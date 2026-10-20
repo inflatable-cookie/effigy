@@ -17,9 +17,8 @@ use crate::runner::exec_command::transport::{
     resolve_host_program,
 };
 use crate::runner::exec_command::{
-    activate_exec_surface_with, determine_routed_task_exec_strategy,
-    routed_task_exec_requires_workspace_effigy, strategy_requires_workspace_effigy_install,
-    verified_target_exec_args,
+    activate_exec_surface_with, routed_task_exec_requires_workspace_effigy,
+    strategy_requires_workspace_effigy_install, verified_target_exec_args,
 };
 use crate::runner::runtime_session_context::{
     with_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
@@ -100,7 +99,6 @@ fn routed_task_runtime_env_maps_aliases_only_for_raw_payloads() {
         ("ROOT".to_owned(), "{repo}/data".to_owned()),
         ("ALIAS".to_owned(), "{project}".to_owned()),
         ("LITERAL".to_owned(), "/literal/host/path".to_owned()),
-        ("HOST_RUN_TOKEN".to_owned(), "never-forward".to_owned()),
     ]);
     let raw = effigy_exec::ExecStrategy::RawExec {
         working_dir: "/workspace/leaf with 'quote".to_owned(),
@@ -117,9 +115,6 @@ fn routed_task_runtime_env_maps_aliases_only_for_raw_payloads() {
     assert!(args.contains(&OsString::from("ROOT=/workspace/leaf with 'quote/data")));
     assert!(args.contains(&OsString::from("ALIAS=/workspace/leaf with 'quote")));
     assert!(args.contains(&OsString::from("LITERAL=/literal/host/path")));
-    assert!(!args
-        .iter()
-        .any(|arg| arg.to_string_lossy().contains("never-forward")));
     assert_eq!(args.last(), Some(&OsString::from("/literal/host/path")));
 
     let handoff = effigy_exec::ExecStrategy::Handoff {
@@ -574,53 +569,6 @@ fn build_routed_task_exec_args_handoff_uses_installed_effigy_path() {
             OsString::from("tasks"),
             OsString::from("--json"),
         ]
-    );
-}
-
-#[test]
-fn authenticated_host_execution_uses_resolved_container_payload() {
-    let capabilities = effigy_exec::detection::ContainerCapabilities {
-        has_effigy: true,
-        effigy_version: Some("stale-container-copy".to_owned()),
-        shell: "sh".to_owned(),
-        tools: std::collections::HashMap::new(),
-        probed_at: std::time::Instant::now(),
-    };
-    let command = vec![
-        "sh".to_owned(),
-        "-lc".to_owned(),
-        "bun install --frozen-lockfile".to_owned(),
-    ];
-
-    let admitted = determine_routed_task_exec_strategy(
-        &capabilities,
-        "workspace:js:prepare",
-        &[],
-        "/workspace/subdir",
-        &command,
-        true,
-    );
-    assert_eq!(
-        admitted,
-        effigy_exec::ExecStrategy::RawExec {
-            working_dir: "/workspace/subdir".to_owned(),
-            command: command.clone(),
-        }
-    );
-
-    let unadmitted = determine_routed_task_exec_strategy(
-        &capabilities,
-        "workspace:js:prepare",
-        &[],
-        "/workspace/subdir",
-        &command,
-        false,
-    );
-    assert_eq!(
-        unadmitted,
-        effigy_exec::ExecStrategy::Handoff {
-            args: vec!["workspace:js:prepare".to_owned()],
-        }
     );
 }
 

@@ -316,12 +316,7 @@ pub(in crate::runner) fn run_inline_task_with_cwd_and_env(
         surface: effigy_tasks::TaskSurface::Published,
     };
     let selection_plan = super::selection::build_execution_selection_plan(&preflight, &selection);
-    super::pipeline::standard::run_standard_task(
-        &preflight,
-        &selection,
-        &selection_plan,
-        crate::runner::host_scheduler::active_nested().is_some(),
-    )
+    super::pipeline::standard::run_standard_task(&preflight, &selection, &selection_plan, None)
 }
 
 #[cfg(test)]

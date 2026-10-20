@@ -1841,7 +1841,7 @@ Current mechanisms and their kernel replacements. Evidence is at main
 | Read-command presentation | Local window-size query and recorded version stamps only; no `tput` fallback or Git identity inference | Static (R2) |
 | Git provenance and identity diagnostics | Child Git probes disable optional index writes (`GIT_OPTIONAL_LOCKS=0`) | Observe (R2) |
 | Bundle and catalog source preparation | Checkout pins and immutable source generations; no read-time refresh or cache lock | Prepare run; `Gate(Store bundles)` with deadline; atomic checkout lock publication |
-| Scheduler client signal handler | `src/runner/host_scheduler/submit.rs:205-212` | subscribes to `SignalRouter` cancel; admission shape is Q-006 |
+| Scheduler client signal handler | retired with the host-run client (Q-006, effigy#227) | the admission hook is a custody process of the run; a routed signal while waiting cancels the run |
 | QA group records: 20 s staleness, truncating writes | `crates/effigy-runtime/src/qa_group_status.rs:19`, `:275-291` | `Run` rows; `stop` and `hard_timeout_ms` become possible |
 
 Task engine adoption (effigy#217, 2026-10-19):
@@ -1856,7 +1856,8 @@ Task engine adoption (effigy#217, 2026-10-19):
 | Env-schema commands | Done. Resolved after `Admitted`; each `exec()` is a custody effect of the run with bounded capture. |
 | `set_var` | Done for the vault passphrase, the local-dev marker and the managed run token. Sequence environments use lexical spawn inputs, never process-global mutation (effigy#226). The external task source isolation marker remains. |
 | Task cache | Done: removed. |
-| Git exclude on reads; bundle refresh during reads; scheduler signal handler | Not this task. Read paths no longer refresh bundles or append Git excludes (source pins, effigy#220); the scheduler signal handler is the admission (Q-006) follow-up. |
+| Git exclude on reads; bundle refresh during reads; scheduler signal handler | Not this task. Read paths no longer refresh bundles or append Git excludes (source pins, effigy#220). The scheduler client and its signal handler are gone (Q-006, effigy#227). |
+| Heavy admission and run control (Q-006) | Done (effigy#227). `admission = "heavy"` is metadata; `EFFIGY_ADMISSION_HOOK` runs as an auxiliary custody process held until settle; `--run-id` derives the run id; `runs`, `run status|logs|stop` read the journal, the per-stream logs (family 6) and request `Stop`. Contract [049](049-heavy-validation-admission-contract.md). |
 | QA group records | Done for liveness: a group run is a kernel run, and status reads its gate, not a PID or heartbeat. The member report files remain reports. |
 
 Prerequisite kernel additions for that adoption: `run::history`,
@@ -1940,7 +1941,7 @@ Environment reconciler adoption, tranche 3 (effigy#230, 2026-10-20):
 | Deps state: try-only lock, local atomic helper | `crates/effigy-deps/src/state.rs:497`, `:573` | gate with deadline; `atomic_replace` |
 | Graph reads and explicit refresh | `crates/effigy-codegraph/src/refresh.rs`; `storage.rs`; graph contract 045 | RefreshDerived owns a kernel store gate; Observe probes only. Queries never refresh; rollback-journal readers create no files. Existing WAL is migrated by explicit index. |
 | Catalog pack store lock | `crates/effigy-catalog/src/pack/store.rs:343` | `Gate`, or removal under Q-005 |
-| Pending-facts journal with file and directory `fsync` | `crates/effigy-host-run/src/secure_fs.rs:299-308` | the pattern `atomic_replace` absorbs |
+| Pending-facts journal with file and directory `fsync` | the retired host-run client (removed, effigy#227) | the pattern `atomic_replace` absorbs |
 | Doctor publication marker | `crates/effigy-scan/src/execution/doctor_inventory.rs:586` | `Gate` |
 | Rhai, runtime and doctor signal flags | `crates/effigy-rhai/src/lib.rs:219-221`; `crates/effigy-runtime/src/signals.rs:184-186`; `crates/effigy-scan/src/execution/doctor_inventory.rs:2064` | `SignalRouter` and `CancelToken` (K9) |
 | `init` writes in place | `crates/effigy-builtin/src/init/agent.rs:814` | `atomic_replace` |
@@ -2088,7 +2089,7 @@ to the rule and primitive that makes it structurally impossible.
 | 6 | Reaper stops a stack mid-task | yes | R4 | attachments, `TransitionPermit` |
 | 7 | Four unserialised `down` authorities under a live run | yes | K4, R4, I-A1 | one settle; `Gate(Env)` serializing attach and permit |
 | 8 | Deploy reports success for work it never ran | yes, the rule; deploy ownership is Q-003 | R5, I-OC1 | `Outcome` |
-| 9 | `qa`, `ci`, `ci:fresh` hard-wired to the scheduler | no (Q-006) | — | — |
+| 9 | `qa`, `ci`, `ci:fresh` hard-wired to the scheduler | closed by Q-006 (effigy#227): no name implies a class | R5 | `Run`; custody hook |
 | 10 | Underlay bundle floor below the keys it emits | no (bundle and config lane) | — | — |
 | 11 | Wrong-backend volume actions; unserialised data writers; global reset | yes for identity and claims; reset scope is environment-lane | I-ID4, I-A3 | backend in `ResourceId`; `Data` claims; objects per generation |
 | 12 | Host stop drops failures | yes | R5, I-R8 | `StopReport`; `Outcome` residue |
@@ -2105,7 +2106,8 @@ to the rule and primitive that makes it structurally impossible.
 
 ## 14. Non-goals
 
-- No host-wide scheduler (vision). Heavy-task shape stays open under Q-006.
+- No host-wide scheduler (vision). Heavy tasks carry metadata and an optional
+  launcher hook (Q-006, contract 049).
 - No separate binaries. Supervisor, sentinel and probe guard re-exec the one
   `effigy`.
 - No daemon beyond the user gateway, per-run processes (supervisor,

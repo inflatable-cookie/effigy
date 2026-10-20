@@ -49,23 +49,28 @@ pub enum RunnerError {
         shell_error: String,
         cleanup_error: String,
     },
-    /// A scheduler-routing refusal or pre-launch outcome that carries its own
-    /// process exit code (for example 75 unreachable or 77 invalid token).
-    HostScheduler {
+    /// An attached or followed run settled; its output was already written,
+    /// so the caller exits with that run's own result and prints nothing.
+    RunSettled {
+        code: i32,
+    },
+    /// A `--run-id` key already names this run: the invocation attaches to
+    /// it instead of starting another.
+    RunKeyExists {
+        run: String,
+    },
+    /// The admission hook denied, failed or timed out: the heavy task did
+    /// not run (Q-006). Details carry `effigy.admission.v1`.
+    AdmissionRefused {
+        detail: String,
+        details_json: String,
+    },
+    /// A run-control read or request that could not be answered, with its
+    /// `effigy.run.v1` details.
+    RunControl {
         code: i32,
         detail: String,
-    },
-    /// An exact host-run request lookup or follow result with a versioned
-    /// machine-readable state.
-    HostRequestFailure {
-        code: i32,
-        detail: String,
-        json_details: String,
-    },
-    /// The scheduler-launched child settled; its output was already relayed
-    /// verbatim, so the caller exits with its real status and prints nothing.
-    HostRunSettled {
-        code: i32,
+        details_json: String,
     },
     HostContainerLeaseEncode {
         detail: String,
@@ -250,15 +255,12 @@ impl RunnerError {
         rendered_output::runner_error_rendered_output(self)
     }
 
-    /// Process exit code owned by the host scheduler routing, when it applies.
-    /// The process exit code for this error: a scheduler's own code, a
-    /// task command's code (128 + n when a signal ended it), 75 when the
+    /// The process exit code for this error: an attached run's own result,
+    /// a task command's code (128 + n when a signal ended it), 75 when the
     /// task's gate is held by a live run, otherwise 1.
     pub fn process_exit_code(&self) -> i32 {
-        if let Some(code) = self.host_scheduler_exit_code() {
-            return code;
-        }
         match self {
+            RunnerError::RunSettled { code } | RunnerError::RunControl { code, .. } => *code,
             RunnerError::TaskCommandFailure {
                 code: Some(code), ..
             } if (1..=255).contains(code) => *code,
@@ -273,15 +275,6 @@ impl RunnerError {
             }
             RunnerError::TaskLockConflict(_) => 75,
             _ => 1,
-        }
-    }
-
-    pub fn host_scheduler_exit_code(&self) -> Option<i32> {
-        match self {
-            RunnerError::HostRunSettled { code }
-            | RunnerError::HostScheduler { code, .. }
-            | RunnerError::HostRequestFailure { code, .. } => Some(*code),
-            _ => None,
         }
     }
 
@@ -449,9 +442,7 @@ impl RunnerError {
     // Effigy preserves is the launched child's status.
     pub fn task_exit_status(&self) -> Option<i32> {
         match self {
-            RunnerError::HostRunSettled { code }
-            | RunnerError::HostScheduler { code, .. }
-            | RunnerError::HostRequestFailure { code, .. } => Some(*code),
+            RunnerError::RunSettled { code } | RunnerError::RunControl { code, .. } => Some(*code),
             RunnerError::TaskCommandFailure { code, .. } => Some(code.unwrap_or(1)),
             RunnerError::CommandJsonFailure { rendered } => Some(
                 serde_json::from_str::<serde_json::Value>(rendered)

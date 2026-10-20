@@ -115,10 +115,8 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
             let ports = RunnerDoctorPorts::new();
             effigy_doctor::run_doctor(args, &ports).map_err(RunnerError::from)
         }
-        Command::Tasks(mut args) => match args.request.take() {
-            Some(request) => crate::runner::host_scheduler::run_request(request, args.output_json),
-            None => run_tasks(args),
-        },
+        Command::Tasks(args) => run_tasks(args),
+        Command::Runs(args) => crate::runner::run_control::run_runs(args),
         Command::Drafts(args) => run_drafts(args),
         Command::Draft(args) => {
             eprintln!("[warn] `effigy draft <task>` is deprecated in v0.15; run `effigy <task>` directly. Internal tasks use the ordinary task runtime.");

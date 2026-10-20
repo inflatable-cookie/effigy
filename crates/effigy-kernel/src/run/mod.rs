@@ -8,6 +8,7 @@ mod claims;
 mod history;
 mod journal;
 mod lifecycle;
+mod logs;
 pub use lifecycle::{metadata, RunMetadata, SentinelStatus};
 #[path = "../objects/run.rs"]
 mod objects;
@@ -19,7 +20,8 @@ pub use attachments::{
     AttachMode, AttachmentTicket, Attachments, Holder, Liveness, TransitionPermit,
 };
 pub use claims::{Claims, ReservationToken};
-pub use history::{children, history, unclosed, RunSummary};
+pub use history::{children, history, recent, summary, unclosed, RunSummary};
+pub use logs::{read_log, LogRead};
 pub(crate) use settle::settle_interrupted_wait;
 pub use settle::{settle_interrupted, Reconciled, Settled, SettlementAdapter};
 
@@ -343,9 +345,10 @@ impl<'a> Run<'a> {
     pub(crate) fn capture_log(
         &self,
         sequence: i64,
+        stream: crate::custody::Stream,
         limits: &crate::ctx::Limits,
     ) -> std::io::Result<crate::custody::capture::Log> {
-        crate::custody::capture::Log::open(self.root, self.id, sequence, limits)
+        crate::custody::capture::Log::open(self.root, self.id, sequence, stream, limits)
     }
     pub(crate) fn has_sentinel(&self) -> bool {
         self.sentinel.is_some()

@@ -294,9 +294,6 @@ pub(super) fn append_container_exec_env(
     env: &BTreeMap<String, OsString>,
 ) {
     for (key, value) in env {
-        if crate::runner::host_scheduler::is_scheduler_owned_env(key) {
-            continue;
-        }
         args.push(OsString::from("-e"));
         let mut assignment = OsString::from(key);
         assignment.push("=");
@@ -590,28 +587,6 @@ working_dir = "/var/www/contact-patch"
                 OsString::from("A=1"),
                 OsString::from("-e"),
                 OsString::from("B=two"),
-            ]
-        );
-    }
-
-    #[test]
-    fn scheduler_tokens_are_not_forwarded_to_container_exec() {
-        let mut args = vec![OsString::from("exec"), OsString::from("-T")];
-        let env = BTreeMap::from([
-            ("HOST_RUN_TOKEN".to_owned(), OsString::from("secret-token")),
-            ("HOST_RUN_ID".to_owned(), OsString::from("scheduler-run")),
-            ("VISIBLE".to_owned(), OsString::from("yes")),
-        ]);
-
-        append_container_exec_env(&mut args, &env);
-
-        assert_eq!(
-            args,
-            vec![
-                OsString::from("exec"),
-                OsString::from("-T"),
-                OsString::from("-e"),
-                OsString::from("VISIBLE=yes"),
             ]
         );
     }

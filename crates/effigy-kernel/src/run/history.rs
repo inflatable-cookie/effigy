@@ -43,6 +43,40 @@ pub fn history(
     )
 }
 
+/// One run by id; `Absent` when the journal has no such row (never run, or
+/// removed by retention).
+pub fn summary(reader: &StoreReader, id: RunId) -> Observed<RunSummary> {
+    let sql = format!("SELECT {COLUMNS} FROM runs WHERE run_id=?1");
+    match read(reader, &sql, params![id.to_string()]) {
+        Observed::Verified(mut rows, evidence) => match rows.pop() {
+            Some(row) => Observed::Verified(row, evidence),
+            None => Observed::Absent(crate::observe::AbsenceProof::NoRow {
+                table: "runs".into(),
+            }),
+        },
+        Observed::Absent(proof) => Observed::Absent(proof),
+        Observed::Unknown(reason) => Observed::Unknown(reason),
+    }
+}
+
+/// The newest runs whose owner lives in `scope`, or in any scope, newest
+/// first, at most `limit`, open or closed.
+pub fn recent(
+    reader: &StoreReader,
+    scope: Option<Scope>,
+    limit: usize,
+) -> Observed<Vec<RunSummary>> {
+    let sql = format!(
+        "SELECT {COLUMNS} FROM runs JOIN resources r ON r.name=runs.owner \
+         WHERE ?1 IS NULL OR r.scope=?1 ORDER BY runs.created_at DESC, runs.run_id DESC LIMIT ?2"
+    );
+    read(
+        reader,
+        &sql,
+        params![scope.map(crate::gate::scope_name), limit as i64],
+    )
+}
+
 /// Every non-closed run whose owner lives in `scope`, oldest first. A free
 /// owner gate makes such a run `Interrupted`, never absent.
 pub fn unclosed(reader: &StoreReader, scope: Scope) -> Observed<Vec<RunSummary>> {

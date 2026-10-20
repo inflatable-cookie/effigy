@@ -30,7 +30,6 @@ mod graph_command;
 mod graph_time_budget;
 mod host_container_lease;
 mod host_process;
-mod host_scheduler;
 mod interactive_session;
 mod managed_listener_readiness;
 mod managed_settle;
@@ -41,6 +40,7 @@ mod qa_group_command;
 mod release_command;
 mod render;
 mod rhai_command;
+mod run_control;
 mod runtime_session_context;
 mod script_command;
 #[cfg(test)]

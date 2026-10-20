@@ -66,6 +66,8 @@ fn is_top_level_builtin_command(name: &str) -> bool {
             | "exec"
             | "gateway"
             | "release"
+            | "run"
+            | "runs"
             | "service"
             | "system"
             | "tasks"

@@ -33,16 +33,12 @@ pub(super) fn run_execution_pipeline(
         return render_resolved_selector_plan(&preflight, &selection);
     }
 
-    if let Some(output) = managed::run_managed_task(&preflight, &selection, &selection_plan)? {
+    if let Some(output) = managed::run_managed_task(&preflight, &selection, &selection_plan, None)?
+    {
         return Ok(output);
     }
 
-    standard::run_standard_task(
-        &preflight,
-        &selection,
-        &selection_plan,
-        crate::runner::host_scheduler::active_nested().is_some(),
-    )
+    standard::run_standard_task(&preflight, &selection, &selection_plan, None)
 }
 
 fn render_resolved_selector_plan(

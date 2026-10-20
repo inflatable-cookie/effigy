@@ -47,6 +47,8 @@ pub enum Command {
     Release(ReleaseArgs),
     Doctor(DoctorArgs),
     Tasks(TasksArgs),
+    /// `effigy runs` and `effigy run status|logs|stop <id>`.
+    Runs(RunsArgs),
     Drafts(DraftsArgs),
     Draft(DraftArgs),
     Task(TaskInvocation),
@@ -146,6 +148,7 @@ pub enum HelpTopic {
     Uninstall,
     Drafts,
     Draft,
+    Runs,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1250,8 +1253,6 @@ pub struct TasksArgs {
     pub status_all: bool,
     pub output_json: bool,
     pub pretty_json: bool,
-    /// Exact caller-owned host-run request lookup or follow operation.
-    pub request: Option<TasksRequestCommand>,
     /// Explicit bounded-QA-group subcommand (`tasks qa-groups` /
     /// `tasks qa-group`). Recognized only as the exact leading route so group
     /// verbs never take over task names or top-level selectors.
@@ -1269,18 +1270,35 @@ impl Default for TasksArgs {
             status_all: false,
             output_json: false,
             pretty_json: true,
-            request: None,
             qa: None,
         }
     }
 }
 
-/// `effigy tasks request status|follow` resolves the exact caller/request UUID
-/// through the trusted host-run client.
+/// Run control over the kernel run journal (Q-006): every run, heavy or not.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TasksRequestCommand {
-    Status { caller: String, request_id: String },
-    Follow { caller: String, request_id: String },
+pub struct RunsArgs {
+    pub repo_override: Option<PathBuf>,
+    pub output_json: bool,
+    pub action: RunsAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunsAction {
+    /// `effigy runs [--limit N] [--all]`: this checkout's runs, or every
+    /// run on the host with `--all`.
+    List { limit: usize, all: bool },
+    /// `effigy run status <run>`: a run id or a `--run-id` key.
+    Status { run: String },
+    /// `effigy run logs <run> [--follow] [--stdout-offset N] [--stderr-offset N]`.
+    Logs {
+        run: String,
+        follow: bool,
+        stdout_offset: u64,
+        stderr_offset: u64,
+    },
+    /// `effigy run stop <run> [--wait-ms N]`: the kernel stop path.
+    Stop { run: String, wait_ms: Option<u64> },
 }
 
 /// Bounded QA-group surfaces under `effigy tasks` (contract 051).
@@ -1394,10 +1412,16 @@ pub struct TaskInvocation {
     pub args: Vec<String>,
 }
 
-/// Internal argument used to carry a parsed global request identity to the
+/// Internal argument used to carry a parsed global `--run-id` key to the
 /// selector runner without exposing it to the selected task's own arguments.
 #[doc(hidden)]
-pub const INTERNAL_HOST_RUN_REQUEST_ID_ARG: &str = "--__effigy-host-run-request-id";
+pub const INTERNAL_RUN_ID_ARG: &str = "--__effigy-run-id";
+
+/// The refusal for the retired `--host-run-request-id` flag.
+pub const RETIRED_HOST_RUN_REQUEST_ID: &str = "`--host-run-request-id` was retired with the host-run client (Q-006). Use `effigy --run-id <key> <task>`: a repeat with the same key attaches to that run and never starts a second; inspect it with `effigy run status <key>`";
+
+/// The refusal for the retired `effigy tasks request status|follow`.
+pub const RETIRED_TASKS_REQUEST: &str = "`effigy tasks request status|follow` was retired with the host-run client (Q-006). Start a run with `effigy --run-id <key> <task>`, then use `effigy run status <key>`, `effigy run logs <key> --follow` or `effigy run stop <key>`";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliParseError {

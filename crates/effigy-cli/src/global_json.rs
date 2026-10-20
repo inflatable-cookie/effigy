@@ -10,7 +10,8 @@ pub struct GlobalCliOptions {
     pub task_env_schema: Option<PathBuf>,
     pub task_lock_wait_ms: Option<String>,
     pub task_plan: bool,
-    pub host_run_request_id: Option<String>,
+    /// `--run-id <key>`: a caller-chosen idempotency key for one task run.
+    pub run_id: Option<String>,
 }
 
 pub fn strip_global_cli_flags(
@@ -45,15 +46,19 @@ pub fn strip_global_cli_flags(
                 )?));
             }
             "--host-run-request-id" => {
-                if options.host_run_request_id.is_some() {
+                return Err(CliParseError::InvalidArguments(
+                    crate::RETIRED_HOST_RUN_REQUEST_ID.to_owned(),
+                ));
+            }
+            "--run-id" => {
+                if options.run_id.is_some() {
                     return Err(CliParseError::InvalidArguments(
-                        "`--host-run-request-id` may be supplied only once".to_owned(),
+                        "`--run-id` may be supplied only once".to_owned(),
                     ));
                 }
-                options.host_run_request_id =
-                    Some(args.next().ok_or(CliParseError::MissingFlagValue {
-                        flag: "--host-run-request-id".to_owned(),
-                    })?);
+                options.run_id = Some(args.next().ok_or(CliParseError::MissingFlagValue {
+                    flag: "--run-id".to_owned(),
+                })?);
             }
             "--verbose-root" => options.task_verbose_root = true,
             "--lock-wait-ms" => {
@@ -142,10 +147,9 @@ pub fn apply_global_cli_options(
             }
             let task_args = std::mem::take(&mut task.args);
             task.args = effigy_core::task_args::join_task_args(effigy, task_args);
-            if let Some(request_id) = options.host_run_request_id.as_ref() {
-                task.args
-                    .push(crate::INTERNAL_HOST_RUN_REQUEST_ID_ARG.to_owned());
-                task.args.push(request_id.clone());
+            if let Some(key) = options.run_id.as_ref() {
+                task.args.push(crate::INTERNAL_RUN_ID_ARG.to_owned());
+                task.args.push(key.clone());
             }
             return Ok(cmd);
         }
@@ -263,6 +267,10 @@ pub fn apply_global_cli_options(
                 args.repo_override
                     .get_or_insert_with(|| repo_override.clone());
             }
+            Command::Runs(args) => {
+                args.repo_override
+                    .get_or_insert_with(|| repo_override.clone());
+            }
             Command::Drafts(args) => {
                 args.repo_override
                     .get_or_insert_with(|| repo_override.clone());
@@ -314,14 +322,23 @@ pub fn apply_global_cli_options(
         }
     }
 
-    if let Some(request_id) = options.host_run_request_id.as_ref() {
+    if let Some(key) = options.run_id.as_ref() {
+        // A built-in routed as a task (`tasks`, `test`) is not a task run.
         match &mut cmd {
-            Command::Task(task) => {
-                task.args
-                    .push(crate::INTERNAL_HOST_RUN_REQUEST_ID_ARG.to_owned());
-                task.args.push(request_id.clone());
+            Command::Task(task)
+                if !effigy_core::builtin_tasks::is_builtin_task_name(
+                    task.name.rsplit('/').next().unwrap_or(&task.name),
+                ) =>
+            {
+                task.args.push(crate::INTERNAL_RUN_ID_ARG.to_owned());
+                task.args.push(key.clone());
             }
-            _ => return Err(unknown_argument("--host-run-request-id")),
+            _ => {
+                return Err(CliParseError::InvalidArguments(
+                    "`--run-id` names one repository task run: `effigy --run-id <key> <task>`"
+                        .to_owned(),
+                ))
+            }
         }
     }
 
@@ -383,6 +400,7 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::Uninstall(args) => args.output_json = true,
         Command::Release(args) => args.output_json = true,
         Command::Tasks(args) => args.output_json = true,
+        Command::Runs(args) => args.output_json = true,
         Command::Drafts(args) => args.output_json = true,
         Command::Draft(args) => {
             if !runtime_flag_present_before_passthrough(&args.args, "--json") {
@@ -432,6 +450,7 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::Uninstall(args) => args.output_json,
         Command::Release(args) => args.output_json,
         Command::Tasks(args) => args.output_json,
+        Command::Runs(args) => args.output_json,
         Command::Drafts(args) => args.output_json,
         Command::Draft(args) => args.output_json,
         Command::Doctor(args) => args.output_json,

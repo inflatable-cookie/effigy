@@ -144,9 +144,59 @@ config_keys = ["catalog.graph"]
 allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "docs/knowledge/contracts/json-schema-index.json", "crates/effigy-manifest/src/lib.rs", "crates/effigy-manifest/src/loaded_catalog.rs"]
 
 [[retired]]
+id = "effigy-host-run-client"
+retired = "2026-10-19"
+replacement = "Heavy tasks carry admission = \"heavy\" as metadata only. An optional EFFIGY_ADMISSION_HOOK, set by whoever launches Effigy, gates heavy runs and is held until the run settles; every run gets kernel run control: --run-id <key>, effigy runs, effigy run status|logs|stop (Q-006, contract 049). The retired flag and tasks request commands refuse with this replacement; the scheduler variables are ignored and historical ~/.local/state/host-run files stay untouched. No task is heavy by name."
+owner = "docs/knowledge/contracts/049-heavy-validation-admission-contract.md"
+terms = [
+  "--host-run-request-id",
+  "tasks request status",
+  "tasks request follow",
+  "effigy.host_run.request-status.v1",
+  "effigy.host_run.request-follow.v1",
+  "HOST_RUN_TOKEN",
+  "HOST_RUN_ID",
+  "EFFIGY_SCHEDULER_OVERRIDE",
+  "EFFIGY_HOST_RUN_ROOT",
+  "EFFIGY_HOST_RUN_PRIVATE_SERVER",
+  "EFFIGY_REQUIRE_HOST_RUN_PRIVATE_SERVER",
+  "scheduler_unreachable",
+  "invalid_parent_token",
+  "effigy-host-run",
+]
+paths = [
+  "src/runner/host_scheduler/",
+  "crates/effigy-host-run/",
+  "tests/host_scheduler_integration.rs",
+  "tests/cli_output_tests/fixture_parent_tests.rs",
+  "tests/scripts/fixture-parent-isolation.sh",
+  "tests/scripts/fixture-parent-workspace.py",
+  "tests/scripts/fixture-parent-cli-tests.sh",
+  "tests/scripts/fixture-parent-runner-tests.sh",
+  "tests/scripts/contract-fixture-checks.py",
+  "tests/scripts/release-preparation-admission.sh",
+  "docs/knowledge/architecture/033-host-run-protocol-client.md",
+]
+config_keys = ["EFFIGY_SCHEDULER_OVERRIDE", "EFFIGY_HOST_RUN_ROOT"]
+allow = [
+  "CHANGELOG.md",
+  "docs/guides/080-host-wide-validation-admission.md",
+  "docs/guides/083-v0.14.0-consumer-migration.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/contracts/049-heavy-validation-admission-contract.md",
+  "docs/knowledge/contracts/052-runtime-kernel-contract.md",
+  "docs/knowledge/questions.md",
+  "crates/effigy-cli/src/lib.rs",
+  "crates/effigy-cli/src/global_json.rs",
+  "crates/effigy-cli/src/command_parsing.rs",
+  "src/tests/lib_tests_parse_tests/help_and_flag_tests.rs",
+  "tests/run_control_cli.rs",
+]
+
+[[retired]]
 id = "effigy-heavy-admission-store-and-cli"
 retired = "2026-10-02"
-replacement = "Queue and Nucleus own heavy scheduling. Effigy routes heavy invocations through the host-run client and exposes no local heavy-admission store or status/run/runs commands. Historical files under the former default or EFFIGY_ADMISSION_DIR root remain untouched and opaque; 48183cf is local rollout evidence, not a published consumer rollback target."
+replacement = "Effigy keeps no heavy-admission store and no admission status/run/runs commands. Heavy runs are gated only by an optional launcher hook (see effigy-host-run-client, which also retired the host-run client). Historical files under the former default or EFFIGY_ADMISSION_DIR root remain untouched and opaque; 48183cf is local rollout evidence, not a published consumer rollback target."
 owner = "docs/knowledge/contracts/049-heavy-validation-admission-contract.md"
 terms = [
   "effigy admission",
@@ -186,7 +236,7 @@ allow = [
 [[retired]]
 id = "effigy-owned-run-control-proposal"
 retired = "2026-10-18"
-replacement = "Contract 052 is now the runtime kernel contract. Run identity, the run journal, stop, signals and deadlines are kernel primitives (Run, OwnedProcess, SignalRouter, OperationContext); engines own any command surface on top. The proposed run-id CLI, its JSON schemas and refusal codes, the opt-in witness placement and its workflow guide are not planned."
+replacement = "Contract 052 is now the runtime kernel contract. Run identity, the run journal, stop, signals and deadlines are kernel primitives (Run, OwnedProcess, SignalRouter, OperationContext); engines own any command surface on top. That surface is Q-006 run control (effigy runs, effigy run status|logs|stop, --run-id; contract 049). The proposed tasks-run CLI, its JSON schemas and refusal codes, the opt-in witness placement and its workflow guide are not planned."
 owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
 terms = [
   "tasks run status",

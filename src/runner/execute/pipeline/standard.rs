@@ -34,7 +34,8 @@ use crate::runner::runtime_session_context::{
     current_runtime_session_context, LeaseRefreshPolicy, RuntimeSessionContext,
 };
 use crate::runner::task_engine::{
-    refuse_live_legacy_holder, resolve_lock_wait_ms, RunExec, TaskRun, TaskRunRequest, TaskTarget,
+    refuse_live_legacy_holder, resolve_lock_wait_ms, RunExec, RunKey, TaskRun, TaskRunRequest,
+    TaskTarget,
 };
 use effigy_cli::{SecretsArgs, SecretsSubcommand};
 use effigy_containers::{load_container_policy, ContainerAction, ContainerComposeInvocationPlan};
@@ -57,7 +58,7 @@ pub(in crate::runner) fn run_standard_task(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
     selection_plan: &ExecutionSelectionPlan,
-    host_admitted_execution: bool,
+    run_key: Option<&RunKey>,
 ) -> Result<String, RunnerError> {
     if selection.task.cache.is_some() {
         return Err(retired_task_cache_error(&preflight.selector.task_name));
@@ -89,6 +90,9 @@ pub(in crate::runner) fn run_standard_task(
             || env_schema_planned(env_schema_root, env_schema_override, env_schema_config),
         managed_run_token: inherited_managed_run.as_deref(),
         args: &preflight.runtime_args_exec.passthrough,
+        key: run_key,
+        admission: selection.task.admission,
+        cwd: Some(&preflight.invocation_cwd),
     })?;
     let mut workload = None;
     // Admitted commits before env-schema commands run (K3): each `exec()`
@@ -109,7 +113,6 @@ pub(in crate::runner) fn run_standard_task(
             preflight,
             selection,
             command::build_task_command(preflight, selection, &env_schema_resolved)?,
-            host_admitted_execution,
         );
         run_standard_task_inner(
             preflight,
@@ -263,15 +266,6 @@ fn run_standard_task_inner(
         "standard task execution",
     ));
     let container_binding = binding_resolution.binding();
-    let host_owned_container_payload = context.host_admitted_execution
-        && matches!(
-            container_binding,
-            ContainerExecutionBinding::Container { .. } | ContainerExecutionBinding::Inline { .. }
-        )
-        && matches!(
-            selection.task.run.as_ref(),
-            Some(ManifestManagedRun::Command(_))
-        );
     if let ContainerExecutionBinding::Inline { .. } = container_binding {
         let output = run_inline_workspace_standard_task(
             preflight,
@@ -279,7 +273,6 @@ fn run_standard_task_inner(
             context,
             secret_ref,
             &binding_resolution,
-            host_owned_container_payload,
         )?;
         return Ok(output);
     }
@@ -355,7 +348,6 @@ fn run_standard_task_inner(
                     command: context.command(),
                     task_env: Some(&context.selection.task.env),
                     secret_env: secret_ref,
-                    host_admitted: host_owned_container_payload,
                 },
                 container,
                 activated_policy,
@@ -394,7 +386,6 @@ fn run_standard_task_inner(
                 command: context.command(),
                 task_env: Some(&context.selection.task.env),
                 secret_env: secret_ref,
-                host_admitted: host_owned_container_payload,
             },
             container,
             activated_policy,
@@ -836,7 +827,6 @@ fn run_inline_workspace_standard_task(
     context: &ExecutionTaskContext<'_>,
     secret_ref: Option<&[(&str, &SecretString)]>,
     binding_resolution: &ExecutionBindingResolution,
-    host_admitted_execution: bool,
 ) -> Result<String, RunnerError> {
     let repo_root = &selection.catalog.catalog_root;
     let policy = binding_resolution
@@ -848,8 +838,6 @@ fn run_inline_workspace_standard_task(
     let activation = activate_inline_workspace_container_runtime(repo_root, &policy)?;
     let policy = activation.policy;
     let teardown_plan = inline_workspace_teardown_plan(repo_root, &policy);
-    let runtime = owned_container_runtime(teardown_plan.as_ref());
-    crate::runner::host_scheduler::report_container_started(&runtime, policy.name.as_str());
 
     let exec_result = if preflight.output_json {
         let output = capture_routed_task_container_exec_with_policy(
@@ -862,7 +850,6 @@ fn run_inline_workspace_standard_task(
                 command: context.command(),
                 task_env: Some(&context.selection.task.env),
                 secret_env: secret_ref,
-                host_admitted: host_admitted_execution,
             },
             &policy,
             &working_dir,
@@ -897,7 +884,6 @@ fn run_inline_workspace_standard_task(
                 command: context.command(),
                 task_env: Some(&context.selection.task.env),
                 secret_env: secret_ref,
-                host_admitted: host_admitted_execution,
             },
             &policy,
             &working_dir,
@@ -929,39 +915,15 @@ fn inline_workspace_teardown_plan(
     .ok()
 }
 
-fn owned_container_runtime(plan: Option<&ContainerComposeInvocationPlan>) -> String {
-    plan.map(|plan| plan.backend_id.to_string())
-        .unwrap_or_else(|| "unknown".to_owned())
-}
-
-/// Tear down the container this task activated and report the result to the
-/// scheduler run it ran under. Removal is `true` only when the teardown command
-/// succeeded; a failed command is `false` and an unrunnable one is unknown.
-/// Started and removed facts share this plan's backend id.
+/// Tear down the container this task activated. The teardown is best
+/// effort; its result never changes the task's outcome.
 fn teardown_inline_workspace_container(
     policy: &effigy_containers::EffectiveContainerPolicy,
     plan: Option<&ContainerComposeInvocationPlan>,
 ) {
-    let Some(plan) = plan else {
-        crate::runner::host_scheduler::report_container_removed(
-            "unknown",
-            policy.name.as_str(),
-            None,
-        );
-        return;
-    };
-    let result = effigy_runtime::signals::run_compose_plan_capture(policy, plan);
-    crate::runner::host_scheduler::report_container_removed(
-        plan.backend_id.as_str(),
-        policy.name.as_str(),
-        removal_state(&result),
-    );
-}
-
-/// `true` only when the teardown command ran and succeeded, `false` when it ran
-/// and failed, `None` (unknown) when it could not be observed.
-fn removal_state<E>(result: &Result<std::process::Output, E>) -> Option<bool> {
-    result.as_ref().ok().map(|output| output.status.success())
+    if let Some(plan) = plan {
+        let _ = effigy_runtime::signals::run_compose_plan_capture(policy, plan);
+    }
 }
 
 fn standard_runtime_activation_plan(
@@ -1094,7 +1056,6 @@ pub(in crate::runner) fn run_sequence_container_command(
         preflight,
         &selected,
         command::build_task_command(preflight, &selected, &None)?,
-        false,
     );
     // The canonical selection plan is rebuilt without effects by the resolver.
     let invocation = effigy_cli::TaskInvocation {
@@ -1114,16 +1075,14 @@ pub(in crate::runner) fn run_sequence_container_command(
 #[cfg(test)]
 mod tests {
     use super::{
-        activate_inline_workspace_container_runtime_with, inline_workspace_teardown_plan,
-        owned_container_runtime, should_stay_in_workspace_shell_in, ContainerExecutionBinding,
+        activate_inline_workspace_container_runtime_with, should_stay_in_workspace_shell_in,
+        ContainerExecutionBinding,
     };
     use crate::runner::container_runtime_prep::activate_routed_container_runtime_with;
     use crate::runner::container_runtime_prep::ContainerTaskActivation;
     use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
     use crate::runner::runtime_session_context::LeaseRefreshPolicy;
-    use effigy_containers::{
-        ContainerAction, ContainerRuntimeState, EffectiveComposeSource, EffectiveContainerPolicy,
-    };
+    use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
     use effigy_manifest::{ManifestManagedRun, ManifestTask, ManifestTaskRunIn};
     use effigy_runtime_plan::RuntimeLeasePolicy;
     use std::path::{Path, PathBuf};
@@ -1147,67 +1106,6 @@ mod tests {
             rendered.ends_with("effigy 'seed' '--' '--force'"),
             "got: {rendered}"
         );
-    }
-
-    #[test]
-    fn inline_workspace_started_and_removed_facts_share_compose_plan_backend() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let _env =
-            crate::contract_test_support::EnvGuard::set_many(&[("EFFIGY_COMPOSE_BACKEND", None)]);
-        let policy = EffectiveContainerPolicy {
-            render: None,
-            repo_root: temp.path().to_path_buf(),
-            name: "web".to_owned(),
-            driver: effigy_manifest::ManifestContainerDriver::Colima,
-            startup: effigy_manifest::ManifestContainerStartup::Detached,
-            profile: "effigy".to_owned(),
-            compose_source: EffectiveComposeSource::Direct,
-            compose_files: vec![temp.path().join("docker-compose.yml")],
-            compose_file_display: "docker-compose.yml".to_owned(),
-            managed_volumes: vec![],
-            borrowed_volumes: Vec::new(),
-            data_peers: Vec::new(),
-            data_from: None,
-            shared_services: vec![],
-            project_name: "demo".to_owned(),
-            primary_service: "app".to_owned(),
-            dns_domain: None,
-            dns_base_domain: None,
-            dns_tls: false,
-            dns_port: None,
-            dns_routes: vec![],
-            service_aliases: vec![],
-            declared_ports: vec![],
-            ports_declared_explicitly: false,
-            declared_mounts: vec![],
-            declared_media_mounts: vec![],
-            pull_production_hook: None,
-            health_check: None,
-            health_timeout_secs: 60,
-            secret_delivery: effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv,
-            secret_runtime_dir: None,
-            source_secret_runtime_for_deferrals: false,
-            workspace_user: None,
-            workspace_home: None,
-            on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
-            shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
-            detach_timeout_secs: 10,
-            host_processes: Vec::new(),
-        };
-        let plan = inline_workspace_teardown_plan(temp.path(), &policy).expect("plan");
-        let started = owned_container_runtime(Some(&plan));
-        let report = effigy_runtime::container_manager::lifecycle_operation_report(
-            temp.path(),
-            &policy,
-            ContainerAction::Status,
-            ContainerRuntimeState::Unknown,
-            None,
-        )
-        .expect("report");
-        assert_eq!(plan.backend_id.as_str(), "colima-nerdctl");
-        assert_eq!(started, "colima-nerdctl");
-        assert_eq!(started, plan.backend_id.to_string());
-        assert_eq!(report.backend_id.as_str(), "docker-compose");
     }
 
     #[test]
@@ -1402,22 +1300,5 @@ mod tests {
             ))
         );
         assert!(!activation.refreshed_host_container_lease);
-    }
-
-    #[test]
-    #[cfg_attr(
-        effigy_shared_process,
-        ignore = "known v0.15 rebuild defect: papercut 0ede7d0d-6bfa-468d-8ca0-1a3c86602a78; owner lane v015-environment"
-    )]
-    fn container_removal_state_is_false_or_unknown_and_never_assumed() {
-        use std::process::Command;
-        let output = |program: &str| Command::new(program).output().expect("run");
-        let removed: Result<_, std::io::Error> = Ok(output("true"));
-        let failed: Result<_, std::io::Error> = Ok(output("false"));
-        let unobserved: Result<std::process::Output, _> =
-            Err(std::io::Error::other("teardown could not run"));
-        assert_eq!(super::removal_state(&removed), Some(true));
-        assert_eq!(super::removal_state(&failed), Some(false));
-        assert_eq!(super::removal_state(&unobserved), None);
     }
 }

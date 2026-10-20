@@ -196,6 +196,10 @@ pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
         command_name: Some("doctor"),
     },
     CommandDescriptor {
+        topic: HelpTopic::Runs,
+        command_name: Some("runs"),
+    },
+    CommandDescriptor {
         topic: HelpTopic::Tasks,
         command_name: None,
     },
@@ -253,6 +257,13 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
         description: "List public tasks by group; --all and --json include internal tasks",
         deferred_builtin: Some("tasks"),
         help_argument: Some("tasks"),
+    },
+    GeneralHelpEntry {
+        group: HelpGroup::Work,
+        command: "effigy runs",
+        description: "List runs; follow, inspect or stop one with `effigy run status|logs|stop <run>`",
+        deferred_builtin: Some("runs"),
+        help_argument: Some("runs"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Work,
@@ -502,6 +513,7 @@ pub const HELP_COMMAND_TOPICS: &[(&str, HelpTopic)] = &[
     ("skill", HelpTopic::Skill),
     ("state", HelpTopic::State),
     ("system", HelpTopic::System),
+    ("runs", HelpTopic::Runs),
     ("tasks", HelpTopic::Tasks),
     ("test", HelpTopic::Test),
     ("uninstall", HelpTopic::Uninstall),

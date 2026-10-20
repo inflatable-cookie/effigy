@@ -130,6 +130,7 @@ command -v effigy
 effigy --version
 ```
 
-Heavy selectors route through the Queue/Nucleus scheduler; Effigy no longer
-provides a local admission capability query. Existing agent contexts may still
+Heavy selectors wait only for an `EFFIGY_ADMISSION_HOOK` the launcher sets;
+`effigy run status|logs|stop <key>` controls a run started with
+`--run-id <key>`. Existing agent contexts may still
 hold older skill instructions after the files are refreshed.

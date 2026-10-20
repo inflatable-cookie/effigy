@@ -44,8 +44,9 @@ agent context after an install or refresh.
 
 Agent Skill guidance and the `effigy` executable are separate. Check the
 resolved executable with `command -v effigy` and `effigy --version`. Heavy
-selectors route through the Queue/Nucleus scheduler; Effigy no longer exposes
-a local admission query command. See
+selectors wait only for an `EFFIGY_ADMISSION_HOOK` the launcher sets. Name a
+run with `effigy --run-id <key> <task>` and inspect, follow or stop it with
+`effigy run status|logs|stop <key>`. See
 `docs/guides/080-host-wide-validation-admission.md`.
 
 ## Footguns (read first)

@@ -193,8 +193,11 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.container.ports.v1` (`container ports status|reclaim`)
 - `effigy.container.bounded-exec.v1` (`container <NAME> shell --bounded --json`)
 - `effigy.container-partial-activation.v2` (detached `container up` failure details)
-- `effigy.host_run.request-status.v1` (`tasks request status`)
-- `effigy.host_run.request-follow.v1` (`tasks request follow`)
+- `effigy.runs.v1` (`runs --json`)
+- `effigy.run.v1` (`run status|stop --json`)
+- `effigy.run.logs.v1` (`run logs --json`)
+- `effigy.admission.v1` (error details when a heavy run is not admitted)
+- `effigy.admission-request.v1` (the `EFFIGY_ADMISSION_REQUEST` hook input)
 - `effigy.state-stack.lineage.v1`
 - `effigy.state-stack.apply.v1`
 

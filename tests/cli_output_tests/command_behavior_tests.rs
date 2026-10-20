@@ -13,10 +13,9 @@ use effigy_demo::{write_active_attempt_record, PersistedDemoActiveAttempt};
 use super::support::{
     attach_bare_remote, git_commit_all, git_stdout, init_git_repo, parse_stdout_json,
     run_cli_command, run_json_cli_command, run_json_cli_command_with_manifest,
-    run_json_task_success, scheduler_state_root, temp_execution_workspace, temp_workspace,
-    wait_for_path_exists, wait_for_positive_pid, write_effigy_release_root_marker,
-    write_fake_effigy_install_repo, write_release_changelog, write_release_manifest,
-    FixtureCommandExt, OwnedCliChild,
+    run_json_task_success, temp_execution_workspace, temp_workspace, wait_for_path_exists,
+    wait_for_positive_pid, write_effigy_release_root_marker, write_fake_effigy_install_repo,
+    write_release_changelog, write_release_manifest, FixtureCommandExt, OwnedCliChild,
 };
 
 static CLI_PROCESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -9067,7 +9066,6 @@ fn cli_container_status_json_reports_default_container_contract() {
         .arg("--json")
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -9126,7 +9124,6 @@ fn cli_container_status_succeeds_with_unrelated_required_container_secrets() {
         .arg("--json")
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -9215,7 +9212,6 @@ fn cli_container_reset_succeeds_with_unrelated_required_container_secrets() {
         .arg("--json")
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -9265,7 +9261,6 @@ fn cli_container_data_list_json_reports_managed_volumes() {
         .arg("--json")
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -9323,7 +9318,6 @@ fn cli_container_cache_list_json_reports_purge_safe_isolated_volumes() {
         .arg("--json")
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -9374,7 +9368,6 @@ fn cli_generated_container_status_json_reports_media_mounts() {
         .arg("--json")
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -9448,7 +9441,6 @@ fn cli_container_data_export_json_reports_transfer_contract() {
         .arg("--json")
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -9513,7 +9505,6 @@ fn cli_container_data_import_json_reports_transfer_contract() {
         .arg("--json")
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -9572,7 +9563,6 @@ fn cli_container_data_pull_production_json_reports_hook_contract() {
         .arg("--json")
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -9709,7 +9699,6 @@ fn container_data_seed_command(fixture_root: &std::path::Path, disable_reaper: b
         .arg("--json")
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -9733,82 +9722,6 @@ fn container_data_seed_command(fixture_root: &std::path::Path, disable_reaper: b
         command.env_remove("EFFIGY_DISABLE_HOST_CONTAINER_LEASE_REAPER");
     }
     command
-}
-
-#[test]
-#[ignore = "requires inherited private parent; run test:audit:fixture-family"]
-fn cli_nested_health_and_seed_old_placement_refuse_before_task_effects() {
-    assert!(std::env::var_os("HOST_RUN_TOKEN").is_some());
-    let outside = tempfile::tempdir().expect("old outside-root fixture");
-    let root = outside.path();
-    fs::write(root.join("package.json"), "{}\n").expect("package marker");
-    fs::write(
-        root.join("effigy.toml"),
-        "[tasks.health]\nrun = \"printf ran > health-marker\"\n",
-    )
-    .expect("old health manifest");
-    let health = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["--json", "doctor", "--deep", "--repo"])
-        .arg(root)
-        .output()
-        .expect("old health public entry");
-    assert!(!health.status.success(), "{health:?}");
-    let report = parse_stdout_json(&health);
-    assert!(
-        report["error"]["details"]["findings"]
-            .as_array()
-            .expect("findings")
-            .iter()
-            .any(|finding| finding["check_id"] == "health.task.execute"
-                && finding["severity"] == "error"),
-        "{report}"
-    );
-    // Doctor intentionally summarizes/truncates nested JSON. Verify the exact
-    // parent refusal separately through the same public health selector.
-    let nested = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["--json", "health"])
-        .current_dir(root)
-        .output()
-        .expect("old nested health entry");
-    assert_eq!(nested.status.code(), Some(77), "{nested:?}");
-    assert!(
-        String::from_utf8_lossy(&nested.stdout).contains("cwd is outside token root"),
-        "{nested:?}"
-    );
-    assert!(!root.join("health-marker").exists());
-
-    // Seed performs local/runtime preparation before the nested task refusal;
-    // only the task marker, not every setup effect, must remain absent.
-    let seed = container_data_seed_command(root, true)
-        .output()
-        .expect("old seed entry");
-    assert!(!seed.status.success(), "{seed:?}");
-    assert!(
-        String::from_utf8_lossy(&seed.stdout).contains("cwd is outside token root"),
-        "{seed:?}"
-    );
-    assert!(!root.join(".effigy/local/db-seed.marker").exists());
-}
-
-#[test]
-#[ignore = "requires inherited private parent; run test:audit:fixture-family"]
-fn cli_seed_isolated_home_without_trusted_state_refuses_before_task_effects() {
-    assert!(std::env::var_os("HOST_RUN_TOKEN").is_some());
-    let root = temp_execution_workspace("seed-old-home-state");
-    let output = container_data_seed_command(&root, true)
-        .env_remove("EFFIGY_HOST_RUN_ROOT")
-        .output()
-        .expect("old HOME state lookup");
-    assert!(!output.status.success(), "{output:?}");
-    let report = parse_stdout_json(&output);
-    assert!(
-        report["error"]["message"]
-            .as_str()
-            .expect("message")
-            .contains("scheduler_unreachable"),
-        "{report}"
-    );
-    assert!(!root.join(".effigy/local/db-seed.marker").exists());
 }
 
 fn assert_container_data_seed_contract(root: &std::path::Path, output: &std::process::Output) {
@@ -9991,7 +9904,6 @@ fn cli_container_up_detached_starts_colima_and_reports_ready() {
         .arg("--json")
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -10176,10 +10088,6 @@ mounts = ["./app:/workspace"]
             "1".to_owned(),
         ),
         ("HOME".to_owned(), root.display().to_string()),
-        (
-            "EFFIGY_HOST_RUN_ROOT".to_owned(),
-            scheduler_state_root().display().to_string(),
-        ),
         (
             "EFFIGY_TEST_CONTAINERS_HOME".to_owned(),
             root.join(".effigy").display().to_string(),
@@ -10408,10 +10316,6 @@ detach_timeout_secs = 1
             "1".to_owned(),
         ),
         ("HOME".to_owned(), root.display().to_string()),
-        (
-            "EFFIGY_HOST_RUN_ROOT".to_owned(),
-            scheduler_state_root().display().to_string(),
-        ),
         (
             "EFFIGY_TEST_CONTAINERS_HOME".to_owned(),
             root.join(".effigy").display().to_string(),
@@ -10837,10 +10741,6 @@ detach_timeout_secs = 1
         ),
         ("HOME".to_owned(), root.display().to_string()),
         (
-            "EFFIGY_HOST_RUN_ROOT".to_owned(),
-            scheduler_state_root().display().to_string(),
-        ),
-        (
             "EFFIGY_TEST_CONTAINERS_HOME".to_owned(),
             root.join(".effigy").display().to_string(),
         ),
@@ -11050,7 +10950,6 @@ fn cli_container_attached_session_stops_environment_on_sigint() {
         .arg(&root)
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -11108,7 +11007,6 @@ fn cli_container_attached_stream_session_reports_operator_overview() {
         .arg(&root)
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_CONTAINER_STREAM", "1")
@@ -11176,7 +11074,6 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
         .arg(&root)
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_CONTAINER_STREAM", "1")
@@ -11242,7 +11139,6 @@ fn cli_workspace_binding_handoff_stops_environment_after_return() {
         .arg("workspace")
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -11312,7 +11208,6 @@ fn cli_container_attached_session_terminates_log_process_group() {
         .arg(&root)
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_CONTAINER_STREAM", "1")
@@ -11394,7 +11289,6 @@ fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
         .arg("--json")
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", bin_dir.display().to_string())
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -11443,7 +11337,6 @@ fn cli_container_shell_command_runs_via_sh_lc() {
         .arg("printf shell-ok")
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -11497,7 +11390,6 @@ fn cli_container_rejects_mounts_that_escape_repo_root() {
         .arg(&root)
         .env("NO_COLOR", "1")
         .env("HOME", &root)
-        .env("EFFIGY_HOST_RUN_ROOT", scheduler_state_root())
         .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)

@@ -1028,13 +1028,13 @@ fn build_qa_groups_contract_fixture(
         .output()
         .map_err(|error| format!("failed to execute fixture group run: {error}"))?;
     if !output.status.success() {
+        // Captured output stays private: only the status is reported.
         return Err(format!(
-            "fixture group run failed unexpectedly (status={}); category: {}",
+            "fixture group run failed unexpectedly (status={})",
             output
                 .status
                 .code()
                 .map_or("signal".to_owned(), |code| code.to_string()),
-            fixture_group_refusal_category(&output.stdout).unwrap_or("unavailable")
         ));
     }
 
@@ -1058,27 +1058,6 @@ fn build_qa_groups_contract_fixture(
         .to_owned();
 
     Ok((fixture, run_id))
-}
-
-fn fixture_group_refusal_category(stdout: &[u8]) -> Option<&'static str> {
-    let payload: Value = serde_json::from_slice(stdout).ok()?;
-    let report = payload
-        .get("result")
-        .filter(|value| !value.is_null())
-        .or_else(|| payload.get("error")?.get("details"))?;
-    for member in report.get("members")?.as_array()? {
-        let summary = member
-            .get("summary")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if summary.starts_with("runner error: invalid_parent_token:") {
-            return Some("invalid_parent_token");
-        }
-        if summary.starts_with("runner error: scheduler_unreachable:") {
-            return Some("scheduler_unreachable");
-        }
-    }
-    None
 }
 
 const QA_GROUPS_CONTRACT_FIXTURE_GROUP: &str = "release-probe";
