@@ -617,7 +617,9 @@ fn managed_matrix_down_ends_recorded_non_group_leader_workload() {
             .as_raw(),
         pid as i32
     );
-    process::register_detached(owner.0.id(), &root.join("engine"))
+    owner
+        .0
+        .register_owner(&root.join("engine"))
         .expect("fake workload group registration");
     let down = Command::new("python3")
         .arg(root.join("matrix-adapter.py"))
@@ -1156,19 +1158,22 @@ fn managed_matrix_missing_record_handover_preserves_live_holder() {
 
 const ADAPTER: &str = r#"import sys,os,json,pathlib,subprocess,time,signal
 root=pathlib.Path(os.environ['MATRIX_ROOT']);state=root/'engine';args=sys.argv[2:];op=sys.argv[1]
-def fixture_process(action,pid=None,owner=None):
+def fixture_process(action,pid=None,owner=None,nonce=None):
  helper=os.environ.get('EFFIGY_TEST_PROCESS_HELPER')
  owner=str(owner if owner is not None else root/'engine')
  if helper:
   command=[helper,action]+([str(pid),owner] if action=='register' else [owner])
+  if nonce is not None: command.append(nonce)
   subprocess.run(command,check=True,stdout=subprocess.DEVNULL)
  else:
   env=dict(os.environ,EFFIGY_REGISTER_OWNER=owner,EFFIGY_REGISTER_ACTION=action)
   if pid is not None: env['EFFIGY_REGISTER_PID']=str(pid)
+  if nonce is not None: env['EFFIGY_REGISTER_NONCE']=nonce
   subprocess.run([env['MATRIX_TEST_BINARY'],'--ignored','--exact','register_fixture_process_child'],env=env,check=True,stdout=subprocess.DEVNULL)
 if op=='prior-parent':
- child=subprocess.Popen(['sh','-c',args[0]],start_new_session=True)
- try: fixture_process('register',child.pid,root)
+ nonce=os.urandom(16).hex()
+ child=subprocess.Popen(['sh','-c',args[0]],start_new_session=True,env=dict(os.environ,EFFIGY_CUSTODY_NONCE=nonce))
+ try: fixture_process('register',child.pid,root,nonce)
  except BaseException:
   os.killpg(child.pid,signal.SIGKILL)
   child.wait()
@@ -1187,8 +1192,9 @@ if op=='down':
 if op=='payload' or (op=='exec' and '.pgid' in args[-1]):
  payload=args[-1].replace('/usr/local/bin/effigy',str(root/'effigy-wrapper'))
  with open(root/('remote-'+str(os.getpid())+'.out'),'wb') as log:
-  child=subprocess.Popen(['sh','-c',payload],start_new_session=True,stdout=log,stderr=log)
-  try: fixture_process('register',child.pid)
+  nonce=os.urandom(16).hex()
+  child=subprocess.Popen(['sh','-c',payload],start_new_session=True,stdout=log,stderr=log,env=dict(os.environ,EFFIGY_CUSTODY_NONCE=nonce))
+  try: fixture_process('register',child.pid,nonce=nonce)
   except BaseException:
    # This exact unreaped child created the dedicated group; rollback before reaping.
    os.killpg(child.pid,signal.SIGKILL)

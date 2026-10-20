@@ -4850,6 +4850,8 @@ fn register_fixture_process_child() {
             .expect("registration PID")
             .parse()
             .unwrap();
-        process::register_detached(pid, Path::new(&owner)).expect("register fake backend child");
+        let nonce = std::env::var("EFFIGY_REGISTER_NONCE").unwrap_or_default();
+        process::register_detached_with_nonce(pid, Path::new(&owner), &nonce)
+            .expect("register fake backend child");
     }
 }

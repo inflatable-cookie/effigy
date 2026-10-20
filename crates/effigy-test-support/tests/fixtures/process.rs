@@ -4,10 +4,10 @@ use std::path::Path;
 fn main() {
     let args: Vec<_> = std::env::args().collect();
     let result = match args.get(1).map(String::as_str) {
-        Some("register") if args.len() == 4 => args[2]
+        Some("register") if args.len() == 4 || args.len() == 5 => args[2]
             .parse::<u32>()
             .map_err(std::io::Error::other)
-            .and_then(|pid| process::register_detached(pid, Path::new(&args[3])))
+            .and_then(|pid| process::register_detached_with_nonce(pid, Path::new(&args[3]), args.get(4).map(String::as_str).unwrap_or("")))
             .map(|_| false),
         Some("stop-root") if args.len() == 3 => {
             process::close_root(Path::new(&args[2])).map(|_| false)
@@ -21,7 +21,7 @@ fn main() {
         ).map(|_| false),
         Some("sweep") if args.len() == 3 => process::sweep(Path::new(&args[2]), None),
         _ => Err(std::io::Error::other(
-            "usage: effigy-fixture-process register PID OWNER | stop-root OWNER | wait-root HOME | run OWNER DONE SCRIPT | sweep LEDGER",
+            "usage: effigy-fixture-process register PID OWNER [NONCE] | stop-root OWNER | wait-root HOME | run OWNER DONE SCRIPT | sweep LEDGER",
         )),
     };
     match result {

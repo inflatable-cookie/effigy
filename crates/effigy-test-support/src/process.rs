@@ -88,7 +88,13 @@ fn record(receipt: &ProcessReceipt, owner: &Path) -> io::Result<tempfile::TempPa
 }
 
 pub fn register_detached(pid: u32, owner: &Path) -> io::Result<()> {
-    let receipt = custody::register(pid, "")?;
+    register_detached_with_nonce(pid, owner, "")
+}
+
+/// Fake launchers pass the nonce they installed before spawning, rather than
+/// reconstructing it from a possibly unavailable native environment snapshot.
+pub fn register_detached_with_nonce(pid: u32, owner: &Path, nonce: &str) -> io::Result<()> {
+    let receipt = custody::register(pid, nonce)?;
     record(&receipt, owner)?.keep().map_err(io::Error::other)?;
     Ok(())
 }
@@ -239,6 +245,13 @@ impl std::ops::DerefMut for OwnedChild {
     }
 }
 impl OwnedChild {
+    pub fn register_owner(&self, owner: &Path) -> io::Result<()> {
+        record(&self.receipt, owner)?
+            .keep()
+            .map_err(io::Error::other)?;
+        Ok(())
+    }
+
     pub fn group_closed(&self) -> bool {
         self.reaped
             || matches!(

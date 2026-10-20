@@ -52,12 +52,44 @@ fn timeout_with_process() {
 }
 
 #[test]
+#[ignore = "detached descendant leak; only run under the negative-control wrapper"]
+fn force_exit_after_detached_leader_reap() {
+    use effigy_test_support::process::FixtureCommandExt;
+    let fixture = Fixture::new("effigy-detached-nonce-").unwrap();
+    let output = Command::new("python3")
+        .arg("-c")
+        .arg(r#"
+import os, pathlib, subprocess, sys
+root = pathlib.Path(sys.argv[1])
+nonce = os.urandom(16).hex()
+child = subprocess.Popen(['sh', '-c', 'sleep 60 & while [ ! -f release ]; do sleep 0.01; done'],
+                         cwd=root, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         env=dict(os.environ, EFFIGY_CUSTODY_NONCE=nonce))
+try:
+    subprocess.run([os.environ['EFFIGY_TEST_PROCESS_HELPER'], 'register', str(child.pid), str(root), nonce], check=True)
+    (root / 'release').touch()
+    assert child.wait(timeout=10) == 0
+except BaseException:
+    import signal
+    os.killpg(child.pid, signal.SIGKILL)
+    child.wait()
+    raise
+"#)
+        .arg(fixture.path())
+        .output_owned()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    std::process::exit(0);
+}
+
+#[test]
 fn suite_assertion_rejects_leaked_process_forced_exit_and_timeout() {
     let script =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/scripts/fixture_hygiene.py");
     for (helper, timeout, exit) in [
         ("deliberately_leak_process", "30", 1),
         ("force_exit_with_process", "30", 1),
+        ("force_exit_after_detached_leader_reap", "30", 1),
         ("timeout_with_process", "3", 124),
     ] {
         let output = Command::new("python3")
@@ -72,8 +104,13 @@ fn suite_assertion_rejects_leaked_process_forced_exit_and_timeout() {
             .output()
             .unwrap();
         assert_eq!(output.status.code(), Some(exit), "{helper}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            String::from_utf8_lossy(&output.stderr).contains("leaked test process:"),
+            stderr.contains("leaked test process:"),
+            "{helper}: {output:?}"
+        );
+        assert!(
+            !stderr.contains("unresolved fixture ownership"),
             "{helper}: {output:?}"
         );
     }

@@ -100,7 +100,7 @@ script dispatch to the built CLI with the existing scoped executable override,
 avoiding a nested Cargo build while the test runner owns its build lock.
 Acceptance uses the optimized `fixture-proof` profile with debug assertions enabled:
 doctor CLI proofs require its debug-only process evidence seams, while cold CLI
-timing proofs retain optimization and retains bounded per-test and suite deadlines.
+timing proofs retain optimization and bounded per-test and suite deadlines.
 
 The parent-death matrix controller launches its lifecycle actor in a separate,
 registered group. Killing and reaping the controller leaves the actor able to
@@ -147,3 +147,25 @@ The scan Git command factory's debug-only `EFFIGY_TEST_DOCTOR_GIT_SCRIPT` seam
 runs that private shim through `/bin/sh`; production release builds keep normal
 Git resolution. Whole-CLI fixtures therefore share the actual bounded probe and
 cleanup path without depending on macOS execution of a newly written script.
+
+Ordinary acceptance uses two nextest workers, matching the maintained managed
+matrix selector. Each admitted matrix test already launches a private gateway,
+supervisor and fake workload processes. The four-worker attempt encountered
+backend startup delays and matrix timeouts; the two-worker setting keeps
+the existing command and per-test deadlines, scenario count and leak assertions.
+
+Fake detached launchers install a fresh custody nonce before spawning and pass
+that same nonce with their launch registration. A second fixture owner of an
+`OwnedChild` copies its existing receipt rather than re-reading its environment.
+This preserves descendant recovery evidence when a test runner kills the native
+parent before Drop. Kernel generation and nonce checks remain unchanged.
+
+The forced-exit negative control also reaps a detached group leader before
+leaving its background child behind. The suite must reject and settle that
+known-nonce descendant without retaining unresolved ownership.
+
+A reaped leader currently leaves a kernel custody limitation on macOS when the
+OS exposes a live descendant's arguments without its environment. Even the
+launcher's known nonce cannot be verified from that observation. Recovery must
+remain `Unknown` and retain the ledger; the detached-leader negative control
+exposes this boundary rather than granting numeric group-kill authority.
