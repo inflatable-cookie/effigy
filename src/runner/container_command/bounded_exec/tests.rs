@@ -469,6 +469,9 @@ fn run_guarded_public_case(
 ) -> GuardedPublicOutcome {
     use std::os::unix::process::CommandExt;
 
+    // Inherited handoff markers must be captured only after env mutators finish.
+    let _environment = lock_test();
+
     let GuardedPublicCase {
         mode,
         backend,
@@ -778,6 +781,51 @@ fn guarded_public_entry_child() {
             );
         }
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn public_child_environment_snapshot_waits_for_handoff_mutator() {
+    let (dir, bin_dir, repo) = public_fixture("snapshot-handoff", true);
+    let identity = format!("release:v{}", effigy_core::build_info::package_version());
+    let env = EnvGuard::set_many(&[(
+        crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME,
+        Some("1".to_owned()),
+    )]);
+    let reader = thread::Builder::new()
+        .name(
+            thread::current()
+                .name()
+                .expect("named parent test")
+                .to_owned(),
+        )
+        .spawn(move || {
+            run_guarded_public_case(
+                &dir,
+                &bin_dir,
+                &repo,
+                GuardedPublicCase {
+                    mode: "valid-identity",
+                    backend: "docker",
+                    identity: &identity,
+                    deadline_ms: 8_000,
+                    stdout_limit: 512,
+                },
+            );
+        })
+        .expect("spawn environment reader");
+    let queued = crate::contract_test_support::test_lock_waiter_position(
+        reader.thread().id(),
+        Duration::from_secs(30),
+    );
+    // Release before asserting/joining so a failed control cannot strand a child.
+    drop(env);
+    let result = reader.join();
+    assert!(
+        queued.is_some(),
+        "child launch must wait for the handoff mutator"
+    );
+    result.expect("full public path succeeds after environment restoration");
 }
 
 #[cfg(unix)]

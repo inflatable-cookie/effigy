@@ -266,7 +266,7 @@ pub(crate) fn recover_exited_owned_services_with_stale_timer(
                     && compose_status_is_running(&current.status)
             })
         {
-            recovery.warnings.push(stale_timer_warning(
+            recovery.warnings.push(stale_timer_diagnostic(
                 row,
                 &result.stderr,
                 result.success,
@@ -476,6 +476,27 @@ fn persistent_start_failure(
             .map(|row| !compose_status_is_running(&row.status))
             .unwrap_or(true);
         if !still_down {
+            if let Some((_, result)) = start_results.iter().find(|(row, result)| {
+                row.container_name == target.container_name
+                    && backend == ComposeBackend::ColimaNerdctl
+                    && !result.success
+                    && looks_like_stale_healthcheck_timer(&result.stdout, &result.stderr)
+            }) {
+                return Some(ContainerExecError::Failure {
+                    command: format!("start owned service `{}`", target.container_name),
+                    code: None,
+                    stdout: String::new(),
+                    stderr: format!(
+                        "stale backend state in Colima profile `{profile}`: {}",
+                        stale_timer_diagnostic(
+                            target,
+                            &format!("{}\n{}", result.stdout, result.stderr),
+                            false,
+                            profile,
+                        )
+                    ),
+                });
+            }
             continue;
         }
         let status = current
@@ -580,10 +601,10 @@ fn persistent_exited_service_error(
 }
 
 #[cfg(all(test, unix))]
-#[path = "restart_recovery/private_tests.rs"]
+#[path = "restart_recovery/tests/private.rs"]
 mod production_refusal_tests;
 
-fn stale_timer_warning(
+fn stale_timer_diagnostic(
     row: &RunningComposeContainer,
     stderr: &str,
     start_succeeded: bool,
@@ -1554,7 +1575,7 @@ mod tests {
         let mut inspect_calls = 0;
         let mut started = Vec::new();
         let mut recoveries = 0;
-        let recovery = recover_exited_owned_services_with_stale_timer(
+        let error = recover_exited_owned_services_with_stale_timer(
             "acowtancy-shared-mysql",
             "effigy",
             ComposeBackend::ColimaNerdctl,
@@ -1577,14 +1598,13 @@ mod tests {
                 panic!("a now-running container must not be mutated");
             },
         )
-        .expect("a running container is not a failed service");
+        .expect_err("failed start with a timer collision must fail before readiness");
 
         assert_eq!(started.len(), 1, "the single start is not retried");
         assert_eq!(recoveries, 0, "no unit mutation on a now-running container");
         assert_eq!(inspect_calls, 2);
-        assert_eq!(recovery.started, vec!["acowtancy-mysql-1".to_owned()]);
-        assert_eq!(recovery.warnings.len(), 1);
-        let warning = &recovery.warnings[0];
+        let warning = error.to_string();
+        assert!(warning.contains("stale backend state in Colima profile `effigy`"));
         assert!(
             warning.contains("unresolved nerdctl health-check unit collision"),
             "got: {warning}"

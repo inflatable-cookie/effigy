@@ -1016,14 +1016,15 @@ domain = "switch.test"
     /// gone, and the following invocation on the same scope succeeds.
     #[cfg(unix)]
     #[test]
-    #[cfg_attr(
-        effigy_shared_process,
-        ignore = "known v0.15 rebuild defect: papercut 43195655-e403-4496-a3c8-adcc02217321; owner lane v015-environment"
-    )]
     fn handover_end_owner_releases_lock_for_reverse_handover() {
+        // The compiled child inherits PATH and shell selection from this process.
+        let _environment = crate::contract_test_support::lock_test();
         use std::time::{Duration, Instant};
 
         let temp = tempfile::tempdir().expect("reverse handover fixture");
+        let parent = effigy_host_run::test_support::ParentFixture::new(temp.path())
+            .expect("private authenticated handover parent");
+        let owner_stderr = temp.path().join("owner.stderr");
         let repo_root = temp.path().join("repo");
         fs::create_dir_all(&repo_root).expect("mkdir repo");
         fs::write(
@@ -1049,11 +1050,15 @@ run = "printf reverse-ok"
         // when the handover actually ends it.
         let mut owner = ReapedChild::spawn(
             std::process::Command::new(&binary)
+                .current_dir(&repo_root)
                 .env("HOME", &home)
+                .env("EFFIGY_HOST_RUN_ROOT", parent.state_root())
+                .env("HOST_RUN_TOKEN", parent.token())
+                .env("HOST_RUN_ID", "private-fixture-parent")
                 .args(["--repo", &repo_arg, "dev", "--headless"])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
+                .stderr(fs::File::create(&owner_stderr).expect("private owner stderr"))
                 .spawn()
                 .expect("spawn headless owner"),
         );
@@ -1084,7 +1089,8 @@ run = "printf reverse-ok"
             );
             assert!(
                 owner.exited().is_none(),
-                "headless owner exited before the handover"
+                "headless owner exited before the handover: {}",
+                fs::read_to_string(&owner_stderr).unwrap_or_default()
             );
             std::thread::sleep(Duration::from_millis(100));
         }
@@ -1098,7 +1104,11 @@ run = "printf reverse-ok"
         // While the owner lives, the reverse invocation on the same lock
         // scope refuses.
         let refused = std::process::Command::new(&binary)
+            .current_dir(&repo_root)
             .env("HOME", &home)
+            .env("EFFIGY_HOST_RUN_ROOT", parent.state_root())
+            .env("HOST_RUN_TOKEN", parent.token())
+            .env("HOST_RUN_ID", "private-fixture-parent")
             .args(["--repo", &repo_arg, "rev"])
             .output()
             .expect("reverse attempt");
@@ -1139,7 +1149,11 @@ run = "printf reverse-ok"
         // The following invocation on the same scope succeeds: the
         // reverse handover.
         let reverse = std::process::Command::new(&binary)
+            .current_dir(&repo_root)
             .env("HOME", &home)
+            .env("EFFIGY_HOST_RUN_ROOT", parent.state_root())
+            .env("HOST_RUN_TOKEN", parent.token())
+            .env("HOST_RUN_ID", "private-fixture-parent")
             .args(["--repo", &repo_arg, "rev"])
             .output()
             .expect("reverse run");

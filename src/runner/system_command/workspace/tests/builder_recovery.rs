@@ -92,6 +92,7 @@ struct Fixture {
     root: PathBuf,
     policy: effigy_containers::EffectiveContainerPolicy,
     _env: EnvGuard,
+    _parent: effigy_host_run::test_support::ParentFixture,
     preserved: Vec<(PathBuf, Vec<u8>)>,
 }
 
@@ -195,7 +196,16 @@ nerdctl) while [ "$1" != -- ]; do shift; done; shift; exec "$(dirname "$0")/dock
 esac
 "#,
         );
+        // Keep authenticated scheduler identity independent of the isolated HOME.
+        // This parent refuses submissions and grants only this private subtree.
+        let parent = effigy_host_run::test_support::ParentFixture::new(&root).unwrap();
         let env = EnvGuard::set_many(&[
+            (
+                "EFFIGY_HOST_RUN_ROOT",
+                Some(parent.state_root().display().to_string()),
+            ),
+            ("HOST_RUN_TOKEN", Some(parent.token().to_owned())),
+            ("HOST_RUN_ID", Some("private-fixture-parent".to_owned())),
             (
                 "PATH",
                 Some(format!(
@@ -270,6 +280,7 @@ esac
             root,
             policy,
             _env: env,
+            _parent: parent,
             preserved,
         }
     }
