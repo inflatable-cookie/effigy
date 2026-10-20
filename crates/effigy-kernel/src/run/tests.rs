@@ -669,6 +669,201 @@ fn claims_conflict_set_is_atomic_and_concurrent_starts_have_one_winner() {
     first.settle(&cleanup(&cx), &mut fake).unwrap();
 }
 #[test]
+fn claims_persistent_payload_survives_settle_and_release_quarantines() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let address = ResourceId::endpoint(EndpointKind::Address, "127.0.0.9").unwrap();
+    let desired = [(address.clone(), serde_json::json!({"environment":"stack"}))];
+    let mut run = begin(&cx, &root, owner(), 1, &mut fake);
+    let token = Claims::reserve(
+        &mut run,
+        std::slice::from_ref(&address),
+        Duration::from_secs(60),
+    )
+    .unwrap();
+    Claims::publish_retained(
+        &mut run,
+        Some(&token),
+        &desired,
+        &Value::from("first"),
+        Duration::from_secs(60),
+    )
+    .unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    let store = Store::open(&cx, &root).unwrap();
+    assert_eq!(
+        journal::effects(store.conn(), id(1)).unwrap()[0].state,
+        EffectState::Retained
+    );
+    assert!(store
+        .conn()
+        .query_row("SELECT run_id IS NULL FROM claims", [], |r| r
+            .get::<_, bool>(0))
+        .unwrap());
+    let mut next = begin(&cx, &root, owner(), 2, &mut fake);
+    assert_eq!(next.resource_state().unwrap(), Some(Value::from("first")));
+    let extra = ResourceId::endpoint(EndpointKind::Address, "127.0.0.10").unwrap();
+    let token = Claims::reserve(&mut next, std::slice::from_ref(&extra), Duration::ZERO).unwrap();
+    let mut expanded = desired.to_vec();
+    expanded.push((extra, Value::Null));
+    Claims::publish_retained(
+        &mut next,
+        Some(&token),
+        &expanded,
+        &Value::from("second"),
+        Duration::from_secs(60),
+    )
+    .unwrap();
+    Claims::publish_retained(&mut next, None, &[], &Value::Null, Duration::from_secs(60)).unwrap();
+    assert_eq!(
+        next.effects()
+            .unwrap()
+            .iter()
+            .filter(|e| e.state == EffectState::Retained)
+            .count(),
+        2
+    );
+    assert_eq!(
+        next.store
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM claims WHERE state='quarantined' AND run_id IS NULL",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        2
+    );
+    next.settle(&cleanup(&cx), &mut fake).unwrap();
+    let mut foreign = begin(
+        &cx,
+        &root,
+        ResourceId::gateway("foreign").unwrap(),
+        3,
+        &mut fake,
+    );
+    assert!(matches!(
+        Claims::reserve(&mut foreign, &[address], Duration::ZERO),
+        Err(RunError::Conflict(_))
+    ));
+    foreign.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+#[test]
+fn claims_persistent_publication_refuses_foreign_or_unreserved_endpoints() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let address = ResourceId::endpoint(EndpointKind::Address, "127.0.0.9").unwrap();
+    let desired = [(address.clone(), Value::Null)];
+    let mut run = begin(&cx, &root, owner(), 1, &mut fake);
+    let token = Claims::reserve(&mut run, &[address], Duration::ZERO).unwrap();
+    assert!(Claims::publish_retained(
+        &mut run,
+        Some(&token),
+        &[],
+        &Value::from("lost"),
+        Duration::ZERO
+    )
+    .is_err());
+    assert_eq!(run.resource_state().unwrap(), None);
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    let mut foreign = begin(
+        &cx,
+        &root,
+        ResourceId::gateway("foreign").unwrap(),
+        2,
+        &mut fake,
+    );
+    assert!(Claims::publish_retained(
+        &mut foreign,
+        None,
+        &desired,
+        &Value::from("foreign"),
+        Duration::ZERO
+    )
+    .is_err());
+    assert_eq!(foreign.resource_state().unwrap(), None);
+    foreign.settle(&cleanup(&cx), &mut fake).unwrap();
+}
+#[test]
+#[cfg(feature = "fault-injection")]
+fn claims_persistent_faults_leave_payload_and_claim_revision_coherent() {
+    for point in [
+        "ClaimPublishBefore",
+        "ClaimPublishAfter",
+        "ClaimRetainBefore",
+        "ClaimRetainAfter",
+    ] {
+        let home = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let mut fake = Fake::new(home.path());
+        let address = ResourceId::endpoint(EndpointKind::Address, "127.0.0.9").unwrap();
+        let mut run = begin(&cx, &root, owner(), 1, &mut fake);
+        let token =
+            Claims::reserve(&mut run, std::slice::from_ref(&address), Duration::ZERO).unwrap();
+        let desired = [(address, Value::from("details"))];
+        let result = crate::fault_injection::with_hook(
+            move |name| {
+                if name == point {
+                    Err(std::io::Error::from_raw_os_error(libc::ENOSPC))
+                } else {
+                    Ok(())
+                }
+            },
+            || {
+                Claims::publish_retained(
+                    &mut run,
+                    Some(&token),
+                    &desired,
+                    &Value::from("published"),
+                    Duration::ZERO,
+                )?;
+                run.settle(&cleanup(&cx), &mut fake)?;
+                Ok::<_, RunError>(())
+            },
+        );
+        assert!(result.is_err(), "{point}");
+        let recovered = begin(&cx, &root, owner(), 2, &mut fake);
+        let published = point != "ClaimPublishBefore";
+        assert_eq!(
+            recovered.resource_state().unwrap(),
+            published.then(|| Value::from("published")),
+            "{point}"
+        );
+        let row = recovered
+            .store
+            .conn()
+            .query_row(
+                "SELECT state,run_id IS NULL,revision,details FROM claims",
+                [],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, bool>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            row.0,
+            if published { "live" } else { "released" },
+            "{point}"
+        );
+        if published {
+            assert!(row.1);
+            assert_eq!(row.2, 1);
+            assert_eq!(row.3, Some("\"details\"".into()));
+        }
+        recovered.settle(&cleanup(&cx), &mut fake).unwrap();
+    }
+}
+#[test]
 fn claims_quarantine_blocks_reuse_until_boot_deadline_and_release_is_once() {
     let home = home();
     let cx = context();

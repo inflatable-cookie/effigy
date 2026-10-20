@@ -102,3 +102,7 @@ pub fn run_main(raw_args: Vec<String>) -> std::io::Result<()> {
     run_cli(raw_args);
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../tests/support/gateway_legacy.rs"]
+mod gateway_legacy_fixture;

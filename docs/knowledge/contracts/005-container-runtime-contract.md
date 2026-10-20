@@ -1295,6 +1295,13 @@ Detached JSON also reports `activation_stage` from a closed vocabulary:
 `runtime_integrations`, or `persistent_owner`. This identifies the checked
 caller boundary without exposing backend output, argv or environment. It is
 not a cause attribution, an absent-resource verdict, or readiness proof.
+While that stage is `preparation`, `preparation_step` identifies the checked
+boundary: `declaration`, `policy`, `admission`, `validation`, `runtime`, `mounts`,
+`inventory`, `refresh`, or `dispatch`; it is null outside preparation.
+`failure_kind` is one of `endpoint_observation_unknown`, `endpoint_store_refusal`,
+`invocation_refusal`, `managed_readiness`, `gateway_route_refusal`, or `other`.
+These closed codes retain no error payload, backend output, argv or environment,
+and do not turn an unavailable observation into absence or stop authority.
 
 Restore that admitted context before supported reconciliation; unavailable
 context cannot authorize recreation, cleanup or guessed exposure.

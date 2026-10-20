@@ -117,19 +117,39 @@ fn create_gateway_log(path: PathBuf) -> std::io::Result<File> {
 }
 
 pub(super) fn wait_for_private_gateway_ready(config: &GatewayConfig) -> Result<(), RunnerError> {
-    for _ in 0..40 {
-        match server::get_verified_gateway_status(config) {
-            Ok(_) => return Ok(()),
+    let operation = effigy_gateway::operator::context(
+        Duration::from_secs(15),
+        effigy_kernel::ctx::EffectClass::Observe,
+    );
+    wait_for_private_gateway_ready_with_probe(&operation, || {
+        server::get_verified_gateway_status(config).map(|_| ())
+    })
+}
+
+pub(super) fn wait_for_private_gateway_ready_with_probe(
+    operation: &effigy_kernel::ctx::OperationContext,
+    mut probe: impl FnMut() -> Result<(), effigy_gateway::GatewayError>,
+) -> Result<(), RunnerError> {
+    loop {
+        operation
+            .check("private gateway verified listener publication")
+            .map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "private gateway startup interrupted: {error:?}"
+                ))
+            })?;
+        match probe() {
+            Ok(()) => return Ok(()),
             Err(effigy_gateway::GatewayError::NotRunning) => {}
             Err(effigy_gateway::GatewayError::Io(error))
                 if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(RunnerError::task_invocation(error.to_string())),
         }
-        thread::sleep(Duration::from_millis(25));
+        let remaining = operation.remaining().ok_or_else(|| {
+            RunnerError::task_invocation("private gateway startup requires a finite budget")
+        })?;
+        thread::sleep(remaining.min(Duration::from_millis(25)));
     }
-    Err(RunnerError::task_invocation(
-        "private gateway did not publish verified listener addresses within one second",
-    ))
 }
 
 pub(super) fn stop_gateway_process(

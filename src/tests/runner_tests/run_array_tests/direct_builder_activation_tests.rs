@@ -10,6 +10,8 @@
 
 use super::rhai_script_tests::{install_fake_container_runtime, write_executable};
 use crate::contract_test_support::lock_test;
+#[cfg(test)]
+use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 use crate::runner::tests::prelude::execution::run_manifest_task_with_cwd;
 use crate::runner::tests::prelude::{fs, write_manifest};
 use effigy_cli::TaskInvocation;

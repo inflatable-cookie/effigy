@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 use std::net::Ipv4Addr;
 
 fn test_route(domain: &str, target: &str) -> Route {
@@ -22,6 +24,18 @@ fn empty_table() {
     let table = RouteTable::new();
     assert!(table.is_empty());
     assert_eq!(table.len(), 0);
+}
+
+#[test]
+fn legacy_import_lock_wait_respects_its_deadline() {
+    let fixture = tempfile::tempdir().unwrap();
+    let path = fixture.path().join("routes.json");
+    let _held = RouteTableLock::acquire(&path).unwrap();
+    let now = std::time::Instant::now();
+    assert!(
+        RouteTableLock::acquire_until(&path, now + std::time::Duration::from_millis(20)).is_err()
+    );
+    assert!(now.elapsed() < std::time::Duration::from_secs(1));
 }
 
 #[test]

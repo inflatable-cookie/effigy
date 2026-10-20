@@ -6,6 +6,9 @@ use std::path::PathBuf;
 /// Errors that can occur during gateway operations.
 #[derive(Debug, thiserror::Error)]
 pub enum GatewayError {
+    /// A fenced endpoint transaction, import or observation was refused.
+    #[error("gateway endpoint store: {reason}")]
+    EndpointStore { reason: String },
     /// The route table file could not be read.
     #[error("failed to read route table at {path}: {reason}")]
     RouteTableReadError { path: PathBuf, reason: String },

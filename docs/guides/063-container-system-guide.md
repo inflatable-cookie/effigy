@@ -1510,11 +1510,16 @@ is shared with the experimental adoption proof.
 
 ### Route-table trust
 
-The operator daemon reverse-proxies to the upstream each route names. Effigy
-writes `routes.json` owner-only (`0o600`) with a managed marker. An untrusted,
-unreadable or group/other-writable replacement is refused while the daemon
-keeps its last-known-good table. Re-registering routes stamps the current format.
-The full route-table model is in
+The operator daemon reads routes from the gateway endpoint Store in
+`~/.effigy/state/kernel.db`. The first gateway mutation automatically imports
+`routes.json`, `loopback-ips.json` and `ports.json`, preserving their mappings
+and leaving the original files untouched as backups. Registration and daemon
+reload use committed Store revisions after import; editing a backup does not
+change routing. An Unknown Store read preserves the last applied table and
+reports the observation failure. Legacy JSON provenance checks apply before
+import. The storage and lifetime model is in
+[architecture 035](../knowledge/architecture/035-gateway-endpoint-store.md);
+the legacy trust model is in
 [`033-gateway-route-table-trust-contract.md`](../knowledge/contracts/033-gateway-route-table-trust-contract.md).
 
 Status never requests administrator verification. A legacy root-owned or
@@ -1637,8 +1642,8 @@ configured/default target unless `--disk` is supplied.
 
 ## Port registry capacity and recovery
 
-Generated container ports come from `~/.effigy/ports.json`, which holds one
-100-port range per project. Exhaustion blocks new allocations until a range is
+Generated container ports come from the gateway endpoint Store, which imports
+`~/.effigy/ports.json` automatically and retains one 100-port range per project. Exhaustion blocks new allocations until a range is
 released. Check capacity first:
 
 ```bash
@@ -1651,7 +1656,7 @@ effigy container ports reclaim --apply --expect-plan <DIGEST> --json
 no files. Each row is `retain`, `hold` or `reclaim` with a reason, and the
 report includes free range capacity before and after the planned reclaim. The
 plan digest is over the decisions. `--apply` recomputes the plan under the
-registry lock and refuses to write if the digest differs from the reviewed one.
+gateway Store gate and refuses to write if the digest differs from the reviewed one.
 
 When registry capacity is at or near exhaustion (zero or one free 100-port
 range), ordinary `effigy container status` output ends with a one-line text
@@ -1679,12 +1684,15 @@ A stopped Colima profile is incomplete, because its created or stopped
 containers cannot be listed without starting it. Present paths are always
 retained.
 
-Apply removes only the reclaim rows. It saves the pre-edit file as
-`ports.json.reclaim-backup-<nanos>` and reports both SHA-256 values. It never
+Apply removes only the reclaim rows. It saves the pre-edit endpoint document as
+`ports.json.reclaim-backup-<nanos>` and reports both document SHA-256 values.
+The imported original stays unchanged. Released ranges remain quarantined for
+at least 70 seconds before they can be allocated to another owner. It never
 touches containers, volumes, data, routes, certificates, profiles or loopback
 assignments. Normal `container down` keeps stable allocations. `container
 retire` releases the retired scope's own project allocations through its
-existing record path.
+existing record path. Loopback IPs and dormant domain ownership also survive
+ordinary down/up; retirement explicitly releases the recorded owner's claims.
 
 Limits: the bound-port probe is a point-in-time check. A backup left by a
 crash between backup and rename is not removed automatically. Recovery does

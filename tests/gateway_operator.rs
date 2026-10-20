@@ -1,5 +1,8 @@
 //! Real user daemon custody, probes and control, entirely inside a fresh HOME.
+#[path = "support/gateway_legacy.rs"]
+mod gateway_legacy_fixture;
 use effigy_gateway::{operator, GatewayConfig};
+use gateway_legacy_fixture::LegacyRegistryFixture;
 use std::net::{TcpListener, UdpSocket};
 use std::time::Duration;
 

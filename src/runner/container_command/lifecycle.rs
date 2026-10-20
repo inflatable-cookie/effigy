@@ -104,6 +104,7 @@ struct DetachedOperationState {
     partial: bool,
     admitted: bool,
     stage: Option<&'static str>,
+    preparation_step: Option<&'static str>,
 }
 
 pub(super) fn run_container_up(
@@ -128,11 +129,21 @@ pub(super) fn run_container_up(
             _ => "Detached activation did not complete. Reconciliation requires the original admitted inputs and fresh exact-owned bindings; unavailable observations grant no restart, recreation or route authority.".to_owned(),
         };
         if output_json {
+            let failure_kind = match &error {
+                RunnerError::TaskInvocation(message) if message.starts_with("gateway endpoint store: observation unknown:") => "endpoint_observation_unknown",
+                RunnerError::TaskInvocation(message) if message.starts_with("gateway endpoint store:") => "endpoint_store_refusal",
+                RunnerError::TaskInvocation(_) => "invocation_refusal",
+                RunnerError::ManagedHostReadiness { .. } => "managed_readiness",
+                RunnerError::GatewayRouteTable { .. } | RunnerError::GatewayRouteRegistration { .. } | RunnerError::GatewayRouteShape { .. } | RunnerError::GatewayLoopback { .. } | RunnerError::GatewayRuntimeTarget { .. } => "gateway_route_refusal",
+                _ => "other",
+            };
             return RunnerError::CommandJsonFailure {
                 rendered: serde_json::json!({
                     "state": state,
                     "phase": "detached_activation",
                     "activation_stage": operation.stage.unwrap_or("preparation"),
+                    "preparation_step": operation.preparation_step.filter(|_| operation.stage == Some("preparation")),
+                    "failure_kind": failure_kind,
                     "readiness": "unverified",
                     "exposure": "unverified",
                     "recovery": recovery,
@@ -265,6 +276,7 @@ fn prepare_container_up(
     detach: bool,
     operation: &mut DetachedOperationState,
 ) -> Result<ContainerUpPlan, RunnerError> {
+    operation.preparation_step = Some("declaration");
     let stop_flag = install_stop_requested_flag()?;
     // Resolve the attach declaration without materializing policy or probing runtime.
     let declared =
@@ -288,10 +300,13 @@ fn prepare_container_up(
                     c.startup == Some(effigy_manifest::ManifestContainerStartup::Detached)
                 }));
     operation.active = declared_detached;
+    operation.preparation_step = Some("policy");
+    effigy_containers::policy::ports::prepare_endpoint_store()?;
     // Allocation is a Prepare effect, before admission captures the render.
     let prepared = effigy_containers::policy::render::prepare_inputs(&load_container_policy(
         repo_root, name,
     )?)?;
+    operation.preparation_step = Some("admission");
     let (mut policy, mut preparation_admission) = if declared_detached {
         // A record of an earlier admission whose inputs have changed since is
         // retired here, before admission compares against it.
@@ -324,6 +339,7 @@ fn prepare_container_up(
         crate::runner::host_container_lease::retained_detached_activation_context(
             repo_root, &policy,
         )?;
+    operation.preparation_step = Some("validation");
     let reconcile_pending = retained_context.is_some();
     let operation_plan = lifecycle_operation_plan(
         repo_root,
@@ -352,6 +368,7 @@ fn prepare_container_up(
     let warnings = colima_profile_warnings(&policy, repo_root);
     emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
+    operation.preparation_step = Some("runtime");
     let colima_started = start_runtime_after_scope_registration(&policy, || {
         ensure_runtime_backend_running(&policy, repo_root).map_err(Into::into)
     })?;
@@ -362,9 +379,11 @@ fn prepare_container_up(
     if let Some(context) = &admitted_context {
         context.verify(repo_root, &policy, context.marker_required)?;
     }
+    operation.preparation_step = Some("mounts");
     effigy_containers::policy::mounts::prepare_container_mount_sources(&policy)?;
     let shared_service_notes =
         ensure_shared_services_running(&policy, preparation_admission.as_ref())?;
+    operation.preparation_step = Some("inventory");
     let primary_service_running = if reconcile_pending {
         true
     } else if policy.compose_source == effigy_containers::EffectiveComposeSource::Direct {
@@ -382,6 +401,7 @@ fn prepare_container_up(
     if let Some(context) = &admitted_context {
         context.verify(repo_root, &policy, context.marker_required)?;
     }
+    operation.preparation_step = Some("refresh");
     let workspace_mount_decisions = if reconcile_pending {
         Vec::new()
     } else if let Some(admission) = preparation_admission.as_mut() {
@@ -401,6 +421,7 @@ fn prepare_container_up(
     } else {
         resolve_workspace_mounts_for_creation(repo_root, &mut policy, primary_service_running)?
     };
+    operation.preparation_step = Some("dispatch");
     validate_container_policy(repo_root, &policy)?;
     validate_compose_backend_runtime(repo_root, &policy)?;
     let _manager_report = effigy_runtime::container_manager::lifecycle_operation_report(

@@ -7,10 +7,11 @@ publish = false
 description = "Container policy contracts for Effigy"
 
 [features]
-test-support = []
+test-support = ["dep:tempfile"]
 
 [dependencies]
 effigy-kernel = { path = "../effigy-kernel" }
+tempfile = { version = "3", optional = true }
 effigy-catalog = { path = "../effigy-catalog" }
 effigy-core = { path = "../effigy-core" }
 effigy-gateway = { path = "../effigy-gateway" }

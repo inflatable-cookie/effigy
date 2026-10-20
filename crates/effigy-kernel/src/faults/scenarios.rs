@@ -1562,9 +1562,8 @@ fn faults_engine_real_environment_handover() {}
 #[test]
 #[ignore = "engine lane (environment, gateway): legacy import (§11) of host sidecars, gateway state and routes"]
 fn faults_engine_legacy_import() {}
-#[test]
-#[ignore = "engine lane (gateway): endpoint commit through the user-owned daemon and its route effects"]
-fn faults_engine_gateway_endpoint_commit() {}
+// Gateway endpoint commits run against the user-owned daemon, watcher and
+// live HTTP in effigy-gateway::server::endpoint_faults (test:gateway:proxy).
 // Vault rotation is exercised by effigy-secrets::storage::tests::faults_engine_vault_rotation
 // through the dependency fault hooks (test:secrets:vault).
 #[test]
