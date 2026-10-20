@@ -1,10 +1,11 @@
 //! Private production-adapter proof for a no-port direct-Compose builder.
 //!
-//! The manifest declares `compose_file` with no published ports. A Rhai task
+//! The manifest declares a retired `compose_file` (translated to a project
+//! catalog fragment) with no published ports. A Rhai task
 //! runs `container::up` and then `container::shell`, so the real policy load,
 //! admission guard, detached preparation, owned-binding verification and exec
 //! all run. Only the Docker/Colima binaries are fake. The fake `up` applies the
-//! labels from the rendered ownership override, as Compose would, and `ps` and
+//! labels from the generated render, as Compose would, and `ps` and
 //! `inspect` serve those labels back. Each scenario changes only how the labels
 //! were applied, so every refusal comes from the production check.
 
@@ -41,7 +42,7 @@ case "$subcmd" in
     ovr=""
     for arg in "$@"; do
       case "$arg" in
-        *ownership.compose.yml|*generated.compose.yml) ovr="$arg" ;;
+        *generated.compose.yml) ovr="$arg" ;;
       esac
     done
     mode="${EFFIGY_TEST_BUILDER_MODE:-applied}"
@@ -445,9 +446,14 @@ fn direct_builder_without_ports_activates_and_execs_with_current_checkout_labels
     outcome
         .result
         .expect("current direct builder must activate and exec without a published route");
+    // A translated `compose_file` carries ownership labels in its one
+    // generated document; no separate override exists.
     assert!(
-        outcome.docker_args.contains("ownership.compose.yml"),
-        "the ownership override must reach Compose: {}",
+        outcome
+            .docker_args
+            .contains("builder.generated.compose.yml")
+            && !outcome.docker_args.contains("ownership.compose.yml"),
+        "the generated render must reach Compose: {}",
         outcome.docker_args
     );
     assert!(

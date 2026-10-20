@@ -169,10 +169,14 @@ User customization layers on top:
 <service>` extracts a bundled fragment to the override directory for
 customization.
 
-### Eject
+### Repo-owned Compose (retired)
 
-`effigy container <name> eject` copies the generated compose file into a repo-owned compose file, switches the manifest to `compose_file =`, and the user
-owns it directly. Generated-compose data commands no longer apply after eject.
+Effigy owns the environment; Compose is the engine adapter (Q-004). Direct
+`compose_file` ownership and `eject` are retired. For one release a
+`compose_file` environment is read as project-layer fragments under
+`infra/dev/catalog/`, and `effigy container migrate <name>` writes them out
+with an unchanged render (contract 005). `effigy container render <name>`
+shows the exact render.
 
 ### Design reference: DDEV
 
@@ -1100,7 +1104,7 @@ repo-owned Compose volumes stay unless labelled mutable.
 
 | Owner | Role |
 | --- | --- |
-| `effigy-catalog` | fragment schema, layered lookup, template rendering, compose assembly, output/eject, volume classification, catalog packs |
+| `effigy-catalog` | fragment schema, layered lookup, template rendering, compose assembly, volume classification and identity, catalog packs |
 | `effigy-manifest` | systems, workspaces, containers, DNS routes, services, lifecycle, host, data, and alias grammar |
 | `effigy-containers` | effective policy, generated Compose, manager facade, backend operations, workspace transport |
 | `effigy-exec` | host/container route decision, cwd translation, aliases, capability detection, readiness model |
@@ -1169,9 +1173,9 @@ run = "rhai:scripts/seed.rhai"
 ```
 
 The manifest declares local infrastructure and task binding, not a production
-provider topology. `compose_file` can replace the generated service block
-when the repository needs direct Compose ownership. Release and provider
-export remain separate surfaces.
+provider topology. A repository that needs its own service definition writes
+a project catalog fragment; the retired `compose_file` translates to one.
+Release and provider export remain separate surfaces.
 
 ## Design Boundaries
 

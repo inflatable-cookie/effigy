@@ -1,3 +1,4 @@
+pub mod backend;
 pub mod colima;
 pub mod compose;
 pub mod exec;
@@ -11,6 +12,10 @@ pub mod report;
 mod runtime;
 pub mod session;
 mod workspace;
+
+#[cfg(test)]
+#[path = "../../../tests/support/sealed_fixture.rs"]
+pub(crate) mod sealed_fixture;
 
 pub use manager::*;
 pub use ops::{
@@ -41,24 +46,22 @@ pub use policy::load::{
     register_container_runtime_scope, ContainerExecTarget,
 };
 pub use policy::model::{
-    ContainerEjectResult, ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource,
-    EffectiveContainerPolicy, EffectiveDataPeer, EffectiveDnsRoute, EffectiveHostProcess,
-    EffectiveManagedHostListener, EffectiveServiceAlias, HostProcessRestart, HostProcessSignal,
-    SharedServiceBinding,
+    ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource, EffectiveContainerPolicy,
+    EffectiveDataPeer, EffectiveDnsRoute, EffectiveHostProcess, EffectiveManagedHostListener,
+    EffectiveServiceAlias, HostProcessRestart, HostProcessSignal, SharedServiceBinding,
 };
 pub use report::{
     annotate_workspace_extra_mount_decisions, cache_list_global_report, cache_list_report,
     cache_prune_report, data_list_report, data_pull_production_report, data_transfer_report,
-    down_report, eject_report, hosts_report, logs_report, reset_report, retire_report,
-    retire_report_unverified, stats_global_report, status_global_report, status_report,
-    up_detached_report, volume_list_report, volume_prune_report,
-    workspace_extra_mount_decision_lines, AllocatedPortsSummary, ContainerCacheGlobalEntry,
-    ContainerCachePruneEntry, ContainerCacheVolumeEntry, ContainerCommandReport,
-    ContainerDataHookResult, ContainerDataTransferAction, ContainerDataVolumeEntry,
-    ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
+    down_report, hosts_report, logs_report, reset_report, retire_report, retire_report_unverified,
+    stats_global_report, status_global_report, status_report, up_detached_report,
+    volume_list_report, volume_prune_report, workspace_extra_mount_decision_lines,
+    AllocatedPortsSummary, ContainerCacheGlobalEntry, ContainerCachePruneEntry,
+    ContainerCacheVolumeEntry, ContainerCommandReport, ContainerDataHookResult,
+    ContainerDataTransferAction, ContainerDataVolumeEntry, ContainerStatsAllEntry,
+    ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
     ContainerVolumeGlobalEntry, ContainerVolumePruneEntry,
 };
-pub use runtime::eject::eject_generated_compose;
 pub use runtime::loopback::{
     prune_loopback_assignments, prune_loopback_assignments_with_rows, warn_skipped_reclamation,
     LoopbackPruneOutcome,
@@ -109,9 +112,7 @@ pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::{fs, io};
 
 use effigy_catalog::pack::{layered_resolver, CatalogLayers, PackStore};
 use effigy_catalog::CatalogResolver;
@@ -122,7 +123,6 @@ pub(crate) const DEFAULT_COLIMA_PROFILE: &str = "effigy";
 pub(crate) const DEFAULT_ATTACH_TIMEOUT_SECS: u64 = 10;
 pub(crate) const DEFAULT_HEALTH_TIMEOUT_SECS: u64 = 60;
 const GENERATED_RUNTIME_COMPOSE_DIR: &str = ".effigy/runtime/compose";
-const RUNTIME_BACKEND_METADATA_FILE: &str = ".effigy/runtime/compose/.effigy-runtime.json";
 pub(crate) const PROJECT_LOCAL_CATALOG_DIR: &str = "infra/dev/catalog";
 const SHARED_SERVICE_HOST: &str = "host.docker.internal";
 const NERDCTL_MOUNTS_LABEL_BUDGET_BYTES: usize = 4096;
@@ -170,7 +170,11 @@ fn project_local_catalog_dir(repo_root: Option<&Path>) -> Option<PathBuf> {
 /// one implementation, while `~/.effigy` discovery stays with this crate's
 /// existing `effigy_home_dir` (and its test override).
 pub(crate) fn layered_catalog_resolver(repo_root: Option<&Path>) -> CatalogResolver {
-    catalog_layers(project_local_catalog_dir(repo_root)).resolver
+    let resolver = catalog_layers(project_local_catalog_dir(repo_root)).resolver;
+    match repo_root {
+        Some(repo_root) => resolver.with_overlay(policy::compose_file::overlay_for(repo_root)),
+        None => resolver,
+    }
 }
 
 pub(crate) fn catalog_layers(project_local: Option<PathBuf>) -> CatalogLayers {
@@ -204,66 +208,6 @@ pub fn user_global_colima_profile() -> Option<String> {
 pub fn user_global_colima_profile_disk_gib() -> Option<u64> {
     let user_config = effigy_manifest::load_user_config().ok()?;
     user_config.preferred_container_profile_disk_gib()
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct RuntimeBackendMetadata {
-    #[serde(default)]
-    backend: Option<String>,
-    #[serde(default)]
-    containers: BTreeMap<String, RuntimeBackendContainerMetadata>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct RuntimeBackendContainerMetadata {
-    backend: String,
-}
-
-pub fn load_runtime_backend_override(
-    repo_root: &Path,
-    container_name: Option<&str>,
-) -> Option<BackendId> {
-    let path = repo_root.join(RUNTIME_BACKEND_METADATA_FILE);
-    let source = fs::read_to_string(path).ok()?;
-    let parsed = toml::from_str::<RuntimeBackendMetadata>(&source).ok()?;
-    if let Some(name) = container_name {
-        return parsed
-            .containers
-            .get(name)
-            .map(|entry| BackendId::new(entry.backend.clone()));
-    }
-    parsed.backend.map(BackendId::new)
-}
-
-pub fn write_runtime_backend_override(
-    repo_root: &Path,
-    container_name: Option<&str>,
-    backend_id: &BackendId,
-) -> Result<(), io::Error> {
-    let path = repo_root.join(RUNTIME_BACKEND_METADATA_FILE);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut metadata = fs::read_to_string(&path)
-        .ok()
-        .and_then(|source| toml::from_str::<RuntimeBackendMetadata>(&source).ok())
-        .unwrap_or(RuntimeBackendMetadata {
-            backend: None,
-            containers: BTreeMap::new(),
-        });
-    if let Some(name) = container_name {
-        metadata.containers.insert(
-            name.to_owned(),
-            RuntimeBackendContainerMetadata {
-                backend: backend_id.as_str().to_owned(),
-            },
-        );
-        metadata.backend = None;
-    } else {
-        metadata.backend = Some(backend_id.as_str().to_owned());
-    }
-    let rendered = toml::to_string_pretty(&metadata).map_err(io::Error::other)?;
-    fs::write(path, rendered)
 }
 
 pub fn driver_label(driver: ManifestContainerDriver) -> &'static str {

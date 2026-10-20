@@ -1,5 +1,8 @@
 #[path = "cli_output_tests/command_behavior_tests.rs"]
 mod command_behavior_tests;
+#[cfg(unix)]
+#[path = "cli_output_tests/container_migrate_tests.rs"]
+mod container_migrate_tests;
 #[path = "cli_output_tests/core_output_tests.rs"]
 mod core_output_tests;
 #[path = "shared/deploy_fixture_support.rs"]

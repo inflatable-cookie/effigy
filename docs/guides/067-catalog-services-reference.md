@@ -635,6 +635,7 @@ After this guide, you should be able to:
 When adding a service to a repo's substrate, start with the default catalog
 parameters in this reference, then narrow only the parameters that matter.
 If the repo needs a service shape not listed here, either extract the
-closest fragment with `effigy service extract <name>` or declare the service
-directly in a user-owned `compose_file` as documented in
+closest fragment with `effigy service extract <name>` or write a project
+fragment under `infra/dev/catalog/<name>/`. A repo-owned `compose_file` is
+deprecated; `effigy container migrate` converts it, as documented in
 [`063-container-system-guide.md`](063-container-system-guide.md).

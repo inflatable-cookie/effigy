@@ -261,7 +261,7 @@ Current v1 helpers:
   - `container::data("export", name, volume, path)`
   - `container::data("import", name, volume, path)`
   - `container::data("pull_production", name)`
-  - `container::eject(name)`
+  - `container::eject(name)` (retired: returns an error naming `effigy container render`)
   - `container::stats()`
   - `docs::check_links(options_map)`
   - `docs::check_json_examples(options_map)`

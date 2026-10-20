@@ -933,6 +933,7 @@ dependencies = [
  "siphasher",
  "tempfile",
  "toml",
+ "toml_edit",
  "yaml_serde",
 ]
 
