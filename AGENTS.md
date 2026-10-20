@@ -33,7 +33,7 @@ The plan (lanes, their documents and their order), leads, papercuts, brief draft
 
 ## Validate
 
-Workers run the changed-code tests, compile the touched targets, and run docs checks when docs changed, once. Briefs name those targeted Effigy selectors. Then open the PR and report; no whole suites or repeat passes. Reviewers read the diff, run the same targeted checks, and exercise the behavior. A re-review checks only the change since the last reviewed head, plus the targeted checks for that change. A base that has moved on is not a content finding. Anyone who starts fixture processes stops them by recorded PID, and removes the fixture, before reporting.
+Workers run the changed-code tests, compile the touched targets, and run docs checks when docs changed, once. Briefs name those targeted Effigy selectors. Then open the PR and report; no whole suites or repeat passes. Reviewers read the diff, run the same targeted checks, and exercise the behavior. A re-review checks only the change since the last reviewed head, plus the targeted checks for that change. A base that has moved on is not a content finding. Anyone who starts fixture processes stops them by recorded PID, and removes the fixture, before reporting. A hosted CI failure in a test file the PR doesn't touch, recorded with a papercut, counts as green if the planner's single rerun of the failed jobs passes. A reviewer records it and doesn't hold the PR for it.
 
 The planner runs milestone full QA on `main` through Queue `project.qa.run` and reads its result with `project.qa.get`, then briefs fixes for failures. Do not configure a per-task Queue validation command. Run `effigy skill run northstar/retired-concepts` when retiring concepts.
 
