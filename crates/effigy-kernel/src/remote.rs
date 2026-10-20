@@ -61,12 +61,24 @@ pub enum SessionState {
 #[derive(Debug)]
 pub struct AdapterError(pub UnknownReason);
 
+/// How the exec client reaches the operator's terminal. `None` gives the
+/// workload EOF stdin. `Stdin` attaches the owner's stdin; `Tty` also asks the
+/// backend for a terminal, which merges the workload's streams, so the
+/// registration frame then arrives on stdout with a `\r\n` ending.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RemoteTerminal {
+    #[default]
+    None,
+    Stdin,
+    Tty,
+}
 /// The adapter forwards this environment privately, never as CLI arguments.
 /// It must use `wrapper_argv` verbatim; the wrapper contains no workload grammar.
 #[derive(Clone)]
 pub struct RemoteCommand {
     pub argv: Vec<OsString>,
     pub env: BTreeMap<OsString, EnvValue>,
+    pub terminal: RemoteTerminal,
 }
 impl std::fmt::Debug for RemoteCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -88,8 +100,16 @@ impl RemoteCommand {
 }
 // POSIX sh only. Linux guests supply /proc; unreadable facts fail before exec.
 // setsid is optional. The ack's sid==pid establishes whether isolation exists.
+// A backend terminal already makes the exec a session leader, and setsid(1)
+// forks a group leader: either way the exec client would see a premature exit.
 const WRAPPER: &str = r#"inner=$1; shift
-if command -v setsid >/dev/null 2>&1; then
+IFS= read -r stat < "/proc/$$/stat" || stat=
+stat=${stat##*) }
+lead=$(s=${stat}; set -f; set -- $s; printf '%s %s' "${3:-}" "${4:-}")
+if [ "${lead#* }" = "$$" ]; then
+    exec sh -c "$inner" sh "$@"
+fi
+if [ "${lead% *}" != "$$" ] && command -v setsid >/dev/null 2>&1; then
     exec setsid sh -c "$inner" sh "$@"
 fi
 exec sh -c "$inner" sh "$@"
@@ -111,6 +131,10 @@ exec "$@"
 /// Every operation is bounded and targets the exact registered container.
 /// `signal_session` must implement the evidence rules in `session`; exec errors
 /// are Unknown. Only inventory, boot-change or complete session proofs are Absent.
+/// `find_by_nonce` never knows the environment fence: the kernel binds the
+/// intent's own fence to what it returns. `Verified(None)` is a positive proof
+/// that the known, live container on the registered boot was inventoried
+/// completely and no process carries the nonce; anything less is `Unknown`.
 pub trait RemoteExecAdapter {
     fn identity(
         &mut self,
@@ -267,6 +291,7 @@ impl RemoteCustody {
         })?;
         crate::fault_point!(RemoteAfterIntent).map_err(RunError::from)?;
         let mut command = spec.command;
+        let terminal = command.terminal;
         command.env.insert(
             "EFFIGY_CUSTODY_NONCE".into(),
             EnvValue::Secret(
@@ -281,9 +306,17 @@ impl RemoteCustody {
             .map_err(|e| RemoteError::Unknown(e.0))?;
         crate::fault_point!(AdapterAfter).map_err(RunError::from)?;
         check(launch_cx.operation(), "remote adapter launch").map_err(RemoteError::Unknown)?;
-        // PTYs merge the streams before framing and cannot carry registration.
-        client_spec.terminal = Terminal::None;
-        let stream = Arc::new(Mutex::new(stream::RegistrationStream::new(intent.clone())));
+        // A local PTY would merge the client's streams before framing. Terminal
+        // pass-through inherits the owner's stdin and keeps both streams
+        // captured; a backend terminal frames on stdout instead.
+        client_spec.terminal = match terminal {
+            RemoteTerminal::None => Terminal::None,
+            RemoteTerminal::Stdin | RemoteTerminal::Tty => Terminal::Inherit { capture: true },
+        };
+        let stream = Arc::new(Mutex::new(stream::RegistrationStream::new(
+            intent.clone(),
+            terminal == RemoteTerminal::Tty,
+        )));
         let mut client = Custody::spawn_remote(run, client_spec, cx, stream.clone())
             .map_err(RemoteError::Spawn)?;
         let result = (|| {
@@ -379,7 +412,14 @@ pub(crate) fn settle_effect(
             let found = adapter.find_by_nonce(&intent.container, &intent.nonce, &call);
             check(&call, "remote nonce search")?;
             match found {
-                Observed::Verified(Some(reg), _) => reg,
+                // The nonce binds the fence; the adapter cannot know it.
+                Observed::Verified(Some(mut reg), _) => {
+                    reg.env = intent.env.clone();
+                    reg
+                }
+                // Positive proof the workload never started (R5): the client
+                // was stopped first, as settle runs effects in reverse order.
+                Observed::Verified(None, _) => return Ok(()),
                 Observed::Absent(proof)
                     if session::valid_container_absence(&intent.container, &proof) =>
                 {

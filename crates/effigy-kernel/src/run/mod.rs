@@ -534,7 +534,7 @@ impl<'a> Run<'a> {
                 .transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
                     journal::check_fence(txn.conn(), &self.owner)?;
                     let effect = journal::effect(txn.conn(), self.id, ticket.sequence)?;
-                    journal::check_fence(txn.conn(), &effect.spec.target)?;
+                    journal::check_target(txn.conn(), &effect)?;
                     if !matches!(effect.state, EffectState::Intended | EffectState::Unknown) {
                         return Err(RunError::Invalid("effect already completed".into()));
                     }
@@ -617,7 +617,7 @@ impl<'a> Run<'a> {
         }
         journal::check_fence(self.store.conn(), &self.owner)?;
         let effect = journal::effect(self.store.conn(), self.id, ticket.sequence)?;
-        journal::check_fence(self.store.conn(), &effect.spec.target)?;
+        journal::check_target(self.store.conn(), &effect)?;
         if effect.state != EffectState::Applied || self.completed.contains_key(&ticket.sequence) {
             return Err(RunError::Invalid(
                 "effect is not awaiting completion".into(),

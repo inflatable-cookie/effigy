@@ -10,14 +10,25 @@ pub(crate) struct RegistrationStream {
     pending: Vec<u8>,
     result: Option<Result<RemoteRegistration, UnknownReason>>,
     discard: bool,
+    /// Framed on a backend terminal: stdout, with the terminal's `\r\n`.
+    tty: bool,
 }
 impl RegistrationStream {
-    pub(super) fn new(intent: Intent) -> Self {
+    pub(super) fn new(intent: Intent, tty: bool) -> Self {
         Self {
             intent,
             pending: Vec::new(),
             result: None,
             discard: false,
+            tty,
+        }
+    }
+    /// The client stream that carries the frame: stderr, or stdout on a tty.
+    pub(crate) fn stream(&self) -> usize {
+        if self.tty {
+            0
+        } else {
+            1
         }
     }
     pub(super) fn registration(&self) -> Option<Result<RemoteRegistration, UnknownReason>> {
@@ -35,7 +46,7 @@ impl RegistrationStream {
             self.pending.push(byte);
             if self.pending.starts_with(PREFIX) {
                 if byte == b'\n' {
-                    let result = parse(&self.pending, &self.intent);
+                    let result = parse(&self.pending, &self.intent, self.tty);
                     self.result = Some(if self.result.is_some() {
                         Err(inconsistent("duplicate remote acknowledgement"))
                     } else {
@@ -65,9 +76,13 @@ impl RegistrationStream {
         out
     }
 }
-fn parse(line: &[u8], intent: &Intent) -> Result<RemoteRegistration, UnknownReason> {
+fn parse(line: &[u8], intent: &Intent, tty: bool) -> Result<RemoteRegistration, UnknownReason> {
     let text = std::str::from_utf8(line).map_err(|_| inconsistent("non-UTF8 acknowledgement"))?;
-    let fields: Vec<_> = text.trim_end_matches('\n').split(' ').collect();
+    let mut text = text.strip_suffix('\n').unwrap_or(text);
+    if tty {
+        text = text.strip_suffix('\r').unwrap_or(text);
+    }
+    let fields: Vec<_> = text.split(' ').collect();
     if fields.len() != 8
         || fields[0] != "\x1eEFFIGY-CUSTODY"
         || fields[1] != "v1"

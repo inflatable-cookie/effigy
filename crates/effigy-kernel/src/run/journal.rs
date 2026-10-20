@@ -60,6 +60,31 @@ pub(super) fn check_fence(conn: &Connection, fence: &Fence) -> Result<(), RunErr
     }
     Ok(())
 }
+/// A callback's target check. A remote workload is bound to its environment
+/// at intent; afterwards its acknowledgement and completion check that the
+/// environment still exists, not its transition generation. Every bring-up
+/// advances that generation, while container identity and VM boot (I-RC2)
+/// and holder protection (R4) keep a stale session off a replacement (K7).
+pub(super) fn check_target(conn: &Connection, effect: &Effect) -> Result<(), RunError> {
+    if effect.spec.kind != crate::remote::KIND {
+        return check_fence(conn, &effect.spec.target);
+    }
+    let exists = conn
+        .query_row(
+            "SELECT 1 FROM resources WHERE name=?1",
+            [effect.spec.target.resource.name().to_string()],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if !exists {
+        return Err(RunError::StaleGeneration {
+            expected: effect.spec.target.clone(),
+            current: None,
+        });
+    }
+    Ok(())
+}
 pub(super) fn insert_effect(
     txn: &mut crate::store::Txn<'_>,
     id: RunId,
