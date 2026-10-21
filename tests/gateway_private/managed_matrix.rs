@@ -1,13 +1,32 @@
-//! The requested 3 × 3 × 2 × 3 lifecycle matrix. UI mode alternates across
-//! cases, covering every stop path in both modes without adding a fifth axis.
+//! The run supervisor's strict-fake lifecycle matrix (contract 052 §12.3,
+//! effigy#235): front end (TUI, attached text, detached) × prior environment
+//! state (fresh, partial, stopped) × stop (request, interrupt, handover,
+//! client or owner SIGKILL) × failed children (none, some, all): 108 cells
+//! against the real binary and a fake Compose backend whose unmodelled calls
+//! fail. Every cell asserts exactly one environment down, no surviving owned
+//! process, a closed run with complete cleanup, and an immediate restart.
 use super::*;
 use std::os::unix::process::CommandExt;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Front {
+    Tui,
+    Text,
+    Detached,
+}
 #[derive(Clone, Copy, Debug)]
 enum Stop {
+    /// `serve stop`: the kernel stop request.
     Request,
-    Signal,
+    /// INT to an attached client (it requests the stop and waits); TERM to
+    /// the supervisor of a detached run.
+    Interrupt,
+    /// `container other up` hands the environment over: it settles the
+    /// bound run first.
     Handover,
+    /// SIGKILL to an attached client (owning-client death); SIGKILL to the
+    /// supervisor of a detached run (its sentinel settles).
+    Kill,
 }
 #[derive(Clone, Copy, Debug)]
 enum Prior {
@@ -110,6 +129,9 @@ struct Case<'a> {
     root: PathBuf,
     state: PathBuf,
     home: PathBuf,
+    // The run's control socket lives under HOME, so HOME stays short enough
+    // for a Unix socket path (SUN_LEN).
+    _home: effigy_test_support::Fixture,
     gateway: &'a Path,
     effects: &'a HostEffectSentinels,
     foreign_ca: &'a Path,
@@ -137,9 +159,11 @@ impl<'a> Case<'a> {
         let proxy = MatrixProxy::bind(&root);
         let port = proxy.address.port();
         let state = root.join("engine");
-        let home = root.join("home");
+        let short_home =
+            effigy_test_support::Fixture::in_parent("e235-", std::path::Path::new("/tmp"))
+                .expect("short private home");
+        let home = short_home.path().canonicalize().expect("canonical home");
         fs::create_dir(&state).expect("private engine state");
-        fs::create_dir(&home).expect("private home");
         let bin = std::env::split_paths(&effects.env_path)
             .next()
             .expect("fake binary directory");
@@ -223,6 +247,7 @@ impl<'a> Case<'a> {
             root,
             state,
             home,
+            _home: short_home,
             gateway,
             effects,
             foreign_ca,
@@ -312,47 +337,48 @@ impl<'a> Case<'a> {
         };
         fs::write(self.state.join(marker), "prior owned state").expect("prior state");
     }
-    fn spawn(&self, tui: bool, name: &str) -> Owner {
-        let prior_run_token = fs::read(
-            self.root
-                .join(".effigy/runtime/managed/serve-default/session.json"),
-        )
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .and_then(|state| state["run_token"].as_str().map(str::to_owned));
+    fn spawn(&self, front: Front, name: &str) -> Owner {
         let output = self.root.join(format!("{name}.out"));
         let file = fs::File::create(&output).expect("owner log");
-        let mut command = self.command(if tui {
-            &["serve"]
-        } else {
-            &["serve", "--headless"]
+        let mut command = self.command(match front {
+            Front::Tui => &["serve"],
+            Front::Text => &["serve", "--headless"],
+            Front::Detached => &["serve", "--detach"],
         });
         command.process_group(0);
-        if tui {
-            use nix::pty::{openpty, Winsize};
-            let pair = openpty(
-                Some(&Winsize {
-                    ws_row: 24,
-                    ws_col: 100,
-                    ws_xpixel: 0,
-                    ws_ypixel: 0,
-                }),
-                None,
-            )
-            .expect("private PTY");
-            let slave = fs::File::from(pair.slave);
+        let previous = self.status()["run"]["run_id"].as_str().map(str::to_owned);
+        if front == Front::Tui {
+            // Like a terminal emulator, only this side holds the master: a
+            // client that inherited it would keep its own terminal open.
+            let (master, slave) = private_pty(24, 100);
             command
                 .stdin(slave.try_clone().expect("PTY stdin"))
                 .stdout(slave.try_clone().expect("PTY stdout"))
                 .stderr(slave);
             command.env("EFFIGY_MANAGED_TUI", "1");
             let child = command.spawn_owned().expect("TUI owner");
-            let mut master = fs::File::from(pair.master);
+            let mut master = master;
+            let hangup = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let closing = hangup.clone();
             let reader = thread::spawn(move || {
+                use std::os::fd::AsRawFd;
                 let mut file = file;
                 let mut buffer = [0; 4096];
                 let mut recent = Vec::new();
-                while let Ok(count) = master.read(&mut buffer) {
+                // Dropping the master on hangup is the terminal closing.
+                while !closing.load(std::sync::atomic::Ordering::Acquire) {
+                    let mut poll = libc::pollfd {
+                        fd: master.as_raw_fd(),
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    // SAFETY: one initialized pollfd for a live descriptor.
+                    if unsafe { libc::poll(&mut poll, 1, 50) } <= 0 {
+                        continue;
+                    }
+                    let Ok(count) = master.read(&mut buffer) else {
+                        break;
+                    };
                     if count == 0 {
                         break;
                     }
@@ -367,10 +393,12 @@ impl<'a> Case<'a> {
                 }
             });
             Owner {
+                front,
                 child: ManagedSupervisor(child),
                 reader: Some(reader),
+                hangup: Some(hangup),
                 output,
-                prior_run_token,
+                previous,
             }
         } else {
             command
@@ -378,98 +406,104 @@ impl<'a> Case<'a> {
                 .stdout(file.try_clone().expect("stdout"))
                 .stderr(file);
             Owner {
-                child: ManagedSupervisor(command.spawn_owned().expect("headless owner")),
+                front,
+                child: ManagedSupervisor(command.spawn_owned().expect("managed client")),
                 reader: None,
+                hangup: None,
                 output,
-                prior_run_token,
+                previous,
             }
         }
     }
+    /// The managed status projection: journal plus owner gate.
+    fn status(&self) -> Value {
+        let output = self.run(&["serve", "status", "--json"]);
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .rev()
+            .find_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+            .unwrap_or(Value::Null)
+    }
+    fn lifecycle_log(&self) -> String {
+        String::from_utf8_lossy(&self.run(&["serve", "logs", "lifecycle"]).stdout).into_owned()
+    }
+    /// Waits for this owner's new run to be active with its environment up
+    /// and both children started, `failures` of them already failed.
+    /// Returns every owned PID to prove gone after the stop.
     fn ready(&self, owner: &mut Owner, failures: usize) -> Vec<u32> {
-        let path = self
-            .root
-            .join(".effigy/runtime/managed/serve-default/session.json");
-        let deadline = Instant::now() + Duration::from_secs(45);
+        let deadline = Instant::now() + Duration::from_secs(60);
         loop {
-            assert!(
-                owner.child.0.try_wait().expect("poll owner").is_none(),
-                "owner exited: {} lifecycle={} engine={}",
-                fs::read_to_string(&owner.output).unwrap_or_default(),
-                fs::read_to_string(
-                    self.root
-                        .join(".effigy/runtime/managed/serve-default/01-lifecycle.log")
-                )
-                .unwrap_or_default(),
-                fs::read_to_string(&self.log).unwrap_or_default()
-            );
-            let state = fs::read(&path)
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
-            let recorded_failures = state
-                .as_ref()
-                .and_then(|state| state["processes"].as_array())
-                .map(|rows| {
-                    rows.iter()
-                        .filter(|row| {
-                            matches!(row["name"].as_str(), Some("api" | "jobs"))
-                                && row["status"].as_str().is_some_and(|status| {
-                                    status.starts_with("exit=") && status != "exit=0"
-                                })
-                        })
-                        .count()
-                })
-                .unwrap_or(0);
-            let lifecycle = self
-                .root
-                .join(".effigy/runtime/managed-lifecycle/serve-stack.state");
-            if fs::read_to_string(lifecycle).unwrap_or_default().trim() == "ready"
-                // Failed cleanup can leave the preceding ready record and
-                // workload files. Only this spawned owner's new run counts.
-                && state.as_ref().is_some_and(|state| {
-                    state["supervisor_pid"].as_u64() == Some(owner.child.0.id() as u64)
-                        && state["run_token"].as_str().is_some_and(|token| {
-                            Some(token) != owner.prior_run_token.as_deref()
-                        })
-                })
+            if owner.front != Front::Detached {
+                assert!(
+                    owner.child.0.try_wait().expect("poll client").is_none(),
+                    "client exited: {} lifecycle={} engine={}",
+                    fs::read_to_string(&owner.output).unwrap_or_default(),
+                    self.lifecycle_log(),
+                    fs::read_to_string(&self.log).unwrap_or_default()
+                );
+            }
+            let status = self.status();
+            let new_run = status["run"]["run_id"].as_str().map(str::to_owned);
+            let processes = status["processes"].as_array().cloned().unwrap_or_default();
+            let failed = processes
+                .iter()
+                .filter(|row| matches!(row["name"].as_str(), Some("api" | "jobs")))
+                .filter(|row| row["exit"].as_i64().is_some_and(|code| code != 0))
+                .count();
+            if status["state"] == "running"
+                && new_run.is_some()
+                && new_run != owner.previous
+                && status["environment"]["state"] == "up"
                 && self.root.join("work-api.pid").exists()
                 && self.root.join("work-jobs.pid").exists()
-                && recorded_failures == failures
-                && state
-                    .as_ref()
-                    .and_then(|state| state["processes"].as_array())
-                    .is_some_and(|rows| {
-                        rows.iter()
-                            .all(|row| row["pid"].as_u64().is_some_and(|pid| pid > 0))
-                    })
+                && failed == failures
             {
-                let mut pids = state.expect("session")["processes"]
-                    .as_array()
-                    .expect("processes")
+                let mut pids = processes
                     .iter()
                     .filter_map(|row| row["pid"].as_u64().map(|pid| pid as u32))
                     .collect::<Vec<_>>();
+                if let Some(supervisor) = status["run"]["pid"].as_u64() {
+                    pids.push(supervisor as u32);
+                }
                 for entry in fs::read_dir(&self.root).expect("case files").flatten() {
                     if entry
                         .path()
                         .extension()
                         .is_some_and(|extension| extension == "pid")
                     {
-                        pids.push(
-                            fs::read_to_string(entry.path())
-                                .expect("PID record")
-                                .trim()
-                                .parse()
-                                .expect("PID"),
-                        );
+                        if let Ok(pid) = fs::read_to_string(entry.path())
+                            .unwrap_or_default()
+                            .trim()
+                            .parse()
+                        {
+                            pids.push(pid);
+                        }
                     }
                 }
                 return pids;
             }
             assert!(
                 Instant::now() < deadline,
-                "readiness timed out: session={state:?} owner={} engine={}",
+                "readiness timed out: status={status} client={} lifecycle={} engine={}",
                 fs::read_to_string(&owner.output).unwrap_or_default(),
+                self.lifecycle_log(),
                 fs::read_to_string(&self.log).unwrap_or_default()
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+    /// Waits for the run to close, and returns its status.
+    fn closed(&self) -> Value {
+        let deadline = Instant::now() + Duration::from_secs(150);
+        loop {
+            let status = self.status();
+            if status["run"]["phase"] == "closed" {
+                return status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "run did not close: {status} lifecycle={}",
+                self.lifecycle_log()
             );
             thread::sleep(Duration::from_millis(50));
         }
@@ -480,20 +514,6 @@ impl<'a> Case<'a> {
             .lines()
             .filter(|line| *line == "matrix-stack")
             .count()
-    }
-    fn shell(&self, script: &str) -> Command {
-        let template = self.command(&[]);
-        let mut command = Command::new("/bin/sh");
-        command
-            .args(["-c", script])
-            .current_dir(&self.root)
-            .process_group(0);
-        for (key, value) in template.get_envs() {
-            if let Some(value) = value {
-                command.env(key, value);
-            }
-        }
-        command
     }
     fn assert_down(&self, pids: &[u32]) {
         assert!(
@@ -645,42 +665,116 @@ fn managed_matrix_down_ends_recorded_non_group_leader_workload() {
 }
 
 struct Owner {
+    front: Front,
     child: ManagedSupervisor,
     reader: Option<JoinHandle<()>>,
+    /// Closes a TUI client's terminal: the PTY master goes away.
+    hangup: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     output: PathBuf,
-    prior_run_token: Option<String>,
+    previous: Option<String>,
 }
 impl Owner {
-    fn finish(mut self, success: bool) {
-        let deadline = Instant::now() + Duration::from_secs(145);
+    /// Waits for the client to exit; `success` when it must exit 0.
+    fn finish(mut self, success: Option<bool>) {
+        let deadline = Instant::now() + Duration::from_secs(150);
         let exit = loop {
-            if let Some(status) = self.child.0.try_wait().expect("owner wait") {
+            if let Some(status) = self.child.0.try_wait().expect("client wait") {
                 break status;
             }
             assert!(
                 Instant::now() < deadline,
-                "owner did not settle: {}",
+                "client did not exit: {}",
                 fs::read_to_string(&self.output).unwrap_or_default()
             );
             thread::sleep(Duration::from_millis(50));
         };
-        assert_eq!(
-            exit.success(),
-            success,
-            "owner status {exit}: {}",
-            fs::read_to_string(&self.output).unwrap_or_default()
-        );
+        if let Some(success) = success {
+            assert_eq!(
+                exit.success(),
+                success,
+                "client status {exit}: {}",
+                fs::read_to_string(&self.output).unwrap_or_default()
+            );
+        }
         assert!(
             self.child.0.group_closed(),
-            "managed owner exited with surviving group members"
+            "managed client exited with surviving group members"
         );
         if let Some(reader) = self.reader.take() {
             reader.join().expect("PTY output drained");
         }
     }
+    fn close_terminal(&mut self) {
+        self.hangup
+            .as_ref()
+            .expect("a TUI client has a terminal")
+            .store(true, std::sync::atomic::Ordering::Release);
+        if let Some(reader) = self.reader.take() {
+            reader.join().expect("PTY closed");
+        }
+    }
+    fn signal(&self, signal: nix::sys::signal::Signal) {
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(self.child.0.id() as i32), signal)
+            .expect("signal the client");
+    }
 }
 
-fn matrix(children: usize, stop: Stop) {
+/// A private PTY whose master is close-on-exec from birth. Tests here share
+/// one process with threads that spawn children at any moment (CI's shared
+/// mode); a child that inherited the master would keep the terminal open.
+fn private_pty(rows: u16, cols: u16) -> (fs::File, fs::File) {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::fs::OpenOptionsExt;
+    // SAFETY: opens a new PTY master this test owns; flags are plain ints.
+    let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC) };
+    assert!(
+        master >= 0,
+        "PTY master: {}",
+        std::io::Error::last_os_error()
+    );
+    // SAFETY: owns the descriptor posix_openpt just returned.
+    let master = unsafe { fs::File::from_raw_fd(master) };
+    let fd = master.as_raw_fd();
+    // SAFETY: grant and unlock the slave of the master this test owns.
+    assert_eq!(unsafe { libc::grantpt(fd) }, 0, "grantpt");
+    assert_eq!(unsafe { libc::unlockpt(fd) }, 0, "unlockpt");
+    let mut name = [0 as libc::c_char; 128];
+    #[cfg(target_os = "linux")]
+    // SAFETY: the reentrant name lookup writes into this test's buffer.
+    let named = unsafe { libc::ptsname_r(fd, name.as_mut_ptr(), name.len()) } == 0;
+    #[cfg(target_os = "macos")]
+    // SAFETY: TIOCPTYGNAME (_IOC(IOC_OUT, 't', 83, 128)) writes the slave
+    // name into this 128-byte buffer; ptsname's static one is not reentrant.
+    let named = unsafe { libc::ioctl(fd, 0x4080_7453, name.as_mut_ptr()) } == 0;
+    assert!(named, "PTY slave name");
+    // SAFETY: the buffer now holds a NUL-terminated device path.
+    let path = unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    // std opens close-on-exec; NOCTTY keeps the test's own session clean.
+    let slave = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOCTTY)
+        .open(&path)
+        .expect("PTY slave");
+    let size = libc::winsize {
+        ws_row: rows,
+        ws_col: cols,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    // SAFETY: sets the size of the slave this test owns.
+    let resized = unsafe { libc::ioctl(slave.as_raw_fd(), libc::TIOCSWINSZ, &size) };
+    assert_eq!(resized, 0, "PTY size");
+    (master, slave)
+}
+
+fn supervisor_pid(status: &Value) -> i32 {
+    status["run"]["pid"].as_i64().expect("supervisor pid") as i32
+}
+
+fn matrix(front: Front, stop: Stop) {
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let bin = std::env::split_paths(&effects.env_path)
@@ -696,9 +790,11 @@ fn matrix(children: usize, stop: Stop) {
         .into_iter()
         .enumerate()
     {
-        for slow in [false, true] {
+        for children in 0..3 {
             let case = Case::new(
-                &fixture.path().join(format!("case-{prior_index}-{slow}")),
+                &fixture
+                    .path()
+                    .join(format!("case-{prior_index}-{children}")),
                 &gateway,
                 &effects,
                 &foreign_ca,
@@ -707,151 +803,120 @@ fn matrix(children: usize, stop: Stop) {
             for child in ["api", "jobs"].into_iter().take(children) {
                 fs::write(case.root.join(format!("fail-{child}")), "fail").expect("child failure");
             }
-            if slow {
-                fs::write(case.state.join("slow-down"), "21").expect("slow cascade");
-            }
-            let tui =
-                (prior_index + children + usize::from(slow) + stop as usize).is_multiple_of(2);
-            eprintln!(
-                "matrix children={children} stop={stop:?} prior={prior:?} slow={slow} tui={tui}"
-            );
-            let mut owner = case.spawn(tui, "owner");
+            eprintln!("matrix front={front:?} stop={stop:?} prior={prior:?} children={children}");
+            let mut owner = case.spawn(front, "owner");
             let pids = case.ready(&mut owner, children);
             let down_before = case.down_count();
-            let stop_started = Instant::now();
-            match stop {
-                Stop::Request => case.success(&["serve", "stop"]),
-                Stop::Signal => nix::sys::signal::kill(
-                    nix::unistd::Pid::from_raw(owner.child.0.id() as i32),
-                    nix::sys::signal::Signal::SIGINT,
-                )
-                .expect("SIGINT owned supervisor"),
-                Stop::Handover => case.success(&["container", "other", "up", "--detach"]),
-            }
-            owner.finish(true);
+            let live = case.status();
+            let client_success = match stop {
+                Stop::Request => {
+                    case.success(&["serve", "stop"]);
+                    Some(true)
+                }
+                Stop::Interrupt => {
+                    if front == Front::Detached {
+                        nix::sys::signal::kill(
+                            nix::unistd::Pid::from_raw(supervisor_pid(&live)),
+                            nix::sys::signal::Signal::SIGTERM,
+                        )
+                        .expect("TERM the detached supervisor");
+                    } else {
+                        owner.signal(nix::sys::signal::Signal::SIGINT);
+                    }
+                    Some(true)
+                }
+                Stop::Handover => {
+                    case.success(&["container", "other", "up", "--detach"]);
+                    Some(true)
+                }
+                Stop::Kill => {
+                    if front == Front::Detached {
+                        nix::sys::signal::kill(
+                            nix::unistd::Pid::from_raw(supervisor_pid(&live)),
+                            nix::sys::signal::Signal::SIGKILL,
+                        )
+                        .expect("KILL the detached supervisor");
+                    } else {
+                        owner.signal(nix::sys::signal::Signal::SIGKILL);
+                    }
+                    None
+                }
+            };
+            // A detached client exited 0 once the run was active.
+            owner.finish(if front == Front::Detached {
+                Some(true)
+            } else {
+                client_success
+            });
+            let closed = case.closed();
+            assert_eq!(
+                closed["run"]["cleanup"],
+                "complete",
+                "settled truthfully: {closed} lifecycle={}",
+                case.lifecycle_log()
+            );
             assert_eq!(
                 case.down_count(),
                 down_before + 1,
-                "exactly one down per stop cell"
+                "exactly one down per stop cell: {}",
+                case.lifecycle_log()
             );
-            if slow {
-                assert!(
-                    stop_started.elapsed() >= Duration::from_secs(21),
-                    "slow cascade was skipped"
-                );
-            }
             case.assert_down(&pids);
-            // The restart must recover immediately with the same declaration.
-            let _ = fs::remove_file(case.state.join("slow-down"));
+            if matches!(stop, Stop::Handover) {
+                case.success(&["container", "other", "down"]);
+            }
+            // The restart recovers immediately with the same declaration.
             for child in ["api", "jobs"] {
                 let _ = fs::remove_file(case.root.join(format!("work-{child}.pid")));
             }
-            let mut restarted = case.spawn(tui, "restart");
+            let mut restarted = case.spawn(front, "restart");
             let restarted_pids = case.ready(&mut restarted, children);
             case.success(&["serve", "stop"]);
-            restarted.finish(true);
+            restarted.finish(Some(true));
+            case.closed();
             assert_eq!(
                 case.down_count(),
                 down_before + 2,
                 "exactly one down for the restarted run"
             );
             case.assert_down(&restarted_pids);
-            case.success(&["container", "other", "down"]);
         }
     }
 }
 macro_rules! matrix_case {
-    ($name:ident, $children:expr, $stop:ident) => {
+    ($name:ident, $front:ident, $stop:ident) => {
         #[test]
         fn $name() {
-            matrix($children, Stop::$stop);
+            matrix(Front::$front, Stop::$stop);
         }
     };
 }
-matrix_case!(managed_matrix_running_stop, 0, Request);
-matrix_case!(managed_matrix_some_failed_stop, 1, Request);
-matrix_case!(managed_matrix_all_failed_stop, 2, Request);
-matrix_case!(managed_matrix_running_signal, 0, Signal);
-matrix_case!(managed_matrix_some_failed_signal, 1, Signal);
-matrix_case!(managed_matrix_all_failed_signal, 2, Signal);
-matrix_case!(managed_matrix_running_handover, 0, Handover);
-matrix_case!(managed_matrix_some_failed_handover, 1, Handover);
-matrix_case!(managed_matrix_all_failed_handover, 2, Handover);
+matrix_case!(managed_matrix_tui_request, Tui, Request);
+matrix_case!(managed_matrix_tui_interrupt, Tui, Interrupt);
+matrix_case!(managed_matrix_tui_handover, Tui, Handover);
+matrix_case!(managed_matrix_tui_client_kill, Tui, Kill);
+matrix_case!(managed_matrix_text_request, Text, Request);
+matrix_case!(managed_matrix_text_interrupt, Text, Interrupt);
+matrix_case!(managed_matrix_text_handover, Text, Handover);
+matrix_case!(managed_matrix_text_client_kill, Text, Kill);
+matrix_case!(managed_matrix_detached_request, Detached, Request);
+matrix_case!(managed_matrix_detached_supervisor_term, Detached, Interrupt);
+matrix_case!(managed_matrix_detached_handover, Detached, Handover);
+matrix_case!(managed_matrix_detached_supervisor_kill, Detached, Kill);
 
-/// A real down failure must be reported by stop, and both a following
-/// managed run and standalone up must recover the old owned processes/locks.
-#[test]
-fn managed_matrix_failed_stop_recovers_both_start_surfaces() {
-    let fixture = managed_host_fixture();
-    let effects = HostEffectSentinels::new(fixture.path());
-    let bin = std::env::split_paths(&effects.env_path)
-        .next()
-        .expect("fake directory");
-    write_switch_fake_docker(&bin.join("docker"));
-    let foreign_ca = fixture.path().join("foreign-ca");
-    fs::create_dir(&foreign_ca).expect("CA");
-    let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
-    let (gateway, _) =
-        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut cleanup);
-    for standalone in [false, true] {
-        let case = Case::new(
-            &fixture.path().join(format!("failed-{standalone}")),
-            &gateway,
-            &effects,
-            &foreign_ca,
-        );
-        let mut owner = case.spawn(false, "failed-owner");
-        let old_pids = case.ready(&mut owner, 0);
-        fs::write(case.state.join("deny-down"), "fail down").expect("down fault");
-        fs::write(case.state.join("deny-exec"), "leave old exec groups").expect("exec fault");
-        let down_before = case.down_count();
-        let stop = case.run(&["serve", "stop"]);
-        assert!(
-            !stop.status.success(),
-            "a genuine down failure must not report settled"
-        );
-        assert!(
-            String::from_utf8_lossy(&stop.stderr).contains("cleanup failed"),
-            "{}",
-            String::from_utf8_lossy(&stop.stderr)
-        );
-        owner.finish(false);
-        assert_eq!(
-            case.down_count(),
-            down_before + 1,
-            "exactly one attempted down on failure"
-        );
-        assert!(case.state.join("active-matrix-stack").exists());
-        fs::remove_file(case.state.join("deny-down")).expect("clear down fault");
-        fs::remove_file(case.state.join("deny-exec")).expect("clear exec fault");
-        if standalone {
-            case.success(&["container", "stack", "up", "--detach"]);
-        }
-        let mut restarted = case.spawn(standalone, "recovered-owner");
-        let new_pids = case.ready(&mut restarted, 0);
-        let recovered_downs = case.down_count();
-        // Exercise the second OS signal, independently from matrix SIGINT.
-        nix::sys::signal::kill(
-            nix::unistd::Pid::from_raw(restarted.child.0.id() as i32),
-            nix::sys::signal::Signal::SIGTERM,
-        )
-        .expect("SIGTERM owned owner");
-        restarted.finish(true);
-        assert_eq!(
-            case.down_count(),
-            recovered_downs + 1,
-            "exactly one down on recovered stop"
-        );
-        case.assert_down(&old_pids);
-        case.assert_down(&new_pids);
-    }
+/// How an owning client dies (Tom's ruling 5): its terminal closes, it is
+/// hung up or terminated, or an agent KILLs it before its run is active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Death {
+    TerminalClose,
+    Hangup,
+    Terminate,
+    KillBeforeActive,
 }
 
-/// The "record missing" dimension: a live headless run whose session.json is
-/// removed underneath it keeps status/logs working (reported from locks and
-/// logs) and its stop settles through the task/profile locks and run token.
-#[test]
-fn managed_matrix_missing_record_stop_and_live_views() {
+/// Every owning-client death stops and settles the run: one down, no owned
+/// process left, cleanup complete, and the next run starts immediately.
+fn client_death(front: Front, death: Death) {
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let bin = std::env::split_paths(&effects.env_path)
@@ -864,61 +929,214 @@ fn managed_matrix_missing_record_stop_and_live_views() {
     let (gateway, _) =
         start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut cleanup);
     let case = Case::new(
-        &fixture.path().join("missing-record"),
+        &fixture.path().join("death"),
         &gateway,
         &effects,
         &foreign_ca,
     );
-    let mut owner = case.spawn(false, "missing-record-owner");
-    let pids = case.ready(&mut owner, 0);
-    let state_path = case
-        .root
-        .join(".effigy/runtime/managed/serve-default/session.json");
-    fs::remove_file(&state_path).expect("remove session record under the live run");
-
-    let status = case.run(&["serve", "status"]);
-    assert!(
-        status.status.success(),
-        "status must work from locks without the record: {} {}",
-        String::from_utf8_lossy(&status.stdout),
-        String::from_utf8_lossy(&status.stderr)
-    );
-    assert!(
-        String::from_utf8_lossy(&status.stdout).contains("session record missing"),
-        "{}",
-        String::from_utf8_lossy(&status.stdout)
-    );
-    let logs = case.run(&["serve", "logs", "api"]);
-    assert!(
-        logs.status.success(),
-        "logs must work without the record: {} {}",
-        String::from_utf8_lossy(&logs.stdout),
-        String::from_utf8_lossy(&logs.stderr)
-    );
-
+    eprintln!("client death front={front:?} death={death:?}");
     let down_before = case.down_count();
-    case.success(&["serve", "stop"]);
-    owner.finish(true);
+    let mut killed = None;
+    let pids = if death == Death::KillBeforeActive {
+        // A readiness probe that never answers keeps the run short of
+        // active while its client still owns it.
+        fs::write(case.state.join("hold-exec"), "hold readiness").expect("hold readiness");
+        let owner = case.spawn(front, "owner");
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            let status = case.status();
+            let phase = status["run"]["phase"].as_str().unwrap_or_default();
+            if matches!(phase, "admitted" | "starting")
+                && case.state.join("active-matrix-stack").exists()
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "no run started: {status}");
+            thread::sleep(Duration::from_millis(50));
+        }
+        owner.signal(nix::sys::signal::Signal::SIGKILL);
+        owner.finish(None);
+        killed = Some(Instant::now());
+        Vec::new()
+    } else {
+        let mut owner = case.spawn(front, "owner");
+        let pids = case.ready(&mut owner, 0);
+        match death {
+            Death::TerminalClose => owner.close_terminal(),
+            Death::Hangup => owner.signal(nix::sys::signal::Signal::SIGHUP),
+            Death::Terminate => owner.signal(nix::sys::signal::Signal::SIGTERM),
+            Death::KillBeforeActive => unreachable!(),
+        }
+        owner.finish(None);
+        pids
+    };
+    // The held probe is cancelled by the stop, never waited out.
+    let closed = case.closed();
+    if let Some(killed) = killed {
+        assert!(
+            killed.elapsed() < Duration::from_secs(30),
+            "the stop waited out the held probe"
+        );
+    }
+    let _ = fs::remove_file(case.state.join("hold-exec"));
+    assert_eq!(
+        closed["run"]["cleanup"],
+        "complete",
+        "settled truthfully: {closed} lifecycle={}",
+        case.lifecycle_log()
+    );
     assert_eq!(
         case.down_count(),
         down_before + 1,
-        "exactly one down without the record"
+        "exactly one down: {}",
+        case.lifecycle_log()
     );
     case.assert_down(&pids);
-    let raw = fs::read_to_string(&state_path).expect("record rewritten by the owner cascade");
-    let state: Value = serde_json::from_str(&raw).expect("record parses");
-    assert_eq!(state["status"], "stopped");
-    assert_eq!(state["settle_complete"], true);
+    for child in ["api", "jobs"] {
+        let _ = fs::remove_file(case.root.join(format!("work-{child}.pid")));
+    }
+    let mut restarted = case.spawn(front, "restart");
+    let restarted_pids = case.ready(&mut restarted, 0);
+    case.success(&["serve", "stop"]);
+    restarted.finish(Some(true));
+    case.closed();
+    case.assert_down(&restarted_pids);
+}
+macro_rules! death_case {
+    ($name:ident, $front:ident, $death:ident) => {
+        #[test]
+        fn $name() {
+            client_death(Front::$front, Death::$death);
+        }
+    };
+}
+death_case!(managed_matrix_death_tui_terminal_close, Tui, TerminalClose);
+death_case!(managed_matrix_death_tui_hangup, Tui, Hangup);
+death_case!(managed_matrix_death_tui_terminate, Tui, Terminate);
+death_case!(
+    managed_matrix_death_tui_kill_before_active,
+    Tui,
+    KillBeforeActive
+);
+death_case!(managed_matrix_death_text_hangup, Text, Hangup);
+death_case!(managed_matrix_death_text_terminate, Text, Terminate);
+death_case!(
+    managed_matrix_death_text_kill_before_active,
+    Text,
+    KillBeforeActive
+);
+death_case!(
+    managed_matrix_death_detached_kill_before_active,
+    Detached,
+    KillBeforeActive
+);
+
+/// A down that fails leaves the run closed with residue, never `settled`; a
+/// following run settles it first (K5) and stops cleanly.
+#[test]
+fn managed_matrix_failed_down_keeps_residue_until_the_next_run_settles_it() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let bin = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("fake directory");
+    write_switch_fake_docker(&bin.join("docker"));
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("CA");
+    let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (gateway, _) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut cleanup);
+    let case = Case::new(
+        &fixture.path().join("failed-down"),
+        &gateway,
+        &effects,
+        &foreign_ca,
+    );
+    let mut owner = case.spawn(Front::Text, "failed-owner");
+    let old_pids = case.ready(&mut owner, 0);
+    fs::write(case.state.join("deny-down"), "fail down").expect("down fault");
+    let down_before = case.down_count();
+    let stop = case.run(&["serve", "stop"]);
+    let stop_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&stop.stdout),
+        String::from_utf8_lossy(&stop.stderr)
+    );
+    assert!(
+        stop_text.contains("cleanup incomplete"),
+        "a failed down must not report settled: {stop_text}"
+    );
+    assert!(
+        !stop.status.success(),
+        "residue is not a clean stop: {stop_text}"
+    );
+    // The owning client reports the incomplete settle in its exit status.
+    owner.finish(Some(false));
+    let closed = case.closed();
+    assert_eq!(closed["run"]["cleanup"], "incomplete", "{closed}");
+    assert_eq!(closed["environment"]["state"], "residue", "{closed}");
+    assert_eq!(case.down_count(), down_before + 1, "one attempted down");
+    assert!(case.state.join("active-matrix-stack").exists());
+    fs::remove_file(case.state.join("deny-down")).expect("clear down fault");
+    // The next run settles its predecessor's residue before admission.
+    let mut restarted = case.spawn(Front::Text, "recovered-owner");
+    let new_pids = case.ready(&mut restarted, 0);
+    assert_eq!(
+        case.down_count(),
+        down_before + 2,
+        "the successor's admission retried the predecessor's down"
+    );
+    restarted.signal(nix::sys::signal::Signal::SIGTERM);
+    restarted.finish(Some(true));
+    case.closed();
+    assert_eq!(case.down_count(), down_before + 3, "one down on the stop");
+    case.assert_down(&old_pids);
+    case.assert_down(&new_pids);
+}
+
+/// A slow down is waited for, never estimated: the stop reports settled
+/// only after the environment is down.
+#[test]
+fn managed_matrix_slow_down_is_awaited_by_the_stop() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let bin = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("fake directory");
+    write_switch_fake_docker(&bin.join("docker"));
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("CA");
+    let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (gateway, _) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut cleanup);
+    let case = Case::new(
+        &fixture.path().join("slow"),
+        &gateway,
+        &effects,
+        &foreign_ca,
+    );
+    let mut owner = case.spawn(Front::Text, "slow-owner");
+    let pids = case.ready(&mut owner, 0);
+    fs::write(case.state.join("slow-down"), "8").expect("slow cascade");
+    let started = Instant::now();
+    case.success(&["serve", "stop"]);
+    assert!(
+        started.elapsed() >= Duration::from_secs(8),
+        "the stop returned before the slow down finished"
+    );
+    owner.finish(Some(true));
+    assert_eq!(case.closed()["run"]["cleanup"], "complete");
+    case.assert_down(&pids);
 }
 
 #[derive(Clone, Copy, Debug)]
 enum Authority {
-    PreviousGeneration,
+    ExplicitDown,
     Reaper,
-    ExitTrap,
-    MissingRecordHandover,
 }
 
+/// Holder protection (R4): neither an explicit `container down` nor the
+/// lease reaper brings an environment down under its live bound run.
 fn authority_matrix(authority: Authority) {
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
@@ -937,87 +1155,24 @@ fn authority_matrix(authority: Authority) {
         &effects,
         &foreign_ca,
     );
-    // Keep children pending beyond the suite's bounded proof window. This
-    // case stops during startup rather than racing a four-second delay.
-    let startup_only = matches!(authority, Authority::PreviousGeneration);
-    if startup_only {
-        let manifest_path = case.root.join("effigy.toml");
-        let manifest = fs::read_to_string(&manifest_path).expect("manifest");
-        fs::write(
-            manifest_path,
-            manifest.replace("start = 2", "start = 2, start_after_ms = 3600000"),
-        )
-        .expect("startup delay");
-    }
-    let mut owner = case.spawn(false, "live-owner");
-    let session = case
-        .root
-        .join(".effigy/runtime/managed/serve-default/session.json");
-    let deadline = Instant::now() + Duration::from_secs(35);
-    while !session.exists()
-        || !case.state.join("active-matrix-stack").exists()
-        || (startup_only
-            && !fs::read(&session)
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-                .and_then(|state| state["processes"].as_array().cloned())
-                .is_some_and(|rows| {
-                    rows.iter()
-                        .any(|row| row["pid"].as_u64().is_some_and(|pid| pid > 0))
-                }))
-    {
-        assert!(
-            Instant::now() < deadline,
-            "successor startup: {}",
-            fs::read_to_string(&owner.output).unwrap_or_default()
-        );
-        thread::sleep(Duration::from_millis(25));
-    }
+    let mut owner = case.spawn(Front::Text, "live-owner");
+    let pids = case.ready(&mut owner, 0);
     let down_before = case.down_count();
-    let observed_pids: Vec<u32>;
     match authority {
-        Authority::PreviousGeneration => {
-            let mut prior: Value =
-                serde_json::from_slice(&fs::read(&session).expect("session")).expect("state");
+        Authority::ExplicitDown => {
+            let down = case.run(&["container", "stack", "down"]);
+            assert!(!down.status.success(), "down under a live holder");
             assert!(
-                prior["processes"]
-                    .as_array()
-                    .expect("processes")
-                    .iter()
-                    .any(|row| row["status"] == "pending"),
-                "successor must still be starting"
+                String::from_utf8_lossy(&down.stderr).contains("while runs hold it"),
+                "{}",
+                String::from_utf8_lossy(&down.stderr)
             );
-            observed_pids = prior["processes"]
-                .as_array()
-                .expect("processes")
-                .iter()
-                .filter_map(|row| row["pid"].as_u64().map(|pid| pid as u32))
-                .collect();
-            assert!(!observed_pids.is_empty(), "live lifecycle owns startup");
-            assert!(!case.root.join("work-api.pid").exists());
-            assert!(!case.root.join("work-jobs.pid").exists());
-            prior["task"] = "prior".into();
-            prior["supervisor_pid"] = 999_999_999u32.into();
-            prior["run_token"] = "managedrun-prior".into();
-            prior["settle_complete"] = false.into();
-            let dir = case.root.join(".effigy/runtime/managed/prior-default");
-            fs::create_dir_all(&dir).expect("prior directory");
-            fs::write(dir.join("session.json"), prior.to_string()).expect("unsettled prior record");
-            // A stale generation grants no down: `up` never tears an
-            // environment down for a failed predecessor (the kernel settles
-            // it, K5). The no-down oracle below covers whatever `up` returns.
-            let _ = case.run(&["container", "stack", "up", "--detach"]);
-            fs::remove_file(dir.join("session.json")).expect("clear injected record");
         }
         Authority::Reaper => {
-            observed_pids = case.ready(&mut owner, 0);
-            assert!(!observed_pids.is_empty());
             let dir = case
                 .home
                 .join(".effigy/runtime/host-container-leases/matrix/matrix-stack");
             fs::create_dir_all(&dir).expect("lease directory");
-            // A stale sleeper may survive a newer persistent owner. Remove
-            // the marker to exercise the lock guard, rather than that shortcut.
             let _ = fs::remove_file(dir.join("stack.persistent"));
             let lease = serde_json::json!({"schema":"effigy.host-container-lease.v1","schema_version":1,"token":"expired-prior","container_name":"stack","profile":"matrix","project_name":"matrix-stack","expires_at_epoch_ms":0});
             fs::write(dir.join("stack.json"), lease.to_string()).expect("expired lease");
@@ -1041,120 +1196,31 @@ fn authority_matrix(authority: Authority) {
                 "a v0.14.1 lease file is never changed"
             );
         }
-        Authority::ExitTrap => {
-            observed_pids = case.ready(&mut owner, 0);
-            let rendered = effigy_containers::session::managed_lifecycle_command(
-                effigy_containers::session::ManagedLifecycleRequest {
-                    repo_root: &case.root,
-                    container_name: Some("stack"),
-                    owner_task: "prior",
-                    health_wait: false,
-                    health_wait_timeout_secs: 10,
-                    ready_message: None,
-                    dns_route_lines: &[],
-                    readiness_probe_urls: &[],
-                    setup_commands: &[],
-                    executable: case.root.join("effigy-wrapper").to_str().expect("wrapper"),
-                    secrets_required: false,
-                },
-            );
-            let output =
-                fs::File::create(case.root.join("prior-lifecycle.out")).expect("prior log");
-            // The controller and lifecycle shell have separate owned groups.
-            // Reaping the killed controller makes real parent death observable
-            // while the registered shell performs its normal EXIT trap.
-            let script = format!(
-                "exec python3 {} prior-parent {}",
-                effigy_core::shell::shell_quote(
-                    &case.root.join("matrix-adapter.py").display().to_string()
-                ),
-                effigy_core::shell::shell_quote(&rendered)
-            );
-            let mut parent = ManagedSupervisor(
-                case.shell(&script)
-                    .stdout(output.try_clone().expect("log"))
-                    .stderr(output)
-                    .spawn_owned()
-                    .expect("prior parent"),
-            );
-            let marker = case
-                .root
-                .join(".effigy/runtime/managed-lifecycle/prior-stack.state");
-            let deadline = Instant::now() + Duration::from_secs(25);
-            while fs::read_to_string(&marker).unwrap_or_default().trim() != "ready" {
-                assert!(
-                    Instant::now() < deadline,
-                    "prior lifecycle readiness: {}",
-                    fs::read_to_string(case.root.join("prior-lifecycle.out")).unwrap_or_default()
-                );
-                thread::sleep(Duration::from_millis(25));
-            }
-            parent.0.kill().expect("kill only prior parent");
-            parent.0.wait().expect("reap prior parent");
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while fs::read_to_string(&marker).unwrap_or_default().trim() != "stopped" {
-                assert!(
-                    Instant::now() < deadline,
-                    "parent death must execute EXIT trap: {}",
-                    fs::read_to_string(case.root.join("prior-lifecycle.out")).unwrap_or_default()
-                );
-                thread::sleep(Duration::from_millis(25));
-            }
-        }
-        Authority::MissingRecordHandover => {
-            observed_pids = case.ready(&mut owner, 0);
-            fs::remove_file(&session).expect("remove live session");
-            let handover = case.run(&["container", "other", "up", "--detach"]);
-            assert!(
-                !handover.status.success(),
-                "an unbound live holder must prevent handover down"
-            );
-            assert!(
-                String::from_utf8_lossy(&handover.stderr).contains("while runs hold it"),
-                "{}",
-                String::from_utf8_lossy(&handover.stderr)
-            );
-        }
     }
     assert_eq!(
         case.down_count(),
         down_before,
         "{authority:?} must issue no down"
     );
-    assert!(
-        case.state.join("active-matrix-stack").exists(),
-        "live environment survives"
-    );
-    let pids = if observed_pids.is_empty() {
-        case.ready(&mut owner, 0)
-    } else {
-        observed_pids
-    };
+    assert!(case.state.join("active-matrix-stack").exists());
     case.success(&["serve", "stop"]);
-    owner.finish(true);
+    owner.finish(Some(true));
+    case.closed();
     assert_eq!(
         case.down_count(),
         down_before + 1,
-        "only the live run's own stop downs once"
+        "only the run's own settle downs, once"
     );
     case.assert_down(&pids);
 }
 
 #[test]
-fn managed_matrix_unsettled_previous_record_under_live_startup() {
-    authority_matrix(Authority::PreviousGeneration);
+fn managed_matrix_explicit_down_refuses_under_live_holder() {
+    authority_matrix(Authority::ExplicitDown);
 }
 #[test]
 fn managed_matrix_reaper_under_live_holder() {
     authority_matrix(Authority::Reaper);
-}
-#[test]
-fn managed_matrix_exit_trap_on_parent_death() {
-    authority_matrix(Authority::ExitTrap);
-}
-#[test]
-fn managed_matrix_missing_record_handover_preserves_live_holder() {
-    authority_matrix(Authority::MissingRecordHandover);
 }
 
 const ADAPTER: &str = r#"import sys,os,json,pathlib,subprocess,time,signal,shlex
@@ -1209,6 +1275,8 @@ if op=='payload' or (op=='exec' and '.pgid' in args[-1]):
   os.replace(pending,pid_file)
   sys.exit(child.wait())
 if op=='exec':
+ held=time.time()+60
+ while (state/'hold-exec').exists() and time.time()<held: time.sleep(.05)
  if (state/'deny-exec').exists(): sys.exit(72)
  if args[-1].startswith('alive()'): sys.exit(subprocess.call(['sh','-c',args[-1]]))
  sys.exit(0)

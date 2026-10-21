@@ -149,12 +149,10 @@ fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
                 "Managed Task Plan",
                 "tab-order: lifecycle, api",
                 "lifecycle",
-                "container web up --detach",
-                "cleanup() { if",
-                "stopped >",
+                "container 'web' up --detach",
                 "shutdown-on-exit: lifecycle, api",
             ],
-            expected_absent: &["container web down"],
+            expected_absent: &["container 'web' down", "trap", "state_path"],
             setup: setup_lifecycle_entry,
         },
         ManagedOutputCase {
@@ -166,11 +164,11 @@ fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
                 "tab-order: lifecycle, terminal, api",
                 "lifecycle",
                 "shell",
-                "container web up --detach",
+                "container 'web' up --detach",
                 "container web shell",
                 "shutdown-on-exit: lifecycle, api",
             ],
-            expected_absent: &["container web down"],
+            expected_absent: &["container 'web' down"],
             setup: setup_lifecycle_and_shell_entry,
         },
         ManagedOutputCase {
@@ -180,10 +178,10 @@ fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
             expected: &[
                 "Managed Task Plan",
                 "tab-order: lifecycle, terminal, api",
-                "shell --service workspace --command true",
                 "shell --service workspace",
             ],
-            expected_absent: &["container web down"],
+            // Readiness is the supervisor's, never a probe loop in the tab.
+            expected_absent: &["container 'web' down", "--command true"],
             setup: setup_lifecycle_and_shell_service_entry,
         },
         ManagedOutputCase {
@@ -194,10 +192,10 @@ fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
                 "Managed Task Plan",
                 "readiness-wait: enabled",
                 "ready-message: http://project.test",
-                "container web up --detach",
+                "container 'web' up --detach",
                 "container web shell",
             ],
-            expected_absent: &["container web down"],
+            expected_absent: &["container 'web' down"],
             setup: setup_lifecycle_readiness_entry,
         },
         ManagedOutputCase {
@@ -210,7 +208,7 @@ fn run_manifest_task_managed_tui_concurrent_plan_rendering_contract_table() {
                 "readiness-wait: enabled",
                 "ready-message: http://project.test",
             ],
-            expected_absent: &["container web down"],
+            expected_absent: &["container 'web' down"],
             setup: setup_lifecycle_gateway_and_readiness_entry,
         },
     ];

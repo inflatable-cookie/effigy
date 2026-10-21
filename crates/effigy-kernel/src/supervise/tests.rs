@@ -450,7 +450,7 @@ fn a_path_replaced_before_spawn_is_typed_not_started() {
     std::fs::copy(&path, &rebuilt).unwrap();
     std::fs::rename(&rebuilt, &path).unwrap();
     let log = helper_log(&root).unwrap();
-    let error = spawn_helper(&plan.executable, SENTINEL, &log).expect_err("refused");
+    let error = spawn_helper(&plan.executable, SENTINEL, &log, None).expect_err("refused");
     match error {
         RunError::HelperExited {
             helper,

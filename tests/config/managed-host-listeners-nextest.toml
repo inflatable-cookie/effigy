@@ -11,5 +11,5 @@ slow-timeout = { period = "120s", terminate-after = 1 }
 
 # These proofs drive several public CLI transitions and real listener processes.
 [[profile.default.overrides]]
-filter = "test(managed_host_dependent_replacement_) | test(container_hybrid_environment_switch_)"
+filter = "test(managed_host_dependent_replacement_) | test(container_hybrid_environment_switch_) | test(container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clone)"
 slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }

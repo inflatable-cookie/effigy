@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 use crate::core::{LogEntry, LogEntryKind};
-use effigy_process::ProcessSupervisor;
+use crate::multiprocess::SessionProcesses;
 
 use super::super::super::state::{OptionsAction, SessionState};
 use super::super::super::terminal_text::{push_entry, sanitize_log_text};
@@ -12,7 +12,7 @@ use super::super::super::MultiProcessTuiError;
 pub(super) fn apply_options_action(
     action: OptionsAction,
     active: &str,
-    supervisor: &ProcessSupervisor,
+    supervisor: &dyn SessionProcesses,
     state: &mut SessionState,
     max_offset: usize,
 ) -> Result<bool, MultiProcessTuiError> {

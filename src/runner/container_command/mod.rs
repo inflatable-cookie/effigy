@@ -27,8 +27,8 @@ pub(in crate::runner) use gateway_registration::{
     gateway_routes_registered_for_container, register_gateway_routes_for_container,
 };
 pub(in crate::runner) use lifecycle::{
-    run_container_exec_capture_with_options, run_container_exec_operation_capture,
-    run_container_exec_stream, run_container_reset_adapter,
+    release_managed_environment, run_container_exec_capture_with_options,
+    run_container_exec_operation_capture, run_container_exec_stream, run_container_reset_adapter,
 };
 pub(in crate::runner) use secret_env::container_secret_runtime_env_path;
 
@@ -91,7 +91,15 @@ pub(in crate::runner) fn run_container_up_held(
 }
 
 pub(in crate::runner) fn run_container(args: ContainerArgs) -> Result<String, RunnerError> {
-    run_container_with(args, Retention::Persistent, &[])
+    // A managed run's own ensure names its run as the holder: that is a
+    // task's ensure, so a stack it starts is held (contract 053 §5). An
+    // ensure never demotes a persistent stack.
+    let retention = if crate::runner::environment::requested_holder().is_some() {
+        crate::runner::environment::task_retention()
+    } else {
+        Retention::Persistent
+    };
+    run_container_with(args, retention, &[])
 }
 
 fn run_container_with(

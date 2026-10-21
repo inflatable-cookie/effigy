@@ -373,6 +373,14 @@ fn stop_request(run: &mut TaskRun) -> Option<Request> {
         .find(|request| matches!(request.action, RequestAction::Stop))
 }
 
+/// The spawn environment a run gives a workload in `cwd`, before its own
+/// overrides: this process's environment without custody nonces.
+pub(in crate::runner) fn spawn_environment(
+    cwd: &Path,
+) -> Result<BTreeMap<OsString, EnvValue>, RunnerError> {
+    environment(cwd, Vec::new())
+}
+
 pub(super) fn environment(
     cwd: &Path,
     overrides: Vec<(String, EnvOverride)>,

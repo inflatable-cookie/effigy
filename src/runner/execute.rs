@@ -31,4 +31,7 @@ mod sequence_run;
 #[path = "execute/workspace_seeded.rs"]
 mod workspace_seeded;
 
+pub(in crate::runner) use pipeline::managed::{
+    inline_managed_policy, release_inline_managed_environment,
+};
 pub(in crate::runner) use sequence_run::render_script_path;

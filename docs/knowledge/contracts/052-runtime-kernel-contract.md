@@ -20,14 +20,16 @@ are implemented in the kernel, with macOS/Linux qualification selectors. The
 §12.1 fault-injection driver, oracles O1–O14 and the §12.3 supervisor model
 matrix are implemented (`test:kernel:faults`, `test:kernel:matrix`);
 engine-specific §12.1 scenarios are placeholders owned by their engine lanes.
-Fault points inside helper processes (sentinel settle, guard acknowledgement,
-detached supervisor) are not yet armed; architecture 032 records the limit.
+Fault points inside helper processes (sentinel settle, guard acknowledgement)
+are not yet armed; architecture 032 records the limit. The managed-run
+supervisor is armed at every kernel crossing (`test:supervisor:faults`).
 The task engine has adopted the kernel (effigy#217; §10.1 records each row),
 and bundle-source preparation uses Prepare runs, source custody, store gating
 and atomic lock publication. The environment reconciler has adopted it
 (effigy#232; contract [053](053-environment-reconciler-contract.md), §10.3).
-The other engines have not adopted it; their adoption-map rows (§10) remain
-current behavior. QA-group runs are kernel runs,
+Managed runs have one detached supervisor per run (effigy#235; §10.2 records
+each row). The other engines have not adopted it; their adoption-map rows
+(§10) remain current behavior. QA-group runs are kernel runs,
 but `stop` and `hard_timeout_ms` stay unavailable: contract
 [051](051-bounded-qa-groups-contract.md) keeps refusing them until the task
 engine exposes them.
@@ -2004,6 +2006,50 @@ bounds. Ordinary dev, test and release profiles are unchanged.
 | Host sidecar supervisors: setsid, PID and spec files, blocking lifecycle lock, best-effort stop | `src/runner/host_process.rs:104-128`, `:430-458`, `:745`; `src/runner/container_command/closeout.rs:33-36` | environment-owned detached run; `StopReport` |
 | Listener transition history | Removed; existing historical files are left untouched | No replacement writer or store |
 | Remote stop of a bare PGID in the current primary | `crates/effigy-containers/src/exec/managed_stop.rs:36` | `signal_session` on the registration (I-RC2) |
+
+Adoption (effigy#235). A managed run's client resolves the invocation and
+starts one detached engine supervisor (`start_engine`, §5.8). The supervisor
+admits the run, then runs setup, gateway, environment and workloads inside
+it, and its one settle is the only cleanup. TUI, attached text (`--headless`)
+and `--detach` are front ends over the same run. Row by row:
+
+- `session.json`: replaced. The `runs` row and its effects are the record;
+  `<task> status` projects them (`effigy.managed.status.v1`). A live v0.14
+  session is refused with its stop command; nothing is imported (§11).
+- Setup before the lock: replaced. Setup runs after `Admitted`.
+- `stop.requested`: replaced. `<task> stop`, signals and handover write a
+  `requests` row through the run-control stop path (#227).
+- Exec group markers: narrowed, not replaced. Each remote group is a
+  `managed:exec-group` effect intended before spawn. Its marker
+  (`.effigy/runtime/managed-exec/<task>+<profile>/<process>.pgid`) holds the
+  PGID and the run's nonce, and release refuses a marker without that nonce.
+  In-band registration (§5.10) stays open.
+- Lossy `safe_component`: replaced. Marker components are percent-encoded,
+  so distinct names never share a marker.
+- Settle budget sum: replaced. Settle reads the journal under one cleanup
+  deadline; each effect is observed before release.
+- INT/TERM handler: replaced. Clients route INT, TERM and HUP through
+  `SignalRouter`, and the supervisor's owning pipe makes client death
+  (terminal close, SIGHUP, SIGKILL) a stop.
+- Owner discovery through lock files and run tokens: replaced. The run
+  holds its environment through the reconciler's hold API (contract 053
+  §4): its bring-up names the run in `EFFIGY_INTERNAL_ENVIRONMENT_HOLDER`, so
+  the activation attaches it, and its settle's stop exempts only itself.
+  Remote task locks still carry `EFFIGY_MANAGED_RUN_TOKEN` for attribution.
+- Directory scan before handover: replaced. Handover ends the live managed
+  runs the environment record names as holders.
+- Lifecycle shell, state file, EXIT trap, curl readiness, `starting`
+  bypass: replaced. The environment phase is an `up` custody child and
+  exec readiness polled with backoff to a deadline; `health_wait` route
+  probes run through `Probe` once the workloads have started. No shell trap
+  remains.
+- Progressive spawn without rollback: replaced. Each workload is an intended
+  custody effect; a failed start settles everything already started.
+- Supervisor shutdown grace: replaced by `OwnedProcess::stop` in settle.
+- Host sidecar supervisors: not adopted. Sidecars stay owned by the
+  environment's `up`/`down`, which the run's environment effect releases.
+- Remote stop of a bare PGID: narrowed by the nonce check above;
+  `signal_session` on a registration stays open with §5.10.
 
 ### 10.3 Environment reconciler
 

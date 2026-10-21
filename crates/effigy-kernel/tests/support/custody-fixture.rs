@@ -96,10 +96,15 @@ fn main() {
         probe_fixture::run(entry, &args, router.root_cancel());
         return;
     }
-    if let Some(result) = internal_entry(entry, &mut router, &mut Strict, |a| {
-        a == [OsString::from("recover")]
-    }) {
-        if result.is_err() {
+    if entry.starts_with("__kernel-") {
+        let result = engine_entry(
+            entry,
+            router,
+            &mut Strict,
+            |a| a == [OsString::from("recover")],
+            fixture_engine,
+        );
+        if !matches!(result, Some(Ok(()))) {
             std::process::exit(1);
         }
         return;
@@ -128,6 +133,32 @@ fn main() {
     let root = StateRoot::effects(&cx, home).unwrap();
     let id = RunId::new(1, [9; 10]).unwrap();
     let inv = invocation();
+    if entry == "engine-client" {
+        // An owning (or, with `detach`, detaching) client of one engine run.
+        let detach = args.get(2).is_some_and(|mode| mode == "detach");
+        let mut client = start_engine(
+            &cx,
+            home,
+            engine_launch(home),
+            &Executable::current().unwrap(),
+            if detach {
+                ClientMode::Detach
+            } else {
+                ClientMode::Owning
+            },
+        )
+        .unwrap();
+        if !detach {
+            while !matches!(client.event(&op).unwrap(), Event::Active) {}
+        }
+        std::fs::write(home.join("client-ready"), client.run.to_string()).unwrap();
+        if detach {
+            return;
+        }
+        loop {
+            let _ = client.event(&op.child(Duration::from_millis(50)));
+        }
+    }
     if entry == "detached" {
         let mut client = start_detached(
             &cx,
@@ -260,6 +291,109 @@ fn main() {
         assert_eq!(unsafe { libc::tcgetpgrp(0) }, unsafe { libc::getpgrp() });
         std::fs::write(home.join("terminal-restored"), b"yes").unwrap();
     }
+}
+
+/// The engine payload a fixture client hands its supervisor: the home.
+fn engine_launch(home: &Path) -> EngineLaunch {
+    EngineLaunch {
+        payload: home.as_os_str().as_encoded_bytes().to_vec(),
+        cwd: home.into(),
+        env: vec![("FIXTURE_ENGINE_ENV".into(), "present".into())],
+    }
+}
+
+/// A minimal engine supervisor: it admits its own run, captures its output,
+/// runs one workload, echoes client frames and stops on its owner channel.
+fn fixture_engine(mut session: EngineSession, mut router: RouterHandle) -> Result<(), RunError> {
+    let home = std::path::PathBuf::from(
+        std::str::from_utf8(session.payload())
+            .map_err(|_| RunError::Invalid("fixture payload".into()))?,
+    );
+    let op = OperationContext::new(
+        Deadline::Open(OpenReason::DevServer),
+        router.root_cancel(),
+        op(CancelToken::default()).limits().clone(),
+        EffectClass::Mutate,
+        effigy_kernel::ctx::Placement::Host,
+    );
+    let cx = op.effects().unwrap();
+    let cleanup = op.cleanup(Duration::from_secs(10)).unwrap();
+    let root = StateRoot::effects(&cx, &home).unwrap();
+    let mut run = match Run::begin(
+        &cx,
+        &root,
+        &invocation(),
+        BeginOpts {
+            id: RunId::new(1, [9; 10]).unwrap(),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: Some(LifecyclePlan {
+                executable: Executable::current().unwrap(),
+                placement: effigy_kernel::supervise::Placement::Detached,
+            }),
+        },
+        &cleanup,
+        &mut Strict,
+    ) {
+        Ok(run) => run,
+        Err(error) => {
+            session.refused(&error.to_string());
+            return Err(error);
+        }
+    };
+    session.admitted(&mut run)?;
+    session
+        .capture_output(&run, vec![b"engine-secret".to_vec()])
+        .map_err(RunError::from)?;
+    println!(
+        "engine output engine-secret cwd={} env={}",
+        std::env::current_dir().unwrap().display(),
+        std::env::var("FIXTURE_ENGINE_ENV").unwrap_or_default()
+    );
+    let mut child = Custody::spawn(
+        &mut run,
+        ProcessSpec {
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "echo $$ > engine-workload.pid; exec /bin/sleep 40".into(),
+            ],
+            ..spec(&home)
+        },
+        &cx,
+    )
+    .map_err(|error| RunError::Invalid(format!("{error:?}")))?;
+    run.advance(Phase::Active)?;
+    session.active();
+    let cause = loop {
+        let routed = router.poll();
+        let control = session.control(&mut run, &routed)?;
+        for signal in &control.forward {
+            child.forward(*signal);
+        }
+        for frame in control.frames {
+            session.event(frame);
+        }
+        if let Some(cause) = control.stop {
+            break cause;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    std::fs::write(home.join("engine-stop-cause"), format!("{cause:?}")).unwrap();
+    run.interrupt(
+        &cleanup,
+        WorkloadOutcome::Cancelled {
+            signal: match &cause {
+                StopCause::Signal(signal) => Some(*signal),
+                _ => None,
+            },
+            cause,
+        },
+    )?;
+    let outcome = run.settle(&cleanup, &mut Strict)?;
+    session.closed(&outcome);
+    Ok(())
 }
 
 #[path = "probe-fixture.rs"]

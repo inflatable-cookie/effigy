@@ -4,16 +4,18 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::Paragraph;
 
-use effigy_process::{ProcessSupervisor, ShutdownProgress};
+use effigy_process::ShutdownProgress;
+
+use super::super::SessionProcesses;
 
 use super::super::config::SHUTDOWN_GRACE_TIMEOUT;
 use super::terminal::TuiTerminal;
 
 pub(super) fn run_shutdown_with_progress(
     terminal: &mut TuiTerminal,
-    supervisor: &ProcessSupervisor,
+    supervisor: &dyn SessionProcesses,
 ) {
-    supervisor.terminate_all_graceful_with_progress(SHUTDOWN_GRACE_TIMEOUT, |progress| {
+    supervisor.terminate_all_graceful_with_progress(SHUTDOWN_GRACE_TIMEOUT, &mut |progress| {
         let _ = draw_shutdown_status(terminal, shutdown_progress_label(&progress));
     });
 }

@@ -16,6 +16,9 @@ use effigy_manifest::LoadedCatalog;
 use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 
 pub(in crate::runner) struct ExecutionPreflight {
+    /// The selector and arguments exactly as invoked: a managed run's
+    /// supervisor re-resolves this same invocation on the host.
+    pub(in crate::runner) invocation: TaskInvocation,
     pub(in crate::runner) invocation_cwd: PathBuf,
     pub(in crate::runner) runtime_args_raw: TaskRuntimeArgs,
     pub(in crate::runner) runtime_args_exec: TaskRuntimeArgs,
@@ -58,6 +61,10 @@ pub(in crate::runner) fn build_execution_preflight(
 pub(in crate::runner) fn build_execution_preflight_from_input(
     input: ExecutionPreflightInput,
 ) -> Result<ExecutionPreflight, RunnerError> {
+    let invocation = TaskInvocation {
+        name: input.selector.clone(),
+        args: input.args.clone(),
+    };
     let (runtime_args_raw, runtime_args_exec, output_json, plan) =
         prepare_execution_runtime_args(&input.args)?;
     let discovery = discovery::discover_execution_preflight(
@@ -68,6 +75,7 @@ pub(in crate::runner) fn build_execution_preflight_from_input(
     )?;
     let discovery_plan = discovery.plan;
     Ok(ExecutionPreflight {
+        invocation,
         invocation_cwd: discovery_plan.invocation_cwd.clone(),
         runtime_args_raw,
         runtime_args_exec,

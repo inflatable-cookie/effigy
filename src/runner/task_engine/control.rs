@@ -171,6 +171,21 @@ fn unreadable(reason: &str) -> RunnerError {
     RunnerError::task_invocation(format!("the run journal is unreadable: {reason}"))
 }
 
+/// A run's effects as its journal records them: a pure read (R2).
+pub(in crate::runner) fn effects(id: RunId) -> Observed<Vec<effigy_kernel::run::Effect>> {
+    let cx = kernel::observe();
+    let root = match kernel::observe_root(&cx) {
+        Observed::Verified(root, _) => root,
+        Observed::Absent(proof) => return Observed::Absent(proof),
+        Observed::Unknown(reason) => return Observed::Unknown(reason),
+    };
+    match Store::read(&cx, &root) {
+        Observed::Verified(reader, _) => effigy_kernel::run::effects(&reader, id),
+        Observed::Absent(proof) => Observed::Absent(proof),
+        Observed::Unknown(reason) => Observed::Unknown(reason),
+    }
+}
+
 /// The run's workload process: its last custody process that is not the
 /// admission hook or an env-schema command. `None` until it has started.
 pub(in crate::runner) fn workload_process(id: RunId) -> Observed<Option<i64>> {

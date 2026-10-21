@@ -113,6 +113,20 @@ supervisor: Stopping → settle: remote workloads, local workloads, attachment
   (the reconciler applies its release policy under a permit) → Closed
 ```
 
+As built (effigy#235): the client starts the engine supervisor with
+`start_engine`; the supervisor re-resolves the invocation, admits a
+`Detached` run and captures its own output as the run's output log
+(sequence 0). The environment phase is an `up` custody child that names
+the run as holder, so the reconciler's activation attaches it (contract 053
+§4). The run also journals a `managed:environment` effect: `Release` (a
+reconciler stop exempting only this run) when its ensure holds the
+environment, `Retain` when it borrowed one an explicit `container up` keeps
+persistent. Exec readiness is then polled to a deadline; `health_wait`
+route probes run from the owner loop once the workloads that serve them have
+started. Remote groups are `managed:exec-group` effects; their nonce-checked
+markers stand in for §5.10 registration. A run that holds an environment
+stays up when its workloads exit, until a stop.
+
 ### Environment transition
 
 ```text
@@ -584,9 +598,11 @@ fails the drive, and every declared oracle must judge at least one subject.
   their suites (`test:kernel:remote`, `test:kernel:probe`) and O12's foreign
   fixture cover them.
 - Points inside helper processes are not armed: `SentinelBeforeSettle`,
-  `SentinelAfterSettle`, the guard-side `ProbeGuardAck` and every point inside
-  the detached supervisor. Helpers run as `kernel-custody-fixture`, a non-test
-  build where `fault_point!` is a no-op. Owner-side `SentinelClose` is driven,
+  `SentinelAfterSettle` and the guard-side `ProbeGuardAck`. Helpers run as
+  `kernel-custody-fixture`, a non-test build where `fault_point!` is a no-op.
+  The managed-run supervisor is the exception: the effigy library test binary
+  is its supervisor, and with `fault-injection` it is SIGKILLed at each kernel
+  crossing it makes (`test:supervisor:faults`). Owner-side `SentinelClose` is driven,
   and owner Kill at every point exercises sentinel settlement. Arming them needs
   fault hooks compiled into the fixture under `fault-injection`.
 - Each drive splits its jobs across six worker processes. Shards are processes,
@@ -598,8 +614,8 @@ with an environment attachment, environment up, down and handover with a
 concurrent attach, a closed predecessor with residue followed by `begin`, owner
 loss followed by recovery stop over reused and foreign groups, Observe with a
 guarded subprocess and an HTTP probe, endpoint reserve and commit, and a vault
-write. Real backend handover, legacy import, gateway endpoint commit and fault points inside the out-of-process supervisor
-are ignored placeholders that name their engine lanes.
+write. Real backend handover, legacy import and gateway endpoint commit are
+ignored placeholders that name their engine lanes.
 
 `matrix` runs the §12.3 cross product (3 front ends × 4 prior states × 8 stops
 × 3 attachments) as model tests over `Run` and `Attachments` with the strict

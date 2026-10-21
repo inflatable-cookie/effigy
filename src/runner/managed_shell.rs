@@ -3,11 +3,7 @@ use std::path::Path;
 use effigy_containers::compose::{
     compose_args, compose_invocation_for_repo, resolve_host_cli_program,
 };
-use effigy_containers::session::{
-    container_exec_command, managed_lifecycle_dns_routes_section,
-    managed_lifecycle_idle_wait_command, managed_lifecycle_readiness_wait,
-    managed_lifecycle_setup_sequence, managed_lifecycle_state_path,
-};
+use effigy_containers::session::container_exec_command;
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_core::shell::shell_quote;
 
@@ -54,191 +50,56 @@ pub(crate) fn render_inline_compose_command(
     )
 }
 
-pub(crate) struct InlineManagedLifecycle<'a> {
-    pub(crate) owner_task: &'a str,
-    pub(crate) health_wait: bool,
-    pub(crate) health_wait_timeout_secs: u64,
-    pub(crate) ready_message: Option<&'a str>,
-    pub(crate) dns_route_lines: &'a [String],
-    pub(crate) readiness_probe_urls: &'a [String],
-    pub(crate) setup_commands: &'a [String],
-}
-
-pub(crate) fn render_inline_managed_lifecycle_command(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    lifecycle: InlineManagedLifecycle<'_>,
-) -> String {
-    let InlineManagedLifecycle {
-        owner_task,
-        health_wait,
-        health_wait_timeout_secs,
-        ready_message,
-        dns_route_lines,
-        readiness_probe_urls,
-        setup_commands,
-    } = lifecycle;
-    let lifecycle_state = managed_lifecycle_state_path(repo_root, &policy.name, owner_task);
-    let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
-    let up = render_inline_compose_command(repo_root, policy, &compose_args(policy, ["up", "-d"]));
-    let ps = render_inline_compose_command(repo_root, policy, &compose_args(policy, ["ps"]));
-    let readiness_status = if health_wait {
-        "waiting for readiness via detached container startup"
-    } else {
-        "startup does not declare managed readiness waiting"
-    };
-    let ready_banner = ready_message
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("container `{}` is ready", policy.name));
-    let dns_routes_section = managed_lifecycle_dns_routes_section(dns_route_lines);
-    let readiness_wait = managed_lifecycle_readiness_wait(
-        health_wait,
-        readiness_probe_urls,
-        health_wait_timeout_secs,
-        "managed lifecycle readiness wait timed out",
-    );
-    let setup_sequence = managed_lifecycle_setup_sequence(setup_commands);
-    let idle_wait = managed_lifecycle_idle_wait_command();
-    format!(
-        "sh -lc {}",
-        shell_quote(&format!(
-            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; started=0; cleanup() {{ if [ \"$started\" = 1 ]; then printf '%s\\n' stopped > \"$state_path\"; else printf '%s\\n' failed > \"$state_path\"; fi; }}; trap 'cleanup' EXIT; trap 'exit 0' INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; if ! {up}; then printf '%s\\n' 'managed lifecycle failed during container startup' 1>&2; exit 1; fi; started=1; printf '%s\\n' started > \"$state_path\"; {setup_sequence}{readiness_wait}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; {dns_routes_section}printf 'ready_message: %s\\n\\n' {ready_banner}; {ps} || true; printf '\\n[info] lifecycle owner is idle; use compose status to refresh.\\n'; {idle_wait}",
-            label = shell_quote(&policy.name),
-            owner_task = shell_quote(owner_task),
-            readiness_status = shell_quote(readiness_status),
-            ready_banner = shell_quote(&ready_banner),
-            dns_routes_section = dns_routes_section,
-            readiness_wait = readiness_wait,
-            setup_sequence = setup_sequence,
-            idle_wait = idle_wait,
-        ))
-    )
-}
-
-pub(crate) fn render_handoff_managed_lifecycle_command(
-    repo_root: &Path,
-    container_label: &str,
-    owner_task: &str,
-    health_wait: bool,
-    ready_message: Option<&str>,
-    dns_route_lines: &[String],
-    setup_commands: &[String],
-) -> String {
-    let lifecycle_state = managed_lifecycle_state_path(repo_root, container_label, owner_task);
-    let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
-    let readiness_status = if health_wait {
-        "workspace container is already running in handoff mode"
-    } else {
-        "running inside workspace container handoff"
-    };
-    let ready_banner = ready_message
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("workspace container `{container_label}` is ready"));
-    let dns_routes_section = managed_lifecycle_dns_routes_section(dns_route_lines);
-    let setup_sequence = managed_lifecycle_setup_sequence(setup_commands);
-    let idle_wait = managed_lifecycle_idle_wait_command();
-    format!(
-        "sh -lc {}",
-        shell_quote(&format!(
-            "state_path={lifecycle_state}; parent_pid=$PPID; mkdir -p \"$(dirname \"$state_path\")\"; printf '%s\\n' starting > \"$state_path\"; cleanup() {{ printf '%s\\n' stopped > \"$state_path\"; }}; trap 'cleanup' EXIT; trap 'exit 0' INT TERM; printf 'managed lifecycle: %s\\n' {readiness_status}; {setup_sequence}printf '%s\\n' ready > \"$state_path\"; printf 'managed ready: %s\\n' {ready_banner}; printf 'Managed Container Lifecycle\\n\\n'; printf 'container: %s\\n' {label}; printf 'owner_task: %s\\n' {owner_task}; printf 'readiness: %s\\n' {readiness_status}; {dns_routes_section}printf 'ready_message: %s\\n\\n' {ready_banner}; printf '[info] lifecycle owner is idle; workspace container handoff is already active.\\n'; {idle_wait}",
-            label = shell_quote(container_label),
-            owner_task = shell_quote(owner_task),
-            readiness_status = shell_quote(readiness_status),
-            ready_banner = shell_quote(&ready_banner),
-            dns_routes_section = dns_routes_section,
-            setup_sequence = setup_sequence,
-            idle_wait = idle_wait,
-        ))
-    )
-}
-
+/// An inline workspace's interactive shell tab. The run's supervisor starts
+/// it only once the environment is ready.
 pub(crate) fn render_inline_managed_shell_command(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    owner_task: &str,
     service: Option<&str>,
 ) -> String {
-    let lifecycle_state = managed_lifecycle_state_path(repo_root, &policy.name, owner_task);
-    let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
     let service_name = service
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or(policy.primary_service.as_str());
-    let readiness_probe = render_inline_compose_command(
-        repo_root,
-        policy,
-        &compose_args(policy, ["exec", service_name, "sh", "-lc", "true"]),
-    );
     let attach = render_inline_compose_command(
         repo_root,
         policy,
         &compose_args(policy, ["exec", service_name, "sh"]),
     );
-    format!(
-        "sh -lc {}",
-        shell_quote(&format!(
-            "state_path={lifecycle_state}; while true; do if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = starting ]; then sleep 1; continue; fi; if {readiness_probe} >/dev/null 2>&1; then {attach}; exit $?; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before shell became available' 1>&2; exit 1; fi; sleep 1; done"
-        ))
-    )
+    format!("exec sh -c {}", shell_quote(&attach))
 }
 
-pub(crate) struct InlineManagedStandardExecRequest<'a> {
+pub(crate) struct InlineManagedExecRequest<'a> {
     pub repo_root: &'a Path,
     pub policy: &'a EffectiveContainerPolicy,
-    pub owner_task: &'a str,
     pub process_cwd: &'a Path,
     pub container_repo_root: Option<&'a Path>,
     pub setup_command: Option<&'a str>,
     pub command: &'a str,
-    /// Outer budget for the exec-readiness wait. The caller passes the
-    /// managed plan's readiness timeout so concurrent children share the
-    /// lifecycle's own startup budget instead of a fixed guess.
-    pub exec_readiness_timeout_secs: u64,
-    /// Container-side path of the exec-group marker the attach writes, so
-    /// the managed run's stop can end the remote process group through the
-    /// exec adapter. `None` keeps the plain attach shape.
-    pub exec_group_file: Option<&'a Path>,
+    /// Container-side marker path and run nonce; `None` records no group.
+    pub exec_group: Option<(&'a Path, &'a str)>,
 }
 
-pub(crate) fn render_inline_managed_standard_exec_command(
-    request: InlineManagedStandardExecRequest<'_>,
-) -> String {
-    let InlineManagedStandardExecRequest {
+/// An inline workspace's exec workload: Compose exec once the run has
+/// observed the environment ready, with the leader recorded for settle.
+pub(crate) fn render_inline_managed_exec_command(request: InlineManagedExecRequest<'_>) -> String {
+    let InlineManagedExecRequest {
         repo_root,
         policy,
-        owner_task,
         process_cwd,
         container_repo_root,
         setup_command,
         command,
-        exec_readiness_timeout_secs,
-        exec_group_file,
+        exec_group,
     } = request;
     let cwd = shell_quote(&process_cwd.display().to_string());
-    let lifecycle_state = managed_lifecycle_state_path(repo_root, &policy.name, owner_task);
-    let lifecycle_state = shell_quote(&lifecycle_state.display().to_string());
-    let probe = render_inline_compose_command(
-        repo_root,
-        policy,
-        &compose_args(
-            policy,
-            [
-                "exec",
-                "-T",
-                policy.primary_service.as_str(),
-                "sh",
-                "-lc",
-                "true",
-            ],
-        ),
-    );
     let rewritten = container_exec_command(command, repo_root, process_cwd, container_repo_root);
-    let tracked =
-        effigy_containers::session::render_tracked_exec_command(&rewritten, exec_group_file);
+    let tracked = match exec_group {
+        Some((file, nonce)) => {
+            effigy_containers::session::render_tracked_exec_command(&rewritten, file, nonce)
+        }
+        None => rewritten,
+    };
     let attach = render_inline_compose_command(
         repo_root,
         policy,
@@ -276,14 +137,7 @@ pub(crate) fn render_inline_managed_standard_exec_command(
             format!("{setup} && ")
         })
         .unwrap_or_default();
-    format!(
-        "sh -lc {}",
-        shell_quote(&format!(
-            "cd {cwd} && state_path={lifecycle_state}; deadline=$(( $(date +%s) + {timeout_secs} )); while true; do if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = starting ]; then sleep 1; continue; fi; if {probe} >/dev/null 2>&1; then {setup_sequence}{attach}; exit $?; fi; if [ -f \"$state_path\" ] && [ \"$(cat \"$state_path\")\" = failed ]; then printf '%s\\n' 'managed lifecycle failed before exec surface became available' 1>&2; exit 1; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'managed exec timed out waiting for container exec readiness' 1>&2; exit 1; fi; sleep 1; done",
-            timeout_secs = exec_readiness_timeout_secs,
-            setup_sequence = setup_sequence,
-        ))
-    )
+    format!("cd {cwd} && {setup_sequence}{attach}")
 }
 
 fn format_os_args(args: &[std::ffi::OsString]) -> String {

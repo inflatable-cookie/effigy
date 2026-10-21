@@ -55,7 +55,10 @@ pub(super) fn prepare_runtime_session(
         .collect();
 
     let pending_startup = processes.len();
-    let supervisor = ProcessSupervisor::spawn_progressively(repo_root.clone(), processes);
+    let supervisor = Box::new(ProcessSupervisor::spawn_progressively(
+        repo_root.clone(),
+        processes,
+    ));
     let mut state = SessionState::new(
         repo_root,
         process_names,
@@ -75,6 +78,46 @@ pub(super) fn prepare_runtime_session(
         state,
         diagnostics,
         vt_emulator_enabled,
+        terminal_lost: false,
+    })
+}
+
+/// A session over processes another supervisor owns: the same state, with
+/// tabs from `tabs` instead of local specs.
+pub(super) fn prepare_source_session(
+    repo_root: PathBuf,
+    supervisor: Box<dyn super::SessionProcesses>,
+    tabs: Vec<super::SessionTab>,
+    tab_order: Vec<String>,
+) -> Result<SessionRuntime, MultiProcessTuiError> {
+    let terminal = init_terminal()?;
+    let default_tabs = tabs.iter().map(|tab| tab.name.clone()).collect();
+    let process_names = select_process_tabs(default_tabs, tab_order);
+    let mut state = SessionState::new(
+        repo_root,
+        process_names,
+        VT_PARSER_ROWS,
+        VT_PARSER_COLS,
+        VT_PARSER_SCROLLBACK,
+    );
+    state.pending_startup = tabs.len();
+    state.shutdown_on_exit_processes = tabs
+        .iter()
+        .filter(|tab| tab.shutdown_on_exit)
+        .map(|tab| tab.name.clone())
+        .collect();
+    state.vt_enabled_processes = tabs
+        .iter()
+        .filter(|tab| tab.pty)
+        .map(|tab| tab.name.clone())
+        .collect();
+    Ok(SessionRuntime {
+        supervisor,
+        terminal,
+        state,
+        diagnostics: RuntimeDiagnostics::from_env(),
+        vt_emulator_enabled: vt_emulator_enabled_from_env(),
+        terminal_lost: false,
     })
 }
 

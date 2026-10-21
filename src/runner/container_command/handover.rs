@@ -428,55 +428,45 @@ pub(super) fn stop_peer_data_services(
     Ok(notes)
 }
 
-/// End every live headless managed owner of this checkout whose plan is
-/// bound to `environment`, through the same path as `effigy <task> stop`.
-/// Runs after the #195 handover record lands and before the environment
-/// stops: the record already leaves the environment recoverable by its
-/// own `up` or `down`, so a failure refuses with the environment still
-/// stoppable and says what to run. The owner's whole stop cascade -
-/// including its own `container <env> down` - finishes before the
-/// handover continues, so the wait uses the derived managed settle
-/// budget. The owner's exit releases its own task lock through the lock
-/// owner-token rules; a stale lock from a dead holder is still reclaimed
-/// only by the existing lock rules, never weakened here.
+/// End every live managed run that holds `environment` (contract 053 §4:
+/// the environment record's holders), through the same kernel stop path as
+/// `effigy <task> stop`. A failure refuses before the handover's transition;
+/// the stop already requested settles or fails on its own. The run's whole
+/// settle, including its own stop of the environment, finishes first.
 fn end_headless_managed_owners(
     repo_root: &Path,
     target: &PendingHandover,
 ) -> Result<Vec<String>, RunnerError> {
+    let holding = match environment::record(&target.policy) {
+        Some(record) => match record.holders {
+            effigy_kernel::observe::Observed::Verified(holders, _) => {
+                holders.into_iter().map(|holder| holder.run).collect()
+            }
+            _ => Vec::new(),
+        },
+        None => Vec::new(),
+    };
     let mut notes = Vec::new();
-    for session in effigy_managed::runtime::live_headless_sessions(repo_root) {
-        if session.container_environment.as_deref() != Some(target.environment.as_str()) {
+    for holder in crate::runner::task_engine::live_holders(repo_root) {
+        let Some(run) = holder.managed_run.as_ref().and(holder.run) else {
+            continue;
+        };
+        if !holding.contains(&run) {
             continue;
         }
-        settle_headless_owner(repo_root, &session).map_err(|error| {
+        let label = holder.scope_label();
+        crate::runner::managed_run::stop_run(run).map_err(|error| {
             RunnerError::task_invocation(format!(
-                "cannot hand over environment `{}`: failed to end managed task `{}` (profile `{}`) bound to it: {error}. The stop the handover requested is already in progress and settles or fails on its own; environment `{}` stays in a state its own `effigy container up` or `effigy container down` recovers",
-                target.environment, session.task, session.profile, target.environment,
+                "cannot hand over environment `{}`: failed to end managed run {run} (`{label}`) holding it: {error}. The stop the handover requested is already in progress and settles or fails on its own; environment `{}` stays in a state its own `effigy container up` or `effigy container down` recovers",
+                target.environment, target.environment,
             ))
         })?;
         notes.push(format!(
-            "[handover] ended managed task `{}` (profile `{}`) bound to environment `{}`",
-            session.task, session.profile, target.environment,
+            "[handover] ended managed run {run} (`{label}`) holding environment `{}`",
+            target.environment,
         ));
     }
     Ok(notes)
-}
-
-/// End one live headless owner through the same path as
-/// `effigy <task> stop` and wait for its real settle: every owned child
-/// process has ended - including the groups the owner exec'd into the
-/// environment - and every task lock the run took is released, through
-/// the derived settle budget. Refuses naming what is still running; it
-/// never advises the stop that is already in progress.
-fn settle_headless_owner(
-    repo_root: &Path,
-    session: &effigy_managed::runtime::LiveHeadlessSession,
-) -> Result<String, RunnerError> {
-    crate::runner::managed_settle::stop_and_settle_headless_run(
-        repo_root,
-        &session.task,
-        &session.profile,
-    )
 }
 
 /// Bring one environment down with the ordinary `container down` semantics:
@@ -822,411 +812,6 @@ domain = "switch.test"
             Some("web")
         );
         assert_eq!(managed_listener_owner_environment("web"), None);
-    }
-
-    /// A child process reaped by a background thread. The handover's
-    /// settle wait treats a zombie as alive (it answers signals), and in
-    /// these tests the owner is our own child, so without prompt reaping
-    /// the wait would time out on a reaped-but-uncollected exit. In
-    /// production the handover runs in a different process from the owner
-    /// and never sees this.
-    #[cfg(unix)]
-    type ReapedStatus = std::sync::Arc<std::sync::Mutex<Option<(bool, Option<i32>)>>>;
-
-    #[cfg(unix)]
-    struct ReapedChild {
-        status: ReapedStatus,
-        handle: Option<std::thread::JoinHandle<()>>,
-    }
-
-    #[cfg(unix)]
-    impl ReapedChild {
-        fn spawn(mut child: std::process::Child) -> Self {
-            let status: ReapedStatus = std::sync::Arc::new(std::sync::Mutex::new(None));
-            let sink = status.clone();
-            let handle = std::thread::spawn(move || {
-                let exited = child
-                    .wait()
-                    .ok()
-                    .map(|status| (status.success(), status.code()));
-                *sink.lock().expect("reaper lock") = exited;
-            });
-            ReapedChild {
-                status,
-                handle: Some(handle),
-            }
-        }
-
-        /// `(success, code)` once the child has been reaped, `None` while
-        /// it still lives.
-        fn exited(&self) -> Option<(bool, Option<i32>)> {
-            *self.status.lock().expect("reaper lock")
-        }
-
-        fn join(&mut self) {
-            if let Some(handle) = self.handle.take() {
-                let _ = handle.join();
-            }
-        }
-    }
-
-    /// A fabricated live headless session: a session-leader `sh`
-    /// supervisor that observes its session stop request, ends its owned
-    /// `sleep` child, reaps it and exits. The owner orders the cascade;
-    /// the request-side caller never sends competing process signals.
-    #[cfg(unix)]
-    struct FixtureOwner {
-        supervisor: ReapedChild,
-        supervisor_pid: u32,
-        owned_pid: u32,
-    }
-
-    #[cfg(unix)]
-    fn spawn_session_owner(stop_path: &Path) -> FixtureOwner {
-        use std::io::BufRead;
-        use std::os::unix::process::CommandExt;
-
-        let mut supervisor = std::process::Command::new("sh");
-        supervisor
-            .args(["-c", "sleep 60 & child=$!; echo $child; while [ ! -f \"$1\" ] && kill -0 \"$child\" 2>/dev/null; do sleep 0.05; done; kill -TERM \"$child\" 2>/dev/null || true; wait \"$child\" 2>/dev/null || true", "fixture-owner"])
-            .arg(stop_path)
-            .stdout(std::process::Stdio::piped());
-        // SAFETY: `pre_exec` runs in the forked child before `exec`;
-        // `setsid` moves the supervisor into its own session so the
-        // stop path's process-tree signals stay inside the fixture.
-        unsafe {
-            supervisor.pre_exec(|| {
-                nix::unistd::setsid()
-                    .map(|_| ())
-                    .map_err(std::io::Error::from)
-            });
-        }
-        let mut supervisor = supervisor.spawn().expect("fixture supervisor");
-        let supervisor_pid = supervisor.id();
-        let stdout = supervisor.stdout.take().expect("supervisor stdout");
-        let mut lines = std::io::BufReader::new(stdout).lines();
-        let owned_pid: u32 = lines
-            .next()
-            .expect("sleep pid line")
-            .expect("read sleep pid")
-            .trim()
-            .parse()
-            .expect("parse sleep pid");
-        FixtureOwner {
-            supervisor: ReapedChild::spawn(supervisor),
-            supervisor_pid,
-            owned_pid,
-        }
-    }
-
-    #[cfg(unix)]
-    fn write_live_headless_session(
-        repo_root: &Path,
-        task: &str,
-        profile: &str,
-        supervisor_pid: u32,
-        environment: Option<&str>,
-        owned_pid: u32,
-    ) {
-        let dir = repo_root
-            .join(".effigy/runtime/managed")
-            .join(format!("{task}-{profile}"));
-        fs::create_dir_all(&dir).expect("session dir");
-        let mut state = serde_json::json!({
-            "schema": "effigy.managed.headless.v1",
-            "task": task,
-            "profile": profile,
-            "supervisor_pid": supervisor_pid,
-            "status": "running",
-            "started_at_unix_ms": 1,
-            "processes": [{
-                "name": "worker",
-                "pid": owned_pid,
-                "status": "running",
-                "log": dir.join("01-worker.log").display().to_string(),
-            }],
-        });
-        if let Some(environment) = environment {
-            state["container_environment"] = serde_json::Value::String(environment.to_owned());
-        }
-        fs::write(
-            dir.join("session.json"),
-            serde_json::to_vec_pretty(&state).expect("session json"),
-        )
-        .expect("write session");
-    }
-
-    /// The `effigy` binary under test, resolved the same way the managed
-    /// stream tests resolve it: the `effigy` binary beside the test
-    /// harness's parent directory.
-    #[cfg(unix)]
-    fn compiled_effigy_binary() -> PathBuf {
-        std::env::current_exe()
-            .expect("current exe")
-            .parent()
-            .and_then(|dir| dir.parent())
-            .map(|dir| dir.join("effigy"))
-            .filter(|path| path.is_file())
-            .expect("compiled effigy binary")
-    }
-
-    #[cfg(unix)]
-    fn patch_headless_session_environment(state_path: &Path, environment: &str) {
-        let raw = fs::read_to_string(state_path).expect("read headless session");
-        let mut state: serde_json::Value =
-            serde_json::from_str(&raw).expect("headless session parses");
-        state["container_environment"] = serde_json::Value::String(environment.to_owned());
-        fs::write(
-            state_path,
-            serde_json::to_vec_pretty(&state).expect("session json"),
-        )
-        .expect("write headless session");
-    }
-
-    /// Reverse-handover proof: a real headless owner process holds the
-    /// shared task lock, the reverse invocation on the same scope
-    /// refuses while it lives, the handover ends it, its lock file is
-    /// gone, and the following invocation on the same scope succeeds.
-    #[cfg(unix)]
-    #[test]
-    fn handover_end_owner_releases_lock_for_reverse_handover() {
-        // The compiled child inherits PATH and shell selection from this process.
-        let _environment = crate::contract_test_support::lock_test();
-        use std::time::{Duration, Instant};
-
-        let temp = tempfile::tempdir().expect("reverse handover fixture");
-        let owner_stderr = temp.path().join("owner.stderr");
-        let repo_root = temp.path().join("repo");
-        fs::create_dir_all(&repo_root).expect("mkdir repo");
-        fs::write(
-            repo_root.join("effigy.toml"),
-            r#"[tasks.dev]
-mode = "tui"
-lock = "handover-proof"
-concurrent = [
-  { name = "api", run = "while true; do sleep 1; done", start = 1 }
-]
-
-[tasks.rev]
-lock = "handover-proof"
-run = "printf reverse-ok"
-"#,
-        )
-        .expect("write manifest");
-        let binary = compiled_effigy_binary();
-        let repo_arg = repo_root.display().to_string();
-        // The children's runs land in the test's private kernel home.
-        let home = crate::runner::task_engine::test_state_home();
-        // The owner is a separate process, so its lock guard drops only
-        // when the handover actually ends it.
-        let mut owner = ReapedChild::spawn(
-            std::process::Command::new(&binary)
-                .current_dir(&repo_root)
-                .env("HOME", &home)
-                .args(["--repo", &repo_arg, "dev", "--headless"])
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(fs::File::create(&owner_stderr).expect("private owner stderr"))
-                .spawn()
-                .expect("spawn headless owner"),
-        );
-        let state_path = repo_root.join(".effigy/runtime/managed/dev-default/session.json");
-        let start_deadline = Instant::now() + Duration::from_secs(60);
-        loop {
-            // The record exists before the first child starts; wait until the
-            // owner's post-spawn write has recorded every child's PID. That is
-            // the owner's last write until a child exits, so the environment
-            // patch below survives until the handover reads it.
-            let recorded = fs::read_to_string(&state_path)
-                .ok()
-                .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-                .and_then(|state| {
-                    state["processes"].as_array().map(|rows| {
-                        !rows.is_empty()
-                            && rows.iter().all(|row| {
-                                row["pid"].as_u64().unwrap_or(0) != 0 && row["status"] == "running"
-                            })
-                    })
-                });
-            if recorded == Some(true) {
-                break;
-            }
-            assert!(
-                Instant::now() < start_deadline,
-                "headless owner did not start"
-            );
-            assert!(
-                owner.exited().is_none(),
-                "headless owner exited before the handover: {}",
-                fs::read_to_string(&owner_stderr).unwrap_or_default()
-            );
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        // Bind the live owner to env `stack` the way a lifecycle-backed
-        // plan records it.
-        patch_headless_session_environment(&state_path, "stack");
-        assert!(
-            !crate::runner::task_engine::live_holders(&repo_root).is_empty(),
-            "the live owner holds its task lock"
-        );
-        // While the owner lives, the reverse invocation on the same lock
-        // scope refuses.
-        let refused = std::process::Command::new(&binary)
-            .current_dir(&repo_root)
-            .env("HOME", &home)
-            .args(["--repo", &repo_arg, "rev"])
-            .output()
-            .expect("reverse attempt");
-        assert!(
-            !refused.status.success(),
-            "reverse handover must refuse while the owner lives"
-        );
-        assert!(
-            String::from_utf8_lossy(&refused.stderr).contains("is held"),
-            "{}",
-            String::from_utf8_lossy(&refused.stderr)
-        );
-
-        let target = handover_target_for(&repo_root, "stack");
-        let notes = end_headless_managed_owners(&repo_root, &target).expect("end losing owner");
-        assert_eq!(notes.len(), 1, "one line for one ended owner: {notes:?}");
-        assert!(notes[0].contains("`dev`"), "{}", notes[0]);
-        let exit_deadline = Instant::now() + Duration::from_secs(60);
-        let exit_status = loop {
-            if let Some((success, code)) = owner.exited() {
-                break (success, code);
-            }
-            assert!(
-                Instant::now() < exit_deadline,
-                "headless owner did not exit after the handover ended it"
-            );
-            std::thread::sleep(Duration::from_millis(100));
-        };
-        assert!(
-            exit_status.0,
-            "ended owner exits cleanly after settling: {exit_status:?}"
-        );
-        owner.join();
-        assert!(
-            crate::runner::task_engine::live_holders(&repo_root).is_empty(),
-            "ending the owner released its task lock"
-        );
-        // The following invocation on the same scope succeeds: the
-        // reverse handover.
-        let reverse = std::process::Command::new(&binary)
-            .current_dir(&repo_root)
-            .env("HOME", &home)
-            .args(["--repo", &repo_arg, "rev"])
-            .output()
-            .expect("reverse run");
-        assert!(
-            reverse.status.success(),
-            "reverse handover succeeds after the owner is ended: {}",
-            String::from_utf8_lossy(&reverse.stderr)
-        );
-        assert!(
-            String::from_utf8_lossy(&reverse.stdout).contains("reverse-ok"),
-            "{}",
-            String::from_utf8_lossy(&reverse.stdout)
-        );
-    }
-
-    #[cfg(unix)]
-    fn handover_target_for(repo_root: &Path, environment: &str) -> PendingHandover {
-        let mut policy = claim_policy(repo_root, None);
-        policy.name = environment.to_owned();
-        PendingHandover {
-            environment: environment.to_owned(),
-            policy,
-            domains: Vec::new(),
-            data_from: false,
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn handover_ends_only_the_headless_owner_bound_to_the_losing_environment() {
-        let temp = tempfile::tempdir().expect("handover owner fixture");
-        let repo_root = temp.path().join("repo");
-        fs::create_dir_all(&repo_root).expect("mkdir repo");
-        let mut losing = spawn_session_owner(
-            &repo_root.join(".effigy/runtime/managed/site-default/stop.requested"),
-        );
-        let mut other = spawn_session_owner(
-            &repo_root.join(".effigy/runtime/managed/other-default/stop.requested"),
-        );
-        let losing_pid = losing.owned_pid;
-        let other_pid = other.owned_pid;
-        write_live_headless_session(
-            &repo_root,
-            "site",
-            "default",
-            losing.supervisor_pid,
-            Some("web"),
-            losing_pid,
-        );
-        write_live_headless_session(
-            &repo_root,
-            "other",
-            "default",
-            other.supervisor_pid,
-            Some("stack"),
-            other_pid,
-        );
-        // A legacy session without the environment binding is never
-        // touched, even though its supervisor is alive.
-        write_live_headless_session(
-            &repo_root,
-            "legacy",
-            "default",
-            other.supervisor_pid,
-            None,
-            other_pid,
-        );
-
-        let target = handover_target_for(&repo_root, "web");
-        let notes = end_headless_managed_owners(&repo_root, &target).expect("end losing owner");
-
-        assert_eq!(notes.len(), 1, "one line for one ended owner: {notes:?}");
-        assert!(
-            notes[0].contains("`site`")
-                && notes[0].contains("`default`")
-                && notes[0].contains("`web`"),
-            "{}",
-            notes[0]
-        );
-        assert!(
-            !effigy_process::process_is_running(losing_pid),
-            "the losing environment's owner is settled"
-        );
-        assert!(
-            effigy_process::process_is_running(other_pid),
-            "an owner bound to another environment is never touched"
-        );
-        effigy_process::terminate_process_tree(other_pid, true);
-        losing.supervisor.join();
-        other.supervisor.join();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn handover_ignores_dead_supervisors_and_missing_sessions() {
-        let temp = tempfile::tempdir().expect("handover owner fixture");
-        let repo_root = temp.path().join("repo");
-        fs::create_dir_all(&repo_root).expect("mkdir repo");
-        // A supervisor PID that has already exited: spawn and reap so
-        // the pid is real but dead (and cannot be confused with -1).
-        let mut exited = std::process::Command::new("true")
-            .spawn()
-            .expect("exited supervisor");
-        let dead = exited.id();
-        let _ = exited.wait();
-        write_live_headless_session(&repo_root, "gone", "default", dead, Some("web"), dead);
-
-        let target = handover_target_for(&repo_root, "web");
-        let notes =
-            end_headless_managed_owners(&repo_root, &target).expect("dead owners are ignored");
-        assert!(notes.is_empty(), "{notes:?}");
     }
 
     fn claim_policy(repo_root: &Path, shared: Option<(&str, &str)>) -> EffectiveContainerPolicy {

@@ -640,3 +640,13 @@ terms = ["write_runtime_backend_override", "load_runtime_backend_override", "RUN
 paths = []
 config_keys = []
 allow = ["CHANGELOG.md", "docs/knowledge/contracts/052-runtime-kernel-contract.md"]
+
+[[retired]]
+id = "managed-headless-session-runtime"
+retired = "2026-10-20"
+replacement = "Each managed run has one detached supervisor that records the run in the kernel journal and settles it once. `<task> status [--json]` (effigy.managed.status.v1), `logs` and `stop` read and stop it; `--detach` starts it in the background. A live v0.14 session.json is refused with its own stop command and never adopted."
+owner = "docs/guides/012-dev-process-manager-tui.md"
+terms = ["effigy.managed.headless.v1", "ManagedRunSettle", "redacted_secret_values"]
+paths = ["crates/effigy-managed/src/runtime/headless.rs", "crates/effigy-managed/src/runtime/redaction.rs"]
+config_keys = []
+allow = ["CHANGELOG.md", "src/runner/managed_run/legacy.rs", "docs/knowledge/contracts/052-runtime-kernel-contract.md"]

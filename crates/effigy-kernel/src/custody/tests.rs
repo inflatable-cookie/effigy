@@ -268,6 +268,8 @@ fn fault_child() {
         "reg-commit" => Point::LifecycleCommit,
         "reg-after" => Point::LifecycleAfter,
         "socket" => Point::SocketBind,
+        // Bound but unrecorded: the receipt is the socket's first `applied`.
+        "socket-receipt" => Point::AppliedBefore,
         _ => panic!("unmodelled point"),
     };
     let fault = if std::env::var("EFFIGY_KERNEL_CUSTODY_FAULT_KIND").unwrap() == "kill" {
@@ -279,7 +281,7 @@ fn fault_child() {
     let cx = cx();
     let root = StateRoot::effects(&cx, Path::new(&home)).unwrap();
     if let Ok(mut run) = begin(&cx, &root) {
-        if point == Point::SocketBind {
+        if matches!(point, Point::SocketBind | Point::AppliedBefore) {
             let _ = run.control_socket();
         } else {
             let process = ProcessSpec {
@@ -325,6 +327,7 @@ fn fault_matrix_registration_spawn_and_socket_kill_enospc() {
         "reg-commit",
         "reg-after",
         "socket",
+        "socket-receipt",
     ] {
         for fault in ["kill", "enospc"] {
             let home = home();
@@ -389,7 +392,11 @@ fn fault_matrix_registration_spawn_and_socket_kill_enospc() {
                 sentinel.is_some(),
                 "registration partial at {point}/{fault}"
             );
-            if point == "socket" {
+            if point.starts_with("socket") {
+                assert!(
+                    !root.path().join(format!("sock/{}.sock", id())).exists(),
+                    "{point}/{fault}: the run's socket outlived its close"
+                );
                 let result = status(
                     &cx.operation().observe().unwrap(),
                     &root,
@@ -416,6 +423,7 @@ fn fault_matrix_registration_spawn_and_socket_kill_enospc() {
                 "record",
                 "go",
                 "socket",
+                "socket-receipt",
                 "reg-before",
                 "reg-commit",
                 "reg-after",

@@ -26,6 +26,7 @@ The default path is still repo-owned task dispatch:
 effigy dev
 effigy dev <profile>
 effigy dev --headless
+effigy dev --detach
 effigy dev status
 effigy dev logs [process]
 effigy dev stop
@@ -36,8 +37,11 @@ effigy dev stop
 - `effigy dev <profile>` selects a repo-owned profile under
   `[tasks.dev.profiles.<name>]`.
 - On interactive terminals, Effigy launches the managed session runtime.
-- `--headless` launches the same resolved concurrent profile without a terminal
-  UI. `EFFIGY_MANAGED_HEADLESS=1` selects the same mode.
+- `--headless` follows the same run as text instead of a terminal UI.
+  `EFFIGY_MANAGED_HEADLESS=1` selects the same mode.
+- `--detach` starts the run in the background and returns once every
+  workload has started, with the run id and its `status`, `logs` and `stop`
+  commands.
 - On non-interactive terminals, Effigy renders a managed plan summary or stream
   output depending on task/runtime state.
 
@@ -274,83 +278,89 @@ concurrent; use `effigy dev` for daily runtime.
 
 ## 8) Environment Controls
 
-### Headless managed runtime
+### One supervisor per run
 
-`effigy dev --headless` stays attached as the supervisor, starts every profile
-entry concurrently in the same resolved order as the TUI, and keeps the same
-setup, lifecycle, shutdown, schema-env, and local-dev secret paths. It writes:
+Every managed run has one supervisor: a detached Effigy process in its own
+session that owns the run. It admits the run in the kernel journal, then runs
+setup, the gateway, the environment and every workload, and its one settle is
+the only cleanup. The TUI, `--headless` and `--detach` are front ends over that
+run:
 
-- `.effigy/runtime/managed/<task>-<profile>/session.json`, atomically, before
-  the first child starts and on every recorded state change; the record is
-  never deleted while the owner is alive
-- one numbered log file per process in that directory
+- The TUI and `--headless` stay attached. `--headless` prints the run's own
+  lines (`[environment]`, `[managed]`) and every workload's output as
+  `[name] line`. Closing the terminal, SIGHUP, SIGINT, SIGTERM or SIGKILL to
+  that client stops and settles the run, and the client exits non-zero when
+  the settle leaves residue. A second interrupt within two seconds escalates
+  the stop.
+- `--detach` returns once every workload has started, before `health_wait`
+  routes have answered (`status` and `logs lifecycle` show them). The run
+  keeps going until `effigy dev stop`. Killing a detaching client before that point stops
+  the run it started.
 
-Headless runs never allocate an interactive TTY. Shell-role processes only
-attach an interactive container shell once the lifecycle is ready and gate
-no readiness, so the headless supervisor skips them and prints one note per
-skipped process instead of spawning a child that would block on a TTY it
-can never receive. Startup prints the stop command for the task
-(`effigy dev stop`). SIGINT/SIGTERM to the headless owner settles the run
-through the same path as `effigy dev stop`, then the owner exits.
-A TUI task with its own container lifecycle keeps its supervisor on the host
-and executes container children through the adapter. TUI runs accept the same `effigy dev stop` and handover controls and settle on
-SIGINT/SIGTERM. An explicit stop exits successfully even when workload children
-previously failed. Their failure details remain in logs or the TUI summary. Container cleanup
-also runs after a child failure; a cleanup failure still exits non-zero and
-names the failing command. `stop` checks the owner's final cleanup result
-before reporting success. Stopping keeps the environment's volumes. If the
-owner died before settling, the next run or container `up` verifies the old
-stack, brings it down, and recovers its residual locks before starting.
-Changed inputs on a recorded partial activation still refuse.
+The journal is the run's only record. `.effigy/runtime/managed/` session
+files, stop markers and lifecycle state files are gone. A live run left by
+v0.14 is refused with its own stop command and never adopted.
 
-A stop reports settled only after the run's whole cascade finished:
-- every owned host process has ended, including the process groups the
-  run exec'd into its container environment, which are ended through
-  the container adapter after checking its full ID and ownership labels
-  (an in-container `cargo run` cannot outlive the stop); a run that owns its
-  environment also brings it down, which ends what attaches to it;
-- every task lock the run and its children took has been released,
-  through the lock owner-token rules. Processes the run started - on
-  the host and inside the container - write the run's settle token
-  into their lock records, so the settle releases what a killed holder
-  could not drop, and an immediate restart has no lock conflict.
+Headless runs never allocate an interactive TTY and never start shell-role
+tabs: shells belong to a terminal.
+
+The environment phase runs before any workload: `container up` as a child of
+the run, then container exec readiness, polled with backoff until the
+workspace service answers or the readiness budget runs out
+(`health_wait_timeout_secs`, default 60 seconds). Readiness is observed and
+never a fixed timer, so a slow first engine start delays the workloads
+instead of failing them, and workloads need no `start_after_ms` to wait for
+the environment. With `health_wait = true`, the task's routes are probed once
+every workload has started, since the workloads serve them; the ready
+message prints when they answer, and a route that never answers within the
+budget fails the run.
+
+A run holds its environment while it lives, so `container down`, handover
+and recovery refuse until it settles. A run that brought its environment up
+stops it when the run settles. A run that found an environment already
+running from an explicit `container up` borrows it and leaves it running. A run that holds an environment stays up
+when its workloads exit, until a stop; `shutdown_on_exit` still ends it.
+
+A stop reports settled only after the run's settle finished:
+- every owned host process has ended, including the process groups the run
+  exec'd into its container environment. Those are ended through the container
+  adapter after checking the marker's run nonce, so an in-container
+  `cargo run` cannot outlive the stop;
+- the environment the run started is down (volumes kept);
+- the run is `closed` in the journal. `cleanup incomplete` lists the residue
+  in `status`, `stop` exits non-zero, and the next run settles it first.
 
 Use another shell or automation process to inspect or stop it:
 
 ```sh
 effigy dev status
+effigy dev status --json
 effigy dev status admin
 effigy dev logs
 effigy dev logs api
 effigy dev logs api --follow
 effigy dev logs --profile admin
+effigy dev logs lifecycle
 effigy dev stop
 effigy dev stop admin
 ```
 
-`status` reports each process PID, state, and log path. A failed headless run
-includes the failing process's log path and tail in the task error, so lifecycle
-startup failures do not collapse to an unexplained exit code.
+`status` reports the run, its environment and each started process with PID,
+state and exit code. `--json` prints `effigy.managed.status.v1`. `logs <name>`
+reads a workload's log; `logs lifecycle` reads the run's own output (setup,
+environment, readiness, starts and exits). A failed run names the failing
+process, its log command and the log's tail in the task error. `stop` is
+idempotent: on a closed run it reports the run's outcome. If the supervisor
+died, the run's sentinel has already settled it, or `stop` settles it.
 
-If the session record is ever missing or unreadable while a run is live,
-`status`, `logs` and `stop` still work: they find the live owner through its
-task/profile locks and run token, report from the locks and the log files, and
-deliver the stop through the same `stop.requested` path the owner watches.
-The stop settles through the ordinary cascade and the owner's exit rewrites
-the record. They refuse only when no live run of that task and profile exists,
-and the refusal names the actual task and profile in its start hint
-(`effigy <task> --headless`).
-
-Concurrent children wait while the lifecycle reports `starting` and only
-then poll container exec readiness. The wait shares the task's readiness
-budget (`health_wait_timeout_secs`, default 60 seconds) with the same
-per-probe windows as `container up`, instead of a fixed 30 seconds — so a
-slow-but-healthy first start no longer times children out while the stack
-is still coming up. Raise the timeout when the stack legitimately needs
-longer than the default.
+Start delays remain interruptible: stop cancels children that have not
+started yet. While a run is live, recovery, lease expiry and another
+environment's handover cannot stop its environment before that run settles;
+a handover asks the run to stop and waits for its settle. Use the task's
+`stop` control before an unrelated explicit `container down`.
 
 - `EFFIGY_MANAGED_HEADLESS=1`
-  - runs the concurrent headless supervisor
+  - follows the run as text (`--headless`)
 - `EFFIGY_MANAGED_TUI=0|false`
   - disables TUI auto-launch and renders managed plan output
 - `EFFIGY_MANAGED_TUI=1|true`
@@ -360,13 +370,13 @@ longer than the default.
 
 ### Restart the managed dev session
 
-To restart the repository's managed `dev` session, inspect and stop that task
-session, then run the same task headlessly:
+To restart the repository's managed `dev` session, inspect and stop that run,
+then start the same task in the background:
 
 ```sh
 effigy dev status
 effigy dev stop
-effigy dev --headless
+effigy dev --detach
 ```
 
 This sequence restarts the managed application processes and leaves the shared
@@ -374,14 +384,6 @@ gateway available to other sessions. Gateway auto-start prints an operator
 notice before waiting if administrator approval may be needed. If startup times
 out, run `effigy gateway status` before retrying; an unknown process identity
 keeps its records held for reconciliation.
-
-Managed startup delays remain interruptible: status shows delayed children as
-`pending`, logs can be read before they produce output, and stop cancels those
-children before they launch. Lifecycle shell exit never stops containers;
-the managed owner's finish runs the single environment shutdown. While a run
-holds its task/profile locks, recovery, lease expiry and another environment's
-handover cannot stop its containers before that run settles. Use the task's
-`stop` control before an unrelated explicit `container down`.
 
 ## 9) Validation Checklist
 

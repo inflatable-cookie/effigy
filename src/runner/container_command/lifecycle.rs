@@ -1050,6 +1050,27 @@ fn run_container_down_adapter(
     .map_err(RunnerError::from)
 }
 
+/// A managed run's settle releasing the environment it started: the
+/// ordinary `container down`, exempting only `run`'s own hold, which the
+/// kernel grants once that run is settling (contract 053 §4, R4).
+pub(in crate::runner) fn release_managed_environment(
+    repo_root: &Path,
+    name: Option<&str>,
+    run: effigy_kernel::id::RunId,
+) -> Result<String, RunnerError> {
+    let policy = load_container_policy(repo_root, name)?;
+    let _operation_plan =
+        lifecycle_operation_plan(repo_root, &policy, ContainerLifecycleOperation::down(false));
+    run_container_down(
+        repo_root,
+        name,
+        false,
+        deregister_runtime_gateway_routes,
+        environment::stop_hook_exempting(Operation::Down, Some(run)),
+    )
+    .map_err(RunnerError::from)
+}
+
 pub(in crate::runner) fn run_container_reset_adapter(
     repo_root: &Path,
     name: Option<&str>,

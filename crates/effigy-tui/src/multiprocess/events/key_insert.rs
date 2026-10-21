@@ -1,13 +1,13 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
-use effigy_process::ProcessSupervisor;
+use crate::multiprocess::SessionProcesses;
 
 use super::super::state::SessionState;
 use super::super::MultiProcessTuiError;
 
 pub(super) fn handle_insert_key(
     key: &KeyEvent,
-    supervisor: &ProcessSupervisor,
+    supervisor: &dyn SessionProcesses,
     state: &mut SessionState,
 ) -> Result<(), MultiProcessTuiError> {
     match key.code {
