@@ -597,6 +597,12 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Sentinel admission after a running executable is replaced uses an APFS
+  copy-on-write clone on macOS or the held executable fd on Linux, avoiding a
+  full binary write. Unsupported zero-copy execution refuses admission with
+  a typed helper error instead of falling back to copying.
+- Deep doctor leaves identical cache generations untouched, including during
+  `--refresh`, avoiding publication locks and redundant synced replacements.
 - The operator gateway can start from an Effigy-managed task without inheriting
   its parent's custody or probe nonce. Startup reports refused spawns and early
   daemon exits; status retains the exit code and bounded stderr tail from the

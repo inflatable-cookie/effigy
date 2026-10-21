@@ -577,6 +577,13 @@ fn load_cache(
 }
 
 fn publish_cache(paths: &CachePaths, generation: &CacheGeneration) -> Result<(), String> {
+    let encoded = serde_json::to_vec(generation)
+        .map_err(|error| format!("doctor cache serialization failed: {error}"))?;
+    // Compare before creating even the publication lock: a warm deep scan is
+    // an observation, and identical generations need no filesystem mutation.
+    if std::fs::read(&paths.current).ok().as_deref() == Some(encoded.as_slice()) {
+        return Ok(());
+    }
     std::fs::create_dir_all(&paths.directory).map_err(|error| {
         format!(
             "doctor cache directory creation failed for {}: {error}",
@@ -593,15 +600,17 @@ fn publish_cache(paths: &CachePaths, generation: &CacheGeneration) -> Result<(),
                 paths.lock.display()
             )
         })?;
-    let result = publish_cache_locked(paths, generation);
+    let result = publish_cache_locked(paths, &encoded);
     drop(lock);
     let _ = std::fs::remove_file(&paths.lock);
     result
 }
 
-fn publish_cache_locked(paths: &CachePaths, generation: &CacheGeneration) -> Result<(), String> {
-    let encoded = serde_json::to_vec(generation)
-        .map_err(|error| format!("doctor cache serialization failed: {error}"))?;
+fn publish_cache_locked(paths: &CachePaths, encoded: &[u8]) -> Result<(), String> {
+    // A concurrent publisher may have installed these facts while we waited.
+    if std::fs::read(&paths.current).ok().as_deref() == Some(encoded) {
+        return Ok(());
+    }
     let temporary = paths.directory.join(format!(
         ".generation-{}-{}.tmp",
         std::process::id(),
@@ -621,7 +630,7 @@ fn publish_cache_locked(paths: &CachePaths, generation: &CacheGeneration) -> Res
             )
         })?;
     let result = (|| {
-        file.write_all(&encoded)
+        file.write_all(encoded)
             .map_err(|error| format!("doctor cache temporary write failed: {error}"))?;
         file.sync_all()
             .map_err(|error| format!("doctor cache temporary sync failed: {error}"))?;
@@ -1764,6 +1773,63 @@ mod tests {
             .expect("changed inventory");
         assert_eq!(changed.cache_hits, 0);
         assert_eq!(changed.cache_misses, 1);
+    }
+
+    #[test]
+    fn unchanged_generation_needs_no_publication_lock_or_replacement() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let source = root.join("main.rs");
+        std::fs::write(&source, "fn alpha() {}\n").unwrap();
+        let options = options();
+        run_doctor_scan_inventory(root, "root", root, &[], &options, false, None).unwrap();
+        let paths = cache_paths(root, "root", root);
+        let before = std::fs::metadata(&paths.current).unwrap();
+        let directory = std::fs::metadata(&paths.directory).unwrap();
+        for refresh in [false, true] {
+            let result =
+                run_doctor_scan_inventory(root, "root", root, &[], &options, refresh, None)
+                    .unwrap();
+            assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+            let after = std::fs::metadata(&paths.current).unwrap();
+            assert_eq!(
+                (before.ino(), before.mtime(), before.mtime_nsec()),
+                (after.ino(), after.mtime(), after.mtime_nsec())
+            );
+            let after_dir = std::fs::metadata(&paths.directory).unwrap();
+            assert_eq!(
+                (directory.mtime(), directory.mtime_nsec()),
+                (after_dir.mtime(), after_dir.mtime_nsec()),
+                "even transient files mutate the directory"
+            );
+        }
+        // An unchanged generation also succeeds while another writer owns the
+        // lock; changed content still follows the locked, atomic path.
+        std::fs::write(&paths.lock, "other publisher").unwrap();
+        let warm =
+            run_doctor_scan_inventory(root, "root", root, &[], &options, false, None).unwrap();
+        assert!(warm.warnings.is_empty());
+        std::fs::write(&source, "fn bravo() {}\n").unwrap();
+        let blocked =
+            run_doctor_scan_inventory(root, "root", root, &[], &options, false, None).unwrap();
+        assert!(blocked
+            .warnings
+            .iter()
+            .any(|w| w.contains("lock unavailable")));
+        assert_eq!(
+            std::fs::metadata(&paths.current).unwrap().ino(),
+            before.ino()
+        );
+        std::fs::remove_file(&paths.lock).unwrap();
+        let changed =
+            run_doctor_scan_inventory(root, "root", root, &[], &options, false, None).unwrap();
+        assert!(changed.warnings.is_empty());
+        assert_ne!(
+            std::fs::metadata(&paths.current).unwrap().ino(),
+            before.ino()
+        );
     }
 
     #[test]
