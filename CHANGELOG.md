@@ -225,19 +225,24 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Added
 - Per-run scratch on a configured external volume (effigy#244). Setting
   `[scratch] root` in `~/.effigy/config.toml` to a mounted volume's root gives
-  every host-placed run `<root>/<8-char run id>/` as its `TMPDIR`, `TMP` and
+  every host-placed run — the built-in `effigy test` route included — its own
+  `<root>/<8-character run directory>/`, named from the run's whole identity so
+  same-instant and `--run-id` runs still differ, as its `TMPDIR`, `TMP` and
   `TEMP`, as a kernel run effect settled with the run: released when the run
   succeeded, kept for 24 hours from the moment it failed (the failure output
-  prints the path), and swept by a bounded later run. A volume gate refuses an
-  absent root, the boot or data volume, a root that is not the volume's mount
-  point, a `volume_uuid` mismatch, a root inside `/Volumes/Builds/oxide-pool`,
-  and a root that is not root-owned, ACL-free and closed to other writes; a
-  refusal falls back to the default temp directory and `effigy doctor` reports
-  the reason. An explicit or non-default `TMPDIR` wins, a nested run reuses its
-  parent's directory, container workloads never receive the host scratch, and a
-  task opts out with `scratch = false` (managed sessions included) or
-  `EFFIGY_SCRATCH=0`. Unset, the environment is unchanged. The user guide
-  section is [069](docs/guides/069-workspace-host-integration.md).
+  prints the path), and swept by a bounded later run. Only the run's own marker,
+  matching that run's derived directory name, authorises a removal. A volume
+  gate refuses an absent root, the boot or data volume, a root that is not the
+  volume's mount point, a `volume_uuid` mismatch, a root inside
+  `/Volumes/Builds/oxide-pool`, and a root that is not root-owned, ACL-free and
+  closed to other writes; a refusal falls back to the default temp directory and
+  `effigy doctor` reports the reason. An explicit or non-default `TMPDIR` wins,
+  a nested run reuses its parent's directory, a nested task that declares
+  `scratch = false` hides its parent's directory from its own host processes,
+  container workloads never receive the host scratch, and a task opts out with
+  `scratch = false` (managed sessions included) or `EFFIGY_SCRATCH=0`. Unset,
+  the environment is unchanged. The user guide section is
+  [069](docs/guides/069-workspace-host-integration.md).
 - Catalog sources (Q-005). Services resolve from the project catalog
   (`infra/dev/catalog/`), the bundle's shipped `catalog/`, declared
   `[catalog.sources.<name>]` git, OCI or path sources, then the compiled

@@ -237,6 +237,25 @@ impl TaskRun {
         label: &str,
         admission: Option<effigy_manifest::ManifestTaskAdmission>,
     ) -> Result<Self, RunnerError> {
+        Self::standalone_with(root, label, admission, false)
+    }
+
+    /// A standalone run whose host processes may use the configured per-run
+    /// scratch directory: the built-in `test` route runs a project's suites
+    /// exactly as a manifest test task would.
+    pub(in crate::runner) fn standalone_scratching(
+        root: &std::path::Path,
+        label: &str,
+    ) -> Result<Self, RunnerError> {
+        Self::standalone_with(root, label, None, true)
+    }
+
+    fn standalone_with(
+        root: &std::path::Path,
+        label: &str,
+        admission: Option<effigy_manifest::ManifestTaskAdmission>,
+        scratch: bool,
+    ) -> Result<Self, RunnerError> {
         let nonce = new_run_id()?;
         let lock = format!("{BUILTIN_LOCK_PREFIX}run:{nonce}");
         let target = TaskTarget {
@@ -253,7 +272,7 @@ impl TaskRun {
                 target: &target,
                 lock_wait_ms: 0,
                 custody: false,
-                scratch: false,
+                scratch,
                 managed_run_token: None,
                 args: &[],
                 key: None,
@@ -375,6 +394,12 @@ impl TaskRun {
                 keyed: false,
             };
             run.admit(request.admission, admission, request.cwd)?;
+            // An engine-internal run (a lock section, a QA group) has no
+            // opinion on scratch; the built-in test route asks for one and
+            // holds the same scratch a task run does.
+            if request.scratch {
+                run.scratch = crate::runner::scratch::for_run(&mut run, true);
+            }
             return Ok(run);
         }
         let invocation = invocation(&task_id, owner.clone(), argv, &provenance)?;

@@ -90,6 +90,13 @@ pub trait BuiltinRuntimePorts {
         let _ = evidence;
     }
 
+    /// Host environment the caller's run gives the host processes a built-in
+    /// starts: the per-run scratch directory's temp variables. Empty when the
+    /// caller runs no such directory, and never forwarded into a container.
+    fn host_scratch_env(&self) -> Vec<(String, std::ffi::OsString)> {
+        Vec::new()
+    }
+
     // Locking.
     fn acquire_scopes(
         &self,

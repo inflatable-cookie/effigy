@@ -36,6 +36,13 @@ impl RunnerBuiltinPorts {
 }
 
 impl BuiltinRuntimePorts for RunnerBuiltinPorts {
+    fn host_scratch_env(&self) -> Vec<(String, std::ffi::OsString)> {
+        crate::runner::scratch::temp_env()
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.into_os_string()))
+            .collect()
+    }
+
     fn builtin_test_child_evidence_enabled(&self) -> bool {
         #[cfg(test)]
         {
@@ -155,5 +162,33 @@ pub(in crate::runner) fn runner_to_builtin(error: RunnerError) -> BuiltinError {
             BuiltinError::CommandJsonFailure { rendered }
         }
         other => BuiltinError::TaskInvocation(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use effigy_builtin::BuiltinRuntimePorts;
+
+    #[test]
+    fn host_scratch_env_follows_the_runs_scratch_scope() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let dir = scratch.path().join("scratch-dir");
+        std::fs::create_dir(&dir).expect("dir");
+
+        assert!(
+            super::RunnerBuiltinPorts::new()
+                .host_scratch_env()
+                .is_empty(),
+            "a caller with no run injects no temp variables"
+        );
+
+        crate::runner::scratch::with_test_scope(&dir, || {
+            let env = super::RunnerBuiltinPorts::new().host_scratch_env();
+            let keys = env.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>();
+            assert_eq!(keys, ["TMPDIR", "TMP", "TEMP"]);
+            for (_, value) in env {
+                assert_eq!(std::path::Path::new(&value), dir);
+            }
+        });
     }
 }

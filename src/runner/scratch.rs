@@ -479,28 +479,41 @@ pub(in crate::runner) struct RunScratch {
     run: String,
 }
 
-/// The scratch a run holds: its own, or the one it inherited from its parent.
-#[derive(Debug)]
-pub(in crate::runner) struct Handle {
-    run: Arc<RunScratch>,
-    /// This run pushed the directory onto the thread's scope, so it pops it.
-    owns_scope: bool,
-}
+/// One thread's scratch scope: the directory a run made its own, or `None`
+/// for a run that declined scratch. A declined scope hides its parent's, so a
+/// nested task's `scratch = false` really reaches its host processes.
+type Scope = Option<Arc<RunScratch>>;
 
 thread_local! {
     /// The scratch in force on this thread, innermost last. A nested run or
-    /// step reuses it instead of starting another directory.
-    static CURRENT: RefCell<Vec<Arc<RunScratch>>> = const { RefCell::new(Vec::new()) };
+    /// step reuses the entry it finds instead of starting another directory.
+    static CURRENT: RefCell<Vec<Scope>> = const { RefCell::new(Vec::new()) };
 }
 
-/// The scratch directory this thread's run uses, if any.
+/// The scratch a run holds: its own, the one it inherited from its parent, or
+/// an inherited opt-out. Only the run that opened the directory concludes or
+/// releases it.
+#[derive(Debug)]
+pub(in crate::runner) struct Handle {
+    run: Scope,
+    /// This run pushed its own scope, so it pops it when it ends.
+    owns_scope: bool,
+}
+
+/// The scratch directory in force on this thread, if any.
 pub(in crate::runner) fn current() -> Option<Arc<RunScratch>> {
-    CURRENT.with(|current| current.borrow().last().cloned())
+    CURRENT.with(|current| current.borrow().last().cloned().flatten())
+}
+
+/// Whether the innermost scope is a run that declined scratch.
+fn declined() -> bool {
+    CURRENT.with(|current| matches!(current.borrow().last(), Some(None)))
 }
 
 /// The temp environment a run's host processes get, when the run owns it. Only
 /// the run that opened a scratch directory sets these; a run that inherited an
-/// explicit `TMPDIR` sets nothing.
+/// explicit `TMPDIR`, or that is inside a scope which declined scratch, sets
+/// nothing.
 pub(in crate::runner) fn temp_env() -> Vec<(&'static str, PathBuf)> {
     match current() {
         Some(scratch) => ["TMPDIR", "TMP", "TEMP"]
@@ -511,26 +524,62 @@ pub(in crate::runner) fn temp_env() -> Vec<(&'static str, PathBuf)> {
     }
 }
 
-/// A run's scratch: inherited from the parent thread scope, or created as a
-/// kernel effect of `run`. `enabled` is false for container-placed runs and for
-/// a task that declares `scratch = false`.
+fn push(scope: Scope) {
+    CURRENT.with(|current| current.borrow_mut().push(scope));
+}
+
+fn pop() {
+    CURRENT.with(|current| {
+        current.borrow_mut().pop();
+    });
+}
+
+/// A run's scratch: inherited from the parent thread scope, created as a kernel
+/// effect of `run`, or explicitly declined. `enabled` is false for
+/// container-placed runs and for a task that declares `scratch = false`.
 pub(in crate::runner) fn for_run(run: &mut TaskRun, enabled: bool) -> Option<Handle> {
     if !enabled {
-        return None;
-    }
-    if let Some(inherited) = current() {
+        // A declined run hides the parent's directory from its own host
+        // processes, and its children inherit the decision. With no scope in
+        // force there is nothing to hide, so no scope is opened at all.
+        if CURRENT.with(|current| current.borrow().is_empty()) {
+            return None;
+        }
+        push(None);
         return Some(Handle {
-            run: inherited,
+            run: None,
+            owns_scope: true,
+        });
+    }
+    if declined() {
+        return Some(Handle {
+            run: None,
             owns_scope: false,
         });
     }
-    create(run).map(|run| Handle {
-        run,
-        owns_scope: true,
-    })
+    if let Some(inherited) = current() {
+        return Some(Handle {
+            run: Some(inherited),
+            owns_scope: false,
+        });
+    }
+    match create(run) {
+        Some(scratch) => {
+            push(Some(scratch.clone()));
+            Some(Handle {
+                run: Some(scratch),
+                owns_scope: true,
+            })
+        }
+        None => Some(Handle {
+            run: None,
+            owns_scope: false,
+        }),
+    }
 }
 
-/// The scratch a step inherits: a step is part of its run, never a new root.
+/// The scratch a step inherits: a step is part of its run, never a new root,
+/// and it inherits an opt-out just as it inherits a directory.
 pub(in crate::runner) fn inherited_handle(handle: Option<&Handle>) -> Option<Handle> {
     handle.map(|handle| Handle {
         run: handle.run.clone(),
@@ -542,18 +591,14 @@ pub(in crate::runner) fn inherited_handle(handle: Option<&Handle>) -> Option<Han
 /// workload's environment would contain.
 #[cfg(test)]
 pub(in crate::runner) fn with_test_scope<T>(dir: &Path, f: impl FnOnce() -> T) -> T {
-    CURRENT.with(|current| {
-        current.borrow_mut().push(Arc::new(RunScratch {
-            dir: dir.to_path_buf(),
-            run: "t".repeat(NAME_LEN),
-        }))
-    });
+    push(Some(Arc::new(RunScratch {
+        dir: dir.to_path_buf(),
+        run: "tttttttt".to_owned(),
+    })));
     struct Pop;
     impl Drop for Pop {
         fn drop(&mut self) {
-            CURRENT.with(|current| {
-                current.borrow_mut().pop();
-            });
+            pop();
         }
     }
     let _pop = Pop;
@@ -569,7 +614,7 @@ fn create(run: &mut TaskRun) -> Option<Arc<RunScratch>> {
     sweep(&root);
     let label = run.target().label.clone();
     let id = run.id().to_string();
-    let dir = root.join(&id[..id.len().min(NAME_LEN)]);
+    let dir = root.join(scratch_name(&run.id())?);
     let scratch = Arc::new(RunScratch {
         dir: dir.clone(),
         run: id,
@@ -591,40 +636,105 @@ fn create(run: &mut TaskRun) -> Option<Arc<RunScratch>> {
         keep: None,
         concluded_ms: None,
     };
-    // `create_dir`, never `create_dir_all`: the root is the operator's, and a
-    // colliding name means this run must not reuse or remove it.
-    let created = std::fs::create_dir(&dir).and_then(|()| write_marker(&dir, &marker));
-    if let Err(error) = created {
-        if dir.exists() {
-            let _ = kernel.unknown(
-                &ticket,
-                UnknownReason::Inconsistent(format!(
-                    "scratch directory `{}` already exists: {error}",
-                    dir.display()
-                )),
-            );
-        } else {
-            let _ = kernel.failed(
-                &ticket,
-                AbsenceProof::NoFile {
-                    name: MARKER.to_owned(),
-                },
-            );
+    // `create_dir`, never `create_dir_all`: the root is the operator's. A name
+    // that already exists is this very run's own interrupted attempt (a keyed
+    // run reuses its id, and retention may still hold the directory) and is
+    // adopted; anything else is not ours, and the intent that named it must
+    // never delete it.
+    let payload = EffectPayload {
+        dir: dir.clone(),
+        run: scratch.run.clone(),
+    };
+    let created = match std::fs::create_dir(&dir) {
+        Ok(()) => write_marker(&dir, &marker),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if owned_dir(&payload).is_some() {
+                write_marker(&dir, &marker)
+            } else {
+                Err(error)
+            }
         }
+        Err(error) => Err(error),
+    };
+    if let Err(error) = created {
+        let _ = kernel.unknown(
+            &ticket,
+            UnknownReason::Inconsistent(format!(
+                "scratch directory `{}` was not created: {error}",
+                dir.display()
+            )),
+        );
         return None;
     }
     if kernel
-        .applied(&ticket, serde_json::json!({ "dir": dir }))
+        .applied(
+            &ticket,
+            serde_json::json!({ "dir": dir, "run": scratch.run }),
+        )
         .is_err()
     {
-        // The record could not be completed; the settle still sees the intent,
-        // and the marker keeps the directory unless a later run proves success.
-        let _ = std::fs::remove_dir_all(&dir);
+        // The record could not be completed. Only a directory this run's own
+        // marker claims is removed, and the settle's ownership check is the
+        // same one.
+        if owned_dir(&payload).is_some() {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
         return None;
     }
     drop(kernel);
-    CURRENT.with(|current| current.borrow_mut().push(scratch.clone()));
+    // The caller opens the thread scope: one push per run, popped when it ends.
     Some(scratch)
+}
+
+/// The eight-character directory name of `run`: a digest of the whole id, so
+/// runs admitted in the same timestamp window — and every keyed run, whose id
+/// starts at time zero — still get distinct names.
+fn scratch_name(run: &effigy_kernel::id::RunId) -> Option<String> {
+    let digest = effigy_kernel::id::Digest::of(format!("effigy-scratch\0{run}").as_bytes());
+    let mut bits = 0u32;
+    let mut available = 0u32;
+    let mut name = String::with_capacity(NAME_LEN);
+    // 40 bits of the digest make exactly eight 5-bit characters.
+    for byte in &digest.0[..5] {
+        bits = (bits << 8) | u32::from(*byte);
+        available += 8;
+        while available >= 5 && name.len() < NAME_LEN {
+            available -= 5;
+            name.push(RUN_ALPHABET[((bits >> available) & 31) as usize] as char);
+        }
+    }
+    (name.len() == NAME_LEN).then_some(name)
+}
+
+/// The base32 alphabet run ids are rendered in.
+const RUN_ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
+
+/// The directory name a run owns, for tests that assert the layout.
+#[cfg(test)]
+pub(in crate::runner) fn name_for_tests(id: &effigy_kernel::id::RunId) -> String {
+    scratch_name(id).expect("scratch name")
+}
+
+/// The directory name the run in `run` owns, when the id parses.
+fn scratch_name_of(run: &str) -> Option<String> {
+    scratch_name(&run.parse::<effigy_kernel::id::RunId>().ok()?)
+}
+
+/// The directory this effect may touch, proven by Effigy's own marker inside
+/// it: the marker must name the payload's run and the directory must carry the
+/// name derived from that run. A collision, a replacement or a failed creation
+/// therefore confers no cleanup authority over whatever now occupies the path.
+fn owned_dir(payload: &EffectPayload) -> Option<PathBuf> {
+    let expected = scratch_name_of(&payload.run)?;
+    if file_name(&payload.dir) != expected {
+        return None;
+    }
+    let metadata = std::fs::symlink_metadata(&payload.dir).ok()?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return None;
+    }
+    let marker = read_marker(&payload.dir)?;
+    (marker.run == payload.run).then_some(payload.dir.clone())
 }
 
 /// Records the run's decision in the marker *before* the settle reads it, and
@@ -635,10 +745,7 @@ fn create(run: &mut TaskRun) -> Option<Arc<RunScratch>> {
 /// early `keep: false` from a successful step would let a later crash of the
 /// parent delete data the parent's own failure should retain.
 pub(in crate::runner) fn conclude(handle: &Handle, succeeded: bool) -> Option<String> {
-    if !handle.owns_scope {
-        return None;
-    }
-    let scratch = &handle.run;
+    let scratch = handle.run.as_ref().filter(|_| handle.owns_scope)?;
     let previous = read_marker(&scratch.dir);
     let concluded_ms = now_ms();
     let marker = Marker {
@@ -662,13 +769,12 @@ pub(in crate::runner) fn conclude(handle: &Handle, succeeded: bool) -> Option<St
     (!succeeded).then(|| format!("scratch kept at `{}` for 24 hours", scratch.dir.display()))
 }
 
-/// Pops this run's directory from the thread scope when the run closes.
+/// Pops this run's scope when it closes, restoring its parent's. Runs on one
+/// thread nest strictly, so the run closing is the innermost scope.
 pub(in crate::runner) fn leave(handle: &Handle) {
-    if !handle.owns_scope {
-        return;
+    if handle.owns_scope {
+        pop();
     }
-    let run = handle.run.run.clone();
-    CURRENT.with(|current| current.borrow_mut().retain(|held| held.run != run));
 }
 
 /// Whether the platform's temp directory is the one Effigy may replace: an
@@ -709,57 +815,62 @@ pub(in crate::runner) fn owns(kind: &str) -> bool {
     kind == EFFECT
 }
 
+/// Ownership is Effigy's own marker, never the pathname alone: only the
+/// directory whose marker names this effect's run is this run's to observe or
+/// remove. Anything else at that path is somebody else's and reports absent.
 pub(in crate::runner) fn observe(effect: &Effect, _cx: &CleanupContext) -> Observed<Fence> {
-    match payload(effect) {
-        Ok(payload) => match std::fs::symlink_metadata(&payload.dir) {
-            Ok(_) => Observed::Verified(effect.spec.target.clone(), evidence()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Observed::Absent(AbsenceProof::NoFile {
-                    name: file_name(&payload.dir),
-                })
-            }
-            Err(error) => Observed::Unknown(UnknownReason::Inconsistent(format!(
-                "scratch directory `{}` is unreadable: {error}",
-                payload.dir.display()
-            ))),
-        },
-        Err(reason) => Observed::Unknown(reason),
+    let payload = match payload(effect) {
+        Ok(payload) => payload,
+        Err(reason) => return Observed::Unknown(reason),
+    };
+    match owned_dir(&payload) {
+        Some(_) => Observed::Verified(effect.spec.target.clone(), evidence()),
+        None => Observed::Absent(AbsenceProof::NoFile {
+            name: owned_name(&payload),
+        }),
     }
 }
 
 pub(in crate::runner) fn release(effect: &Effect, _cx: &CleanupContext) -> Observed<()> {
-    match payload(effect) {
-        Ok(payload) => remove(&payload.dir),
-        Err(reason) => Observed::Unknown(reason),
+    let payload = match payload(effect) {
+        Ok(payload) => payload,
+        Err(reason) => return Observed::Unknown(reason),
+    };
+    match owned_dir(&payload) {
+        Some(dir) => remove(&dir),
+        // No directory of this run exists, so there is nothing to release.
+        None => Observed::Verified((), evidence()),
     }
 }
 
 /// The run's decision, read from the marker the engine wrote before settling: a
 /// run that succeeded releases its directory, everything else retains it for
-/// the sweep.
+/// the sweep. Only the exact owning directory is ever removed.
 pub(in crate::runner) fn reconcile(effect: &Effect, _cx: &CleanupContext) -> Observed<Reconciled> {
     let payload = match payload(effect) {
         Ok(payload) => payload,
         Err(reason) => return Observed::Unknown(reason),
     };
-    match read_marker(&payload.dir) {
-        Some(marker) if marker.keep == Some(false) => {
-            remove(&payload.dir).map(|()| Reconciled::Released)
-        }
-        Some(_) => Observed::Verified(Reconciled::Retained, evidence()),
-        // No marker: not a directory Effigy can prove it owns, so never remove.
-        None if !payload.dir.exists() => Observed::Absent(AbsenceProof::NoFile {
-            name: file_name(&payload.dir),
-        }),
-        None => Observed::Verified(Reconciled::Retained, evidence()),
+    let Some(dir) = owned_dir(&payload) else {
+        return Observed::Absent(AbsenceProof::NoFile {
+            name: owned_name(&payload),
+        });
+    };
+    match read_marker(&dir) {
+        Some(marker) if marker.keep == Some(false) => remove(&dir).map(|()| Reconciled::Released),
+        _ => Observed::Verified(Reconciled::Retained, evidence()),
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct EffectPayload {
     dir: PathBuf,
-    #[allow(dead_code)]
     run: String,
+}
+
+/// The directory name this effect's run owns, for an absence proof.
+fn owned_name(payload: &EffectPayload) -> String {
+    scratch_name_of(&payload.run).unwrap_or_else(|| file_name(&payload.dir))
 }
 
 fn payload(effect: &Effect) -> Result<EffectPayload, UnknownReason> {
@@ -923,7 +1034,9 @@ pub(in crate::runner) fn sweep_at(
         let Some(marker) = read_marker(&path) else {
             continue;
         };
-        if marker.run.get(..NAME_LEN) != Some(name.as_str()) {
+        // The name must be the one derived from the marker's run: a directory
+        // whose name and marker disagree is not Effigy's to remove.
+        if scratch_name_of(&marker.run).as_deref() != Some(name.as_str()) {
             continue;
         }
         let RunState::Closed { at_ms } = state(&marker.run) else {
@@ -940,10 +1053,9 @@ pub(in crate::runner) fn sweep_at(
     report
 }
 
-/// The base32 alphabet run ids are rendered in.
+/// Whether `name` is in the scratch directory's alphabet.
 fn is_run_name(name: &str) -> bool {
-    name.bytes()
-        .all(|byte| byte.is_ascii_lowercase() || (b'2'..=b'7').contains(&byte))
+    name.bytes().all(|byte| RUN_ALPHABET.contains(&byte))
 }
 
 /// The bounded sweep a run's admission performs: a Prepare step, once per
@@ -1063,7 +1175,17 @@ mod tests {
             .to_owned()
     }
 
-    fn effect(dir: &Path, run: &str) -> Effect {
+    /// A deterministic real run id. Keyed runs use time zero, so tests use the
+    /// same shape: distinct entropy, same timestamp.
+    fn run_id(n: u8) -> effigy_kernel::id::RunId {
+        effigy_kernel::id::RunId::new(0, [n; 10]).expect("run id")
+    }
+
+    fn name_of(id: &effigy_kernel::id::RunId) -> String {
+        scratch_name(id).expect("scratch name")
+    }
+
+    fn effect(dir: &Path, id: &effigy_kernel::id::RunId) -> Effect {
         Effect {
             sequence: 1,
             spec: EffectSpec {
@@ -1076,7 +1198,7 @@ mod tests {
                     generation: effigy_kernel::id::Generation::new(1),
                 },
                 kind: EFFECT.to_owned(),
-                payload: serde_json::json!({ "dir": dir, "run": run }),
+                payload: serde_json::json!({ "dir": dir, "run": id.to_string() }),
                 settlement: Settlement::Reconcile(serde_json::Value::Null),
                 required: false,
             },
@@ -1244,9 +1366,29 @@ mod tests {
         assert!(!platform_default("/Volumes/Scratch/tmp"));
     }
 
-    fn marker(run: &str, created_ms: i64, concluded_ms: Option<i64>) -> Marker {
+    /// The directory a run owns, with a marker for that run. `aged` puts its
+    /// creation a full retention window in the past.
+    fn hold(root: &Path, id: &effigy_kernel::id::RunId, keep: Option<bool>) -> PathBuf {
+        hold_marker(
+            root,
+            id,
+            Marker {
+                keep,
+                ..marker(id, now_ms() - RETENTION.as_millis() as i64 - 1, None)
+            },
+        )
+    }
+
+    fn hold_marker(root: &Path, id: &effigy_kernel::id::RunId, marker: Marker) -> PathBuf {
+        let dir = root.join(name_of(id));
+        std::fs::create_dir(&dir).expect("dir");
+        write_marker(&dir, &marker).expect("marker");
+        dir
+    }
+
+    fn marker(id: &effigy_kernel::id::RunId, created_ms: i64, concluded_ms: Option<i64>) -> Marker {
         Marker {
-            run: run.to_owned(),
+            run: id.to_string(),
             task: "test".to_owned(),
             created_ms,
             keep: Some(true),
@@ -1254,33 +1396,40 @@ mod tests {
         }
     }
 
-    fn hold(root: &Path, name: &str, marker: Marker) -> PathBuf {
-        let dir = root.join(name);
-        std::fs::create_dir(&dir).expect("dir");
-        write_marker(&dir, &marker).expect("marker");
-        dir
-    }
-
     fn closed(_: &str) -> RunState {
         RunState::Closed { at_ms: None }
     }
 
     #[test]
+    fn scratch_names_follow_the_whole_run_id_not_its_timestamp() {
+        // Keyed runs all start at time zero, so a prefix of the id would give
+        // every one of them the same directory name.
+        let first = run_id(1);
+        let second = run_id(2);
+        assert!(first.to_string().starts_with("aaaaaa"));
+        assert!(second.to_string().starts_with("aaaaaa"));
+        assert_ne!(name_of(&first), name_of(&second));
+        for name in [name_of(&first), name_of(&second)] {
+            assert_eq!(name.len(), NAME_LEN);
+            assert!(is_run_name(&name), "{name}");
+        }
+        assert_eq!(
+            scratch_name_of(&first.to_string()).as_deref(),
+            Some(name_of(&first).as_str())
+        );
+        assert!(scratch_name_of("not-a-run-id").is_none());
+    }
+
+    #[test]
     fn only_the_owning_run_writes_the_retention_decision() {
         let root = tempfile::tempdir().expect("root");
-        let dir = hold(
-            root.path(),
-            "pppppppp",
-            Marker {
-                keep: None,
-                ..marker("pppppppp", now_ms(), None)
-            },
-        );
+        let id = run_id(3);
+        let dir = hold(root.path(), &id, None);
         let owning = Handle {
-            run: Arc::new(RunScratch {
+            run: Some(Arc::new(RunScratch {
                 dir: dir.clone(),
-                run: "pppppppp".to_owned(),
-            }),
+                run: id.to_string(),
+            })),
             owns_scope: true,
         };
         let step = inherited_handle(Some(&owning)).expect("inherited handle");
@@ -1302,39 +1451,53 @@ mod tests {
     fn the_sweep_removes_only_old_closed_runs_it_created() {
         let root = tempfile::tempdir().expect("root");
         let old = now_ms() - RETENTION.as_millis() as i64 - 1;
-        let retained = hold(root.path(), "abcdefgh", marker("abcdefgh", old, None));
-        // Not ours: no marker, or a marker naming another run.
+        let retained = hold(root.path(), &run_id(4), Some(true));
+        // Not ours: no marker, or a marker whose name does not match its run.
         std::fs::create_dir(root.path().join("notours1")).expect("foreign dir");
-        let mismatched = hold(root.path(), "zzzzzzzz", marker("yyyyyyyy", old, None));
+        let foreign_name = name_of(&run_id(5));
+        std::fs::create_dir(root.path().join(&foreign_name)).expect("dir");
+        write_marker(
+            &root.path().join(&foreign_name),
+            &marker(&run_id(6), old, None),
+        )
+        .expect("marker");
         // Old but still open: kept.
-        let open = hold(root.path(), "bbbbbbbb", marker("bbbbbbbb", old, None));
+        let open_id = run_id(7);
+        let open = hold(root.path(), &open_id, Some(true));
         // Closed but young: kept.
-        let young = hold(root.path(), "cccccccc", marker("cccccccc", now_ms(), None));
+        let young_id = run_id(8);
+        let young = hold_marker(
+            root.path(),
+            &young_id,
+            Marker {
+                keep: Some(true),
+                ..marker(&young_id, now_ms(), None)
+            },
+        );
 
-        let report = sweep_at(root.path(), now_ms(), 8, |run| match run {
-            "bbbbbbbb" => RunState::Open,
-            other => closed(other),
+        let open_run = open_id.to_string();
+        let report = sweep_at(root.path(), now_ms(), 8, |run| {
+            if run == open_run {
+                RunState::Open
+            } else {
+                closed(run)
+            }
         });
         assert_eq!(report.removed, 1);
         assert!(!retained.exists(), "a closed, retained run is removed");
         assert!(open.exists(), "a live run keeps its scratch");
         assert!(young.exists(), "retention has not passed");
-        assert!(mismatched.exists(), "a marker for another run is no claim");
+        assert!(
+            root.path().join(&foreign_name).exists(),
+            "a directory whose name and marker disagree is no claim"
+        );
         assert!(root.path().join("notours1").exists());
     }
 
     #[test]
     fn an_unknown_journal_keeps_every_scratch() {
         let root = tempfile::tempdir().expect("root");
-        let dir = hold(
-            root.path(),
-            "dddddddd",
-            marker(
-                "dddddddd",
-                now_ms() - RETENTION.as_millis() as i64 - 1,
-                None,
-            ),
-        );
+        let dir = hold(root.path(), &run_id(9), Some(true));
         assert_eq!(
             sweep_at(root.path(), now_ms(), 8, |_| RunState::Unknown).removed,
             0
@@ -1345,9 +1508,8 @@ mod tests {
     #[test]
     fn the_sweep_is_bounded() {
         let root = tempfile::tempdir().expect("root");
-        let old = now_ms() - RETENTION.as_millis() as i64 - 1;
-        for name in ["eeeeeeee", "ffffffff", "gggggggg"] {
-            hold(root.path(), name, marker(name, old, None));
+        for id in [run_id(10), run_id(11), run_id(12)] {
+            hold(root.path(), &id, Some(true));
         }
         assert_eq!(sweep_at(root.path(), now_ms(), 2, closed).removed, 2);
     }
@@ -1357,11 +1519,12 @@ mod tests {
         let root = tempfile::tempdir().expect("root");
         // A run that lived for a week and failed a minute ago keeps its full
         // 24 hours: the creation time must not shorten the retained window.
-        let late = hold(
+        let late_id = run_id(13);
+        let late = hold_marker(
             root.path(),
-            "llllllll",
+            &late_id,
             marker(
-                "llllllll",
+                &late_id,
                 now_ms() - 7 * 24 * 60 * 60 * 1000,
                 Some(now_ms() - 60_000),
             ),
@@ -1370,11 +1533,12 @@ mod tests {
         assert!(late.exists(), "a fresh failure keeps its scratch");
 
         // And once the concluded retention has passed, it goes.
-        let expired = hold(
+        let expired_id = run_id(14);
+        let expired = hold_marker(
             root.path(),
-            "mmmmmmmm",
+            &expired_id,
             marker(
-                "mmmmmmmm",
+                &expired_id,
                 now_ms() - 7 * 24 * 60 * 60 * 1000,
                 Some(now_ms() - RETENTION.as_millis() as i64 - 1),
             ),
@@ -1389,10 +1553,13 @@ mod tests {
         let old = now_ms() - RETENTION.as_millis() as i64 - 1;
         // No concluded time: the owner died before deciding. The sentinel's
         // settle recorded the close, and that is when retention started.
-        let recently_closed = hold(root.path(), "nnnnnnnn", marker("nnnnnnnn", old, None));
-        let long_closed = hold(root.path(), "oooooooo", marker("oooooooo", old, None));
+        let recent_id = run_id(15);
+        let long_id = run_id(16);
+        let recently_closed = hold_marker(root.path(), &recent_id, marker(&recent_id, old, None));
+        let long_closed = hold_marker(root.path(), &long_id, marker(&long_id, old, None));
+        let recent_run = recent_id.to_string();
         let report = sweep_at(root.path(), now_ms(), 8, |run| RunState::Closed {
-            at_ms: Some(if run == "nnnnnnnn" {
+            at_ms: Some(if run == recent_run {
                 now_ms() - 60_000
             } else {
                 old
@@ -1409,20 +1576,21 @@ mod tests {
     #[test]
     fn a_run_that_succeeded_releases_its_scratch_and_a_failure_retains_it() {
         let root = tempfile::tempdir().expect("root");
-        for (name, keep) in [("hhhhhhhh", false), ("iiiiiiii", true)] {
-            let dir = root.path().join(name);
+        for (n, keep) in [(17u8, false), (18, true)] {
+            let id = run_id(n);
+            let dir = root.path().join(name_of(&id));
             std::fs::create_dir(&dir).expect("dir");
             std::fs::write(dir.join("work.txt"), b"payload").expect("file");
             write_marker(
                 &dir,
                 &Marker {
                     keep: Some(keep),
-                    ..marker(name, now_ms(), Some(now_ms()))
+                    ..marker(&id, now_ms(), Some(now_ms()))
                 },
             )
             .expect("marker");
             let cx = cleanup();
-            match reconcile(&effect(&dir, name), &cx) {
+            match reconcile(&effect(&dir, &id), &cx) {
                 Observed::Verified(Reconciled::Released, _) => assert!(!dir.exists()),
                 Observed::Verified(Reconciled::Retained, _) => assert!(dir.exists()),
                 other => panic!("unexpected reconcile result {other:?}"),
@@ -1432,16 +1600,46 @@ mod tests {
 
     #[test]
     fn a_directory_effigy_cannot_prove_it_owns_is_never_removed() {
+        let cx = cleanup();
+
+        // No marker at all.
         let root = tempfile::tempdir().expect("root");
-        let dir = root.path().join("jjjjjjjj");
+        let id = run_id(19);
+        let dir = root.path().join(name_of(&id));
         std::fs::create_dir(&dir).expect("dir");
         std::fs::write(dir.join("work.txt"), b"keep me").expect("file");
-        let cx = cleanup();
-        match reconcile(&effect(&dir, "jjjjjjjj"), &cx) {
-            Observed::Verified(Reconciled::Retained, _) => {}
-            other => panic!("expected a retained directory, got {other:?}"),
+        match reconcile(&effect(&dir, &id), &cx) {
+            Observed::Absent(_) => {}
+            other => panic!("expected an absent directory, got {other:?}"),
         }
         assert!(dir.join("work.txt").exists());
+
+        // A foreign marker with a removal verdict at this run's name: a
+        // collision or a replacement confers no cleanup authority.
+        let foreign = tempfile::tempdir().expect("root");
+        let ours_id = run_id(20);
+        let mut foreign_marker = marker(&run_id(21), now_ms(), Some(now_ms()));
+        foreign_marker.keep = Some(false);
+        let foreign_dir = hold_marker(foreign.path(), &ours_id, foreign_marker);
+        match reconcile(&effect(&foreign_dir, &ours_id), &cx) {
+            Observed::Absent(_) => {}
+            other => panic!("expected an absent directory, got {other:?}"),
+        }
+        assert!(
+            foreign_dir.join("work.txt").exists() || foreign_dir.exists(),
+            "a foreign marker never authorises removal"
+        );
+        assert!(matches!(
+            observe(&effect(&foreign_dir, &ours_id), &cx),
+            Observed::Absent(_)
+        ));
+
+        // The effect's run does not parse: no authority either.
+        let broken = effect(&foreign_dir, &ours_id);
+        let mut broken = broken;
+        broken.spec.payload = serde_json::json!({ "dir": foreign_dir, "run": "not-a-run" });
+        assert!(matches!(reconcile(&broken, &cx), Observed::Absent(_)));
+        assert!(foreign_dir.exists());
     }
 
     #[test]
@@ -1449,10 +1647,17 @@ mod tests {
         let outside = tempfile::tempdir().expect("outside");
         let root = tempfile::tempdir().expect("root");
         std::fs::write(outside.path().join("work.txt"), b"keep me").expect("file");
-        std::os::unix::fs::symlink(outside.path(), root.path().join("kkkkkkkk")).expect("symlink");
+        let id = run_id(22);
+        std::os::unix::fs::symlink(outside.path(), root.path().join(name_of(&id)))
+            .expect("symlink");
         assert!(matches!(
-            remove(&root.path().join("kkkkkkkk")),
+            remove(&root.path().join(name_of(&id))),
             Observed::Unknown(_)
+        ));
+        let cx = cleanup();
+        assert!(matches!(
+            reconcile(&effect(&root.path().join(name_of(&id)), &id), &cx),
+            Observed::Absent(_)
         ));
         assert!(outside.path().join("work.txt").exists());
     }

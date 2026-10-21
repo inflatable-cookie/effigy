@@ -322,9 +322,9 @@ fn a_host_run_uses_its_scratch_as_temp_and_the_settle_removes_it_on_success() {
             );
             assert!(wrote, "a workload writes into its own scratch");
             assert_eq!(
-                seen.trim_end_matches('/').rsplit('/').next().unwrap().len(),
-                8,
-                "the directory is named by the run's 8-character id"
+                seen.trim_end_matches('/').rsplit('/').next().unwrap(),
+                crate::runner::scratch::name_for_tests(&run.id()),
+                "the directory is named by the run"
             );
             let warnings = run.close(WorkloadOutcome::Succeeded);
             assert!(
@@ -434,7 +434,10 @@ fn a_nested_run_reuses_its_parents_scratch_instead_of_starting_another() {
                 "a nested run reuses its parent's scratch"
             );
             assert!(step.close(WorkloadOutcome::Succeeded).is_empty());
-            assert!(parent_temp.ends_with(parent.id().to_string()[..8].to_owned().as_str()));
+            assert!(
+                parent_temp.ends_with(&crate::runner::scratch::name_for_tests(&parent.id())),
+                "the directory is named by the run"
+            );
             assert!(parent.close(WorkloadOutcome::Succeeded).is_empty());
             assert!(!Path::new(&parent_temp).exists());
             assert_eq!(
@@ -586,6 +589,174 @@ fn a_scratch_failure_keeps_its_full_retention_from_the_failure() {
     assert!(
         concluded >= created,
         "retention starts when the run ended: {marker}"
+    );
+}
+
+#[test]
+fn a_second_keyed_run_gets_its_own_scratch_while_the_first_is_retained() {
+    let _guard = crate::contract_test_support::lock_test();
+    let root = tempfile::tempdir().expect("root");
+    let work = tempfile::tempdir().expect("work");
+    let catalog = catalog(root.path(), "", "root", 0);
+    let target = TaskTarget::for_catalog(root.path(), "test", &catalog);
+    let scratch_root = root.path().join("scratch-vol");
+    std::fs::create_dir(&scratch_root).expect("scratch root");
+    let config = scratch_config(&scratch_root);
+    let first_key = RunKey::parse("scratch-first").expect("key");
+    let second_key = RunKey::parse("scratch-second").expect("key");
+
+    crate::runner::scratch::with_test_scratch(
+        Some(config.clone()),
+        Some(config.root.clone()),
+        true,
+        || {
+            let mut first = TaskRun::begin(TaskRunRequest {
+                target: &target,
+                lock_wait_ms: 0,
+                custody: true,
+                scratch: true,
+                managed_run_token: None,
+                args: &[],
+                key: Some(&first_key),
+                admission: None,
+                cwd: None,
+            })
+            .expect("first keyed run");
+            let (first_temp, _) = read_temp(&mut first, work.path());
+            assert!(!first.close(WorkloadOutcome::Failed { code: 1 }).is_empty());
+
+            // The failed run's directory is retained; a different key still
+            // allocates its own, whatever the run ids look like.
+            let mut second = TaskRun::begin(TaskRunRequest {
+                target: &target,
+                lock_wait_ms: 0,
+                custody: true,
+                scratch: true,
+                managed_run_token: None,
+                args: &[],
+                key: Some(&second_key),
+                admission: None,
+                cwd: None,
+            })
+            .expect("second keyed run");
+            let (second_temp, _) = read_temp(&mut second, work.path());
+            assert_ne!(first_temp, second_temp);
+            assert!(
+                Path::new(&first_temp).exists(),
+                "the failure stays retained"
+            );
+            assert!(Path::new(&second_temp).starts_with(&config.root));
+            assert!(second.close(WorkloadOutcome::Succeeded).is_empty());
+            assert!(!Path::new(&second_temp).exists());
+        },
+    );
+}
+
+#[test]
+fn the_builtin_test_route_holds_and_settles_the_configured_scratch() {
+    let _guard = crate::contract_test_support::lock_test();
+    let root = tempfile::tempdir().expect("root");
+    let catalog = catalog(root.path(), "", "root", 0);
+    let scratch_root = root.path().join("scratch-vol");
+    std::fs::create_dir(&scratch_root).expect("scratch root");
+    let config = scratch_config(&scratch_root);
+
+    // The built-in `test` route takes this exact run before the runner hands
+    // its env to the suites: one directory, settled with the built-in's own
+    // outcome.
+    let (seen, warnings) = crate::runner::scratch::with_test_scratch(
+        Some(config.clone()),
+        Some(config.root.clone()),
+        true,
+        || {
+            let run = TaskRun::standalone_scratching(root.path(), "effigy test")
+                .expect("the built-in run is admitted");
+            let env = crate::runner::scratch::temp_env();
+            assert!(!env.is_empty(), "the built-in test route owns a scratch");
+            let seen = env
+                .iter()
+                .find(|(key, _)| *key == "TMPDIR")
+                .map(|(_, value)| value.display().to_string())
+                .expect("TMPDIR");
+            assert!(Path::new(&seen).starts_with(&config.root));
+            assert_eq!(
+                Path::new(&seen).file_name().and_then(|name| name.to_str()),
+                Some(crate::runner::scratch::name_for_tests(&run.id()).as_str())
+            );
+            // Every host suite of that run reads this through the ports.
+            let ports = crate::runner::builtin_ports::RunnerBuiltinPorts::new();
+            use effigy_builtin::BuiltinRuntimePorts;
+            let port_env = ports.host_scratch_env();
+            assert!(
+                port_env
+                    .iter()
+                    .any(|(key, value)| key == "TMPDIR" && Path::new(value) == Path::new(&seen)),
+                "the suite port carries the run's scratch: {port_env:?}"
+            );
+            (seen, run.close(WorkloadOutcome::Succeeded))
+        },
+    );
+    let _ = &catalog;
+    assert!(
+        !Path::new(&seen).exists(),
+        "the built-in run's settle removes its scratch on success"
+    );
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
+#[test]
+fn a_nested_run_that_opts_out_hides_its_parents_scratch() {
+    let _guard = crate::contract_test_support::lock_test();
+    let root = tempfile::tempdir().expect("root");
+    let work = tempfile::tempdir().expect("work");
+    let catalog = catalog(root.path(), "", "root", 0);
+    let parent_target = TaskTarget::for_catalog(root.path(), "parent", &catalog);
+    let child_target = TaskTarget::for_catalog(root.path(), "child", &catalog);
+    let scratch_root = root.path().join("scratch-vol");
+    std::fs::create_dir(&scratch_root).expect("scratch root");
+    let config = scratch_config(&scratch_root);
+
+    crate::runner::scratch::with_test_scratch(
+        Some(config.clone()),
+        Some(config.root.clone()),
+        true,
+        || {
+            let mut parent = begin_scratching(&parent_target);
+            let (parent_temp, _) = read_temp(&mut parent, work.path());
+            assert!(Path::new(&parent_temp).starts_with(&config.root));
+
+            // A nested task reference on this thread: the child declares
+            // `scratch = false`, so its host processes see the inherited temp
+            // environment, not its parent's directory.
+            let _parent_scope = parent.enter();
+            let mut child = TaskRun::begin(TaskRunRequest {
+                target: &child_target,
+                lock_wait_ms: 0,
+                custody: true,
+                scratch: false,
+                managed_run_token: None,
+                args: &[],
+                key: None,
+                admission: None,
+                cwd: None,
+            })
+            .expect("the nested run is admitted");
+            assert!(
+                crate::runner::scratch::temp_env().is_empty(),
+                "an opted-out nested run hides its parent's scratch"
+            );
+            let (child_temp, _) = read_temp(&mut child, work.path());
+            assert_ne!(child_temp, parent_temp);
+            assert!(!Path::new(&child_temp).starts_with(&config.root));
+            assert!(child.close(WorkloadOutcome::Succeeded).is_empty());
+            drop(_parent_scope);
+
+            // The parent's scope is back once the child ends.
+            let (restored, _) = read_temp(&mut parent, work.path());
+            assert_eq!(restored, parent_temp);
+            assert!(parent.close(WorkloadOutcome::Succeeded).is_empty());
+            assert!(!Path::new(&parent_temp).exists());
+        },
     );
 }
 
