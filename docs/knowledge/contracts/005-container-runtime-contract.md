@@ -247,6 +247,16 @@ caller absolute deadline bounds verification and execution unchanged: no fresh
 phase allowance extends it. Unavailable or foreign ownership still refuses;
 the longer observation window grants no restart or successor-adoption authority.
 
+The stopped-inclusive project inventory (`runtime ps --all`) used by task
+preparation and owned-service recovery is label-filtered to the Compose project
+and retried once, after a short backoff, only when Effigy's own observation
+bound expired. It is a read-only observation, so the retry cannot duplicate an
+effect; a second timeout, a refused runtime, a parse failure and a non-timeout
+failure are all returned unchanged. Two timeouts name the failure as a runtime
+inventory admission failure: the task did not run, and the message points at
+`container status` and the task's host route where the repository defines one.
+No assertion, timeout budget or ownership requirement is relaxed.
+
 The up diagnostic and detached JSON report describe only the Compose create
 spec decision and whether the Compose up command succeeded. They identify
 included or absent source/target pairs and report runtime mount verification as

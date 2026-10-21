@@ -662,6 +662,13 @@ During v0.x, MINOR bumps may include breaking changes.
   running generation is reconciled instead of reused. A file or symlink at that
   path still refuses, and no ownership or mode changes. `container status` and
   `doctor` stay read-only and report drift after the observation.
+- The stopped-inclusive runtime inventory (`runtime ps --all`) used by task
+  preparation and owned-service recovery retries once, after a short backoff,
+  only when Effigy's own observation bound expired for one project-scoped read.
+  A second timeout fails closed and names the failure as a runtime inventory
+  admission failure: the task did not run, and the message points at
+  `container status` and the task's host route where the repository defines
+  one. Parse, refused-runtime and non-timeout failures are never retried.
 - Managed host listener readiness keeps polling while another process briefly
   shares the listening socket, and fails with the exclusivity error only at
   its deadline; its diagnostic no longer mixes a stale HTTP status into a
