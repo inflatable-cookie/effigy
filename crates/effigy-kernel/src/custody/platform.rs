@@ -16,6 +16,10 @@ pub(crate) struct Member {
 pub(crate) trait ProcessTable {
     fn leader(&mut self, receipt: &ProcessReceipt) -> Observed<ProcessIdentity>;
     fn members(&mut self, pgid: u32) -> Observed<Vec<Member>>;
+    /// Whether `identity` is still a live process. A member can leave the
+    /// group between the inventory and its evidence read; only a member that
+    /// is still present can be foreign, never one that is provably gone.
+    fn present(&mut self, identity: &ProcessIdentity) -> Observed<bool>;
     fn signal_leader(&mut self, receipt: &ProcessReceipt, signal: i32)
         -> Observed<SignalDelivered>;
     fn signal_member(
@@ -192,6 +196,17 @@ pub(crate) fn recover_with(
                         unknown: !evidenced,
                     });
                     if !evidenced {
+                        // Its environment is gone (or cleared) while its pid
+                        // was still live: the member can have exited between
+                        // the inventory and this read. A vanished member is
+                        // not residue, so re-inventory instead of reporting
+                        // it; a present one without the nonce still is.
+                        match table.present(&member.identity) {
+                            Observed::Verified(false, _) => continue,
+                            Observed::Verified(true, _) => {}
+                            Observed::Unknown(reason) => return Observed::Unknown(reason),
+                            Observed::Absent(_) => continue,
+                        }
                         foreign.push(format!(
                             "pid {} nonce={:?} age_verified={}",
                             member.identity.pid,
@@ -241,6 +256,15 @@ impl ProcessTable for Host {
             }
             Observed::Unknown(reason) => Observed::Unknown(reason),
             _ => ident::process_identity(r.identity.pid),
+        }
+    }
+    fn present(&mut self, identity: &ProcessIdentity) -> Observed<bool> {
+        match ident::process_state(identity.pid) {
+            Observed::Verified(ProcessState::Zombie, _) | Observed::Absent(_) => {
+                Observed::Verified(false, evidence())
+            }
+            Observed::Verified(_, _) => Observed::Verified(true, evidence()),
+            Observed::Unknown(reason) => Observed::Unknown(reason),
         }
     }
     fn members(&mut self, pgid: u32) -> Observed<Vec<Member>> {

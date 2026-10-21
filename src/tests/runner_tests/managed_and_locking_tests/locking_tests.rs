@@ -206,22 +206,30 @@ run = "sleep 1"
 fn lock_wait_acquires_after_live_owner_releases() {
     let _guard = lock_test();
     let root = temp_workspace("lock-wait-retry-after-release");
-    write_root_manifest(
-        &root,
-        r#"[tasks.dev]
-run = "sleep 0.2"
-"#,
+    // The owner's workload ends only when the test releases it, so the waiter
+    // starts while the owner is certainly live and inside its workload. What
+    // the waiter then waits for is the owner's complete custody settlement,
+    // which is what frees the gate; that settle is host-dependent and is not
+    // the workload's duration, so the budget is an upper bound rather than a
+    // measurement (papercut efb9b1b2). The barrier is the assertion: the
+    // waiter must be blocked while the owner lives and must acquire once the
+    // owner's settle has finished.
+    let owner = start_held_dev_owner(&root);
+
+    let root_for_waiter = root.clone();
+    let waiter =
+        OwnedThread::spawn(move || run_dev(&root_for_waiter, &["--lock-wait-ms", "30000"]));
+    // A waiter is admitted only after the gate frees: while the owner holds
+    // it the waiter is still blocked in admission.
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    assert!(
+        !waiter.is_finished(),
+        "a waiter acquired a gate its live owner still holds"
     );
 
-    let root_for_thread = root.clone();
-    let owner = OwnedThread::spawn(move || run_dev(&root_for_thread, &[]));
-    wait_for_live_task_owner(&root, "dev");
-
-    let out =
-        run_dev(&root, &["--lock-wait-ms", "2000"]).expect("waiter should acquire after release");
+    owner.release_and_join().expect("first run should complete");
+    let out = waiter.join().expect("waiter should acquire after release");
     assert_output_equals(&out, "");
-
-    owner.join().expect("first run should complete");
 }
 
 /// v0.14 lease records are never imported or deleted: a dead or corrupt

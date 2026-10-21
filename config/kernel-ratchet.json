@@ -510,6 +510,8 @@
       "std::fs::write": 3
     },
     "crates/effigy-containers/src/exec/implementation.rs": {
+      "std.process.Command.new": 1,
+      "std.process.Command.output": 1,
       "std::env::remove_var": 10,
       "std::env::set_var": 8,
       "std::fs::write": 3
@@ -520,7 +522,7 @@
       "std.process.Command.output": 2
     },
     "crates/effigy-containers/src/exec/mounts.rs": {
-      "std::fs::write": 4
+      "std::fs::write": 6
     },
     "crates/effigy-containers/src/exec/parse.rs": {
       "std::fs::write": 1
@@ -919,7 +921,7 @@
       "std.process.Command.output": 3,
       "std.process.Command.spawn": 1,
       "std::fs::remove_file": 1,
-      "std::fs::write": 13
+      "std::fs::write": 14
     },
     "src/runner/task_engine/legacy.rs": {
       "std.process.Command.new": 1,

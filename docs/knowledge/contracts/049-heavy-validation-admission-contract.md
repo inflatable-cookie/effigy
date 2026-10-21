@@ -74,7 +74,13 @@ Nested calls never queue twice. Every child an admitted run spawns gets
 `EFFIGY_ADMITTED`, an opaque marker naming the admitting run; an in-process
 nested run (a sequence step or a QA member) is already inside the admission.
 A nested heavy invocation with a live marker skips the hook. A marker whose
-run has ended does not bypass the hook.
+run has ended does not bypass the hook. The in-process marker is held per
+thread, the same way run nesting is (sequence steps and QA members run on
+the thread that admitted their parent): two runs that share one Effigy
+process but not a thread never see each other's marker, so a heavy run on
+one thread is always gated by its own hook. A nested run that moved to
+another thread is not inside this thread's admission and queues again,
+which fails closed.
 
 ## Run control
 
@@ -154,6 +160,7 @@ Queue's migration to the hook is described in
 | Guarantee | Proof |
 | --- | --- |
 | Hook admit, hold, release; deny; timeout; crash; nested marker; no-hook default; `qa`/`ci` | `test:run-control:cli` |
+| The in-process marker is per thread: a heavy run on another thread of the same process still takes the hook | `test:run-control` (`admission::tests::a_held_admission_marker_belongs_to_the_thread_that_holds_it`) |
 | `--run-id` racing invocations and repeats | `test:run-control:cli`; `test:run-control` |
 | `run stop` settles a running task and its children | `test:run-control`; `test:run-control:cli` |
 | `logs --follow` ends on settle; killed follower reattaches by offset | `test:run-control:cli` |

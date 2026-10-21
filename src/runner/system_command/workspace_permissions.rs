@@ -3101,6 +3101,87 @@ mod tests {
     }
 
     #[test]
+    fn acowtancy_shaped_nested_target_volume_root_is_repaired() {
+        // Acowtancy #670 shape: a bind-mounted workspace checkout with isolated
+        // named volumes nested under it, including the Rust `target`. A fresh
+        // volume root is empty and owned 0:0, while node_modules volumes were
+        // already repaired. Every isolated root must reach the workspace user,
+        // including after the host mount point was deleted and recreated.
+        let root = tempfile::tempdir().expect("fresh private fixture root");
+        let compose = root.path().join("docker-compose.yml");
+        std::fs::write(
+            &compose,
+            r#"
+services:
+  workspace:
+    volumes:
+      - /private/task-checkout:/workspace-root/acowtancy
+      - repo-node-modules:/workspace-root/acowtancy/node_modules
+      - repo-froyo-node-modules:/workspace-root/acowtancy/packages/froyo/node_modules
+      - repo-farmyard-target:/workspace-root/acowtancy/apps/farmyard/target
+volumes:
+  repo-node-modules: {}
+  repo-froyo-node-modules: {}
+  repo-farmyard-target: {}
+"#,
+        )
+        .expect("private compose fixture");
+        let mut policy = effective_container_policy("stack", "acowtancy-dev", "workspace", compose);
+        policy.repo_root = root.path().to_path_buf();
+        policy.workspace_user = Some("dev".to_owned());
+
+        for target_state in ["empty", "stale"] {
+            let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
+            backend.add_dir("/workspace-root/acowtancy", 501, 20, 0o755);
+            for dir in ["node_modules", "packages/froyo/node_modules"] {
+                backend.add_dir(&format!("/workspace-root/acowtancy/{dir}"), 501, 20, 0o700);
+            }
+            backend.add_dir(
+                "/workspace-root/acowtancy/apps/farmyard/target",
+                0,
+                0,
+                0o755,
+            );
+            if target_state == "stale" {
+                backend.add_dir(
+                    "/workspace-root/acowtancy/apps/farmyard/target/debug",
+                    0,
+                    0,
+                    0o755,
+                );
+            }
+
+            ensure_workspace_permissions_ready_with(&policy, None, true, &mut backend)
+                .expect("every isolated volume root is prepared for the workspace user");
+
+            assert_eq!(
+                backend.owner_of("/workspace-root/acowtancy/apps/farmyard/target"),
+                Some((501, 20)),
+                "{target_state}"
+            );
+            if target_state == "stale" {
+                assert_eq!(
+                    backend.owner_of("/workspace-root/acowtancy/apps/farmyard/target/debug"),
+                    Some((501, 20))
+                );
+            }
+            assert_eq!(
+                backend.owner_of("/workspace-root/acowtancy/node_modules"),
+                Some((501, 20))
+            );
+            assert_eq!(
+                backend.owner_of("/workspace-root/acowtancy/packages/froyo/node_modules"),
+                Some((501, 20))
+            );
+            // The workspace host bind is verified, never chowned.
+            assert_eq!(
+                backend.owner_of("/workspace-root/acowtancy"),
+                Some((501, 20))
+            );
+        }
+    }
+
+    #[test]
     fn nested_owned_volume_is_pruned_from_parent_then_repaired_in_its_own_scope() {
         let mut backend = MemoryAccessBackend::new(vec![identity("dev", 501, 20)]);
         backend.add_dir("/home/dev", 0, 0, 0o755);

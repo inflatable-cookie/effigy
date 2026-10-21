@@ -103,6 +103,20 @@ live holders makes no backend call.
 An absent service has no live mount inventory; its absence does not prove mount
 drift or require recreation. Ordinary up may create it with `--no-recreate`.
 
+An isolated volume overlays a directory inside the checkout, so its host mount
+point must exist. The mount observation includes those host directories: a
+missing one is drift, reported read-only by `container status` and doctor, and
+seen by routed-task preparation before that preparation creates anything. Up
+and routed-task preparation then recreate a missing host mount-point directory
+for a named volume of the primary service nested under the working directory
+(the isolated `target` and `node_modules` trees). Because the missing directory
+is already drift, routed-task preparation heals it through the guarded bring-up
+rather than an idempotent `--no-recreate` apply, and a running stack is
+reconciled instead of reused: the nested mount lost the directory beneath it.
+A non-directory or symlink at that path refuses; creation never replaces a file
+and never follows a link. This is a host-side preparation step, not permission
+repair: it changes no ownership or mode.
+
 `container status` exposes `mount_drift` with a `state` and `details` in JSON
 and text; doctor reports drift or unavailable observations read-only. Legacy
 stacks need no manual marker removal or volume deletion: their next guarded
@@ -235,6 +249,16 @@ effect still rechecks and targets its retained immutable full ID. An explicit
 caller absolute deadline bounds verification and execution unchanged: no fresh
 phase allowance extends it. Unavailable or foreign ownership still refuses;
 the longer observation window grants no restart or successor-adoption authority.
+
+The stopped-inclusive project inventory (`runtime ps --all`) used by task
+preparation and owned-service recovery is label-filtered to the Compose project
+and retried once, after a short backoff, only when Effigy's own observation
+bound expired. It is a read-only observation, so the retry cannot duplicate an
+effect; a second timeout, a refused runtime, a parse failure and a non-timeout
+failure are all returned unchanged. Two timeouts name the failure as a runtime
+inventory admission failure: the task did not run, and the message points at
+`container status` and the task's host route where the repository defines one.
+No assertion, timeout budget or ownership requirement is relaxed.
 
 The up diagnostic and detached JSON report describe only the Compose create
 spec decision and whether the Compose up command succeeded. They identify
