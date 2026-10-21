@@ -343,6 +343,14 @@
 "test:task-engine:shared-secrets" = { visibility = "internal", group = "Maintenance", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy --lib secrets_tests:: -- --test-threads=8", timeout_ms = 1800000 }] }
 # The exec adapter's remote group stop under bash and dash (a leaderless group).
 "test:task-engine:remote-stop" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(/exec::managed_stop::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
+# Per-run scratch on a configured external volume (effigy#244): the volume gate's
+# refusals, TMPDIR precedence, runtime settlement and retention sweep, and the
+# user-config and task keys that enable them.
+"test:scratch:runner" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-manifest -p effigy-builtin --lib -E 'test(/^runner::scratch::/) | test(/^runner::task_engine::tests::/) | test(/^runner::task_engine::remote::tests::a_container_workload/) | test(/^runner::builtin_ports::tests::/) | test(/^runner::execute::selection::fallback::tests::/) | test(/^runner::execute::pipeline::managed::tests::a_managed_task_honours_its_scratch_opt_out/) | test(/^test::execution::tests::/) | test(user_config::tests::) | test(task_runtime::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-doctor --lib -E 'test(/^manifest_schema::tests::validate_manifest_schema_(accepts_the_task_scratch_opt_out|rejects_a_non_boolean_task_scratch)/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test ratchet --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+] }
 # Read-only resolver shadow diff over consumer roots: EFFIGY_SHADOW_OLD names the
 # previous binary, EFFIGY_SHADOW_ROOTS a file of roots relative to ~/Dev.
 "qa:resolver-shadow-diff" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo build --bin effigy && python3 tests/scripts/resolver-shadow-diff.py --old \"$EFFIGY_SHADOW_OLD\" --new target/debug/effigy --roots \"$EFFIGY_SHADOW_ROOTS\" ${EFFIGY_SHADOW_REPORT:+--report \"$EFFIGY_SHADOW_REPORT\"}", timeout_ms = 3600000 }] }

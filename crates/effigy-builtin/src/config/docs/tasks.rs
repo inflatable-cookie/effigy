@@ -20,6 +20,8 @@ const SECTION_TASKS_CANONICAL_PREFIX: &[&str] = &[
     "# Optional shared lock name when multiple tasks should serialize together.",
     "lock = \"dev-stack\"",
     "fail_on_non_zero = true",
+    "# Optional: keep this task out of the user-configured per-run scratch directory (`[scratch]`).",
+    "scratch = false",
     "# First bounded dev-front-door contract: let one managed task own container lifecycle.",
     "container_lifecycle = true",
     "# Optional: auto-start the shipped gateway when the task-owned container session declares DNS.",

@@ -14,7 +14,7 @@ use effigy_tui::multiprocess::{run_multiprocess_tui, MultiProcessTuiOptions};
 use super::planning::{BuiltinTargetRuntime, BuiltinTestRunnable};
 use super::{BuiltinError, BuiltinTestExecResult};
 use crate::ports::BuiltinTestChildEvidence;
-use crate::BuiltinRuntimePorts;
+use crate::{BuiltinRuntimePorts, HostSuiteCustody};
 #[path = "planning/runnable/cargo_env.rs"]
 mod cargo_env;
 
@@ -45,6 +45,7 @@ pub(super) fn run_builtin_test_targets_tui(
         .iter()
         .map(|suite| suite.name.clone())
         .collect::<Vec<String>>();
+    let host_env = host_scratch_env(ports);
     let specs = runnable
         .iter()
         .map(|suite| {
@@ -61,7 +62,11 @@ pub(super) fn run_builtin_test_targets_tui(
                 start_after_ms: 0,
                 shutdown_on_exit: false,
                 pty: true,
-                env: std::collections::BTreeMap::new(),
+                env: if runs_on_host(suite) {
+                    host_env.clone()
+                } else {
+                    std::collections::BTreeMap::new()
+                },
             })
         })
         .collect::<Result<Vec<ProcessSpec>, BuiltinError>>()?;
@@ -113,6 +118,9 @@ pub(super) fn run_builtin_test_targets_parallel(
     } else {
         0
     };
+    // The suites run on worker threads, which cannot see the caller's thread
+    // scope: read the run's host environment here and carry it across.
+    let host_env = host_scratch_env(ports);
     let jobs = runnable
         .into_iter()
         .map(|job| {
@@ -139,15 +147,38 @@ pub(super) fn run_builtin_test_targets_parallel(
                 job.teardown_command.as_deref(),
                 job.teardown_policy,
             );
+            let host = runs_on_host(&job);
+            // A suite the caller's run owns runs under that run's custody: one
+            // child run per suite, moved to the worker that runs it, so the run
+            // settles the suite's whole process group. Child evidence is the
+            // built-in's own diagnostic spawn, so it keeps the plain path.
+            let custody = if host && !capture_child_evidence {
+                ports.host_suite_custody(&job.name)?
+            } else {
+                None
+            };
             Ok((
                 job.name,
                 job.root,
                 job.runner,
                 job.command,
                 execution_command,
+                host,
+                custody,
             ))
         })
-        .collect::<Result<Vec<(String, PathBuf, String, String, String)>, BuiltinError>>()?;
+        .collect::<Result<
+            Vec<(
+                String,
+                PathBuf,
+                String,
+                String,
+                String,
+                bool,
+                Option<Box<dyn HostSuiteCustody>>,
+            )>,
+            BuiltinError,
+        >>()?;
     let worker_count = max_parallel.min(jobs.len()).max(1);
     let queue = Arc::new(Mutex::new(VecDeque::from(jobs)));
 
@@ -162,6 +193,7 @@ pub(super) fn run_builtin_test_targets_parallel(
             let mut handles = Vec::with_capacity(worker_count);
             for _ in 0..worker_count {
                 let queue_ref = Arc::clone(&queue);
+                let host_env = host_env.clone();
                 let child_evidence_sender = child_evidence_sender.clone();
                 handles.push(scope.spawn(move || {
                     let mut local = Vec::<BuiltinTestExecResult>::new();
@@ -170,7 +202,9 @@ pub(super) fn run_builtin_test_targets_parallel(
                             let mut queue = queue_ref.lock().expect("test queue lock poisoned");
                             queue.pop_front()
                         };
-                        let Some((name, root, runner, command, execution_command)) = job else {
+                        let Some((name, root, runner, command, execution_command, host, custody)) =
+                            job
+                        else {
                             break;
                         };
                         let child_generation = if capture_child_evidence {
@@ -178,9 +212,52 @@ pub(super) fn run_builtin_test_targets_parallel(
                         } else {
                             0
                         };
+                        if let Some(mut custody) = custody {
+                            let outcome =
+                                custody.run(&execution_command, &root, &host_env, capture_output);
+                            let result = outcome.map(|outcome| {
+                                #[cfg(unix)]
+                                let status = {
+                                    use std::os::unix::process::ExitStatusExt;
+                                    std::process::ExitStatus::from_raw(
+                                        outcome.code.unwrap_or(1) << 8,
+                                    )
+                                };
+                                #[cfg(not(unix))]
+                                let status = {
+                                    let _ = outcome;
+                                    unreachable!("built-in test custody is a unix process group")
+                                };
+                                status
+                            });
+                            let succeeded = matches!(&result, Ok(status) if status.success());
+                            // The suite's outcome is recorded and its whole
+                            // process group stopped here, before the run that
+                            // owns the scratch directory concludes.
+                            custody.settle(succeeded);
+                            let status =
+                                result.map_err(|error| BuiltinError::TaskCommandLaunch {
+                                    command: execution_command.clone(),
+                                    error: std::io::Error::other(error.to_string()),
+                                })?;
+                            local.push(BuiltinTestExecResult {
+                                name,
+                                runner,
+                                root,
+                                command,
+                                success: status.success(),
+                                code: status.code(),
+                            });
+                            continue;
+                        }
                         let mut process = ProcessCommand::new("sh");
                         process.arg("-c").arg(&execution_command).current_dir(&root);
                         with_local_node_bin_path(&mut process, &root);
+                        if host {
+                            for (key, value) in &host_env {
+                                process.env(key, value);
+                            }
+                        }
                         let observer_active_at_spawn =
                             effigy_process::process_group_observer_active();
                         if observer_active_at_spawn {
@@ -329,6 +406,21 @@ fn route_suite_command(
     ports.render_container_suite_command(&target, command)
 }
 
+/// The run's host environment, as the caller's run provides it.
+fn host_scratch_env(ports: &dyn BuiltinRuntimePorts) -> std::collections::BTreeMap<String, String> {
+    ports
+        .host_scratch_env()
+        .into_iter()
+        .map(|(key, value)| (key, value.to_string_lossy().into_owned()))
+        .collect()
+}
+
+/// Whether this suite runs as a host process of the calling run: a host-scoped
+/// target that is not already a nested invocation inside someone else's scope.
+fn runs_on_host(suite: &BuiltinTestRunnable) -> bool {
+    matches!(suite.runtime, BuiltinTargetRuntime::Host) && !suite.nested_invocation
+}
+
 fn render_routed_suite_command(
     ports: &dyn BuiltinRuntimePorts,
     suite: &BuiltinTestRunnable,
@@ -433,4 +525,225 @@ fn render_wrapped_suite_command(suite: &BuiltinTestRunnable) -> String {
         &suite.env,
         &suite.root,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{BuiltinLockGuards, LockScope};
+    use effigy_cli::{Command, DoctorArgs, TaskInvocation, TasksArgs};
+    use effigy_manifest::{LoadedCatalog, ManifestCargoEnvMatchMode};
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::ffi::OsString;
+    use std::path::Path;
+
+    /// A ports double that answers the scratch question, and can hand out a
+    /// custody double that records the suite it was given.
+    struct ScratchPorts {
+        env: Vec<(String, OsString)>,
+        custody_marker: Option<PathBuf>,
+    }
+
+    impl BuiltinRuntimePorts for ScratchPorts {
+        fn host_scratch_env(&self) -> Vec<(String, OsString)> {
+            self.env.clone()
+        }
+
+        fn custody_holds_host_suites(&self) -> bool {
+            self.custody_marker.is_some()
+        }
+
+        fn host_suite_custody(
+            &self,
+            label: &str,
+        ) -> Result<Option<Box<dyn HostSuiteCustody>>, BuiltinError> {
+            let Some(marker) = &self.custody_marker else {
+                return Ok(None);
+            };
+            Ok(Some(Box::new(RecordingCustody {
+                marker: marker.clone(),
+                label: label.to_owned(),
+            })))
+        }
+
+        fn acquire_scopes(
+            &self,
+            _workspace_root: &Path,
+            _scopes: &[LockScope],
+        ) -> Result<BuiltinLockGuards, BuiltinError> {
+            Ok(BuiltinLockGuards::new(()))
+        }
+
+        fn current_working_dir(&self) -> Result<PathBuf, BuiltinError> {
+            std::env::current_dir()
+                .map_err(|error| BuiltinError::task_invocation(error.to_string()))
+        }
+
+        fn run_manifest_task_with_cwd(
+            &self,
+            _task: &TaskInvocation,
+            _cwd: PathBuf,
+        ) -> Result<String, BuiltinError> {
+            unreachable!("the execution proof runs suites directly")
+        }
+
+        fn run_doctor(&self, _args: DoctorArgs) -> Result<String, BuiltinError> {
+            unreachable!("the execution proof runs suites directly")
+        }
+
+        fn run_tasks(&self, _args: TasksArgs) -> Result<String, BuiltinError> {
+            unreachable!("the execution proof runs suites directly")
+        }
+
+        fn run_command(&self, _command: Command) -> Result<String, BuiltinError> {
+            unreachable!("the execution proof runs suites directly")
+        }
+
+        fn deferred_builtins_from_catalogs(
+            &self,
+            _catalogs: &[LoadedCatalog],
+            _resolved_root: &Path,
+        ) -> BTreeSet<String> {
+            BTreeSet::new()
+        }
+    }
+
+    fn suite(root: &Path, command: &str, runtime: BuiltinTargetRuntime) -> BuiltinTestRunnable {
+        BuiltinTestRunnable {
+            name: "proof".to_owned(),
+            runner: "proof".to_owned(),
+            root: root.to_path_buf(),
+            command: command.to_owned(),
+            auto_workspace_scope: false,
+            cargo_env: BTreeMap::new(),
+            cargo_env_match: ManifestCargoEnvMatchMode::default(),
+            env: BTreeMap::new(),
+            setup_command: None,
+            teardown_command: None,
+            teardown_policy: ManifestTestSuiteTeardownPolicy::Always,
+            is_default: true,
+            runtime,
+            nested_invocation: false,
+        }
+    }
+
+    /// Records the suite it is given and reports the code the suite's own
+    /// script would have produced, without spawning: the dispatch proof.
+    struct RecordingCustody {
+        marker: PathBuf,
+        label: String,
+    }
+
+    impl HostSuiteCustody for RecordingCustody {
+        fn run(
+            &mut self,
+            command: &str,
+            cwd: &Path,
+            env: &BTreeMap<String, String>,
+            _capture: bool,
+        ) -> Result<crate::HostSuiteOutcome, BuiltinError> {
+            std::fs::write(
+                &self.marker,
+                format!(
+                    "{}|{}|{}|{}|{}",
+                    self.label,
+                    command,
+                    cwd.display(),
+                    env.get("TMPDIR").cloned().unwrap_or_default(),
+                    env.len()
+                ),
+            )
+            .expect("custody marker");
+            Ok(crate::HostSuiteOutcome { code: Some(0) })
+        }
+
+        fn settle(self: Box<Self>, _succeeded: bool) {}
+    }
+
+    fn ports(dir: &Path) -> ScratchPorts {
+        ScratchPorts {
+            env: ["TMPDIR", "TMP", "TEMP"]
+                .iter()
+                .map(|key| ((*key).to_owned(), dir.as_os_str().to_owned()))
+                .collect(),
+            custody_marker: None,
+        }
+    }
+
+    #[test]
+    fn a_host_suite_runs_in_the_caller_runs_scratch_directory() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let scratch = tempfile::tempdir().expect("scratch");
+        let seen = fixture.path().join("tmpdir.txt");
+        let command = format!(
+            "printf '%s' \"$TMPDIR\" > {}",
+            shell_quote(&seen.display().to_string())
+        );
+        let runnable = suite(fixture.path(), &command, BuiltinTargetRuntime::Host);
+
+        let results =
+            run_builtin_test_targets_parallel(&ports(scratch.path()), vec![runnable], 1, true)
+                .expect("suite ran");
+        assert!(results[0].success, "{:?}", results[0]);
+        assert_eq!(
+            std::fs::read_to_string(&seen).expect("suite output"),
+            scratch.path().display().to_string(),
+            "a host suite sees the run's scratch directory as TMPDIR"
+        );
+    }
+
+    #[test]
+    fn a_host_suite_is_dispatched_through_the_callers_run_custody() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let scratch = tempfile::tempdir().expect("scratch");
+        let marker = fixture.path().join("custody.txt");
+        let runnable = suite(fixture.path(), "printf suite", BuiltinTargetRuntime::Host);
+        let mut ports = ports(scratch.path());
+        ports.custody_marker = Some(marker.clone());
+
+        let results =
+            run_builtin_test_targets_parallel(&ports, vec![runnable], 1, true).expect("suite ran");
+        assert!(results[0].success, "{:?}", results[0]);
+        let recorded = std::fs::read_to_string(&marker).expect("custody marker");
+        let fields = recorded.split('|').collect::<Vec<_>>();
+        assert_eq!(fields[0], "proof", "the suite reached its own custody");
+        assert_eq!(fields[1], "printf suite");
+        assert_eq!(
+            fields[3],
+            scratch.path().display().to_string(),
+            "custody ran the suite with the run's temp environment: {recorded}"
+        );
+        assert_eq!(fields[4], "3", "TMPDIR, TMP and TEMP");
+    }
+
+    #[test]
+    fn a_nested_or_container_suite_never_receives_the_host_scratch() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let scratch = tempfile::tempdir().expect("scratch");
+        let seen = fixture.path().join("tmpdir.txt");
+        let command = format!(
+            "printf '%s' \"$TMPDIR\" > {}",
+            shell_quote(&seen.display().to_string())
+        );
+        // A nested invocation renders its container command itself and runs
+        // inside the surrounding scope, so the outer host scratch stays out.
+        let mut runnable = suite(
+            fixture.path(),
+            &command,
+            BuiltinTargetRuntime::Container {
+                container: "web".to_owned(),
+            },
+        );
+        runnable.nested_invocation = true;
+
+        let results =
+            run_builtin_test_targets_parallel(&ports(scratch.path()), vec![runnable], 1, true)
+                .expect("suite ran");
+        assert!(results[0].success, "{:?}", results[0]);
+        assert_ne!(
+            std::fs::read_to_string(&seen).expect("suite output"),
+            scratch.path().display().to_string(),
+            "a container suite keeps the container's own temp directory"
+        );
+    }
 }

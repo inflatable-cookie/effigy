@@ -351,7 +351,23 @@ fn cancel_token() -> CancelToken {
         .unwrap_or_default()
 }
 
-/// Task runs record kernel effects: local custody and remote custody.
+/// A read-only journal view for engines outside the run path, such as the
+/// scratch directory's retention sweep. `None` when the journal is absent or
+/// unreadable: retention removes nothing rather than guessing.
+pub(in crate::runner) fn journal_reader() -> Option<effigy_kernel::store::StoreReader> {
+    let cx = observe();
+    let root = match observe_root(&cx) {
+        Observed::Verified(root, _) => root,
+        _ => return None,
+    };
+    match effigy_kernel::store::Store::read(&cx, &root) {
+        Observed::Verified(reader, _) => Some(reader),
+        _ => None,
+    }
+}
+
+/// Task runs record kernel effects: local custody, remote custody and their own
+/// scratch directory.
 /// Remote sessions settle through the Compose backend their identity names,
 /// also in sentinel recovery. Managed runs add their own engine effects,
 /// settled by the run supervisor's adapter. Any other effect is no engine's
@@ -387,6 +403,9 @@ impl SettlementAdapter for TaskSettlement {
         Some(self.remote.get_or_insert_with(recovery_adapter).as_mut())
     }
     fn observe(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<Fence> {
+        if crate::runner::scratch::owns(&effect.spec.kind) {
+            return crate::runner::scratch::observe(effect, cx);
+        }
         if crate::runner::managed_run::owns_effect(&effect.spec.kind) {
             return crate::runner::managed_run::observe_effect(effect, cx);
         }
@@ -395,6 +414,9 @@ impl SettlementAdapter for TaskSettlement {
         ))
     }
     fn release(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<()> {
+        if crate::runner::scratch::owns(&effect.spec.kind) {
+            return crate::runner::scratch::release(effect, cx);
+        }
         if crate::runner::managed_run::owns_effect(&effect.spec.kind) {
             return crate::runner::managed_run::release_effect(effect, cx);
         }
@@ -403,6 +425,9 @@ impl SettlementAdapter for TaskSettlement {
         ))
     }
     fn reconcile(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<Reconciled> {
+        if crate::runner::scratch::owns(&effect.spec.kind) {
+            return crate::runner::scratch::reconcile(effect, cx);
+        }
         if crate::runner::managed_run::owns_effect(&effect.spec.kind) {
             return crate::runner::managed_run::reconcile_effect(effect, cx);
         }

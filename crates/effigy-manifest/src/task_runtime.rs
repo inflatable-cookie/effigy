@@ -49,6 +49,10 @@ pub struct ManifestTask {
     pub profiles: BTreeMap<String, ManifestManagedProfile>,
     #[serde(default)]
     pub cache: Option<ManifestTaskCache>,
+    /// `false` keeps this task out of the configured per-run scratch
+    /// directory (user config `[scratch]`). Unset or `true` uses it.
+    #[serde(default)]
+    pub scratch: Option<bool>,
 }
 
 /// Discovery policy only: internal tasks remain directly runnable.
@@ -89,6 +93,11 @@ pub enum ManifestTaskSecretsMode {
 }
 
 impl ManifestTask {
+    /// Whether this task may run in the configured per-run scratch directory.
+    pub fn uses_scratch(&self) -> bool {
+        self.scratch.unwrap_or(true)
+    }
+
     pub fn run_in(&self) -> ManifestTaskRunIn {
         self.run_in.unwrap_or(ManifestTaskRunIn::Either)
     }
@@ -380,5 +389,19 @@ run = { task = "docs check headings README.md --require-heading '# Hello'" }
             [ManifestManagedRunStep::Step(step)]
                 if step.task.as_deref() == Some("docs check headings README.md --require-heading '# Hello'")
         ));
+    }
+
+    #[test]
+    fn a_task_uses_the_configured_scratch_unless_it_opts_out() {
+        let default: ManifestTask = toml::from_str(r#"run = "cargo test""#).expect("parse task");
+        assert!(default.uses_scratch());
+
+        let opted_out: ManifestTask =
+            toml::from_str("run = \"cargo test\"\nscratch = false").expect("parse task");
+        assert!(!opted_out.uses_scratch());
+
+        let opted_in: ManifestTask =
+            toml::from_str("run = \"cargo test\"\nscratch = true").expect("parse task");
+        assert!(opted_in.uses_scratch());
     }
 }

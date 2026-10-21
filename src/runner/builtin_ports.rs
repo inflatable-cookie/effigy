@@ -26,16 +26,137 @@ use crate::runner::tasks_command;
 
 /// Concrete `BuiltinRuntimePorts` implementation that delegates to the
 /// runner modules directly.
-#[derive(Debug, Default)]
-pub(in crate::runner) struct RunnerBuiltinPorts;
+///
+/// A caller that holds a run owning a scratch directory lends that run here:
+/// each host suite then runs as a child run of it, so the suite's process tree
+/// is custody the run settles before its scratch directory is released.
+pub(in crate::runner) struct RunnerBuiltinPorts<'a> {
+    suite_parent: Option<std::cell::RefCell<&'a mut TaskRun>>,
+    next_suite: std::cell::Cell<usize>,
+}
 
-impl RunnerBuiltinPorts {
-    pub(in crate::runner) fn new() -> Self {
-        Self
+impl std::fmt::Debug for RunnerBuiltinPorts<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunnerBuiltinPorts")
+            .field("owns_host_suites", &self.suite_parent.is_some())
+            .finish()
     }
 }
 
-impl BuiltinRuntimePorts for RunnerBuiltinPorts {
+impl Default for RunnerBuiltinPorts<'_> {
+    fn default() -> Self {
+        Self {
+            suite_parent: None,
+            next_suite: std::cell::Cell::new(0),
+        }
+    }
+}
+
+impl<'a> RunnerBuiltinPorts<'a> {
+    pub(in crate::runner) fn new() -> RunnerBuiltinPorts<'static> {
+        RunnerBuiltinPorts::default()
+    }
+
+    /// Lends the built-in `test` route's run, so its host suites become child
+    /// runs of it.
+    pub(in crate::runner) fn with_suite_run(run: &'a mut TaskRun) -> RunnerBuiltinPorts<'a> {
+        RunnerBuiltinPorts {
+            suite_parent: Some(std::cell::RefCell::new(run)),
+            next_suite: std::cell::Cell::new(0),
+        }
+    }
+}
+
+/// One host suite's custody: a child run of the caller's run, closed on the
+/// worker that ran it.
+struct SuiteCustody {
+    run: Option<TaskRun>,
+    label: String,
+}
+
+impl effigy_builtin::HostSuiteCustody for SuiteCustody {
+    fn run(
+        &mut self,
+        command: &str,
+        cwd: &Path,
+        env: &std::collections::BTreeMap<String, String>,
+        capture: bool,
+    ) -> Result<effigy_builtin::HostSuiteOutcome, BuiltinError> {
+        let Some(run) = self.run.as_mut() else {
+            return Err(BuiltinError::task_invocation(
+                "the suite's run was already settled",
+            ));
+        };
+        let exit = crate::runner::task_engine::run_plain(
+            run,
+            crate::runner::task_engine::PlainCommand {
+                command,
+                cwd,
+                env: env
+                    .iter()
+                    .map(|(key, value)| {
+                        (
+                            key.clone(),
+                            crate::runner::task_engine::EnvOverride::Plain(value.clone()),
+                        )
+                    })
+                    .collect(),
+                capture,
+                timeout_ms: None,
+            },
+        )
+        .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
+        Ok(effigy_builtin::HostSuiteOutcome {
+            code: Some(exit.code),
+        })
+    }
+
+    fn settle(mut self: Box<Self>, succeeded: bool) {
+        let Some(run) = self.run.take() else {
+            return;
+        };
+        let workload = if succeeded {
+            effigy_kernel::outcome::WorkloadOutcome::Succeeded
+        } else {
+            effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 }
+        };
+        for warning in run.close(workload) {
+            eprintln!("warning: {}: {warning}", self.label);
+        }
+    }
+}
+
+impl BuiltinRuntimePorts for RunnerBuiltinPorts<'_> {
+    fn host_scratch_env(&self) -> Vec<(String, std::ffi::OsString)> {
+        crate::runner::scratch::temp_env()
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.into_os_string()))
+            .collect()
+    }
+
+    fn custody_holds_host_suites(&self) -> bool {
+        self.suite_parent.is_some()
+    }
+
+    fn host_suite_custody(
+        &self,
+        label: &str,
+    ) -> Result<Option<Box<dyn effigy_builtin::HostSuiteCustody>>, BuiltinError> {
+        let Some(parent) = self.suite_parent.as_ref() else {
+            return Ok(None);
+        };
+        let index = self.next_suite.get();
+        self.next_suite.set(index + 1);
+        let run = parent
+            .borrow_mut()
+            .step(index, label)
+            .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
+        Ok(Some(Box::new(SuiteCustody {
+            run: Some(run),
+            label: label.to_owned(),
+        })))
+    }
+
     fn builtin_test_child_evidence_enabled(&self) -> bool {
         #[cfg(test)]
         {
@@ -155,5 +276,33 @@ pub(in crate::runner) fn runner_to_builtin(error: RunnerError) -> BuiltinError {
             BuiltinError::CommandJsonFailure { rendered }
         }
         other => BuiltinError::TaskInvocation(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use effigy_builtin::BuiltinRuntimePorts;
+
+    #[test]
+    fn host_scratch_env_follows_the_runs_scratch_scope() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let dir = scratch.path().join("scratch-dir");
+        std::fs::create_dir(&dir).expect("dir");
+
+        assert!(
+            super::RunnerBuiltinPorts::new()
+                .host_scratch_env()
+                .is_empty(),
+            "a caller with no run injects no temp variables"
+        );
+
+        crate::runner::scratch::with_test_scope(&dir, || {
+            let env = super::RunnerBuiltinPorts::new().host_scratch_env();
+            let keys = env.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>();
+            assert_eq!(keys, ["TMPDIR", "TMP", "TEMP"]);
+            for (_, value) in env {
+                assert_eq!(std::path::Path::new(&value), dir);
+            }
+        });
     }
 }

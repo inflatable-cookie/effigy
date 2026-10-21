@@ -15,6 +15,8 @@ This guide covers two related features that ship together:
 - **Host git/SSH integration** — fold the developer's `~/.gitconfig`,
   `~/.ssh/known_hosts`, and forwarded SSH agent socket into git-aware
   workspace containers (`php-fpm`, `workspace-rust-bun`, `node`) by default.
+- **Per-run scratch** — move every host-placed run's temporary directory onto
+  an external volume, one directory per run, with kernel-owned cleanup.
 
 ## Vision Alignment
 
@@ -209,6 +211,138 @@ The `Root Resolution` section reports:
 - the active Docker context, when Docker is installed
 - the Colima profiles declared by the target repo
 - whether a user-global backend/profile preference is pinned
+
+## Per-Run Scratch On An External Volume
+
+Test and QA runs write a lot of scratch data. By default that lands in the
+operating system's temp directory, which on a laptop is the internal SSD. The
+user-global `[scratch]` block moves it to a volume you name, one directory per
+run, and Effigy removes it again.
+
+```toml
+# ~/.effigy/config.toml
+[scratch]
+root = "/Volumes/EffigyScratch"
+volume_uuid = "A6AC3ED7-33EA-46B4-8082-7254CF291ED2"
+require_separate_volume = true
+```
+
+`root` is the volume's **mount point**, not a directory inside the volume:
+that is the only path whose device and ownership Effigy can prove belong to a
+separate, mounted volume. Point it at a dedicated volume (`/Volumes/<name>`),
+or at an existing volume's mount root, as the preparation recipe below does.
+
+With that block set, every host-placed run gets its own `<root>/<8-character
+run directory>/`, named from the run's whole identity (so two runs started in
+the same instant, and every `--run-id` run, still differ), and its host
+processes see that directory as `TMPDIR`, `TMP` and `TEMP`. The canonical
+built-in `effigy test` route holds such a run too, so project test suites write
+their fixtures and temp files to the volume. Unset, nothing changes: Effigy
+never rewrites the temp environment, and a command that would hold no scratch
+directory (including `effigy test`) opens no run at all, so it needs no Effigy
+state home.
+
+**Recommendation: always set `volume_uuid`.** Without the pin, a mount point
+that happens to be reused by another disk is accepted as long as the other
+checks pass. `diskutil info /Volumes/<name> | grep "Volume UUID"` prints the
+value; Effigy compares it case-insensitively against the volume that actually
+holds the root.
+
+### What Effigy refuses
+
+Every condition is checked before a run creates anything, on an opened
+descriptor of the root. A failure falls back to the default temp directory and
+`effigy doctor` reports the reason, so the run still works — it just writes to
+the internal disk:
+
+- the root does not exist (Effigy never creates a mount point or the root);
+- the root's volume is the boot volume `/`;
+- the root's volume is `/System/Volumes/Data`;
+- the root is not the volume's mount point (`require_separate_volume = true`,
+  the default), including a plain directory inside the volume or a stale
+  directory left under `/Volumes` after the drive went away;
+- the volume UUID is unreadable, or different from `volume_uuid`;
+- the root is inside `/Volumes/Builds/oxide-pool`, which belongs to Oxide;
+- the root is not owned by `root` (uid 0), carries an ACL, or is writable by
+  others.
+
+The ownership rule is what makes the root trustworthy against another local
+account. A fresh volume's root is root-owned and not writable by you, so give
+your own group write access to the mount point once:
+
+```sh
+# The volume is already mounted at /Volumes/EffigyScratch.
+sudo chown root:staff /Volumes/EffigyScratch
+sudo chmod 0775 /Volumes/EffigyScratch
+```
+
+No ACL, and no world write: those two are why `chmod 0775` is the right shape
+(`0777` is refused).
+
+`require_separate_volume = false` relaxes only the two volume-identity checks
+(boot/data volume and the mounted-volume-root requirement, so a directory
+inside a trusted volume is accepted); the UUID pin, when set, and the
+structural checks still apply. It exists for an explicitly trusted directory
+on an already-verified volume, not as a way to keep scratch on the internal
+disk.
+
+### Precedence
+
+- `TMPDIR`, `TMP` and `TEMP` are replaced only when `TMPDIR` is unset or is
+  the platform default (macOS `/var/folders/.../T`, Linux `/tmp`). An explicit
+  or non-default `TMPDIR` always wins, and Effigy creates no directory.
+- A nested run (a step, a task reference, or a nested `effigy` invocation)
+  reuses its parent's directory instead of starting another. A task that
+  declares `scratch = false` hides its parent's directory from its own host
+  processes rather than inheriting it.
+- Container-placed tasks and steps never get the host scratch. Effigy does not
+  forward `TMPDIR` into a container; a container workload keeps the
+  container's own tmp. Hybrid host processes of a managed session use that
+  session run's scratch.
+- A task can opt out with `scratch = false` in its `effigy.toml` entry
+  (managed sessions included), and `EFFIGY_SCRATCH=0` (or `false`) opts out
+  for one invocation.
+- Each host suite of the built-in `effigy test` route runs as a child run of
+  that route's run, so its whole process group is custody the run settles
+  before the directory is released — a suite's backgrounded descendant does not
+  outlive it. Because the multi-suite TUI spawns processes of its own, `effigy
+  test` streams its suites instead of opening the TUI while a scratch run holds
+  them.
+- That route's run carries a sentinel, like a task run: if Effigy is killed
+  outright, the sentinel settles the run and its suites, so the directory is
+  retained with a close time and the sweep can expire it later.
+
+### Retention
+
+- A run that succeeded releases its directory at settle.
+- A run that failed, was cancelled or timed out keeps it for 24 hours, and the
+  failure output names the path. The 24 hours start when the run ended, not
+  when it started, so a long run that fails late keeps its full window.
+- A run that loses its directory — the path is gone, or something else now
+  occupies the name without Effigy's marker for that run — keeps no authority
+  over what is there: it never writes a verdict into it and never removes it.
+- A run killed outright leaves the effect open; the sentinel's settle keeps
+  the directory rather than guessing, and its 24 hours run from the close the
+  sentinel recorded.
+- A bounded sweep during a later run's Prepare step removes retained
+  directories whose run is closed and whose 24 hours have passed. The sweep
+  only touches a directory Effigy can prove it named: the marker inside it must
+  name the run whose derived name the directory carries. Only the run that owns
+  the directory ever writes that marker, so a step's or a nested run's result
+  can never decide the parent's retention, and a directory that some other
+  process put at that path is never removed.
+
+### Interaction with Oxide
+
+Oxide (the sibling test runner) keeps a caller-provided `TMPDIR` instead of
+starting its own per-slot scratch. When Effigy runs `oxide test` from a run
+with scratch enabled, Effigy's scratch is already an explicit `TMPDIR`, so
+Oxide keeps it: one scratch directory serves both. When Effigy falls back to
+the default temp directory, Oxide uses its own per-slot scratch. Either way a
+single scratch tree is used, and neither tool leaves one behind.
+
+Queue worktree hooks are unaffected: Queue calls them directly rather than
+through a task run.
 
 ## Host Git/SSH Integration
 

@@ -61,6 +61,11 @@ pub(super) fn validate_tasks_table(context: &mut SchemaContext<'_, '_>, tasks: &
         validate_task_run_in_field(context, task_name, task_table.get("run_in"));
         validate_task_lock_field(context, task_name, task_table.get("lock"));
         validate_task_mode(context, task_name, task_table.get("mode"));
+        validate_optional_boolean_field(
+            context,
+            task_table.get("scratch"),
+            &format!("tasks.{task_name}.scratch"),
+        );
         validate_task_secrets_mode(context, task_name, task_table.get("secrets"));
         validate_task_run_field(context, task_name, task_table.get("run"));
         validate_task_system_field(context, task_name, task_table.get("system"));
@@ -187,6 +192,7 @@ fn validate_task_table_keys(
             "ready_message",
             "concurrent",
             "profiles",
+            "scratch",
         ],
     );
 }

@@ -187,6 +187,10 @@ fn collect_runtime_diagnostics(
     // §11); listing it tells the operator what is safe to remove.
     append_legacy_task_state_diagnostics(resolved_root, &mut diagnostics);
 
+    // The user-configured scratch root is machine-global: report whether it is
+    // in force, or why Effigy fell back to the default temp directory.
+    append_scratch_diagnostics(&mut diagnostics);
+
     let policies = match load_all_container_policies(resolved_root) {
         Ok(value) => value,
         Err(_) => return Ok(diagnostics),
@@ -444,6 +448,30 @@ fn append_legacy_task_state_diagnostics(
             ),
             fixable: false,
         });
+    }
+}
+
+/// Report the user-configured per-run scratch root: what runs under it, or
+/// why Effigy fell back to the default temp directory. The reason is an
+/// observation, never a failure.
+fn append_scratch_diagnostics(diagnostics: &mut DoctorRuntimeDiagnostics) {
+    use crate::runner::scratch;
+    match scratch::status() {
+        scratch::Status::Unconfigured => {}
+        scratch::Status::Admitted { root } => diagnostics.evidence.push(format!(
+            "scratch: host-placed runs use per-run directories under {}",
+            root.display()
+        )),
+        scratch::Status::Refused { root, reason } => {
+            let where_ = if root.as_os_str().is_empty() {
+                String::new()
+            } else {
+                format!("`{}` was refused: ", root.display())
+            };
+            diagnostics.warnings.push(format!(
+                "scratch: {where_}{reason}; runs use the default temp directory"
+            ));
+        }
     }
 }
 

@@ -18,6 +18,11 @@
 //! library_mounts = [
 //!   "~/Dev/legacy/libraries/php-app",
 //! ]
+//!
+//! [scratch]
+//! root = "/Volumes/Builds/effigy-scratch"
+//! volume_uuid = "1E2D3C4B-5A69-4788-99AA-BBCCDDEEFF00"
+//! require_separate_volume = true
 //! ```
 //!
 //! Each entry under `library_mounts` is a host path. When a project's
@@ -43,6 +48,32 @@ pub struct UserConfig {
     pub containers: UserContainersConfig,
     #[serde(default)]
     pub bundle: BTreeMap<String, UserBundleConfig>,
+    #[serde(default)]
+    pub scratch: UserScratchConfig,
+}
+
+/// User-global per-run scratch directory preferences.
+///
+/// Unset means no change: Effigy leaves the operating system's temp directory
+/// alone. A `root` moves the scratch of every host-placed run onto that
+/// volume, and Effigy refuses a root it cannot prove is a separate, trusted
+/// volume root (see the user guide). No path or UUID is hardcoded here: both
+/// come from this file.
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UserScratchConfig {
+    /// Directory that holds one subdirectory per run. Unset disables scratch.
+    #[serde(default)]
+    pub root: Option<String>,
+    /// Volume UUID the root must live on, compared against the volume that
+    /// actually holds it. Unset skips the pin.
+    #[serde(default)]
+    pub volume_uuid: Option<String>,
+    /// Whether the root must be a separate volume from the boot volume.
+    /// Unset (or `true`) requires it; `false` accepts any mounted volume
+    /// that passes the structural checks.
+    #[serde(default)]
+    pub require_separate_volume: Option<bool>,
 }
 
 /// User-global container runtime preferences.
@@ -90,7 +121,7 @@ pub struct LibraryMount {
 
 impl UserConfig {
     pub fn is_empty(&self) -> bool {
-        self.containers.is_empty() && self.bundle.is_empty()
+        self.containers.is_empty() && self.bundle.is_empty() && self.scratch.is_empty()
     }
 
     /// Returns the configured library mounts for the named bundle, with
@@ -127,6 +158,35 @@ impl UserConfig {
 
     pub fn preferred_container_profile_disk_gib(&self) -> Option<u64> {
         self.containers.preferred_profile_disk_gib()
+    }
+}
+
+impl UserScratchConfig {
+    pub fn is_empty(&self) -> bool {
+        self.root().is_none()
+    }
+
+    /// The configured scratch root with `~` expanded, or `None` when unset or
+    /// blank (the default: no change).
+    pub fn root(&self) -> Option<PathBuf> {
+        self.root
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(expand_user_path)
+    }
+
+    /// The UUID pin, trimmed, when configured.
+    pub fn volume_uuid(&self) -> Option<&str> {
+        self.volume_uuid
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    /// A root must be a separate volume unless this is explicitly `false`.
+    pub fn require_separate_volume(&self) -> bool {
+        self.require_separate_volume.unwrap_or(true)
     }
 }
 
@@ -323,6 +383,60 @@ library_mounts = ["~/Dev/u-libs"]
 
         let unknown = cfg.library_mounts_for("does-not-exist");
         assert!(unknown.is_empty());
+    }
+
+    #[test]
+    fn parses_user_global_scratch_preferences() {
+        let tmp = tempdir().expect("tempdir");
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[scratch]
+root = "  /Volumes/Builds/effigy-scratch  "
+volume_uuid = " 1E2D3C4B-5A69-4788-99AA-BBCCDDEEFF00 "
+require_separate_volume = false
+"#,
+        )
+        .expect("write");
+        let cfg = load_user_config_from(&path).expect("load");
+        assert_eq!(
+            cfg.scratch.root(),
+            Some(PathBuf::from("/Volumes/Builds/effigy-scratch"))
+        );
+        assert_eq!(
+            cfg.scratch.volume_uuid(),
+            Some("1E2D3C4B-5A69-4788-99AA-BBCCDDEEFF00")
+        );
+        assert!(!cfg.scratch.require_separate_volume());
+        assert!(!cfg.is_empty());
+    }
+
+    #[test]
+    fn unset_scratch_changes_nothing_and_requires_a_separate_volume_by_default() {
+        let tmp = tempdir().expect("tempdir");
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[scratch]
+root = "~/scratch"
+"#,
+        )
+        .expect("write");
+        let cfg = load_user_config_from(&path).expect("load");
+        assert!(cfg.scratch.volume_uuid().is_none());
+        assert!(cfg.scratch.require_separate_volume());
+        assert!(cfg.scratch.root().expect("root").ends_with("scratch"));
+
+        let empty = UserConfig::default();
+        assert!(empty.scratch.root().is_none());
+        assert!(empty.is_empty());
+        assert!(load_user_config_from(&tmp.path().join("missing.toml"))
+            .expect("absent file")
+            .scratch
+            .root()
+            .is_none());
     }
 
     #[test]
