@@ -24,9 +24,10 @@ There are currently no in-repository fixture exceptions. Scheduler retirement
 removed the authenticated-parent CWD restriction. `Fixture::workspace` allocates
 externally, using `/Users/Shared` on macOS because public container paths enforce
 Colima's share boundary even with a fake transport. Environment reconciler, unit
-workspace, bootstrap, CLI, gateway, builder and kill-matrix helpers all use this owner. The Python
-catalog adapter also allocates externally. Production catalog staging remains
-runtime-owned rather than a test fixture.
+workspace, bootstrap, CLI, gateway, builder and kill-matrix helpers all use this
+owner. The former Python catalog handoff adapter and production catalog-pack
+staging were retired with the catalog-pack path in #234; neither is restored by this
+fixture migration.
 
 ## Suite leak assertion
 
