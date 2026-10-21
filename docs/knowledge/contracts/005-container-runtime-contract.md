@@ -104,15 +104,18 @@ An absent service has no live mount inventory; its absence does not prove mount
 drift or require recreation. Ordinary up may create it with `--no-recreate`.
 
 An isolated volume overlays a directory inside the checkout, so its host mount
-point must exist. Before creating or reusing a stack, up and routed-task
-preparation recreate any missing host mount-point directory for a named volume
-of the primary service nested under the working directory (the isolated
-`target` and `node_modules` trees). A missing host mount point that had to be
-recreated is drift: the running stack is reconciled instead of reused, because
-the nested mount lost the directory beneath it. A non-directory or symlink at
-that path refuses; creation never replaces a file and never follows a link.
-This is a host-side preparation step, not permission repair: it changes no
-ownership or mode.
+point must exist. The mount observation includes those host directories: a
+missing one is drift, reported read-only by `container status` and doctor, and
+seen by routed-task preparation before that preparation creates anything. Up
+and routed-task preparation then recreate a missing host mount-point directory
+for a named volume of the primary service nested under the working directory
+(the isolated `target` and `node_modules` trees). Because the missing directory
+is already drift, routed-task preparation heals it through the guarded bring-up
+rather than an idempotent `--no-recreate` apply, and a running stack is
+reconciled instead of reused: the nested mount lost the directory beneath it.
+A non-directory or symlink at that path refuses; creation never replaces a file
+and never follows a link. This is a host-side preparation step, not permission
+repair: it changes no ownership or mode.
 
 `container status` exposes `mount_drift` with a `state` and `details` in JSON
 and text; doctor reports drift or unavailable observations read-only. Legacy

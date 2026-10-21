@@ -186,21 +186,9 @@ pub fn ensure_isolated_mount_host_points(
 fn ensure_points(points: &[IsolatedMountPoint]) -> Result<Vec<String>, ContainerExecError> {
     let mut created = Vec::new();
     for point in points {
-        match std::fs::symlink_metadata(&point.host_path) {
-            Ok(metadata) if metadata.is_dir() => continue,
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(unavailable(format!(
-                    "isolated mount point `{}` is a symlink; refusing to follow it",
-                    point.host_path.display()
-                )))
-            }
-            Ok(_) => {
-                return Err(unavailable(format!(
-                    "isolated mount point `{}` is not a directory",
-                    point.host_path.display()
-                )))
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        match host_point_presence(point)? {
+            HostPoint::Directory => continue,
+            HostPoint::Missing => {
                 std::fs::create_dir_all(&point.host_path).map_err(|error| {
                     unavailable(format!(
                         "cannot recreate isolated mount point `{}`: {error}",
@@ -209,15 +197,55 @@ fn ensure_points(points: &[IsolatedMountPoint]) -> Result<Vec<String>, Container
                 })?;
                 created.push(point.host_path.display().to_string());
             }
-            Err(error) => {
-                return Err(unavailable(format!(
-                    "cannot inspect isolated mount point `{}`: {error}",
-                    point.host_path.display()
-                )))
-            }
         }
     }
     Ok(created)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostPoint {
+    Directory,
+    Missing,
+}
+
+/// Read-only host observation for one isolated mount point. A non-directory or
+/// symlink is unavailable, never drift and never recreation authority.
+fn host_point_presence(point: &IsolatedMountPoint) -> Result<HostPoint, ContainerExecError> {
+    match std::fs::symlink_metadata(&point.host_path) {
+        Ok(metadata) if metadata.is_dir() => Ok(HostPoint::Directory),
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(unavailable(format!(
+            "isolated mount point `{}` is a symlink; refusing to follow it",
+            point.host_path.display()
+        ))),
+        Ok(_) => Err(unavailable(format!(
+            "isolated mount point `{}` is not a directory",
+            point.host_path.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(HostPoint::Missing),
+        Err(error) => Err(unavailable(format!(
+            "cannot inspect isolated mount point `{}`: {error}",
+            point.host_path.display()
+        ))),
+    }
+}
+
+/// A host mount point that no longer exists is mount drift even while the
+/// running container still reports the named volume: the directory beneath
+/// that nested mount is gone. Observation only; the caller decides whether it
+/// may create the directory and reconcile.
+fn observe_host_mount_points(
+    points: &[IsolatedMountPoint],
+) -> Result<Vec<String>, ContainerExecError> {
+    let mut drift = Vec::new();
+    for point in points {
+        if host_point_presence(point)? == HostPoint::Missing {
+            drift.push(format!(
+                "isolated mount point `{}` is missing on the host; the running stack's nested mount has no directory. Run `effigy container up --detach` to recreate it and reconcile before ownership repair",
+                point.host_path.display()
+            ));
+        }
+    }
+    Ok(drift)
 }
 
 /// Observe only. A failed inventory, ownership check or inspect is an error,
@@ -239,7 +267,9 @@ pub fn probe_mount_drift(
     let ownership = OwnershipContext::resolve(repo_root, policy)?;
     let working_dir = crate::load_container_exec_working_dir(repo_root, Some(&policy.name))
         .map_err(unavailable)?;
-    observe_mounts(&mounts, &rows, |row| {
+    let host_point_drift =
+        observe_host_mount_points(&isolated_mount_points(repo_root, policy, &working_dir)?)?;
+    let mut drift = observe_mounts(&mounts, &rows, |row| {
         let remaining =
             super::process::remaining_until_deadline(deadline, "inspect rendered mounts")?;
         let output = run_runtime_command_capture_for_policy_with_absolute_deadline(
@@ -261,7 +291,9 @@ pub fn probe_mount_drift(
             }
         }
         serde_json::from_slice(&output.stdout).map_err(unavailable)
-    })
+    })?;
+    drift.extend(host_point_drift);
+    Ok(drift)
 }
 
 fn observe_mounts(
@@ -535,5 +567,32 @@ mod tests {
                 .expect_err("a symlink mount point refuses");
             assert!(error.to_string().contains("symlink"), "{error}");
         }
+    }
+
+    #[test]
+    fn a_missing_host_mount_point_is_observed_as_drift_without_creating_it() {
+        let fixture = tempfile::tempdir().unwrap();
+        let policy = isolated_policy(fixture.path());
+        let working_dir = Path::new("/workspace-root/repo");
+        let points = isolated_mount_points(fixture.path(), &policy, working_dir).unwrap();
+        let drift = observe_host_mount_points(&points).unwrap();
+        assert_eq!(drift.len(), 2, "{drift:?}");
+        assert!(drift
+            .iter()
+            .all(|detail| detail.contains("is missing on the host")));
+        assert!(
+            !fixture.path().join("node_modules").exists(),
+            "observation only"
+        );
+        assert!(!fixture.path().join("apps/farmyard/target").exists());
+
+        std::fs::create_dir_all(fixture.path().join("node_modules")).unwrap();
+        let points = isolated_mount_points(fixture.path(), &policy, working_dir).unwrap();
+        let drift = observe_host_mount_points(&points).unwrap();
+        assert_eq!(drift.len(), 1, "{drift:?}");
+
+        ensure_points(&points).unwrap();
+        let points = isolated_mount_points(fixture.path(), &policy, working_dir).unwrap();
+        assert!(observe_host_mount_points(&points).unwrap().is_empty());
     }
 }

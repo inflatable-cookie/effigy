@@ -41,13 +41,15 @@ named mounts before any ownership repair. Effigy never repairs a host bind by
 recursively changing its ownership.
 
 An isolated volume overlays a directory inside the checkout, so that host
-mount point must exist for the runtime to mount over it. `container up` and
-routed-task preparation recreate a missing host mount-point directory before
-creating or reusing the stack. A host cleanup that deletes `target` or
-`node_modules` under a running stack is therefore treated as mount drift: the
-stack is reconciled instead of reused, and the recreated directory never
-replaces a file or follows a symlink. `container status` and doctor report the
-missing directory as drift only after it is observed; they remain read-only.
+mount point must exist for the runtime to mount over it. The mount observation
+includes it: `container status` and doctor report a missing host directory as
+`mount_drift` without creating it. `container up` and routed-task preparation
+then recreate it before creating or reusing the stack, and because the missing
+directory is already drift, routed-task preparation reconciles through the
+guarded bring-up instead of an idempotent re-apply. A host cleanup that deletes
+`target` or `node_modules` under a running stack is therefore healed: the stack
+is reconciled instead of reused, and the recreated directory never replaces a
+file or follows a symlink.
 
 
 ## Start Here
