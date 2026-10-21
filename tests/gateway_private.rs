@@ -1816,6 +1816,7 @@ fn start_managed_listener_gateway(
     );
     let tls_json = parse_json_success(tls);
     assert_eq!(tls_json["private"], true);
+    gateway_cleanup.track(&private_gateway);
     let gateway = run_gateway(
         &private_gateway,
         "up",
@@ -1831,7 +1832,6 @@ fn start_managed_listener_gateway(
         ],
     );
     let gateway_json = parse_json_success(gateway);
-    gateway_cleanup.track(&private_gateway);
     let https_address = socket_field(&gateway_json, "https_addr");
     (private_gateway, https_address)
 }
@@ -3091,13 +3091,13 @@ fn save_plain_localhost_route(root: &Path, target: SocketAddr) {
         .expect("write trusted private fixture route");
 }
 
-fn run_gateway(
+fn gateway_command(
     root: &Path,
     subcommand: &str,
     effects: &HostEffectSentinels,
     foreign_ca_root: Option<&Path>,
     extra: &[&str],
-) -> Output {
+) -> Command {
     let mut command = Command::new(EFFIGY);
     command
         .arg("gateway")
@@ -3121,21 +3121,21 @@ fn run_gateway(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let previous_pid = fs::read_to_string(root.join("gateway.pid")).ok();
-    let output = command
+    command
+}
+
+fn run_gateway(
+    root: &Path,
+    subcommand: &str,
+    effects: &HostEffectSentinels,
+    foreign_ca_root: Option<&Path>,
+    extra: &[&str],
+) -> Output {
+    gateway_command(root, subcommand, effects, foreign_ca_root, extra)
         .spawn_owned()
         .expect("public gateway CLI")
         .wait_with_output()
-        .expect("run public effigy CLI");
-    if subcommand == "up" && output.status.success() {
-        if let Ok(pid) = fs::read_to_string(root.join("gateway.pid")) {
-            if previous_pid.as_ref() != Some(&pid) {
-                process::register_detached(pid.trim().parse().expect("gateway PID"), root)
-                    .expect("register launched private gateway");
-            }
-        }
-    }
-    output
+        .expect("run public effigy CLI")
 }
 
 fn parse_json_success(output: Output) -> Value {
@@ -4853,5 +4853,218 @@ fn register_fixture_process_child() {
         let nonce = std::env::var("EFFIGY_REGISTER_NONCE").unwrap_or_default();
         process::register_detached_with_nonce(pid, Path::new(&owner), &nonce)
             .expect("register fake backend child");
+    }
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[ignore = "failure actor; launched only by its fixture cleanup proof"]
+fn detached_gateway_failure_actor() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).unwrap();
+    let root = private_root(fixture.path(), "managed-listener-gateway");
+    parse_json_success(run_gateway(
+        &root,
+        "setup-tls",
+        &effects,
+        Some(&foreign_ca),
+        &[],
+    ));
+    let mut client = gateway_command(
+        &root,
+        "up",
+        &effects,
+        Some(&foreign_ca),
+        &[
+            "--dns-addr",
+            "127.0.0.1:0",
+            "--proxy-addr",
+            "127.0.0.1:0",
+            "--https-addr",
+            "127.0.0.1:0",
+        ],
+    )
+    .env("EFFIGY_TEST_GATEWAY_STARTUP_HOLD", "1")
+    .current_dir(fixture.path())
+    .spawn_owned()
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let addresses = loop {
+        assert!(
+            client.try_wait().unwrap().is_none(),
+            "up client exited before held response"
+        );
+        if root.join(".fixture-client-held").exists() {
+            if let Ok(bytes) = fs::read(root.join("gateway.addresses.json")) {
+                if let Ok(addresses) = serde_json::from_slice::<Value>(&bytes) {
+                    if private_gateway_http_response(socket_field(&addresses, "proxy_addr"))
+                        .is_some()
+                    {
+                        break addresses;
+                    }
+                }
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "fixture gateway never reached held startup; log={:?}",
+            fs::read_to_string(root.join("gateway.stderr.log"))
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    let pid = u32::try_from(addresses["pid"].as_u64().unwrap()).unwrap();
+    // Kill only the held caller we created. The detached daemon must still be
+    // recorded even though `up` never returned a successful response.
+    client.kill().unwrap();
+    assert!(!client.wait().unwrap().success());
+    let identity = effigy_kernel::ident::process_identity(pid)
+        .verified()
+        .cloned()
+        .expect("live fixture daemon identity");
+    assert!(fixture_gateway_is_live(&identity));
+    println!(
+        "detached-gateway-report={}",
+        serde_json::json!({"pid": pid, "identity": identity, "root": fixture.path()})
+    );
+    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+    match std::env::var("EFFIGY_GATEWAY_FAILURE_MODE")
+        .unwrap()
+        .as_str()
+    {
+        "panic" => panic!("controlled readiness failure before successful up response"),
+        "exit" => std::process::exit(0),
+        "timeout" => thread::sleep(Duration::from_secs(120)),
+        _ => panic!("unknown failure mode"),
+    }
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn detached_gateway_cleanup_covers_failure_exit_and_timeout_before_up_response() {
+    let wrapper = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scripts/fixture_hygiene.py");
+    let owner = effigy_test_support::Fixture::workspace("effigy-gateway-failure-proof-").unwrap();
+    for mode in ["panic", "exit", "timeout"] {
+        let output = Command::new("python3")
+            .arg(&wrapper)
+            .args(["--timeout", "40", "--"])
+            .arg(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "detached_gateway_failure_actor",
+                "--nocapture",
+            ])
+            .env("EFFIGY_GATEWAY_FAILURE_MODE", mode)
+            .current_dir(owner.path())
+            .output_owned()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let report: Value = serde_json::from_str(
+            stdout
+                .lines()
+                .find_map(|line| {
+                    line.split_once("detached-gateway-report=")
+                        .map(|(_, report)| report)
+                })
+                .unwrap_or_else(|| panic!("{mode}: missing daemon report; {stdout}; {stderr}")),
+        )
+        .unwrap();
+        assert!(!output.status.success(), "{mode}: failure was hidden");
+        assert!(
+            !stderr.contains("unresolved fixture ownership"),
+            "{mode}: {stderr}"
+        );
+        assert!(
+            !Path::new(report["root"].as_str().unwrap()).exists(),
+            "{mode}: fixture survived; {stderr}"
+        );
+        assert!(
+            !fixture_gateway_is_live(&serde_json::from_value(report["identity"].clone()).unwrap()),
+            "{mode}: detached gateway survived; {stderr}"
+        );
+        if mode == "timeout" {
+            assert_eq!(output.status.code(), Some(124));
+        }
+        if mode == "exit" {
+            assert!(stderr.contains("leaked test process:"), "{stderr}");
+        }
+    }
+}
+
+#[test]
+fn private_gateway_up_publishes_fixture_custody_in_every_profile() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).unwrap();
+    let root = private_root(fixture.path(), "managed-listener-gateway");
+    let mut cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    cleanup.track(&root);
+    parse_json_success(run_gateway(
+        &root,
+        "setup-tls",
+        &effects,
+        Some(&foreign_ca),
+        &[],
+    ));
+    parse_json_success(run_gateway(
+        &root,
+        "up",
+        &effects,
+        Some(&foreign_ca),
+        &[
+            "--dns-addr",
+            "127.0.0.1:0",
+            "--proxy-addr",
+            "127.0.0.1:0",
+            "--https-addr",
+            "127.0.0.1:0",
+        ],
+    ));
+    let addresses: Value =
+        serde_json::from_slice(&fs::read(root.join("gateway.addresses.json")).unwrap()).unwrap();
+    let pid = u32::try_from(addresses["pid"].as_u64().unwrap()).unwrap();
+    let records = fs::read_dir(process::ledger().unwrap().join("processes")).unwrap();
+    let matches = records
+        .filter_map(|entry| fs::read(entry.ok()?.path()).ok())
+        .filter_map(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .filter(|record| record["receipt"]["identity"]["pid"].as_u64() == Some(u64::from(pid)))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "one birth registration, without the replaced post-response writer"
+    );
+    assert_eq!(
+        matches[0]["owner"],
+        root.canonicalize().unwrap().to_str().unwrap()
+    );
+    assert!(!matches[0]["receipt"]["nonce"].as_str().unwrap().is_empty());
+    let identity = serde_json::from_value(matches[0]["receipt"]["identity"].clone()).unwrap();
+    drop(cleanup);
+    drop(fixture);
+    assert!(!fixture_gateway_is_live(&identity));
+}
+
+fn fixture_gateway_is_live(identity: &effigy_kernel::ident::ProcessIdentity) -> bool {
+    use effigy_kernel::{ident::ProcessState, observe::Observed};
+    let pid = identity.pid;
+    match effigy_kernel::ident::process_identity(pid) {
+        Observed::Absent(_) => return false,
+        Observed::Verified(current, _) if current != *identity => return false,
+        Observed::Verified(..) => (),
+        Observed::Unknown(reason) => {
+            panic!("fixture gateway identity is unknown for {pid}: {reason:?}")
+        }
+    }
+    match effigy_kernel::ident::process_state(pid) {
+        Observed::Absent(_) | Observed::Verified(ProcessState::Zombie, _) => false,
+        Observed::Verified(..) => true,
+        Observed::Unknown(reason) => {
+            panic!("fixture gateway state is unknown for {pid}: {reason:?}")
+        }
     }
 }

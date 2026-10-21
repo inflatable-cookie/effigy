@@ -87,10 +87,14 @@ longer create or stale-reclaim a fixed lock file in the system temporary root.
 The old CLI, gateway and private-startup guard implementations
 are replaced by this shared owner.
 
-A fake backend's newly spawned detached child, and each newly launched private
-gateway, are registered while their launch receipt is available. Registration
-observes the live kernel identity; a PID file is not later treated as kill
-authority. A directory guard settles its registered processes before unsealing
+A fake backend's newly spawned detached child is registered while its launch
+receipt is available. A private gateway launched with an explicit fixture ledger
+publishes its own kernel generation, dedicated group and fresh launch nonce to
+that same ledger before the server publishes state or serves listeners. This
+handshake runs in all build profiles; without a fixture ledger, the private
+startup path is unchanged. Failed registration refuses daemon startup. The old
+post-success CLI PID-file registration is removed, so a failed response or killed
+client cannot skip ownership. A PID file is never later treated as kill authority. A directory guard settles its registered processes before unsealing
 or removing files. The suite wrapper invokes `effigy-fixture-process sweep`
 before its directory sweep. The runner receives no inherited outer-command custody
 or probe nonce; fixture launches allocate fresh nonces. The wrapper fails for surviving registrations even when cleanup
@@ -231,3 +235,21 @@ helper. The suite wrapper still fails and cleans registered residue on timeout.
 `test:fixtures:hygiene:revision` groups
 kernel registration, ordinary/shared guards, environment fixtures, reclaim
 proofs and the kernel ratchet for the registration-barrier change.
+
+
+`test:fixtures:hygiene:gateway-failure` proves the real detached gateway path.
+A debug-only, bounded startup barrier holds `gateway up` after launch but before
+a successful response. The actor waits for the real daemon to serve, kills only
+its retained CLI child, then panics, exits without destructors, or exceeds the
+wrapper timeout. The panic case uses fixture-drop cleanup; exit and timeout use
+the separate sweep process with an empty native registry. Each requires a
+nonzero result, an ended recorded generation and a removed fixture root; unresolved
+ownership fails the proof. A second proof requires exactly one birth receipt
+and runs in both debug-asserting and non-debug optimized profiles. The existing
+kernel unknown-ownership retention and tracked orphan-descendant defect remain.
+Gateway cleanup tracks its root before issuing `up`, including failed responses.
+
+Historical host residue must be checked separately from a current suite's log.
+A clean suite and clean Git status do not establish that earlier detached daemons
+are gone. Closeout records exact PID/start identities and private directory
+identities; cleanup targets only those authorized generations and roots.
