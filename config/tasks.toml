@@ -3,11 +3,6 @@
 # Aggregator tasks below call the built-in through task refs.
 
 [tasks]
-# Every selector that runs Cargo goes through `scripts/oxide-selector.sh`, which
-# leases Oxide's shared slot pool and keeps Rust intermediates off the internal
-# SSD. This is its escape hatch: run one Cargo command exactly as written, and
-# `EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>` runs a whole selector that way.
-"cargo" = { visibility = "internal", group = "Maintenance", run = "cargo {args}" }
 "test:gateway:downgrade:covering" = { visibility = "internal", group = "Maintenance", run = [{ task = "test:gateway:downgrade" }, { task = "test:gateway:operator" }, { task = "test:gateway:operator:process" }] }
 "test:gateway:closeout:operator" = { visibility = "internal", group = "Maintenance", run = [{ task = "test:gateway:closeout:ci" }, { task = "test:gateway:operator" }, { task = "test:gateway:operator:process" }] }
 "proof:gateway:downgrade" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ run = "sh scripts/oxide-selector.sh build -p effigy-gateway --example gateway-downgrade-proof", timeout_ms = 900000 }, { run = "sh tests/scripts/gateway-downgrade.sh", timeout_ms = 1800000 }] }
@@ -171,7 +166,7 @@
 "lint:environment" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-kernel -p effigy-containers -p effigy-runtime -p effigy --all-targets --features effigy-kernel/fault-injection,effigy-containers/fault-injection -- -D warnings", timeout_ms = 900000 }] }
 "test:kernel:environment" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(run::tests::environment_) | test(run::tests::attachments_) | test(objects::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:containers:environment" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --features fault-injection --lib -E 'test(environment::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
-"test:environment:runner" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-runtime --lib -E 'test(container_command::) | test(container_runtime_prep::) | test(runner::environment) | test(execute::pipeline::) | test(exec_command::) | test(deferral_tests::) | test(managed_settle::) | test(system_command::workspace) | test(task_engine::) | test(write::) | test(session::)' --no-fail-fast --retries 0 --no-tests fail -j 4", timeout_ms = 1800000 }] }
+"test:environment:runner" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-runtime --lib -E 'test(container_command::) | test(container_runtime_prep::) | test(runner::environment) | test(execute::pipeline::) | test(exec_command::) | test(deferral_tests::) | test(system_command::workspace) | test(task_engine::) | test(write::) | test(session::)' --no-fail-fast --retries 0 --no-tests fail -j 4", timeout_ms = 1800000 }] }
 "test:containers:compose-file-migration" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers -p effigy-catalog -p effigy -E '(package(effigy-containers) & (test(policy::compose_file::) | test(backend::tests::))) | (package(effigy-catalog) & test(volume_identity_)) | (package(effigy) & (test(reset_removes_only_labelled_volumes_on_the_exact_backend) | test(shared_compose_receives_its_immutable_generation_root) | test(parse_container_migrate_) | test(parse_container_eject_) | test(container_migrate_tests::)))' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail -j 1", timeout_ms = 1800000 }] }
 "qa:containers:render-static" = { visibility = "internal", group = "Maintenance", run = [{ task = "fmt:check" }, { task = "qa:kernel-ratchet" }] }
 
@@ -230,8 +225,8 @@
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^remote::tests::/) | test(/^strict_fake::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
-# Stays on Cargo: the probe family is timing-sensitive, and an independent
-# comparison saw it pass 17/17 under Cargo while one Oxide pass failed it 16/17.
+# Stays on Cargo: the probe family is timing-sensitive and one independent
+# comparison saw it pass 17/17 under Cargo while an Oxide pass failed it 16/17.
 # The brief keeps any family whose result differs under Oxide on Cargo
 # (dogfood finding for the Oxide supervisor).
 "test:kernel:probe" = { visibility = "internal", group = "Maintenance", run = [
@@ -245,8 +240,21 @@
 ] }
 "test:kernel:helpers" = { visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
-  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^supervise::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^supervise::tests::/)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
+"test:kernel:custody:spawn-fault" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 }, { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(custody::tests::fault_matrix_registration_spawn_and_socket_kill_enospc)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
+# Stays on Cargo: it unsets EFFIGY_KERNEL_CUSTODY_FIXTURE to prove the
+# sibling-path fallback for the fixture binary, which a shared build
+# directory cannot satisfy (Oxide 0/2, Cargo 2/2 on 2026-10-21).
+"test:kernel:helpers:native" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "env -u EFFIGY_KERNEL_CUSTODY_FIXTURE cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(replaced_native_image_verifies_in_the_real_sentinel) | test(sentinel_refusal_reaches_the_parent_stderr_tail)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+] }
+"test:kernel:helpers:linux" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ id = "linux-helpers", run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh helpers", timeout_ms = 1800000 }] }
+"check:kernel:write-churn" = { visibility = "internal", group = "Maintenance", run = [{ task = "check:kernel" }, { task = "check:doctor:inventory" }] }
+"check:doctor:inventory" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-scan --all-targets -- -D warnings", timeout_ms = 600000 }] }
+"test:doctor:inventory" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file .config/nextest.toml --user-config-file none -p effigy-scan --lib -E 'test(execution::doctor_inventory::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
+"fmt:kernel:write-churn" = { visibility = "internal", group = "Maintenance", run = "rustfmt --edition 2021 --config skip_children=true crates/effigy-kernel/src/supervise.rs crates/effigy-kernel/src/supervise/image.rs crates/effigy-kernel/src/supervise/tests.rs crates/effigy-kernel/src/supervise/tests/image.rs crates/effigy-kernel/src/fault.rs crates/effigy-scan/src/execution/doctor_inventory.rs" }
 "test:kernel:custody:linux" = { visibility = "internal", group = "Maintenance",  admission = "heavy", run = [{ id = "linux-custody", run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh", timeout_ms = 1800000 }] }
 "test:kernel:custody:signals" = { visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
@@ -297,7 +305,7 @@
 # profile so macOS pre-main loading does not consume custody deadlines.
 "check:task-engine" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-kernel -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context -p effigy-containers -p effigy-distribution -p effigy-doctor --all-targets", timeout_ms = 900000 }] }
 "lint:task-engine" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-kernel -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context -p effigy-containers -p effigy-distribution -p effigy-doctor --all-targets -- -D warnings", timeout_ms = 900000 }] }
-"test:task-engine" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(/^runner::task_engine::/) | test(managed_and_locking_tests::locking_tests::) | test(direct_task_dispatch_tests::) | test(/^runner::managed_settle::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
+"test:task-engine" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(/^runner::task_engine::/) | test(managed_and_locking_tests::locking_tests::) | test(direct_task_dispatch_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 # Q-006 run control: lost-follow fault points (engine hooks, fault-injection
 # builds only), expiry, key races and stop; the CLI proofs drive the binary.
 "test:run-control" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --features fault-injection --lib -E 'test(/^runner::run_control::/) | test(/^runner::task_engine::admission::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
@@ -322,6 +330,8 @@
 "test:task-engine:crates" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh build --bin effigy && sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context -p effigy-doctor --lib --no-fail-fast --retries 0 {args}", timeout_ms = 3600000 }] }
 # CLI integration suites that run tasks, locks, status and flag placement
 # through the binary; extra arguments narrow the run.
+# The CLI's command-behaviour proofs, managed front ends included.
+"test:cli:command-behavior" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(/^command_behavior_tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 3600000 }] }
 "test:task-engine:cli" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --test documentation_coverage_tests --test env_schema_tests --test changelog_tests --test bootstrap_cli_tests --no-fail-fast --retries 0 {args}", timeout_ms = 3600000 }] }
 # Runner secrets tests in one shared process, as hosted CI's shared-process
 # lane runs them: the in-process passphrase cache must not leak between tests.
@@ -640,26 +650,40 @@
   "sh scripts/oxide-selector.sh check -p effigy -p effigy-managed -p effigy-containers -p effigy-tui -p effigy-process --all-targets",
   "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-managed -p effigy-containers -p effigy-tui -p effigy-process --all-targets -- -D warnings",
 ] }
-"test:managed:matrix" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_) & !test(managed_matrix_failed_stop_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 2500000 }] }
-# The matrix cases own their fake Docker proxy socket from bind through teardown.
-"test:managed:matrix:unsettled" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_unsettled_previous_record_under_live_startup)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }] }
-"test:fixtures:matrix-port" = { visibility = "internal", group = "Maintenance", run = [{ task = "test:managed:matrix" }, { task = "test:managed:failed-stop" }] }
+# Run supervisor (effigy#235): unit and in-process front-end proofs.
+# Stays on Cargo: no comparison parity (an Oxide pass failed three
+# managed-headless cases; a Cargo pass failed one remote-container case).
+"test:supervisor:unit" = { visibility = "internal", group = "Maintenance", run = [
+  { id = "supervisor-lib", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(/^runner::managed_run::/) | test(/^runner::execute::pipeline::managed::/) | test(managed_and_locking_tests::) | test(/^runner::container_command::handover::/) | test(/^runner::demo_command::execute::task::selection::/) | test(/^runner::task_engine::/)' --no-fail-fast --retries 0 --no-tests fail {args}", timeout_ms = 1200000 },
+  { id = "supervisor-crates", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-managed -p effigy-containers -p effigy-tui --lib --filterset 'test(/^invocation::/) | test(/^session::/) | test(/^runtime::/) | test(/^multiprocess::/) | test(/^presentation::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+] }
+# The TUI front end and the client-death cases in shared test processes, as
+# hosted CI runs them: other tests' children must not keep a PTY open.
+# Stays on Cargo: same supervisor front-end family as :unit and :faults,
+# which the brief keeps on Cargo until a comparison shows parity.
+"test:supervisor:shared" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy-tui --lib --no-fail-fast -- --test-threads=8 multiprocess::", timeout_ms = 1200000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --test gateway_private --no-fail-fast -- --test-threads=8 managed_matrix_death_", timeout_ms = 3600000 },
+] }
+# The supervisor SIGKILLed at every kernel journal crossing it makes, each
+# followed by a settle and a clean restart (test-binary-only arming).
+# Stays on Cargo: it proves binary identity from the running test
+# executable's ancestors, which refuses the removable Builds pool the
+# shared slot lives on (Oxide refused "untrusted /Volumes/Builds"; Cargo
+# passed).
+"test:supervisor:faults" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --features fault-injection --lib --filterset 'test(managed_supervisor_fault_tests::)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail {args}", timeout_ms = 3600000 }] }
+# The 108-cell strict-fake lifecycle matrix (front end × prior × stop ×
+# failed children) plus the client-death cases, each a real-binary run
+# against the fake Compose backend with an immediate restart.
+"test:managed:matrix" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2 {args}", timeout_ms = 3600000 }] }
+"test:fixtures:matrix-port" = { visibility = "internal", group = "Maintenance", run = [{ task = "test:managed:matrix" }] }
 "test:fixtures:merge-helpers" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(/^runner::bootstrap_command::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "check:fixtures:matrix-port" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy --all-targets", timeout_ms = 600000 }] }
 "lint:fixtures:matrix-port" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy --all-targets -- -D warnings", timeout_ms = 600000 }] }
-"test:managed:matrix:all-failed" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_all_failed_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 2500000 }] }
-"test:managed:failed-stop" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_failed_stop_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }] }
 "test:managed:recovery" = { visibility = "internal", group = "Maintenance", run = [
   { id = "managed-shutdown-labels", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(legacy_admission_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-  { task = "test:managed:session-runtime" },
+  { task = "test:supervisor:unit" },
   { task = "test:tui:startup-visibility" },
-  { task = "test:managed:recovery-controls" },
-] }
-"test:managed:session-runtime" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "managed-session-runtime", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-managed --lib --filterset 'test(runtime::headless::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-] }
-"test:managed:recovery-controls" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "managed-recovery-controls", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_and_locking_tests::managed_headless_tests::) | test(managed_settle::tests::) | test(finish_managed_task_) | test(partial_activation_running_primary_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
 "test:managed:headless-lifecycle" = { visibility = "internal", group = "Maintenance", run = [
   { id = "managed-exec-readiness-render", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(session::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
@@ -667,7 +691,7 @@
   { id = "managed-handoff-local-exec", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(bounded_exec::tests::handoff_local_tests::handoff_container_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { id = "managed-inline-exec-render", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(execute::pipeline::managed::tests::inline_managed) | test(demo_command::execute::task::selection::tests::) | test(concurrent_configuration_tests::plan_rendering_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
   { id = "managed-headless-controls", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_and_locking_tests::managed_headless_tests)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-  { id = "managed-headless-healthy-stack", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_managed_headless_lifecycle_reaches_running_on_healthy_stack)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "managed-headless-healthy-stack", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_managed_headless_lifecycle_reaches_running_on_healthy_stack) | test(cli_managed_headless_streams_workload_output_by_name)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { id = "managed-headless-settle-e2e", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_managed_headless_stop_settles_remote_exec_children_and_locks)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { id = "managed-handover-slow-down-e2e", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_forward_handover_waits_for_owner_whose_stop_cascade_is_slow)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { task = "test:managed:handover-settle" },
@@ -923,22 +947,6 @@
   { id = "route-table-lock-debug", run = "sh scripts/oxide-selector.sh test -p effigy-gateway --lib route_table_lock_debug_is_available_and_redacts_the_lock_descriptor -- --nocapture", timeout_ms = 600000 },
   { id = "live-route-table-debug", run = "sh scripts/oxide-selector.sh test -p effigy-gateway --lib live_route_table_debug_does_not_lock_or_print_route_contents -- --nocapture", timeout_ms = 600000 },
   { id = "script-context-debug", run = "sh scripts/oxide-selector.sh test -p effigy-rhai --lib script_context_debug_is_available_for_diagnostics -- --nocapture", timeout_ms = 600000 },
-] }
-# Signal-supervision initialization failure must preserve the original error
-# and terminate/reap exactly the already-owned child tree. Private tempfile
-# fixtures with recorded pids/groups and a private test-only injection at the
-# real initialization boundary; no OS exhaustion or live-process sabotage.
-"test:release:supervision-coordination-control" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh test -p effigy --lib release_preparation_fixture_supervision_init_excludes_parallel_normal_scope_at_wait_boundary -- --nocapture", timeout_ms = 120000 }] }
-"test:release:supervision-fixture-exclusion" = { visibility = "internal", group = "Maintenance", run = [
-  { task = "test:runner:supervision-init" },
-  { task = "test:release:prepared-tree-fixture-coordination" },
-] }
-"test:runner:supervision-init" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "supervision-init", run = "sh scripts/oxide-selector.sh test -p effigy --lib supervision_init -- --nocapture", timeout_ms = 240000 },
-] }
-"check:runner:supervision-init" = { visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh check -p effigy --all-targets",
-  "sh scripts/oxide-selector.sh clippy -p effigy --all-targets -- -D warnings",
 ] }
 "test:init:upstream-guidance" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test -p effigy --lib init_upstream_guidance -- --nocapture" }
 "check:init:upstream-guidance" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh check -p effigy-builtin -p effigy --lib --bin effigy --tests" }
@@ -1274,15 +1282,15 @@
 ] }
 "check:env-isolation" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh check -p effigy-core -p effigy --lib" }
 
-# Release preparation fixture regression: run the selected built-in, environment,
-# signal, and supervision-init proofs together in one libtest process so their
+# Release preparation fixture regression: run the selected built-in, environment
+# and signal proofs together in one libtest process so their
 # process-global locks contend under the same model as `cargo test --workspace`.
 # The Effigy step timeout bounds a hung in-process fixture run.
 "test:release:prepared-tree-fixture-coordination" = { visibility = "internal", group = "Maintenance", run = [
   { id = "prepared-tree-fixture-coordination", run = "sh scripts/oxide-selector.sh test -p effigy --lib release_preparation_fixture -- --nocapture --test-threads=8", timeout_ms = 240000 },
 ] }
 "test:release:preparation-environment-isolation" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "preparation-environment-isolation", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/release-preparation-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(release_preparation_fixture_env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer) | test(supervision_init_unbounded_wait_failure_reaps_owned_tree) | test(graph_explore_cold_stale_index_names_next_action) | test(graph_cwd_selection_uses_captured_invocation_context) | test(docs_cold_read_is_bounded_and_never_prepares) | test(graph_timeout_uses_the_existing_two_minute_default_when_unset) | test(resolve_host_program_uses_host_cli_resolver_for_bare_names) | test(copy_file_into_service_invocation_prefers_policy_backend_over_installed_docker)' --max-fail 1:immediate --retries 0", timeout_ms = 240000 },
+  { id = "preparation-environment-isolation", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/release-preparation-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(release_preparation_fixture_env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer) | test(graph_explore_cold_stale_index_names_next_action) | test(graph_cwd_selection_uses_captured_invocation_context) | test(docs_cold_read_is_bounded_and_never_prepares) | test(graph_timeout_uses_the_existing_two_minute_default_when_unset) | test(resolve_host_program_uses_host_cli_resolver_for_bare_names) | test(copy_file_into_service_invocation_prefers_policy_backend_over_installed_docker)' --max-fail 1:immediate --retries 0", timeout_ms = 240000 },
 ] }
 "check:release:preparation-environment-isolation" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh check -p effigy --lib --tests",
@@ -1736,6 +1744,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
   { id = "graph-scan-test-clippy", run = "cargo clippy -p effigy-codegraph -p effigy-scan --tests -- -D warnings", timeout_ms = 600000 },
   { id = "cli-test-clippy", run = "cargo clippy -p effigy --test cli_output_tests -- -D warnings", timeout_ms = 600000 },
 ] }
+"check:doctor:inventory:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy-scan --all-targets -- -D warnings", timeout_ms = 600000 }] }
 "check:doctor:ownership-latency:cargo" = { visibility = "internal", group = "Maintenance", run = "cargo check -p effigy-containers -p effigy-doctor -p effigy --lib --tests --bins --profile test" }
 "check:doctor:workspace-liveness:cargo" = { visibility = "internal", group = "Maintenance", run = [
   "cargo check -p effigy-containers -p effigy-doctor -p effigy --lib --tests --bins --profile test",
@@ -1799,6 +1808,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 "check:kernel:clippy:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy-kernel --all-targets --features fault-injection -- -D warnings", timeout_ms = 600000 }] }
 "check:kernel:clippy:default:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy-kernel --all-targets -- -D warnings", timeout_ms = 600000 }] }
 "check:kernel:compile:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo check -p effigy-kernel --all-targets --features fault-injection", timeout_ms = 600000 }] }
+"check:kernel:write-churn:cargo" = { visibility = "internal", group = "Maintenance", run = [{ task = "check:kernel:cargo" }, { task = "check:doctor:inventory:cargo" }] }
 "check:managed:host-listeners:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { id = "managed-host-listener-compile", run = "cargo check -p effigy-process -p effigy-gateway -p effigy-manifest -p effigy-containers -p effigy-cli -p effigy --all-targets --profile test", timeout_ms = 600000 },
   { id = "managed-host-listener-clippy", run = "cargo clippy -p effigy-process -p effigy-gateway -p effigy-manifest -p effigy-containers -p effigy-cli -p effigy --all-targets -- -D warnings", timeout_ms = 600000 },
@@ -1828,10 +1838,6 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 "check:runner:builtin-child-evidence:cargo" = { visibility = "internal", group = "Maintenance", run = [
   "cargo check -p effigy-builtin --all-targets --profile test",
   "cargo clippy -p effigy-builtin --all-targets -- -D warnings",
-] }
-"check:runner:supervision-init:cargo" = { visibility = "internal", group = "Maintenance", run = [
-  "cargo check -p effigy --all-targets --profile test",
-  "cargo clippy -p effigy --all-targets -- -D warnings",
 ] }
 "check:runner:timeout-descendants:cargo" = { visibility = "internal", group = "Maintenance", run = [
   "cargo check -p effigy --all-targets --profile test",
@@ -2086,6 +2092,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 "test:bundles:presentation-cli:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(help_and_flags_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:bundles:surface:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(bundle_command::tests::) | test(config_builtin_tests::) | test(bootstrap_command::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:catalog:sources:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-catalog -p effigy-manifest -p effigy-containers -p effigy-release -p effigy-doctor -p effigy-cli -p effigy --lib --test integration --test catalog_sources --test service_list_cli_tests --test cli_output_tests -E 'package(effigy-catalog) | (package(effigy-manifest) & test(bundles::)) | package(effigy-containers) | (package(effigy-release) & (test(retired_catalog_pack_support_policy_key_is_refused) | test(release_preparation_without_catalog_policy_prepares_the_version) | test(load_release_config_reads_manifest_release_settings))) | (package(effigy-doctor) & test(manifest_schema::)) | (package(effigy-cli) & test(service)) | (package(effigy) & (test(service_command::) | test(parse_service_) | test(render_service_help) | test(doctor_command_tests::core::) | test(doctor_text_output_tests::snapshot_layout_tests::) | binary(catalog_sources) | binary(service_list_cli_tests) | test(retirement_user_catalog) | test(genuine_command_owned_subcommands_stay_nested) | test(genuine_subcommands_keep_nested_help)))' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1800000 }] }
+"test:cli:command-behavior:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(/^command_behavior_tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 3600000 }] }
 "test:cli:command-surface:cargo" = { visibility = "internal", group = "Maintenance", run = "cargo test -p effigy-cli --lib command_surface -- --nocapture" }
 "test:cli:lock-conflict:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { id = "lock-conflict", run = "cargo test --test cli_output_tests lock_conflict -- --nocapture", timeout_ms = 600000 },
@@ -2227,6 +2234,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
   "cargo test -p effigy --lib runner::doctor_ports::tests::doctor_batches_keep_bind_and_shared_volumes_verify_only -- --exact --nocapture",
   "cargo test -p effigy --lib runner::doctor_ports::tests::successful_and_stopped_liveness_distinctions_survive_a_deadline -- --exact --nocapture",
 ] }
+"test:doctor:inventory:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file .config/nextest.toml --user-config-file none -p effigy-scan --lib -E 'test(execution::doctor_inventory::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:doctor:ownership-hang:cargo" = { visibility = "internal", group = "Maintenance", run = [
   "cargo test -p effigy --lib runner::doctor_ports::tests::hung_ownership_batch_is_bounded_and_reaps_its_process_group -- --exact --nocapture",
   "cargo test -p effigy --lib runner::doctor_ports::tests::ownership_preflight_hang_is_unavailable_without_metadata_reap_claim -- --exact --nocapture",
@@ -2274,7 +2282,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
   { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo build --bin effigy", timeout_ms = 600000 },
   { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy -p effigy-containers --lib --no-fail-fast -- --test-threads=8 runtime::dns::tests:: tests::compose:: policy::admission:: policy::render::tests:: workspace::tests::host_git_mount_tests:: exec::healthcheck_timer:: exec::restart_recovery:: bounded_exec::tests:: builder_recovery:: host_container_lease::tests:: handover_end_owner_releases_lock_for_reverse_handover", timeout_ms = 1200000 },
 ] }
-"test:environment:runner:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-runtime --lib -E 'test(container_command::) | test(container_runtime_prep::) | test(runner::environment) | test(execute::pipeline::) | test(exec_command::) | test(deferral_tests::) | test(managed_settle::) | test(system_command::workspace) | test(task_engine::) | test(write::) | test(session::)' --no-fail-fast --retries 0 --no-tests fail -j 4", timeout_ms = 1800000 }] }
+"test:environment:runner:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-runtime --lib -E 'test(container_command::) | test(container_runtime_prep::) | test(runner::environment) | test(execute::pipeline::) | test(exec_command::) | test(deferral_tests::) | test(system_command::workspace) | test(task_engine::) | test(write::) | test(session::)' --no-fail-fast --retries 0 --no-tests fail -j 4", timeout_ms = 1800000 }] }
 "test:exec:runtime-paths:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { task = "test:exec:runtime-paths:cwd:cargo" },
   { task = "test:exec:runtime-paths:renderer:cargo" },
@@ -2450,7 +2458,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
   { task = "test:fixtures:hygiene:container-policy:cargo" },
 ] }
 "test:fixtures:hygiene:wrapper:cargo" = { visibility = "internal", run = [{ task = "test:fixtures:hygiene:prepare:cargo" }, { run = "EFFIGY_TEST_PROCESS_HELPER=$PWD/target/debug/effigy-fixture-process PYTHONDONTWRITEBYTECODE=1 python3 tests/scripts/fixture_hygiene_test.py", timeout_ms = 120000 }] }
-"test:fixtures:matrix-port:cargo" = { visibility = "internal", group = "Maintenance", run = [{ task = "test:managed:matrix:cargo" }, { task = "test:managed:failed-stop:cargo" }] }
+"test:fixtures:matrix-port:cargo" = { visibility = "internal", group = "Maintenance", run = [{ task = "test:managed:matrix:cargo" }] }
 "test:fixtures:merge-helpers:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(/^runner::bootstrap_command::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:fixtures:publication:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(/^runner::managed_listener_readiness::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:gateway:boot-identity:cargo" = { visibility = "internal", group = "Maintenance", run = [
@@ -2560,6 +2568,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
   { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test custody -E 'test(custody_signal_and_owner_kill_matrix_settles_without_survivors)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
+"test:kernel:custody:spawn-fault:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 }, { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(custody::tests::fault_matrix_registration_spawn_and_socket_kill_enospc)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:kernel:environment:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(run::tests::environment_) | test(run::tests::attachments_) | test(objects::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:kernel:faults:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
@@ -2569,7 +2578,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 "test:kernel:gate:shared:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy-kernel --test gate -- --test-threads=8", timeout_ms = 600000 }] }
 "test:kernel:helpers:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
-  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^supervise::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^supervise::tests::/)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
 "test:kernel:identity:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(identity_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:kernel:matrix:cargo" = { visibility = "internal", group = "Maintenance", run = [
@@ -2592,7 +2601,6 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 "test:kernel:run:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^run::tests::run_/) | test(/^run::tests::faults::run_/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:kernel:source-store:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(source_directory_) | test(run_store_record_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:kernel:store:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test store -E 'test(store_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
-"test:managed:failed-stop:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_failed_stop_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }] }
 "test:managed:handover-settle:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { id = "managed-handover-owner-settle", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(container_command::handover::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { id = "managed-lock-attribution", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_and_locking_tests::locking_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
@@ -2603,7 +2611,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
   { id = "managed-handoff-local-exec", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(bounded_exec::tests::handoff_local_tests::handoff_container_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { id = "managed-inline-exec-render", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(execute::pipeline::managed::tests::inline_managed) | test(demo_command::execute::task::selection::tests::) | test(concurrent_configuration_tests::plan_rendering_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 300000 },
   { id = "managed-headless-controls", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_and_locking_tests::managed_headless_tests)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-  { id = "managed-headless-healthy-stack", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_managed_headless_lifecycle_reaches_running_on_healthy_stack)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "managed-headless-healthy-stack", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_managed_headless_lifecycle_reaches_running_on_healthy_stack) | test(cli_managed_headless_streams_workload_output_by_name)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { id = "managed-headless-settle-e2e", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_managed_headless_stop_settles_remote_exec_children_and_locks)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { id = "managed-handover-slow-down-e2e", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_forward_handover_waits_for_owner_whose_stop_cascade_is_slow)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { task = "test:managed:handover-settle:cargo" },
@@ -2619,27 +2627,18 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
   { id = "managed-host-listener-gateway-transition", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(socket_ownership::) | test(transition_lock::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { task = "test:gateway:route-handover:cargo" },
 ] }
-"test:managed:matrix:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_) & !test(managed_matrix_failed_stop_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 2500000 }] }
-"test:managed:matrix:all-failed:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_all_failed_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 2500000 }] }
-"test:managed:matrix:unsettled:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_unsettled_previous_record_under_live_startup)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }] }
+"test:managed:matrix:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-matrix-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_matrix_)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail -j 2 {args}", timeout_ms = 3600000 }] }
 "test:managed:process-inventory:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { id = "managed-process-inventory-rows", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(process_inventory_row_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
 "test:managed:recovery:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { id = "managed-shutdown-labels", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(legacy_admission_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
-  { task = "test:managed:session-runtime:cargo" },
+  { task = "test:supervisor:unit" },
   { task = "test:tui:startup-visibility:cargo" },
-  { task = "test:managed:recovery-controls:cargo" },
-] }
-"test:managed:recovery-controls:cargo" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "managed-recovery-controls", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_and_locking_tests::managed_headless_tests::) | test(managed_settle::tests::) | test(finish_managed_task_) | test(partial_activation_running_primary_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
 "test:managed:scoped-host-routes:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { id = "managed-scoped-host-routes-runtime", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(scoped_host_routes)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "managed-scoped-host-routes-policy", run = "cargo test -p effigy-containers --lib listener_routes -- --nocapture", timeout_ms = 600000 },
-] }
-"test:managed:session-runtime:cargo" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "managed-session-runtime", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-managed --lib --filterset 'test(runtime::headless::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
 "test:qa-groups:cli:cargo" = { visibility = "internal", group = "Maintenance", run = "cargo test --test cli_output_tests qa_groups_tests -- --nocapture" }
 "test:qa-groups:identity:cargo" = { visibility = "internal", group = "Maintenance", run = "cargo test -p effigy-process --lib identity -- --nocapture" }
@@ -2654,7 +2653,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 ] }
 "test:release:listener-handoff-fixture-ownership:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo test -p effigy-gateway --lib listener_handoff -- --nocapture --test-threads=8", timeout_ms = 240000 }] }
 "test:release:preparation-environment-isolation:cargo" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "preparation-environment-isolation", run = "cargo nextest run --config-file tests/config/release-preparation-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(release_preparation_fixture_env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer) | test(supervision_init_unbounded_wait_failure_reaps_owned_tree) | test(graph_explore_cold_stale_index_names_next_action) | test(graph_cwd_selection_uses_captured_invocation_context) | test(docs_cold_read_is_bounded_and_never_prepares) | test(graph_timeout_uses_the_existing_two_minute_default_when_unset) | test(resolve_host_program_uses_host_cli_resolver_for_bare_names) | test(copy_file_into_service_invocation_prefers_policy_backend_over_installed_docker)' --max-fail 1:immediate --retries 0", timeout_ms = 240000 },
+  { id = "preparation-environment-isolation", run = "cargo nextest run --config-file tests/config/release-preparation-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(release_preparation_fixture_env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer) | test(graph_explore_cold_stale_index_names_next_action) | test(graph_cwd_selection_uses_captured_invocation_context) | test(docs_cold_read_is_bounded_and_never_prepares) | test(graph_timeout_uses_the_existing_two_minute_default_when_unset) | test(resolve_host_program_uses_host_cli_resolver_for_bare_names) | test(copy_file_into_service_invocation_prefers_policy_backend_over_installed_docker)' --max-fail 1:immediate --retries 0", timeout_ms = 240000 },
 ] }
 "test:release:prepared-tree-fixture-coordination:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { id = "prepared-tree-fixture-coordination", run = "cargo test -p effigy --lib release_preparation_fixture -- --nocapture --test-threads=8", timeout_ms = 240000 },
@@ -2669,11 +2668,6 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
   { task = "test:architecture:runtime-container-drift-controls" },
   { id = "partial-activation-markers", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(container_command::lifecycle::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
-"test:release:supervision-coordination-control:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo test -p effigy --lib release_preparation_fixture_supervision_init_excludes_parallel_normal_scope_at_wait_boundary -- --nocapture", timeout_ms = 120000 }] }
-"test:release:supervision-fixture-exclusion:cargo" = { visibility = "internal", group = "Maintenance", run = [
-  { task = "test:runner:supervision-init:cargo" },
-  { task = "test:release:prepared-tree-fixture-coordination:cargo" },
-] }
 "test:retirements:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-core -p effigy-cli -p effigy-builtin -p effigy-manifest -p effigy-managed -p effigy-catalog -p effigy-gateway --lib --test integration --test documentation_coverage_tests -E 'package(effigy-catalog) | test(retirement_) | test(command_surface) | test(parse_) | test(render_) | test(builtin_) | test(init_inventory) | test(resolver::) | test(composition::) | test(socket_ownership::) | test(transition_lock::) | test(gateway_identity) | test(legacy_recovery_) | test(host_process_) | test(managed_headless) | test(project_local_and_distributed_effigy_skills) | test(public_help_families)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 1800000 }] }
 "test:retirements:ci-fixtures:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(documentation_graph_runtime_inventory_is_current) | test(cli_tasks_text_output_matches_canonical_fixture_tail) | test(cli_tasks_text_output_managed_profiles_matches_canonical_fixture_tail)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
 "test:retirements:cli:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(retirement_tests::) | test(json_envelope_tests::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
@@ -2686,9 +2680,6 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 "test:rhai:storage-retirement:cargo" = { visibility = "internal", group = "Maintenance", run = "cargo test -p effigy-rhai --lib storage_retirement -- --nocapture" }
 "test:run-control:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --features fault-injection --lib -E 'test(/^runner::run_control::/) | test(/^runner::task_engine::admission::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 "test:run-control:cli:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test run_control_cli --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
-"test:runner:supervision-init:cargo" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "supervision-init", run = "cargo test -p effigy --lib supervision_init -- --nocapture", timeout_ms = 240000 },
-] }
 "test:runner:timeout-descendants:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { id = "timeout-descendants", run = "cargo test -p effigy --lib timeout_descendants -- --nocapture", timeout_ms = 240000 },
 ] }
@@ -2711,7 +2702,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
   { id = "environment-race-fixtures", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(bootstrap_command::tests::) | test(container_runtime_prep::tests::) | test(output_mode_behavior_tests::) | test(release_preparation_fixture_env_isolation_) | test(release_preparation_fixture_signal_proof_lock_order_serializes_in_process)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "shared-path-mutators", run = "cargo test -p effigy --lib shared_process_ -- --nocapture --test-threads=8", timeout_ms = 240000 },
 ] }
-"test:task-engine:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(/^runner::task_engine::/) | test(managed_and_locking_tests::locking_tests::) | test(direct_task_dispatch_tests::) | test(/^runner::managed_settle::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
+"test:task-engine:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(/^runner::task_engine::/) | test(managed_and_locking_tests::locking_tests::) | test(direct_task_dispatch_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 "test:task-engine:cli:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --test documentation_coverage_tests --test env_schema_tests --test changelog_tests --test bootstrap_cli_tests --no-fail-fast --retries 0 {args}", timeout_ms = 3600000 }] }
 "test:task-engine:crates:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo build --bin effigy && cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context -p effigy-doctor --lib --no-fail-fast --retries 0 {args}", timeout_ms = 3600000 }] }
 "test:task-engine:remote-stop:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(/exec::managed_stop::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }

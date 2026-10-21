@@ -32,7 +32,7 @@ mod graph_time_budget;
 mod host_process;
 mod interactive_session;
 mod managed_listener_readiness;
-mod managed_settle;
+mod managed_run;
 mod managed_shell;
 mod manifest;
 mod owned_children;

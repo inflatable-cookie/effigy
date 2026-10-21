@@ -4326,8 +4326,11 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
     let docker_log = fixture.path().join("docker-fixture.log");
     write_switch_fake_docker(&docker_dir.join("docker"));
 
-    let home = fixture.path().join("home");
-    fs::create_dir(&home).expect("fixture home");
+    // A short private HOME: the run's control socket path must fit the
+    // platform's Unix socket limit.
+    let short_home = effigy_test_support::Fixture::in_parent("e235g.", Path::new("/tmp"))
+        .expect("short private home");
+    let home = short_home.path().to_path_buf();
     // Managed process commands run through `sh -lc`, whose login profile
     // reorders PATH behind the developer's real docker; the fixture home's
     // profile pins the sentinel docker first for every spawned shell.
@@ -4567,13 +4570,26 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
     );
     let managed = &mut managed_guard.0;
 
+    // The run's environment state from the managed status projection.
     let lifecycle_state = || {
-        fs::read_to_string(
-            checkout.join(".effigy/runtime/managed-lifecycle/dev-container-stack.state"),
-        )
-        .unwrap_or_default()
-        .trim()
-        .to_owned()
+        let mut status = Command::new(EFFIGY);
+        status.args(["dev:container", "status", "--json"]);
+        managed_env(&mut status);
+        let output = status.output().expect("managed status");
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .rev()
+            .find_map(|line| serde_json::from_str::<serde_json::Value>(line.trim()).ok())
+            .and_then(|status| status["environment"]["state"].as_str().map(str::to_owned))
+            .unwrap_or_default()
+    };
+    let lifecycle_log = || {
+        let mut logs = Command::new(EFFIGY);
+        logs.args(["dev:container", "logs", "lifecycle"]);
+        managed_env(&mut logs);
+        logs.output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+            .unwrap_or_default()
     };
     let route_count = || {
         RouteTable::load(&routes_path)
@@ -4591,15 +4607,12 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
             let _ = managed.wait();
             panic!(
                 "the managed supervisor exited before publishing routes: lifecycle_log={} supervisor_stderr={}",
-                fs::read_to_string(
-                    checkout.join(".effigy/runtime/managed/dev_container-default/01-lifecycle.log")
-                )
-                .unwrap_or_default(),
+                lifecycle_log(),
                 fs::read_to_string(fixture.path().join("managed-supervisor.out"))
                     .unwrap_or_default()
             );
         }
-        if lifecycle_state() == "ready" && route_count() > 0 {
+        if lifecycle_state() == "up" && route_count() > 0 {
             break route_count();
         }
         assert!(
@@ -4607,10 +4620,7 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
             "the managed lifecycle did not publish routes in time: state={} routes={} lifecycle_log={}",
             lifecycle_state(),
             route_count(),
-            fs::read_to_string(
-                checkout.join(".effigy/runtime/managed/dev_container-default/01-lifecycle.log")
-            )
-            .unwrap_or_default()
+            lifecycle_log()
         );
         thread::sleep(Duration::from_millis(50));
     };

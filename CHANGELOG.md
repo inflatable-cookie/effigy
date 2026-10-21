@@ -7,6 +7,25 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Managed tasks (`mode = "tui"` with `concurrent`) run under one detached
+  supervisor per run (effigy#235). The supervisor admits the run in the kernel
+  journal, then owns setup, gateway, environment and workloads, and one settle
+  is the only cleanup. The TUI, `--headless` and the new `--detach` are front
+  ends: closing the terminal, SIGHUP, SIGINT, SIGTERM or SIGKILL to an
+  attached client stops and settles the run, and `--detach` returns once every
+  workload has started. `--headless` prints the run's own lines and every
+  workload's output as `[name] line`, as before. `<task> stop` and an
+  attached client exit non-zero when the settle leaves residue.
+  `.effigy/runtime/managed/` session files, stop markers,
+  lifecycle state files and the generated lifecycle shell with its EXIT trap
+  are gone. `<task> status --json` prints `effigy.managed.status.v1`, and
+  `<task> logs lifecycle` reads the run's own output. The environment comes up
+  and passes exec readiness, observed to the readiness budget, before any
+  workload starts, so `start_after_ms` no longer has to wait for it;
+  `health_wait` routes are probed once the workloads that serve them have
+  started. A run that holds an environment stays up when
+  its workloads exit, until a stop. A live v0.14 headless session is refused
+  with its stop command. `--run-id` is refused for managed tasks.
 - Container tasks, sequence container steps, built-in `exec` steps and
   named-container managed setup run under kernel remote custody: the run
   journals the container workload before it starts, a stop, signal or timeout
@@ -610,6 +629,18 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Managed host listener readiness keeps polling while another process briefly
+  shares the listening socket, and fails with the exclusivity error only at
+  its deadline; its diagnostic no longer mixes a stale HTTP status into a
+  later observation.
+- A run's control socket left unrecorded by an owner killed between bind and
+  receipt is removed at settle instead of becoming residue.
+- Sentinel admission after a running executable is replaced uses an APFS
+  copy-on-write clone on macOS or the held executable fd on Linux, avoiding a
+  full binary write. Unsupported zero-copy execution refuses admission with
+  a typed helper error instead of falling back to copying.
+- Deep doctor leaves identical cache generations untouched, including during
+  `--refresh`, avoiding publication locks and redundant synced replacements.
 - The operator gateway can start from an Effigy-managed task without inheriting
   its parent's custody or probe nonce. Startup reports refused spawns and early
   daemon exits; status retains the exit code and bounded stderr tail from the

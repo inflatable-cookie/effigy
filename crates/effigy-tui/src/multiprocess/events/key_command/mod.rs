@@ -1,6 +1,6 @@
 use crossterm::event::KeyEvent;
 
-use effigy_process::ProcessSupervisor;
+use crate::multiprocess::SessionProcesses;
 
 use super::super::state::SessionState;
 use super::super::{MultiProcessTuiError, MultiProcessTuiOptions};
@@ -28,7 +28,7 @@ pub(super) fn handle_pre_dispatch_key(
 
 pub(super) fn handle_shell_shortcuts(
     key: &KeyEvent,
-    supervisor: &ProcessSupervisor,
+    supervisor: &dyn SessionProcesses,
     state: &mut SessionState,
     active_process: &str,
     active_is_shell: bool,

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::time::Instant;
 
-use effigy_process::ProcessSupervisor;
+use crate::multiprocess::SessionProcesses;
 
 use super::diagnostics::RuntimeDiagnostics;
 use super::MultiProcessTuiError;
@@ -20,7 +20,7 @@ pub(super) fn restore_terminal(terminal: &mut TuiTerminal) -> Result<(), std::io
 
 pub(super) fn shutdown_and_render_summary(
     terminal: &mut TuiTerminal,
-    supervisor: &ProcessSupervisor,
+    supervisor: &dyn SessionProcesses,
     observed_non_zero: HashMap<String, String>,
     process_logs: &HashMap<String, VecDeque<LogEntry>>,
     process_started_at: &HashMap<String, Instant>,

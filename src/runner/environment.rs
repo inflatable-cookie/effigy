@@ -383,7 +383,8 @@ fn record_mode(ctx: &EnvContext<'_>, env: &EnvRef) -> AttachMode {
     }
 }
 
-fn requested_holder() -> Option<RunId> {
+/// The run a managed run's `container up` was asked to attach, if any.
+pub(in crate::runner) fn requested_holder() -> Option<RunId> {
     std::env::var(HOLDER_ENV)
         .ok()
         .and_then(|value| value.trim().parse().ok())
@@ -404,6 +405,18 @@ pub(in crate::runner) fn stop(
     op: Operation,
     effect: impl FnOnce() -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
+    stop_exempting(repo_root, policy, op, exempt_run(), effect)
+}
+
+/// [`stop`] for a run settling in this process: its own hold is exempt by
+/// id, as `EFFIGY_INTERNAL_ENVIRONMENT_EXEMPT` names it for a child.
+pub(in crate::runner) fn stop_exempting(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    op: Operation,
+    exempt: Option<RunId>,
+    effect: impl FnOnce() -> Result<(), RunnerError>,
+) -> Result<(), RunnerError> {
     import_legacy(repo_root, policy)?;
     let env = env_ref(policy)?;
     stop_env(
@@ -411,6 +424,7 @@ pub(in crate::runner) fn stop(
         &backend(repo_root, policy),
         &policy.project_name,
         op,
+        exempt,
         effect,
     )
 }
@@ -430,6 +444,7 @@ pub(in crate::runner) fn stop_peer(
         &backend(repo_root, policy),
         project,
         Operation::Handover,
+        exempt_run(),
         effect,
     )
 }
@@ -439,11 +454,12 @@ fn stop_env(
     backend: &BackendSelection,
     project: &str,
     op: Operation,
+    exempt: Option<RunId>,
     effect: impl FnOnce() -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
     let ctx = context()?;
     let mut failure = None;
-    let result = engine::down(&ctx, env, op, backend, project, exempt_run(), || {
+    let result = engine::down(&ctx, env, op, backend, project, exempt, || {
         effect().map_err(|error| {
             let message = error.to_string();
             failure = Some(error);
@@ -523,8 +539,20 @@ pub(in crate::runner) fn stop_hook(
     &EffectiveContainerPolicy,
     effigy_runtime::write::ShutdownEffect<'_>,
 ) -> Result<(), effigy_runtime::EffigyRuntimeError> {
+    stop_hook_exempting(op, exempt_run())
+}
+
+/// [`stop_hook`] exempting `exempt`, a run settling in this process.
+pub(in crate::runner) fn stop_hook_exempting(
+    op: Operation,
+    exempt: Option<RunId>,
+) -> impl Fn(
+    &Path,
+    &EffectiveContainerPolicy,
+    effigy_runtime::write::ShutdownEffect<'_>,
+) -> Result<(), effigy_runtime::EffigyRuntimeError> {
     move |repo_root, policy, effect| {
-        stop(repo_root, policy, op, || {
+        stop_exempting(repo_root, policy, op, exempt, || {
             let _ =
                 crate::runner::host_process::stop_host_processes_for_container(repo_root, policy);
             effect().map_err(RunnerError::from)

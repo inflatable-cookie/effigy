@@ -258,7 +258,6 @@ mod tests {
                 shutdown_on_exit: true,
                 service: None,
                 run_on_host: false,
-                exec_group_file: None,
             },
             ManagedProcessSpec {
                 name: "api".to_owned(),
@@ -275,7 +274,6 @@ mod tests {
                 shutdown_on_exit: false,
                 service: None,
                 run_on_host: false,
-                exec_group_file: None,
             },
             ManagedProcessSpec {
                 name: "shell".to_owned(),
@@ -289,7 +287,6 @@ mod tests {
                 shutdown_on_exit: false,
                 service: Some("workspace".to_owned()),
                 run_on_host: false,
-                exec_group_file: None,
             },
         ]);
 

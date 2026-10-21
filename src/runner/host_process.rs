@@ -2328,14 +2328,6 @@ fn observe_identity(
 
 /// Keeps a diagnostic observation at the point it is seen, then passes the
 /// original verification error through unchanged.
-fn observe_ownership<T>(
-    diagnostic: &mut HostListenerDiagnostic,
-    observation: OwnershipObservation,
-    result: Result<T, RunnerError>,
-) -> Result<T, RunnerError> {
-    result.inspect_err(|_| diagnostic.ownership = observation)
-}
-
 enum ListenerStartupFailure {
     Stopped,
     Failed(RunnerError),
@@ -2386,7 +2378,10 @@ fn wait_for_owned_listener(
     let preferred = config.bind.parse::<SocketAddr>().map_err(|error| {
         RunnerError::task_invocation(format!("managed listener bind address is invalid: {error}"))
     })?;
+    let mut exclusivity: Option<std::io::Error>;
     loop {
+        // Per observation: an earlier iteration's sharer is not this one's.
+        exclusivity = None;
         if shutdown.load(Ordering::SeqCst) {
             return Err(ListenerStartupFailure::Stopped);
         }
@@ -2481,6 +2476,8 @@ fn wait_for_owned_listener(
         diagnostic.candidates_inspected = u32::try_from(candidates.len()).ok();
         diagnostic.ownership = OwnershipObservation::NoOwnerObserved;
         diagnostic.observed_listener_pid = None;
+        diagnostic.http_probe = None;
+        diagnostic.http_status = None;
         let mut found = None;
         for pid in candidates {
             let identity = match read_live_process_identity(pid) {
@@ -2545,9 +2542,12 @@ fn wait_for_owned_listener(
                     )
                     .into());
                 }
-                observe_ownership(
-                    diagnostic,
-                    OwnershipObservation::ExclusivityUnproven,
+                // Another same-user process can hold the listening socket
+                // for a moment (a forked helper before it closes inherited
+                // descriptors). Exclusivity is observed, never assumed: poll
+                // until it holds, and fail with it at the deadline
+                // (papercut 629e8cdc).
+                if let Err(error) =
                     effigy_gateway::socket_ownership::verify_process_listener_exclusive(
                         pid,
                         &GatewayEndpoint {
@@ -2555,12 +2555,13 @@ fn wait_for_owned_listener(
                             addr: address,
                         },
                     )
-                    .map_err(|error| {
-                        RunnerError::task_invocation(format!(
-                            "cannot prove exclusive managed listener ownership: {error}"
-                        ))
-                    }),
-                )?;
+                {
+                    diagnostic.ownership = OwnershipObservation::ExclusivityUnproven;
+                    diagnostic.observed_listener_pid = Some(pid);
+                    exclusivity = Some(error);
+                    break;
+                }
+                exclusivity = None;
                 diagnostic.ownership = OwnershipObservation::ExclusiveOwnerObserved;
                 diagnostic.observed_listener_pid = Some(pid);
                 found = Some(OwnedHostListener {
@@ -2600,7 +2601,14 @@ fn wait_for_owned_listener(
             }
         }
         if Instant::now() >= deadline {
-            return Err(listener_readiness_timeout(timeout).into());
+            return Err(match exclusivity {
+                Some(error) => RunnerError::task_invocation(format!(
+                    "cannot prove exclusive managed listener ownership within {}s: {error}",
+                    timeout.as_secs()
+                )),
+                None => listener_readiness_timeout(timeout),
+            }
+            .into());
         }
         thread::sleep(Duration::from_millis(50));
     }

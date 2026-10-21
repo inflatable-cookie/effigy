@@ -20,7 +20,7 @@ use crate::signal::RouterHandle;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::net::UnixStream;
@@ -28,6 +28,9 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::{Duration, Instant};
+
+mod image;
+use image::{private_image, PrivateImage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Placement {
@@ -66,6 +69,10 @@ pub struct Executable {
     changed: (i64, i64),
     #[serde(skip)]
     image: Option<std::sync::Arc<std::fs::File>>,
+    // Only the private, parent-to-helper frame carries this inherited fd.
+    #[cfg(target_os = "linux")]
+    #[serde(default)]
+    exec_fd: Option<RawFd>,
 }
 impl Executable {
     pub fn current() -> io::Result<Self> {
@@ -85,6 +92,8 @@ impl Executable {
             modified: (metadata.mtime(), metadata.mtime_nsec()),
             changed: (metadata.ctime(), metadata.ctime_nsec()),
             image: Some(std::sync::Arc::new(image)),
+            #[cfg(target_os = "linux")]
+            exec_fd: None,
         })
     }
     /// The held startup image when its path no longer names it and its
@@ -99,6 +108,13 @@ impl Executable {
             .then_some(image)
     }
     pub fn verify(&self) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        let fresh = if let Some(fd) = self.exec_fd {
+            image::fd_executable(&self.path, fd)?
+        } else {
+            Self::capture(&self.path)?
+        };
+        #[cfg(not(target_os = "linux"))]
         let fresh = Self::capture(&self.path)?;
         let changed: Vec<_> = [
             ("device", self.device != fresh.device),
@@ -229,15 +245,22 @@ fn helper_not_started(entry: &str, cause: io::Error) -> RunError {
     }
 }
 /// Verifies the image and spawns `entry` with stderr to `log`. Refusal and
-/// spawn failure are typed, never store I/O.
+/// spawn failure are typed, never store I/O. An engine supervisor gets its
+/// client's working directory and environment explicitly, never inherited.
 fn spawn_helper(
     executable: &Executable,
     entry: &str,
     log: &std::fs::File,
+    launch: Option<&EngineLaunch>,
 ) -> Result<Child, RunError> {
     let mut busy = 0;
     loop {
         let mut command = helper(executable, entry).map_err(|e| helper_not_started(entry, e))?;
+        if let Some(launch) = launch {
+            command
+                .envs(launch.env.iter().map(|(k, v)| (k, v)))
+                .current_dir(&launch.cwd);
+        }
         command
             .stdout(Stdio::piped())
             .stderr(log.try_clone().map_err(|e| helper_not_started(entry, e))?);
@@ -332,68 +355,11 @@ pub(crate) fn helper(executable: &Executable, entry: &str) -> io::Result<Command
             }
         });
     }
+    #[cfg(target_os = "linux")]
+    if let Some(fd) = executable.exec_fd {
+        image::exec_held(&mut command, executable, fd, entry)?;
+    }
     Ok(command)
-}
-/// A private copy of a replaced startup image under the state root, removed
-/// once the helper that runs it has acknowledged (I-SV4).
-struct PrivateImage<'a> {
-    dir: &'a DirFd,
-    name: FileName,
-    executable: Executable,
-}
-impl Drop for PrivateImage<'_> {
-    fn drop(&mut self) {
-        let _ = self.dir.remove(&self.name, false);
-    }
-}
-fn private_image<'a>(
-    root: &'a StateRoot,
-    executable: &Executable,
-) -> Result<Option<PrivateImage<'a>>, RunError> {
-    let Some(image) = executable.replaced_image() else {
-        return Ok(None);
-    };
-    let name = FileName::new(&format!("exe-{}-{}", std::process::id(), nonce()))
-        .map_err(|e| RunError::Invalid(e.to_string()))?;
-    let path = root.dir().join(name.as_str());
-    let io = |op, error: io::Error| {
-        crate::store::StoreError::Io(crate::fs::IoError::new(op, &path, &error))
-    };
-    let (mut copy, _) = root
-        .dir()
-        .open_file(
-            &name,
-            libc::O_WRONLY | libc::O_EXCL,
-            Some(0o700),
-            Trust::Private,
-        )
-        .map_err(crate::store::StoreError::from)?
-        .ok_or_else(|| RunError::Invalid("private image missing".into()))?;
-    let mut pin = PrivateImage {
-        dir: root.dir(),
-        name,
-        executable: executable.clone(),
-    };
-    let mut buffer = vec![0u8; 1 << 20];
-    let mut offset = 0;
-    loop {
-        let count = std::os::unix::fs::FileExt::read_at(image, &mut buffer, offset)
-            .map_err(|e| io("private image read", e))?;
-        if count == 0 {
-            break;
-        }
-        copy.write_all(&buffer[..count])
-            .map_err(|e| io("private image write", e))?;
-        offset += count as u64;
-    }
-    if offset != executable.size {
-        return Err(RunError::Invalid(
-            "startup image changed while copied".into(),
-        ));
-    }
-    drop(copy);
-    pin.executable = Executable::capture(&path).map_err(|e| helper_not_started(SENTINEL, e))?;
-    Ok(Some(pin))
 }
 pub(crate) fn spawn_sentinel(
     run: &Run<'_>,
@@ -424,7 +390,7 @@ pub(crate) fn spawn_sentinel(
             {
                 retried = true;
             }
-            // The sentinel verified and runs its image: the private copy can go.
+            // The sentinel verified and runs its image: the private image can go.
             result => return result,
         }
     }
@@ -439,7 +405,15 @@ fn sentinel_attempt(
 ) -> Result<SentinelLease, RunError> {
     let executable = pin.map_or(&plan.executable, |pin| &pin.executable);
     let log = helper_log(root)?;
-    let mut child = spawn_helper(executable, SENTINEL, &log)?;
+    // A detached owner runs in the environment its client handed over; its
+    // sentinel settles the same effects, so it gets that environment too.
+    // An inline owner's sentinel keeps a cleared environment.
+    let inherited = (plan.placement == Placement::Detached).then(|| EngineLaunch {
+        payload: Vec::new(),
+        cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
+        env: std::env::vars_os().collect(),
+    });
+    let mut child = spawn_helper(executable, SENTINEL, &log, inherited.as_ref())?;
     // The fault driver waits for every helper, registered or not (§12.1).
     #[cfg(all(test, feature = "fault-injection"))]
     crate::fault::note_helper(child.id());
@@ -503,9 +477,13 @@ fn write_frame(writer: &mut impl Write, value: &impl Serialize) -> io::Result<()
     if bytes.len() > ResolvedInvocation::MAX_WIRE_BYTES {
         return Err(io::Error::other("helper frame too large"));
     }
-    let op = context(CancelToken::default(), Duration::from_secs(30));
     let mut frame = (bytes.len() as u32).to_be_bytes().to_vec();
     frame.extend(bytes);
+    write_all(writer, &frame)
+}
+/// A bounded write to a nonblocking helper pipe.
+fn write_all(writer: &mut impl Write, frame: &[u8]) -> io::Result<()> {
+    let op = context(CancelToken::default(), Duration::from_secs(30));
     let mut offset = 0;
     while offset < frame.len() {
         op.check("helper write")
@@ -580,6 +558,8 @@ fn nonblocking(fd: RawFd) -> io::Result<()> {
 /// Main-only hidden dispatch. `None` means this is an ordinary invocation.
 /// Adapter callbacks retain their existing policy, and `validate_next` is the
 /// engine's parser, so recovery never invents a command grammar or a writer.
+/// A supervisor launched for an engine payload is refused here: its binary
+/// dispatches through `engine_entry`.
 pub fn internal_entry(
     entry: &str,
     router: &mut RouterHandle,
@@ -588,15 +568,76 @@ pub fn internal_entry(
 ) -> Option<Result<(), RunError>> {
     let result = match entry {
         SENTINEL => sentinel(adapter, validate_next),
-        SUPERVISOR => supervisor(router, adapter, validate_next),
+        SUPERVISOR => read_supervisor_config().and_then(|config| match config.work {
+            Work::Engine { .. } => {
+                emit(&Event::Refused(
+                    "this binary runs no engine supervisor".into(),
+                ));
+                Err(RunError::Invalid("engine supervisor unsupported".into()))
+            }
+            work => supervisor(
+                router,
+                adapter,
+                validate_next,
+                config.home,
+                config.executable,
+                work,
+            ),
+        }),
         _ => return None,
     };
+    report_entry_error(entry, &result);
+    Some(result)
+}
+/// `internal_entry` for a binary whose engines also run detached supervisors
+/// (§5.8). The engine owns its run from `Run::begin` to settle, so it takes
+/// the process's one signal router with it (K9).
+pub fn engine_entry(
+    entry: &str,
+    mut router: RouterHandle,
+    adapter: &mut impl SettlementAdapter,
+    validate_next: impl Fn(&[OsString]) -> bool,
+    engine: impl FnOnce(EngineSession, RouterHandle) -> Result<(), RunError>,
+) -> Option<Result<(), RunError>> {
+    let result = match entry {
+        SENTINEL => sentinel(adapter, validate_next),
+        SUPERVISOR => read_supervisor_config().and_then(|config| match config.work {
+            Work::Engine { payload } => {
+                EngineSession::open(payload).and_then(|session| engine(session, router))
+            }
+            work => supervisor(
+                &mut router,
+                adapter,
+                validate_next,
+                config.home,
+                config.executable,
+                work,
+            ),
+        }),
+        _ => return None,
+    };
+    report_entry_error(entry, &result);
+    Some(result)
+}
+fn report_entry_error(entry: &str, result: &Result<(), RunError>) {
     // Before acknowledgement stderr is the parent's private log, so an early
     // failure names itself in the parent's typed error; afterwards it is null.
-    if let Err(error) = &result {
+    if let Err(error) = result {
         let _ = writeln!(io::stderr(), "{entry}: {error}");
     }
-    Some(result)
+}
+fn read_supervisor_config() -> Result<SupervisorConfig, RunError> {
+    // Unbuffered: no byte after the config frame may sit in a reader the
+    // owning channel never sees.
+    let mut input = std::fs::File::from(private_dup(libc::STDIN_FILENO)?);
+    nonblocking(input.as_raw_fd())?;
+    nonblocking(libc::STDOUT_FILENO)?;
+    let config: SupervisorConfig = serde_json::from_slice(&read_frame(&mut input)?)?;
+    config
+        .executable
+        .verify()
+        .map_err(|error| RunError::Invalid(format!("startup binary refused: {error}")))?;
+    Ok(config)
 }
 const SENTINEL: &str = "__kernel-sentinel";
 const SUPERVISOR: &str = "__kernel-supervise";
@@ -771,11 +812,22 @@ impl WireProcess {
 #[derive(Serialize, Deserialize)]
 struct SupervisorConfig {
     home: PathBuf,
-    invocation: Vec<u8>,
-    processes: Vec<WireProcess>,
-    run: RunId,
-    next: Vec<Vec<u8>>,
     executable: Executable,
+    work: Work,
+}
+/// What one detached supervisor runs: kernel-resolved process specs, or an
+/// engine's opaque payload that the engine itself admits and drives.
+#[derive(Serialize, Deserialize)]
+enum Work {
+    Processes {
+        invocation: Vec<u8>,
+        processes: Vec<WireProcess>,
+        run: RunId,
+        next: Vec<Vec<u8>>,
+    },
+    Engine {
+        payload: Vec<u8>,
+    },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Event {
@@ -794,6 +846,8 @@ pub enum Event {
         exit_code: i32,
     },
     Refused(String),
+    /// An engine supervisor's own event; the kernel never reads it.
+    Engine(Vec<u8>),
 }
 #[derive(Debug)]
 pub struct SupervisorClient {
@@ -885,6 +939,20 @@ impl SupervisorClient {
         }
         Ok(())
     }
+    /// One framed message on the owning-client pipe, for an engine
+    /// supervisor's own front-end commands. A process supervisor ignores it.
+    pub fn send_frame(&mut self, bytes: &[u8]) -> io::Result<()> {
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| io::Error::other("owning pipe already released"))?;
+        if bytes.len() > ResolvedInvocation::MAX_WIRE_BYTES {
+            return Err(io::Error::other("engine frame too large"));
+        }
+        let mut frame = (bytes.len() as u32).to_be_bytes().to_vec();
+        frame.extend_from_slice(bytes);
+        write_all(writer, &frame)
+    }
     pub fn detach(mut self, cx: &EffectContext, id: RunId) -> Result<RunId, RunError> {
         while !self.active {
             self.event(cx.operation())?;
@@ -922,6 +990,72 @@ pub fn start_detached(
     executable: &Executable,
     client: ClientMode,
 ) -> Result<SupervisorClient, RunError> {
+    let work = Work::Processes {
+        invocation: serde_json::to_vec(inv)?,
+        processes: processes.into_iter().map(WireProcess::encode).collect(),
+        run: id,
+        next: next.argv().iter().map(|a| a.as_bytes().to_vec()).collect(),
+    };
+    let fence = Fence {
+        resource: inv.spec().owner.clone(),
+        generation: crate::id::Generation::new(0),
+    };
+    launch(cx, home, work, None, (id, fence), executable, client)
+}
+/// What an engine's detached supervisor is started with besides its binary:
+/// an opaque payload, and the client's working directory and environment,
+/// handed over explicitly at spawn. The engine admits its own run (§5.8).
+#[derive(Clone)]
+pub struct EngineLaunch {
+    pub payload: Vec<u8>,
+    pub cwd: PathBuf,
+    pub env: Vec<(OsString, OsString)>,
+}
+impl std::fmt::Debug for EngineLaunch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("EngineLaunch { payload/cwd/env: [REDACTED] }")
+    }
+}
+/// One detached engine supervisor per run, in its own session. The returned
+/// client learns the run identity from the engine's admission.
+pub fn start_engine(
+    cx: &EffectContext,
+    home: &Path,
+    launch_spec: EngineLaunch,
+    executable: &Executable,
+    client: ClientMode,
+) -> Result<SupervisorClient, RunError> {
+    let work = Work::Engine {
+        payload: launch_spec.payload.clone(),
+    };
+    // Placeholder identity until the engine's `Admitted` names its run.
+    let pending = (
+        RunId::new(0, [0; 10]).map_err(|e| RunError::Invalid(e.to_string()))?,
+        Fence {
+            resource: ResourceId::store(crate::id::Scope::Machine, "engine-supervisor")
+                .map_err(|e| RunError::Invalid(e.to_string()))?,
+            generation: crate::id::Generation::new(0),
+        },
+    );
+    launch(
+        cx,
+        home,
+        work,
+        Some(&launch_spec),
+        pending,
+        executable,
+        client,
+    )
+}
+fn launch(
+    cx: &EffectContext,
+    home: &Path,
+    work: Work,
+    engine: Option<&EngineLaunch>,
+    (id, fence): (RunId, Fence),
+    executable: &Executable,
+    client: ClientMode,
+) -> Result<SupervisorClient, RunError> {
     cx.require(crate::ctx::Capability::AdapterEffect)
         .map_err(|_| RunError::Invalid("detached spawn needs Mutate".into()))?;
     cx.require(crate::ctx::Capability::HostAuthority)
@@ -929,15 +1063,12 @@ pub fn start_detached(
     cx.operation().check("start detached")?;
     let config = SupervisorConfig {
         home: home.into(),
-        invocation: serde_json::to_vec(inv)?,
-        processes: processes.into_iter().map(WireProcess::encode).collect(),
-        run: id,
-        next: next.argv().iter().map(|a| a.as_bytes().to_vec()).collect(),
         executable: executable.clone(),
+        work,
     };
     let root = StateRoot::effects(cx, home).map_err(crate::store::StoreError::from)?;
     let log = helper_log(&root)?;
-    let mut child = spawn_helper(executable, SUPERVISOR, &log)?;
+    let mut child = spawn_helper(executable, SUPERVISOR, &log, engine)?;
     let mut writer = child
         .stdin
         .take()
@@ -960,16 +1091,16 @@ pub fn start_detached(
         events,
         buffer: Vec::new(),
         run: id,
-        fence: Fence {
-            resource: inv.spec().owner.clone(),
-            generation: crate::id::Generation::new(0),
-        },
+        fence,
         home: home.into(),
         active: false,
         closed: false,
     };
     match result.event(cx.operation()) {
-        Ok(Event::Admitted { fence, .. }) => result.fence = fence,
+        Ok(Event::Admitted { run, fence }) => {
+            result.run = run;
+            result.fence = fence;
+        }
         Ok(Event::Refused(reason)) => return Err(RunError::Invalid(reason)),
         Ok(_) => return Err(RunError::Invalid("invalid admission event".into())),
         Err(error) => return Err(helper_failed(SUPERVISOR, &mut result.child, &log, error)),
@@ -1015,35 +1146,417 @@ fn peer_owned(socket: &UnixStream) -> bool {
     }
 }
 fn emit(event: &Event) {
+    emit_to(libc::STDOUT_FILENO, event)
+}
+fn emit_to(fd: RawFd, event: &Event) {
     if let Ok(bytes) = serde_json::to_vec(event) {
         let mut frame = (bytes.len() as u32).to_be_bytes().to_vec();
         frame.extend(bytes);
         if frame.len() <= 4096 {
-            // SAFETY: immutable initialized frame and stdout fd. One nonblocking
-            // write <= PIPE_BUF is atomic; backpressure never detaches a writer
-            // or changes workload outcome. Redacted rotating logs retain output.
-            unsafe { libc::write(libc::STDOUT_FILENO, frame.as_ptr().cast(), frame.len()) };
+            // SAFETY: immutable initialized frame and a live event fd. One
+            // nonblocking write <= PIPE_BUF is atomic; backpressure never
+            // detaches a writer or changes workload outcome. Redacted rotating
+            // logs retain output.
+            unsafe { libc::write(fd, frame.as_ptr().cast(), frame.len()) };
         }
     }
+}
+
+/// What one turn of the owner loop learned from its signals, its requests,
+/// its control socket and its owning client.
+#[derive(Debug, Default)]
+pub struct Control {
+    /// Signals the owner forwards to its workloads.
+    pub forward: Vec<i32>,
+    /// Why the run must stop now, if it must.
+    pub stop: Option<StopCause>,
+    /// A second interrupt or an `Escalate` request: KILL now, settle after.
+    pub escalate: bool,
+    /// Framed messages the owning client sent its engine.
+    pub frames: Vec<Vec<u8>>,
+}
+/// The owning client's side of a detached run: its pipe, the run's control
+/// socket doorbell and the detach state. One implementation serves the
+/// kernel's process supervisor and every engine supervisor.
+struct OwningChannel {
+    input: std::fs::File,
+    buffer: Vec<u8>,
+    listener: Option<std::os::unix::net::UnixListener>,
+    detached: bool,
+}
+impl OwningChannel {
+    fn turn(
+        &mut self,
+        run: &mut Run<'_>,
+        routed: &[crate::signal::RoutedSignal],
+    ) -> Result<Control, RunError> {
+        let mut control = Control::default();
+        for signal in routed {
+            control.forward.push(signal.forward);
+            control.escalate |= signal.escalate;
+            control
+                .stop
+                .get_or_insert(StopCause::Signal(signal.received));
+        }
+        // EOF is read before the durable requests: a client commits its
+        // detach before closing the pipe, so a request snapshot taken first
+        // could miss that detach and mistake it for owner death.
+        let (eof, requests) =
+            observe_client_requests(&mut self.input, &mut self.buffer, || run.requests())?;
+        for request in requests {
+            match request.action {
+                RequestAction::Detach => self.detached = true,
+                RequestAction::Escalate => {
+                    control.escalate = true;
+                    control.stop.get_or_insert(StopCause::Requested);
+                }
+                RequestAction::Stop | RequestAction::Settle => {
+                    control.stop.get_or_insert(StopCause::Requested);
+                }
+            }
+            run.resolve_request(&request)?;
+        }
+        if let Some(listener) = &self.listener {
+            // The socket is a doorbell: the journal already holds the request.
+            while let Ok((socket, _)) = listener.accept() {
+                if peer_owned(&socket) {
+                    drop(socket);
+                }
+            }
+        }
+        if eof && !self.detached {
+            control.stop.get_or_insert(StopCause::OwnerLost);
+        }
+        while self.buffer.len() >= 4 {
+            let size = u32::from_be_bytes(
+                self.buffer[..4]
+                    .try_into()
+                    .map_err(|_| RunError::Invalid("client frame".into()))?,
+            ) as usize;
+            if size > ResolvedInvocation::MAX_WIRE_BYTES {
+                // A malformed client stream is a lost owning client.
+                self.buffer.clear();
+                control.stop.get_or_insert(StopCause::OwnerLost);
+                break;
+            }
+            if self.buffer.len() < size + 4 {
+                break;
+            }
+            control.frames.push(self.buffer[4..size + 4].to_vec());
+            self.buffer.drain(..size + 4);
+        }
+        Ok(control)
+    }
+}
+/// An engine's detached supervisor (§5.8): the owning-client channel, the
+/// event pipe and this process's own output. The engine admits its run with
+/// `Run::begin`, then calls `admitted` before its first workload effect.
+pub struct EngineSession {
+    payload: Vec<u8>,
+    events: std::os::fd::OwnedFd,
+    channel: OwningChannel,
+    output: Option<OutputCapture>,
+}
+impl std::fmt::Debug for EngineSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EngineSession")
+            .field("detached", &self.channel.detached)
+            .finish_non_exhaustive()
+    }
+}
+impl EngineSession {
+    /// Moves the owning pipe and the event pipe off descriptors 0 and 1, so
+    /// nothing the engine runs can read a client frame or write an event.
+    fn open(payload: Vec<u8>) -> Result<Self, RunError> {
+        let input = private_dup(libc::STDIN_FILENO)?;
+        let events = private_dup(libc::STDOUT_FILENO)?;
+        null_onto(libc::STDIN_FILENO)?;
+        null_onto(libc::STDOUT_FILENO)?;
+        Ok(Self {
+            payload,
+            events,
+            channel: OwningChannel {
+                input: std::fs::File::from(input),
+                buffer: Vec::new(),
+                listener: None,
+                detached: false,
+            },
+            output: None,
+        })
+    }
+    pub fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+    fn emit(&self, event: &Event) {
+        emit_to(self.events.as_raw_fd(), event);
+    }
+    /// The run is admitted: bind its control socket (K3: after `Admitted`),
+    /// announce it to the owning client and return stderr to the null device.
+    pub fn admitted(&mut self, run: &mut Run<'_>) -> Result<(), RunError> {
+        let listener = run.control_socket()?;
+        self.channel.listener = Some(listener);
+        self.emit(&Event::Admitted {
+            run: run.id(),
+            fence: run.fence().clone(),
+        });
+        release_helper_log();
+        Ok(())
+    }
+    /// Admission refused: the client reports `reason`; nothing ran. The
+    /// reason also reaches the client's helper log tail, so a refusal too
+    /// long for one event frame still names itself.
+    pub fn refused(&self, reason: &str) {
+        let _ = writeln!(io::stderr(), "{reason}");
+        let mut end = reason.len().min(3072);
+        while !reason.is_char_boundary(end) {
+            end -= 1;
+        }
+        self.emit(&Event::Refused(reason[..end].into()));
+    }
+    pub fn active(&self) {
+        self.emit(&Event::Active);
+    }
+    /// An engine event for the owning client. Delivery is best effort, never
+    /// an outcome (K10): front ends recover state from the journal.
+    pub fn event(&self, bytes: Vec<u8>) {
+        self.emit(&Event::Engine(bytes));
+    }
+    /// One owner-loop turn over `routed` signals, pending requests, the
+    /// control socket and the owning client.
+    pub fn control(
+        &mut self,
+        run: &mut Run<'_>,
+        routed: &[crate::signal::RoutedSignal],
+    ) -> Result<Control, RunError> {
+        self.channel.turn(run, routed)
+    }
+    /// Whether the owning client detached: its death no longer stops the run.
+    pub fn detached(&self) -> bool {
+        self.channel.detached
+    }
+    /// Watches the owning pipe while the engine is inside a blocking step and
+    /// cannot take a `control` turn. It reads nothing: frames stay queued.
+    pub fn owner_watch(&self) -> io::Result<OwnerWatch> {
+        OwnerWatch::start(&self.channel.input)
+    }
+    /// From now on this process's own stdout and stderr, and those of every
+    /// child that inherits them, are the run's output log (sequence 0),
+    /// redacted before the sink (K12). Readers use `run::read_log`.
+    pub fn capture_output(&mut self, run: &Run<'_>, secrets: Vec<Vec<u8>>) -> io::Result<()> {
+        if self.output.is_none() {
+            self.output = Some(OutputCapture::start(run, secrets)?);
+        }
+        Ok(())
+    }
+    /// Announces the settled outcome after the captured output is flushed.
+    pub fn closed(&mut self, outcome: &crate::outcome::Outcome<crate::run::Settled>) {
+        if let Some(output) = self.output.take() {
+            output.finish();
+        }
+        self.emit(&Event::Closed {
+            cleanup_complete: outcome.cleanup() == crate::outcome::CleanupOutcome::Complete,
+            workload: outcome.workload().clone(),
+            exit_code: outcome.exit_code(),
+        });
+    }
+}
+/// Whether the owning client went away, observed without consuming its
+/// frames: the pipe polls readable with nothing left to read.
+#[derive(Debug)]
+pub struct OwnerWatch {
+    lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+impl OwnerWatch {
+    fn start(input: &std::fs::File) -> io::Result<Self> {
+        let fd = private_dup(input.as_raw_fd())?;
+        let lost = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (thread_lost, thread_done) = (lost.clone(), done.clone());
+        let thread = std::thread::Builder::new()
+            .name("effigy-owner-watch".into())
+            .spawn(move || {
+                use std::sync::atomic::Ordering;
+                while !thread_done.load(Ordering::Acquire) {
+                    let mut poll = libc::pollfd {
+                        fd: fd.as_raw_fd(),
+                        events: libc::POLLIN,
+                        revents: 0,
+                    };
+                    // SAFETY: one initialized pollfd for a live descriptor.
+                    let ready = unsafe { libc::poll(&mut poll, 1, 100) };
+                    if ready <= 0 {
+                        continue;
+                    }
+                    let mut pending: libc::c_int = 0;
+                    // SAFETY: FIONREAD writes the readable byte count to `pending`.
+                    let queued =
+                        unsafe { libc::ioctl(fd.as_raw_fd(), libc::FIONREAD, &mut pending) };
+                    if queued == 0 && pending == 0 {
+                        thread_lost.store(true, Ordering::Release);
+                        return;
+                    }
+                    // Queued frames wait for the owner's next turn.
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            })?;
+        Ok(Self {
+            lost,
+            done,
+            thread: Some(thread),
+        })
+    }
+    pub fn lost(&self) -> bool {
+        self.lost.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+impl Drop for OwnerWatch {
+    fn drop(&mut self) {
+        self.done.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+/// The run's own output log, fed from pipes on descriptors 1 and 2.
+struct OutputCapture {
+    thread: std::thread::JoinHandle<()>,
+}
+/// The output log's journal position: no effect has sequence 0.
+pub const OUTPUT_SEQUENCE: i64 = 0;
+impl OutputCapture {
+    fn start(run: &Run<'_>, secrets: Vec<Vec<u8>>) -> io::Result<Self> {
+        let limits = run.limits();
+        let mut logs = [
+            crate::custody::Stream::Stdout,
+            crate::custody::Stream::Stderr,
+        ]
+        .map(|stream| run.capture_log(OUTPUT_SEQUENCE, stream, &limits).ok());
+        let mut readers = Vec::new();
+        for target in [libc::STDOUT_FILENO, libc::STDERR_FILENO] {
+            let (read, write) = crate::custody::spawn::pipe()?;
+            // SAFETY: dup2 of a live pipe end onto a standard descriptor.
+            if unsafe { libc::dup2(write.as_raw_fd(), target) } < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            readers.push(read);
+        }
+        let thread = std::thread::Builder::new()
+            .name("effigy-run-output".into())
+            .spawn(move || {
+                let mut redactor = crate::custody::Redactor::new(secrets);
+                let mut open = [true, true];
+                let mut buf = [0u8; 8192];
+                while open.iter().any(|open| *open) {
+                    let mut fds: Vec<libc::pollfd> = readers
+                        .iter()
+                        .map(|fd| libc::pollfd {
+                            fd: fd.as_raw_fd(),
+                            events: libc::POLLIN,
+                            revents: 0,
+                        })
+                        .collect();
+                    // SAFETY: initialized pollfd array of its own length.
+                    if unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, 200) } < 0 {
+                        continue;
+                    }
+                    for (index, fd) in fds.iter().enumerate() {
+                        if !open[index] || fd.revents == 0 {
+                            continue;
+                        }
+                        // SAFETY: live pipe read end and writable stack buffer.
+                        let count =
+                            unsafe { libc::read(fd.fd, buf.as_mut_ptr().cast(), buf.len()) };
+                        if count <= 0 {
+                            open[index] = false;
+                            continue;
+                        }
+                        let tagged: Vec<(u8, u8)> = buf[..count as usize]
+                            .iter()
+                            .map(|b| (index as u8, *b))
+                            .collect();
+                        sink(&mut logs, redactor.push_tagged(&tagged, false));
+                    }
+                }
+                sink(&mut logs, redactor.push_tagged(&[], true));
+            })?;
+        Ok(Self { thread })
+    }
+    /// Closes this process's write ends so the reader drains to EOF. A child
+    /// still holding an inherited copy ends with its own settle.
+    fn finish(self) {
+        let _ = null_onto(libc::STDOUT_FILENO);
+        let _ = null_onto(libc::STDERR_FILENO);
+        let _ = self.thread.join();
+    }
+}
+fn sink(logs: &mut [Option<crate::custody::capture::Log>; 2], clean: Vec<(u8, u8)>) {
+    for (index, log) in logs.iter_mut().enumerate() {
+        let part: Vec<u8> = clean
+            .iter()
+            .filter(|(tag, _)| usize::from(*tag) == index)
+            .map(|(_, byte)| *byte)
+            .collect();
+        if part.is_empty() {
+            continue;
+        }
+        // Observability only: a failed write marks the log, never the run (K10).
+        if let Some(writer) = log.as_mut() {
+            if writer.append(&part).is_err() {
+                writer.mark_truncated();
+                *log = None;
+            }
+        }
+    }
+}
+fn private_dup(fd: RawFd) -> io::Result<std::os::fd::OwnedFd> {
+    // SAFETY: duplicates a live standard descriptor to a fresh CLOEXEC fd.
+    let copy = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 3) };
+    if copy < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: fcntl returned a new fd owned exactly once here.
+    Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(copy) })
+}
+fn null_onto(target: RawFd) -> io::Result<()> {
+    // SAFETY: open of a static C string, dup2 onto a standard descriptor and
+    // close of our own temporary fd.
+    unsafe {
+        let null = libc::open(c"/dev/null".as_ptr(), libc::O_RDWR | libc::O_CLOEXEC);
+        if null < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let result = libc::dup2(null, target);
+        libc::close(null);
+        if result < 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
 }
 
 fn supervisor(
     router: &mut RouterHandle,
     adapter: &mut impl SettlementAdapter,
     validate_next: impl Fn(&[OsString]) -> bool,
+    home: PathBuf,
+    executable: Executable,
+    work: Work,
 ) -> Result<(), RunError> {
-    let mut input = std::io::stdin().lock();
-    nonblocking(input.as_raw_fd())?;
-    nonblocking(libc::STDOUT_FILENO)?;
-    let config: SupervisorConfig = serde_json::from_slice(&read_frame(&mut input)?)?;
-    config
-        .executable
-        .verify()
-        .map_err(|error| RunError::Invalid(format!("startup binary refused: {error}")))?;
-    let inv = ResolvedInvocation::decode(&config.invocation)
-        .map_err(|e| RunError::Invalid(e.to_string()))?;
+    let Work::Processes {
+        invocation,
+        processes,
+        run: run_id,
+        next,
+    } = work
+    else {
+        return Err(RunError::Invalid("process supervisor work".into()));
+    };
+    let inv =
+        ResolvedInvocation::decode(&invocation).map_err(|e| RunError::Invalid(e.to_string()))?;
     let next = Invocation::validated(
-        config.next.into_iter().map(OsString::from_vec).collect(),
+        next.into_iter().map(OsString::from_vec).collect(),
         validate_next,
     )
     .map_err(|_| RunError::Invalid("invalid recovery invocation".into()))?;
@@ -1059,7 +1572,7 @@ fn supervisor(
     let cx = op
         .effects()
         .map_err(|_| RunError::Invalid("supervisor context".into()))?;
-    let root = StateRoot::effects(&cx, &config.home).map_err(crate::store::StoreError::from)?;
+    let root = StateRoot::effects(&cx, &home).map_err(crate::store::StoreError::from)?;
     let cleanup = op
         .cleanup(Duration::from_secs(30))
         .map_err(|_| RunError::Invalid("cleanup overflow".into()))?;
@@ -1068,12 +1581,12 @@ fn supervisor(
         &root,
         &inv,
         BeginOpts {
-            id: config.run,
+            id: run_id,
             wait: Wait::FailFast,
             acknowledge: vec![],
             next,
             custody: Some(LifecyclePlan {
-                executable: config.executable,
+                executable,
                 placement: Placement::Detached,
             }),
         },
@@ -1102,9 +1615,13 @@ fn supervisor(
         fence: run.fence().clone(),
     });
     release_helper_log();
-    nonblocking(input.as_raw_fd())?;
-    let specs = config
-        .processes
+    let mut channel = OwningChannel {
+        input: std::fs::File::from(private_dup(libc::STDIN_FILENO)?),
+        buffer: Vec::new(),
+        listener: Some(listener),
+        detached: false,
+    };
+    let specs = processes
         .into_iter()
         .map(WireProcess::decode)
         .collect::<io::Result<Vec<_>>>()?;
@@ -1119,52 +1636,21 @@ fn supervisor(
     };
     run.advance(run::Phase::Active)?;
     emit(&Event::Active);
-    let mut detached = false;
     let mut seen = vec![false; children.len()];
     'owner: loop {
-        for event in router.poll() {
+        let routed = router.poll();
+        let control = channel.turn(&mut run, &routed)?;
+        for signal in &control.forward {
             for child in &mut children {
-                child.forward(event.forward);
+                child.forward(*signal);
             }
         }
-        // Observe EOF before reading durable requests: detach commits before
-        // closing the client pipe. Reading requests first can miss a detach
-        // committed between that read and EOF, spuriously stopping the run.
-        let mut stop = op.cancel_token().cause().cloned();
-        let mut owner_eof = false;
-        if stop.is_none() {
-            let (eof, requests) = observe_client_requests(&mut input, detached, || run.requests())?;
-            owner_eof = eof;
-            for request in requests {
-                match request.action {
-                    RequestAction::Detach => detached = true,
-                    RequestAction::Escalate => {
-                        for child in &mut children {
-                            child.forward(libc::SIGKILL);
-                        }
-                        stop = Some(StopCause::Requested);
-                    }
-                    RequestAction::Stop | RequestAction::Settle => {
-                        stop = Some(StopCause::Requested)
-                    }
-                }
-                run.resolve_request(&request)?;
+        if control.escalate {
+            for child in &mut children {
+                child.forward(libc::SIGKILL);
             }
         }
-        loop {
-            match listener.accept() {
-                Ok((socket, _)) => {
-                    if peer_owned(&socket) {
-                        drop(socket);
-                    }
-                }
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                Err(_) => break,
-            }
-        }
-        if !detached && owner_eof {
-            stop = Some(StopCause::OwnerLost);
-        }
+        let stop = op.cancel_token().cause().cloned().or(control.stop);
         if let Some(cause) = stop {
             let _ = run.interrupt(
                 &op.cleanup(Duration::from_secs(30))
@@ -1239,15 +1725,27 @@ fn supervisor(
 
 #[cfg(all(test, feature = "fault-injection"))]
 mod tests;
-// EOF is causally after the client's last durable request. Keep the observation
-// and request ordering together so detach cannot be mistaken for owner death.
+// EOF is causally after the client's last durable request. Keep the pipe read
+// and the request read together, in that order, so detach cannot be mistaken
+// for owner death.
 fn observe_client_requests(
     input: &mut dyn Read,
-    detached: bool,
+    buffer: &mut Vec<u8>,
     requests: impl FnOnce() -> Result<Vec<Request>, RunError>,
 ) -> Result<(bool, Vec<Request>), RunError> {
-    let mut byte = [0u8; 1];
-    let eof = !detached && matches!(input.read(&mut byte), Ok(0));
+    let mut bytes = [0u8; 8192];
+    let mut eof = false;
+    loop {
+        match input.read(&mut bytes) {
+            Ok(0) => {
+                eof = true;
+                break;
+            }
+            Ok(count) => buffer.extend_from_slice(&bytes[..count]),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
     Ok((eof, requests()?))
 }
 
@@ -1269,22 +1767,23 @@ mod client_order_tests {
         }
         let committed = Cell::new(false);
         let id = RunId::new(1, [1; 10]).unwrap();
-        let (eof, requests) = observe_client_requests(&mut Eof(&committed), false, || {
-            Ok(if committed.get() {
-                vec![Request {
-                    id,
-                    run: id,
-                    expected: Fence {
-                        resource: ResourceId::gateway("fixture").unwrap(),
-                        generation: crate::id::Generation::new(1),
-                    },
-                    action: RequestAction::Detach,
-                }]
-            } else {
-                vec![]
+        let (eof, requests) =
+            observe_client_requests(&mut Eof(&committed), &mut Vec::new(), || {
+                Ok(if committed.get() {
+                    vec![Request {
+                        id,
+                        run: id,
+                        expected: Fence {
+                            resource: ResourceId::gateway("fixture").unwrap(),
+                            generation: crate::id::Generation::new(1),
+                        },
+                        action: RequestAction::Detach,
+                    }]
+                } else {
+                    vec![]
+                })
             })
-        })
-        .unwrap();
+            .unwrap();
         assert!(eof);
         assert!(matches!(
             requests.as_slice(),

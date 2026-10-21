@@ -27,7 +27,7 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
     )?;
     renderer.notice(
         NoticeLevel::Info,
-        "`EFFIGY_MANAGED_HEADLESS=1` selects the same managed headless runtime as `--headless`; use `effigy <task> status`, `logs [process] [--follow]`, and `stop` from another shell.",
+        "A managed task runs under one supervisor: `--headless` (or `EFFIGY_MANAGED_HEADLESS=1`) follows it as text, `--detach` returns once it has started, and closing or killing an attached client stops it. Use `effigy <task> status [--json]`, `logs [process] [--follow]`, and `stop` from another shell.",
     )?;
     renderer.key_values(&[
         KeyValue::new("-h, --help", "Print this help panel"),

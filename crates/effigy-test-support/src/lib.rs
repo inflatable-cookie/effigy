@@ -115,6 +115,16 @@ impl Fixture {
     /// never dropped. Drain these guards at normal process exit, including
     /// a libtest failure; the suite ledger handles forced termination.
     pub fn process_lifetime(prefix: &str) -> io::Result<PathBuf> {
+        Self::own_for_process(Self::new(prefix)?)
+    }
+
+    /// [`Self::process_lifetime`] under `parent`: for state that needs a short
+    /// path, such as a home whose run sockets must fit a Unix socket path.
+    pub fn process_lifetime_in(prefix: &str, parent: &Path) -> io::Result<PathBuf> {
+        Self::own_for_process(Self::in_parent(prefix, parent)?)
+    }
+
+    fn own_for_process(fixture: Self) -> io::Result<PathBuf> {
         extern "C" fn cleanup() {
             drain_process_fixtures();
         }
@@ -128,7 +138,6 @@ impl Fixture {
             );
             Mutex::new(Vec::new())
         });
-        let fixture = Self::new(prefix)?;
         let path = fixture.path().to_path_buf();
         owners
             .lock()

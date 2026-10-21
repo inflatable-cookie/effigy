@@ -57,11 +57,16 @@ impl Run<'_> {
         }
         crate::fault_point!(SettleStopping)?;
         let effects = self.effects()?;
-        for effect in effects
-            .iter()
-            .rev()
-            .filter(|effect| !effect.state.terminal())
-        {
+        // Reverse effect order (K4), attachments last: an attachment is
+        // released only once nothing else of the run is open, so a holder's
+        // own effects, including those it intended before attaching, settle
+        // first ("then release attachments", §10).
+        let open = |attachment: bool| {
+            effects.iter().rev().filter(move |effect| {
+                !effect.state.terminal() && (effect.spec.kind == attachments::KIND) == attachment
+            })
+        };
+        for effect in open(false).chain(open(true)) {
             cleanup.operation().check("settle effect")?;
             crate::fault_point!(SettleEffectBefore)?;
             if effect.spec.kind == children::KIND {

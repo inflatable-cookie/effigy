@@ -71,18 +71,19 @@ impl Run<'_> {
             let Some(stat) = dir.entry(&name).map_err(StoreError::from)? else {
                 return Ok(EffectState::Released);
             };
-            let receipt: Receipt = serde_json::from_value(
-                effect
-                    .receipt
-                    .clone()
-                    .ok_or_else(|| RunError::Invalid("socket identity unrecorded".into()))?,
-            )?;
-            if device(&stat) != receipt.device
-                || stat.st_ino != receipt.inode
-                || stat.st_uid != crate::fs::operator_uid()
+            if stat.st_uid != crate::fs::operator_uid()
                 || stat.st_mode & libc::S_IFMT != libc::S_IFSOCK
             {
                 return Err(RunError::Invalid("socket generation unverified".into()));
+            }
+            // An owner killed between bind and receipt leaves its socket
+            // unrecorded. Only this run binds its run-unique name in the
+            // private directory, so the name is the generation (§7.3).
+            if let Some(receipt) = effect.receipt.clone() {
+                let receipt: Receipt = serde_json::from_value(receipt)?;
+                if device(&stat) != receipt.device || stat.st_ino != receipt.inode {
+                    return Err(RunError::Invalid("socket generation unverified".into()));
+                }
             }
             dir.remove(&name, false).map_err(StoreError::from)?;
             Ok(EffectState::Released)

@@ -130,8 +130,6 @@ pub(in crate::runner) struct TaskRun {
     run: Option<Arc<Mutex<Run<'static>>>>,
     shared: Option<Run<'static>>,
     target: TaskTarget,
-    /// The outcome recorded by `begin_stop`, before the run's own teardown.
-    stopping: bool,
     ancestors: Vec<ResourceId>,
     shared_owners: Vec<ResourceId>,
     _custody_scope: Option<kernel::CustodyWait>,
@@ -168,7 +166,22 @@ fn owned(run: Arc<Mutex<Run<'static>>>) -> Run<'static> {
 
 impl TaskRun {
     pub(in crate::runner) fn begin(request: TaskRunRequest<'_>) -> Result<Self, RunnerError> {
-        Self::begin_with(request, true)
+        Self::begin_with(request, true, LifecyclePlacement::Inline)
+    }
+
+    /// A run owned by its detached supervisor (§5.8): this process is the
+    /// run's only writer, and its sentinel settles the run if it dies.
+    pub(in crate::runner) fn begin_detached(
+        request: TaskRunRequest<'_>,
+    ) -> Result<Self, RunnerError> {
+        Self::begin_with(
+            TaskRunRequest {
+                custody: true,
+                ..request
+            },
+            true,
+            LifecyclePlacement::Detached,
+        )
     }
 
     /// A checkout-wide exclusive section, held by a run of its own (I-G4):
@@ -205,6 +218,7 @@ impl TaskRun {
                 cwd: None,
             },
             false,
+            LifecyclePlacement::Inline,
         )
         .map(|run| ExclusiveSection(Some(run)))
     }
@@ -240,10 +254,15 @@ impl TaskRun {
                 cwd: Some(root),
             },
             false,
+            LifecyclePlacement::Inline,
         )
     }
 
-    fn begin_with(request: TaskRunRequest<'_>, task_gate: bool) -> Result<Self, RunnerError> {
+    fn begin_with(
+        request: TaskRunRequest<'_>,
+        task_gate: bool,
+        placement: LifecyclePlacement,
+    ) -> Result<Self, RunnerError> {
         let parent = PARENTS.with(|parents| parents.borrow().last().cloned());
         let root = kernel::effects_root()?;
         let checkout = checkout::mint(&request.target.root)?;
@@ -275,7 +294,7 @@ impl TaskRun {
             kernel::install_router()?;
             Some(LifecyclePlan {
                 executable: kernel::executable()?,
-                placement: LifecyclePlacement::Inline,
+                placement,
             })
         } else {
             None
@@ -341,7 +360,6 @@ impl TaskRun {
                 run: shared.map(|run| Arc::new(Mutex::new(run))),
                 shared: None,
                 target: request.target.clone(),
-                stopping: false,
                 ancestors,
                 shared_owners,
                 _custody_scope: custody_scope,
@@ -394,7 +412,7 @@ impl TaskRun {
             Ok(run) => run,
             Err(error) => {
                 if let Some(shared) = shared {
-                    let _ = close_run(shared, WorkloadOutcome::NotStarted, true);
+                    let _ = close_run(shared, WorkloadOutcome::NotStarted);
                 }
                 return Err(error);
             }
@@ -403,7 +421,6 @@ impl TaskRun {
             run: Some(Arc::new(Mutex::new(run))),
             shared,
             target: request.target.clone(),
-            stopping: false,
             ancestors,
             shared_owners,
             _custody_scope: custody_scope,
@@ -452,7 +469,6 @@ impl TaskRun {
                         run: None,
                         shared: None,
                         target,
-                        stopping: false,
                         ancestors: Vec::new(),
                         shared_owners: Vec::new(),
                         _custody_scope: None,
@@ -576,7 +592,6 @@ impl TaskRun {
             run: Some(Arc::new(Mutex::new(run))),
             shared: None,
             target,
-            stopping: false,
             ancestors,
             shared_owners: self.shared_owners.clone(),
             _custody_scope: Some(custody_scope),
@@ -598,25 +613,24 @@ impl TaskRun {
         &self.target
     }
 
-    /// Records the workload outcome and enters settle (`Stopping`) before
-    /// the run's own environment teardown: R4 exempts a holder's own stop
-    /// only once that run is settling. `close` then settles without
-    /// recording the outcome again.
-    pub(in crate::runner) fn begin_stop(&mut self, workload: WorkloadOutcome) -> Vec<String> {
-        let mut warnings = Vec::new();
-        if let Some(run) = self.run.as_ref() {
-            let mut run = run
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Err(error) = record_outcome(&mut run, workload) {
-                warnings.push(format!(
-                    "run outcome was not recorded: {}",
-                    run_error(&error)
-                ));
-            }
-        }
-        self.stopping = true;
-        warnings
+    /// `close` with its own settle budget, returning the settled outcome a
+    /// supervisor announces. `None` when the run could not settle now.
+    pub(in crate::runner) fn close_settled(
+        mut self,
+        workload: WorkloadOutcome,
+        budget: Duration,
+    ) -> (
+        Option<effigy_kernel::outcome::Outcome<effigy_kernel::run::Settled>>,
+        Vec<String>,
+    ) {
+        let admission = self.admission.take();
+        let result = match self.run.take() {
+            Some(run) => close_run_settled(owned(run), workload, kernel::cleanup_context(budget)),
+            None => (None, Vec::new()),
+        };
+        drop(admission);
+        retain();
+        result
     }
 
     /// Records the workload outcome, settles every effect and releases the
@@ -626,7 +640,7 @@ impl TaskRun {
         // Settle stops the admission hook; the marker goes with it.
         let admission = self.admission.take();
         if let Some(run) = self.run.take() {
-            warnings.extend(close_run(owned(run), workload.clone(), !self.stopping));
+            warnings.extend(close_run(owned(run), workload.clone()));
         }
         if let Some(shared) = self.shared.take() {
             let mirrored = match workload {
@@ -635,7 +649,7 @@ impl TaskRun {
                 }
                 other => other,
             };
-            warnings.extend(close_run(shared, mirrored, true));
+            warnings.extend(close_run(shared, mirrored));
         }
         drop(admission);
         retain();
@@ -716,19 +730,28 @@ fn record_outcome(run: &mut Run<'static>, workload: WorkloadOutcome) -> Result<(
     }
 }
 
-fn close_run(mut run: Run<'static>, workload: WorkloadOutcome, record: bool) -> Vec<String> {
+fn close_run(run: Run<'static>, workload: WorkloadOutcome) -> Vec<String> {
+    match kernel::cleanup() {
+        Ok(cleanup) => close_run_settled(run, workload, cleanup).1,
+        Err(error) => vec![error.to_string()],
+    }
+}
+
+/// Records the outcome, then settles.
+fn close_run_settled(
+    mut run: Run<'static>,
+    workload: WorkloadOutcome,
+    cleanup: effigy_kernel::ctx::CleanupContext,
+) -> (
+    Option<effigy_kernel::outcome::Outcome<effigy_kernel::run::Settled>>,
+    Vec<String>,
+) {
     let mut warnings = Vec::new();
-    let cleanup = match kernel::cleanup() {
-        Ok(cleanup) => cleanup,
-        Err(error) => return vec![error.to_string()],
-    };
-    if record {
-        if let Err(error) = record_outcome(&mut run, workload) {
-            warnings.push(format!(
-                "run outcome was not recorded: {}",
-                run_error(&error)
-            ));
-        }
+    if let Err(error) = record_outcome(&mut run, workload) {
+        warnings.push(format!(
+            "run outcome was not recorded: {}",
+            run_error(&error)
+        ));
     }
     match run.settle(&cleanup, &mut TaskSettlement::default()) {
         Ok(outcome) => {
@@ -739,10 +762,24 @@ fn close_run(mut run: Run<'static>, workload: WorkloadOutcome, record: bool) -> 
                         .to_owned(),
                 );
             }
+            (Some(outcome), warnings)
         }
-        Err(error) => warnings.push(format!("run settle failed: {}", run_error(&error))),
+        Err(error) => {
+            warnings.push(format!("run settle failed: {}", run_error(&error)));
+            (None, warnings)
+        }
     }
-    warnings
+}
+
+/// Files a fenced stop request against run `id` for its live owner, as
+/// `effigy run stop` does.
+pub(in crate::runner) fn request_run_stop(id: RunId) -> Result<(), RunnerError> {
+    match super::control::lookup(id) {
+        super::control::Lookup::Found(record) => super::control::request_stop(&record).map(|_| ()),
+        _ => Err(RunnerError::task_invocation(format!(
+            "run {id} is not readable for a stop request"
+        ))),
+    }
 }
 
 fn retain() {
@@ -863,6 +900,11 @@ fn key_run_exists(key: &RunKey) -> bool {
 
 /// A fresh random run id, for requests and runs no key names.
 pub(super) fn fresh_run_id() -> Result<RunId, RunnerError> {
+    new_run_id()
+}
+
+/// A fresh id for one kernel request.
+pub(in crate::runner) fn fresh_request_id() -> Result<RunId, RunnerError> {
     new_run_id()
 }
 

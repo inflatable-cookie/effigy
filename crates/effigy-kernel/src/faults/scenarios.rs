@@ -1566,6 +1566,7 @@ fn faults_engine_legacy_import() {}
 // live HTTP in effigy-gateway::server::endpoint_faults (test:gateway:proxy).
 // Vault rotation is exercised by effigy-secrets::storage::tests::faults_engine_vault_rotation
 // through the dependency fault hooks (test:secrets:vault).
-#[test]
-#[ignore = "engine lane (supervisor): fault points inside the out-of-process detached supervisor binary"]
-fn faults_engine_detached_supervisor_internal_points() {}
+// The out-of-process managed-run supervisor is killed at every kernel
+// crossing it makes through the dependency fault hooks in
+// effigy::runner::tests::managed_and_locking_tests::managed_supervisor_fault_tests
+// (test:supervisor:faults).

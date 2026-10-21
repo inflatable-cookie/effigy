@@ -1,6 +1,8 @@
 use crossterm::event::KeyEvent;
 
-use effigy_process::{ProcessEventKind, ProcessSupervisor};
+use effigy_process::ProcessEventKind;
+
+use super::SessionProcesses;
 use std::time::Instant;
 
 use super::config::{EVENT_DRAIN_WAIT, MAX_EVENT_DRAIN_TIME};
@@ -23,7 +25,7 @@ pub(super) enum LoopControl {
 }
 
 pub(super) struct KeyEventContext<'a> {
-    pub(super) supervisor: &'a ProcessSupervisor,
+    pub(super) supervisor: &'a dyn SessionProcesses,
     pub(super) state: &'a mut SessionState,
     pub(super) diagnostics: &'a mut RuntimeDiagnostics,
     pub(super) options: MultiProcessTuiOptions,
@@ -31,7 +33,7 @@ pub(super) struct KeyEventContext<'a> {
 }
 
 pub(super) fn drain_process_events(
-    supervisor: &ProcessSupervisor,
+    supervisor: &dyn SessionProcesses,
     state: &mut SessionState,
     diagnostics: &mut RuntimeDiagnostics,
     max_events: usize,

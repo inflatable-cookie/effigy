@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crossterm::event::{self, Event, KeyEventKind};
 
 use super::config::{INPUT_POLL_WAIT, MAX_EVENTS_PER_TICK};
@@ -21,12 +23,12 @@ pub(super) fn run_event_loop_with_control(
 ) -> Result<bool, MultiProcessTuiError> {
     loop {
         if let Some(control) = control {
-            if (control.poll)(&runtime.supervisor).map_err(MultiProcessTuiError::Control)? {
+            if (control.poll)(runtime.supervisor.as_ref()).map_err(MultiProcessTuiError::Control)? {
                 return Ok(true);
             }
         }
         drain_process_events(
-            &runtime.supervisor,
+            runtime.supervisor.as_ref(),
             &mut runtime.state,
             &mut runtime.diagnostics,
             MAX_EVENTS_PER_TICK,
@@ -51,7 +53,7 @@ pub(super) fn run_event_loop_with_control(
             runtime.vt_emulator_enabled,
         );
 
-        runtime.terminal.draw(|frame| {
+        let drawn = runtime.terminal.draw(|frame| {
             render_ui(
                 frame,
                 RenderUiState {
@@ -87,7 +89,16 @@ pub(super) fn run_event_loop_with_control(
                     shell_cursor: active_view.shell_cursor,
                 },
             )
-        })?;
+        });
+        if let Err(error) = drawn {
+            // A write to a closed terminal can fail before its input reports
+            // the hangup; a hung-up input says the terminal is gone.
+            if matches!(terminal_input(Duration::ZERO), TerminalInput::HungUp) {
+                runtime.terminal_lost = true;
+                return Ok(true);
+            }
+            return Err(error.into());
+        }
         runtime.diagnostics.record_frame();
         if runtime.state.shutdown_requested
             && (runtime.state.startup_failed
@@ -96,17 +107,29 @@ pub(super) fn run_event_loop_with_control(
             break;
         }
 
-        if !event::poll(INPUT_POLL_WAIT)? {
-            continue;
-        }
-        if let Event::Key(key) = event::read()? {
+        // Every event crossterm already read, then whatever the terminal has.
+        // A closed terminal ends the session like a quit: the caller's
+        // shutdown stops and settles what the session started.
+        let mut wait = INPUT_POLL_WAIT;
+        loop {
+            if matches!(terminal_input(wait), TerminalInput::HungUp) {
+                runtime.terminal_lost = true;
+                return Ok(true);
+            }
+            wait = Duration::ZERO;
+            if !event::poll(Duration::ZERO)? {
+                break;
+            }
+            let Event::Key(key) = event::read()? else {
+                continue;
+            };
             if key.kind != KeyEventKind::Press {
                 continue;
             }
             match handle_key_event(
                 &key,
                 KeyEventContext {
-                    supervisor: &runtime.supervisor,
+                    supervisor: runtime.supervisor.as_ref(),
                     state: &mut runtime.state,
                     diagnostics: &mut runtime.diagnostics,
                     options,
@@ -121,6 +144,106 @@ pub(super) fn run_event_loop_with_control(
     Ok(false)
 }
 
+enum TerminalInput {
+    Ready,
+    Idle,
+    HungUp,
+}
+
+/// Waits up to `wait` for terminal input without letting crossterm wait on
+/// it: crossterm's tty reader retries a zero-byte read forever, so after the
+/// terminal closes (POLLHUP) any crossterm poll spins. `Idle` with a zero
+/// wait still lets crossterm hand out events it already parsed.
+fn terminal_input(wait: Duration) -> TerminalInput {
+    // SAFETY: isatty on this process's standard input.
+    if unsafe { libc::isatty(libc::STDIN_FILENO) } != 1 {
+        // crossterm reads /dev/tty instead; it alone can wait on it.
+        return match event::poll(wait) {
+            Ok(true) => TerminalInput::Ready,
+            _ => TerminalInput::Idle,
+        };
+    }
+    terminal_input_on(libc::STDIN_FILENO, wait)
+}
+
+fn terminal_input_on(fd: libc::c_int, wait: Duration) -> TerminalInput {
+    let mut input = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let millis = i32::try_from(wait.as_millis()).unwrap_or(i32::MAX);
+    // SAFETY: one initialized pollfd for this process's standard input.
+    let ready = unsafe { libc::poll(&mut input, 1, millis) };
+    if ready <= 0 {
+        return TerminalInput::Idle;
+    }
+    if input.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+        TerminalInput::HungUp
+    } else {
+        TerminalInput::Ready
+    }
+}
+
 fn startup_states_settled(runtime: &SessionRuntime) -> bool {
     runtime.state.pending_startup == 0
+}
+
+#[cfg(test)]
+mod terminal_input_tests {
+    use super::*;
+
+    /// A closed terminal reads as hangup, never as idle input, so the loop
+    /// ends instead of handing crossterm a reader that spins on EOF.
+    #[test]
+    #[cfg_attr(
+        effigy_shared_process,
+        ignore = "hangup needs every master reference closed, which a shared test process cannot promise; nextest runs this proof in its own process"
+    )]
+    fn terminal_input_reports_idle_ready_and_hangup_on_a_real_pty() {
+        // Close-on-exec from birth: other tests in a shared process spawn
+        // children, and one that inherited the master would keep it open.
+        // SAFETY: opens a new PTY master this test owns and closes.
+        let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC) };
+        assert!(master >= 0, "private PTY");
+        // SAFETY: grant and unlock the slave of the master this test owns.
+        assert_eq!(unsafe { libc::grantpt(master) }, 0);
+        assert_eq!(unsafe { libc::unlockpt(master) }, 0);
+        let mut name = [0 as libc::c_char; 128];
+        #[cfg(target_os = "linux")]
+        // SAFETY: the reentrant name lookup writes into this test's buffer.
+        let named = unsafe { libc::ptsname_r(master, name.as_mut_ptr(), name.len()) } == 0;
+        #[cfg(target_os = "macos")]
+        // SAFETY: TIOCPTYGNAME (_IOC(IOC_OUT, 't', 83, 128)) writes the slave
+        // name into this 128-byte buffer; ptsname's static one is shared.
+        let named = unsafe { libc::ioctl(master, 0x4080_7453, name.as_mut_ptr()) } == 0;
+        assert!(named, "PTY slave name");
+        // SAFETY: opens the NUL-terminated slave path the kernel just named.
+        let slave = unsafe {
+            libc::open(
+                name.as_ptr(),
+                libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC,
+            )
+        };
+        assert!(slave >= 0, "PTY slave");
+        assert!(matches!(
+            terminal_input_on(slave, Duration::ZERO),
+            TerminalInput::Idle
+        ));
+        // A whole line: the fresh slave is canonical, unlike the TUI's raw one.
+        // SAFETY: a two-byte write to the live master this test owns.
+        assert_eq!(unsafe { libc::write(master, b"x\n".as_ptr().cast(), 2) }, 2);
+        assert!(matches!(
+            terminal_input_on(slave, Duration::from_millis(500)),
+            TerminalInput::Ready
+        ));
+        // SAFETY: closes the master this test owns: the terminal goes away.
+        unsafe { libc::close(master) };
+        assert!(matches!(
+            terminal_input_on(slave, Duration::from_millis(500)),
+            TerminalInput::HungUp
+        ));
+        // SAFETY: closes the slave this test owns.
+        unsafe { libc::close(slave) };
+    }
 }

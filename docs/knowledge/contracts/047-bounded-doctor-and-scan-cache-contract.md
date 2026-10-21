@@ -124,12 +124,23 @@ cache and timeout behavior.
 5. Git index blob identity is valid only for a clean tracked file. All other
    files require a content digest. Mtime plus size cannot establish a hit.
 6. Cache publication under `.effigy/doctor/cache/v1/` is locked and atomic.
+   Compare the complete encoded generation with the current bytes before
+   creating a directory, lock, or temporary file. Identical content performs
+   no publication writes, including with `--refresh`. Changed content is
+   compared again under the publication lock before atomic replacement.
    Interrupted work cannot publish partial state or destroy a valid prior
    generation.
 7. Corrupt or incompatible cache content is ignored, reported, and rebuilt.
-8. `--refresh` bypasses reads and atomically replaces successful entries.
+8. `--refresh` bypasses cached observation reuse and atomically replaces
+   successful entries only when the resulting generation differs.
 9. Cache content is disposable local state and is never required in version
    control.
+
+Deep inventory's changed-generation publication is an explicit derived-cache
+exception to contract 052 R2, scoped to `doctor --deep` (with or without
+`--refresh`). It does not grant writes to structural doctor, standalone scan,
+or any other Static/Observe command. An unchanged deep generation remains
+read-only; the cache remains disposable and publication failures are warnings.
 
 ## Report contract
 
@@ -161,7 +172,10 @@ compatible unless this contract explicitly adds data.
   and never invokes a health sentinel within the 10-second default budget.
 - An instrumented cold deep run proves exactly one walk per selected scope
   while all enabled scanners retain standalone-equivalent findings.
-- A warm deep run proves unchanged files are not reread or reanalysed.
+- A warm deep run proves unchanged files are not reread or reanalysed, and
+  identical generations retain the cache inode and timestamps and the cache
+  directory timestamp (no transient lock or temp file). `--refresh` of the
+  same facts also skips publication; changed facts retain locked replacement.
 - Same-size, same-mtime changed content misses the cache.
 - One selected catalog does not touch sibling files, cache, or health; explicit
   all-catalog fan-out visits each declared scope once.

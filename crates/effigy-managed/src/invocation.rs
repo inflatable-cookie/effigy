@@ -4,11 +4,15 @@ use crate::{ManagedError, DEFAULT_MANAGED_PROFILE};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ManagedInvocation {
+    /// `--headless` follows the run as text; `--detach` returns once it is
+    /// active and leaves it running.
     Run {
         headless: bool,
+        detach: bool,
     },
     Status {
         profile: String,
+        json: bool,
     },
     Logs {
         profile: String,
@@ -31,13 +35,16 @@ pub fn parse_managed_invocation(
 ) -> Result<ParsedManagedInvocation, ManagedError> {
     let mut cleaned = runtime_args.clone();
     let mut args = cleaned.passthrough.clone();
-    let headless = remove_flag(&mut args, "--headless");
+    let detach = remove_flag(&mut args, "--detach");
+    let headless = remove_flag(&mut args, "--headless") || detach;
 
     let action = match args.first().map(String::as_str) {
         Some("status") => {
             args.remove(0);
+            let json = remove_flag(&mut args, "--json");
             ManagedInvocation::Status {
                 profile: parse_profile_only(&args, "status")?,
+                json,
             }
         }
         Some("stop") => {
@@ -52,7 +59,7 @@ pub fn parse_managed_invocation(
         }
         _ => {
             cleaned.passthrough = args;
-            ManagedInvocation::Run { headless }
+            ManagedInvocation::Run { headless, detach }
         }
     };
 
@@ -146,7 +153,13 @@ mod tests {
     #[test]
     fn headless_flag_is_removed_without_losing_profile() {
         let parsed = parse_managed_invocation(&args(&["admin", "--headless"])).expect("parse");
-        assert_eq!(parsed.action, ManagedInvocation::Run { headless: true });
+        assert_eq!(
+            parsed.action,
+            ManagedInvocation::Run {
+                headless: true,
+                detach: false
+            }
+        );
         assert_eq!(parsed.runtime_args.passthrough, ["admin"]);
     }
 

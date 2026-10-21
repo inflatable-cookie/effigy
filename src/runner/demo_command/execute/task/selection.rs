@@ -3,14 +3,13 @@ use crate::runner::execute::api::{
     resolve_execution_binding_resolution, ContainerExecutionBinding,
 };
 use crate::runner::managed_shell::{
-    managed_readiness_probe_urls, render_inline_compose_command,
-    render_inline_managed_lifecycle_command, render_inline_managed_shell_command,
-    render_inline_managed_standard_exec_command,
+    render_inline_compose_command, render_inline_managed_exec_command,
+    render_inline_managed_shell_command, InlineManagedExecRequest,
 };
 use effigy_containers::compose::compose_args;
 use effigy_containers::session::{
-    managed_lifecycle_command, managed_shell_command, managed_standard_exec_command,
-    resolve_effigy_invocation_prefix, ManagedLifecycleRequest, ManagedStandardExecRequest,
+    managed_exec_command, managed_shell_command, resolve_effigy_invocation_prefix,
+    ManagedExecRequest,
 };
 use effigy_core::shell::shell_quote;
 use effigy_managed::ManagedProcessRole;
@@ -174,63 +173,76 @@ fn materialize_demo_special_managed_processes(
         inline_policy.as_ref(),
         &executable,
     )?;
-    let exec_readiness_timeout_secs = plan.readiness.timeout_secs;
+    // A demo runs every entry at once in its own recorder. Its lifecycle tab
+    // brings the environment up and stays open; entries that attach to the
+    // environment observe its exec surface until their own deadline. No trap
+    // and no state file: the recorder's stop ends every tab.
+    let readiness_secs = plan.readiness.timeout_secs;
+    let exec_probe = if let Some(policy) = inline_policy.as_ref() {
+        render_inline_compose_command(
+            repo_root,
+            policy,
+            &compose_args(
+                policy,
+                ["exec", "-T", policy.primary_service.as_str(), "true"],
+            ),
+        )
+    } else {
+        managed_shell_command(
+            repo_root,
+            container_binding.container_name(),
+            None,
+            &executable,
+        )
+        .replacen("exec ", "", 1)
+        .replacen(" shell ", " shell --command true ", 1)
+    };
     for process in &mut plan.processes {
         match process.role {
             ManagedProcessRole::Lifecycle => {
-                process.run = if let Some(policy) = inline_policy.as_ref() {
-                    render_inline_managed_lifecycle_command(
+                let up = if let Some(policy) = inline_policy.as_ref() {
+                    render_inline_compose_command(
                         repo_root,
                         policy,
-                        crate::runner::managed_shell::InlineManagedLifecycle {
-                            owner_task: task_name,
-                            health_wait: task.health_wait.unwrap_or(false),
-                            health_wait_timeout_secs: task.health_wait_timeout_secs.unwrap_or(60),
-                            ready_message: task.ready_message.as_deref(),
-                            dns_route_lines: &[],
-                            readiness_probe_urls: &managed_readiness_probe_urls(
-                                inline_policy.as_ref(),
-                            ),
-                            setup_commands: &lifecycle_setup_commands,
-                        },
+                        &compose_args(policy, ["up", "-d"]),
                     )
                 } else {
-                    managed_lifecycle_command(ManagedLifecycleRequest {
-                        repo_root,
-                        container_name: container_binding.container_name(),
-                        owner_task: task_name,
-                        health_wait: task.health_wait.unwrap_or(false),
-                        health_wait_timeout_secs: task.health_wait_timeout_secs.unwrap_or(60),
-                        ready_message: task.ready_message.as_deref(),
-                        dns_route_lines: &[],
-                        readiness_probe_urls: &[],
-                        setup_commands: &lifecycle_setup_commands,
-                        executable: &executable,
-                        secrets_required: matches!(
-                            task.secrets,
-                            Some(effigy_manifest::ManifestTaskSecretsMode::Required)
-                        ),
-                    })
+                    demo_environment_up(repo_root, container_binding.container_name(), &executable)
                 };
+                let setup = lifecycle_setup_commands
+                    .iter()
+                    .map(|command| format!("{command} && "))
+                    .collect::<String>();
+                let banner = task
+                    .ready_message
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|message| !message.is_empty())
+                    .unwrap_or("environment is ready");
+                process.run = format!(
+                    "sh -c {}",
+                    shell_quote(&format!(
+                        "{up} && {setup}printf 'managed ready: %s\\n' {banner} && while :; do sleep 3600; done",
+                        banner = shell_quote(banner),
+                    ))
+                );
             }
             ManagedProcessRole::Shell => {
-                process.run = if let Some(policy) = inline_policy.as_ref() {
+                let attach = if let Some(policy) = inline_policy.as_ref() {
                     render_inline_managed_shell_command(
                         repo_root,
                         policy,
-                        task_name,
                         process.service.as_deref(),
                     )
                 } else {
                     managed_shell_command(
                         repo_root,
                         container_binding.container_name(),
-                        task_name,
                         process.service.as_deref(),
                         &executable,
-                        exec_readiness_timeout_secs,
                     )
                 };
+                process.run = demo_after_exec_ready(&exec_probe, readiness_secs, &attach);
             }
             ManagedProcessRole::Standard => {
                 if process.run_on_host {
@@ -239,41 +251,61 @@ fn materialize_demo_special_managed_processes(
                     }
                     continue;
                 }
-                if let Some(policy) = inline_policy.as_ref() {
-                    process.run = render_inline_managed_standard_exec_command(
-                        crate::runner::managed_shell::InlineManagedStandardExecRequest {
-                            repo_root,
-                            policy,
-                            owner_task: task_name,
-                            process_cwd: &process.cwd,
-                            container_repo_root: container_repo_root.as_deref(),
-                            setup_command: process.setup.as_deref(),
-                            command: &process.run,
-                            exec_readiness_timeout_secs,
-                            exec_group_file: None,
-                        },
-                    );
+                let attach = if let Some(policy) = inline_policy.as_ref() {
+                    render_inline_managed_exec_command(InlineManagedExecRequest {
+                        repo_root,
+                        policy,
+                        process_cwd: &process.cwd,
+                        container_repo_root: container_repo_root.as_deref(),
+                        setup_command: process.setup.as_deref(),
+                        command: &process.run,
+                        exec_group: None,
+                    })
                 } else if matches!(
                     container_binding,
                     ContainerExecutionBinding::Container { .. }
                 ) {
-                    process.run = managed_standard_exec_command(ManagedStandardExecRequest {
+                    managed_exec_command(ManagedExecRequest {
                         repo_root,
                         container_name: container_binding.container_name(),
-                        owner_task: task_name,
                         process_cwd: &process.cwd,
                         container_repo_root: container_repo_root.as_deref(),
                         setup_command: process.setup.as_deref(),
                         executable: &executable,
                         command: &process.run,
-                        exec_readiness_timeout_secs,
-                        exec_group_file: None,
-                    });
-                }
+                        exec_group: None,
+                    })
+                } else {
+                    continue;
+                };
+                process.run = demo_after_exec_ready(&exec_probe, readiness_secs, &attach);
             }
         }
     }
     Ok(())
+}
+
+fn demo_environment_up(repo_root: &Path, container: Option<&str>, executable: &str) -> String {
+    let selector = container
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && *name != "default")
+        .map(|name| format!(" {}", shell_quote(name)))
+        .unwrap_or_default();
+    format!(
+        "env EFFIGY_INTERNAL_SUPPRESS_HEADER=1 {executable} container{selector} up --detach --repo {}",
+        shell_quote(&repo_root.display().to_string())
+    )
+}
+
+/// A demo entry's own observed wait for the environment's exec surface,
+/// bounded by the plan's readiness deadline, then its attach.
+fn demo_after_exec_ready(probe: &str, timeout_secs: u64, attach: &str) -> String {
+    format!(
+        "sh -c {}",
+        shell_quote(&format!(
+            "deadline=$(( $(date +%s) + {timeout_secs} )); until {probe} >/dev/null 2>&1; do if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' 'the environment exec surface was not ready within {timeout_secs}s' 1>&2; exit 1; fi; sleep 1; done; {attach}"
+        ))
+    )
 }
 
 fn build_demo_managed_lifecycle_setup_commands(
@@ -437,9 +469,8 @@ container = { image = "alpine:latest", mount = "./:/workspace" }
             .run
             .contains(".effigy/inline-workspaces/dev__app/docker-compose.yml"));
         assert!(lifecycle.run.contains("'up'") && lifecycle.run.contains("'-d'"));
-        // Runner finish owns teardown; the lifecycle EXIT trap only records
-        // state, including when an inline workspace is selected by a demo.
-        assert!(lifecycle.run.contains("stopped >"));
+        // No trap and no state file: the demo recorder's stop ends the tab.
+        assert!(!lifecycle.run.contains("trap") && !lifecycle.run.contains("state_path"));
         assert!(
             !lifecycle.run.contains("'down'") && !lifecycle.run.contains("'--remove-orphans'"),
             "demo lifecycle must leave teardown to runner finish: {}",
