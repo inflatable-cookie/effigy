@@ -14,9 +14,9 @@
 //! naming the admitting run, so a nested heavy invocation never queues
 //! twice. Failure, a crash and a timeout all fail closed.
 
+use std::cell::RefCell;
 use std::ffi::OsString;
 use std::io::Write;
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use effigy_kernel::ctx::OpenReason;
@@ -42,9 +42,20 @@ const POLL: Duration = Duration::from_millis(20);
 /// The decision line is short; a hook that writes more is malformed.
 const DECISION_MAX: usize = 4096;
 
-/// Admission markers this process holds, innermost last. An in-process
-/// nested run (a sequence step or a QA member) is already admitted.
-static HELD: Mutex<Vec<String>> = Mutex::new(Vec::new());
+// Admission markers this thread holds, innermost last. A nested in-process
+// run (a sequence step or a QA member) runs on the thread that admitted its
+// parent, so this is per thread and not ambient: two runs that share this
+// process but not a thread never see each other's marker, and neither can
+// suppress the other's hook. `HELD` has the same shape as the lexical
+// `PARENTS` stack that nests runs, so admission nesting and run nesting
+// cannot disagree.
+thread_local! {
+    static HELD: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+fn held_marker() -> Option<String> {
+    HELD.with(|held| held.borrow().last().cloned())
+}
 
 /// What a run must do before its workload.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,18 +78,38 @@ impl Plan {
 
 /// Decides admission before the run begins; a malformed timeout refuses.
 pub(super) fn plan(class: Option<ManifestTaskAdmission>) -> Result<Plan, RunnerError> {
+    decide(
+        class,
+        &held_marker(),
+        &inherited_marker_live,
+        &std::env::var(HOOK_ENV).ok(),
+        &std::env::var(TIMEOUT_ENV).ok(),
+    )
+}
+
+/// `plan` against explicit ambient state, in the order the decisions nest:
+/// the class, this thread's held admission, a live inherited one, the hook,
+/// then its timeout. Keeping it pure is what lets the proof put a marker on
+/// one thread and a heavy run on another.
+fn decide(
+    class: Option<ManifestTaskAdmission>,
+    held: &Option<String>,
+    inherited_live: &dyn Fn() -> bool,
+    hook: &Option<String>,
+    timeout_ms: &Option<String>,
+) -> Result<Plan, RunnerError> {
     if class.is_none() {
         return Ok(Plan::Run);
     }
-    if held_marker().is_some() || inherited_marker_live() {
+    if held.is_some() || inherited_live() {
         return Ok(Plan::Nested);
     }
-    let command = match std::env::var(HOOK_ENV) {
-        Ok(command) if !command.trim().is_empty() => command,
+    let command = match hook {
+        Some(command) if !command.trim().is_empty() => command.clone(),
         _ => return Ok(Plan::Run),
     };
-    let timeout = match std::env::var(TIMEOUT_ENV) {
-        Ok(raw) if !raw.trim().is_empty() => raw
+    let timeout = match timeout_ms {
+        Some(raw) if !raw.trim().is_empty() => raw
             .trim()
             .parse::<u64>()
             .ok()
@@ -104,11 +135,20 @@ pub(in crate::runner) fn child_marker() -> Option<String> {
     })
 }
 
-fn held_marker() -> Option<String> {
-    HELD.lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .last()
-        .cloned()
+/// The stack a held admission pushed to, innermost last. Only the thread
+/// that holds it can read it, which is the point: no other thread's run may
+/// treat this admission as its own.
+fn push_marker(marker: String) {
+    HELD.with(|held| held.borrow_mut().push(marker));
+}
+
+fn pop_marker(marker: &str) {
+    HELD.with(|held| {
+        let mut held = held.borrow_mut();
+        if let Some(index) = held.iter().rposition(|held| held == marker) {
+            held.remove(index);
+        }
+    });
 }
 
 /// An inherited marker counts while the run it names is live, or when its
@@ -140,12 +180,7 @@ pub(super) struct Admission {
 
 impl Drop for Admission {
     fn drop(&mut self) {
-        let mut held = HELD
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(index) = held.iter().rposition(|marker| *marker == self.marker) {
-            held.remove(index);
-        }
+        pop_marker(&self.marker);
     }
 }
 
@@ -215,9 +250,7 @@ pub(super) fn admit(
         if let Some(line) = decision_line(&stdout, matches!(exited, Observed::Verified(..))) {
             return match parse_decision(&line) {
                 Decision::Admit => {
-                    HELD.lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .push(run_id.clone());
+                    push_marker(run_id.clone());
                     Ok(Admission {
                         _hook: hook,
                         marker: run_id,
@@ -319,6 +352,61 @@ fn refusal(target: &TaskTarget, run_id: &str, decision: &str, reason: String) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The marker is held per thread, like the lexical run nesting it
+    /// mirrors: a run on another thread of the same process is not inside
+    /// this thread's admission, so its own hook still gates it.
+    #[test]
+    fn a_held_admission_marker_belongs_to_the_thread_that_holds_it() {
+        let hook = Some("/bin/true".to_owned());
+        let no_inherited = || false;
+        push_marker("run-held".to_owned());
+        // The holding thread is inside the admission: a nested heavy run on
+        // it never queues twice.
+        assert!(matches!(
+            decide(
+                Some(ManifestTaskAdmission::Heavy),
+                &held_marker(),
+                &no_inherited,
+                &hook,
+                &None
+            ),
+            Ok(Plan::Nested)
+        ));
+        // A process-global marker would report `Nested` here and skip host
+        // capacity control for an unrelated run.
+        let thread_hook = hook.clone();
+        let elsewhere = std::thread::spawn(move || {
+            (
+                held_marker(),
+                matches!(
+                    decide(
+                        Some(ManifestTaskAdmission::Heavy),
+                        &held_marker(),
+                        &|| false,
+                        &thread_hook,
+                        &None
+                    ),
+                    Ok(Plan::Hook { .. })
+                ),
+            )
+        })
+        .join()
+        .expect("second thread");
+        assert_eq!(elsewhere, (None, true));
+        pop_marker("run-held");
+        assert_eq!(held_marker(), None);
+        assert!(matches!(
+            decide(
+                Some(ManifestTaskAdmission::Heavy),
+                &held_marker(),
+                &no_inherited,
+                &hook,
+                &None
+            ),
+            Ok(Plan::Hook { .. })
+        ));
+    }
 
     #[test]
     fn decisions_parse_strictly() {
