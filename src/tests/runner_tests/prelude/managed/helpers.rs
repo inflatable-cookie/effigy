@@ -97,6 +97,14 @@ impl<T> OwnedThread<T> {
             .join()
             .expect("thread join")
     }
+
+    /// Whether the owned thread has returned. A waiter that has not returned
+    /// is still blocked on its gate.
+    pub(in crate::runner::tests) fn is_finished(&self) -> bool {
+        self.handle
+            .as_ref()
+            .is_none_or(std::thread::JoinHandle::is_finished)
+    }
 }
 
 impl<T> Drop for OwnedThread<T> {

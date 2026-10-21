@@ -51,11 +51,33 @@ fn plan_command_at(root: PathBuf, args: &[&str]) -> serde_json::Value {
     parsed["targets"][0]["commands"][0].clone()
 }
 
+/// The Rust runner the plan chose, by its command prefix. Which one Effigy
+/// picks is a property of the host (`cargo-nextest` on PATH), never of the
+/// package scope these proofs cover, so every assertion below reads the
+/// rendered arguments after the route and compares them exactly.
+const PLAN_ROUTES: [&str; 2] = ["cargo nextest run", "cargo test"];
+
+/// The arguments the plan handed the chosen runner, exactly as rendered.
+fn plan_arguments(command: &str) -> &str {
+    for route in PLAN_ROUTES {
+        if let Some(rest) = command.strip_prefix(route) {
+            return rest.strip_prefix(' ').unwrap_or(rest);
+        }
+    }
+    panic!("unexpected plan route: {command}");
+}
+
+/// The rendered arguments are exactly `expected`: quoting, order and count
+/// are the proof, so a widening, dropped or duplicated selector cannot pass.
+fn assert_plan_arguments(command: &str, expected: &str) {
+    assert_eq!(
+        plan_arguments(command),
+        expected,
+        "unexpected plan command: {command}"
+    );
+}
+
 #[test]
-#[cfg_attr(
-    effigy_shared_process,
-    ignore = "known v0.15 rebuild defect: papercut dfcd9c9d-c8af-444a-a9fc-2cadeb12c1e2; owner lane v015-task-engine"
-)]
 fn run_manifest_task_builtin_test_plan_package_scope_narrows_cargo_command() {
     let _guard = lock_test();
     let root = temp_workspace("builtin-test-package-scope-plan-narrows");
@@ -66,10 +88,7 @@ fn run_manifest_task_builtin_test_plan_package_scope_narrows_cargo_command() {
         &["--plan", "--json", "-p", "scope-good"],
     );
     let command = command.as_str().expect("plan command string");
-    assert!(
-        command.contains("run '-p' 'scope-good'"),
-        "unexpected plan command: {command}"
-    );
+    assert_plan_arguments(command, "'-p' 'scope-good'");
     assert!(
         !command.contains("--workspace"),
         "package scope must not widen to the workspace: {command}"
@@ -83,10 +102,6 @@ fn run_manifest_task_builtin_test_plan_package_scope_narrows_cargo_command() {
 }
 
 #[test]
-#[cfg_attr(
-    effigy_shared_process,
-    ignore = "known v0.15 rebuild defect: papercut dfcd9c9d-c8af-444a-a9fc-2cadeb12c1e2; owner lane v015-task-engine"
-)]
 fn run_manifest_task_builtin_test_plan_package_scope_covers_selection_forms() {
     let _guard = lock_test();
     let root = temp_workspace("builtin-test-package-scope-plan-forms");
@@ -97,7 +112,7 @@ fn run_manifest_task_builtin_test_plan_package_scope_covers_selection_forms() {
         &["--plan", "--json", "--package=scope-good"],
     );
     let equals_form = equals_form.as_str().expect("plan command string");
-    assert!(equals_form.contains("'--package=scope-good'"));
+    assert_plan_arguments(equals_form, "'--package=scope-good'");
     assert!(!equals_form.contains("--workspace"));
 
     let repeated = plan_command_at(
@@ -105,39 +120,31 @@ fn run_manifest_task_builtin_test_plan_package_scope_covers_selection_forms() {
         &["--plan", "--json", "-p", "scope-good", "-p", "scope-bad"],
     );
     let repeated = repeated.as_str().expect("plan command string");
-    assert!(repeated.contains("'-p' 'scope-good' '-p' 'scope-bad'"));
+    assert_plan_arguments(repeated, "'-p' 'scope-good' '-p' 'scope-bad'");
     assert!(!repeated.contains("--workspace"));
 
     let workspace = plan_command_at(root.to_path_buf(), &["--plan", "--json", "--workspace"]);
     let workspace = workspace.as_str().expect("plan command string");
-    assert!(
-        workspace.contains("run '--workspace'"),
-        "explicit workspace selection must be preserved: {workspace}"
-    );
+    assert_plan_arguments(workspace, "'--workspace'");
 
     let excluded = plan_command_at(
         root.to_path_buf(),
         &["--plan", "--json", "--workspace", "--exclude", "scope-bad"],
     );
     let excluded = excluded.as_str().expect("plan command string");
-    assert!(excluded.contains("run '--workspace' '--exclude' 'scope-bad'"));
+    assert_plan_arguments(excluded, "'--workspace' '--exclude' 'scope-bad'");
 
     let bare_exclusion = plan_command_at(
         root.to_path_buf(),
         &["--plan", "--json", "--exclude", "scope-bad"],
     );
     let bare_exclusion = bare_exclusion.as_str().expect("plan command string");
-    assert!(
-        bare_exclusion.contains("run --workspace '--exclude' 'scope-bad'"),
-        "exclusion without an explicit workspace keeps the auto workspace scope: {bare_exclusion}"
-    );
+    // The auto `--workspace` comes from the route's own command string, so it
+    // is the one argument the plan renders unquoted.
+    assert_plan_arguments(bare_exclusion, "--workspace '--exclude' 'scope-bad'");
 }
 
 #[test]
-#[cfg_attr(
-    effigy_shared_process,
-    ignore = "known v0.15 rebuild defect: papercut dfcd9c9d-c8af-444a-a9fc-2cadeb12c1e2; owner lane v015-task-engine"
-)]
 fn run_manifest_task_builtin_test_plan_package_scope_ignores_selectors_after_runner_separator() {
     let _guard = lock_test();
     let root = temp_workspace("builtin-test-package-scope-runner-separator");
@@ -161,11 +168,17 @@ fn run_manifest_task_builtin_test_plan_package_scope_ignores_selectors_after_run
         ],
     );
     let command = command.as_str().expect("plan command string");
-    assert!(
-        command.contains("run '-p' 'scope-good' 'good_passes' '--' '--workspace'"),
-        "unexpected plan command: {command}"
+    assert_plan_arguments(
+        command,
+        "'-p' 'scope-good' 'good_passes' '--' '--workspace'",
     );
-    assert!(!command.starts_with("cargo nextest run --workspace"));
+    // Cargo's own level ends at the runner separator: no workspace scope
+    // precedes it.
+    let cargo_level = plan_arguments(command)
+        .split(" '--'")
+        .next()
+        .expect("cargo-level arguments");
+    assert!(!cargo_level.contains("workspace"), "{command}");
 
     // Pre-separator `-p` scopes Cargo while post-boundary tokens flow to the
     // runner as a matching name filter.
