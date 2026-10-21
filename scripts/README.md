@@ -30,7 +30,16 @@ pool instead of `target/`, so the bulk of the writes stay off the internal SSD
 - `effigy-selfbuild.sh` — builds this checkout's binary and runs it
   (`oxide build --bin effigy`, then `target/debug/effigy`, the same path plain
   Cargo uses since Oxide #106). One place owns that path, and
-  `cargo run --bin effigy --` stays the plain-Cargo escape.
+  `cargo run --bin effigy --` stays the plain-Cargo escape. It reads the same
+  `EFFIGY_OXIDE_ESCAPE` switch, so one variable escapes a selector and its
+  nested self-builds.
+- Every routed selector also carries a named `:cargo` sibling in
+  `config/tasks.toml` (`effigy <selector>:cargo`) with the plain-Cargo command
+  it replaced; aggregates point their siblings at sibling leaves.
+- The `cargo qa*` / `prepush-ci` aliases run `src/bin/effigy-qa.rs`, which maps
+  the old flags to the same tasks (`qa:gates`, `qa:docs`, `qa:json`,
+  `qa:json:ci`, `release gates`, `prepush:ci`) and launches the wrapper, so the
+  alias selects what it always did and never builds Effigy with plain Cargo.
 - Selectors that pin a `target/` binary path, a non-Oxide Cargo profile
   (`discovery-proof`, `fixture-proof`, `doctor-process`) or a scrubbed `HOME`
   keep calling Cargo directly.

@@ -13,6 +13,8 @@ fn main() {
         [] => "qa:gates".to_owned(),
         [flag] if flag == "--docs-only" => "qa:docs".to_owned(),
         [flag] if flag == "--json-only" => "qa:json".to_owned(),
+        [flag] if flag == "--release-gates" => "release gates".to_owned(),
+        [flag] if flag == "--prepush" => "prepush:ci".to_owned(),
         [first, second] if first == "--json-only" && second == "--ci" => "qa:json:ci".to_owned(),
         [first, second] if first == "--all" && second == "--ci" => "qa:ci".to_owned(),
         _ => {
@@ -21,11 +23,12 @@ fn main() {
         }
     };
 
-    let status = match Command::new("cargo")
-        .args(["run", "--bin", "effigy", "--", "--repo"])
-        .arg(&repo_root)
+    // Build-then-exec through the shared wrapper: Oxide leases the slot pool and
+    // uplifts `target/debug/effigy`. `EFFIGY_OXIDE_ESCAPE=cargo` reaches the
+    // wrapper too, so one variable keeps the whole QA path on plain Cargo.
+    let status = match Command::new(repo_root.join("scripts/effigy-selfbuild.sh"))
         .arg(&task)
-        .current_dir(repo_root)
+        .current_dir(&repo_root)
         .status()
     {
         Ok(s) => s,

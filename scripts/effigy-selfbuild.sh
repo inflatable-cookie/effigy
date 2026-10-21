@@ -12,8 +12,11 @@
 #
 # Escapes for when Oxide itself is broken:
 #   scripts/effigy-selfbuild.sh --cargo <args...>
+#   EFFIGY_OXIDE_ESCAPE=cargo scripts/effigy-selfbuild.sh <args...>
 #   EFFIGY_SELF_BUILD_TOOL=cargo scripts/effigy-selfbuild.sh <args...>
 #   cargo run --bin effigy -- <selector>   (no wrapper at all)
+# `EFFIGY_OXIDE_ESCAPE` is the same switch the selector wrapper reads, so one
+# variable escapes a whole selector run, including its nested self-builds.
 # Hosted runners have no Oxide, so `GITHUB_ACTIONS=true` also builds with
 # Cargo; `.github/workflows` keep calling Cargo unchanged.
 #
@@ -32,7 +35,7 @@ if [ ! -f "$root/Cargo.toml" ]; then
 fi
 
 bin=effigy
-tool=${EFFIGY_SELF_BUILD_TOOL:-oxide}
+tool=${EFFIGY_SELF_BUILD_TOOL:-${EFFIGY_OXIDE_ESCAPE:-oxide}}
 while [ $# -gt 0 ]; do
   case $1 in
     --bin)
@@ -60,7 +63,7 @@ done
 case $tool in
   oxide | cargo) ;;
   *)
-    echo "effigy-selfbuild: EFFIGY_SELF_BUILD_TOOL must be oxide or cargo, not '$tool'" >&2
+    echo "effigy-selfbuild: EFFIGY_OXIDE_ESCAPE/EFFIGY_SELF_BUILD_TOOL must be oxide or cargo, not '$tool'" >&2
     exit 2
     ;;
 esac
@@ -72,7 +75,7 @@ if [ "$tool" = cargo ]; then
 fi
 
 if ! command -v oxide >/dev/null 2>&1; then
-  echo "effigy-selfbuild: oxide is not on PATH; run 'cargo run --bin $bin --' for the plain-Cargo escape" >&2
+  echo "effigy-selfbuild: oxide is not on PATH; run 'cargo run --bin $bin --' or set EFFIGY_OXIDE_ESCAPE=cargo" >&2
   exit 127
 fi
 (cd "$root" && oxide build --bin "$bin")

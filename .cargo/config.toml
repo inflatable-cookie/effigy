@@ -1,11 +1,13 @@
-# Aliases build this checkout's own binaries through Oxide (see
-# `scripts/effigy-selfbuild.sh`): intermediates go to Oxide's shared slot pool,
-# the binary is uplifted to `target/debug/`. `cargo run --bin effigy --
-# <selector>` remains the plain-Cargo escape.
+# Cargo aliases cannot shell out to a build-then-exec wrapper, so each one runs
+# the checkout's own `effigy-qa` shim, which routes the requested task through
+# `scripts/effigy-selfbuild.sh` (Oxide build, `target/debug/effigy`, never a
+# nested `oxide run`). Only that std-only shim binary compiles with plain Cargo.
+# `cargo run --bin effigy -- <selector>` remains the plain-Cargo escape, and
+# `EFFIGY_OXIDE_ESCAPE=cargo` keeps the whole alias path on Cargo.
 [alias]
-qa = "!sh scripts/effigy-selfbuild.sh qa"
-qa-docs = "!sh scripts/effigy-selfbuild.sh --bin effigy-qa --docs-only"
-qa-json = "!sh scripts/effigy-selfbuild.sh --bin effigy-qa --json-only"
-qa-json-ci = "!sh scripts/effigy-selfbuild.sh --bin effigy-qa --json-only --ci"
-qa-release = "!sh scripts/effigy-selfbuild.sh release gates"
-prepush-ci = "!sh scripts/effigy-selfbuild.sh prepush:ci"
+qa = "run --bin effigy-qa --"
+qa-docs = "run --bin effigy-qa -- --docs-only"
+qa-json = "run --bin effigy-qa -- --json-only"
+qa-json-ci = "run --bin effigy-qa -- --json-only --ci"
+qa-release = "run --bin effigy-qa -- --release-gates"
+prepush-ci = "run --bin effigy-qa -- --prepush"

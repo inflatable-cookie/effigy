@@ -19,6 +19,7 @@ The plan (lanes, their documents and their order), leads, papercuts, brief draft
 - `effigy tasks` for selector inventory; `effigy doctor` for routing or health ambiguity.
 - `effigy test --plan` when test selection matters; narrow Effigy selectors for task validation.
 - Without an installed binary, use `sh scripts/effigy-selfbuild.sh <command>`. It builds this checkout through Oxide and runs the built `target/debug/effigy`. `cargo run --bin effigy -- <command>` is the plain-Cargo escape.
+- The `cargo qa`, `qa-docs`, `qa-json`, `qa-json-ci`, `qa-release` and `prepush-ci` aliases run the `effigy-qa` shim, which selects the same task as before and builds through the same wrapper; `EFFIGY_OXIDE_ESCAPE=cargo` keeps that whole path on Cargo.
 
 ## Guardrails
 
@@ -37,7 +38,7 @@ Workers run the changed-code tests, compile the touched targets, and run docs ch
 
 The planner runs milestone full QA on `main` through Queue `project.qa.run` and reads its result with `project.qa.get`, then briefs fixes for failures. Do not configure a per-task Queue validation command. Run `effigy skill run northstar/retired-concepts` when retiring concepts.
 
-Run validation through Effigy selectors, not raw Cargo, Bun, or Vitest commands. During the v0.15 rebuild, this checkout's `effigy.toml` uses keys the installed v0.14.1 binary rejects. Run selectors with the worktree build, `sh scripts/effigy-selfbuild.sh <selector>`, not the installed `effigy`. Selectors run Cargo through `scripts/oxide-selector.sh`, so Rust intermediates land in Oxide's shared slot pool instead of `target/`; selectors that pin a `target/` binary path, a non-Oxide Cargo profile or a scrubbed `HOME` stay on Cargo. Escapes when Oxide is broken: `EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>` for one selector, `effigy cargo <cargo args>` for one command, `cargo run --bin effigy -- <selector>` for the whole self-build. Record background exit codes. Stop only processes you started, using their recorded PIDs or process groups; never use pattern kills (`pkill -f`, `killall`, or `pgrep` piped into `kill`).
+Run validation through Effigy selectors, not raw Cargo, Bun, or Vitest commands. During the v0.15 rebuild, this checkout's `effigy.toml` uses keys the installed v0.14.1 binary rejects. Run selectors with the worktree build, `sh scripts/effigy-selfbuild.sh <selector>`, not the installed `effigy`. Selectors run Cargo through `scripts/oxide-selector.sh`, so Rust intermediates land in Oxide's shared slot pool instead of `target/`; selectors that pin a `target/` binary path, a non-Oxide Cargo profile or a scrubbed `HOME` stay on Cargo. Every routed selector has a named escape sibling: `effigy <selector>:cargo` runs the plain-Cargo command that selector replaced (for example `effigy qa:docs:changelog:cargo`). Also: `EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>` escapes a whole run including its self-builds, `effigy cargo <cargo args>` escapes one command, and `cargo run --bin effigy -- <selector>` needs no wrapper at all. Record background exit codes. Stop only processes you started, using their recorded PIDs or process groups; never use pattern kills (`pkill -f`, `killall`, or `pgrep` piped into `kill`).
 
 <!-- northstar:rust-quality:start -->
 ## Northstar Rust Quality
