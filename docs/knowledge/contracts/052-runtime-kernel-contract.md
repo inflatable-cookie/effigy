@@ -805,7 +805,7 @@ leader was reparented and its number is no longer pinned.
 | --- | --- |
 | Leader alive with the recorded start and boot identity | signal the group. On Linux 6.9 or later: open a pidfd, check identity, then call `pidfd_send_signal` with `PIDFD_SIGNAL_PROCESS_GROUP`, which targets the original group's kernel identity, not its number. Elsewhere (older Linux, macOS): a numeric group signal follows the identity check, with the window below. |
 | Leader gone or identity differs, and `kill(-pgid, 0)` returns `ESRCH` | none needed: `Absent` |
-| Leader gone or identity differs, and the group has members | signal each member individually, only if its environment carries the run's custody nonce and it started no earlier than the recorded spawn. On Linux, through a per-process pidfd opened before the check. Other members: `Unknown`, residue, never signalled. |
+| Leader gone or identity differs, and the group has members | signal each member individually, only if its environment carries the run's custody nonce and it started no earlier than the recorded spawn. On Linux, through a per-process pidfd opened before the check. A member that has provably left the group since the inventory (its pid is gone or a zombie) is re-inventoried, never residue. Other members: `Unknown`, residue, never signalled. |
 | Process table or member environment unreadable | `Unknown`, residue |
 
 Where no descriptor operation exists (macOS for any signal; Linux before
@@ -840,7 +840,10 @@ kernel restores it on exit.
 - I-P4: signals need positive generation evidence: the owner's unreaped
   leader; in recovery, the leader's verified start and boot identity, or a
   member's custody nonce plus start time. A non-empty group or session is
-  never ownership evidence. No pattern kills (`pkill -f`).
+  never ownership evidence. No pattern kills (`pkill -f`). Missing evidence
+  is residue only while the member is still present: a member that exited
+  between the group inventory and its evidence read is re-inventoried, so a
+  clean settle cannot report residue for a process that is already gone.
 - I-P5: capture is bounded (tail ring plus rotating log) and redacted at the
   source, before any sink (K12).
 - I-P6: secrets never appear in argv; no `set_var`.
@@ -886,6 +889,11 @@ kernel restores it on exit.
   nonce after the leader is gone. Recovery signals nothing and reports
   residue. The same holds for a foreign process sharing a pgid with a
   surviving nonce-carrying member.
+- A member that exits between the group inventory and its evidence read: the
+  observer re-inventories a vanished member instead of reporting residue, and
+  a present one without the nonce still reports residue
+  (`recovery_foreign_reused_group_unknown_and_nonce_evidence_oracle`, case 6
+  and cases 0/2/3).
 - Leader exits while a nonce-carrying descendant survives: owner stop kills
   it through the group, whose number the unreaped leader keeps allocated;
   sentinel recovery kills it through the nonce.

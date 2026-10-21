@@ -678,6 +678,10 @@ During v0.x, MINOR bumps may include breaking changes.
   image. A kernel helper that still dies before acknowledging is reported as
   `kernel helper ... exited ... before acknowledging`, with its exit status
   and the tail of its own error output.
+- Custody recovery no longer reports `group contains members without generation
+  evidence` for a process that exited between the group inventory and its
+  environment read. A member that is provably gone is re-inventoried; a live
+  member without the run's nonce is still residue and is never signalled.
 - `gateway setup --remove` exports current routes, loopback IPs and port pins
   for a v0.14.1 downgrade. Setup re-imports subsequent legacy edits on return.
   Interrupted exports are resumable; changed foreign files and active managed
