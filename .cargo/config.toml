@@ -1,7 +1,21 @@
-[alias]
-qa = "run --bin effigy-qa --"
-qa-docs = "run --bin effigy-qa -- --docs-only"
-qa-json = "run --bin effigy-qa -- --json-only"
-qa-json-ci = "run --bin effigy-qa -- --json-only --ci"
-qa-release = "run --bin effigy -- release gates"
-prepush-ci = "run --bin effigy -- prepush:ci"
+# No Cargo aliases here.
+#
+# This checkout's Rust builds go through `scripts/oxide-selector.sh` (selectors)
+# and `scripts/effigy-selfbuild.sh` (the checkout's own binary), so Rust
+# intermediates land in Oxide's shared slot pool instead of `target/`.
+#
+# A Cargo alias cannot run a wrapper: `[alias] name = "!sh ..."` is rejected by
+# Cargo ("no such command: `!sh`"), and `name = "run --bin ..."` makes plain
+# Cargo compile Effigy's whole dependency graph before anything else runs. The
+# former `qa`, `qa-docs`, `qa-json`, `qa-json-ci`, `qa-release` and `prepush-ci`
+# aliases are therefore replaced by the selectors they used to select:
+#
+#   cargo qa          -> effigy qa:gates
+#   cargo qa-docs     -> effigy qa:docs
+#   cargo qa-json     -> effigy qa:json
+#   cargo qa-json-ci  -> effigy qa:json:ci
+#   cargo qa-release  -> effigy release gates
+#   cargo prepush-ci  -> effigy prepush:ci
+#
+# Without an installed binary, run `sh scripts/effigy-selfbuild.sh <task>`.
+# `cargo run --bin effigy -- <task>` remains the plain-Cargo escape.

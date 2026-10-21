@@ -42,13 +42,17 @@ Canonical operator entrypoints:
 - `effigy release gates`
 - `cargo run --bin effigy -- <command>` when validating the current checkout before refreshing the installed binary
 
-Compatibility fallbacks:
-- `cargo qa`
-- `cargo qa-docs`
-- `cargo qa-json`
-- `cargo qa-json-ci`
-- `cargo qa-release`
-- `cargo prepush-ci`
+Former Cargo aliases and their replacements:
+- `cargo qa` -> `effigy qa:gates`
+- `cargo qa-docs` -> `effigy qa:docs`
+- `cargo qa-json` -> `effigy qa:json`
+- `cargo qa-json-ci` -> `effigy qa:json:ci`
+- `cargo qa-release` -> `effigy release gates`
+- `cargo prepush-ci` -> `effigy prepush:ci`
+
+The `cargo qa*` and `prepush-ci` aliases were removed: a Cargo alias cannot run
+this repository's build-then-exec wrapper (`!sh` is rejected, and
+`run --bin ...` compiles Effigy's dependency graph with plain Cargo first).
 
 Task-composition note:
 - `qa:docs` is a native task chain over `effigy docs check links`, `docs check json-examples`, `docs check forbidden`, `docs check paths`, `docs check workflow-paths`, and `effigy changelog validate`
@@ -69,9 +73,8 @@ Intentional remaining shell scripts:
 - none
 
 Boundary note:
-- `cargo qa-release` now maps straight to `effigy release gates`
-  rather than a separate helper binary layered on top of the release wrapper
-  path
+- release gating is `effigy release gates` directly; there is no helper binary
+  or Cargo alias layered on top of the release wrapper path
 
 Release policy note:
 - prefer built-in `effigy release ...` commands for operator-driven release work
