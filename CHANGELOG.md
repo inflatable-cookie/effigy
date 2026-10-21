@@ -654,6 +654,13 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- A repo manifest that overrides a bundle-defined step table
+  (`[secrets.vault].generate`, a deploy hook, or the `run = { ... }` step
+  shorthand) replaces the bundle's executor instead of inheriting it. Switching
+  a generator from `rhai` to `task` no longer keeps both keys and fails the
+  exactly-one-executor rule. Unset step metadata (`run_in`, `env`, `env_file`,
+  `id`, `timeout_ms`) still defaults from the bundle, and a manifest step that
+  names two executors is still refused, never silently repaired.
 - Managed host listener readiness keeps polling while another process briefly
   shares the listening socket, and fails with the exclusivity error only at
   its deadline; its diagnostic no longer mixes a stale HTTP status into a

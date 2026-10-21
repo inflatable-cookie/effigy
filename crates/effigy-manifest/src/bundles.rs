@@ -717,11 +717,43 @@ fn toml_type_name(value: &Value) -> &'static str {
     }
 }
 
+/// Keys that pick how a step-shaped table executes.
+///
+/// One of these in a manifest table means the table is a task step: an inline
+/// task definition (`[secrets.vault].generate`), a deploy hook
+/// (`[deploy.model.services.build]`), a bootstrap entry, or the single-object
+/// shorthand for `run`. Cargo-style tool tables use none of these keys.
+const STEP_EXECUTOR_KEYS: [&str; 4] = ["run", "task", "draft", "rhai"];
+
+fn names_step_executor(table: &toml::map::Map<String, Value>) -> bool {
+    STEP_EXECUTOR_KEYS
+        .iter()
+        .any(|key| table.contains_key(*key))
+}
+
+/// Fill values the manifest left unset from the bundle defaults.
+///
+/// Ordinary tables merge key by key. A step-shaped table is different: naming
+/// an executor in the manifest replaces the default's whole executor group, so
+/// a consumer switching `generate = { rhai = ... }` to `generate = { task = ... }`
+/// no longer inherits `rhai` and fails the exactly-one-executor rule. Metadata
+/// the manifest leaves unset (for example `run_in`, `env`, `timeout_ms`) still
+/// defaults from the bundle, and the manifest's own keys are never rewritten.
 pub(super) fn merge_missing_values(current: &mut Value, defaults: &Value) {
     if let (Some(current_table), Some(defaults_table)) =
         (current.as_table_mut(), defaults.as_table())
     {
+        let replace_executor_group = names_step_executor(current_table);
         for (key, default_value) in defaults_table {
+            // Only a default executor the manifest does not mention is dropped.
+            // The same key still merges, which is how a task's `run` table
+            // reaches this rule and how a plain command keeps winning.
+            if replace_executor_group
+                && STEP_EXECUTOR_KEYS.contains(&key.as_str())
+                && !current_table.contains_key(key)
+            {
+                continue;
+            }
             match current_table.get_mut(key) {
                 Some(current_value) => merge_missing_values(current_value, default_value),
                 None => {
