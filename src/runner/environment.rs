@@ -325,7 +325,7 @@ pub(in crate::runner) fn reconcile(
     let ctx = context()?;
     let existing = record(policy);
     let running = running(repo_root, policy)?;
-    let drift = match running {
+    let mut drift = match running {
         Observed::Verified(true, _) => effigy_containers::exec::probe_mount_drift(
             repo_root,
             policy,
@@ -334,6 +334,26 @@ pub(in crate::runner) fn reconcile(
         .unwrap_or_default(),
         _ => Vec::new(),
     };
+    // Observe first, then create: a missing isolated host mount point is drift,
+    // so routed-task preparation and status/doctor see it before anything is
+    // recreated. The created list is the fallback when that observation was
+    // unavailable: a recreated mount point still reconciles the running stack.
+    let recreated_mount_points = effigy_containers::exec::ensure_isolated_mount_host_points(
+        repo_root, policy,
+    )
+    .map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "container `{}` could not prepare its isolated mount points in the checkout: {error}",
+            policy.name
+        ))
+    })?;
+    if drift.is_empty() && matches!(running, Observed::Verified(true, _)) {
+        for path in &recreated_mount_points {
+            drift.push(format!(
+                "isolated mount point `{path}` was missing on the host and has been recreated; the running stack is reconciled"
+            ));
+        }
+    }
     let pending = engine::reconcile(
         &ctx,
         &env,

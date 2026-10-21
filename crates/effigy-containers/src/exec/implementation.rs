@@ -36,6 +36,10 @@ const DOCKER_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"
 const DOCKER_STATS_FORMAT: &str = "{{ json . }}";
 const CONTAINER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(60);
 const COMPOSE_PS_TIMEOUT: Duration = Duration::from_secs(30);
+/// One bounded retry for the stopped-inclusive project inventory. The read is
+/// a pure observation, so a retry cannot duplicate an effect, and a second
+/// timeout still refuses: this is not a longer timeout.
+const INVENTORY_RETRY_BACKOFF: Duration = Duration::from_millis(500);
 const DOCKER_GLOBAL_RUNTIME_LABEL: &str = "docker";
 
 #[derive(Debug)]
@@ -1352,20 +1356,53 @@ pub fn list_compose_containers_for_project_including_stopped(
     policy: &EffectiveContainerPolicy,
     project_name: &str,
 ) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
-    let output = run_runtime_command_capture_with_repair(
-        repo_root,
-        policy,
-        &project_ps_args(project_name, true),
-        "runtime ps --all",
-        Some(COMPOSE_PS_TIMEOUT),
-        None,
-    )?;
+    let output = retry_inventory_once(|| {
+        run_runtime_command_capture_with_repair(
+            repo_root,
+            policy,
+            &project_ps_args(project_name, true),
+            "runtime ps --all",
+            Some(COMPOSE_PS_TIMEOUT),
+            None,
+        )
+    })?;
     Ok(
         parse_running_compose_containers(&String::from_utf8_lossy(&output.stdout))?
             .into_iter()
             .filter(|row| row.project_name.as_deref() == Some(project_name))
             .collect(),
     )
+}
+
+/// Retry one read-only runtime inventory once when Effigy's own bound expired.
+/// A machine under load can miss a single 30s observation; a parse error, a
+/// refused runtime or a second timeout is returned unchanged so admission still
+/// fails closed and the message names the runtime observation, not the task.
+fn retry_inventory_once(
+    mut run: impl FnMut() -> Result<Output, ContainerExecError>,
+) -> Result<Output, ContainerExecError> {
+    match run() {
+        Err(error) if super::process::error_is_timeout(&error) => {
+            std::thread::sleep(INVENTORY_RETRY_BACKOFF);
+            run().map_err(|second| match second {
+                ContainerExecError::Failure {
+                    command,
+                    code,
+                    stdout,
+                    stderr,
+                } => ContainerExecError::Failure {
+                    command,
+                    code,
+                    stdout,
+                    stderr: format!(
+                        "{stderr}\n[effigy] runtime inventory admission timed out twice; the runtime did not answer an observation, so the task did not run. Check `effigy container status` and retry, or run this task through its host route (`effigy <selector>:cargo`) where the repository defines one. First timeout: {error}"
+                    ),
+                },
+                other => other,
+            })
+        }
+        result => result,
+    }
 }
 
 pub fn list_compose_containers_for_policy_including_stopped(
@@ -1988,6 +2025,69 @@ fn run_runtime_command_capture_allow_failure_for_backend_profile(
 mod inventory_tests {
     use super::*;
     use std::cell::Cell;
+
+    fn timeout() -> ContainerExecError {
+        ContainerExecError::Failure {
+            command: "runtime ps --all".to_owned(),
+            code: None,
+            stdout: String::new(),
+            stderr: "[effigy] command timed out after 30s".to_owned(),
+        }
+    }
+
+    fn output() -> Output {
+        std::process::Command::new("true")
+            .output()
+            .expect("fixture command")
+    }
+
+    #[test]
+    fn a_single_inventory_timeout_is_retried_once() {
+        let calls = Cell::new(0);
+        let result = retry_inventory_once(|| {
+            calls.set(calls.get() + 1);
+            if calls.get() == 1 {
+                Err(timeout())
+            } else {
+                Ok(output())
+            }
+        })
+        .expect("the second observation answers");
+        assert!(result.status.success());
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn a_second_inventory_timeout_names_runtime_admission() {
+        let calls = Cell::new(0);
+        let error = retry_inventory_once(|| {
+            calls.set(calls.get() + 1);
+            Err(timeout())
+        })
+        .expect_err("two timeouts refuse");
+        assert_eq!(calls.get(), 2);
+        let text = error.to_string();
+        assert!(text.contains("timed out twice"), "{text}");
+        assert!(text.contains("the task did not run"), "{text}");
+        assert!(text.contains(":cargo"), "{text}");
+    }
+
+    #[test]
+    fn a_non_timeout_inventory_failure_is_never_retried() {
+        let calls = Cell::new(0);
+        let error = retry_inventory_once(|| {
+            calls.set(calls.get() + 1);
+            Err(ContainerExecError::Failure {
+                command: "runtime ps --all".to_owned(),
+                code: Some(1),
+                stdout: String::new(),
+                stderr: "Cannot connect to the Docker daemon".to_owned(),
+            })
+        })
+        .expect_err("a refused runtime stays refused");
+        assert_eq!(calls.get(), 1);
+        assert!(!error.to_string().contains("timed out twice"));
+    }
 
     fn row(project_name: &str, working_dir: &str) -> RunningComposeContainer {
         RunningComposeContainer {

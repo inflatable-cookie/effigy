@@ -223,6 +223,10 @@ During v0.x, MINOR bumps may include breaking changes.
   lists the families still present.
 
 ### Added
+- The container system guide documents Colima's VM DNS proxy timing out a
+  registry pull while the host resolves normally, with a bounded two-attempt
+  retry and a profile restart, so a transient VM resolver outage is not
+  mistaken for a failed catalog image or wrong pull credentials.
 - Per-run scratch on a configured external volume (effigy#244). Setting
   `[scratch] root` in `~/.effigy/config.toml` to a mounted volume's root gives
   every host-placed run — the built-in `effigy test` route included — its own
@@ -654,6 +658,23 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Deleting an isolated volume's host mount-point directory (`target`,
+  `node_modules`) under a running container stack no longer leaves the nested
+  volume without a mount point until someone recreates the container. The mount
+  observation now includes those host directories, so `container status` and
+  `doctor` report a missing one as `mount_drift` without creating it.
+  `container up` and routed-task preparation recreate the missing host
+  directory before create or reuse, and because it is already drift the
+  routed-task path reconciles through the guarded bring-up instead of an
+  idempotent `--no-recreate` apply. A file or symlink at that path still
+  refuses, and no ownership or mode changes.
+- The stopped-inclusive runtime inventory (`runtime ps --all`) used by task
+  preparation and owned-service recovery retries once, after a short backoff,
+  only when Effigy's own observation bound expired for one project-scoped read.
+  A second timeout fails closed and names the failure as a runtime inventory
+  admission failure: the task did not run, and the message points at
+  `container status` and the task's host route where the repository defines
+  one. Parse, refused-runtime and non-timeout failures are never retried.
 - Managed host listener readiness keeps polling while another process briefly
   shares the listening socket, and fails with the exclusivity error only at
   its deadline; its diagnostic no longer mixes a stale HTTP status into a

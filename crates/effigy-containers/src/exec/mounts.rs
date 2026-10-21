@@ -1,7 +1,7 @@
 //! Compare live named mounts with the final immutable Compose closure.
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use serde_yaml::Value;
@@ -129,6 +129,125 @@ fn named_mounts(policy: &EffectiveContainerPolicy) -> Result<Vec<NamedMount>, Co
         .collect())
 }
 
+/// One isolated mount: a named volume whose container target sits inside the
+/// workspace checkout, so the checkout subtree is its host mount point.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IsolatedMountPoint {
+    host_path: PathBuf,
+}
+
+/// Named volumes nested under the primary service's workspace bind overlay a
+/// host checkout subtree. Deleting that host directory (a host `target` or
+/// `node_modules` cleanup) leaves a running container's nested mount without a
+/// mount point, so `up` must restore the directory before create or reuse.
+/// Only the primary service is mapped: its bind source is the checkout root.
+fn isolated_mount_points(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    working_dir: &Path,
+) -> Result<Vec<IsolatedMountPoint>, ContainerExecError> {
+    let working_dir = working_dir
+        .to_str()
+        .ok_or_else(|| unavailable("workspace working directory is not UTF-8"))?
+        .trim_end_matches('/');
+    let mut points = named_mounts(policy)?
+        .into_iter()
+        .filter(|mount| mount.service == policy.primary_service)
+        .filter_map(|mount| {
+            let target = mount.target.trim_end_matches('/');
+            let relative = target
+                .strip_prefix(working_dir)
+                .and_then(|rest| rest.strip_prefix('/'))
+                .filter(|rest| !rest.is_empty())?;
+            Some(IsolatedMountPoint {
+                host_path: repo_root.join(relative),
+            })
+        })
+        .collect::<Vec<_>>();
+    points.sort_by(|left, right| left.host_path.cmp(&right.host_path));
+    points.dedup();
+    Ok(points)
+}
+
+/// Recreate missing host mount-point directories for isolated mounts before a
+/// stack is created or reused. Returns the host paths this call created, so the
+/// bring-up can treat a deleted mount point as mount drift and reconcile the
+/// running generation. An existing non-directory or symlink refuses: this is
+/// never permission to write through a link or replace a file.
+pub fn ensure_isolated_mount_host_points(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Vec<String>, ContainerExecError> {
+    let working_dir = crate::load_container_exec_working_dir(repo_root, Some(&policy.name))
+        .map_err(unavailable)?;
+    ensure_points(&isolated_mount_points(repo_root, policy, &working_dir)?)
+}
+
+fn ensure_points(points: &[IsolatedMountPoint]) -> Result<Vec<String>, ContainerExecError> {
+    let mut created = Vec::new();
+    for point in points {
+        match host_point_presence(point)? {
+            HostPoint::Directory => continue,
+            HostPoint::Missing => {
+                std::fs::create_dir_all(&point.host_path).map_err(|error| {
+                    unavailable(format!(
+                        "cannot recreate isolated mount point `{}`: {error}",
+                        point.host_path.display()
+                    ))
+                })?;
+                created.push(point.host_path.display().to_string());
+            }
+        }
+    }
+    Ok(created)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostPoint {
+    Directory,
+    Missing,
+}
+
+/// Read-only host observation for one isolated mount point. A non-directory or
+/// symlink is unavailable, never drift and never recreation authority.
+fn host_point_presence(point: &IsolatedMountPoint) -> Result<HostPoint, ContainerExecError> {
+    match std::fs::symlink_metadata(&point.host_path) {
+        Ok(metadata) if metadata.is_dir() => Ok(HostPoint::Directory),
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(unavailable(format!(
+            "isolated mount point `{}` is a symlink; refusing to follow it",
+            point.host_path.display()
+        ))),
+        Ok(_) => Err(unavailable(format!(
+            "isolated mount point `{}` is not a directory",
+            point.host_path.display()
+        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(HostPoint::Missing),
+        Err(error) => Err(unavailable(format!(
+            "cannot inspect isolated mount point `{}`: {error}",
+            point.host_path.display()
+        ))),
+    }
+}
+
+/// A host mount point that no longer exists is mount drift even while the
+/// running container still reports the named volume: the directory beneath
+/// that nested mount is gone. Observation only; the caller decides whether it
+/// may create the directory and reconcile.
+fn observe_host_mount_points(
+    points: &[IsolatedMountPoint],
+) -> Result<Vec<String>, ContainerExecError> {
+    let mut drift = Vec::new();
+    for point in points {
+        if host_point_presence(point)? == HostPoint::Missing {
+            drift.push(format!(
+                "isolated mount point `{}` is missing on the host; the running stack's nested mount has no directory. Run `effigy container up --detach` to recreate it and reconcile before ownership repair",
+                point.host_path.display()
+            ));
+        }
+    }
+    Ok(drift)
+}
+
 /// Observe only. A failed inventory, ownership check or inspect is an error,
 /// never a clean mount set or permission to recreate anything.
 pub fn probe_mount_drift(
@@ -148,7 +267,9 @@ pub fn probe_mount_drift(
     let ownership = OwnershipContext::resolve(repo_root, policy)?;
     let working_dir = crate::load_container_exec_working_dir(repo_root, Some(&policy.name))
         .map_err(unavailable)?;
-    observe_mounts(&mounts, &rows, |row| {
+    let host_point_drift =
+        observe_host_mount_points(&isolated_mount_points(repo_root, policy, &working_dir)?)?;
+    let mut drift = observe_mounts(&mounts, &rows, |row| {
         let remaining =
             super::process::remaining_until_deadline(deadline, "inspect rendered mounts")?;
         let output = run_runtime_command_capture_for_policy_with_absolute_deadline(
@@ -170,7 +291,9 @@ pub fn probe_mount_drift(
             }
         }
         serde_json::from_slice(&output.stdout).map_err(unavailable)
-    })
+    })?;
+    drift.extend(host_point_drift);
+    Ok(drift)
 }
 
 fn observe_mounts(
@@ -373,5 +496,103 @@ mod tests {
         assert_eq!(required.len(), 2);
         assert_eq!(required[0].name, "efv-compacted");
         assert_eq!(required[1].name, "owner-data-from");
+    }
+
+    fn isolated_policy(fixture: &Path) -> EffectiveContainerPolicy {
+        let mut policy = crate::policy::model::test_policy(fixture);
+        let compose = fixture.join("compose.yml");
+        std::fs::write(
+            &compose,
+            "services:\n  app:\n    volumes:\n      - node_modules:/workspace-root/repo/node_modules\n      - farmyard-target:/workspace-root/repo/apps/farmyard/target\n      - registry:/usr/local/cargo/registry\n  db:\n    volumes:\n      - pgdata:/workspace-root/repo/pgdata\nvolumes:\n  node_modules:\n  farmyard-target:\n  registry:\n  pgdata:\n",
+        )
+        .unwrap();
+        policy.compose_files = vec![compose];
+        policy
+    }
+
+    #[test]
+    fn isolated_mount_points_map_only_primary_workspace_volumes_to_the_checkout() {
+        let fixture = tempfile::tempdir().unwrap();
+        let policy = isolated_policy(fixture.path());
+        let points =
+            isolated_mount_points(fixture.path(), &policy, Path::new("/workspace-root/repo"))
+                .unwrap();
+        assert_eq!(
+            points,
+            vec![
+                IsolatedMountPoint {
+                    host_path: fixture.path().join("apps/farmyard/target")
+                },
+                IsolatedMountPoint {
+                    host_path: fixture.path().join("node_modules")
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn isolated_mount_points_are_recreated_and_a_file_or_link_refuses() {
+        let fixture = tempfile::tempdir().unwrap();
+        let target = fixture.path().join("apps/farmyard/target");
+        let present = fixture.path().join("node_modules");
+        std::fs::create_dir_all(&present).unwrap();
+        let points = vec![
+            IsolatedMountPoint {
+                host_path: target.clone(),
+            },
+            IsolatedMountPoint {
+                host_path: present.clone(),
+            },
+        ];
+        assert_eq!(
+            ensure_points(&points).unwrap(),
+            vec![target.display().to_string()]
+        );
+        assert!(target.is_dir());
+        assert!(ensure_points(&points).unwrap().is_empty(), "idempotent");
+
+        let file = fixture.path().join("apps/farmyard/node_modules");
+        std::fs::write(&file, "not a directory").unwrap();
+        let error = ensure_points(&[IsolatedMountPoint {
+            host_path: file.clone(),
+        }])
+        .expect_err("a file mount point refuses");
+        assert!(error.to_string().contains("is not a directory"), "{error}");
+
+        #[cfg(unix)]
+        {
+            let link = fixture.path().join("linked");
+            std::os::unix::fs::symlink(fixture.path(), &link).unwrap();
+            let error = ensure_points(&[IsolatedMountPoint { host_path: link }])
+                .expect_err("a symlink mount point refuses");
+            assert!(error.to_string().contains("symlink"), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_missing_host_mount_point_is_observed_as_drift_without_creating_it() {
+        let fixture = tempfile::tempdir().unwrap();
+        let policy = isolated_policy(fixture.path());
+        let working_dir = Path::new("/workspace-root/repo");
+        let points = isolated_mount_points(fixture.path(), &policy, working_dir).unwrap();
+        let drift = observe_host_mount_points(&points).unwrap();
+        assert_eq!(drift.len(), 2, "{drift:?}");
+        assert!(drift
+            .iter()
+            .all(|detail| detail.contains("is missing on the host")));
+        assert!(
+            !fixture.path().join("node_modules").exists(),
+            "observation only"
+        );
+        assert!(!fixture.path().join("apps/farmyard/target").exists());
+
+        std::fs::create_dir_all(fixture.path().join("node_modules")).unwrap();
+        let points = isolated_mount_points(fixture.path(), &policy, working_dir).unwrap();
+        let drift = observe_host_mount_points(&points).unwrap();
+        assert_eq!(drift.len(), 1, "{drift:?}");
+
+        ensure_points(&points).unwrap();
+        let points = isolated_mount_points(fixture.path(), &policy, working_dir).unwrap();
+        assert!(observe_host_mount_points(&points).unwrap().is_empty());
     }
 }
