@@ -53,7 +53,7 @@ pub(super) fn run_event_loop_with_control(
             runtime.vt_emulator_enabled,
         );
 
-        runtime.terminal.draw(|frame| {
+        let drawn = runtime.terminal.draw(|frame| {
             render_ui(
                 frame,
                 RenderUiState {
@@ -89,7 +89,16 @@ pub(super) fn run_event_loop_with_control(
                     shell_cursor: active_view.shell_cursor,
                 },
             )
-        })?;
+        });
+        if let Err(error) = drawn {
+            // A write to a closed terminal can fail before its input reports
+            // the hangup; a hung-up input says the terminal is gone.
+            if matches!(terminal_input(Duration::ZERO), TerminalInput::HungUp) {
+                runtime.terminal_lost = true;
+                return Ok(true);
+            }
+            return Err(error.into());
+        }
         runtime.diagnostics.record_frame();
         if runtime.state.shutdown_requested
             && (runtime.state.startup_failed

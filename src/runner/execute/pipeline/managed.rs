@@ -938,9 +938,10 @@ fn environment_plan(
 }
 
 /// A stack an explicit `effigy container up` keeps running (its record is
-/// active and persistent, and its exact inventory runs) is borrowed: the run
-/// leaves it running (Tom's ruling 5; contract 053 §5). A persistent stack
-/// that stopped behind the record is started by this run, which stops it.
+/// active and persistent) is borrowed: the run leaves it running (Tom's
+/// ruling 5; contract 053 §5). Only an inventory that proves it is not
+/// running makes it this run's to stop; an unreadable one keeps it borrowed,
+/// since an unknown never grants teardown (R3).
 fn environment_borrowed(repo: &std::path::Path, policy: &EffectiveContainerPolicy) -> bool {
     use effigy_containers::environment::{EnvState, Retention};
     use effigy_kernel::observe::Observed;
@@ -951,9 +952,9 @@ fn environment_borrowed(repo: &std::path::Path, policy: &EffectiveContainerPolic
                 .is_some_and(|engine| engine.retention == Retention::Persistent)
     });
     persistent
-        && matches!(
+        && !matches!(
             crate::runner::environment::running(repo, policy),
-            Ok(Observed::Verified(true, _))
+            Ok(Observed::Verified(false, _))
         )
 }
 

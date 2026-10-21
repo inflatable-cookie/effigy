@@ -624,4 +624,4 @@ owner = "docs/guides/012-dev-process-manager-tui.md"
 terms = ["effigy.managed.headless.v1", "ManagedRunSettle", "redacted_secret_values"]
 paths = ["crates/effigy-managed/src/runtime/headless.rs", "crates/effigy-managed/src/runtime/redaction.rs"]
 config_keys = []
-allow = ["CHANGELOG.md", "src/runner/managed_run/legacy.rs"]
+allow = ["CHANGELOG.md", "src/runner/managed_run/legacy.rs", "docs/knowledge/contracts/052-runtime-kernel-contract.md"]

@@ -4,12 +4,11 @@
 //! brought up or borrowed, the remote process groups its exec workloads
 //! started, and the gateway it ensured.
 //!
-//! SEAM(v015-environment): the environment effect is a narrow adapter over
-//! the current borrow behaviour: an owned environment is released with the
-//! ordinary `container down`, exempting only this run's holders, and a
-//! borrowed one is retained. When the environment record's hold API lands,
-//! this becomes `Attachments::attach` and the environment engine's release
-//! policy (I-A5); nothing here models holders of its own.
+//! The environment effect is the run's obligation toward the environment it
+//! holds through the reconciler's hold API (contract 053 §4): an owned one is
+//! stopped by a reconciler stop that exempts only this run, a borrowed one is
+//! retained. The hold itself is the kernel attachment the bring-up's
+//! activation recorded; nothing here models holders of its own.
 
 use std::path::{Path, PathBuf};
 
