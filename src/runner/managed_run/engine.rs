@@ -159,6 +159,8 @@ pub(in crate::runner) fn own(
         target: &plan.target,
         lock_wait_ms: plan.lock_wait_ms,
         custody: true,
+        // Hybrid host processes in the session use its scratch.
+        scratch: true,
         managed_run_token: Some(&plan.token),
         args: &plan.args,
         key: None,

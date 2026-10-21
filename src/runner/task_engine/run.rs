@@ -69,6 +69,9 @@ pub(in crate::runner) struct TaskRunRequest<'a> {
     pub(in crate::runner) lock_wait_ms: u64,
     /// The run will spawn under kernel custody, so it gets a sentinel.
     pub(in crate::runner) custody: bool,
+    /// This run may get the configured per-run scratch directory: it is
+    /// host-placed and its task did not opt out.
+    pub(in crate::runner) scratch: bool,
     pub(in crate::runner) managed_run_token: Option<&'a str>,
     pub(in crate::runner) args: &'a [String],
     /// A caller's `--run-id` key: it names this run and no other.
@@ -135,6 +138,8 @@ pub(in crate::runner) struct TaskRun {
     _custody_scope: Option<kernel::CustodyWait>,
     /// Held for the run's life; the run's settle stops the hook.
     admission: Option<super::admission::Admission>,
+    /// The configured scratch directory this run holds, when it has one.
+    scratch: Option<crate::runner::scratch::Handle>,
     /// Named by a caller's `--run-id` key: its output is logged for
     /// `effigy run logs`.
     keyed: bool,
@@ -211,6 +216,7 @@ impl TaskRun {
                 target: &target,
                 lock_wait_ms,
                 custody: false,
+                scratch: false,
                 managed_run_token: None,
                 args: &[],
                 key: None,
@@ -247,6 +253,7 @@ impl TaskRun {
                 target: &target,
                 lock_wait_ms: 0,
                 custody: false,
+                scratch: false,
                 managed_run_token: None,
                 args: &[],
                 key: None,
@@ -364,6 +371,7 @@ impl TaskRun {
                 shared_owners,
                 _custody_scope: custody_scope,
                 admission: None,
+                scratch: None,
                 keyed: false,
             };
             run.admit(request.admission, admission, request.cwd)?;
@@ -425,9 +433,14 @@ impl TaskRun {
             shared_owners,
             _custody_scope: custody_scope,
             admission: None,
+            scratch: None,
             keyed: request.key.is_some(),
         };
         run.admit(request.admission, admission, request.cwd)?;
+        // The run's scratch is its own effect, recorded before the first
+        // workload runs and settled with the run. A nested run reuses the
+        // scratch its parent already opened.
+        run.scratch = crate::runner::scratch::for_run(&mut run, request.scratch);
         Ok(run)
     }
 
@@ -473,6 +486,7 @@ impl TaskRun {
                         shared_owners: Vec::new(),
                         _custody_scope: None,
                         admission: None,
+                        scratch: None,
                         keyed: false,
                     },
                 );
@@ -596,6 +610,7 @@ impl TaskRun {
             shared_owners: self.shared_owners.clone(),
             _custody_scope: Some(custody_scope),
             admission: None,
+            scratch: crate::runner::scratch::inherited_handle(self.scratch.as_ref()),
             keyed: false,
         })
     }
@@ -624,13 +639,16 @@ impl TaskRun {
         Vec<String>,
     ) {
         let admission = self.admission.take();
+        let scratch = self.conclude_scratch(&workload);
         let result = match self.run.take() {
             Some(run) => close_run_settled(owned(run), workload, kernel::cleanup_context(budget)),
             None => (None, Vec::new()),
         };
         drop(admission);
         retain();
-        result
+        let (outcome, mut warnings) = result;
+        warnings.extend(scratch);
+        (outcome, warnings)
     }
 
     /// Records the workload outcome, settles every effect and releases the
@@ -639,6 +657,7 @@ impl TaskRun {
         let mut warnings = Vec::new();
         // Settle stops the admission hook; the marker goes with it.
         let admission = self.admission.take();
+        warnings.extend(self.conclude_scratch(&workload));
         if let Some(run) = self.run.take() {
             warnings.extend(close_run(owned(run), workload.clone()));
         }
@@ -653,6 +672,24 @@ impl TaskRun {
         }
         drop(admission);
         retain();
+        warnings
+    }
+
+    /// Records the run's scratch decision before the settle reads it. A kept
+    /// directory is a warning here, not a failure: the task's own result is
+    /// already decided.
+    fn conclude_scratch(&mut self, workload: &WorkloadOutcome) -> Vec<String> {
+        let Some(scratch) = self.scratch.take() else {
+            return Vec::new();
+        };
+        let mut warnings = Vec::new();
+        if let Some(warning) = crate::runner::scratch::conclude(
+            &scratch,
+            matches!(workload, WorkloadOutcome::Succeeded),
+        ) {
+            warnings.push(warning);
+        }
+        crate::runner::scratch::leave(&scratch);
         warnings
     }
 
@@ -676,6 +713,7 @@ impl TaskRun {
             target: &target,
             lock_wait_ms: 0,
             custody: false,
+            scratch: false,
             managed_run_token,
             args: &[],
             key: None,
@@ -706,8 +744,13 @@ impl Drop for ExclusiveSection {
 
 impl Drop for TaskRun {
     /// An unclosed run (an early return or panic) still settles; the
-    /// journal records it interrupted rather than claiming an outcome.
+    /// journal records it interrupted rather than claiming an outcome. Its
+    /// scratch leaves this thread's scope but is never concluded, so the
+    /// directory is retained until the sweep removes it.
     fn drop(&mut self) {
+        if let Some(scratch) = self.scratch.take() {
+            crate::runner::scratch::leave(&scratch);
+        }
         let cleanup = kernel::cleanup();
         for run in [self.run.take().map(owned), self.shared.take()]
             .into_iter()

@@ -232,6 +232,7 @@ fn begin(root: &Path, task: &str) -> TaskRun {
         target: &target,
         lock_wait_ms: 0,
         custody: true,
+        scratch: false,
         managed_run_token: None,
         args: &[],
         key: None,
@@ -731,4 +732,30 @@ fn matrix_unreachable_engine_leaves_residue_until_the_next_run_settles_it() {
     let successor = begin(&matrix.root, "remote:matrix:down");
     assert!(!matrix.engine.alive(), "the predecessor's settle stops it");
     close(successor, WorkloadOutcome::Succeeded);
+}
+
+/// The host scratch never reaches a container: the container environment is
+/// built from the run's spawned env entries and the task's own values only.
+#[test]
+fn a_container_workload_never_receives_the_host_scratch() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let dir = scratch.path().join("abcdefgh");
+    std::fs::create_dir(&dir).expect("dir");
+    crate::runner::scratch::with_test_scope(&dir, || {
+        // The host side of this run owns a scratch directory ...
+        assert!(!crate::runner::scratch::temp_env().is_empty());
+        let env = container_env(vec![(
+            "EXPLICIT".to_owned(),
+            EnvOverride::Plain("1".to_owned()),
+        )])
+        .expect("container env");
+        // ... and the container still sees none of it.
+        for key in ["TMPDIR", "TMP", "TEMP"] {
+            assert!(
+                !env.contains_key(std::ffi::OsStr::new(key)),
+                "`{key}` must not be forwarded into a container"
+            );
+        }
+        assert!(env.contains_key(std::ffi::OsStr::new("EXPLICIT")));
+    });
 }

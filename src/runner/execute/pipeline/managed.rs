@@ -126,6 +126,8 @@ pub(in crate::runner) fn run_managed_task(
                 target: &target,
                 lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,
                 custody: false,
+                // A workspace shell session is not a task command.
+                scratch: false,
                 managed_run_token: None,
                 args: &preflight.runtime_args_exec.passthrough,
                 key: run_key,

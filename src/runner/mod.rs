@@ -42,6 +42,7 @@ mod render;
 mod rhai_command;
 mod run_control;
 mod runtime_session_context;
+mod scratch;
 mod script_command;
 #[cfg(test)]
 mod scripted_doctor;

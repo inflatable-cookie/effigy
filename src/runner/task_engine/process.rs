@@ -410,6 +410,13 @@ pub(super) fn environment(
             EnvValue::Plain(OsString::from(path)),
         );
     }
+    // The run's own scratch directory is the only temp directory a host
+    // process sees: set only when this run owns it (neither an explicit nor a
+    // non-default `TMPDIR` was inherited). Task env and env-schema values are
+    // applied after, so an explicit override still wins.
+    for (key, value) in crate::runner::scratch::temp_env() {
+        env.insert(OsString::from(key), EnvValue::Plain(value.into_os_string()));
+    }
     for (key, value) in super::spawn_env::entries().into_iter().chain(overrides) {
         let value = match value {
             EnvOverride::Plain(value) => EnvValue::Plain(OsString::from(value)),

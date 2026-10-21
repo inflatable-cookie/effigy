@@ -87,6 +87,9 @@ pub(in crate::runner) fn run_standard_task(
         // Host commands, env-schema commands and container workloads all
         // run under the run's custody; every route plans its sentinel.
         custody: true,
+        // Only a host-placed task gets the configured per-run scratch, and a
+        // task may opt out of it.
+        scratch: runs_plain_host_command(preflight, selection) && selection.task.uses_scratch(),
         managed_run_token: inherited_managed_run.as_deref(),
         args: &preflight.runtime_args_exec.passthrough,
         key: run_key,
