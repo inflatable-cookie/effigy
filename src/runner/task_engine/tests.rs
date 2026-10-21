@@ -653,6 +653,70 @@ fn a_second_keyed_run_gets_its_own_scratch_while_the_first_is_retained() {
 }
 
 #[test]
+fn a_built_in_suite_settles_its_process_tree_before_the_scratch_is_released() {
+    let _guard = crate::contract_test_support::lock_test();
+    let root = tempfile::tempdir().expect("root");
+    let work = tempfile::tempdir().expect("work");
+    let catalog = catalog(root.path(), "", "root", 0);
+    let _ = catalog;
+    let scratch_root = root.path().join("scratch-vol");
+    std::fs::create_dir(&scratch_root).expect("scratch root");
+    let config = scratch_config(&scratch_root);
+    let seen = work.path().join("suite-tmpdir.txt");
+    let late = work.path().join("descendant.txt");
+
+    crate::runner::scratch::with_test_scratch(
+        Some(config.clone()),
+        Some(config.root.clone()),
+        true,
+        || {
+            let mut parent = TaskRun::standalone_scratching(root.path(), "effigy test")
+                .expect("the built-in run is admitted");
+            let command = format!(
+                "printf '%s' \"$TMPDIR\" > {}; ( sleep 1; printf late > {} ) & exit 0",
+                seen.display(),
+                late.display()
+            );
+            {
+                use effigy_builtin::BuiltinRuntimePorts;
+                let ports =
+                    crate::runner::builtin_ports::RunnerBuiltinPorts::with_suite_run(&mut parent);
+                assert!(ports.custody_holds_host_suites());
+                // Exactly what the runner hands the built-in: the run's temp
+                // environment.
+                let env = ports.host_scratch_env();
+                let mut suite_env = std::collections::BTreeMap::new();
+                for (key, value) in env {
+                    suite_env.insert(key, value.to_string_lossy().into_owned());
+                }
+                let mut custody = ports
+                    .host_suite_custody("suite")
+                    .expect("custody available")
+                    .expect("a held run owns its suites");
+                let outcome = custody
+                    .run(&command, work.path(), &suite_env, false)
+                    .expect("the suite ran");
+                assert_eq!(outcome.code, Some(0));
+                // The suite's verdict closes its child run, which stops the
+                // suite's whole process group.
+                custody.settle(true);
+            }
+            assert!(parent.close(WorkloadOutcome::Succeeded).is_empty());
+        },
+    );
+
+    let suite_temp = std::fs::read_to_string(&seen).expect("the suite saw its temp dir");
+    assert!(Path::new(&suite_temp).starts_with(&config.root));
+    // The backgrounded descendant would write after a second; the suite's
+    // settle stopped its group first, so it never gets there.
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert!(
+        !late.exists(),
+        "a suite's descendant must not outlive the run that owns it"
+    );
+}
+
+#[test]
 fn the_builtin_test_route_holds_and_settles_the_configured_scratch() {
     let _guard = crate::contract_test_support::lock_test();
     let root = tempfile::tempdir().expect("root");

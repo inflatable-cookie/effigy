@@ -231,9 +231,14 @@ During v0.x, MINOR bumps may include breaking changes.
   `TEMP`, as a kernel run effect settled with the run: released when the run
   succeeded, kept for 24 hours from the moment it failed (the failure output
   prints the path), and swept by a bounded later run. Only the run's own marker,
-  matching that run's derived directory name, authorises a removal. A volume
-  gate refuses an absent root, the boot or data volume, a root that is not the
-  volume's mount point, a `volume_uuid` mismatch, a root inside
+  matching that run's derived directory name, authorises a verdict or a
+  removal, so a directory that went away or was replaced is never relabelled or
+  deleted. The built-in `effigy test` route's host suites run as child runs of
+  its run, so their process groups are stopped before the directory is released
+  (the multi-suite TUI is not used while such a run holds them), and with no
+  configured scratch that route opens no run and needs no Effigy state home. A
+  volume gate refuses an absent root, the boot or data volume, a root that is
+  not the volume's mount point, a `volume_uuid` mismatch, a root inside
   `/Volumes/Builds/oxide-pool`, and a root that is not root-owned, ACL-free and
   closed to other writes; a refusal falls back to the default temp directory and
   `effigy doctor` reports the reason. An explicit or non-default `TMPDIR` wins,

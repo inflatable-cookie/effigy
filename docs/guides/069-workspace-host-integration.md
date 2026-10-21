@@ -238,7 +238,9 @@ the same instant, and every `--run-id` run, still differ), and its host
 processes see that directory as `TMPDIR`, `TMP` and `TEMP`. The canonical
 built-in `effigy test` route holds such a run too, so project test suites write
 their fixtures and temp files to the volume. Unset, nothing changes: Effigy
-never rewrites the temp environment.
+never rewrites the temp environment, and a command that would hold no scratch
+directory (including `effigy test`) opens no run at all, so it needs no Effigy
+state home.
 
 **Recommendation: always set `volume_uuid`.** Without the pin, a mount point
 that happens to be reused by another disk is accepted as long as the other
@@ -300,6 +302,12 @@ disk.
 - A task can opt out with `scratch = false` in its `effigy.toml` entry
   (managed sessions included), and `EFFIGY_SCRATCH=0` (or `false`) opts out
   for one invocation.
+- Each host suite of the built-in `effigy test` route runs as a child run of
+  that route's run, so its whole process group is custody the run settles
+  before the directory is released — a suite's backgrounded descendant does not
+  outlive it. Because the multi-suite TUI spawns processes of its own, `effigy
+  test` streams its suites instead of opening the TUI while a scratch run holds
+  them.
 
 ### Retention
 
@@ -307,6 +315,9 @@ disk.
 - A run that failed, was cancelled or timed out keeps it for 24 hours, and the
   failure output names the path. The 24 hours start when the run ended, not
   when it started, so a long run that fails late keeps its full window.
+- A run that loses its directory — the path is gone, or something else now
+  occupies the name without Effigy's marker for that run — keeps no authority
+  over what is there: it never writes a verdict into it and never removes it.
 - A run killed outright leaves the effect open; the sentinel's settle keeps
   the directory rather than guessing, and its 24 hours run from the close the
   sentinel recorded.

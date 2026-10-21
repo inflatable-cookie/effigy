@@ -74,6 +74,30 @@ pub struct BuiltinTestChildEvidence {
     pub wait_error: Option<String>,
 }
 
+/// One host suite's result under the caller's process custody.
+#[derive(Debug, Clone, Default)]
+pub struct HostSuiteOutcome {
+    /// The suite command's exit code; `None` when a signal ended it.
+    pub code: Option<i32>,
+}
+
+/// One host suite's process custody, owned by the caller's run. The suite runs
+/// as a process group of that run, so the run's settle stops its tree before
+/// the run's scratch directory is released, and the sentinel's settle does the
+/// same when the owner dies.
+pub trait HostSuiteCustody: Send {
+    fn run(
+        &mut self,
+        command: &str,
+        cwd: &Path,
+        env: &std::collections::BTreeMap<String, String>,
+        capture: bool,
+    ) -> Result<HostSuiteOutcome, BuiltinError>;
+
+    /// Records the suite's outcome and stops its process group.
+    fn settle(self: Box<Self>, succeeded: bool);
+}
+
 /// Runtime services the built-in command layer depends on. Every
 /// reach-back from the built-in layer into the rest of the runner goes
 /// through this trait.
@@ -95,6 +119,22 @@ pub trait BuiltinRuntimePorts {
     /// caller runs no such directory, and never forwarded into a container.
     fn host_scratch_env(&self) -> Vec<(String, std::ffi::OsString)> {
         Vec::new()
+    }
+
+    /// Whether the caller's run owns host suites, so the built-in must not put
+    /// them behind a TUI that spawns its own processes.
+    fn custody_holds_host_suites(&self) -> bool {
+        false
+    }
+
+    /// The caller's run custody for one host suite. `None` keeps the built-in's
+    /// own spawn, which is what a caller without a scratch run provides.
+    fn host_suite_custody(
+        &self,
+        label: &str,
+    ) -> Result<Option<Box<dyn HostSuiteCustody>>, BuiltinError> {
+        let _ = label;
+        Ok(None)
     }
 
     // Locking.

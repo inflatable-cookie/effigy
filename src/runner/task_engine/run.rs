@@ -237,17 +237,20 @@ impl TaskRun {
         label: &str,
         admission: Option<effigy_manifest::ManifestTaskAdmission>,
     ) -> Result<Self, RunnerError> {
-        Self::standalone_with(root, label, admission, false)
+        Self::standalone_with(root, label, admission, false, false)
     }
 
     /// A standalone run whose host processes may use the configured per-run
     /// scratch directory: the built-in `test` route runs a project's suites
     /// exactly as a manifest test task would.
+    /// Its custody is its own: the run's suites are child runs, it has a
+    /// sentinel, and its settle stops the whole tree before releasing the
+    /// directory — including after the owner is killed.
     pub(in crate::runner) fn standalone_scratching(
         root: &std::path::Path,
         label: &str,
     ) -> Result<Self, RunnerError> {
-        Self::standalone_with(root, label, None, true)
+        Self::standalone_with(root, label, None, true, true)
     }
 
     fn standalone_with(
@@ -255,6 +258,7 @@ impl TaskRun {
         label: &str,
         admission: Option<effigy_manifest::ManifestTaskAdmission>,
         scratch: bool,
+        custody: bool,
     ) -> Result<Self, RunnerError> {
         let nonce = new_run_id()?;
         let lock = format!("{BUILTIN_LOCK_PREFIX}run:{nonce}");
@@ -271,7 +275,7 @@ impl TaskRun {
             TaskRunRequest {
                 target: &target,
                 lock_wait_ms: 0,
-                custody: false,
+                custody,
                 scratch,
                 managed_run_token: None,
                 args: &[],

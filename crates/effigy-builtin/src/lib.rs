@@ -44,7 +44,7 @@ pub use constants::{BUILTIN_TASKS, DEFAULT_BUILTIN_TEST_MAX_PARALLEL};
 pub use error::BuiltinError;
 pub use ports::{
     BuiltinContainerSuiteTarget, BuiltinLockGuards, BuiltinRuntimePorts, BuiltinTestChildEvidence,
-    LockScope,
+    HostSuiteCustody, HostSuiteOutcome, LockScope,
 };
 pub use prompt_policy::{PromptDecision, PromptPolicy};
 

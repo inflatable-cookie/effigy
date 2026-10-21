@@ -23,29 +23,52 @@ pub(super) fn run_fallback_route<'a>(
         Route::Task { selection, plan } => Ok(SelectionResolution::Selected { selection, plan }),
         Route::Builtin => {
             // The built-in `test` route runs a project's suites on the host
-            // exactly as a manifest test task would, so it holds a run of its
-            // own: that run's scratch directory is the suites' temp directory,
-            // and its settle decides retention.
-            let scratch_run = (builtin_runs_project_tests(&preflight.selector.task_name)
-                // `--plan` reads; it starts no suite and needs no directory.
-                && !preflight.plan)
-                .then(|| {
-                    TaskRun::standalone_scratching(
+            // exactly as a manifest test task would, so with a configured
+            // scratch directory it holds a run of its own: that run's scratch
+            // is the suites' temp directory, its suites are child runs whose
+            // process trees it settles, and its settle decides retention.
+            // Unconfigured — or with an explicit `TMPDIR` — it holds no run
+            // and needs no Effigy state, exactly as before.
+            let mut scratch_run = if builtin_runs_project_tests(&preflight.selector.task_name)
+                && !preflight.plan
+                && crate::runner::scratch::wanted()
+            {
+                let label = format!("effigy {}", preflight.selector.task_name);
+                match TaskRun::standalone_scratching(&preflight.resolved.resolved_root, &label) {
+                    Ok(run) => Some(run),
+                    // A scratch that cannot be admitted falls back to the
+                    // default temp directory rather than failing the suites.
+                    Err(error) => {
+                        eprintln!("warning: {label}: no scratch run: {error}");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            let outcome = match scratch_run.as_mut() {
+                Some(run) => {
+                    let ports = RunnerBuiltinPorts::with_suite_run(run);
+                    try_run_builtin_task(
+                        &ports,
+                        &preflight.selector,
+                        task,
+                        &preflight.runtime_args_raw,
                         &preflight.resolved.resolved_root,
-                        &format!("effigy {}", preflight.selector.task_name),
+                        &preflight.catalogs,
+                        &preflight.invocation_cwd,
                     )
-                })
-                .transpose()?;
-            let ports = RunnerBuiltinPorts::new();
-            let outcome = try_run_builtin_task(
-                &ports,
-                &preflight.selector,
-                task,
-                &preflight.runtime_args_raw,
-                &preflight.resolved.resolved_root,
-                &preflight.catalogs,
-                &preflight.invocation_cwd,
-            );
+                }
+                None => try_run_builtin_task(
+                    &RunnerBuiltinPorts::new(),
+                    &preflight.selector,
+                    task,
+                    &preflight.runtime_args_raw,
+                    &preflight.resolved.resolved_root,
+                    &preflight.catalogs,
+                    &preflight.invocation_cwd,
+                ),
+            };
             if let Some(run) = scratch_run {
                 let workload = match &outcome {
                     Ok(Some(_)) => WorkloadOutcome::Succeeded,

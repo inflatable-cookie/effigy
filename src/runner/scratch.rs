@@ -138,6 +138,15 @@ pub(in crate::runner) fn config() -> Result<Option<Config>, Refusal> {
     }
 }
 
+/// Whether a new run should hold a scratch directory at all: a configured
+/// root, no `EFFIGY_SCRATCH` opt-out, and a temp environment Effigy may
+/// replace. Callers that can avoid a run entirely (the built-in test route)
+/// ask this first, so an unconfigured machine keeps today's behaviour and
+/// needs no Effigy state home.
+pub(in crate::runner) fn wanted() -> bool {
+    !disabled_by_env() && temp_env_is_default() && config().ok().flatten().is_some()
+}
+
 /// `EFFIGY_SCRATCH=0` (or `false`) turns the feature off for one invocation.
 pub(in crate::runner) fn disabled_by_env() -> bool {
     disabled(std::env::var(DISABLE_ENV).ok().as_deref())
@@ -725,16 +734,23 @@ fn scratch_name_of(run: &str) -> Option<String> {
 /// name derived from that run. A collision, a replacement or a failed creation
 /// therefore confers no cleanup authority over whatever now occupies the path.
 fn owned_dir(payload: &EffectPayload) -> Option<PathBuf> {
-    let expected = scratch_name_of(&payload.run)?;
-    if file_name(&payload.dir) != expected {
-        return None;
+    owns_directory(&payload.dir, &payload.run).then(|| payload.dir.clone())
+}
+
+/// Whether `dir` is exactly the directory Effigy made for `run`: the name the
+/// run derives, a real directory (never a symlink), and Effigy's own marker
+/// naming that run. Nothing else is ever observed, decided or removed.
+fn owns_directory(dir: &Path, run: &str) -> bool {
+    if scratch_name_of(run).as_deref() != Some(file_name(dir).as_str()) {
+        return false;
     }
-    let metadata = std::fs::symlink_metadata(&payload.dir).ok()?;
+    let Ok(metadata) = std::fs::symlink_metadata(dir) else {
+        return false;
+    };
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
-        return None;
+        return false;
     }
-    let marker = read_marker(&payload.dir)?;
-    (marker.run == payload.run).then_some(payload.dir.clone())
+    read_marker(dir).is_some_and(|marker| marker.run == run)
 }
 
 /// Records the run's decision in the marker *before* the settle reads it, and
@@ -746,6 +762,13 @@ fn owned_dir(payload: &EffectPayload) -> Option<PathBuf> {
 /// parent delete data the parent's own failure should retain.
 pub(in crate::runner) fn conclude(handle: &Handle, succeeded: bool) -> Option<String> {
     let scratch = handle.run.as_ref().filter(|_| handle.owns_scope)?;
+    // The verdict is written only into the directory this run already owns. If
+    // the original directory moved aside and something else now occupies its
+    // name, this run has lost it: concluding must not relabel a foreign
+    // directory as ours and hand the settle permission to delete it.
+    if !owns_directory(&scratch.dir, &scratch.run) {
+        return None;
+    }
     let previous = read_marker(&scratch.dir);
     let concluded_ms = now_ms();
     let marker = Marker {
@@ -1445,6 +1468,85 @@ mod tests {
         let decided = read_marker(&dir).expect("marker");
         assert_eq!(decided.keep, Some(true));
         assert!(decided.concluded_ms.is_some());
+    }
+
+    #[test]
+    fn a_lost_directory_never_takes_a_verdict() {
+        let root = tempfile::tempdir().expect("root");
+        let ours = run_id(30);
+        let foreign = run_id(31);
+        // Something else now occupies our name, with its own marker: concluding
+        // must not rewrite that marker and hand our settle permission to delete
+        // it.
+        let dir = hold_marker(
+            root.path(),
+            &ours,
+            Marker {
+                keep: Some(true),
+                ..marker(&foreign, now_ms(), Some(now_ms()))
+            },
+        );
+        let handle = Handle {
+            run: Some(Arc::new(RunScratch {
+                dir: dir.clone(),
+                run: ours.to_string(),
+            })),
+            owns_scope: true,
+        };
+        assert!(conclude(&handle, false).is_none());
+        let untouched = read_marker(&dir).expect("marker");
+        assert_eq!(
+            untouched.run,
+            foreign.to_string(),
+            "a foreign marker is untouched"
+        );
+        let cx = cleanup();
+        assert!(matches!(
+            reconcile(&effect(&dir, &ours), &cx),
+            Observed::Absent(_)
+        ));
+        assert!(dir.exists());
+
+        // The same holds when our marker is gone entirely.
+        let gone = tempfile::tempdir().expect("root");
+        let id = run_id(32);
+        let dir = gone.path().join(name_of(&id));
+        std::fs::create_dir(&dir).expect("dir");
+        let handle = Handle {
+            run: Some(Arc::new(RunScratch {
+                dir: dir.clone(),
+                run: id.to_string(),
+            })),
+            owns_scope: true,
+        };
+        assert!(conclude(&handle, true).is_none());
+        assert!(!dir.join(".effigy-scratch.json").exists());
+    }
+
+    #[test]
+    fn a_new_run_wants_scratch_only_when_it_is_configured() {
+        crate::runner::scratch::with_test_scratch(None, None, true, || {
+            assert!(!wanted(), "unset scratch pays for no run");
+        });
+        let root = tempfile::tempdir().expect("root");
+        let canonical = std::fs::canonicalize(root.path()).expect("canonical");
+        let configured = Config {
+            root: canonical.clone(),
+            volume_uuid: None,
+            require_separate_volume: false,
+        };
+        crate::runner::scratch::with_test_scratch(
+            Some(configured.clone()),
+            Some(canonical),
+            true,
+            || assert!(wanted()),
+        );
+        crate::runner::scratch::with_test_scratch(
+            Some(configured),
+            Some(std::fs::canonicalize(root.path()).expect("canonical")),
+            false,
+            || assert!(!wanted(), "an explicit TMPDIR wins, so no run is opened"),
+        );
     }
 
     #[test]

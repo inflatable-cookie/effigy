@@ -14,7 +14,7 @@ use effigy_tui::multiprocess::{run_multiprocess_tui, MultiProcessTuiOptions};
 use super::planning::{BuiltinTargetRuntime, BuiltinTestRunnable};
 use super::{BuiltinError, BuiltinTestExecResult};
 use crate::ports::BuiltinTestChildEvidence;
-use crate::BuiltinRuntimePorts;
+use crate::{BuiltinRuntimePorts, HostSuiteCustody};
 #[path = "planning/runnable/cargo_env.rs"]
 mod cargo_env;
 
@@ -148,6 +148,15 @@ pub(super) fn run_builtin_test_targets_parallel(
                 job.teardown_policy,
             );
             let host = runs_on_host(&job);
+            // A suite the caller's run owns runs under that run's custody: one
+            // child run per suite, moved to the worker that runs it, so the run
+            // settles the suite's whole process group. Child evidence is the
+            // built-in's own diagnostic spawn, so it keeps the plain path.
+            let custody = if host && !capture_child_evidence {
+                ports.host_suite_custody(&job.name)?
+            } else {
+                None
+            };
             Ok((
                 job.name,
                 job.root,
@@ -155,9 +164,21 @@ pub(super) fn run_builtin_test_targets_parallel(
                 job.command,
                 execution_command,
                 host,
+                custody,
             ))
         })
-        .collect::<Result<Vec<(String, PathBuf, String, String, String, bool)>, BuiltinError>>()?;
+        .collect::<Result<
+            Vec<(
+                String,
+                PathBuf,
+                String,
+                String,
+                String,
+                bool,
+                Option<Box<dyn HostSuiteCustody>>,
+            )>,
+            BuiltinError,
+        >>()?;
     let worker_count = max_parallel.min(jobs.len()).max(1);
     let queue = Arc::new(Mutex::new(VecDeque::from(jobs)));
 
@@ -181,7 +202,8 @@ pub(super) fn run_builtin_test_targets_parallel(
                             let mut queue = queue_ref.lock().expect("test queue lock poisoned");
                             queue.pop_front()
                         };
-                        let Some((name, root, runner, command, execution_command, host)) = job
+                        let Some((name, root, runner, command, execution_command, host, custody)) =
+                            job
                         else {
                             break;
                         };
@@ -190,6 +212,44 @@ pub(super) fn run_builtin_test_targets_parallel(
                         } else {
                             0
                         };
+                        if let Some(mut custody) = custody {
+                            let outcome =
+                                custody.run(&execution_command, &root, &host_env, capture_output);
+                            let result = outcome.map(|outcome| {
+                                #[cfg(unix)]
+                                let status = {
+                                    use std::os::unix::process::ExitStatusExt;
+                                    std::process::ExitStatus::from_raw(
+                                        outcome.code.unwrap_or(1) << 8,
+                                    )
+                                };
+                                #[cfg(not(unix))]
+                                let status = {
+                                    let _ = outcome;
+                                    unreachable!("built-in test custody is a unix process group")
+                                };
+                                status
+                            });
+                            let succeeded = matches!(&result, Ok(status) if status.success());
+                            // The suite's outcome is recorded and its whole
+                            // process group stopped here, before the run that
+                            // owns the scratch directory concludes.
+                            custody.settle(succeeded);
+                            let status =
+                                result.map_err(|error| BuiltinError::TaskCommandLaunch {
+                                    command: execution_command.clone(),
+                                    error: std::io::Error::other(error.to_string()),
+                                })?;
+                            local.push(BuiltinTestExecResult {
+                                name,
+                                runner,
+                                root,
+                                command,
+                                success: status.success(),
+                                code: status.code(),
+                            });
+                            continue;
+                        }
                         let mut process = ProcessCommand::new("sh");
                         process.arg("-c").arg(&execution_command).current_dir(&root);
                         with_local_node_bin_path(&mut process, &root);
@@ -477,14 +537,33 @@ mod tests {
     use std::ffi::OsString;
     use std::path::Path;
 
-    /// A ports double that only answers the scratch question.
+    /// A ports double that answers the scratch question, and can hand out a
+    /// custody double that records the suite it was given.
     struct ScratchPorts {
         env: Vec<(String, OsString)>,
+        custody_marker: Option<PathBuf>,
     }
 
     impl BuiltinRuntimePorts for ScratchPorts {
         fn host_scratch_env(&self) -> Vec<(String, OsString)> {
             self.env.clone()
+        }
+
+        fn custody_holds_host_suites(&self) -> bool {
+            self.custody_marker.is_some()
+        }
+
+        fn host_suite_custody(
+            &self,
+            label: &str,
+        ) -> Result<Option<Box<dyn HostSuiteCustody>>, BuiltinError> {
+            let Some(marker) = &self.custody_marker else {
+                return Ok(None);
+            };
+            Ok(Some(Box::new(RecordingCustody {
+                marker: marker.clone(),
+                label: label.to_owned(),
+            })))
         }
 
         fn acquire_scopes(
@@ -548,12 +627,46 @@ mod tests {
         }
     }
 
+    /// Records the suite it is given and reports the code the suite's own
+    /// script would have produced, without spawning: the dispatch proof.
+    struct RecordingCustody {
+        marker: PathBuf,
+        label: String,
+    }
+
+    impl HostSuiteCustody for RecordingCustody {
+        fn run(
+            &mut self,
+            command: &str,
+            cwd: &Path,
+            env: &BTreeMap<String, String>,
+            _capture: bool,
+        ) -> Result<crate::HostSuiteOutcome, BuiltinError> {
+            std::fs::write(
+                &self.marker,
+                format!(
+                    "{}|{}|{}|{}|{}",
+                    self.label,
+                    command,
+                    cwd.display(),
+                    env.get("TMPDIR").cloned().unwrap_or_default(),
+                    env.len()
+                ),
+            )
+            .expect("custody marker");
+            Ok(crate::HostSuiteOutcome { code: Some(0) })
+        }
+
+        fn settle(self: Box<Self>, _succeeded: bool) {}
+    }
+
     fn ports(dir: &Path) -> ScratchPorts {
         ScratchPorts {
             env: ["TMPDIR", "TMP", "TEMP"]
                 .iter()
                 .map(|key| ((*key).to_owned(), dir.as_os_str().to_owned()))
                 .collect(),
+            custody_marker: None,
         }
     }
 
@@ -577,6 +690,30 @@ mod tests {
             scratch.path().display().to_string(),
             "a host suite sees the run's scratch directory as TMPDIR"
         );
+    }
+
+    #[test]
+    fn a_host_suite_is_dispatched_through_the_callers_run_custody() {
+        let fixture = tempfile::tempdir().expect("fixture");
+        let scratch = tempfile::tempdir().expect("scratch");
+        let marker = fixture.path().join("custody.txt");
+        let runnable = suite(fixture.path(), "printf suite", BuiltinTargetRuntime::Host);
+        let mut ports = ports(scratch.path());
+        ports.custody_marker = Some(marker.clone());
+
+        let results =
+            run_builtin_test_targets_parallel(&ports, vec![runnable], 1, true).expect("suite ran");
+        assert!(results[0].success, "{:?}", results[0]);
+        let recorded = std::fs::read_to_string(&marker).expect("custody marker");
+        let fields = recorded.split('|').collect::<Vec<_>>();
+        assert_eq!(fields[0], "proof", "the suite reached its own custody");
+        assert_eq!(fields[1], "printf suite");
+        assert_eq!(
+            fields[3],
+            scratch.path().display().to_string(),
+            "custody ran the suite with the run's temp environment: {recorded}"
+        );
+        assert_eq!(fields[4], "3", "TMPDIR, TMP and TEMP");
     }
 
     #[test]
