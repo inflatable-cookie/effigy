@@ -40,6 +40,15 @@ and permission preparation refuses mismatched
 named mounts before any ownership repair. Effigy never repairs a host bind by
 recursively changing its ownership.
 
+An isolated volume overlays a directory inside the checkout, so that host
+mount point must exist for the runtime to mount over it. `container up` and
+routed-task preparation recreate a missing host mount-point directory before
+creating or reusing the stack. A host cleanup that deletes `target` or
+`node_modules` under a running stack is therefore treated as mount drift: the
+stack is reconciled instead of reused, and the recreated directory never
+replaces a file or follows a symlink. `container status` and doctor report the
+missing directory as drift only after it is observed; they remain read-only.
+
 
 ## Start Here
 

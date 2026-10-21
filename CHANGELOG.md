@@ -654,6 +654,14 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Deleting an isolated volume's host mount-point directory (`target`,
+  `node_modules`) under a running container stack no longer leaves the nested
+  volume without a mount point until someone recreates the container. `container
+  up` and routed-task preparation recreate the missing host directory before
+  create or reuse, and the recreated mount point counts as mount drift, so the
+  running generation is reconciled instead of reused. A file or symlink at that
+  path still refuses, and no ownership or mode changes. `container status` and
+  `doctor` stay read-only and report drift after the observation.
 - Managed host listener readiness keeps polling while another process briefly
   shares the listening socket, and fails with the exclusivity error only at
   its deadline; its diagnostic no longer mixes a stale HTTP status into a

@@ -124,6 +124,7 @@
 "test:containers:isolated-dirs" = { visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers -p effigy --lib -E 'test(isolated_dirs_) | test(legacy_admission_tests::) | test(container_command::lifecycle::tests::) | test(container_runtime_prep::tests::) | test(system_command::workspace_permissions::tests::) | test(doctor_ports::tests::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 1200000 },
   { task = "test:containers:isolated-dirs:compat" },
+  { task = "proof:containers:isolated-mount-points" },
 ] }
 "test:containers:isolated-dirs:compat" = { visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_manifest_task_php_app_)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
@@ -133,6 +134,10 @@
 "proof:containers:isolated-dirs" = { visibility = "internal", group = "Maintenance", run = [
   { run = "cargo build --bin effigy", timeout_ms = 600000 },
   { run = "python3 tests/scripts/container-isolated-dirs.py ./target/debug/effigy", timeout_ms = 540000 },
+] }
+"proof:containers:isolated-mount-points" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "cargo build --bin effigy", timeout_ms = 600000 },
+  { run = "python3 tests/scripts/container-isolated-mount-points.py ./target/debug/effigy", timeout_ms = 540000 },
 ] }
 "test:containers:isolated-dirs:observation" = { visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(exec::mounts::tests::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
@@ -2171,6 +2176,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 "test:containers:isolated-dirs:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers -p effigy --lib -E 'test(isolated_dirs_) | test(legacy_admission_tests::) | test(container_command::lifecycle::tests::) | test(container_runtime_prep::tests::) | test(system_command::workspace_permissions::tests::) | test(doctor_ports::tests::)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 1200000 },
   { task = "test:containers:isolated-dirs:compat:cargo" },
+  { task = "proof:containers:isolated-mount-points" },
 ] }
 "test:containers:isolated-dirs:compat:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(run_manifest_task_php_app_)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
