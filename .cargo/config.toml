@@ -1,6 +1,6 @@
 # Aliases build this checkout's own binaries through Oxide (see
 # `scripts/effigy-selfbuild.sh`): intermediates go to Oxide's shared slot pool,
-# the binary is uplifted to `target/oxide-quick/`. `cargo run --bin effigy --
+# the binary is uplifted to `target/debug/`. `cargo run --bin effigy --
 # <selector>` remains the plain-Cargo escape.
 [alias]
 qa = "!sh scripts/effigy-selfbuild.sh qa"

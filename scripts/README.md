@@ -25,12 +25,12 @@ pool instead of `target/`, so the bulk of the writes stay off the internal SSD
 (Tom approved switching Effigy itself on 2026-10-21).
 
 - `oxide-selector.sh` — runs one selector's Cargo command through `oxide`. One
-  place owns the escape (`EFFIGY_OXIDE_ESCAPE=cargo`), the hosted-runner rule
-  (`GITHUB_ACTIONS=true` uses Cargo, so `.github/workflows` are unchanged) and
-  the `--cargo-profile oxide-quick` nextest flag that goes away with Oxide #106.
+  place owns the escape (`EFFIGY_OXIDE_ESCAPE=cargo`) and the hosted-runner rule
+  (`GITHUB_ACTIONS=true` uses Cargo, so `.github/workflows` are unchanged).
 - `effigy-selfbuild.sh` — builds this checkout's binary and runs it
-  (`oxide build --bin effigy`, then `target/oxide-quick/effigy`). One place
-  owns that path, and `cargo run --bin effigy --` stays the plain-Cargo escape.
+  (`oxide build --bin effigy`, then `target/debug/effigy`, the same path plain
+  Cargo uses since Oxide #106). One place owns that path, and
+  `cargo run --bin effigy --` stays the plain-Cargo escape.
 - Selectors that pin a `target/` binary path, a non-Oxide Cargo profile
   (`discovery-proof`, `fixture-proof`, `doctor-process`) or a scrubbed `HOME`
   keep calling Cargo directly.

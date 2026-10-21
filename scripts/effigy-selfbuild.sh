@@ -3,9 +3,9 @@
 #
 # `oxide build --bin effigy` keeps Rust intermediates in Oxide's shared slot
 # pool (the external Builds drive) and uplifts the final binary to
-# `target/oxide-quick/effigy`. Executing that path directly - never
-# `oxide run` - avoids holding the slot lease while a selector's nested Oxide
-# calls wait behind it.
+# `target/debug/effigy`, the same path plain Cargo uses since Oxide #106.
+# Executing that path directly - never `oxide run` - avoids holding the slot
+# lease while a selector's nested Oxide calls wait behind it.
 #
 #   scripts/effigy-selfbuild.sh <effigy args...>
 #   scripts/effigy-selfbuild.sh --bin effigy-qa <args...>
@@ -17,8 +17,8 @@
 # Hosted runners have no Oxide, so `GITHUB_ACTIONS=true` also builds with
 # Cargo; `.github/workflows` keep calling Cargo unchanged.
 #
-# The quick binary path lives here and nowhere else: when Oxide #106 moves
-# `quick` output to `target/debug`, this is the one line that changes.
+# The binary path lives here and nowhere else, so a future profile move is a
+# one-line change in this script.
 set -eu
 
 script=$0
@@ -76,4 +76,4 @@ if ! command -v oxide >/dev/null 2>&1; then
   exit 127
 fi
 (cd "$root" && oxide build --bin "$bin")
-exec "$root/target/oxide-quick/$bin" "$@"
+exec "$root/target/debug/$bin" "$@"
