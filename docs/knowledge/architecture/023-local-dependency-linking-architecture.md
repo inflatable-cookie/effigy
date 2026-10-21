@@ -146,11 +146,38 @@ The adapter:
   the repo-root patch does not touch unrelated nested workspace locks
 - rolls back only exact config/ignore content applied by the failed operation;
   lockfiles are never restored destructively
+- records the committed Git blob of every affected tracked lockfile in
+  `.effigy/local/cargo-lock-baselines.json` as part of the link transaction, so
+  a failed link rolls the record back with its other changes
 - removes only the selected managed block on unlink, re-runs Cargo resolution,
   and proves exact Git sources plus clean or remaining-link-only lock state
+- on unlink, restores a tracked lockfile from that record only while the record
+  still matches `HEAD` and the current content differs from it solely in
+  packages the unlinked link owned; another active link, an unrelated edit, or
+  a moved `HEAD` leaves the file and the record for review
 
 Cargo may rewrite lockfiles while a patch is active. That is expected local
 state and must be surfaced as do-not-commit state.
+
+### Lock-State Classification
+
+The kernel for "is this lockfile dirty" is one classifier shared by link, unlink
+and status (contract `034`):
+
+- `clean`: byte-identical to the tracked baseline
+- `active-links`: differs only in packages owned by active links
+- `committed-transition`: outside the owned packages, every package name,
+  entry count and source identity is unchanged and only version, checksum or a
+  package's own dependency list moved — a committed release-pin advance or an
+  operator dependency update, reported and never reverted
+- `unexpected-drift`: anything else, including a split version, a package that
+  moved to a path source, a changed repository URL, or a parked
+  `[[patch.unused]]` entry
+
+Unlink accepts a committed transition because it belongs to the consumer's
+dependency history, not to Effigy's link. Link-time and re-link validation stay
+strict, so a dirty lockfile still refuses a link it cannot attribute to an
+existing link.
 
 ## Bun Adapter
 
