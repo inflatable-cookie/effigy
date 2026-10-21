@@ -40,6 +40,17 @@ and permission preparation refuses mismatched
 named mounts before any ownership repair. Effigy never repairs a host bind by
 recursively changing its ownership.
 
+An isolated volume overlays a directory inside the checkout, so that host
+mount point must exist for the runtime to mount over it. The mount observation
+includes it: `container status` and doctor report a missing host directory as
+`mount_drift` without creating it. `container up` and routed-task preparation
+then recreate it before creating or reusing the stack, and because the missing
+directory is already drift, routed-task preparation reconciles through the
+guarded bring-up instead of an idempotent re-apply. A host cleanup that deletes
+`target` or `node_modules` under a running stack is therefore healed: the stack
+is reconciled instead of reused, and the recreated directory never replaces a
+file or follows a symlink.
+
 
 ## Start Here
 
@@ -1638,6 +1649,36 @@ id/status/project/service and the exact `colima ssh --profile <profile>`
 
 `effigy container status` shows the live `Exited` row rather than an empty
 or assumed-running service list.
+
+## Troubleshooting: Colima VM DNS proxy timeouts during image pulls
+
+Symptom: a `nerdctl build` of a catalog image (for example
+`workspace-rust-bun`) fails after a few minutes with
+
+```
+lookup registry-1.docker.io on 192.168.5.3:53: read udp ...: i/o timeout
+```
+
+while the same name resolves on the macOS host in milliseconds.
+
+Cause: Colima's VM resolver is a DNS proxy at `192.168.5.3` that forwards to
+the host resolver. Under load or after a network change that proxy can stop
+answering for a while even though the host resolves normally. It is not a
+registry-credential or repository problem.
+
+Fix: retry the pull or image build a bounded number of times, and confirm the
+proxy recovered rather than changing the catalog or credentials:
+
+```bash
+# Two bounded attempts; each one is a fresh pull, not a longer timeout.
+colima nerdctl --profile <profile> -- pull <image> || \
+  { sleep 30; colima nerdctl --profile <profile> -- pull <image>; }
+```
+
+A second timeout means the VM resolver is still unavailable: restart the
+profile (`colima restart <profile>`) and retry once. Do not treat one DNS
+proxy timeout as a failed catalog image or a wrong pull credential, and do not
+widen the build timeout to hide it.
 
 ## Host Runtime Fallback
 

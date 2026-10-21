@@ -229,3 +229,52 @@ and `force = false`.
     bench) is only an example, not a guarantee.
 - **Consumers** remove their `:cargo` selectors and CI switches only after the
   reviewed feature has shipped, and each owner scopes its own migration.
+
+## Q-009 — v0.15 user-facing surface cuts
+
+Status: answered
+Asked: 2026-10-21 (planner, from the weight map and consumer usage scans)
+Answered: 2026-10-21 by Tom, item by item; final "Confirm"
+
+Breaking changes land in v0.15, the release that carries built-in migration
+from v0.14.1, so that v0.16 doesn't need a second migration. Each retirement adds a
+`retired.toml` entry and an actionable error.
+
+- **Cut:**
+  - `demo` and `[demos]`;
+  - the `draft`/`drafts` refusal routes;
+  - the v0.14 task-status JSON fallback (migration imports old state once);
+  - `tasks qa-group`, replaced by `runs` and `run status|logs|stop`;
+  - `[shell]`;
+  - the experimental gateway listener-handoff commands (`setup-listener-handoff`, `listener-handoff-status`, `remove-listener-handoff`);
+  - the `system` command;
+  - `graph` and `docs context`. Tom: "graph - agree, cut". Agent transcripts over 60 days showed about 0.1% of shell commands, mostly prompted by guidance; median 10 s, frequent timeouts. `docs check` stays; scanners that need the code graph go with it unless the scanner assessment keeps them.
+- **Consolidate:**
+  - `system` lifecycle becomes `container [<name>] up|down|status|logs`;
+  - `system repair` and `reset-runtime` move under `container profile`;
+  - the `[systems]` table stays, because `workspace` and `exec` resolve through it;
+  - `artifact` folds into `state`. Tom: "both surfaces were built as solutions for parts of deployment on the acowtancy project, but we've not actually made use of it yet"; the surface is revisited in v0.16;
+  - `contracts check-json` takes its schema index from project config and shares one JSON Schema engine with Rhai validation, and `validate-selection` folds into it.
+- **Release platform.** Tom: "I want a consolidated release platform in effigy that all projects can adhere to." One generic pipeline any project declares, run as one Run with checkpoints. Effigy-specific release machinery moves to Effigy repo tasks. `[distribution]` retires into the release platform's publish settings. v0.15 settles the shape; v0.16 adds publish providers. A release-platform contract is reviewed before implementation. Tom accepted the
+  stage model (validate, prepare, gates/certify, publish, verify, closeout; one
+  checkpointed Run; several versioned packages; build once and publish exactly
+  that; tag and repo-task publish targets in v0.15) "so long as we can fit
+  existing workflows to it". The contract maps every project's release workflow
+  onto it, including libraries that don't use `[release]` yet, such as Poodle,
+  Longhorn and Underlay.
+- **Keep:**
+  - `deps`: Tom: "the only way to test them in anger before release in consuming projects";
+  - `workspace` and `exec`, the daily entry verbs;
+  - trailing `<task> --plan` and `--json` through v0.15, with their note, and removed in v0.16. No released version has shown the note yet.
+- **Keep and fix:**
+  - `scan`: assess every scanner and remove or improve each. Tom, agreeing with the planner's per-scanner calls from the 2026-10 scanner assessment: keep and fix `god-files` and `duplicate-blocks`; cut `attention-markers`, `generated-in-src`, `comment-ratio`, `generated-assets` and `stale-suppressions`. The graph-backed scanners (`boundary-violations`, `dead-code`, `validation-gaps`) go with `graph`, with no graphless replacement; `effigy test --plan` answers which tests run;
+  - `bootstrap`: simplify it, prove it on a selection of real projects, and align each project's `[bootstrap]`. Tom: "a single-command way to download and start another person's project".
+    - **Shape:** `[bootstrap] setup = [<selectors>]` and `start = "<selector>"`, run as ordinary tasks.
+    - **Cut:** `children` and its subcommands, `deps-sync`, `--db-seed` and dump prompts, `--fresh`/`teardown`, `--backend`, `--start`, and the `run` alias.
+    - **Keep `submodules`.** Tom: "They would be valid in polyrepo setups".
+    - **Add pinned extra sources.** Tom: "Pinned extra sources - yes please". A source is pinned to a commit and never silently advanced, and an existing working copy is never reset. This replaces `children`.
+    - **First database seed.** A first seed is a setup task. Tom: CBS's seed "was commented out because of a race condition from a few versions ago - let's make sure it works now".
+- **Not cut:** the internal restructuring from the weight map (extracting code from the binary crate, merging small crates). It isn't user-facing and can follow v0.15.
+
+Each item lands with its implementing PR, which updates the owning knowledge.
+That includes `vision.md` "Agent operations", which loses graph and docs context.

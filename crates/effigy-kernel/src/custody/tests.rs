@@ -130,6 +130,8 @@ fn recovery_foreign_reused_group_unknown_and_nonce_evidence_oracle() {
         signals: Vec<SignalDelivered>,
         race: bool,
         vanished_on_cont: bool,
+        /// A member without the nonce that the re-inventory no longer lists.
+        vanished: bool,
     }
     impl ProcessTable for Fake {
         fn leader(&mut self, _: &ProcessReceipt) -> Observed<ProcessIdentity> {
@@ -137,6 +139,13 @@ fn recovery_foreign_reused_group_unknown_and_nonce_evidence_oracle() {
         }
         fn members(&mut self, _: u32) -> Observed<Vec<Member>> {
             Observed::Verified(self.members.clone(), evidence())
+        }
+        fn present(&mut self, identity: &ProcessIdentity) -> Observed<bool> {
+            if !self.vanished {
+                return Observed::Verified(true, evidence());
+            }
+            self.members.retain(|other| other.identity != *identity);
+            Observed::Verified(false, evidence())
         }
         fn signal_leader(&mut self, r: &ProcessReceipt, s: i32) -> Observed<SignalDelivered> {
             if self.vanished_on_cont && s == libc::SIGCONT {
@@ -183,13 +192,13 @@ fn recovery_foreign_reused_group_unknown_and_nonce_evidence_oracle() {
         grace_millis: 0,
     };
     let cleanup = cx().operation().cleanup(Duration::from_secs(1)).unwrap();
-    for case in 0..6 {
+    for case in 0..7 {
         let mut own = identity.clone();
         own.pid += 1;
         let mut foreign = identity.clone();
         foreign.pid += 2;
         let members = match case {
-            0 | 3 => vec![Member {
+            0 | 3 | 6 => vec![Member {
                 identity: foreign,
                 nonce: Observed::Unknown(unknown("foreign or cleared environment")),
             }],
@@ -210,7 +219,7 @@ fn recovery_foreign_reused_group_unknown_and_nonce_evidence_oracle() {
             _ => vec![],
         };
         let mut fake = Fake {
-            leader: if case >= 4 {
+            leader: if (4..=5).contains(&case) {
                 Observed::Verified(identity.clone(), evidence())
             } else {
                 Observed::Absent(AbsenceProof::NoSuchProcess { pid: r.pgid })
@@ -219,12 +228,26 @@ fn recovery_foreign_reused_group_unknown_and_nonce_evidence_oracle() {
             signals: vec![],
             race: case == 4,
             vanished_on_cont: case == 5,
+            // Case 6 is the inventory/evidence race: the member without the
+            // nonce has left the group, so the re-inventory no longer lists
+            // it and recovery closes instead of reporting residue.
+            vanished: case == 6,
         };
         let result = platform::recover_with(&mut fake, &r, &cleanup, &mut || false);
         if case == 5 {
             assert!(matches!(result, Observed::Verified(..)));
             assert_eq!(fake.signals.len(), 1);
             assert_eq!(fake.signals[0].signal, libc::SIGKILL);
+        } else if case == 6 {
+            assert!(
+                matches!(result, Observed::Verified(..)),
+                "a vanished member is not residue: {result:?}"
+            );
+            assert!(
+                fake.signals.is_empty(),
+                "nothing to signal: {:?}",
+                fake.signals
+            );
         } else if case == 1 {
             assert!(matches!(result, Observed::Verified(..)));
             assert!(fake
