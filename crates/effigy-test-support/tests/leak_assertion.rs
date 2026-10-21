@@ -55,18 +55,33 @@ fn timeout_with_process() {
 #[ignore = "detached descendant leak; only run under the negative-control wrapper"]
 fn force_exit_after_detached_leader_reap() {
     use effigy_test_support::process::FixtureCommandExt;
+    use std::process::Stdio;
     let fixture = Fixture::new("effigy-detached-nonce-").unwrap();
     let output = Command::new("python3")
         .arg("-c")
         .arg(r#"
-import os, pathlib, subprocess, sys
+import json, os, pathlib, subprocess, sys, time
 root = pathlib.Path(sys.argv[1])
+control = pathlib.Path(os.environ['EFFIGY_TEST_DETACHED_CONTROL'])
+(control / 'metadata.json').write_text(json.dumps(dict(
+    fixture=str(root), ledger=os.environ['EFFIGY_TEST_FIXTURE_LEDGER'])))
 nonce = os.urandom(16).hex()
-child = subprocess.Popen(['sh', '-c', 'sleep 60 & while [ ! -f release ]; do sleep 0.01; done'],
+descendant = '''trap 'touch "$1/signalled"' TERM INT HUP CONT
+touch "$1/ready"
+while read command; do touch "$1/alive"; done
+'''
+child = subprocess.Popen(['sh', '-c',
+                         'exec 3<&0; env -i PATH=/bin:/usr/bin sh -c "$1" sh "$2" <&3 & '
+                         'while [ ! -f release ]; do sleep 0.01; done',
+                         'sh', descendant, str(control)],
                          cwd=root, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          env=dict(os.environ, EFFIGY_CUSTODY_NONCE=nonce))
 try:
     subprocess.run([os.environ['EFFIGY_TEST_PROCESS_HELPER'], 'register', str(child.pid), str(root), nonce], check=True)
+    deadline = time.monotonic() + 5
+    while not (control / 'ready').exists():
+        assert time.monotonic() < deadline, 'descendant readiness deadline'
+        time.sleep(0.01)
     (root / 'release').touch()
     assert child.wait(timeout=10) == 0
 except BaseException:
@@ -76,7 +91,12 @@ except BaseException:
     raise
 "#)
         .arg(fixture.path())
-        .output_owned()
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn_owned()
+        .unwrap()
+        .wait_with_output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
     std::process::exit(0);
@@ -94,12 +114,71 @@ fn suite_assertion_rejects_leaked_process_forced_exit_and_timeout() {
 }
 
 #[test]
-#[cfg_attr(
-    unix,
-    ignore = "known v0.15 rebuild defect: papercut aedb6038-fe8c-4b02-ab6f-a0a7ce8aab50; owner lane v015-task-engine"
-)]
-fn suite_assertion_settles_descendant_after_detached_leader_reap() {
-    assert_process_leak_is_settled("force_exit_after_detached_leader_reap", "30", 1);
+fn suite_assertion_refuses_nonce_free_descendant_after_detached_leader_reap() {
+    use effigy_test_support::process::FixtureCommandExt;
+    let control = Fixture::new("effigy-detached-refusal-").unwrap();
+    let script =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/scripts/fixture_hygiene.py");
+    let output = Command::new("python3")
+        .arg("-c")
+        .arg(
+            r#"
+import json, os, pathlib, shutil, subprocess, sys, time
+control, script, binary, helper = sys.argv[1:]
+control = pathlib.Path(control)
+env = dict(os.environ, EFFIGY_TEST_DETACHED_CONTROL=str(control),
+           EFFIGY_TEST_PROCESS_HELPER=helper)
+# The writer remains here after the forced-exit child and wrapper have ended.
+# Closing it in finally lets the nonce-free descendant exit without signalling.
+wrapper = subprocess.Popen([sys.executable, script, '--timeout', '30', '--',
+                            binary, '--ignored', '--exact',
+                            'force_exit_after_detached_leader_reap'],
+                           env=env, stdin=subprocess.PIPE,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+try:
+    result = wrapper.wait(timeout=60)
+    stdout, stderr = wrapper.stdout.read(), wrapper.stderr.read().decode()
+    assert result == 2, (result, stdout, stderr)
+    assert 'fixture process residue:' in stderr, stderr
+    assert 'group contains members without generation evidence' in stderr, stderr
+    assert 'unresolved fixture ownership; retained ledger:' in stderr, stderr
+    metadata = json.loads((control / 'metadata.json').read_text())
+    ledger, fixture = pathlib.Path(metadata['ledger']), pathlib.Path(metadata['fixture'])
+    assert any((ledger / 'processes').iterdir()), 'Unknown lost its process receipt'
+    assert any((ledger / 'directories').iterdir()), 'Unknown lost its directory receipt'
+    assert (fixture / 'release').exists(), 'Unknown cleaned the fixture'
+    wrapper.stdin.write(b'probe\n')
+    wrapper.stdin.flush()
+    deadline = time.monotonic() + 5
+    while not (control / 'alive').exists():
+        assert time.monotonic() < deadline, 'descendant was killed or stopped'
+        time.sleep(0.01)
+    assert not (control / 'signalled').exists(), 'Unknown signalled the descendant'
+finally:
+    wrapper.stdin.close()
+    if wrapper.poll() is None:
+        wrapper.kill()  # This exact retained direct child, never a discovered PID.
+        wrapper.wait()
+    metadata_file = control / 'metadata.json'
+    if metadata_file.exists():
+        metadata = json.loads(metadata_file.read_text())
+        ledger = pathlib.Path(metadata['ledger'])
+        # Reobserve closure after cooperative EOF; remove only this control's
+        # retained private ledger once no process registration remains.
+        cleanup = subprocess.run([helper, 'sweep', str(ledger)],
+                                 capture_output=True, timeout=30)
+        assert cleanup.returncode in (0, 1), cleanup.stderr
+        assert not any((ledger / 'processes').iterdir()), cleanup.stderr
+        shutil.rmtree(ledger)
+"#,
+        )
+        .arg(control.path())
+        .arg(script)
+        .arg(std::env::current_exe().unwrap())
+        .arg(env!("CARGO_BIN_EXE_effigy-fixture-process"))
+        .output_owned()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
 }
 
 fn assert_process_leak_is_settled(helper: &str, timeout: &str, exit: i32) {

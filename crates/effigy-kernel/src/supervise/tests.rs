@@ -13,6 +13,9 @@ use crate::store::Store;
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod image;
+
 fn cx() -> EffectContext {
     OperationContext::new(
         Deadline::At(Instant::now() + Duration::from_secs(90)),
@@ -188,6 +191,19 @@ impl World {
         run.settle(&cleanup(&cx), &mut Strict).unwrap();
     }
 }
+fn fixture() -> PathBuf {
+    std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let exe = std::env::current_exe().unwrap();
+            exe.parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("kernel-custody-fixture")
+        })
+}
+
 fn helper_exited(error: RunError) -> (String, HelperExit, String) {
     match error {
         RunError::HelperExited {
@@ -318,16 +334,7 @@ fn sentinel_refusal_reaches_the_parent_stderr_tail() {
     let world = World::new();
     let cx = cx();
     let root = StateRoot::effects(&cx, &world.home()).unwrap();
-    let fixture = std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let exe = std::env::current_exe().unwrap();
-            exe.parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .join("kernel-custody-fixture")
-        });
+    let fixture = fixture();
     let executable = Executable::capture(&fixture).unwrap();
     // The config names a stale identity for the sentinel's own image, as a
     // binary replaced after the parent spawned it would: verify refuses.
@@ -364,8 +371,8 @@ fn sentinel_refusal_reaches_the_parent_stderr_tail() {
 /// The effigy#239 cause: a rebuild replaces the startup path between this
 /// process's verify and the sentinel's own (`cargo run` of Effigy beside a
 /// live run). The first sentinel replaces its own path, as the rebuild would,
-/// and refuses unacknowledged; admission retries once from the private copy
-/// of the unchanged startup image, which acknowledges. No copy remains.
+/// and refuses unacknowledged; admission retries once from the private image
+/// of the unchanged startup image, which acknowledges. No private image remains.
 #[test]
 fn startup_path_replaced_during_handshake_retries_from_the_startup_image() {
     let world = World::new();
@@ -373,7 +380,7 @@ fn startup_path_replaced_during_handshake_retries_from_the_startup_image() {
     let root = StateRoot::effects(&cx, &world.home()).unwrap();
     let plan = world.helper(
         r#"case "$0" in
-*/.effigy/state/exe-*) printf '\001'; exec cat >/dev/null ;;
+*/.effigy/state/exe-*|/dev/fd/*) printf '\001'; exec cat >/dev/null ;;
 esac
 cp "$0" "$0.rebuilt" && mv "$0.rebuilt" "$0"
 echo 'sentinel refused: startup binary replaced' >&2
@@ -407,7 +414,7 @@ fn a_refusing_startup_image_is_retried_once_then_typed() {
     let root = StateRoot::effects(&cx, &world.home()).unwrap();
     let plan = world.helper(
         r#"case "$0" in
-*/.effigy/state/exe-*) echo 'private image refused' >&2; exit 2 ;;
+*/.effigy/state/exe-*|/dev/fd/*) echo 'private image refused' >&2; exit 2 ;;
 esac
 cp "$0" "$0.rebuilt" && mv "$0.rebuilt" "$0"
 exit 1"#,

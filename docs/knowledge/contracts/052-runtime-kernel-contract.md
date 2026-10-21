@@ -145,7 +145,7 @@ names the rule or invariant it relies on.
 | # | Rule | Forbidden states |
 | --- | --- | --- |
 | R1 | **Host authority.** Every mutable resource has exactly one authority and one gate. Gates and the store live on the host. Guests never lock host gates or write host records. Effigy in a guest keeps working by requesting host authority (§8). | A guest holding or opening a host gate; a guest writing the host store; a host acting on a guest-resolved plan; authority inferred from a hostname, heartbeat age or a file in a bind mount. |
-| R2 | **Pure reads.** Static and Observe commands write nothing anywhere. Observe may run guarded, non-mutating probes (§5.11). | `help`, `status`, `tasks`, `--plan`, `graph status` or `doctor` creating, renaming or truncating a file, appending a Git exclude, allocating a port or address, rendering Compose, minting a scope token, fetching a bundle, writing the store or a journal, or acquiring a gate exclusively. |
+| R2 | **Pure reads.** Static and Observe commands write nothing anywhere. Observe may run guarded, non-mutating probes (§5.11). The narrowly scoped deep-doctor derived-cache exception is defined in contract 047: only a changed generation may be published; unchanged deep inventory writes nothing. | `help`, `status`, `tasks`, `--plan`, `graph status` or `doctor` (outside the contract 047 exception) creating, renaming or truncating a file, appending a Git exclude, allocating a port or address, rendering Compose, minting a scope token, fetching a bundle, writing the store or a journal, or acquiring a gate exclusively. |
 | R3 | **Unknown grants nothing.** An `Unknown` observation never authorises a kill, teardown, reclaim, reuse, displacement, restart or deletion. Destructive action needs the resource's own gate plus `Verified` ownership and identity, or `Absent` with proof. | A restart because an exec probe failed; reuse of a gateway whose identity could not be read; a route displaced because owner evidence was unreadable; git failure read as clean; a lock reclaimed because a heartbeat aged. |
 | R4 | **Holder protection.** Nothing stops, restarts, recreates, resets or hands over an environment while a live or unknown holder of a bound run exists, except that run's own settle releasing its own attachment. | Any `down`, restart, recreate, reset, handover or reap of an environment with a holder whose liveness is `Verified` or `Unknown`. |
 | R5 | **Positive settlement.** Settled requires a closed run, complete cleanup, and every effect `Released`, `Retained`, `Irreversible` or `Failed`. Succeeded requires natural completion of every required obligation. | A missing record, dead owner, free gate, elapsed time, empty inventory or killed client manufacturing `Settled`, `Succeeded` or `stopped`. |
@@ -850,6 +850,11 @@ kernel restores it on exit.
   clears its environment loses the nonce. Either is outside custody in
   recovery and is reported, never signalled by number. Guest-placement
   Effigy never creates sessions or clears the nonce.
+  A nonce-free descendant surviving a reaped leader (papercut aedb6038) is
+  likewise `Unknown` residue: recovery preserves its records and files and
+  never signals it. PGID, boot identity and a start after launch cannot prove
+  continuity across an emptied and reused group. A retained group anchor is
+  deferred to Queue lead `9717909b` (planner ruling, 2026-10-21).
 
 #### Failure model
 
@@ -1956,15 +1961,25 @@ Prerequisite kernel additions for that adoption: `run::history`,
 separately redacted stdout and stderr queues (§5.7); `Executable` identified by
 file identity instead of a content digest, and holding the startup image open
 (§5.8, I-SV4). When a build replaces the running binary's path (`cargo run` of
-Effigy inside an Effigy sequence), a later sentinel re-execs a private copy of
-the unchanged startup image under the state root, removed once the sentinel
-acknowledges; a changed image still refuses. A replacement can also land
+Effigy inside an Effigy sequence), a later sentinel re-execs the unchanged
+held startup image without copying its data. On macOS `fclonefileat` clones
+from the held fd into the verified state directory; the APFS CoW clone is
+removed only after the sentinel acknowledges. On Linux `execveat` with
+`AT_EMPTY_PATH` executes the held fd directly; the sentinel verifies that
+inherited descriptor before acknowledging. Pinning checks device, inode,
+size, mtime and ctime before and after, and helper verification retains all
+five fields. As before, an unlink's ctime change is allowed only when
+recognising the replaced, otherwise unchanged held image. Unsupported clone
+filesystems, cross-volume clones and unsupported fd execution refuse with
+`HelperExited(NotStarted)` and no byte-copy fallback. Fault points cover
+pin preparation, clone/fd selection, post-pin identity and fd execution;
+a changed image still refuses. A replacement can also land
 between this process's verify and the sentinel's own (effigy#239: library
 tests' nested `cargo run --bin effigy` re-uplifts `target/debug/effigy` as a
 new inode on every invocation). That sentinel refuses and exits
 unacknowledged, or this process's own verify refuses before spawn
 (`NotStarted`); either way nothing ran and nothing recorded it, so admission
-retries once from the private copy. The detached supervisor has no such fallback yet:
+retries once from the pinned held image. The detached supervisor has no such fallback yet:
 a replaced path still refuses its start, now as a typed `HelperExited`.
 
 Read-boundary CLI proofs use the `discovery-proof` Cargo profile: the real,

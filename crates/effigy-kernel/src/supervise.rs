@@ -29,6 +29,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::{Duration, Instant};
 
+mod image;
+use image::{private_image, PrivateImage};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Placement {
     Inline,
@@ -66,6 +69,10 @@ pub struct Executable {
     changed: (i64, i64),
     #[serde(skip)]
     image: Option<std::sync::Arc<std::fs::File>>,
+    // Only the private, parent-to-helper frame carries this inherited fd.
+    #[cfg(target_os = "linux")]
+    #[serde(default)]
+    exec_fd: Option<RawFd>,
 }
 impl Executable {
     pub fn current() -> io::Result<Self> {
@@ -85,6 +92,8 @@ impl Executable {
             modified: (metadata.mtime(), metadata.mtime_nsec()),
             changed: (metadata.ctime(), metadata.ctime_nsec()),
             image: Some(std::sync::Arc::new(image)),
+            #[cfg(target_os = "linux")]
+            exec_fd: None,
         })
     }
     /// The held startup image when its path no longer names it and its
@@ -99,6 +108,13 @@ impl Executable {
             .then_some(image)
     }
     pub fn verify(&self) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        let fresh = if let Some(fd) = self.exec_fd {
+            image::fd_executable(&self.path, fd)?
+        } else {
+            Self::capture(&self.path)?
+        };
+        #[cfg(not(target_os = "linux"))]
         let fresh = Self::capture(&self.path)?;
         let changed: Vec<_> = [
             ("device", self.device != fresh.device),
@@ -339,68 +355,11 @@ pub(crate) fn helper(executable: &Executable, entry: &str) -> io::Result<Command
             }
         });
     }
+    #[cfg(target_os = "linux")]
+    if let Some(fd) = executable.exec_fd {
+        image::exec_held(&mut command, executable, fd, entry)?;
+    }
     Ok(command)
-}
-/// A private copy of a replaced startup image under the state root, removed
-/// once the helper that runs it has acknowledged (I-SV4).
-struct PrivateImage<'a> {
-    dir: &'a DirFd,
-    name: FileName,
-    executable: Executable,
-}
-impl Drop for PrivateImage<'_> {
-    fn drop(&mut self) {
-        let _ = self.dir.remove(&self.name, false);
-    }
-}
-fn private_image<'a>(
-    root: &'a StateRoot,
-    executable: &Executable,
-) -> Result<Option<PrivateImage<'a>>, RunError> {
-    let Some(image) = executable.replaced_image() else {
-        return Ok(None);
-    };
-    let name = FileName::new(&format!("exe-{}-{}", std::process::id(), nonce()))
-        .map_err(|e| RunError::Invalid(e.to_string()))?;
-    let path = root.dir().join(name.as_str());
-    let io = |op, error: io::Error| {
-        crate::store::StoreError::Io(crate::fs::IoError::new(op, &path, &error))
-    };
-    let (mut copy, _) = root
-        .dir()
-        .open_file(
-            &name,
-            libc::O_WRONLY | libc::O_EXCL,
-            Some(0o700),
-            Trust::Private,
-        )
-        .map_err(crate::store::StoreError::from)?
-        .ok_or_else(|| RunError::Invalid("private image missing".into()))?;
-    let mut pin = PrivateImage {
-        dir: root.dir(),
-        name,
-        executable: executable.clone(),
-    };
-    let mut buffer = vec![0u8; 1 << 20];
-    let mut offset = 0;
-    loop {
-        let count = std::os::unix::fs::FileExt::read_at(image, &mut buffer, offset)
-            .map_err(|e| io("private image read", e))?;
-        if count == 0 {
-            break;
-        }
-        copy.write_all(&buffer[..count])
-            .map_err(|e| io("private image write", e))?;
-        offset += count as u64;
-    }
-    if offset != executable.size {
-        return Err(RunError::Invalid(
-            "startup image changed while copied".into(),
-        ));
-    }
-    drop(copy);
-    pin.executable = Executable::capture(&path).map_err(|e| helper_not_started(SENTINEL, e))?;
-    Ok(Some(pin))
 }
 pub(crate) fn spawn_sentinel(
     run: &Run<'_>,
@@ -431,7 +390,7 @@ pub(crate) fn spawn_sentinel(
             {
                 retried = true;
             }
-            // The sentinel verified and runs its image: the private copy can go.
+            // The sentinel verified and runs its image: the private image can go.
             result => return result,
         }
     }
