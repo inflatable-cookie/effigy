@@ -653,6 +653,48 @@ fn a_second_keyed_run_gets_its_own_scratch_while_the_first_is_retained() {
 }
 
 #[test]
+fn the_builtin_test_routes_run_holds_a_sentinel_so_a_kill_still_settles_it() {
+    let _guard = crate::contract_test_support::lock_test();
+    let root = tempfile::tempdir().expect("root");
+    let scratch_root = root.path().join("scratch-vol");
+    std::fs::create_dir(&scratch_root).expect("scratch root");
+    let config = scratch_config(&scratch_root);
+
+    crate::runner::scratch::with_test_scratch(
+        Some(config.clone()),
+        Some(config.root.clone()),
+        true,
+        || {
+            // The route's run owns host suites and the scratch directory, so it
+            // must have a sentinel: a killed owner is settled from the journal,
+            // the directory is retained, and the sweep can expire it. Without
+            // one the row stays `starting` with no cleanup and nothing expires.
+            let mut run = TaskRun::standalone_scratching(root.path(), "effigy test")
+                .expect("the built-in run is admitted");
+            let id = run.id();
+            assert!(
+                run.run_mut().owns_sentinel(),
+                "the built-in test route's run must have a sentinel"
+            );
+            let env = crate::runner::scratch::temp_env();
+            assert_eq!(env.len(), 3, "the run owns the scratch directory");
+            assert!(
+                run.close(WorkloadOutcome::Succeeded).is_empty(),
+                "the route's settle reported no residue"
+            );
+            // Nothing is left for the sweep: the route's own settle released it.
+            assert!(
+                !root
+                    .path()
+                    .join(crate::runner::scratch::name_for_tests(&id))
+                    .exists(),
+                "the settled route released its directory"
+            );
+        },
+    );
+}
+
+#[test]
 fn a_built_in_suite_settles_its_process_tree_before_the_scratch_is_released() {
     let _guard = crate::contract_test_support::lock_test();
     let root = tempfile::tempdir().expect("root");

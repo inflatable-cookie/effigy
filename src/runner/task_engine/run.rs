@@ -352,7 +352,11 @@ impl TaskRun {
             .collect::<Vec<_>>();
 
         // A shared lock is its own resource with its own run, held around
-        // the task's run and released after it, always in that order.
+        // the task's run and released after it, always in that order. For a
+        // standalone run that lock run *is* the run, so it must carry the
+        // custody the caller asked for: without a sentinel a killed owner's
+        // run is never settled and its scratch directory can never expire.
+        let lock_custody = if task_gate { None } else { custody.clone() };
         let shared = match request.target.shared_lock_owner(checkout)? {
             Some(lock_owner) if !shared_owners.contains(&lock_owner) => {
                 shared_owners.push(lock_owner.clone());
@@ -367,7 +371,7 @@ impl TaskRun {
                         wait,
                         acknowledge: Vec::new(),
                         next: next.clone(),
-                        custody: None,
+                        custody: lock_custody,
                     },
                     &cleanup,
                     &mut TaskSettlement::default(),

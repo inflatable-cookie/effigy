@@ -308,6 +308,9 @@ disk.
   outlive it. Because the multi-suite TUI spawns processes of its own, `effigy
   test` streams its suites instead of opening the TUI while a scratch run holds
   them.
+- That route's run carries a sentinel, like a task run: if Effigy is killed
+  outright, the sentinel settles the run and its suites, so the directory is
+  retained with a close time and the sweep can expire it later.
 
 ### Retention
 
