@@ -662,13 +662,20 @@ fn prepared_targets(
         let source = plan
             .targets
             .iter()
-            .find(|candidate| {
-                candidate.path == target.path || path_is_under(&target.path, &candidate.path)
+            .find(|candidate| candidate.path == target.path)
+            .or_else(|| {
+                plan.targets
+                    .iter()
+                    .filter(|candidate| path_is_under(&target.path, &candidate.path))
+                    .max_by_key(|candidate| candidate.path.len())
             })
             .cloned();
         prepared.push(PreparedTarget {
             path: target.path,
-            authority: WorkspaceRepairAuthority::OwnedDisposable,
+            authority: source
+                .as_ref()
+                .map(|value| value.repair_authority)
+                .unwrap_or(WorkspaceRepairAuthority::OwnedDisposable),
             mode: target.mode,
             rust_cache: source.as_ref().and_then(|value| value.rust_cache),
             mount_kind: source
@@ -2695,6 +2702,28 @@ mod tests {
             container_name: "web".to_owned(),
             service: "workspace".to_owned(),
         }
+    }
+
+    #[test]
+    fn isolated_dirs_permission_targets_keep_the_exact_volume_authority() {
+        let mut bind = verify_target_spec("/workspace-root/acowtancy", None);
+        bind.source = Some("/host/task-checkout".into());
+        let volume = owned_target("/workspace-root/acowtancy/node_modules", None);
+        let plan = WorkspaceOwnershipPlan {
+            targets: vec![bind, volume.clone()],
+        };
+        let targets = prepared_targets(&plan, None);
+        let actual = targets
+            .iter()
+            .find(|target| target.path == volume.path)
+            .unwrap();
+        assert_eq!(actual.mount_kind, WorkspaceMountKind::NamedVolume);
+        assert_eq!(actual.source, volume.source);
+        assert_eq!(actual.authority, WorkspaceRepairAuthority::OwnedDisposable);
+        assert!(targets
+            .iter()
+            .filter(|target| target.mount_kind == WorkspaceMountKind::Bind)
+            .all(|target| target.authority == WorkspaceRepairAuthority::VerifyOnly));
     }
 
     fn owned_target(path: &str, rust: Option<WorkspaceRustCacheKind>) -> WorkspaceOwnershipTarget {
