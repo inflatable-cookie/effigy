@@ -4942,9 +4942,43 @@ fn detached_gateway_failure_actor() {
 
 #[cfg(debug_assertions)]
 #[test]
+#[ignore = "separate-process sweep entrypoint for the gateway failure proof"]
+fn gateway_fixture_sweep_child() {
+    let root = std::env::var_os("EFFIGY_GATEWAY_SWEEP_ROOT").expect("sweep root");
+    let result = match std::env::var("EFFIGY_GATEWAY_SWEEP_ACTION").as_deref() {
+        Ok("sweep") => process::sweep(Path::new(&root), None),
+        Ok("wait-root") => process::wait_kernel_helpers(Path::new(&root)).map(|_| false),
+        _ => panic!("unknown gateway fixture sweep action"),
+    };
+    match result {
+        Ok(false) => (),
+        Ok(true) => std::process::exit(1),
+        Err(error) => {
+            eprintln!("gateway fixture sweep: {error}");
+            std::process::exit(2);
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+#[test]
 fn detached_gateway_cleanup_covers_failure_exit_and_timeout_before_up_response() {
     let wrapper = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/scripts/fixture_hygiene.py");
     let owner = effigy_test_support::Fixture::workspace("effigy-gateway-failure-proof-").unwrap();
+    // Plain workspace test runners do not prepare the standalone helper. Use
+    // this binary's ignored entrypoint, always in a separate process, so the
+    // proof also works without an inherited selector environment.
+    let helper = owner.path().join("sweep-fixture");
+    fs::write(
+        &helper,
+        format!(
+            "#!/bin/sh\nEFFIGY_GATEWAY_SWEEP_ACTION=\"$1\" EFFIGY_GATEWAY_SWEEP_ROOT=\"$2\" exec {} --ignored --exact gateway_fixture_sweep_child --nocapture\n",
+            effigy_core::shell::shell_quote(&std::env::current_exe().unwrap().display().to_string())
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
     for mode in ["panic", "exit", "timeout"] {
         let output = Command::new("python3")
             .arg(&wrapper)
@@ -4957,6 +4991,7 @@ fn detached_gateway_cleanup_covers_failure_exit_and_timeout_before_up_response()
                 "--nocapture",
             ])
             .env("EFFIGY_GATEWAY_FAILURE_MODE", mode)
+            .env("EFFIGY_TEST_PROCESS_HELPER", &helper)
             .current_dir(owner.path())
             .output_owned()
             .unwrap();

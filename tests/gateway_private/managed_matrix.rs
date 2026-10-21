@@ -1095,7 +1095,8 @@ fn authority_matrix(authority: Authority) {
             while fs::read_to_string(&marker).unwrap_or_default().trim() != "stopped" {
                 assert!(
                     Instant::now() < deadline,
-                    "parent death must execute EXIT trap"
+                    "parent death must execute EXIT trap: {}",
+                    fs::read_to_string(case.root.join("prior-lifecycle.out")).unwrap_or_default()
                 );
                 thread::sleep(Duration::from_millis(25));
             }
@@ -1156,7 +1157,7 @@ fn managed_matrix_missing_record_handover_preserves_live_holder() {
     authority_matrix(Authority::MissingRecordHandover);
 }
 
-const ADAPTER: &str = r#"import sys,os,json,pathlib,subprocess,time,signal
+const ADAPTER: &str = r#"import sys,os,json,pathlib,subprocess,time,signal,shlex
 root=pathlib.Path(os.environ['MATRIX_ROOT']);state=root/'engine';args=sys.argv[2:];op=sys.argv[1]
 def fixture_process(action,pid=None,owner=None,nonce=None):
  helper=os.environ.get('EFFIGY_TEST_PROCESS_HELPER')
@@ -1172,7 +1173,9 @@ def fixture_process(action,pid=None,owner=None,nonce=None):
   subprocess.run([env['MATRIX_TEST_BINARY'],'--ignored','--exact','register_fixture_process_child'],env=env,check=True,stdout=subprocess.DEVNULL)
 if op=='prior-parent':
  nonce=os.urandom(16).hex()
- child=subprocess.Popen(['sh','-c',args[0]],start_new_session=True,env=dict(os.environ,EFFIGY_CUSTODY_NONCE=nonce))
+ # Execute the rendered sh -lc command directly: dash otherwise keeps an
+ # extra sh -c parent alive after the controller dies, unlike macOS sh.
+ child=subprocess.Popen(shlex.split(args[0]),start_new_session=True,env=dict(os.environ,EFFIGY_CUSTODY_NONCE=nonce))
  try: fixture_process('register',child.pid,root,nonce)
  except BaseException:
   os.killpg(child.pid,signal.SIGKILL)

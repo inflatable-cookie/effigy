@@ -254,3 +254,26 @@ Historical host residue must be checked separately from a current suite's log.
 A clean suite and clean Git status do not establish that earlier detached daemons
 are gone. Closeout records exact PID/start identities and private directory
 identities; cleanup targets only those authorized generations and roots.
+
+
+### Plain-runner fixture regressions
+
+`test:fixtures:hygiene:ci-regressions` covers the hosted failures that the
+selector environment previously masked. The real gateway failure proof supplies
+its own separate-process sweep entrypoint in the test binary, so ordinary
+workspace nextest and shared libtest runs need no prebuilt helper or inherited
+`EFFIGY_TEST_PROCESS_HELPER`. Panic, forced exit and timeout retain the same
+ended-generation and removed-root assertions.
+
+The matrix parent-death controller executes the rendered `sh -lc` command as
+an argument vector. An extra `sh -c` wrapper survives under Linux dash and hides
+controller death from the lifecycle's parent observation; the fixture no longer
+introduces that shell. The five-second EXIT-trap assertion is unchanged.
+
+Store tests that deliberately create a schemaless or symlinked database keep
+that data below a `store-case` directory inside their owned fixture. Those
+stores never launch kernel helpers. They are not presented as the fixture's
+kernel HOME; corrupt real HOMEs still retain their files and ledger when helper
+custody cannot be observed. The selector runs all Store cases in ordinary and
+shared modes as well as the gateway failure and matrix parent-death cases with
+the external helper environment removed.
