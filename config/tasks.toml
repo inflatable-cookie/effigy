@@ -313,6 +313,8 @@
 "test:task-engine:crates" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo build --bin effigy && cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context -p effigy-doctor --lib --no-fail-fast --retries 0 {args}", timeout_ms = 3600000 }] }
 # CLI integration suites that run tasks, locks, status and flag placement
 # through the binary; extra arguments narrow the run.
+# The CLI's command-behaviour proofs, managed front ends included.
+"test:cli:command-behavior" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(/^command_behavior_tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 3600000 }] }
 "test:task-engine:cli" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --test documentation_coverage_tests --test env_schema_tests --test changelog_tests --test bootstrap_cli_tests --no-fail-fast --retries 0 {args}", timeout_ms = 3600000 }] }
 # Runner secrets tests in one shared process, as hosted CI's shared-process
 # lane runs them: the in-process passphrase cache must not leak between tests.
