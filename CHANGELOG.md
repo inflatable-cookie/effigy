@@ -654,6 +654,15 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- `effigy gateway status --json` refuses unprovable state with a structured
+  `effigy.gateway.status.v1` document instead of only prose: `ok: false`,
+  `status: "unknown"`, the recorded `pid`, `observations.record` /
+  `observations.process` / `observations.identity` labels and the
+  `headless` observation precondition. A noninteractive plan can gate on
+  `record=authenticated` plus `process=running` with a recorded PID rather
+  than on exit 0; a denied or unknown identity stays unknown and the command
+  stays non-zero. A record this caller may not open is diagnosed as
+  `record=unreadable`, never as malformed.
 - Managed host listener readiness keeps polling while another process briefly
   shares the listening socket, and fails with the exclusivity error only at
   its deadline; its diagnostic no longer mixes a stale HTTP status into a

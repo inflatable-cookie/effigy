@@ -19,6 +19,25 @@ writers retain their current locks until endpoint-store adoption. Socket
 inspection belongs to `socket_ownership`. No migration replays or mutates
 historical transition receipts.
 
+## Unprovable status and the headless precondition
+
+`gateway status` never upgrades unproven state. When this caller cannot read
+or verify the recorded generation — a root-owned identity the kernel denies
+(noninteractive/headless), an unreadable record, a legacy numeric-only pair, or
+an ambiguous process probe — the command exits non-zero and `--json` prints an
+`effigy.gateway.status.v1` refusal with `ok: false`, `status: "unknown"`, the
+recorded `pid` when one was read, and `observations.record` /
+`observations.process` / `observations.identity` labels. A record this caller
+may not open is `unreadable`, distinct from `untrusted-or-malformed`. The
+refusal's `headless.satisfied` reports only the documented observation
+precondition — `record=authenticated` and `process=running` with a recorded
+PID — and never claims readiness or a known generation. Noninteractive plans
+gate on those observations instead of exit 0; a denied or unknown identity
+stays unknown, and resolving it still needs the bounded read-only check from an
+interactive admin-capable terminal or `gateway setup` migration. No
+administrator workaround, elevation prompt or weakened Unknown is part of
+status.
+
 The historical design analysis below records the root dependencies that led
 to the operator route. The implemented transport and remaining machine
 qualification are described in [Operator daemon custody and privileged

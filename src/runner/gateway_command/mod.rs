@@ -434,7 +434,7 @@ fn resolve_gateway_status_for_config(
         Ok(status) => Ok(Some(status)),
         Err(effigy_gateway::GatewayError::NotRunning) => Ok(None),
         Err(error @ effigy_gateway::GatewayError::LegacyIdentityRequired { .. }) => {
-            Err(legacy_identity_status_error(error, false))
+            Err(RunnerError::task_invocation(error.to_string()))
         }
         Err(error) => Err(RunnerError::task_invocation(format!(
             "cannot determine gateway state ({error}); current diagnosis: {}; no signal was sent and the gateway PID record is left in place for reconciliation. If the reason is a permission denial for a root-owned gateway, rerun from an interactive admin-capable terminal and approve the bounded identity prompt",
@@ -682,28 +682,106 @@ fn route_table_trust_fields(
     }
 }
 
-fn legacy_identity_status_error(
-    error: effigy_gateway::GatewayError,
-    output_json: bool,
+/// Structured refusal for a gateway status this caller cannot prove.
+///
+/// The truth stays `unknown`: `ok` is false and the command exits non-zero, so
+/// no caller can read this as a positive root-owned-gateway gate. What it adds
+/// is the supported evidence a headless plan may gate on instead: the record,
+/// process and identity labels plus the recorded PID, and the observation
+/// precondition spelled out (papercut 0694ef12).
+fn gateway_status_refusal_json(
+    error: &'static str,
+    message: &str,
+    diagnosis: &effigy_gateway::server::GatewayStatusDiagnosis,
+    recovery: serde_json::Value,
+) -> serde_json::Value {
+    use effigy_gateway::server::{GatewayProcessProbe, GatewayRecordKind};
+    let process = diagnosis
+        .process_probe
+        .map(GatewayProcessProbe::label)
+        .unwrap_or("not-probed");
+    json!({
+        "schema": "effigy.gateway.status.v1",
+        "schema_version": 1,
+        "ok": false,
+        "exit_code": 1,
+        "status": "unknown",
+        "error": error,
+        "message": message,
+        "pid": diagnosis.pid,
+        "observations": {
+            "record": diagnosis.record.label(),
+            "process": process,
+            "identity": diagnosis.identity.label(),
+        },
+        "headless": {
+            "precondition": "observations.record=authenticated and observations.process=running with a recorded pid",
+            "satisfied": diagnosis.record == GatewayRecordKind::Authenticated
+                && diagnosis.process_probe == Some(GatewayProcessProbe::Running)
+                && diagnosis.pid.is_some(),
+            "requires_exit_zero": false,
+            "note": "a headless planner gates on these observations, never on `effigy gateway status` exit 0; identity=permission-denied or identity=unknown keeps the status unknown and the command non-zero"
+        },
+        "recovery": recovery,
+    })
+}
+
+/// Build the refusal for one status command, from the same read-only diagnosis
+/// the text message carries.
+fn gateway_status_refusal(
+    config: &GatewayConfig,
+    error: &'static str,
+    message: &str,
+    recovery: serde_json::Value,
 ) -> RunnerError {
-    match error {
-        effigy_gateway::GatewayError::LegacyIdentityRequired { pid } if output_json => {
-            RunnerError::CommandJsonFailure {
-                rendered: json!({
-                    "schema": "effigy.gateway.status.v1",
-                    "schema_version": 1,
-                    "ok": false,
-                    "error": "legacy_identity_required",
-                    "pid": pid,
-                    "recovery": {
-                        "action": "Ask the host administrator to verify and stop the pre-0.14 gateway; after confirmed absence, remove only its old PID/version records and run effigy gateway up",
-                        "reason": "gateway.identity is missing"
-                    }
-                })
-                .to_string(),
-            }
-        }
-        other => RunnerError::task_invocation(other.to_string()),
+    let diagnosis = effigy_gateway::server::diagnose_gateway_status(config);
+    RunnerError::CommandJsonFailure {
+        rendered: gateway_status_refusal_json(error, message, &diagnosis, recovery).to_string(),
+    }
+}
+
+fn legacy_identity_recovery(pid: u32) -> serde_json::Value {
+    json!({
+        "pid": pid,
+        "action": "Ask the host administrator to verify and stop the pre-0.14 gateway; after confirmed absence, remove only its old PID/version records and run effigy gateway up",
+        "reason": "gateway.identity is missing"
+    })
+}
+
+fn unverified_gateway_recovery() -> serde_json::Value {
+    json!({
+        "action": "Rerun from an interactive admin-capable terminal to approve the bounded read-only identity check, or migrate the legacy gateway with `effigy gateway setup`",
+        "reason": "this caller cannot prove the recorded gateway generation"
+    })
+}
+
+/// Status resolution for the `status` command only. A refusal is structured
+/// when the caller asked for JSON; the text form keeps its diagnosis message.
+fn resolve_status_for_status_command(
+    config: &GatewayConfig,
+    status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
+    output_json: bool,
+) -> Result<Option<VerifiedGatewayStatus>, RunnerError> {
+    if !output_json {
+        return resolve_gateway_status_for_config(config, status);
+    }
+    match status {
+        Ok(status) => Ok(Some(status)),
+        Err(effigy_gateway::GatewayError::NotRunning) => Ok(None),
+        Err(error @ effigy_gateway::GatewayError::LegacyIdentityRequired { pid }) => Err(
+            gateway_status_refusal(
+                config,
+                "legacy_identity_required",
+                &error.to_string(),
+                legacy_identity_recovery(pid),
+            ),
+        ),
+        Err(error) => Err(gateway_status_refusal(
+            config,
+            "gateway_status_unverified",
+            &error.to_string(),
+            unverified_gateway_recovery(),
+        )),
     }
 }
 
@@ -712,8 +790,18 @@ fn run_gateway_status_with_config(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     if !config.is_private() {
-        let result = effigy_gateway::operator::status(config)
-            .map_err(|e| RunnerError::task_invocation(e.to_string()))?;
+        let result = match effigy_gateway::operator::status(config) {
+            Ok(result) => result,
+            Err(error) if output_json => {
+                return Err(gateway_status_refusal(
+                    config,
+                    "gateway_status_unverified",
+                    &error.to_string(),
+                    unverified_gateway_recovery(),
+                ))
+            }
+            Err(error) => return Err(RunnerError::task_invocation(error.to_string())),
+        };
         return Ok(if output_json {
             serde_json::to_string(&result)
                 .map_err(|e| RunnerError::task_invocation(e.to_string()))?
@@ -725,12 +813,7 @@ fn run_gateway_status_with_config(
             )
         });
     }
-    let status = match verified_gateway_status(config) {
-        Err(error @ effigy_gateway::GatewayError::LegacyIdentityRequired { .. }) => {
-            return Err(legacy_identity_status_error(error, output_json));
-        }
-        other => resolve_gateway_status_for_config(config, other)?,
-    };
+    let status = resolve_status_for_status_command(config, verified_gateway_status(config), output_json)?;
     let route_table = RouteTable::load(&config.route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let mut tls = gateway_tls_summary(config, &route_table);
