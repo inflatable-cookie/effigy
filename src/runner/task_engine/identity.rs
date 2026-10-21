@@ -141,16 +141,12 @@ mod tests {
     use effigy_kernel::id::CheckoutKind;
 
     fn catalog(root: &Path, relative: &str, alias: &str, depth: usize) -> LoadedCatalog {
-        LoadedCatalog {
-            alias: alias.to_owned(),
-            catalog_root: root.join(relative),
-            manifest_path: root.join(relative).join("effigy.toml"),
-            bundle_root: None,
-            manifest: toml::from_str("").expect("empty manifest"),
-            defer_run: None,
-            deferred_builtins: Default::default(),
+        LoadedCatalog::for_test(
+            alias,
+            root.join(relative),
+            toml::from_str("").expect("empty manifest"),
             depth,
-        }
+        )
     }
 
     #[test]

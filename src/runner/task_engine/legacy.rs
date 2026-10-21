@@ -151,16 +151,12 @@ mod tests {
     use effigy_manifest::LoadedCatalog;
 
     fn target(root: &Path) -> TaskTarget {
-        let catalog = LoadedCatalog {
-            alias: String::new(),
-            catalog_root: root.to_path_buf(),
-            manifest_path: root.join("effigy.toml"),
-            bundle_root: None,
-            manifest: toml::from_str("").expect("empty manifest"),
-            defer_run: None,
-            deferred_builtins: Default::default(),
-            depth: 0,
-        };
+        let catalog = LoadedCatalog::for_test(
+            String::new(),
+            root,
+            toml::from_str("").expect("empty manifest"),
+            0,
+        );
         TaskTarget::for_catalog(root, "check", &catalog)
     }
 

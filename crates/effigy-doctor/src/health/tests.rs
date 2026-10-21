@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use effigy_cli::TaskInvocation;
-use effigy_manifest::{load_task_manifest, DeferredCommand, LoadedCatalog, TaskManifest};
+use effigy_manifest::{load_task_manifest, DeferredCommand, LoadedCatalog};
 use effigy_tasks::TaskSelector;
 
 use super::*;
@@ -76,18 +76,8 @@ fn write(path: &Path, contents: &str) {
 }
 
 fn loaded_catalog(catalog_root: &Path) -> LoadedCatalog {
-    let manifest_path = catalog_root.join("effigy.toml");
-    let manifest: TaskManifest = load_task_manifest(&manifest_path).expect("manifest");
-    LoadedCatalog {
-        alias: "child".to_owned(),
-        catalog_root: catalog_root.to_path_buf(),
-        manifest_path,
-        bundle_root: None,
-        manifest,
-        defer_run: None,
-        deferred_builtins: Default::default(),
-        depth: 1,
-    }
+    let manifest = load_task_manifest(&catalog_root.join("effigy.toml")).expect("manifest");
+    LoadedCatalog::for_test("child", catalog_root, manifest, 1)
 }
 
 fn write_child_manifest(catalog_root: &Path) {
