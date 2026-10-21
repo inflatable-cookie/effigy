@@ -845,9 +845,11 @@ impl GatewayRecordLock {
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
         let lock_path = pid_path.with_extension("lock");
+        // A reader needs no write access: a shared `flock` is taken on the
+        // read-only descriptor, so reading a record never opens the lock for
+        // writing.
         let file = match OpenOptions::new()
             .read(true)
-            .write(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
             .open(&lock_path)
         {
