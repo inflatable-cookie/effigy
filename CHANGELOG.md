@@ -7,6 +7,27 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Container tasks, sequence container steps, built-in `exec` steps and
+  named-container managed setup run under kernel remote custody: the run
+  journals the container workload before it starts, a stop, signal or timeout
+  reaches the container session (not only the local `docker`/`colima`
+  client), and the run settles only once that session is observed closed.
+  A killed Effigy is settled on its next run from what the backend reports.
+  A step whose exec client dies while its container session runs on is
+  recorded as interrupted, not with the client's exit status, and the session
+  is stopped.
+  Values for the container never appear in a command line. A value that spans
+  lines can no longer be passed to a container workload and is refused.
+- A built-in `exec` step in a sequence reports the command's own exit code and
+  streams under `--json`, instead of exit 0 with an `effigy.exec.v1` envelope.
+- Managed container `setup` steps without a lifecycle entry run in the typed
+  sequence engine: each step is a child run, task references resolve on the
+  host, and `run` steps execute at the task root like other sequence steps.
+- Rhai steps of container-routed tasks run as host steps under the run's
+  custody, like those of host tasks.
+- Container tasks get a terminal when Effigy runs in one, and keep the
+  operator's stdin otherwise. On Colima the container gets stdin but no
+  terminal.
 - Container environments now have one kernel record each (contract 053).
   Every stop, restart, recreation, reset, handover and idle stop is a
   transition that refuses while any run holds the environment, except that

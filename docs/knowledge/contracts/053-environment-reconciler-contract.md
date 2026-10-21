@@ -103,6 +103,12 @@ Neither variable confers authority: the holder variable only requests
 protection for a live, admitted run; the exemption only covers a run that is
 already ending.
 
+Remote workloads (052 §5.10, effigy#236) bind the environment's generation at
+intent and then check only its identity, because every bring-up, including a
+`Reused` one, advances the generation (planner ruling, 2026-10-20). A
+non-destructive bring-up that leaves the generation unchanged would be better
+hygiene; it is a recorded follow-up, not required by remote custody.
+
 ## 5. Retention and idle stop
 
 | Retention | Set by | When no run holds it |

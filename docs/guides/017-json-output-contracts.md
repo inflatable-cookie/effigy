@@ -464,5 +464,6 @@ and `failed_step`. Later steps report `state: "not_started"` after failure.
 Execution and exit codes match text mode, including 124 for timeout and 128 + n
 for cancellation. A failed command envelope carries the task payload in
 `error.details`; success carries it in `result`. This is an additive v1 extension.
-Task status v2 adds nested `steps` to run views. Container steps are journalled
-with their legacy exit status; remote custody is deferred to #236.
+Task status v2 adds nested `steps` to run views. Container steps run the same
+way under remote custody and report the workload's own exit code, including a
+built-in `exec` step, whose `stdout` and `stderr` are the command's streams.

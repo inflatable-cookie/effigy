@@ -247,12 +247,40 @@ fn cancel_token() -> CancelToken {
         .unwrap_or_default()
 }
 
-/// Task runs record only kernel effects (custody). Any other effect is not
-/// the task engine's, so recovery observes it as `Unknown` and leaves residue
-/// rather than guessing (R3).
-#[derive(Debug, Default)]
-pub(in crate::runner) struct TaskSettlement;
+/// Task runs record only kernel effects: local custody and remote custody.
+/// Remote sessions settle through the Compose backend their identity names,
+/// also in sentinel recovery. Any other effect is not the task engine's, so
+/// recovery observes it as `Unknown` and leaves residue (R3).
+#[derive(Default)]
+pub(in crate::runner) struct TaskSettlement {
+    remote: Option<Box<dyn effigy_kernel::remote::RemoteExecAdapter>>,
+}
+impl std::fmt::Debug for TaskSettlement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TaskSettlement")
+    }
+}
+#[cfg(test)]
+type RemoteFactory = std::rc::Rc<dyn Fn() -> Box<dyn effigy_kernel::remote::RemoteExecAdapter>>;
+#[cfg(test)]
+thread_local! {
+    /// A test's strict remote model, used by every settle on its thread.
+    pub(in crate::runner) static TEST_REMOTE: std::cell::RefCell<Option<RemoteFactory>> =
+        const { std::cell::RefCell::new(None) };
+}
+fn recovery_adapter() -> Box<dyn effigy_kernel::remote::RemoteExecAdapter> {
+    #[cfg(test)]
+    if let Some(factory) = TEST_REMOTE.with(|factory| factory.borrow().clone()) {
+        return factory();
+    }
+    Box::new(effigy_containers::environment::ComposeRemote::<
+        effigy_containers::environment::HostCli,
+    >::recovery())
+}
 impl SettlementAdapter for TaskSettlement {
+    fn remote(&mut self) -> Option<&mut dyn effigy_kernel::remote::RemoteExecAdapter> {
+        Some(self.remote.get_or_insert_with(recovery_adapter).as_mut())
+    }
     fn observe(&mut self, _effect: &Effect, _cx: &CleanupContext) -> Observed<Fence> {
         Observed::Unknown(UnknownReason::Inconsistent(
             "no engine adapter settles this effect".to_owned(),
@@ -318,7 +346,7 @@ pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
     }
     // One helper serves every engine's runs: a task run records its selector,
     // source preparation records `bundle sync`, the gateway records `gateway up`.
-    let mut adapter = TaskSettlement;
+    let mut adapter = TaskSettlement::default();
     let validate = |argv: &[OsString]| {
         valid_next(argv) || argv == ["bundle", "sync"] || argv == ["gateway", "up"]
     };

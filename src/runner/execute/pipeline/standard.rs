@@ -2,9 +2,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use super::super::super::exec_command::{
-    capture_routed_task_container_exec, capture_routed_task_container_exec_with_policy,
-    run_routed_task_container_exec, run_routed_task_container_exec_with_policy,
-    RoutedTaskExecRequest,
+    run_routed_task_remote, RoutedTaskExecRequest, RoutedTaskExecSurface,
 };
 use super::super::super::system_command::is_primary_service_running;
 use super::super::api::{
@@ -86,8 +84,9 @@ pub(in crate::runner) fn run_standard_task(
     let mut run = TaskRun::begin(TaskRunRequest {
         target: &target,
         lock_wait_ms: resolve_lock_wait_ms(preflight.runtime_args_raw.lock_wait_ms)?,
-        custody: runs_plain_host_command(preflight, selection)
-            || env_schema_planned(env_schema_root, env_schema_override, env_schema_config),
+        // Host commands, env-schema commands and container workloads all
+        // run under the run's custody; every route plans its sentinel.
+        custody: true,
         managed_run_token: inherited_managed_run.as_deref(),
         args: &preflight.runtime_args_exec.passthrough,
         key: run_key,
@@ -273,6 +272,8 @@ fn run_standard_task_inner(
             context,
             secret_ref,
             &binding_resolution,
+            run,
+            workload,
         )?;
         return Ok(output);
     }
@@ -336,70 +337,33 @@ fn run_standard_task_inner(
                 RunnerError::task_invocation("container route missing its activation snapshot")
             })?
             .policy;
-        let task_execution_cwd = preflight.task_execution_root(&selection.catalog.catalog_root);
-        if preflight.output_json {
-            let output = capture_routed_task_container_exec(
-                RoutedTaskExecRequest {
-                    repo_root: scope_root,
-                    invocation_cwd: task_execution_cwd,
-                    selector: &preflight.selector,
-                    task_args: &preflight.runtime_args_exec.passthrough,
-                    service,
-                    command: context.command(),
-                    task_env: Some(&context.selection.task.env),
-                    secret_env: secret_ref,
-                },
-                container,
-                activated_policy,
-            )?;
-            let stdout =
-                redact_task_secret_values(&String::from_utf8_lossy(&output.stdout), secret_ref);
-            let stderr =
-                redact_task_secret_values(&String::from_utf8_lossy(&output.stderr), secret_ref);
-            let rendered = render::render_task_command_json(
-                &preflight.selector,
-                context.repo_for_task(),
-                context.command(),
-                output.status.code(),
-                &stdout,
-                &stderr,
-            )?;
-            if output.status.success() {
-                if task_activation
-                    .as_ref()
-                    .is_some_and(|activation| activation.started_held)
-                {
-                    emit_held_notice(container);
-                }
-                return Ok(rendered);
-            }
-            return Err(RunnerError::CommandJsonFailure { rendered });
-        }
-
-        run_routed_task_container_exec(
-            RoutedTaskExecRequest {
-                repo_root: scope_root,
-                invocation_cwd: task_execution_cwd,
-                selector: &preflight.selector,
-                task_args: &preflight.runtime_args_exec.passthrough,
-                service,
-                command: context.command(),
-                task_env: Some(&context.selection.task.env),
-                secret_env: secret_ref,
+        let request = RoutedTaskExecRequest {
+            repo_root: scope_root,
+            invocation_cwd: preflight.task_execution_root(&selection.catalog.catalog_root),
+            selector: &preflight.selector,
+            task_args: &preflight.runtime_args_exec.passthrough,
+            service,
+            command: context.command(),
+            task_env: Some(&context.selection.task.env),
+            secret_env: secret_ref,
+        };
+        let exit = run_routed_task_remote(
+            &request,
+            RoutedTaskExecSurface::Named {
+                container_name: container,
+                policy: activated_policy,
             },
-            container,
-            activated_policy,
+            run,
+            preflight.output_json,
         )?;
-        if task_activation
-            .as_ref()
-            .is_some_and(|activation| activation.started_held)
+        if exit.workload == WorkloadOutcome::Succeeded
+            && task_activation
+                .as_ref()
+                .is_some_and(|activation| activation.started_held)
         {
             emit_held_notice(container);
         }
-        if preflight.runtime_args_raw.verbose_root {
-            return Ok(context.render_resolution_trace());
-        }
-        return Ok(String::new());
+        return finish_remote(preflight, context, secret_ref, exit, workload);
     }
 
     process_run::run_task_process(
@@ -827,6 +791,8 @@ fn run_inline_workspace_standard_task(
     context: &ExecutionTaskContext<'_>,
     secret_ref: Option<&[(&str, &SecretString)]>,
     binding_resolution: &ExecutionBindingResolution,
+    run: &mut TaskRun,
+    workload: &mut Option<WorkloadOutcome>,
 ) -> Result<String, RunnerError> {
     let repo_root = &selection.catalog.catalog_root;
     let policy = binding_resolution
@@ -838,67 +804,69 @@ fn run_inline_workspace_standard_task(
     let activation = activate_inline_workspace_container_runtime(repo_root, &policy)?;
     let policy = activation.policy;
     let teardown_plan = inline_workspace_teardown_plan(repo_root, &policy);
+    let request = RoutedTaskExecRequest {
+        repo_root,
+        invocation_cwd: &preflight.invocation_cwd,
+        selector: &preflight.selector,
+        task_args: &preflight.runtime_args_exec.passthrough,
+        service: policy.primary_service.as_str(),
+        command: context.command(),
+        task_env: Some(&context.selection.task.env),
+        secret_env: secret_ref,
+    };
+    let exit = run_routed_task_remote(
+        &request,
+        RoutedTaskExecSurface::ResolvedPolicy {
+            policy: &policy,
+            working_dir: &working_dir,
+        },
+        run,
+        preflight.output_json,
+    );
+    teardown_inline_workspace_container(&policy, teardown_plan.as_ref());
+    finish_remote(preflight, context, secret_ref, exit?, workload)
+}
 
-    let exec_result = if preflight.output_json {
-        let output = capture_routed_task_container_exec_with_policy(
-            RoutedTaskExecRequest {
-                repo_root,
-                invocation_cwd: &preflight.invocation_cwd,
-                selector: &preflight.selector,
-                task_args: &preflight.runtime_args_exec.passthrough,
-                service: policy.primary_service.as_str(),
-                command: context.command(),
-                task_env: Some(&context.selection.task.env),
-                secret_env: secret_ref,
-            },
-            &policy,
-            &working_dir,
-        );
-        teardown_inline_workspace_container(&policy, teardown_plan.as_ref());
-        let output = output?;
-        let stdout =
-            redact_task_secret_values(&String::from_utf8_lossy(&output.stdout), secret_ref);
-        let stderr =
-            redact_task_secret_values(&String::from_utf8_lossy(&output.stderr), secret_ref);
+/// The route's result from a remote workload's exit: JSON renders the
+/// captured streams, text has already relayed them.
+fn finish_remote(
+    preflight: &ExecutionPreflight,
+    context: &ExecutionTaskContext<'_>,
+    secret_ref: Option<&[(&str, &SecretString)]>,
+    exit: crate::runner::task_engine::PlainExit,
+    workload: &mut Option<WorkloadOutcome>,
+) -> Result<String, RunnerError> {
+    *workload = Some(exit.workload.clone());
+    let succeeded = exit.workload == WorkloadOutcome::Succeeded;
+    if preflight.output_json {
+        let stdout = redact_task_secret_values(&String::from_utf8_lossy(&exit.stdout), secret_ref);
+        let stderr = redact_task_secret_values(&String::from_utf8_lossy(&exit.stderr), secret_ref);
         let rendered = render::render_task_command_json(
             &preflight.selector,
             context.repo_for_task(),
             context.command(),
-            output.status.code(),
+            Some(exit.code),
             &stdout,
             &stderr,
         )?;
-        if output.status.success() {
+        return if succeeded {
             Ok(rendered)
         } else {
             Err(RunnerError::CommandJsonFailure { rendered })
-        }
-    } else {
-        let result = run_routed_task_container_exec_with_policy(
-            RoutedTaskExecRequest {
-                repo_root,
-                invocation_cwd: &preflight.invocation_cwd,
-                selector: &preflight.selector,
-                task_args: &preflight.runtime_args_exec.passthrough,
-                service: policy.primary_service.as_str(),
-                command: context.command(),
-                task_env: Some(&context.selection.task.env),
-                secret_env: secret_ref,
-            },
-            &policy,
-            &working_dir,
-        );
-        teardown_inline_workspace_container(&policy, teardown_plan.as_ref());
-        result.map(|_| {
-            if preflight.runtime_args_raw.verbose_root {
-                context.render_resolution_trace()
-            } else {
-                String::new()
-            }
-        })
-    };
-
-    exec_result
+        };
+    }
+    if !succeeded {
+        return Err(RunnerError::TaskCommandFailure {
+            command: context.command().to_owned(),
+            code: Some(exit.code),
+            stdout: String::new(),
+            stderr: String::new(),
+        });
+    }
+    if preflight.runtime_args_raw.verbose_root {
+        return Ok(context.render_resolution_trace());
+    }
+    Ok(String::new())
 }
 
 fn inline_workspace_teardown_plan(
@@ -999,18 +967,6 @@ pub(in crate::runner) fn resolve_env_schema_if_present(
 ) -> Result<Option<ResolvedEnv>, RunnerError> {
     shared_resolve_env_schema(catalog_root, schema_config(config), runtime_override, exec)
         .map_err(map_schema_support_error)
-}
-
-fn env_schema_planned(
-    catalog_root: &Path,
-    runtime_override: Option<&Path>,
-    config: Option<&ManifestEnvSchemaConfig>,
-) -> bool {
-    effigy_env::schema_support::catalog_env_schema_planned(
-        catalog_root,
-        schema_config(config),
-        runtime_override,
-    )
 }
 
 fn schema_config(config: Option<&ManifestEnvSchemaConfig>) -> SchemaSupportConfig<'_> {
