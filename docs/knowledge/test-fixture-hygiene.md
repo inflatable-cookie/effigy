@@ -245,8 +245,9 @@ wrapper timeout. The panic case uses fixture-drop cleanup; exit and timeout use
 the separate sweep process with an empty native registry. Each requires a
 nonzero result, an ended recorded generation and a removed fixture root; unresolved
 ownership fails the proof. A second proof requires exactly one birth receipt
-and runs in both debug-asserting and non-debug optimized profiles. The existing
-kernel unknown-ownership retention and tracked orphan-descendant defect remain.
+and runs in both debug-asserting and non-debug optimized profiles. Kernel
+unknown-ownership retention is covered by the active nonce-free descendant
+refusal control described above.
 Gateway cleanup tracks its root before issuing `up`, including failed responses.
 
 Historical host residue must be checked separately from a current suite's log.
