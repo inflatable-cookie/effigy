@@ -275,11 +275,13 @@ fn begin_scratching(target: &TaskTarget) -> TaskRun {
 }
 
 /// The `TMPDIR` a host command of `run` sees, and whether it could write there.
+/// A run without a scratch directory leaves `TMPDIR` unset where the platform
+/// has no default (Linux), so the probe writes to the working directory then.
 fn read_temp(run: &mut TaskRun, work: &Path) -> (String, bool) {
     let exit = run_plain(
         run,
         PlainCommand {
-            command: "printf '%s\\n' \"$TMPDIR\"; printf probe > \"$TMPDIR/effigy-probe\"",
+            command: "printf '%s\\n' \"$TMPDIR\"; printf probe > \"${TMPDIR:-.}/effigy-probe\"",
             cwd: work,
             env: vec![],
             capture: true,
@@ -289,7 +291,8 @@ fn read_temp(run: &mut TaskRun, work: &Path) -> (String, bool) {
     .expect("the probe command ran");
     assert_eq!(exit.code, 0, "probe failed: {:?}", exit.stderr);
     let seen = String::from_utf8_lossy(&exit.stdout).trim().to_owned();
-    let wrote = Path::new(&seen).join("effigy-probe").exists();
+    // Only a run that owns a directory proves writability of it.
+    let wrote = !seen.is_empty() && Path::new(&seen).join("effigy-probe").exists();
     (seen, wrote)
 }
 
