@@ -120,6 +120,9 @@ pub fn inventory(root: &Path) -> Result<Inventory, String> {
                 .entry("std.fs.OpenOptions.write".into())
                 .or_insert(0);
         }
+        if !relative.ends_with("/tests.rs") {
+            enforce_external_ceilings(&relative, &found.0)?;
+        }
         if !found.0.is_empty() {
             result.production.insert(relative.clone(), found.0);
         }
@@ -129,6 +132,45 @@ pub fn inventory(root: &Path) -> Result<Inventory, String> {
     }
     Ok(result)
 }
+/// Boundaries that deliberately write outside the state root, accounted for by
+/// name and ceiling (effigy#244).
+///
+/// `[scratch] root` keeps a run's marker on the volume the operator configured:
+/// it is run metadata, not Effigy state, and the state root's trust policy does
+/// not describe a root-owned volume root. The scanner's `.effigy` heuristic
+/// therefore reads that file as a state writer, so its exact writes are listed
+/// here. A construct that is not listed for a tracked file, or a count above
+/// its ceiling, fails the inventory — regenerating the baseline cannot widen it.
+pub fn external_ceilings(relative: &str) -> Option<&'static [(&'static str, usize)]> {
+    match relative {
+        "src/runner/scratch.rs" => Some(&[("std::fs::File::create", 1)]),
+        _ => None,
+    }
+}
+
+pub fn enforce_external_ceilings(relative: &str, counts: &FileCounts) -> Result<(), String> {
+    let Some(ceilings) = external_ceilings(relative) else {
+        return Ok(());
+    };
+    for (construct, count) in counts {
+        let Some(ceiling) = ceilings
+            .iter()
+            .find_map(|(known, ceiling)| (known == construct).then_some(*ceiling))
+        else {
+            return Err(format!(
+                "{relative}: {construct} is not an accounted external boundary; route it \
+                 through the kernel or add it here deliberately"
+            ));
+        };
+        if *count > ceiling {
+            return Err(format!(
+                "{relative}: {construct} exceeds its accounted ceiling ({count} > {ceiling})"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn vault_storage_path(relative: &str) -> bool {
     matches!(
         relative,

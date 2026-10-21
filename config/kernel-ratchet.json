@@ -405,6 +405,9 @@
       "std.process.Command.new": 1,
       "std.process.Command.output": 1
     },
+    "src/runner/scratch.rs": {
+      "std::fs::File::create": 1
+    },
     "src/runner/secret_vault.rs": {
       "std.fs.OpenOptions.write": 0,
       "std::fs::write": 0

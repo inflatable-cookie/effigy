@@ -122,6 +122,9 @@ pub(in crate::runner) struct OwnedRun {
     pub(in crate::runner) profile: String,
     pub(in crate::runner) environment: Option<EnvironmentPlan>,
     pub(in crate::runner) fail_on_non_zero: bool,
+    /// Whether the session's host processes may use the configured per-run
+    /// scratch directory: its task did not declare `scratch = false`.
+    pub(in crate::runner) scratch: bool,
     /// Secret values this run's output must never show (K12).
     pub(in crate::runner) secrets: Vec<String>,
 }
@@ -159,8 +162,9 @@ pub(in crate::runner) fn own(
         target: &plan.target,
         lock_wait_ms: plan.lock_wait_ms,
         custody: true,
-        // Hybrid host processes in the session use its scratch.
-        scratch: true,
+        // Hybrid host processes in the session use its scratch, unless the
+        // task opted out.
+        scratch: plan.scratch,
         managed_run_token: Some(&plan.token),
         args: &plan.args,
         key: None,

@@ -426,6 +426,54 @@ concurrent = [{ name = "api", run = "cargo run" }]
 }
 
 #[test]
+fn validate_manifest_schema_accepts_the_task_scratch_opt_out() {
+    let manifest: Value = toml::from_str(
+        r#"
+[tasks.probe]
+run = "cargo test"
+scratch = false
+
+[tasks.build]
+run = "cargo build"
+scratch = true
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.is_empty(),
+        "expected `scratch` to validate, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_rejects_a_non_boolean_task_scratch() {
+    let manifest: Value = toml::from_str(
+        r#"
+[tasks.probe]
+run = "cargo test"
+scratch = "never"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings
+            .iter()
+            .any(|finding| finding.evidence.contains("tasks.probe.scratch")),
+        "expected a boolean finding for tasks.probe.scratch, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
 fn validate_manifest_schema_accepts_compact_inline_rhai_task() {
     let manifest: Value = toml::from_str(
         r#"

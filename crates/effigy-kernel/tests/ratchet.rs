@@ -220,3 +220,57 @@ fn ratchet_vault_parameter_paths_cannot_hide_raw_writes() {
         })
         .is_err());
 }
+
+#[test]
+fn ratchet_accounts_for_external_boundaries_by_name_and_ceiling() {
+    let one = counts(
+        "fn write(d: &std::path::Path) { let _ = std::fs::File::create(d.join(\".effigy-marker\")); }",
+    );
+    assert_eq!(one["std::fs::File::create"], 1);
+    assert_eq!(
+        enforce_external_ceilings("src/runner/scratch.rs", &one),
+        Ok(())
+    );
+
+    let two = counts(
+        "fn write(d: &std::path::Path) { let _ = std::fs::File::create(d.join(\".effigy-a\")); let _ = std::fs::File::create(d.join(\".effigy-b\")); }",
+    );
+    assert_eq!(
+        enforce_external_ceilings("src/runner/scratch.rs", &two),
+        Err(
+            "src/runner/scratch.rs: std::fs::File::create exceeds its accounted ceiling (2 > 1)"
+                .into()
+        )
+    );
+
+    // A construct the boundary does not account for fails by name, so a new
+    // raw write cannot ride in on the existing allowance.
+    let unlisted =
+        counts("fn w(d: &std::path::Path) { std::fs::write(d.join(\".effigy-x\"), b\"x\"); }");
+    assert!(
+        enforce_external_ceilings("src/runner/scratch.rs", &unlisted)
+            .unwrap_err()
+            .contains("not an accounted external boundary")
+    );
+
+    // Files outside the table are unaffected.
+    assert_eq!(
+        enforce_external_ceilings("src/runner/other.rs", &two),
+        Ok(())
+    );
+}
+
+#[test]
+fn ratchet_inventory_refuses_an_external_boundary_above_its_ceiling() {
+    let root = tempfile::tempdir().expect("fresh checkout");
+    std::fs::create_dir_all(root.path().join("crates")).expect("workspace root");
+    let path = root.path().join("src/runner/scratch.rs");
+    std::fs::create_dir_all(path.parent().expect("parent")).expect("directory");
+    std::fs::write(
+        &path,
+        "fn write(d: &std::path::Path) { let _ = std::fs::File::create(d.join(\".effigy-a\")); let _ = std::fs::File::create(d.join(\".effigy-b\")); }",
+    )
+    .expect("source");
+    let error = inventory(root.path()).expect_err("two raw writes exceed the ceiling");
+    assert!(error.contains("exceeds its accounted ceiling"), "{error}");
+}

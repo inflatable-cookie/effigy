@@ -497,6 +497,7 @@ fn own_managed_run(
             profile: plan.profile.clone(),
             environment,
             fail_on_non_zero: plan.fail_on_non_zero,
+            scratch: managed_task_scratch(selection.task),
             secrets: secrets
                 .iter()
                 .map(|(_, value)| value.expose().to_owned())
@@ -546,6 +547,12 @@ fn own_managed_run(
         )
     };
     managed_run::own(owner, owned, prepare)
+}
+
+/// A managed session's host processes use the configured scratch directory
+/// unless the task declares `scratch = false`.
+fn managed_task_scratch(task: &effigy_manifest::ManifestTask) -> bool {
+    task.uses_scratch()
 }
 
 fn managed_workload<T>(
@@ -1291,8 +1298,8 @@ fn default_handoff_managed_shell_run() -> String {
 mod tests {
     use super::{
         default_handoff_managed_shell_run, managed_dns_route_lines, managed_role_schema_env,
-        render_handoff_managed_standard_command, should_open_workspace_shell_for_non_managed_task,
-        ContainerExecutionBinding,
+        managed_task_scratch, render_handoff_managed_standard_command,
+        should_open_workspace_shell_for_non_managed_task, ContainerExecutionBinding,
     };
     use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
     use crate::runner::managed_shell::managed_readiness_probe_urls;
@@ -1306,6 +1313,24 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::path::PathBuf;
+
+    #[test]
+    fn a_managed_task_honours_its_scratch_opt_out() {
+        let uses: effigy_manifest::ManifestTask =
+            toml::from_str("mode = \"tui\"\nrun = [\"bun run dev\"]").expect("parse task");
+        assert!(
+            managed_task_scratch(&uses),
+            "a managed session uses the configured scratch by default"
+        );
+
+        let opted_out: effigy_manifest::ManifestTask =
+            toml::from_str("mode = \"tui\"\nscratch = false\nrun = [\"bun run dev\"]")
+                .expect("parse task");
+        assert!(
+            !managed_task_scratch(&opted_out),
+            "a managed task that opts out plans no host scratch"
+        );
+    }
 
     #[test]
     fn handoff_shell_default_avoids_hardcoded_zsh_requirement() {

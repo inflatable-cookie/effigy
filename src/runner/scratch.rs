@@ -286,16 +286,17 @@ pub(in crate::runner) fn evaluate(config: &Config, facts: &Facts) -> Result<(), 
                 facts.canonical.display()
             )));
         }
-        // A mounted volume's root sits on a different device than its parent.
-        // A plain directory under `/Volumes` does not, whichever volume holds
-        // it, so the mount root is what makes the volume separate.
+        // The root must be the volume's mount point itself: a mounted volume
+        // root, not a plain directory that merely lives on the volume (or under
+        // `/Volumes` after the drive went away).
         if facts.mount_point == Path::new("/")
             || facts.mount_point.as_os_str().is_empty()
             || facts.mount_parent_device == facts.device
+            || facts.canonical != facts.mount_point
         {
             return Err(Refusal::new(format!(
-                "the configured scratch root `{}` is not on a mounted volume root (its mount \
-                 point is `{}`)",
+                "the configured scratch root `{}` is not a mounted volume root (the volume's \
+                 mount point is `{}`); point the root at the mounted volume itself",
                 facts.canonical.display(),
                 facts.mount_point.display()
             )));
@@ -588,6 +589,7 @@ fn create(run: &mut TaskRun) -> Option<Arc<RunScratch>> {
         task: label,
         created_ms: now_ms(),
         keep: None,
+        concluded_ms: None,
     };
     // `create_dir`, never `create_dir_all`: the root is the operator's, and a
     // colliding name means this run must not reuse or remove it.
@@ -627,9 +629,18 @@ fn create(run: &mut TaskRun) -> Option<Arc<RunScratch>> {
 
 /// Records the run's decision in the marker *before* the settle reads it, and
 /// returns the warning to print when the directory is kept.
+///
+/// Only the run that opened the directory decides. A step or a nested run holds
+/// an inherited handle, and its result says nothing about the parent's: an
+/// early `keep: false` from a successful step would let a later crash of the
+/// parent delete data the parent's own failure should retain.
 pub(in crate::runner) fn conclude(handle: &Handle, succeeded: bool) -> Option<String> {
+    if !handle.owns_scope {
+        return None;
+    }
     let scratch = &handle.run;
     let previous = read_marker(&scratch.dir);
+    let concluded_ms = now_ms();
     let marker = Marker {
         run: scratch.run.clone(),
         task: previous
@@ -639,9 +650,11 @@ pub(in crate::runner) fn conclude(handle: &Handle, succeeded: bool) -> Option<St
         created_ms: previous
             .as_ref()
             .map(|marker| marker.created_ms)
-            .unwrap_or_else(now_ms),
+            .unwrap_or(concluded_ms),
         // Keep the directory unless the run itself succeeded.
         keep: Some(!succeeded),
+        // A failure's 24 hours start when the run ended, not when it started.
+        concluded_ms: Some(concluded_ms),
     };
     // A marker that cannot be written leaves the directory retained: the
     // settle only removes what it can prove it should.
@@ -825,8 +838,17 @@ struct Marker {
     /// directory. Absent after a crash, which retains it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     keep: Option<bool>,
+    /// When the owning run recorded its verdict: the start of a failure's
+    /// retention. Absent after a crash, which dates retention from the
+    /// journal's close time instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    concluded_ms: Option<i64>,
 }
 
+/// Writes the marker file. This is the one boundary the kernel does not own:
+/// the marker lives on the operator's volume, outside the state root and every
+/// kernel family, and the state root's trust policy cannot represent a
+/// root-owned volume root. `qa:kernel-ratchet` accounts for it by name.
 fn write_marker(dir: &Path, marker: &Marker) -> std::io::Result<()> {
     let rendered = serde_json::to_vec(marker).map_err(std::io::Error::other)?;
     let file = std::fs::File::create(dir.join(MARKER))?;
@@ -854,14 +876,29 @@ pub(in crate::runner) struct SweepReport {
     pub(in crate::runner) removed: usize,
 }
 
+/// What the journal says about the run that owns one directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::runner) enum RunState {
+    /// Admitted and not yet closed: never removed.
+    Open,
+    /// Closed, with when the journal records it ending.
+    Closed { at_ms: Option<i64> },
+    /// The journal cannot say: never removed.
+    Unknown,
+}
+
 /// Removes this root's own retained directories whose run is closed and whose
 /// retention has passed. Bounded, and only ever inside the configured root: a
 /// directory must be a run-named directory carrying this engine's marker.
+///
+/// Retention starts when the run ended, never when it started: a long run that
+/// fails late keeps its full 24 hours. The marker records the conclusion; a run
+/// whose owner died before concluding uses the journal's close time instead.
 pub(in crate::runner) fn sweep_at(
     root: &Path,
     now_ms: i64,
     budget: usize,
-    is_open: impl Fn(&str) -> Option<bool>,
+    state: impl Fn(&str) -> RunState,
 ) -> SweepReport {
     let mut report = SweepReport::default();
     let Ok(entries) = std::fs::read_dir(root) else {
@@ -889,12 +926,11 @@ pub(in crate::runner) fn sweep_at(
         if marker.run.get(..NAME_LEN) != Some(name.as_str()) {
             continue;
         }
-        let age_ms = now_ms.saturating_sub(marker.created_ms);
-        if age_ms < RETENTION.as_millis() as i64 {
+        let RunState::Closed { at_ms } = state(&marker.run) else {
             continue;
-        }
-        // A live or unknown run keeps its scratch.
-        if !matches!(is_open(&marker.run), Some(false)) {
+        };
+        let ended_ms = marker.concluded_ms.or(at_ms).unwrap_or(marker.created_ms);
+        if now_ms.saturating_sub(ended_ms) < RETENTION.as_millis() as i64 {
             continue;
         }
         if remove(&path).verified().is_some() {
@@ -922,15 +958,19 @@ fn sweep(root: &Path) {
     };
     sweep_at(root, now_ms(), SWEEP_REMOVE_MAX, |run| {
         let Ok(id) = run.parse::<effigy_kernel::id::RunId>() else {
-            return None;
+            return RunState::Unknown;
         };
         match effigy_kernel::run::summary(&reader, id) {
-            Observed::Verified(summary, _) => {
-                Some(!matches!(summary.phase, effigy_kernel::run::Phase::Closed))
-            }
-            // A row the journal's own retention removed is a closed run.
-            Observed::Absent(_) => Some(false),
-            Observed::Unknown(_) => None,
+            Observed::Verified(summary, _) => match summary.phase {
+                effigy_kernel::run::Phase::Closed => RunState::Closed {
+                    at_ms: summary.closed_at_ms.or(Some(summary.updated_at_ms)),
+                },
+                _ => RunState::Open,
+            },
+            // A row the journal's own retention removed is a closed run, with
+            // no close time left: the marker's own clock decides.
+            Observed::Absent(_) => RunState::Closed { at_ms: None },
+            Observed::Unknown(_) => RunState::Unknown,
         }
     });
 }
@@ -1083,13 +1123,17 @@ mod tests {
     #[test]
     fn a_plain_directory_on_the_scratch_volume_is_not_a_volume_root() {
         // `/Volumes/Scratch/tmp` is on the right volume but is not its root.
+        // `probe()` reports exactly these facts: the mount point is the volume
+        // root and the parent device is the one above it, not the volume's own.
         let facts = Facts {
             canonical: PathBuf::from("/Volumes/Scratch/tmp"),
             mount_point: PathBuf::from("/Volumes/Scratch"),
-            mount_parent_device: 7,
+            mount_parent_device: 1,
             ..admitted()
         };
-        assert!(refusal(&config(), &facts).contains("not on a mounted volume root"));
+        let reason = refusal(&config(), &facts);
+        assert!(reason.contains("not a mounted volume root"), "{reason}");
+        assert!(reason.contains("/Volumes/Scratch/tmp"), "{reason}");
     }
 
     #[test]
@@ -1122,10 +1166,11 @@ mod tests {
             ..admitted()
         };
         assert!(refusal(&config(), &pooled).contains("oxide-pool"));
-        // Whole components only: a sibling name that merely starts the same
+        // Whole components only: a volume whose name merely starts the same
         // way is not inside the pool.
         let sibling = Facts {
-            canonical: PathBuf::from("/Volumes/Scratch/oxide-pool-notes"),
+            canonical: PathBuf::from("/Volumes/oxide-pool-notes"),
+            mount_point: PathBuf::from("/Volumes/oxide-pool-notes"),
             ..admitted()
         };
         assert_eq!(evaluate(&config(), &sibling), Ok(()));
@@ -1199,65 +1244,77 @@ mod tests {
         assert!(!platform_default("/Volumes/Scratch/tmp"));
     }
 
+    fn marker(run: &str, created_ms: i64, concluded_ms: Option<i64>) -> Marker {
+        Marker {
+            run: run.to_owned(),
+            task: "test".to_owned(),
+            created_ms,
+            keep: Some(true),
+            concluded_ms,
+        }
+    }
+
+    fn hold(root: &Path, name: &str, marker: Marker) -> PathBuf {
+        let dir = root.join(name);
+        std::fs::create_dir(&dir).expect("dir");
+        write_marker(&dir, &marker).expect("marker");
+        dir
+    }
+
+    fn closed(_: &str) -> RunState {
+        RunState::Closed { at_ms: None }
+    }
+
+    #[test]
+    fn only_the_owning_run_writes_the_retention_decision() {
+        let root = tempfile::tempdir().expect("root");
+        let dir = hold(
+            root.path(),
+            "pppppppp",
+            Marker {
+                keep: None,
+                ..marker("pppppppp", now_ms(), None)
+            },
+        );
+        let owning = Handle {
+            run: Arc::new(RunScratch {
+                dir: dir.clone(),
+                run: "pppppppp".to_owned(),
+            }),
+            owns_scope: true,
+        };
+        let step = inherited_handle(Some(&owning)).expect("inherited handle");
+
+        // A successful step says nothing about the run that holds the scratch.
+        assert!(conclude(&step, true).is_none());
+        let undecided = read_marker(&dir).expect("marker");
+        assert_eq!(undecided.keep, None, "a step never decides retention");
+        assert_eq!(undecided.concluded_ms, None);
+
+        // The owner's own conclusion is what records the verdict.
+        assert!(conclude(&owning, false).is_some());
+        let decided = read_marker(&dir).expect("marker");
+        assert_eq!(decided.keep, Some(true));
+        assert!(decided.concluded_ms.is_some());
+    }
+
     #[test]
     fn the_sweep_removes_only_old_closed_runs_it_created() {
         let root = tempfile::tempdir().expect("root");
         let old = now_ms() - RETENTION.as_millis() as i64 - 1;
-        let retained = root.path().join("abcdefgh");
-        std::fs::create_dir(&retained).expect("dir");
-        write_marker(
-            &retained,
-            &Marker {
-                run: "abcdefgh".to_owned(),
-                task: "test".to_owned(),
-                created_ms: old,
-                keep: Some(true),
-            },
-        )
-        .expect("marker");
+        let retained = hold(root.path(), "abcdefgh", marker("abcdefgh", old, None));
         // Not ours: no marker, or a marker naming another run.
         std::fs::create_dir(root.path().join("notours1")).expect("foreign dir");
-        let mismatched = root.path().join("zzzzzzzz");
-        std::fs::create_dir(&mismatched).expect("dir");
-        write_marker(
-            &mismatched,
-            &Marker {
-                run: "yyyyyyyy".to_owned(),
-                task: "test".to_owned(),
-                created_ms: old,
-                keep: None,
-            },
-        )
-        .expect("marker");
+        let mismatched = hold(root.path(), "zzzzzzzz", marker("yyyyyyyy", old, None));
         // Old but still open: kept.
-        let open = root.path().join("bbbbbbbb");
-        std::fs::create_dir(&open).expect("dir");
-        write_marker(
-            &open,
-            &Marker {
-                run: "bbbbbbbb".to_owned(),
-                task: "test".to_owned(),
-                created_ms: old,
-                keep: Some(true),
-            },
-        )
-        .expect("marker");
+        let open = hold(root.path(), "bbbbbbbb", marker("bbbbbbbb", old, None));
         // Closed but young: kept.
-        let young = root.path().join("cccccccc");
-        std::fs::create_dir(&young).expect("dir");
-        write_marker(
-            &young,
-            &Marker {
-                run: "cccccccc".to_owned(),
-                task: "test".to_owned(),
-                created_ms: now_ms(),
-                keep: Some(true),
-            },
-        )
-        .expect("marker");
+        let young = hold(root.path(), "cccccccc", marker("cccccccc", now_ms(), None));
 
-        // A live run stays open; every other run is closed.
-        let report = sweep_at(root.path(), now_ms(), 8, |run| Some(run == "bbbbbbbb"));
+        let report = sweep_at(root.path(), now_ms(), 8, |run| match run {
+            "bbbbbbbb" => RunState::Open,
+            other => closed(other),
+        });
         assert_eq!(report.removed, 1);
         assert!(!retained.exists(), "a closed, retained run is removed");
         assert!(open.exists(), "a live run keeps its scratch");
@@ -1269,19 +1326,19 @@ mod tests {
     #[test]
     fn an_unknown_journal_keeps_every_scratch() {
         let root = tempfile::tempdir().expect("root");
-        let dir = root.path().join("dddddddd");
-        std::fs::create_dir(&dir).expect("dir");
-        write_marker(
-            &dir,
-            &Marker {
-                run: "dddddddd".to_owned(),
-                task: "test".to_owned(),
-                created_ms: now_ms() - RETENTION.as_millis() as i64 - 1,
-                keep: None,
-            },
-        )
-        .expect("marker");
-        assert_eq!(sweep_at(root.path(), now_ms(), 8, |_| None).removed, 0);
+        let dir = hold(
+            root.path(),
+            "dddddddd",
+            marker(
+                "dddddddd",
+                now_ms() - RETENTION.as_millis() as i64 - 1,
+                None,
+            ),
+        );
+        assert_eq!(
+            sweep_at(root.path(), now_ms(), 8, |_| RunState::Unknown).removed,
+            0
+        );
         assert!(dir.exists());
     }
 
@@ -1290,23 +1347,63 @@ mod tests {
         let root = tempfile::tempdir().expect("root");
         let old = now_ms() - RETENTION.as_millis() as i64 - 1;
         for name in ["eeeeeeee", "ffffffff", "gggggggg"] {
-            let dir = root.path().join(name);
-            std::fs::create_dir(&dir).expect("dir");
-            write_marker(
-                &dir,
-                &Marker {
-                    run: name.to_owned(),
-                    task: "test".to_owned(),
-                    created_ms: old,
-                    keep: Some(true),
-                },
-            )
-            .expect("marker");
+            hold(root.path(), name, marker(name, old, None));
         }
-        assert_eq!(
-            sweep_at(root.path(), now_ms(), 2, |_| Some(false)).removed,
-            2
+        assert_eq!(sweep_at(root.path(), now_ms(), 2, closed).removed, 2);
+    }
+
+    #[test]
+    fn retention_runs_from_the_failure_not_from_the_run_start() {
+        let root = tempfile::tempdir().expect("root");
+        // A run that lived for a week and failed a minute ago keeps its full
+        // 24 hours: the creation time must not shorten the retained window.
+        let late = hold(
+            root.path(),
+            "llllllll",
+            marker(
+                "llllllll",
+                now_ms() - 7 * 24 * 60 * 60 * 1000,
+                Some(now_ms() - 60_000),
+            ),
         );
+        assert_eq!(sweep_at(root.path(), now_ms(), 8, closed).removed, 0);
+        assert!(late.exists(), "a fresh failure keeps its scratch");
+
+        // And once the concluded retention has passed, it goes.
+        let expired = hold(
+            root.path(),
+            "mmmmmmmm",
+            marker(
+                "mmmmmmmm",
+                now_ms() - 7 * 24 * 60 * 60 * 1000,
+                Some(now_ms() - RETENTION.as_millis() as i64 - 1),
+            ),
+        );
+        assert_eq!(sweep_at(root.path(), now_ms(), 8, closed).removed, 1);
+        assert!(!expired.exists());
+    }
+
+    #[test]
+    fn a_crashed_runs_retention_runs_from_the_journals_close_time() {
+        let root = tempfile::tempdir().expect("root");
+        let old = now_ms() - RETENTION.as_millis() as i64 - 1;
+        // No concluded time: the owner died before deciding. The sentinel's
+        // settle recorded the close, and that is when retention started.
+        let recently_closed = hold(root.path(), "nnnnnnnn", marker("nnnnnnnn", old, None));
+        let long_closed = hold(root.path(), "oooooooo", marker("oooooooo", old, None));
+        let report = sweep_at(root.path(), now_ms(), 8, |run| RunState::Closed {
+            at_ms: Some(if run == "nnnnnnnn" {
+                now_ms() - 60_000
+            } else {
+                old
+            }),
+        });
+        assert_eq!(report.removed, 1);
+        assert!(
+            recently_closed.exists(),
+            "the sentinel closed it a minute ago"
+        );
+        assert!(!long_closed.exists(), "closed and past retention");
     }
 
     #[test]
@@ -1319,10 +1416,8 @@ mod tests {
             write_marker(
                 &dir,
                 &Marker {
-                    run: name.to_owned(),
-                    task: "test".to_owned(),
-                    created_ms: now_ms(),
                     keep: Some(keep),
+                    ..marker(name, now_ms(), Some(now_ms()))
                 },
             )
             .expect("marker");

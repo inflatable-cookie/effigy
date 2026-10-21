@@ -222,10 +222,15 @@ run, and Effigy removes it again.
 ```toml
 # ~/.effigy/config.toml
 [scratch]
-root = "/Volumes/Builds/effigy-scratch"
+root = "/Volumes/EffigyScratch"
 volume_uuid = "A6AC3ED7-33EA-46B4-8082-7254CF291ED2"
 require_separate_volume = true
 ```
+
+`root` is the volume's **mount point**, not a directory inside the volume:
+that is the only path whose device and ownership Effigy can prove belong to a
+separate, mounted volume. Point it at a dedicated volume (`/Volumes/<name>`),
+or at an existing volume's mount root, as the preparation recipe below does.
 
 With that block set, every host-placed run gets
 `<root>/<8-char run id>/` and its host processes see that directory as
@@ -248,24 +253,30 @@ the internal disk:
 - the root does not exist (Effigy never creates a mount point or the root);
 - the root's volume is the boot volume `/`;
 - the root's volume is `/System/Volumes/Data`;
-- the root is not on a mounted volume root (`require_separate_volume = true`,
-  the default);
+- the root is not the volume's mount point (`require_separate_volume = true`,
+  the default), including a plain directory inside the volume or a stale
+  directory left under `/Volumes` after the drive went away;
 - the volume UUID is unreadable, or different from `volume_uuid`;
 - the root is inside `/Volumes/Builds/oxide-pool`, which belongs to Oxide;
 - the root is not owned by `root` (uid 0), carries an ACL, or is writable by
   others.
 
 The ownership rule is what makes the root trustworthy against another local
-account, so create it once as root and give your own group write access:
+account. A fresh volume's root is root-owned and not writable by you, so give
+your own group write access to the mount point once:
 
 ```sh
-sudo mkdir -p /Volumes/Builds/effigy-scratch
-sudo chown root:staff /Volumes/Builds/effigy-scratch
-sudo chmod 0775 /Volumes/Builds/effigy-scratch
+# The volume is already mounted at /Volumes/EffigyScratch.
+sudo chown root:staff /Volumes/EffigyScratch
+sudo chmod 0775 /Volumes/EffigyScratch
 ```
 
+No ACL, and no world write: those two are why `chmod 0775` is the right shape
+(`0777` is refused).
+
 `require_separate_volume = false` relaxes only the two volume-identity checks
-(boot/data volume and mounted volume root); the UUID pin, when set, and the
+(boot/data volume and the mounted-volume-root requirement, so a directory
+inside a trusted volume is accepted); the UUID pin, when set, and the
 structural checks still apply. It exists for an explicitly trusted directory
 on an already-verified volume, not as a way to keep scratch on the internal
 disk.
@@ -288,13 +299,17 @@ disk.
 
 - A run that succeeded releases its directory at settle.
 - A run that failed, was cancelled or timed out keeps it for 24 hours, and the
-  failure output names the path.
+  failure output names the path. The 24 hours start when the run ended, not
+  when it started, so a long run that fails late keeps its full window.
 - A run killed outright leaves the effect open; the sentinel's settle keeps
-  the directory rather than guessing.
+  the directory rather than guessing, and its 24 hours run from the close the
+  sentinel recorded.
 - A bounded sweep during a later run's Prepare step removes retained
   directories whose run is closed and whose 24 hours have passed. The sweep
   only touches directories it named itself: an 8-character run-id name with
-  Effigy's `.effigy-scratch.json` marker naming the same run.
+  Effigy's `.effigy-scratch.json` marker naming the same run. It reads the
+  marker; only the run that owns the directory ever writes it, so a step's or
+  a nested run's result can never decide the parent's retention.
 
 ### Interaction with Oxide
 

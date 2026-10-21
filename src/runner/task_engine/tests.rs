@@ -497,6 +497,99 @@ fn a_run_that_died_keeps_its_scratch_until_the_sweep_removes_it() {
 }
 
 #[test]
+fn a_successful_step_never_decides_its_parents_scratch_retention() {
+    let _guard = crate::contract_test_support::lock_test();
+    let root = tempfile::tempdir().expect("root");
+    let work = tempfile::tempdir().expect("work");
+    let catalog = catalog(root.path(), "", "root", 0);
+    let target = TaskTarget::for_catalog(root.path(), "qa", &catalog);
+    let scratch_root = root.path().join("scratch-vol");
+    std::fs::create_dir(&scratch_root).expect("scratch root");
+    let config = scratch_config(&scratch_root);
+
+    let seen = crate::runner::scratch::with_test_scratch(
+        Some(config.clone()),
+        Some(config.root.clone()),
+        true,
+        || {
+            let mut parent = begin_scratching(&target);
+            let (seen, _) = read_temp(&mut parent, work.path());
+            let mut step = parent.step(0, "step").expect("step admitted");
+            let (step_temp, _) = read_temp(&mut step, work.path());
+            assert_eq!(step_temp, seen);
+            // The step succeeded; the run it belongs to has not finished.
+            assert!(step.close(WorkloadOutcome::Succeeded).is_empty());
+            let undecided = std::fs::read_to_string(Path::new(&seen).join(".effigy-scratch.json"))
+                .expect("marker");
+            assert!(
+                !undecided.contains("keep"),
+                "a step must not write the parent's verdict: {undecided}"
+            );
+            // The owning run dies without deciding, as a kill leaves it.
+            parent.abandon_for_tests();
+            let successor = TaskRun::begin(TaskRunRequest {
+                target: &target,
+                lock_wait_ms: 0,
+                custody: false,
+                scratch: false,
+                managed_run_token: None,
+                args: &[],
+                key: None,
+                admission: None,
+                cwd: None,
+            })
+            .expect("the successor is admitted");
+            assert!(successor.close(WorkloadOutcome::Succeeded).is_empty());
+            seen
+        },
+    );
+    assert!(
+        Path::new(&seen).exists(),
+        "the interrupted run's scratch is retained, not deleted by its step's success"
+    );
+    let marker =
+        std::fs::read_to_string(Path::new(&seen).join(".effigy-scratch.json")).expect("marker");
+    assert!(!marker.contains("keep"), "{marker}");
+}
+
+#[test]
+fn a_scratch_failure_keeps_its_full_retention_from_the_failure() {
+    let _guard = crate::contract_test_support::lock_test();
+    let root = tempfile::tempdir().expect("root");
+    let work = tempfile::tempdir().expect("work");
+    let catalog = catalog(root.path(), "", "root", 0);
+    let target = TaskTarget::for_catalog(root.path(), "test", &catalog);
+    let scratch_root = root.path().join("scratch-vol");
+    std::fs::create_dir(&scratch_root).expect("scratch root");
+    let config = scratch_config(&scratch_root);
+
+    let seen = crate::runner::scratch::with_test_scratch(
+        Some(config.clone()),
+        Some(config.root.clone()),
+        true,
+        || {
+            let mut run = begin_scratching(&target);
+            let (seen, _) = read_temp(&mut run, work.path());
+            assert!(!run.close(WorkloadOutcome::Failed { code: 1 }).is_empty());
+            seen
+        },
+    );
+    let marker: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(Path::new(&seen).join(".effigy-scratch.json")).expect("marker"),
+    )
+    .expect("marker json");
+    let concluded = marker["concluded_ms"]
+        .as_i64()
+        .expect("the marker records when the failure ended retention");
+    let created = marker["created_ms"].as_i64().expect("created");
+    assert_eq!(marker["keep"], serde_json::Value::Bool(true));
+    assert!(
+        concluded >= created,
+        "retention starts when the run ended: {marker}"
+    );
+}
+
+#[test]
 fn without_a_configured_root_a_host_run_sees_the_inherited_temp_environment() {
     let _guard = crate::contract_test_support::lock_test();
     let root = tempfile::tempdir().expect("root");
