@@ -59,9 +59,11 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        // Short: a managed run's control socket lives under this home, and
+        // a Unix socket path is bounded (SUN_LEN); macOS's TMPDIR is long.
         let home = tempfile::Builder::new()
-            .prefix("effigy-kill-matrix-home-")
-            .tempdir()
+            .prefix("ekm-")
+            .tempdir_in("/tmp")
             .expect("home");
         let repo = tempfile::Builder::new()
             .prefix("effigy-kill-matrix-repo-")

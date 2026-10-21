@@ -40,8 +40,13 @@ pub(in crate::runner) enum EngineEvent {
     StartupFinished,
     /// The run is stopping: workloads, then the environment, are settling.
     Stopping,
-    /// What the client reports once the run closes: `error` fails it.
-    Outcome { error: Option<String> },
+    /// What the client reports once the run closes: `error` fails it, with
+    /// `code` as the exit status when a step's own code decided it.
+    Outcome {
+        error: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<i32>,
+    },
 }
 
 /// An owning client's command for one workload of its run.

@@ -646,6 +646,12 @@
   { id = "supervisor-lib", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(/^runner::managed_run::/) | test(/^runner::execute::pipeline::managed::/) | test(managed_and_locking_tests::) | test(/^runner::container_command::handover::/) | test(/^runner::demo_command::execute::task::selection::/) | test(/^runner::task_engine::/)' --no-fail-fast --retries 0 --no-tests fail {args}", timeout_ms = 1200000 },
   { id = "supervisor-crates", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-managed -p effigy-containers -p effigy-tui --lib --filterset 'test(/^invocation::/) | test(/^session::/) | test(/^runtime::/) | test(/^multiprocess::/) | test(/^presentation::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
+# The TUI front end and the client-death cases in shared test processes, as
+# hosted CI runs them: other tests' children must not keep a PTY open.
+"test:supervisor:shared" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy-tui --lib --no-fail-fast -- --test-threads=8 multiprocess::", timeout_ms = 1200000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --test gateway_private --no-fail-fast -- --test-threads=8 managed_matrix_death_", timeout_ms = 3600000 },
+] }
 # The supervisor SIGKILLed at every kernel journal crossing it makes, each
 # followed by a settle and a clean restart (test-binary-only arming).
 "test:supervisor:faults" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --features fault-injection --lib --filterset 'test(managed_supervisor_fault_tests::)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail {args}", timeout_ms = 3600000 }] }

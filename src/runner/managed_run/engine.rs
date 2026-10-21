@@ -140,7 +140,9 @@ enum End {
     Stopped(StopCause),
     AllExited,
     ShutdownOnExit(String),
-    StartFailed(String),
+    /// The run could not start; `Some(code)` when a step's own exit code
+    /// decided it, which the client exits with.
+    StartFailed(String, Option<i32>),
 }
 
 /// Owns the run from admission to settle. Returns what the client reports.
@@ -257,7 +259,7 @@ impl Owner {
             Err(error) => {
                 return Err(match pending_stop(run, watch.as_ref()) {
                     Some(cause) => End::Stopped(self.cause(cause)),
-                    None => End::StartFailed(error.to_string()),
+                    None => End::StartFailed(error.to_string(), Some(error.process_exit_code())),
                 })
             }
         };
@@ -279,7 +281,7 @@ impl Owner {
             match environment::bring_up(run, environment, &plan.token, &mut stop) {
                 Ok(()) => self.health = Some(RouteHealth::new(environment)),
                 Err(NotReady::Stopped(cause)) => return Err(End::Stopped(self.cause(cause))),
-                Err(NotReady::Failed(reason)) => return Err(End::StartFailed(reason)),
+                Err(NotReady::Failed(reason)) => return Err(End::StartFailed(reason, None)),
             }
         }
         self.lost_while_blocked |= watch.as_ref().is_some_and(OwnerWatch::lost);
@@ -308,7 +310,7 @@ impl Owner {
         loop {
             while next < self.workloads.len() && Instant::now() >= next_at {
                 if let Err(reason) = self.spawn(run, next) {
-                    return End::StartFailed(reason);
+                    return End::StartFailed(reason, None);
                 }
                 next += 1;
                 next_at = Instant::now()
@@ -320,7 +322,10 @@ impl Owner {
             }
             if !active && next == self.workloads.len() {
                 if let Err(error) = run.run_mut().advance(effigy_kernel::run::Phase::Active) {
-                    return End::StartFailed(format!("the run could not become active: {error}"));
+                    return End::StartFailed(
+                        format!("the run could not become active: {error}"),
+                        None,
+                    );
                 }
                 self.session.active();
                 self.event(&EngineEvent::StartupFinished);
@@ -330,7 +335,7 @@ impl Owner {
             if active {
                 match self.health.as_mut().map(RouteHealth::poll) {
                     Some(Health::Ready) => self.health = None,
-                    Some(Health::Failed(reason)) => return End::StartFailed(reason),
+                    Some(Health::Failed(reason)) => return End::StartFailed(reason, None),
                     Some(Health::Pending) | None => {}
                 }
             }
@@ -578,6 +583,7 @@ impl Owner {
             })
             .collect::<Vec<_>>();
         let first_failure = non_zero.first().map(|(_, code, _)| *code);
+        let mut exit_code = None;
         let (workload, error) = match &end {
             End::Stopped(cause) => {
                 println!("[managed] stopping: {}", describe(cause));
@@ -592,10 +598,13 @@ impl Owner {
                     None,
                 )
             }
-            End::StartFailed(reason) => {
+            End::StartFailed(reason, code) => {
                 println!("[managed] startup failed: {reason}");
+                exit_code = code.filter(|code| (1..=255).contains(code));
                 (
-                    WorkloadOutcome::Failed { code: 1 },
+                    WorkloadOutcome::Failed {
+                        code: exit_code.unwrap_or(1),
+                    },
                     Some(format!(
                         "managed task `{}` (profile `{}`) did not start: {reason}",
                         plan.task, plan.profile
@@ -678,6 +687,7 @@ impl Owner {
         }
         self.event(&EngineEvent::Outcome {
             error: error.clone(),
+            code: error.as_ref().and(exit_code),
         });
         if let Some(outcome) = &outcome {
             self.session.closed(outcome);

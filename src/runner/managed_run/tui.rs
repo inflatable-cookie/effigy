@@ -129,15 +129,18 @@ impl Shared {
                             .push_back(event(&process, ProcessEventKind::Exit, &payload));
                     }
                     Some(EngineEvent::StartupFinished) => self.startup_finished = true,
-                    Some(EngineEvent::Outcome { error }) => {
-                        self.closed = Some(Closed { error });
+                    Some(EngineEvent::Outcome { error, code }) => {
+                        self.closed = Some(Closed { error, code });
                     }
                     _ => {}
                 },
                 Ok(Event::Closed { .. }) => {
                     self.startup_finished = true;
                     if self.closed.is_none() {
-                        self.closed = Some(Closed { error: None });
+                        self.closed = Some(Closed {
+                            error: None,
+                            code: None,
+                        });
                     }
                 }
                 Ok(Event::Active) => self.startup_finished = true,
@@ -151,6 +154,7 @@ impl Shared {
                                  sentinel settles the run",
                                 self.run
                             )),
+                            code: None,
                         });
                     }
                     break;
@@ -437,10 +441,10 @@ pub(in crate::runner) fn attach_tui(
         // The terminal may be gone (client death): never panic writing.
         let _ = writeln!(std::io::stderr(), "warning: managed TUI: {error}");
     }
-    match closed {
-        Some(Closed { error: Some(error) }) => Err(RunnerError::task_invocation(error)),
-        Some(Closed { error: None }) | None => Ok(Some(super::control::render(
-            &super::control::status_view(addressed),
-        ))),
+    match closed.and_then(Closed::into_error) {
+        Some(error) => Err(error),
+        None => Ok(Some(super::control::render(&super::control::status_view(
+            addressed,
+        )))),
     }
 }

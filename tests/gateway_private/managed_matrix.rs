@@ -338,35 +338,16 @@ impl<'a> Case<'a> {
         command.process_group(0);
         let previous = self.status()["run"]["run_id"].as_str().map(str::to_owned);
         if front == Front::Tui {
-            use nix::pty::{openpty, Winsize};
-            let pair = openpty(
-                Some(&Winsize {
-                    ws_row: 24,
-                    ws_col: 100,
-                    ws_xpixel: 0,
-                    ws_ypixel: 0,
-                }),
-                None,
-            )
-            .expect("private PTY");
             // Like a terminal emulator, only this side holds the master: a
             // client that inherited it would keep its own terminal open.
-            {
-                use std::os::fd::AsRawFd;
-                // SAFETY: sets FD_CLOEXEC on a live descriptor this test owns.
-                let set = unsafe {
-                    libc::fcntl(pair.master.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC)
-                };
-                assert_eq!(set, 0, "PTY master close-on-exec");
-            }
-            let slave = fs::File::from(pair.slave);
+            let (master, slave) = private_pty(24, 100);
             command
                 .stdin(slave.try_clone().expect("PTY stdin"))
                 .stdout(slave.try_clone().expect("PTY stdout"))
                 .stderr(slave);
             command.env("EFFIGY_MANAGED_TUI", "1");
             let child = command.spawn().expect("TUI owner");
-            let mut master = fs::File::from(pair.master);
+            let mut master = master;
             let hangup = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let closing = hangup.clone();
             let reader = thread::spawn(move || {
@@ -715,6 +696,57 @@ impl Owner {
         nix::sys::signal::kill(nix::unistd::Pid::from_raw(self.child.0.id() as i32), signal)
             .expect("signal the client");
     }
+}
+
+/// A private PTY whose master is close-on-exec from birth. Tests here share
+/// one process with threads that spawn children at any moment (CI's shared
+/// mode); a child that inherited the master would keep the terminal open.
+fn private_pty(rows: u16, cols: u16) -> (fs::File, fs::File) {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::fs::OpenOptionsExt;
+    // SAFETY: opens a new PTY master this test owns; flags are plain ints.
+    let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC) };
+    assert!(
+        master >= 0,
+        "PTY master: {}",
+        std::io::Error::last_os_error()
+    );
+    // SAFETY: owns the descriptor posix_openpt just returned.
+    let master = unsafe { fs::File::from_raw_fd(master) };
+    let fd = master.as_raw_fd();
+    // SAFETY: grant and unlock the slave of the master this test owns.
+    assert_eq!(unsafe { libc::grantpt(fd) }, 0, "grantpt");
+    assert_eq!(unsafe { libc::unlockpt(fd) }, 0, "unlockpt");
+    let mut name = [0 as libc::c_char; 128];
+    #[cfg(target_os = "linux")]
+    // SAFETY: the reentrant name lookup writes into this test's buffer.
+    let named = unsafe { libc::ptsname_r(fd, name.as_mut_ptr(), name.len()) } == 0;
+    #[cfg(target_os = "macos")]
+    // SAFETY: TIOCPTYGNAME (_IOC(IOC_OUT, 't', 83, 128)) writes the slave
+    // name into this 128-byte buffer; ptsname's static one is not reentrant.
+    let named = unsafe { libc::ioctl(fd, 0x4080_7453, name.as_mut_ptr()) } == 0;
+    assert!(named, "PTY slave name");
+    // SAFETY: the buffer now holds a NUL-terminated device path.
+    let path = unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }
+        .to_string_lossy()
+        .into_owned();
+    // std opens close-on-exec; NOCTTY keeps the test's own session clean.
+    let slave = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOCTTY)
+        .open(&path)
+        .expect("PTY slave");
+    let size = libc::winsize {
+        ws_row: rows,
+        ws_col: cols,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    // SAFETY: sets the size of the slave this test owns.
+    let resized = unsafe { libc::ioctl(slave.as_raw_fd(), libc::TIOCSWINSZ, &size) };
+    assert_eq!(resized, 0, "PTY size");
+    (master, slave)
 }
 
 fn supervisor_pid(status: &Value) -> i32 {

@@ -196,19 +196,36 @@ mod terminal_input_tests {
     /// A closed terminal reads as hangup, never as idle input, so the loop
     /// ends instead of handing crossterm a reader that spins on EOF.
     #[test]
+    #[cfg_attr(
+        effigy_shared_process,
+        ignore = "hangup needs every master reference closed, which a shared test process cannot promise; nextest runs this proof in its own process"
+    )]
     fn terminal_input_reports_idle_ready_and_hangup_on_a_real_pty() {
-        let (mut master, mut slave) = (0, 0);
-        // SAFETY: openpty fills two descriptors this test owns and closes.
-        let opened = unsafe {
-            libc::openpty(
-                &mut master,
-                &mut slave,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
+        // Close-on-exec from birth: other tests in a shared process spawn
+        // children, and one that inherited the master would keep it open.
+        // SAFETY: opens a new PTY master this test owns and closes.
+        let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC) };
+        assert!(master >= 0, "private PTY");
+        // SAFETY: grant and unlock the slave of the master this test owns.
+        assert_eq!(unsafe { libc::grantpt(master) }, 0);
+        assert_eq!(unsafe { libc::unlockpt(master) }, 0);
+        let mut name = [0 as libc::c_char; 128];
+        #[cfg(target_os = "linux")]
+        // SAFETY: the reentrant name lookup writes into this test's buffer.
+        let named = unsafe { libc::ptsname_r(master, name.as_mut_ptr(), name.len()) } == 0;
+        #[cfg(target_os = "macos")]
+        // SAFETY: TIOCPTYGNAME (_IOC(IOC_OUT, 't', 83, 128)) writes the slave
+        // name into this 128-byte buffer; ptsname's static one is shared.
+        let named = unsafe { libc::ioctl(master, 0x4080_7453, name.as_mut_ptr()) } == 0;
+        assert!(named, "PTY slave name");
+        // SAFETY: opens the NUL-terminated slave path the kernel just named.
+        let slave = unsafe {
+            libc::open(
+                name.as_ptr(),
+                libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC,
             )
         };
-        assert_eq!(opened, 0, "private PTY");
+        assert!(slave >= 0, "PTY slave");
         assert!(matches!(
             terminal_input_on(slave, Duration::ZERO),
             TerminalInput::Idle

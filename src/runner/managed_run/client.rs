@@ -232,6 +232,24 @@ impl TextFollower {
 /// How the client's view of the run ended.
 pub(in crate::runner) struct Closed {
     pub(in crate::runner) error: Option<String>,
+    /// The exit status a step's own code decided, when `error` is set.
+    pub(in crate::runner) code: Option<i32>,
+}
+
+impl Closed {
+    /// The client's result: a failed run's error, exiting with the step's
+    /// own code when one decided it (as v0.14 did).
+    pub(in crate::runner) fn into_error(self) -> Option<RunnerError> {
+        let error = self.error?;
+        Some(match self.code {
+            Some(code) if code != 1 => RunnerError::RunControl {
+                code,
+                details_json: serde_json::json!({ "error": error, "exit_code": code }).to_string(),
+                detail: error,
+            },
+            _ => RunnerError::task_invocation(error),
+        })
+    }
 }
 
 /// Stop requests a client sends on INT, TERM or HUP: the first stops, a
@@ -288,17 +306,20 @@ pub(in crate::runner) fn attach_text(
         output.relay(false);
         match next_event(&mut client) {
             Ok(Some(Event::Engine(bytes))) => {
-                if let Some(EngineEvent::Outcome { error }) = wire::decode(&bytes) {
+                if let Some(EngineEvent::Outcome { error, code }) = wire::decode(&bytes) {
                     output.relay(false);
                     // Closed follows the outcome on the same pipe.
                     wait_closed(&mut client);
                     output.relay(true);
-                    break Closed { error };
+                    break Closed { error, code };
                 }
             }
             Ok(Some(Event::Closed { .. })) => {
                 output.relay(true);
-                break Closed { error: None };
+                break Closed {
+                    error: None,
+                    code: None,
+                };
             }
             Ok(_) => {}
             Err(lost) => {
@@ -328,15 +349,21 @@ pub(in crate::runner) fn detach(
         match next_event(&mut client) {
             Ok(Some(Event::Active)) if !stop.requested() => break,
             Ok(Some(Event::Engine(bytes))) => {
-                if let Some(EngineEvent::Outcome { error }) = wire::decode(&bytes) {
+                if let Some(EngineEvent::Outcome { error, code }) = wire::decode(&bytes) {
                     wait_closed(&mut client);
                     relay(&mut output);
-                    return finish(addressed, Closed { error });
+                    return finish(addressed, Closed { error, code });
                 }
             }
             Ok(Some(Event::Closed { .. })) => {
                 relay(&mut output);
-                return finish(addressed, Closed { error: None });
+                return finish(
+                    addressed,
+                    Closed {
+                        error: None,
+                        code: None,
+                    },
+                );
             }
             Ok(_) => {}
             Err(lost) => {
@@ -431,6 +458,7 @@ fn supervisor_lost(run: RunId, addressed: &Addressed<'_>, detail: &str) -> Close
                          sentinel settled the run: {}",
                         record.view.state
                     )),
+                    code: None,
                 };
             }
         }
@@ -441,6 +469,7 @@ fn supervisor_lost(run: RunId, addressed: &Addressed<'_>, detail: &str) -> Close
                      is not closed yet. Settle it with `{}`",
                     stop_command(addressed)
                 )),
+                code: None,
             };
         }
         std::thread::sleep(task_engine::RUN_POLL);
@@ -448,8 +477,8 @@ fn supervisor_lost(run: RunId, addressed: &Addressed<'_>, detail: &str) -> Close
 }
 
 fn finish(addressed: &Addressed<'_>, closed: Closed) -> Result<Option<String>, RunnerError> {
-    if let Some(error) = closed.error {
-        return Err(RunnerError::task_invocation(error));
+    if let Some(error) = closed.into_error() {
+        return Err(error);
     }
     Ok(Some(control::render(&control::status_view(addressed))))
 }
