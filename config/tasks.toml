@@ -3,6 +3,11 @@
 # Aggregator tasks below call the built-in through task refs.
 
 [tasks]
+# Every selector that runs Cargo goes through `scripts/oxide-selector.sh`, which
+# leases Oxide's shared slot pool and keeps Rust intermediates off the internal
+# SSD. This is its escape hatch: run one Cargo command exactly as written, and
+# `EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>` runs a whole selector that way.
+"cargo" = { visibility = "internal", group = "Maintenance", run = "cargo {args}" }
 "test:gateway:downgrade:covering" = { visibility = "internal", group = "Maintenance", run = [{ task = "test:gateway:downgrade" }, { task = "test:gateway:operator" }, { task = "test:gateway:operator:process" }] }
 "test:gateway:closeout:operator" = { visibility = "internal", group = "Maintenance", run = [{ task = "test:gateway:closeout:ci" }, { task = "test:gateway:operator" }, { task = "test:gateway:operator:process" }] }
 "proof:gateway:downgrade" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ run = "sh scripts/oxide-selector.sh build -p effigy-gateway --example gateway-downgrade-proof", timeout_ms = 900000 }, { run = "sh tests/scripts/gateway-downgrade.sh", timeout_ms = 1800000 }] }
