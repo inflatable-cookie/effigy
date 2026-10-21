@@ -465,6 +465,7 @@
 ] }
 "test:containers:retire-selection" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh test -p effigy --lib container_retire -- --nocapture",
+  "sh scripts/oxide-selector.sh test -p effigy --lib dead_selection_tests -- --nocapture",
   "sh scripts/oxide-selector.sh test -p effigy --lib retirement_clears_qualified_and_owned_legacy_loopbacks_only -- --nocapture",
   "sh scripts/oxide-selector.sh test --test cli_output_tests cli_container_retire_named_environment_refuses_before_effects -- --nocapture",
 ] }
