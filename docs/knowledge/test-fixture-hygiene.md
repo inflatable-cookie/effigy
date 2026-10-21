@@ -194,21 +194,20 @@ that same nonce with their launch registration. A second fixture owner of an
 This preserves descendant recovery evidence when a test runner kills the native
 parent before Drop. Kernel generation and nonce checks remain unchanged.
 
-The forced-exit negative control also reaps a detached group leader before
-leaving its background child behind. The suite must reject and settle that
-known-nonce descendant without retaining unresolved ownership.
+The active forced-exit control reaps a detached group leader while its
+background child survives with an explicitly cleared environment. Following the
+planner's 2026-10-21 ruling for papercut
+`aedb6038-fe8c-4b02-ab6f-a0a7ce8aab50`, it asserts the by-design `Unknown`
+refusal: recovery retains process and directory receipts and fixture files,
+sends no signal, and leaves the descendant able to answer a pipe probe.
+The governing custody boundary and retained-group-anchor deferral to Queue
+lead `9717909b` live in [contract 052 §5.7, I-P8](contracts/052-runtime-kernel-contract.md#57-ownedprocess-and-signalrouter).
 
-A reaped leader currently leaves a kernel custody limitation on macOS when the
-OS exposes a live descendant's arguments without its environment. Even the
-launcher's known nonce cannot be verified from that observation. Recovery must
-remain `Unknown` and retain the ledger; the detached-leader negative control
-exposes this boundary rather than granting numeric group-kill authority.
-
-The reaped-leader descendant control is retained under a tracked Unix ignore
-for papercut `aedb6038-fe8c-4b02-ab6f-a0a7ce8aab50`, owned by
-`v015-task-engine`. The planner's 2026-10-20 ruling defers that kernel custody
-case from fixture-hygiene acceptance. Ordinary process leaks, forced exits and
-runner timeouts remain active controls; no fixture group-kill authority is added.
+The test closes its private pipe in `finally`, allowing the descendant to exit
+cooperatively. A subsequent kernel custody sweep verifies group closure before
+the exact retained ledger is removed. `test:fixtures:hygiene:leak-assertion`
+runs this control with the ordinary process-leak, forced-exit and runner-timeout
+controls; the tracked Unix defect ignore is removed.
 
 Builder recovery additionally uses a fresh owned directory under the host HOME
 on Linux: the real Colima shared-path preflight rejects OS temp paths there too.
