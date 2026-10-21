@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io::Write as _;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -73,6 +74,8 @@ struct RunSource {
     shared: Arc<Mutex<Shared>>,
     shells: Option<ProcessSupervisor>,
     shell_names: Vec<String>,
+    /// Set once the TUI's quit path (the run's stop) has begun.
+    ending: Arc<AtomicBool>,
 }
 
 impl RunSource {
@@ -327,6 +330,7 @@ impl SessionProcesses for RunSource {
         timeout: Duration,
         on_progress: &mut dyn FnMut(ShutdownProgress),
     ) {
+        self.ending.store(true, Ordering::Release);
         if let Some(shells) = &self.shells {
             shells.terminate_all_graceful(timeout);
         }
@@ -355,6 +359,51 @@ impl SessionProcesses for RunSource {
             forced: 0,
         });
     }
+}
+
+/// How long a closed terminal may go unnoticed by the TUI's own loop.
+const HANGUP_GRACE: Duration = Duration::from_secs(2);
+
+/// Backstop for a closed terminal. The TUI notices a hangup itself and quits,
+/// which stops and settles the run. If the hangup lands while crossterm is
+/// inside its own read, crossterm retries the zero-byte read forever and the
+/// loop never returns. Then this client exits: its death is the run's stop
+/// (the supervisor settles it as owner-lost), as for any dead client.
+fn hangup_watchdog(ending: Arc<AtomicBool>) {
+    // Only a terminal hangs up; a pipe at EOF also polls POLLHUP.
+    // SAFETY: isatty on this process's standard input.
+    if unsafe { libc::isatty(libc::STDIN_FILENO) } != 1 {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("effigy-tui-hangup".into())
+        .spawn(move || {
+            while !ending.load(Ordering::Acquire) {
+                if stdin_hung_up() {
+                    let deadline = Instant::now() + HANGUP_GRACE;
+                    while Instant::now() < deadline {
+                        if ending.load(Ordering::Acquire) {
+                            return;
+                        }
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    // 128 + SIGHUP, the status of a client its terminal hung up.
+                    std::process::exit(129);
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+}
+
+fn stdin_hung_up() -> bool {
+    let mut input = libc::pollfd {
+        fd: libc::STDIN_FILENO,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: one initialized pollfd for this process's stdin; no wait.
+    let ready = unsafe { libc::poll(&mut input, 1, 0) };
+    ready > 0 && input.revents & (libc::POLLHUP | libc::POLLNVAL) != 0
 }
 
 /// Runs the TUI over a started run until it closes.
@@ -392,12 +441,15 @@ pub(in crate::runner) fn attach_tui(
         stop: StopSender::new(),
     }));
     let shell_names = shells.iter().map(|shell| shell.name.clone()).collect();
+    let ending = Arc::new(AtomicBool::new(false));
     let source = RunSource {
         shared: shared.clone(),
         shells: (!shells.is_empty())
             .then(|| ProcessSupervisor::spawn_progressively(repo_root.clone(), shells)),
         shell_names,
+        ending: ending.clone(),
     };
+    hangup_watchdog(ending.clone());
     let session_tabs = tabs
         .iter()
         .map(|tab| SessionTab {
@@ -430,6 +482,7 @@ pub(in crate::runner) fn attach_tui(
         MultiProcessTuiOptions::default(),
         Some(&control),
     );
+    ending.store(true, Ordering::Release);
     let closed = shared
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
