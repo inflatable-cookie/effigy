@@ -294,10 +294,6 @@
     "crates/effigy-tui/src/multiprocess/transcript.rs": {
       "std::fs::write": 1
     },
-    "src/bin/effigy-qa.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.status": 1
-    },
     "src/runner/bootstrap_command/deps.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1
