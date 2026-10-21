@@ -11,6 +11,7 @@ mod bun_plan;
 mod bun_unlink;
 mod cargo;
 mod cargo_apply;
+mod cargo_lock_record;
 mod cargo_plan;
 mod cargo_unlink;
 mod error;
@@ -37,6 +38,10 @@ pub use bun_unlink::{apply_bun_unlink_plan, execute_bun_unlink};
 pub(crate) use cargo::inventory_cargo_consumer_roots;
 pub use cargo::{inventory_cargo_consumers, inventory_cargo_library};
 pub use cargo_apply::{apply_cargo_link_plan, execute_cargo_link};
+pub use cargo_lock_record::{
+    CargoLockBaseline, CargoLockBaselineStore, CargoLockBaselines, CARGO_LOCK_BASELINES_SCHEMA,
+    CARGO_LOCK_BASELINES_SCHEMA_VERSION,
+};
 pub use cargo_plan::{plan_cargo_link, plan_cargo_unlink, CargoPlanObserver, GitCargoPlanObserver};
 pub use cargo_unlink::{apply_cargo_unlink_plan, execute_cargo_unlink};
 pub use error::DepsError;

@@ -654,6 +654,21 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Cargo local links record the committed blob of every tracked lockfile they
+  resolve, and `effigy deps unlink cargo <library-path>` restores those exact
+  bytes when the record still matches `HEAD` and only link-owned packages
+  differ. A lockfile another link or an unrelated edit still holds is left
+  untouched, and a moved `HEAD` invalidates the record rather than reverting
+  committed work.
+- A committed dependency advance no longer fails a valid Cargo unlink. When the
+  only difference from `HEAD` outside the linked packages is a source/version
+  advance of the same packages (an operator `cargo update`, or a release tag
+  that moved after the consumer commit), unlink reports it as a
+  `committed-transition` and completes instead of refusing and leaving stale
+  machine-local link state. A split version, a path source, a changed
+  repository, or a parked `[[patch.unused]]` entry is still refused, and
+  link-time validation stays strict. `effigy deps status` reports a committed
+  transition as a warning, not an error.
 - A repo manifest that overrides a bundle-defined step table
   (`[secrets.vault].generate`, a deploy hook, or the `run = { ... }` step
   shorthand) replaces the bundle's executor instead of inheriting it. Switching

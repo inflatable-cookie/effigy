@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use crate::cargo_apply::{
     apply_exact_change, not_run_verification, rollback_physical_changes, validate_all_preconditions,
 };
+use crate::cargo_lock_record::{blob_contents, head_blob, CargoLockBaselineStore};
 use crate::cargo_plan::{cargo_config_patches_library, plan_adopted_cargo_unlink, plan_cargo_link};
+use crate::state::write_atomic;
 use crate::{
     inventory_cargo_consumer_roots, inventory_cargo_consumers, inventory_cargo_library,
     plan_cargo_unlink, CargoDependencyPlan, CargoExpectedResolution, CargoLibraryInventory,
@@ -139,6 +141,7 @@ pub fn apply_cargo_unlink_plan(
     }
 
     let verification = verify_cargo_unlink(&plan, process);
+    let (restored_lockfiles, restore_errors) = restore_recorded_lockfile_baselines(&plan, process)?;
     let mut after_locks = inspect_lockfiles(
         &plan,
         &plan.lockfile_guard_packages,
@@ -156,8 +159,10 @@ pub fn apply_cargo_unlink_plan(
         .iter()
         .filter_map(|evidence| evidence.message.clone())
         .collect::<Vec<_>>();
+    errors.extend(restore_errors);
     errors.extend(lock_errors(&after_locks, false));
-    let applied_files = applied_paths(&applied);
+    let mut applied_files = applied_paths(&applied);
+    applied_files.extend(restored_lockfiles.iter().cloned());
     if verification.status != VerificationStatus::Passed || !errors.is_empty() {
         return Ok(report(
             plan,
@@ -605,7 +610,7 @@ fn only_committed_transitions(baseline: &toml::Value, current: &toml::Value) -> 
             return false;
         };
         if baseline_entries.len() != current_entries.len() {
-                return false;
+            return false;
         }
         let mut baseline_sources = baseline_entries
             .iter()
@@ -689,11 +694,76 @@ fn is_committed_transition(baseline: &LockPackageTable, current: &LockPackageTab
 /// `git+https://example.test/repo.git?tag=v0.4.4#4567def` name the same source:
 /// only the resolved release moved.
 fn source_identity(source: &str) -> String {
-    source
-        .split(['?', '#'])
-        .next()
-        .unwrap_or(source)
-        .to_owned()
+    source.split(['?', '#']).next().unwrap_or(source).to_owned()
+}
+
+/// Restore the tracked lockfiles this link resolved to the committed bytes
+/// recorded when the link was applied.
+///
+/// Restoration is deliberately narrow: it only writes a lockfile whose current
+/// content differs from the record solely in the packages this link owned, and
+/// only while `HEAD` still holds the recorded blob. A moved `HEAD` or an
+/// unrelated edit leaves both the file and the record alone for review.
+fn restore_recorded_lockfile_baselines(
+    plan: &CargoDependencyPlan,
+    process: &impl ReadOnlyProcess,
+) -> Result<(Vec<PathBuf>, Vec<String>), DepsError> {
+    let repo_root = &plan.operation.key.consumer_repo;
+    let store = CargoLockBaselineStore::for_checkout(repo_root);
+    let record = store.read()?;
+    if record.entries.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let unlinked_packages = plan
+        .expected_resolutions
+        .iter()
+        .map(|resolution| resolution.package.clone())
+        .collect::<Vec<_>>();
+    let mut restored = Vec::new();
+    let mut errors = Vec::new();
+    let mut retained = Vec::new();
+    let mut record_changed = false;
+    for entry in record.entries {
+        if !plan.affected_lockfiles.contains(&entry.lockfile) {
+            retained.push(entry);
+            continue;
+        }
+        let current = fs::read_to_string(&entry.lockfile)
+            .map_err(|error| DepsError::io("read Cargo lockfile", &entry.lockfile, error))?;
+        let head = head_blob(repo_root, &entry.lockfile, process)?;
+        if head.as_deref() != Some(entry.blob.as_str()) {
+            // The commit moved since the link, so the record no longer names
+            // the committed baseline. Leave the file to that baseline.
+            retained.push(entry);
+            continue;
+        }
+        let clean = blob_contents(repo_root, &entry.blob, process)?;
+        if clean == current {
+            record_changed = true;
+            continue;
+        }
+        let state = classify_lockfile(&entry.lockfile, &clean, &current, &unlinked_packages)?;
+        if state == CargoLockfileState::UnexpectedDrift {
+            // Another active link, or an edit this unlink does not own, still
+            // holds the file. Keep the record for a later unlink and leave the
+            // content alone; the caller's own lockfile evidence reports it.
+            retained.push(entry);
+            continue;
+        }
+        if let Err(error) = write_atomic(&entry.lockfile, clean.as_bytes(), false) {
+            errors.push(error.to_string());
+            retained.push(entry);
+            continue;
+        }
+        restored.push(entry.lockfile);
+        record_changed = true;
+    }
+    if record_changed {
+        let mut record = store.read()?;
+        record.entries = retained;
+        store.save(&record)?;
+    }
+    Ok((restored, errors))
 }
 
 fn lock_without_packages(
