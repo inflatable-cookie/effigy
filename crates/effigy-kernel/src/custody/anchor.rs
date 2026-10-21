@@ -42,55 +42,10 @@ fn member_signal(
     member: &ProcessIdentity,
     signal: i32,
 ) -> Observed<SignalDelivered> {
-    #[cfg(target_os = "linux")]
-    let fd = match platform::pidfd(member.pid) {
-        Ok(fd) => fd,
-        Err(e) if e.raw_os_error() == Some(libc::ESRCH) => {
-            return Observed::Absent(AbsenceProof::NoSuchProcess { pid: member.pid })
-        }
-        Err(e) => return Observed::Unknown(unknown(e)),
-    };
-    match platform::generation(member) {
-        Observed::Verified(..) => {}
-        Observed::Absent(proof) => return Observed::Absent(proof),
-        Observed::Unknown(reason) => return Observed::Unknown(reason),
-    }
-    // SAFETY: identity observation validated the positive member pid.
-    if unsafe { libc::getpgid(member.pid as i32) } != r.pgid as i32 || !verified(r, anchor) {
-        return Observed::Unknown(unknown("group anchor unavailable"));
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // SAFETY: live pidfd, null siginfo and flags zero target this identity.
-        if unsafe {
-            libc::syscall(
-                libc::SYS_pidfd_send_signal,
-                fd.as_raw_fd(),
-                signal,
-                std::ptr::null::<libc::siginfo_t>(),
-                0u32,
-            )
-        } == 0
-        {
-            Observed::Verified(
-                SignalDelivered {
-                    pid: member.pid,
-                    group: false,
-                    signal,
-                },
-                evidence(),
-            )
-        } else {
-            let e = io::Error::last_os_error();
-            if e.raw_os_error() == Some(libc::ESRCH) {
-                Observed::Absent(AbsenceProof::NoSuchProcess { pid: member.pid })
-            } else {
-                Observed::Unknown(unknown(e))
-            }
-        }
-    }
-    #[cfg(target_os = "macos")]
-    platform::numeric(member.pid, false, signal)
+    platform::signal_checked(member, signal, || {
+        // SAFETY: signal_checked has verified the positive member generation.
+        (unsafe { libc::getpgid(member.pid as i32) }) == r.pgid as i32 && verified(r, anchor)
+    })
 }
 
 pub(super) fn signal(

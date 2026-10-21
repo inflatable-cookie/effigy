@@ -783,24 +783,27 @@ Spawn protocol:
 Every custody spawn sets `EFFIGY_CUSTODY_NONCE=<run>:<effect>` in the child's
 environment; descendants inherit it. It is evidence, not a credential.
 Before acknowledging the barrier, the blocked child forks an anchor inside
-its already-created process group (and its session for a PTY). The anchor
-execs `/bin/sh` with a fixed kernel-owned script using only shell builtins
-and an environment containing only the custody nonce. It ignores HUP, INT
-and TERM before acknowledging readiness. The parent receives its pid and
-records its full `{pid, start, boot}` identity in the optional `anchor` field
-alongside the existing receipt. Old receipts omit that field and deserialize
-unchanged; there is no inferred anchor for imports or pre-anchor runs.
+its already-created process group (and its session for a PTY). A transient
+intermediate child reparents the anchor and is reaped before workload exec,
+so the workload never inherits a hidden child to wait for. The anchor
+re-execs the run's retained startup image as `__kernel-anchor`, verifies the
+image (I-SV4), ignores HUP, INT and TERM, then acknowledges its pid. Linux
+executes and verifies the held descriptor; macOS uses the existing private
+image pin when the startup path was replaced. Its environment contains only
+the custody nonce. The parent records the full `{pid, start, boot}` identity
+in the optional `anchor` field alongside the existing receipt. Old receipts
+omit that field and deserialize unchanged; imports infer no anchor.
 
 The anchor reads a separate go channel until launch. Barrier EOF closes that
 channel when the blocked child exits, so an unrecorded anchor cannot persist.
 After the durable receipt and owner go byte, the child releases the anchor
-before execing the workload. The anchor then blocks on its own pipe; owner
-or leader death cannot close it. It retains only that pipe's read and write
-ends, no workload streams, gate descriptors or sentinel writer. Its output
-and exit are never workload output or status. This costs one process per
-custody group. The OS-shell helper avoids an additional installed executable
-or a dependency on a potentially replaced startup image. A kernel helper
-mode would need to carry that image through this second pre-exec fork.
+before execing the workload. The anchor closes its last descriptors and
+waits in `pause`; owner or leader death cannot retire it. It inherits no
+workload streams, gate descriptors or sentinel writer, and its output and
+exit never become workload output or status. This costs one persistent
+process and a transient reparenting fork per custody group. A protected OS
+shell is unsuitable on macOS because its environment may be unavailable to
+recovery; the native helper keeps the full nonce verification requirement.
 `PR_SET_CHILD_SUBREAPER` helps reap Linux orphans but does not pin a group;
 cgroups add Linux-only infrastructure and privileges. Neither replaces the
 portable anchor needed on macOS.
@@ -908,8 +911,8 @@ kernel restores it on exit.
 - `anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor`: real
   nonce-free orphan recovery after reaping the leader (ordinary and PTY),
   externally killed anchor refusal and old-receipt refusal.
-- `anchor_receipt_is_additive_and_spawn_overhead_is_measured`: old receipt
-  decoding and matched before/after spawn measurements.
+- `anchor_spawn_overhead_is_measured`: matched before/after measurements
+  and a workload that verifies it has no hidden child to reap.
 - `fault_matrix_registration_spawn_and_socket_kill_enospc` and the custody
   fault scenarios cross `AnchorSpawn`, `AnchorRecord`, `AnchorStop` and
   `AnchorStopped`, including owner SIGKILL.

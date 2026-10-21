@@ -398,7 +398,9 @@ impl Custody {
             required,
         })?;
         let nonce = format!("{}:{}", run.id(), ticket.sequence());
-        let mut pending = spawn::Blocked::fork(&spec, &nonce, cx.operation())?;
+        let image = run.anchor_image()?;
+        let mut pending = spawn::Blocked::fork(&spec, &nonce, cx.operation(), &image)?;
+        drop(image); // helper verified the image before acknowledging the barrier
         let result = (|| {
             crate::fault_point!(SpawnFork)?;
             crate::fault_point!(SpawnBeforeRecord)?;

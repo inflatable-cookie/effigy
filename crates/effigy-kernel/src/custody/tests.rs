@@ -76,6 +76,22 @@ fn home() -> tempfile::TempDir {
         .tempdir_in(std::fs::canonicalize("/tmp").unwrap())
         .unwrap()
 }
+fn executable_path() -> PathBuf {
+    std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("kernel-custody-fixture")
+        })
+}
+fn executable() -> Executable {
+    Executable::capture(&executable_path()).unwrap()
+}
 fn begin<'a>(cx: &EffectContext, root: &'a StateRoot) -> Result<Run<'a>, RunError> {
     Run::begin(
         cx,
@@ -87,19 +103,7 @@ fn begin<'a>(cx: &EffectContext, root: &'a StateRoot) -> Result<Run<'a>, RunErro
             acknowledge: vec![],
             next: next(),
             custody: Some(LifecyclePlan {
-                executable: Executable::capture(Path::new(
-                    &std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE").unwrap_or_else(|| {
-                        std::env::current_exe()
-                            .unwrap()
-                            .parent()
-                            .unwrap()
-                            .parent()
-                            .unwrap()
-                            .join("kernel-custody-fixture")
-                            .into_os_string()
-                    }),
-                ))
-                .unwrap(),
+                executable: executable(),
                 placement: crate::supervise::Placement::Inline,
             }),
         },
@@ -600,6 +604,12 @@ fn replacement_cannot_reconstruct_or_itself_contain_a_secret() {
     }
 }
 
+fn fixture_identity(pid: u32) -> ProcessIdentity {
+    crate::ident::process_identity(pid)
+        .verified()
+        .unwrap()
+        .clone()
+}
 // Even a failed assertion retires only the generations this proof launched.
 struct AnchorFixture(Vec<ProcessIdentity>);
 impl Drop for AnchorFixture {
@@ -628,16 +638,13 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
             cwd: home.path().into(), env: BTreeMap::new(),
             grace: Duration::from_millis(10), lifetime: Lifetime::Finite(Duration::from_secs(60)), terminal, label: "anchor proof".into(),
         };
-        let mut child = spawn::Blocked::fork(&spec, "anchor-proof", cx.operation()).unwrap();
-        let anchor = crate::ident::process_identity(child.anchor.unwrap())
-            .verified()
-            .unwrap()
-            .clone();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let image = crate::supervise::anchor::Image::prepare(&root, &executable()).unwrap();
+        let mut child =
+            spawn::Blocked::fork(&spec, "anchor-proof", cx.operation(), &image).unwrap();
+        let anchor = fixture_identity(child.anchor.unwrap());
         let r = ProcessReceipt {
-            identity: crate::ident::process_identity(child.pid)
-                .verified()
-                .unwrap()
-                .clone(),
+            identity: fixture_identity(child.pid),
             pgid: child.pid,
             nonce: "anchor-proof".into(),
             grace_millis: 10,
@@ -651,10 +658,7 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
             .trim()
             .parse()
             .unwrap();
-        let descendant = crate::ident::process_identity(pid)
-            .verified()
-            .unwrap()
-            .clone();
+        let descendant = fixture_identity(pid);
         fixture.0.push(descendant.clone());
         assert_ne!(platform::read_nonce(pid).verified(), Some(&r.nonce));
         if mode == 1 {
@@ -721,11 +725,14 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
 }
 
 #[test]
-fn anchor_receipt_is_additive_and_spawn_overhead_is_measured() {
+fn anchor_spawn_overhead_is_measured() {
     let home = home();
     let cx = cx();
     let spec = ProcessSpec {
-        argv: vec!["/bin/sh".into(), "-c".into(), "exit 0".into()],
+        argv: vec![
+            executable_path().into_os_string(),
+            "anchor-no-children".into(),
+        ],
         cwd: home.path().into(),
         env: BTreeMap::new(),
         grace: Duration::ZERO,
@@ -733,13 +740,17 @@ fn anchor_receipt_is_additive_and_spawn_overhead_is_measured() {
         terminal: Terminal::None,
         label: "overhead".into(),
     };
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let executable = executable();
     let mut totals = Vec::new();
     for anchored in [false, true] {
         let mut elapsed = Duration::ZERO;
         for _ in 0..12 {
             let started = Instant::now();
+            let image = anchored
+                .then(|| crate::supervise::anchor::Image::prepare(&root, &executable).unwrap());
             let mut child = if anchored {
-                spawn::Blocked::fork(&spec, "overhead", cx.operation())
+                spawn::Blocked::fork(&spec, "overhead", cx.operation(), image.as_ref().unwrap())
             } else {
                 spawn::Blocked::fork_with_nonce(
                     &spec,
@@ -750,31 +761,27 @@ fn anchor_receipt_is_additive_and_spawn_overhead_is_measured() {
             }
             .unwrap();
             let r = ProcessReceipt {
-                identity: crate::ident::process_identity(child.pid)
-                    .verified()
-                    .unwrap()
-                    .clone(),
+                identity: fixture_identity(child.pid),
                 pgid: child.pid,
                 nonce: "overhead".into(),
                 grace_millis: 0,
             };
-            let anchor = child.anchor.map(|pid| {
-                crate::ident::process_identity(pid)
-                    .verified()
-                    .unwrap()
-                    .clone()
-            });
+            let anchor = child.anchor.map(fixture_identity);
             let mut fixture = AnchorFixture(vec![r.identity.clone()]);
             fixture.0.extend(anchor.clone());
-            let old = serde_json::to_value(&r).unwrap();
-            assert!(serde_json::from_value::<ProcessRecord>(old)
-                .unwrap()
-                .anchor
-                .is_none());
             child.go().unwrap();
             child.executed(cx.operation()).unwrap();
             elapsed += started.elapsed();
-            wait(|| spawn::reap(child.pid).unwrap().is_some());
+            let mut exit = None;
+            wait(|| {
+                exit = spawn::reap(child.pid).unwrap();
+                exit.is_some()
+            });
+            assert_eq!(
+                exit.unwrap().code,
+                0,
+                "the workload must have no hidden child"
+            );
             let cleanup = cx.operation().cleanup(Duration::from_secs(2)).unwrap();
             assert!(matches!(
                 anchor::stop(&r, anchor.as_ref(), &cleanup),

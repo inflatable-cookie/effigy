@@ -352,61 +352,67 @@ impl ProcessTable for Host {
         r: &ProcessReceipt,
         signal: i32,
     ) -> Observed<SignalDelivered> {
-        #[cfg(target_os = "linux")]
-        let fd = match pidfd(m.identity.pid) {
-            Ok(fd) => fd,
-            Err(e) if e.raw_os_error() == Some(libc::ESRCH) => {
-                return Observed::Absent(AbsenceProof::NoSuchProcess {
-                    pid: m.identity.pid,
-                })
-            }
-            Err(e) => return Observed::Unknown(unknown(e)),
-        };
-        // Open the descriptor before observing identity and environment. Neither
-        // a stale process table entry nor a bare numeric pid grants authority.
-        match generation(&m.identity) {
-            Observed::Verified(..) => {}
-            Observed::Absent(proof) => return Observed::Absent(proof),
-            Observed::Unknown(reason) => return Observed::Unknown(reason),
-        }
-        if read_nonce(m.identity.pid).verified() != Some(&r.nonce) || !not_earlier(&m.identity, r) {
-            return Observed::Unknown(unknown("member generation unverified"));
-        }
-        #[cfg(target_os = "linux")]
-        {
-            // SAFETY: live per-process pidfd opened before evidence checks;
-            // flags zero targets the referenced process, never a numeric pid.
-            if unsafe {
-                libc::syscall(
-                    libc::SYS_pidfd_send_signal,
-                    fd.as_raw_fd(),
-                    signal,
-                    std::ptr::null::<libc::siginfo_t>(),
-                    0u32,
-                )
-            } == 0
-            {
-                return Observed::Verified(
-                    SignalDelivered {
-                        pid: m.identity.pid,
-                        group: false,
-                        signal,
-                    },
-                    evidence(),
-                );
-            }
-            let e = io::Error::last_os_error();
-            if e.raw_os_error() == Some(libc::ESRCH) {
-                Observed::Absent(AbsenceProof::NoSuchProcess {
-                    pid: m.identity.pid,
-                })
-            } else {
-                Observed::Unknown(unknown(e))
-            }
-        }
-        #[cfg(target_os = "macos")]
-        numeric(m.identity.pid, false, signal)
+        signal_checked(&m.identity, signal, || {
+            read_nonce(m.identity.pid).verified() == Some(&r.nonce) && not_earlier(&m.identity, r)
+        })
     }
+}
+/// Open a pidfd before observing generation and the caller's positive authority.
+pub(super) fn signal_checked(
+    identity: &ProcessIdentity,
+    signal: i32,
+    authority: impl FnOnce() -> bool,
+) -> Observed<SignalDelivered> {
+    #[cfg(target_os = "linux")]
+    let fd = match pidfd(identity.pid) {
+        Ok(fd) => fd,
+        Err(e) if e.raw_os_error() == Some(libc::ESRCH) => {
+            return Observed::Absent(AbsenceProof::NoSuchProcess { pid: identity.pid })
+        }
+        Err(e) => return Observed::Unknown(unknown(e)),
+    };
+    // Open the descriptor before observing identity and environment. Neither
+    // a stale process table entry nor a bare numeric pid grants authority.
+    match generation(identity) {
+        Observed::Verified(..) => {}
+        Observed::Absent(proof) => return Observed::Absent(proof),
+        Observed::Unknown(reason) => return Observed::Unknown(reason),
+    }
+    if !authority() {
+        return Observed::Unknown(unknown("member generation unverified"));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: live per-process pidfd opened before evidence checks;
+        // flags zero targets the referenced process, never a numeric pid.
+        if unsafe {
+            libc::syscall(
+                libc::SYS_pidfd_send_signal,
+                fd.as_raw_fd(),
+                signal,
+                std::ptr::null::<libc::siginfo_t>(),
+                0u32,
+            )
+        } == 0
+        {
+            return Observed::Verified(
+                SignalDelivered {
+                    pid: identity.pid,
+                    group: false,
+                    signal,
+                },
+                evidence(),
+            );
+        }
+        let e = io::Error::last_os_error();
+        if e.raw_os_error() == Some(libc::ESRCH) {
+            Observed::Absent(AbsenceProof::NoSuchProcess { pid: identity.pid })
+        } else {
+            Observed::Unknown(unknown(e))
+        }
+    }
+    #[cfg(target_os = "macos")]
+    numeric(identity.pid, false, signal)
 }
 #[cfg(target_os = "linux")]
 pub(crate) fn pidfd(pid: u32) -> io::Result<OwnedFd> {

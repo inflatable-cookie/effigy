@@ -109,6 +109,16 @@ fn main() {
         }
         return;
     }
+    if entry == "anchor-no-children" {
+        let mut status = 0;
+        // SAFETY: WNOHANG observes only this disposable workload's children;
+        // the proof expects none and owns any unexpected child it could reap.
+        let result = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
+        if result != -1 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ECHILD) {
+            std::process::exit(29);
+        }
+        return;
+    }
     if entry == "nonce-workload" {
         std::thread::sleep(Duration::from_secs(40));
         return;
