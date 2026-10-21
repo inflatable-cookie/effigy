@@ -58,7 +58,8 @@ impl Fixture {
     fn new() -> Self {
         // Short: a managed run's control socket lives under this home, and
         // a Unix socket path is bounded (SUN_LEN); macOS's TMPDIR is long.
-        let home = effigy_test_support::Fixture::in_parent("ekm-", Path::new("/tmp")).expect("home");
+        let home =
+            effigy_test_support::Fixture::in_parent("ekm-", Path::new("/tmp")).expect("home");
         let repo = effigy_test_support::Fixture::workspace("effigy-kill-matrix-repo-")
             .expect("external task fixture");
         fs::write(repo.path().join("effigy.toml"), TASK).expect("manifest");

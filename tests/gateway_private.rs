@@ -4328,12 +4328,8 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
 
     // A short private HOME: the run's control socket path must fit the
     // platform's Unix socket limit.
-    let short_home = sealed_fixture::SealedFixture(
-        tempfile::Builder::new()
-            .prefix("e235g.")
-            .tempdir_in("/tmp")
-            .expect("short private home"),
-    );
+    let short_home = effigy_test_support::Fixture::in_parent("e235g.", Path::new("/tmp"))
+        .expect("short private home");
     let home = short_home.path().to_path_buf();
     // Managed process commands run through `sh -lc`, whose login profile
     // reorders PATH behind the developer's real docker; the fixture home's

@@ -131,7 +131,7 @@ struct Case<'a> {
     home: PathBuf,
     // The run's control socket lives under HOME, so HOME stays short enough
     // for a Unix socket path (SUN_LEN).
-    _home: crate::sealed_fixture::SealedFixture,
+    _home: effigy_test_support::Fixture,
     gateway: &'a Path,
     effects: &'a HostEffectSentinels,
     foreign_ca: &'a Path,
@@ -159,10 +159,9 @@ impl<'a> Case<'a> {
         let proxy = MatrixProxy::bind(&root);
         let port = proxy.address.port();
         let state = root.join("engine");
-        let short_home = tempfile::Builder::new()
-            .prefix("e235-")
-            .tempdir_in("/tmp")
-            .expect("short private home");
+        let short_home =
+            effigy_test_support::Fixture::in_parent("e235-", std::path::Path::new("/tmp"))
+                .expect("short private home");
         let home = short_home.path().canonicalize().expect("canonical home");
         fs::create_dir(&state).expect("private engine state");
         let bin = std::env::split_paths(&effects.env_path)
@@ -248,7 +247,7 @@ impl<'a> Case<'a> {
             root,
             state,
             home,
-            _home: crate::sealed_fixture::SealedFixture(short_home),
+            _home: short_home,
             gateway,
             effects,
             foreign_ca,
