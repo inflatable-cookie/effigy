@@ -78,6 +78,7 @@ impl Drop for TerminalLease {
 #[derive(Debug)]
 pub(crate) struct Blocked {
     pub pid: u32,
+    pub anchor: Option<u32>,
     barrier: Option<OwnedFd>,
     status: OwnedFd,
     streams: Option<(OwnedFd, OwnedFd, Option<TerminalLease>)>,
@@ -145,6 +146,24 @@ impl Blocked {
         args.push(std::ptr::null());
         let mut vars: Vec<_> = env.iter().map(|a| a.as_ptr()).collect();
         vars.push(std::ptr::null());
+        // Fixed OS-shell builtins keep the anchor at one process, without a
+        // second product binary or a dependency on the owner's startup image.
+        // Before go it exits on control EOF; afterwards its own pipe holds it.
+        let anchor_script = c"trap '' HUP INT TERM; printf x >&4; IFS= read -r go <&3; [ \"$go\" = 1 ] || exit; exec 3<&- 4>&-; IFS= read -r hold";
+        let anchor_args = [
+            c"/bin/sh".as_ptr(),
+            c"-c".as_ptr(),
+            anchor_script.as_ptr(),
+            std::ptr::null(),
+        ];
+        let anchor_env = [
+            env.last().expect("nonce present").as_ptr(),
+            std::ptr::null(),
+        ];
+        // WIP: macOS KERN_PROCARGS2 omits this protected OS shell's nonce.
+        // Keep the existing path there until the native helper carries the
+        // retained startup image through the blocked child's second fork.
+        let anchored = key == "EFFIGY_CUSTODY_NONCE" && !cfg!(target_os = "macos");
         let cwd = DirFd::walk(&spec.cwd, Trust::Operator).map_err(io::Error::other)?;
         let _fork = FORK
             .lock()
@@ -256,9 +275,73 @@ impl Blocked {
                 let mut mask: libc::sigset_t = std::mem::zeroed();
                 libc::sigemptyset(&mut mask);
                 libc::sigprocmask(libc::SIG_SETMASK, &mask, std::ptr::null_mut());
+                // Fork inside the blocked leader's session, including PTY
+                // setsid. Its group already exists; neither parent setpgid nor
+                // a join across sessions can race workload execution.
+                let mut anchor_pid = 0i32;
+                let mut control = [-1; 2];
+                if anchored {
+                    let mut ready = [-1; 2];
+                    let mut hold = [-1; 2];
+                    if libc::pipe(control.as_mut_ptr()) != 0
+                        || libc::pipe(ready.as_mut_ptr()) != 0
+                        || libc::pipe(hold.as_mut_ptr()) != 0
+                    {
+                        libc::_exit(125);
+                    }
+                    anchor_pid = libc::fork();
+                    if anchor_pid < 0 {
+                        libc::_exit(125);
+                    }
+                    if anchor_pid == 0 {
+                        // These pipes were allocated above fd 4, so no source
+                        // is overwritten by the five descriptor targets.
+                        if libc::dup2(hold[0], 0) < 0
+                            || libc::dup2(hold[1], 1) < 0
+                            || libc::dup2(control[0], 3) < 0
+                            || libc::dup2(ready[1], 4) < 0
+                        {
+                            libc::_exit(125);
+                        }
+                        libc::close(2);
+                        let mut fd = 5;
+                        while fd < fd_limit {
+                            libc::close(fd);
+                            fd += 1;
+                        }
+                        libc::execve(
+                            c"/bin/sh".as_ptr(),
+                            anchor_args.as_ptr(),
+                            anchor_env.as_ptr(),
+                        );
+                        libc::_exit(125);
+                    }
+                    libc::close(control[0]);
+                    libc::close(ready[1]);
+                    libc::close(hold[0]);
+                    libc::close(hold[1]);
+                    let mut ack = [0u8];
+                    let mut n;
+                    loop {
+                        n = libc::read(ready[0], ack.as_mut_ptr().cast(), 1);
+                        if n >= 0 || last_errno() != libc::EINTR {
+                            break;
+                        }
+                    }
+                    libc::close(ready[0]);
+                    if n != 1 || ack != [b'x'] {
+                        libc::_exit(125);
+                    }
+                }
                 let ready = [1u8];
                 if libc::write(4, ready.as_ptr().cast(), 1) != 1 {
                     libc::_exit(125);
+                }
+                if anchored {
+                    let pid = anchor_pid.to_ne_bytes();
+                    if libc::write(4, pid.as_ptr().cast(), pid.len()) != pid.len() as isize {
+                        libc::_exit(125);
+                    }
                 }
                 let mut go = [0u8];
                 loop {
@@ -277,6 +360,15 @@ impl Blocked {
                 if go[0] != 1 {
                     libc::_exit(125);
                 }
+                if anchored {
+                    let release = b"1\n";
+                    if libc::write(control[1], release.as_ptr().cast(), release.len())
+                        != release.len() as isize
+                    {
+                        libc::_exit(125);
+                    }
+                    libc::close(control[1]);
+                }
                 libc::execve(argv[0].as_ptr(), args.as_ptr(), vars.as_ptr());
                 let failed = [2u8];
                 libc::write(4, failed.as_ptr().cast(), 1);
@@ -290,6 +382,7 @@ impl Blocked {
         drop(input_read);
         let mut child = Self {
             pid: pid as u32,
+            anchor: None,
             barrier: Some(barrier_write),
             status: status_read,
             streams: Some((out_read, err_read, None)),
@@ -301,6 +394,35 @@ impl Blocked {
             nonblock(stderr)?;
         }
         child.await_status(cx, false)?;
+        if anchored {
+            let mut bytes = [0u8; 4];
+            let mut offset = 0;
+            while offset < bytes.len() {
+                cx.check("anchor identity frame")
+                    .map_err(|e| io::Error::other(format!("{e:?}")))?;
+                // SAFETY: nonblocking live status pipe and remaining buffer.
+                let n = unsafe {
+                    libc::read(
+                        child.status.as_raw_fd(),
+                        bytes[offset..].as_mut_ptr().cast(),
+                        bytes.len() - offset,
+                    )
+                };
+                if n > 0 {
+                    offset += n as usize;
+                } else if n == 0 {
+                    return Err(io::Error::other("anchor frame EOF"));
+                } else if !matches!(
+                    io::Error::last_os_error().kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) {
+                    return Err(io::Error::last_os_error());
+                } else {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            }
+            child.anchor = Some(u32::from_ne_bytes(bytes));
+        }
         if matches!(spec.terminal, Terminal::Foreground) {
             child.streams.as_mut().expect("streams present").2 =
                 Some(TerminalLease::take(pid as u32)?);

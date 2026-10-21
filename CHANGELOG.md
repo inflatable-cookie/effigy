@@ -7,6 +7,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Local custody receipts add a process-group anchor. Recovery can stop
+  descendants that cleared their environment after their leader was reaped.
+  Each group retains one extra process until settle; a killed anchor or an
+  older receipt still leaves unverifiable nonce-free survivors as residue.
 - Managed tasks (`mode = "tui"` with `concurrent`) run under one detached
   supervisor per run (effigy#235). The supervisor admits the run in the kernel
   journal, then owns setup, gateway, environment and workloads, and one settle

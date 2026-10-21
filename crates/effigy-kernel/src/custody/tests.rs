@@ -283,6 +283,10 @@ fn fault_child() {
         .unwrap()
         .as_str()
     {
+        "anchor-spawn" => Point::AnchorSpawn,
+        "anchor-record" => Point::AnchorRecord,
+        "anchor-stop" => Point::AnchorStop,
+        "anchor-stopped" => Point::AnchorStopped,
         "fork" => Point::SpawnFork,
         "record" => Point::SpawnBeforeRecord,
         "go" => Point::SpawnBeforeGo,
@@ -342,6 +346,10 @@ fn fault_matrix_registration_spawn_and_socket_kill_enospc() {
             .unwrap(),
     );
     for point in [
+        "anchor-spawn",
+        "anchor-record",
+        "anchor-stop",
+        "anchor-stopped",
         "fork",
         "record",
         "go",
@@ -442,6 +450,8 @@ fn fault_matrix_registration_spawn_and_socket_kill_enospc() {
                 ));
             }
             if [
+                "anchor-spawn",
+                "anchor-record",
                 "fork",
                 "record",
                 "go",
@@ -587,5 +597,196 @@ fn replacement_cannot_reconstruct_or_itself_contain_a_secret() {
         for secret in secrets {
             assert!(!output.windows(secret.len()).any(|w| w == secret));
         }
+    }
+}
+
+// Even a failed assertion retires only the generations this proof launched.
+struct AnchorFixture(Vec<ProcessIdentity>);
+impl Drop for AnchorFixture {
+    fn drop(&mut self) {
+        for identity in &self.0 {
+            if platform::generation(identity).verified().is_some() {
+                platform::numeric(identity.pid, false, libc::SIGKILL);
+            }
+            let _ = spawn::reap(identity.pid);
+        }
+    }
+}
+
+#[test]
+fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
+    for (terminal, mode) in [
+        (Terminal::None, 0),
+        (Terminal::Pty, 0),
+        (Terminal::None, 1),
+        (Terminal::None, 2),
+    ] {
+        let home = home();
+        let cx = cx();
+        let spec = ProcessSpec {
+            argv: vec!["/bin/sh".into(), "-c".into(), "trap '' HUP; /usr/bin/env -i /bin/sh -c 'trap \"\" HUP TERM; echo $$ > descendant; exec /bin/sleep 60' & while [ ! -f descendant ]; do :; done".into()],
+            cwd: home.path().into(), env: BTreeMap::new(),
+            grace: Duration::from_millis(10), lifetime: Lifetime::Finite(Duration::from_secs(60)), terminal, label: "anchor proof".into(),
+        };
+        let mut child = spawn::Blocked::fork(&spec, "anchor-proof", cx.operation()).unwrap();
+        let anchor = crate::ident::process_identity(child.anchor.unwrap())
+            .verified()
+            .unwrap()
+            .clone();
+        let r = ProcessReceipt {
+            identity: crate::ident::process_identity(child.pid)
+                .verified()
+                .unwrap()
+                .clone(),
+            pgid: child.pid,
+            nonce: "anchor-proof".into(),
+            grace_millis: 10,
+        };
+        let mut fixture = AnchorFixture(vec![r.identity.clone(), anchor.clone()]);
+        child.go().unwrap();
+        child.executed(cx.operation()).unwrap();
+        wait(|| spawn::reap(child.pid).unwrap().is_some());
+        let pid: u32 = std::fs::read_to_string(home.path().join("descendant"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let descendant = crate::ident::process_identity(pid)
+            .verified()
+            .unwrap()
+            .clone();
+        fixture.0.push(descendant.clone());
+        assert_ne!(platform::read_nonce(pid).verified(), Some(&r.nonce));
+        if mode == 1 {
+            // SAFETY: exact recorded fixture identity, checked immediately.
+            assert!(platform::generation(&anchor).verified().is_some());
+            platform::numeric(anchor.pid, false, libc::SIGKILL);
+            wait(|| {
+                !matches!(
+                    crate::ident::process_state(anchor.pid),
+                    Observed::Verified(
+                        crate::ident::ProcessState::Active | crate::ident::ProcessState::Stopped,
+                        _
+                    )
+                )
+            });
+        }
+        let cleanup = cx.operation().cleanup(Duration::from_secs(2)).unwrap();
+        let result = if mode == 2 {
+            let old =
+                serde_json::from_value::<ProcessRecord>(serde_json::to_value(&r).unwrap()).unwrap();
+            assert!(old.anchor.is_none());
+            platform::recover(&old.process, &cleanup, &mut || false)
+        } else {
+            anchor::recover(&r, &anchor, &cleanup, &mut || false)
+        };
+        let survived = platform::generation(&descendant).verified().is_some()
+            && matches!(
+                crate::ident::process_state(pid),
+                Observed::Verified(
+                    crate::ident::ProcessState::Active | crate::ident::ProcessState::Stopped,
+                    _
+                )
+            );
+        // Always retire our recorded descendant before asserting the verdict.
+        if survived {
+            platform::numeric(pid, false, libc::SIGKILL);
+        }
+        if mode == 2 {
+            wait(|| {
+                matches!(
+                    anchor::closed(&r, Some(&anchor), None),
+                    Observed::Verified(..) | Observed::Absent(_)
+                )
+            });
+            anchor::stop(&r, Some(&anchor), &cleanup);
+        }
+        wait(|| {
+            matches!(
+                platform::group_closed(r.pgid, None),
+                Observed::Verified(..) | Observed::Absent(_)
+            )
+        });
+        if mode != 0 {
+            assert!(matches!(result, Observed::Unknown(_)), "{result:?}");
+            assert!(survived, "lost anchor must grant no signal authority");
+        } else {
+            assert!(
+                matches!(result, Observed::Verified(..) | Observed::Absent(_)),
+                "{result:?}"
+            );
+            assert!(!survived);
+        }
+    }
+}
+
+#[test]
+fn anchor_receipt_is_additive_and_spawn_overhead_is_measured() {
+    let home = home();
+    let cx = cx();
+    let spec = ProcessSpec {
+        argv: vec!["/bin/sh".into(), "-c".into(), "exit 0".into()],
+        cwd: home.path().into(),
+        env: BTreeMap::new(),
+        grace: Duration::ZERO,
+        lifetime: Lifetime::Finite(Duration::from_secs(1)),
+        terminal: Terminal::None,
+        label: "overhead".into(),
+    };
+    let mut totals = Vec::new();
+    for anchored in [false, true] {
+        let mut elapsed = Duration::ZERO;
+        for _ in 0..12 {
+            let started = Instant::now();
+            let mut child = if anchored {
+                spawn::Blocked::fork(&spec, "overhead", cx.operation())
+            } else {
+                spawn::Blocked::fork_with_nonce(
+                    &spec,
+                    "EFFIGY_PROBE_NONCE",
+                    "overhead",
+                    cx.operation(),
+                )
+            }
+            .unwrap();
+            let r = ProcessReceipt {
+                identity: crate::ident::process_identity(child.pid)
+                    .verified()
+                    .unwrap()
+                    .clone(),
+                pgid: child.pid,
+                nonce: "overhead".into(),
+                grace_millis: 0,
+            };
+            let anchor = child.anchor.map(|pid| {
+                crate::ident::process_identity(pid)
+                    .verified()
+                    .unwrap()
+                    .clone()
+            });
+            let mut fixture = AnchorFixture(vec![r.identity.clone()]);
+            fixture.0.extend(anchor.clone());
+            let old = serde_json::to_value(&r).unwrap();
+            assert!(serde_json::from_value::<ProcessRecord>(old)
+                .unwrap()
+                .anchor
+                .is_none());
+            child.go().unwrap();
+            child.executed(cx.operation()).unwrap();
+            elapsed += started.elapsed();
+            wait(|| spawn::reap(child.pid).unwrap().is_some());
+            let cleanup = cx.operation().cleanup(Duration::from_secs(2)).unwrap();
+            assert!(matches!(
+                anchor::stop(&r, anchor.as_ref(), &cleanup),
+                Observed::Verified(..) | Observed::Absent(_)
+            ));
+        }
+        totals.push(elapsed.as_micros() / 12);
+    }
+    let result =
+        serde_json::json!({"samples":12,"baseline_mean_us":totals[0],"anchored_mean_us":totals[1]});
+    eprintln!("anchor spawn overhead: {result}");
+    if let Some(path) = std::env::var_os("EFFIGY_KERNEL_ANCHOR_BENCH") {
+        std::fs::write(path, result.to_string()).unwrap();
     }
 }

@@ -1,4 +1,5 @@
 //! Journal-first local process custody (§5.7). No signal handlers live here.
+mod anchor;
 pub(crate) mod capture;
 pub(crate) mod platform;
 pub use capture::Stream;
@@ -119,6 +120,15 @@ pub struct ProcessReceipt {
     pub nonce: String,
     pub grace_millis: u64,
 }
+// Persisted extension of the public process identity receipt. Flattening keeps
+// old receipts readable and avoids changing fixture/probe custody's format.
+#[derive(Debug, Serialize, Deserialize)]
+struct ProcessRecord {
+    #[serde(flatten)]
+    process: ProcessReceipt,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    anchor: Option<ProcessIdentity>,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Exit {
     pub code: i32,
@@ -176,6 +186,7 @@ pub struct OwnedProcess {
 #[derive(Debug)]
 pub(crate) struct ProcessCore {
     receipt: ProcessReceipt,
+    anchor: Option<ProcessIdentity>,
     /// stdout and stderr logs, fed from the one merged redaction.
     logs: [Option<capture::Log>; 2],
     output: VecDeque<u8>,
@@ -401,12 +412,26 @@ impl Custody {
                 nonce,
                 grace_millis: spec.grace.as_millis().min(u128::from(u64::MAX)) as u64,
             };
+            let anchor = pending
+                .anchor
+                .map(|pid| {
+                    crate::ident::process_identity(pid)
+                        .verified()
+                        .cloned()
+                        .ok_or_else(|| SpawnError::Refused("anchor identity unavailable".into()))
+                })
+                .transpose()?;
+            crate::fault_point!(AnchorSpawn)?;
             run.applied(
                 &ticket,
-                serde_json::to_value(&receipt)
-                    .map_err(|_| SpawnError::Refused("receipt encoding".into()))?,
+                serde_json::to_value(ProcessRecord {
+                    process: receipt.clone(),
+                    anchor: anchor.clone(),
+                })
+                .map_err(|_| SpawnError::Refused("receipt encoding".into()))?,
             )
             .map_err(SpawnError::Unrecorded)?;
+            crate::fault_point!(AnchorRecord)?;
             let (stdout, stderr, terminal) = pending.take_streams();
             let logs = [Stream::Stdout, Stream::Stderr]
                 .map(|stream| run.capture_log(ticket.sequence(), stream, cx.operation().limits()));
@@ -418,6 +443,7 @@ impl Custody {
             let [stdout_log, stderr_log] = logs;
             let core = Arc::new(Mutex::new(ProcessCore {
                 receipt,
+                anchor,
                 logs: [stdout_log.ok(), stderr_log.ok()],
                 output: VecDeque::new(),
                 streams: [VecDeque::new(), VecDeque::new()],
@@ -711,6 +737,9 @@ impl ProcessCore {
         }
         // The unreaped direct child pins both leader pid and pgid. No numeric
         // signal is issued after that evidence is relinquished.
+        if let Some(anchor) = &self.anchor {
+            return anchor::signal(&self.receipt, anchor, signal);
+        }
         platform::owner_signal(&self.receipt, signal)
     }
     pub(crate) fn stop(&mut self, cx: &CleanupContext) -> StopReport {
@@ -738,8 +767,9 @@ impl ProcessCore {
         let mut killed = false;
         let group = loop {
             self.poll();
-            let state = platform::group_closed(
-                self.receipt.pgid,
+            let state = anchor::closed(
+                &self.receipt,
+                self.anchor.as_ref(),
                 self.exit.map(|_| self.receipt.identity.pid),
             );
             if matches!(state, Observed::Verified(..) | Observed::Absent(_)) {
@@ -749,7 +779,7 @@ impl ProcessCore {
                 break Observed::Unknown(unknown(format!("{e:?}")));
             }
             if (Instant::now() >= grace || crate::signal::escalated() || escalate())
-                && !killed
+                && (!killed || self.anchor.is_some())
                 && !self.reaped
             {
                 match self.signal(libc::SIGKILL) {
@@ -771,6 +801,11 @@ impl ProcessCore {
             }
             std::thread::sleep(Duration::from_millis(2));
         }
+        let group = if matches!(group, Observed::Verified(..) | Observed::Absent(_)) {
+            anchor::stop(&self.receipt, self.anchor.as_ref(), cx)
+        } else {
+            group
+        };
         if matches!(group, Observed::Verified(..) | Observed::Absent(_)) && !self.reaped {
             // Retain the direct child through group closure and stream drain.
             loop {
@@ -820,12 +855,16 @@ pub(crate) fn settle_effect(
     let receipt = match effect
         .receipt
         .as_ref()
-        .map(|v| serde_json::from_value::<ProcessReceipt>(v.clone()))
+        .map(|v| serde_json::from_value::<ProcessRecord>(v.clone()))
     {
         Some(Ok(r)) => r,
         None => return (EffectState::Released, None), // no receipt: barrier never released
         _ => return (EffectState::Residue, Some("invalid custody receipt".into())),
     };
+    let ProcessRecord {
+        process: receipt,
+        anchor,
+    } = receipt;
     if receipt.pgid != receipt.identity.pid || receipt.pgid == 0 || receipt.pgid > i32::MAX as u32 {
         return (EffectState::Residue, Some("invalid group identity".into()));
     }
@@ -835,6 +874,8 @@ pub(crate) fn settle_effect(
             return (EffectState::Residue, Some(format!("{:?}", report.residue)));
         }
         report.group
+    } else if let Some(anchor) = &anchor {
+        anchor::recover(&receipt, anchor, cx, &mut escalate)
     } else {
         platform::recover(&receipt, cx, &mut escalate)
     };
