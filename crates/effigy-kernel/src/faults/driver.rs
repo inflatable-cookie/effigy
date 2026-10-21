@@ -370,13 +370,23 @@ fn helper_log(home: &Path) -> PathBuf {
 }
 /// Waits until every helper spawned for this HOME, registered or not, and
 /// every recorded sentinel has exited: helpers are legitimate writers.
-fn quiesce(home: &Path, label: &str) {
+/// Anchors are nonwriters and must survive until recovery has stopped them.
+fn quiesce(home: &Path, label: &str, after_recovery: bool) {
     wait_until(
         &format!("{label}: helpers exit"),
         Duration::from_secs(40),
         || {
             let logged = std::fs::read_to_string(helper_log(home)).unwrap_or_default();
-            let helpers: Vec<_> = logged.lines().filter_map(world::identity).collect();
+            let helpers: Vec<_> = logged
+                .lines()
+                .filter_map(|line| {
+                    if let Some(line) = line.strip_prefix("anchor ") {
+                        after_recovery.then(|| world::identity(line)).flatten()
+                    } else {
+                        world::identity(line)
+                    }
+                })
+                .collect();
             fault::uninjected(|| {
                 World::capture_runs(home)
                     .iter()
@@ -390,7 +400,7 @@ fn quiesce(home: &Path, label: &str) {
 /// Status reads (O10), the generic settle of every unresolved run, the
 /// scenario's own recovery, then the captured world.
 fn recover(scenario: &dyn Scenario, home: &Path, label: &str) -> World {
-    quiesce(home, label);
+    quiesce(home, label, false);
     let before = world::tree(home);
     observe_everything(home);
     let after = world::tree(home);
@@ -452,7 +462,7 @@ fn recover(scenario: &dyn Scenario, home: &Path, label: &str) -> World {
             blocked.insert(run, refused);
         }
     }
-    quiesce(home, label);
+    quiesce(home, label, true);
     let mut world = World::capture(home);
     world.successor_blocked = blocked;
     world.diffs.push((format!("{label} status"), status_diff));

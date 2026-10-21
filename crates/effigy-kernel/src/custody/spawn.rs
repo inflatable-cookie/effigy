@@ -325,8 +325,11 @@ impl Blocked {
                         {
                             libc::_exit(125);
                         }
+                        // The blocked leader already closed every older fd.
+                        // These pipes and /dev/null are its only new ones.
+                        let end = null.max(control[1]).max(ready[1]);
                         let mut fd = close_from;
-                        while fd < fd_limit {
+                        while fd <= end {
                             libc::close(fd);
                             fd += 1;
                         }
@@ -381,12 +384,11 @@ impl Blocked {
                 if libc::write(4, ready.as_ptr().cast(), 1) != 1 {
                     libc::_exit(125);
                 }
-                if anchored {
-                    if libc::write(4, anchor_pid.as_ptr().cast(), anchor_pid.len())
+                if anchored
+                    && libc::write(4, anchor_pid.as_ptr().cast(), anchor_pid.len())
                         != anchor_pid.len() as isize
-                    {
-                        libc::_exit(125);
-                    }
+                {
+                    libc::_exit(125);
                 }
                 let mut go = [0u8];
                 loop {
@@ -468,7 +470,7 @@ impl Blocked {
             }
             child.anchor = Some(u32::from_ne_bytes(bytes));
             #[cfg(all(test, feature = "fault-injection"))]
-            crate::fault::note_helper(u32::from_ne_bytes(bytes));
+            crate::fault::note_anchor(u32::from_ne_bytes(bytes));
         }
         if matches!(spec.terminal, Terminal::Foreground) {
             child.streams.as_mut().expect("streams present").2 =

@@ -805,8 +805,30 @@ process and a transient reparenting fork per custody group. A protected OS
 shell is unsuitable on macOS because its environment may be unavailable to
 recovery; the native helper keeps the full nonce verification requirement.
 `PR_SET_CHILD_SUBREAPER` helps reap Linux orphans but does not pin a group;
-cgroups add Linux-only infrastructure and privileges. Neither replaces the
+cgroups add Linux-only infrastructure and delegation policy. Neither replaces the
 portable anchor needed on macOS.
+
+A fork-only anchor in the blocked leader cannot obtain the new effect's nonce
+through macOS `KERN_PROCARGS2`: it exposes the exec-time environment, even when
+the libc environment was changed before fork. The existing single-threaded
+sentinel is in another session and cannot join a PTY workload's group.
+`fork_only_anchor_cannot_obtain_the_effect_nonce_or_join_a_pty_session` proves
+both constraints. A fork-only anchor would require an execed custody leader
+helper, or delegating workload creation and descriptor transfer to a sentinel
+launched with its own recorded nonce. This implementation execs only the
+anchor and preserves the existing workload barrier protocol. The retained
+startup image is the only
+shipped native image with the kernel entry point; using it preserves I-SV4 and
+avoids adding a separately distributed helper. After the leader's descriptor
+closure, anchor setup closes only its newly created descriptors; the helper
+closes the protocol's known inherited descriptors after image verification.
+
+Planner ruling (2026-10-21, effigy-bd): about 500 net production lines plus
+proofs are authorized; proof and benchmark lines do not count toward the
+original approximate 600-line tripwire. Spawn cost is the acceptance gate:
+measure a release image with at least 20 paired samples on quiet and loaded
+hosts, reporting p50 and p90 added latency. Target p50 is at most 25 ms; if
+p50 cannot reach 50 ms, stop and report alternatives rather than ship.
 
 If step 3 fails (ENOSPC), the parent kills the blocked child and returns
 `SpawnError::Unrecorded`. A later spawn failure in `spawn_all` stops every
@@ -912,10 +934,13 @@ kernel restores it on exit.
   nonce-free orphan recovery after reaping the leader (ordinary and PTY),
   externally killed anchor refusal and old-receipt refusal.
 - `anchor_spawn_overhead_is_measured`: matched before/after measurements
-  and a workload that verifies it has no hidden child to reap.
+  with 24 alternating release-build pairs per acceptance condition, p50 and
+  p90 added latency, host load, and a workload with no hidden child to reap.
 - `fault_matrix_registration_spawn_and_socket_kill_enospc` and the custody
   fault scenarios cross `AnchorSpawn`, `AnchorRecord`, `AnchorStop` and
-  `AnchorStopped`, including owner SIGKILL.
+  `AnchorStopped`, including owner SIGKILL. The driver waits for writer
+  helpers before recovery and requires all recorded nonwriting anchors to
+  retire after recovery, including anchors that never reached registration.
 - `custody_prepare_source_requires_its_class_and_settles_with_a_sentinel`
   qualifies Prepare acquisition through `Custody::spawn_source`: successful,
   failed and deadline-expired children settle through the registered sentinel.

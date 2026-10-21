@@ -56,19 +56,17 @@ pub(super) fn entry() -> Result<(), RunError> {
     {
         return Err(RunError::Invalid("anchor nonce missing".into()));
     }
-    let limit = crate::custody::spawn::descriptor_limit()?;
     // SAFETY: supported signals and SIG_IGN; this single-threaded helper never
     // forwards or handles workload signals. Its only exit after go is KILL.
     unsafe {
         for signal in [libc::SIGHUP, libc::SIGINT, libc::SIGTERM] {
             libc::signal(signal, libc::SIG_IGN);
         }
-        // No fd survives except our parent's private go and acknowledgement
-        // pipes. Image verification has finished and closed its temporary fds.
-        for fd in 0..limit {
-            if fd != 3 && fd != 4 {
-                libc::close(fd);
-            }
+        // spawn::Blocked supplied only 0..=4 (plus Linux image fd 5).
+        // Image verification has finished and closed its temporary fds; the
+        // main-only helper dispatch and signal router open no descriptors.
+        for fd in [0, 1, 2, 5] {
+            libc::close(fd);
         }
     }
     let mut go = std::fs::File::from(private_dup(3)?);

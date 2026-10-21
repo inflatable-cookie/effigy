@@ -634,7 +634,7 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
         let home = home();
         let cx = cx();
         let spec = ProcessSpec {
-            argv: vec!["/bin/sh".into(), "-c".into(), "trap '' HUP; /usr/bin/env -i /bin/sh -c 'trap \"\" HUP TERM; echo $$ > descendant; exec /bin/sleep 60' & while [ ! -f descendant ]; do :; done".into()],
+            argv: vec!["/bin/sh".into(), "-c".into(), "trap '' HUP; /usr/bin/env -i /bin/sh -c 'trap \"\" HUP; trap \"printf signal > signalled\" TERM CONT; echo $$ > descendant; while :; do if [ -f check ]; then : > checked; fi; done' & while [ ! -f descendant ]; do :; done".into()],
             cwd: home.path().into(), env: BTreeMap::new(),
             grace: Duration::from_millis(10), lifetime: Lifetime::Finite(Duration::from_secs(60)), terminal, label: "anchor proof".into(),
         };
@@ -692,6 +692,13 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
                     _
                 )
             );
+        if mode != 0 && survived {
+            // Acknowledgement proves the descendant ran after recovery and
+            // processed pending traps before we inspect the signal marker.
+            std::fs::write(home.path().join("check"), "check").unwrap();
+            wait(|| home.path().join("checked").exists());
+        }
+        let signalled = home.path().join("signalled").exists();
         // Always retire our recorded descendant before asserting the verdict.
         if survived {
             platform::numeric(pid, false, libc::SIGKILL);
@@ -714,6 +721,7 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
         if mode != 0 {
             assert!(matches!(result, Observed::Unknown(_)), "{result:?}");
             assert!(survived, "lost anchor must grant no signal authority");
+            assert!(!signalled, "refusal must deliver neither TERM nor CONT");
         } else {
             assert!(
                 matches!(result, Observed::Verified(..) | Observed::Absent(_)),
@@ -724,8 +732,85 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
     }
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn fork_only_anchor_cannot_obtain_the_effect_nonce_or_join_a_pty_session() {
+    let nonce = format!("fork-only-proof-{}", std::process::id());
+    let previous = std::env::var_os("EFFIGY_CUSTODY_NONCE");
+    std::env::set_var("EFFIGY_CUSTODY_NONCE", &nonce);
+    // SAFETY: the fork child only calls async-signal-safe pause; no Rust
+    // allocator, environment access or lock is used there.
+    let pid = unsafe { libc::fork() };
+    if pid == 0 {
+        loop {
+            // SAFETY: pause has no arguments and only waits for a signal.
+            unsafe {
+                libc::pause();
+            }
+        }
+    }
+    if let Some(previous) = previous {
+        std::env::set_var("EFFIGY_CUSTODY_NONCE", previous);
+    } else {
+        std::env::remove_var("EFFIGY_CUSTODY_NONCE");
+    }
+    assert!(pid > 0);
+    let _fixture = AnchorFixture(vec![fixture_identity(pid as u32)]);
+    let observed = platform::read_nonce(pid as u32);
+    eprintln!("fork-only nonce observation: {observed:?}");
+    assert_ne!(
+        observed.verified(),
+        Some(&nonce),
+        "KERN_PROCARGS2 must not be confused with the changed libc environment"
+    );
+    let home = home();
+    let spec = ProcessSpec {
+        argv: vec!["/bin/sleep".into(), "1".into()],
+        cwd: home.path().into(),
+        env: BTreeMap::new(),
+        grace: Duration::ZERO,
+        lifetime: Lifetime::Finite(Duration::from_secs(1)),
+        terminal: Terminal::Pty,
+        label: "session proof".into(),
+    };
+    let child =
+        spawn::Blocked::fork_with_nonce(&spec, "EFFIGY_PROBE_NONCE", "session", cx().operation())
+            .unwrap();
+    // SAFETY: setpgid attempts to move only this disposable test process.
+    // A helper in the sentinel's separate session cannot join the PTY group.
+    assert_eq!(unsafe { libc::setpgid(0, child.pid as i32) }, -1);
+    assert_eq!(io::Error::last_os_error().raw_os_error(), Some(libc::EPERM));
+}
+
 #[test]
 fn anchor_spawn_overhead_is_measured() {
+    let mut host_load = [0f64; 3];
+    // SAFETY: getloadavg writes at most three initialized doubles here.
+    assert_eq!(unsafe { libc::getloadavg(host_load.as_mut_ptr(), 3) }, 3);
+    let output = std::env::var_os("EFFIGY_KERNEL_ANCHOR_BENCH");
+    assert!(
+        output.is_none() || !cfg!(debug_assertions),
+        "acceptance benchmark requires --release"
+    );
+    let samples = if output.is_some() { 24 } else { 2 };
+    let load: usize = std::env::var("EFFIGY_KERNEL_ANCHOR_LOAD")
+        .unwrap_or_else(|_| "0".into())
+        .parse()
+        .unwrap();
+    assert!(load <= 4, "bound this proof's owned CPU load");
+    let _load: Vec<_> = (0..load)
+        .map(|_| {
+            OwnedChild(
+                Command::new("/bin/sh")
+                    .args(["-c", "while :; do :; done"])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .unwrap(),
+            )
+        })
+        .collect();
     let home = home();
     let cx = cx();
     let spec = ProcessSpec {
@@ -741,15 +826,26 @@ fn anchor_spawn_overhead_is_measured() {
         label: "overhead".into(),
     };
     let root = StateRoot::effects(&cx, home.path()).unwrap();
-    let executable = executable();
-    let mut totals = Vec::new();
-    for anchored in [false, true] {
-        let mut elapsed = Duration::ZERO;
-        for _ in 0..12 {
+    let image_path = std::env::var_os("EFFIGY_KERNEL_ANCHOR_IMAGE")
+        .map(PathBuf::from)
+        .unwrap_or_else(executable_path);
+    let executable = Executable::capture(&image_path).unwrap();
+    let mut baseline = Vec::new();
+    let mut anchored = Vec::new();
+    let mut added = Vec::new();
+    // Paired samples alternate order; two complete pairs warm both paths.
+    for pair in 0..samples + 2 {
+        let mut times = [0i64; 2];
+        for enabled in if pair % 2 == 0 {
+            [false, true]
+        } else {
+            [true, false]
+        } {
+            let cx = self::cx();
             let started = Instant::now();
-            let image = anchored
+            let image = enabled
                 .then(|| crate::supervise::anchor::Image::prepare(&root, &executable).unwrap());
-            let mut child = if anchored {
+            let mut child = if enabled {
                 spawn::Blocked::fork(&spec, "overhead", cx.operation(), image.as_ref().unwrap())
             } else {
                 spawn::Blocked::fork_with_nonce(
@@ -771,7 +867,7 @@ fn anchor_spawn_overhead_is_measured() {
             fixture.0.extend(anchor.clone());
             child.go().unwrap();
             child.executed(cx.operation()).unwrap();
-            elapsed += started.elapsed();
+            times[usize::from(enabled)] = started.elapsed().as_micros() as i64;
             let mut exit = None;
             wait(|| {
                 exit = spawn::reap(child.pid).unwrap();
@@ -782,18 +878,30 @@ fn anchor_spawn_overhead_is_measured() {
                 0,
                 "the workload must have no hidden child"
             );
-            let cleanup = cx.operation().cleanup(Duration::from_secs(2)).unwrap();
             assert!(matches!(
-                anchor::stop(&r, anchor.as_ref(), &cleanup),
+                anchor::stop(
+                    &r,
+                    anchor.as_ref(),
+                    &cx.operation().cleanup(Duration::from_secs(2)).unwrap()
+                ),
                 Observed::Verified(..) | Observed::Absent(_)
             ));
         }
-        totals.push(elapsed.as_micros() / 12);
+        if pair >= 2 {
+            baseline.push(times[0]);
+            anchored.push(times[1]);
+            added.push(times[1] - times[0]);
+        }
     }
-    let result =
-        serde_json::json!({"samples":12,"baseline_mean_us":totals[0],"anchored_mean_us":totals[1]});
+    baseline.sort();
+    anchored.sort();
+    added.sort();
+    let percentiles = |v: &[i64]| serde_json::json!({"p50_us":v[(v.len()-1)/2], "p90_us":v[(v.len()*9).div_ceil(10)-1]});
+    let result = serde_json::json!({"samples":samples,"load_workers":load,"host_load":host_load,
+        "release":!cfg!(debug_assertions),"image":image_path,"image_bytes":std::fs::metadata(&image_path).unwrap().len(),
+        "baseline":percentiles(&baseline),"anchored":percentiles(&anchored),"added":percentiles(&added)});
     eprintln!("anchor spawn overhead: {result}");
-    if let Some(path) = std::env::var_os("EFFIGY_KERNEL_ANCHOR_BENCH") {
+    if let Some(path) = output {
         std::fs::write(path, result.to_string()).unwrap();
     }
 }
