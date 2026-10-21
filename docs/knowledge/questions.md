@@ -192,3 +192,37 @@ container mode. We shouldn't need a `*:tui` selector at all."
 
 Implementation is planned in the v0.15 environment lane (the
 environment-owned host-process and unified-session work after effigy#235).
+
+## Q-008 — Program fallback (for example oxide → cargo)
+
+Status: answered in principle; default semantics open
+Asked: 2026-10-21 (Oxide owner, relayed via Queue decision b8c28d74)
+Answered: 2026-10-21 by Tom: "Approve.. can the allow list be optional?"
+
+Effigy offers a generic per-program fallback in configuration:
+`[programs.<name>] fallback = "<program>"`, an optional `allow = [subcommands]`
+and `force = false`.
+
+- **When it applies.** If the named program can't be found on the inherited
+  PATH, or `force = true`, Effigy puts a per-run shim on that run's PATH. The
+  shim execs the fallback with the exact argv: no translation, no
+  Oxide-specific flag handling, and no retry after an execution failure. Each
+  run prints an honest notice that the original program's behaviour (for
+  Oxide, managed storage) is lost.
+- **What it covers.** Only name resolution through the inherited PATH. It
+  doesn't apply to absolute paths, a replaced PATH, shell aliases or
+  functions. A nested real `$CARGO` must never recurse into the shim.
+- **Effigy owns** config precedence and trust, program resolution, the
+  boundaries between global options, `--` and subcommands, the shim's lifetime
+  and permissions, the refusals for config and allow-list violations, and
+  focused tests.
+- **The allow list is optional** (Tom). When present, unlisted subcommands are
+  refused.
+  - **Still to decide:** what an omitted allow list means. The Oxide owner
+    proposes "unrestricted exact argv" (which includes `cargo clean` without
+    Oxide's ownership checks, and cargo plugins). That needs an explicit
+    ruling; it isn't decided by silence.
+  - The supplied list (check, build, test, clippy, run, nextest, fmt, doc,
+    bench) is only an example, not a guarantee.
+- **Consumers** remove their `:cargo` selectors and CI switches only after the
+  reviewed feature has shipped, and each owner scopes its own migration.
