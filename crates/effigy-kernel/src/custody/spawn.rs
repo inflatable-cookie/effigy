@@ -329,7 +329,7 @@ impl Blocked {
                         }
                     }
                     libc::close(ready[0]);
-                    if n != 1 || ack != [b'x'] {
+                    if n != 1 || ack[0] != b'x' {
                         libc::_exit(125);
                     }
                 }

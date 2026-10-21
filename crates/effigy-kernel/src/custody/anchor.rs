@@ -50,8 +50,10 @@ fn member_signal(
         }
         Err(e) => return Observed::Unknown(unknown(e)),
     };
-    if platform::generation(member).verified().is_none() {
-        return Observed::Unknown(unknown("member generation changed"));
+    match platform::generation(member) {
+        Observed::Verified(..) => {}
+        Observed::Absent(proof) => return Observed::Absent(proof),
+        Observed::Unknown(reason) => return Observed::Unknown(reason),
     }
     // SAFETY: identity observation validated the positive member pid.
     if unsafe { libc::getpgid(member.pid as i32) } != r.pgid as i32 || !verified(r, anchor) {
@@ -96,6 +98,9 @@ pub(super) fn signal(
     anchor: &ProcessIdentity,
     signal: i32,
 ) -> Observed<SignalDelivered> {
+    if ![libc::SIGTERM, libc::SIGCONT, libc::SIGKILL, libc::SIGINT].contains(&signal) {
+        return Observed::Unknown(unknown("invalid custody signal"));
+    }
     if !verified(r, anchor) {
         return Observed::Unknown(unknown("group anchor unavailable"));
     }
@@ -103,13 +108,18 @@ pub(super) fn signal(
         Ok(pids) => pids,
         Err(e) => return Observed::Unknown(unknown(e)),
     };
+    let mut delivered = None;
     for pid in pids.into_iter().filter(|pid| *pid != anchor.pid) {
         let member = match ident::process_identity(pid) {
             Observed::Verified(member, _) => member,
             Observed::Absent(_) => continue,
             Observed::Unknown(reason) => return Observed::Unknown(reason),
         };
-        if let Observed::Unknown(reason) = member_signal(r, anchor, &member, signal) {
+        let sent = member_signal(r, anchor, &member, signal);
+        if let Observed::Verified(sent, _) = &sent {
+            delivered = Some(sent.clone());
+        }
+        if let Observed::Unknown(reason) = sent {
             // A process can retire between inventory and its evidence read.
             if matches!(
                 ident::process_state(pid),
@@ -120,14 +130,9 @@ pub(super) fn signal(
             return Observed::Unknown(reason);
         }
     }
-    Observed::Verified(
-        SignalDelivered {
-            pid: r.pgid,
-            group: false,
-            signal,
-        },
-        evidence(),
-    )
+    delivered
+        .map(|sent| Observed::Verified(sent, evidence()))
+        .unwrap_or_else(|| Observed::Unknown(unknown("no live workload member to signal")))
 }
 
 pub(super) fn stop(
@@ -189,6 +194,12 @@ pub(super) fn recover(
         };
         for sig in [sig, libc::SIGCONT] {
             if let Observed::Unknown(reason) = signal(r, anchor, sig) {
+                if matches!(
+                    closed(r, Some(anchor), None),
+                    Observed::Verified(..) | Observed::Absent(_)
+                ) {
+                    return stop(r, Some(anchor), cx);
+                }
                 return Observed::Unknown(reason);
             }
         }
