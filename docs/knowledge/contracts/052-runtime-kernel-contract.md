@@ -848,6 +848,11 @@ kernel restores it on exit.
   clears its environment loses the nonce. Either is outside custody in
   recovery and is reported, never signalled by number. Guest-placement
   Effigy never creates sessions or clears the nonce.
+  A nonce-free descendant surviving a reaped leader (papercut aedb6038) is
+  likewise `Unknown` residue: recovery preserves its records and files and
+  never signals it. PGID, boot identity and a start after launch cannot prove
+  continuity across an emptied and reused group. A retained group anchor is
+  deferred to Queue lead `9717909b` (planner ruling, 2026-10-21).
 
 #### Failure model
 
