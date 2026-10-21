@@ -199,6 +199,39 @@ fn wait_state(
     }
 }
 
+/// Wait for the settlement of the run that was live before the signal, not
+/// merely for an open row whose owner is gone. `state: interrupted` is
+/// published for an open run as soon as its gate is free, which happens
+/// while its sentinel is still closing children and committing the parent
+/// row; `latest` names a settled run only once that row is closed. The
+/// barrier is the closed row for this exact run id, so a slow settle is
+/// waited for instead of being reported as a missing cleanup.
+fn wait_settled(
+    fixture: &Fixture,
+    task: &str,
+    run_id: &str,
+    wanted: &[&str],
+    timeout: Duration,
+) -> serde_json::Value {
+    let started = Instant::now();
+    loop {
+        let status = fixture.status(task);
+        let settled = status["latest"]["run_id"].as_str() == Some(run_id);
+        if settled
+            && status["state"]
+                .as_str()
+                .is_some_and(|state| wanted.contains(&state))
+        {
+            return status;
+        }
+        assert!(
+            started.elapsed() < timeout,
+            "`{task}` run {run_id} never settled as {wanted:?}: {status}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 fn kill_case(signal: i32, expected_state: &str) {
     let fixture = Fixture::new();
     let mut owner = fixture.effigy(&["hold"]).spawn_owned().expect("owner");
@@ -210,6 +243,10 @@ fn kill_case(signal: i32, expected_state: &str) {
         Some(u64::from(owner.id())),
         "the live run names its owner: {live}"
     );
+    let run_id = live["current"]["run_id"]
+        .as_str()
+        .expect("live run id")
+        .to_owned();
 
     // SAFETY: our own direct child.
     assert_eq!(unsafe { libc::kill(owner.id() as i32, signal) }, 0);
@@ -233,7 +270,13 @@ fn kill_case(signal: i32, expected_state: &str) {
         "background grandchild {grandchild} survived signal {signal}"
     );
 
-    let closed = wait_state(&fixture, "hold", &[expected_state], Duration::from_secs(40));
+    let closed = wait_settled(
+        &fixture,
+        "hold",
+        &run_id,
+        &[expected_state],
+        Duration::from_secs(40),
+    );
     assert!(closed["current"].is_null(), "no live run remains: {closed}");
     assert_eq!(
         closed["latest"]["cleanup"], "complete",
@@ -494,6 +537,11 @@ fn sequence_signal_matrix_each_step_text_and_json_settles_the_entire_tree() {
                 eprintln!("sequence matrix {cell}");
                 let grandchild = fixture.read_sequence_pid("grandchild.pid", &mut owner, &cell);
                 let leader = fixture.read_sequence_pid("leader.pid", &mut owner, &cell);
+                let live = wait_state(&fixture, "hold", &["running"], Duration::from_secs(15));
+                let run_id = live["current"]["run_id"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{cell}: live run id: {live}"))
+                    .to_owned();
                 // SAFETY: our direct fixture child, never a pattern or foreign PID.
                 assert_eq!(unsafe { libc::kill(owner.id() as i32, signal) }, 0);
                 let exit = wait_exit(&mut owner, Duration::from_secs(40)).expect("sequence exits");
@@ -524,9 +572,10 @@ fn sequence_signal_matrix_each_step_text_and_json_settles_the_entire_tree() {
                     wait_gone(leader, Duration::from_secs(30)),
                     "leader survived"
                 );
-                let status = wait_state(
+                let status = wait_settled(
                     &fixture,
                     "hold",
+                    &run_id,
                     &["cancelled", "interrupted"],
                     Duration::from_secs(30),
                 );
