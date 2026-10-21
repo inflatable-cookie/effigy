@@ -465,6 +465,8 @@ fn volume_uuid(_file: &std::fs::File) -> Option<String> {
     None
 }
 
+/// Only the platform that exposes a volume UUID has anything to spell.
+#[cfg(target_os = "macos")]
 fn format_uuid(bytes: &[u8]) -> Option<String> {
     let hex = bytes
         .iter()
@@ -1362,6 +1364,7 @@ mod tests {
         assert!(refusal(&permissive, &writable).contains("writable by others"));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn a_formatted_uuid_matches_the_platform_spelling() {
         assert_eq!(
