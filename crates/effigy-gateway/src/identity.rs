@@ -3,6 +3,8 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -13,6 +15,12 @@ const IDENTITY_FORMAT_VERSION: u32 = 1;
 const MAX_PID_BYTES: usize = 32;
 const MAX_IDENTITY_BYTES: usize = 1024;
 const MAX_VERSION_BYTES: usize = 256;
+/// Upper bound on how long a reader waits for an in-flight publication before
+/// it falls back to validating the files it can see. A publisher holds the
+/// exclusive record lock for two renames, so this is only reached by a writer
+/// that is stopped mid-publication.
+#[cfg(unix)]
+const READ_LOCK_BUDGET: Duration = Duration::from_secs(2);
 
 /// Precise, platform-specific start data stored with the gateway PID.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -228,6 +236,26 @@ pub fn probe_live_identity(record: &GatewayIdentityRecord) -> GatewayIdentityPro
 /// an empty gateway.
 pub fn read_snapshot(pid_path: &Path) -> Result<Option<GatewayRecordSnapshot>, GatewayError> {
     let owner_uid = trusted_directory_owner(pid_path)?;
+    read_snapshot_coordinated(pid_path, owner_uid)
+}
+
+/// Read the trusted pair while no publication is in flight.
+///
+/// `publish_current_gateway` replaces the sidecar and the decimal PID file as
+/// two renames under the exclusive record lock. A reader that did not
+/// coordinate could observe the identity-only first half of that pair and
+/// report an interrupted publication that never happened, which is what a
+/// startup probe racing its own daemon saw (papercut dcc3fbd2). Readers take
+/// the shared half of the same lock, so an in-flight publication is either
+/// invisible or already complete. Validation still fails closed when this
+/// caller cannot coordinate (no lock file yet, a lock it may not open, or a
+/// publisher that holds it past [`READ_LOCK_BUDGET`]), and the interrupted-pair
+/// refusal is unchanged.
+fn read_snapshot_coordinated(
+    pid_path: &Path,
+    owner_uid: u32,
+) -> Result<Option<GatewayRecordSnapshot>, GatewayError> {
+    let _shared = GatewayRecordLock::share(pid_path, owner_uid)?;
     read_snapshot_for_owner(pid_path, owner_uid)
 }
 
@@ -242,7 +270,7 @@ fn read_snapshot_with(
     authenticated_operator: Option<u32>,
 ) -> Result<Option<GatewayRecordSnapshot>, GatewayError> {
     let owner_uid = trusted_directory_owner_with(pid_path, effective_uid, authenticated_operator)?;
-    read_snapshot_for_owner(pid_path, owner_uid)
+    read_snapshot_coordinated(pid_path, owner_uid)
 }
 
 fn read_snapshot_for_owner(
@@ -309,6 +337,17 @@ pub fn publish_current_gateway(
     pid_path: &Path,
     operator_uid: u32,
 ) -> Result<GatewayRecordSnapshot, GatewayError> {
+    publish_current_gateway_with(pid_path, operator_uid, || {})
+}
+
+/// Publication seam for the lock-ordering proof: `between` runs after the
+/// identity sidecar rename and before the PID rename, inside the exclusive
+/// record lock.
+fn publish_current_gateway_with(
+    pid_path: &Path,
+    operator_uid: u32,
+    between: impl FnOnce(),
+) -> Result<GatewayRecordSnapshot, GatewayError> {
     let owner_uid = trusted_directory_owner(pid_path)?;
     if owner_uid != operator_uid {
         return Err(invalid_record("gateway directory owner changed"));
@@ -329,7 +368,9 @@ pub fn publish_current_gateway(
     let pid_bytes = pid.to_string().into_bytes();
 
     let _lock = GatewayRecordLock::acquire(pid_path, owner_uid)?;
-    if read_snapshot(pid_path)?.is_some() {
+    // This caller already holds the exclusive record lock, so it reads the
+    // pair directly instead of taking the shared half again.
+    if read_snapshot_for_owner(pid_path, owner_uid)?.is_some() {
         return Err(invalid_record(
             "gateway record appeared after the existing-generation check",
         ));
@@ -337,9 +378,10 @@ pub fn publish_current_gateway(
     validate_replace_target(pid_path, owner_uid)?;
     validate_replace_target(&identity_path(pid_path), owner_uid)?;
     atomic_publish(&identity_path(pid_path), &identity_bytes, owner_uid)?;
+    between();
     atomic_publish(pid_path, &pid_bytes, owner_uid)?;
 
-    read_snapshot(pid_path)?
+    read_snapshot_for_owner(pid_path, owner_uid)?
         .filter(|snapshot| snapshot.record.as_ref() == Some(&record))
         .ok_or_else(|| invalid_record("published gateway record pair did not verify"))
 }
@@ -349,7 +391,7 @@ pub fn publish_current_gateway(
 /// delete a concurrently published generation.
 pub fn remove_if_unchanged(snapshot: &GatewayRecordSnapshot) -> Result<bool, GatewayError> {
     let _lock = GatewayRecordLock::acquire(&snapshot.pid_path, snapshot.owner_uid)?;
-    let Some(current) = read_snapshot(&snapshot.pid_path)? else {
+    let Some(current) = read_snapshot_for_owner(&snapshot.pid_path, snapshot.owner_uid)? else {
         return Ok(true);
     };
     if current.pid_bytes != snapshot.pid_bytes
@@ -794,6 +836,64 @@ struct GatewayRecordLock(File);
 
 #[cfg(unix)]
 impl GatewayRecordLock {
+    /// Shared half of the record lock for readers. `None` means this caller
+    /// could not coordinate with a publisher: no lock file exists yet, the
+    /// lock file is not openable by this caller, or a publisher held it for
+    /// longer than [`READ_LOCK_BUDGET`]. Record validation still runs in every
+    /// case, so an uncoordinated read keeps failing closed.
+    fn share(pid_path: &Path, owner_uid: u32) -> Result<Option<Self>, GatewayError> {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+        let lock_path = pid_path.with_extension("lock");
+        let file = match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+            .open(&lock_path)
+        {
+            Ok(file) => file,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+                ) =>
+            {
+                return Ok(None)
+            }
+            Err(error) => return Err(GatewayError::Io(error)),
+        };
+        let metadata = file.metadata().map_err(GatewayError::Io)?;
+        let path_metadata = match fs::symlink_metadata(&lock_path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(GatewayError::Io(error)),
+        };
+        if path_metadata.file_type().is_symlink()
+            || path_metadata.dev() != metadata.dev()
+            || path_metadata.ino() != metadata.ino()
+            || !metadata.is_file()
+            || metadata.mode() & 0o077 != 0
+            || (metadata.uid() != owner_uid && metadata.uid() != 0)
+        {
+            // A writer would refuse this lock too, so nothing validates a pair
+            // through it; read the records without coordination.
+            return Ok(None);
+        }
+        let deadline = Instant::now() + READ_LOCK_BUDGET;
+        loop {
+            match fs2::FileExt::try_lock_shared(&file) {
+                Ok(()) => return Ok(Some(Self(file))),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Ok(None);
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                Err(error) => return Err(GatewayError::Io(error)),
+            }
+        }
+    }
+
     fn acquire(pid_path: &Path, owner_uid: u32) -> Result<Self, GatewayError> {
         use nix::unistd::{fchown, Gid, Uid};
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
@@ -844,6 +944,10 @@ struct GatewayRecordLock;
 
 #[cfg(not(unix))]
 impl GatewayRecordLock {
+    fn share(_pid_path: &Path, _owner_uid: u32) -> Result<Option<Self>, GatewayError> {
+        Ok(None)
+    }
+
     fn acquire(_pid_path: &Path, _owner_uid: u32) -> Result<Self, GatewayError> {
         Ok(Self)
     }
@@ -1125,6 +1229,45 @@ mod tests {
         assert!(malformed.record().is_none());
         assert_eq!(fs::read(&pid_path).unwrap(), legacy_before);
         assert_eq!(fs::read(&sidecar).unwrap(), sidecar_before);
+    }
+
+    /// A startup probe reads the trusted pair while its own daemon is
+    /// publishing it. Coordination through the record lock means the reader
+    /// never sees the identity-only first half as an interrupted publication
+    /// (papercut dcc3fbd2); the interrupted-pair refusal itself is unchanged.
+    #[cfg(unix)]
+    #[test]
+    fn gateway_identity_reader_never_observes_an_in_flight_publication() {
+        use std::os::unix::fs::MetadataExt;
+        use std::sync::mpsc;
+        let dir = tempfile::tempdir().expect("fixture directory");
+        let pid_path = dir.path().join("gateway.pid");
+        let owner_uid = fs::metadata(dir.path()).expect("fixture metadata").uid();
+        let (go_tx, go_rx) = mpsc::channel();
+        let publisher_path = pid_path.clone();
+        let publisher = std::thread::spawn(move || {
+            publish_current_gateway_with(&publisher_path, owner_uid, || {
+                // The reader begins inside the publication window: the sidecar
+                // is durable and the PID file is not written yet.
+                go_tx.send(()).expect("start the reader");
+                std::thread::sleep(Duration::from_millis(100));
+            })
+        });
+        let reader = std::thread::spawn(move || {
+            go_rx.recv_timeout(Duration::from_secs(10)).expect("reader start");
+            read_snapshot(&pid_path)
+        });
+        let snapshot = reader
+            .join()
+            .expect("reader thread")
+            .expect("coordinated read")
+            .expect("record pair");
+        let published = publisher
+            .join()
+            .expect("publisher thread")
+            .expect("publish");
+        assert_eq!(snapshot.pid(), std::process::id());
+        assert_eq!(snapshot.digest(), published.digest());
     }
 
     #[test]
