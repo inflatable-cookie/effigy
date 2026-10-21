@@ -195,7 +195,7 @@ environment-owned host-process and unified-session work after effigy#235).
 
 ## Q-008 — Program fallback (for example oxide → cargo)
 
-Status: answered in principle; default semantics open
+Status: answered
 Asked: 2026-10-21 (Oxide owner, relayed via Queue decision b8c28d74)
 Answered: 2026-10-21 by Tom: "Approve.. can the allow list be optional?"
 
@@ -218,10 +218,13 @@ and `force = false`.
   focused tests.
 - **The allow list is optional** (Tom). When present, unlisted subcommands are
   refused.
-  - **Still to decide:** what an omitted allow list means. The Oxide owner
-    proposes "unrestricted exact argv" (which includes `cargo clean` without
-    Oxide's ownership checks, and cargo plugins). That needs an explicit
-    ruling; it isn't decided by silence.
+  - **An omitted allow list means unrestricted exact argv.** Tom, 2026-10-21, relayed by the Oxide supervisor: "I think this is fine, so long as the conditions are well documented in effigy help and the effigy skill". So `oxide clean` becomes `cargo clean` without Oxide's ownership checks, and cargo plugins and `cargo-<x>` exec run as cargo would run them.
+  - **Mandatory condition:** BOTH `effigy help` and the shipped Effigy agent skill clearly document:
+    - when the fallback triggers (the program is unavailable, or `force`);
+    - that `force` only affects the inherited PATH;
+    - the optional allow-list semantics;
+    - exact argv, with no translation and no retry;
+    - the loss of the original program's safeguards, including `oxide clean` → `cargo clean` and cargo plugin behaviour.
   - The supplied list (check, build, test, clippy, run, nextest, fmt, doc,
     bench) is only an example, not a guarantee.
 - **Consumers** remove their `:cargo` selectors and CI switches only after the
