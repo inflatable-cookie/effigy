@@ -212,10 +212,7 @@ fn operator_startup_bounds_admission_and_readiness_separately() {
     .to_string();
     let elapsed = started.elapsed();
     assert!(refusal.contains("readiness phase"), "{refusal}");
-    assert!(
-        !refusal.contains("admission did not complete"),
-        "{refusal}"
-    );
+    assert!(!refusal.contains("admission did not complete"), "{refusal}");
     assert!(
         elapsed < Duration::from_secs(20),
         "the readiness refusal must not wait out a deadline: {elapsed:?}"

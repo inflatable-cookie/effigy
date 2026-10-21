@@ -2171,12 +2171,10 @@ fn private_status_json_refusal_carries_observation_labels() {
     std::fs::create_dir_all(config.pid_file_path.parent().expect("gateway directory"))
         .expect("create gateway directory");
     std::fs::write(&config.pid_file_path, "4242").expect("legacy PID record");
-    let error =
-        resolve_status_for_status_command(&config, verified_gateway_status(&config), true)
-            .expect_err("a legacy record is not a provable status");
+    let error = resolve_status_for_status_command(&config, verified_gateway_status(&config), true)
+        .expect_err("a legacy record is not a provable status");
     let rendered = error.rendered_output().expect("structured refusal");
-    let refusal: serde_json::Value =
-        serde_json::from_str(rendered).expect("status refusal JSON");
+    let refusal: serde_json::Value = serde_json::from_str(rendered).expect("status refusal JSON");
     assert_eq!(refusal["schema"], "effigy.gateway.status.v1");
     assert_eq!(refusal["ok"], false);
     assert_eq!(refusal["status"], "unknown");

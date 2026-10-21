@@ -1254,7 +1254,9 @@ mod tests {
             })
         });
         let reader = std::thread::spawn(move || {
-            go_rx.recv_timeout(Duration::from_secs(10)).expect("reader start");
+            go_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("reader start");
             read_snapshot(&pid_path)
         });
         let snapshot = reader

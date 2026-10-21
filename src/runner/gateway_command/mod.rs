@@ -768,14 +768,14 @@ fn resolve_status_for_status_command(
     match status {
         Ok(status) => Ok(Some(status)),
         Err(effigy_gateway::GatewayError::NotRunning) => Ok(None),
-        Err(error @ effigy_gateway::GatewayError::LegacyIdentityRequired { pid }) => Err(
-            gateway_status_refusal(
+        Err(error @ effigy_gateway::GatewayError::LegacyIdentityRequired { pid }) => {
+            Err(gateway_status_refusal(
                 config,
                 "legacy_identity_required",
                 &error.to_string(),
                 legacy_identity_recovery(pid),
-            ),
-        ),
+            ))
+        }
         Err(error) => Err(gateway_status_refusal(
             config,
             "gateway_status_unverified",
@@ -813,7 +813,8 @@ fn run_gateway_status_with_config(
             )
         });
     }
-    let status = resolve_status_for_status_command(config, verified_gateway_status(config), output_json)?;
+    let status =
+        resolve_status_for_status_command(config, verified_gateway_status(config), output_json)?;
     let route_table = RouteTable::load(&config.route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let mut tls = gateway_tls_summary(config, &route_table);
