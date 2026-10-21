@@ -82,9 +82,25 @@ effigy test cargo-nextest -- --test-threads=1
 Use built-in test planning when you want one entrypoint for mixed stacks and
 predictable suite selection.
 
+Keep focused Rust runs read-only. A focused run against a checkout whose
+sibling crates are source-linked resolves through `Cargo.lock`, and a plain
+Cargo invocation may rewrite that file as a side effect of collecting
+evidence:
+
+```sh
+effigy test:focused -p effigy-deps --lib -E 'test(cargo_unlink::tests::)'
+effigy test -p app-api --locked
+```
+
+`test:focused` passes `--locked` for you in this repository. In another repo,
+add `--locked` to the built-in test passthrough. A lockfile that genuinely
+needs an update is updated deliberately, never as a side effect of a test run;
+when `--locked` refuses, the error names what the resolver wanted to change.
+
 Deep dive:
 - [`013-testing-orchestration.md`](013-testing-orchestration.md)
 - [`048-built-in-test-suite-lifecycle-and-env.md`](048-built-in-test-suite-lifecycle-and-env.md)
+- [`077-local-dependency-linking.md`](077-local-dependency-linking.md)
 
 ### Repo scans
 

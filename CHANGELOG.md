@@ -223,6 +223,9 @@ During v0.x, MINOR bumps may include breaking changes.
   lists the families still present.
 
 ### Added
+- `test:focused` runs a focused Rust test selection through Cargo with
+  `--locked`, keeping `Cargo.lock` read-only while a source-linked consumer
+  checkout is under observation.
 - Per-run scratch on a configured external volume (effigy#244). Setting
   `[scratch] root` in `~/.effigy/config.toml` to a mounted volume's root gives
   every host-placed run — the built-in `effigy test` route included — its own
