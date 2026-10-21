@@ -223,6 +223,10 @@ During v0.x, MINOR bumps may include breaking changes.
   lists the families still present.
 
 ### Added
+- The container system guide documents Colima's VM DNS proxy timing out a
+  registry pull while the host resolves normally, with a bounded two-attempt
+  retry and a profile restart, so a transient VM resolver outage is not
+  mistaken for a failed catalog image or wrong pull credentials.
 - Per-run scratch on a configured external volume (effigy#244). Setting
   `[scratch] root` in `~/.effigy/config.toml` to a mounted volume's root gives
   every host-placed run — the built-in `effigy test` route included — its own
