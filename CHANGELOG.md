@@ -503,6 +503,14 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- Effigy's own repository builds through Oxide. Selectors run Cargo through
+  `scripts/oxide-selector.sh`, which leases Oxide's shared slot pool so Rust
+  intermediates stay off the internal SSD, and `scripts/effigy-selfbuild.sh`
+  builds the checkout's binary before running it. `EFFIGY_OXIDE_ESCAPE=cargo`,
+  `effigy cargo <args>` and `cargo run --bin effigy --` keep the plain-Cargo
+  escapes. Selectors that pin a `target/` binary path, a non-Oxide Cargo
+  profile or a scrubbed `HOME` stay on Cargo, and hosted runners keep using
+  Cargo through `GITHUB_ACTIONS`.
 - Gateway HTTP requests reuse upstream connections with low-latency TCP settings.
   Managed listener ownership is verified at publication and off the request path;
   stopped or replaced generations still refuse traffic, including reused connections.
