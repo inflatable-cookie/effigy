@@ -509,11 +509,13 @@ During v0.x, MINOR bumps may include breaking changes.
   builds the checkout's binary before running it. Every routed selector keeps a
   named `<selector>:cargo` escape with the plain-Cargo command it replaced;
   `EFFIGY_OXIDE_ESCAPE=cargo`, `effigy cargo <args>` and `cargo run --bin
-  effigy --` keep the rest. The `cargo qa*` and `prepush-ci` aliases now run the
-  `effigy-qa` shim, which keeps their previous task selection and builds
-  through the same wrapper. Selectors that pin a `target/` binary path, a
-  non-Oxide Cargo profile or a scrubbed `HOME` stay on Cargo, and hosted
-  runners keep using Cargo through `GITHUB_ACTIONS`.
+  effigy --` keep the rest. The `cargo qa*` and `prepush-ci` aliases are
+  removed, because a Cargo alias either needs unsupported `!sh` syntax or
+  compiles Effigy's dependency graph with plain Cargo; their tasks are
+  `qa:gates`, `qa:docs`, `qa:json`, `qa:json:ci`, `release gates` and
+  `prepush:ci`. Selectors that pin a `target/` binary path, a non-Oxide Cargo
+  profile or a scrubbed `HOME` stay on Cargo, and hosted runners keep using
+  Cargo through `GITHUB_ACTIONS`.
 - Gateway HTTP requests reuse upstream connections with low-latency TCP settings.
   Managed listener ownership is verified at publication and off the request path;
   stopped or replaced generations still refuse traffic, including reused connections.

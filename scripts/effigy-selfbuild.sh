@@ -8,7 +8,7 @@
 # lease while a selector's nested Oxide calls wait behind it.
 #
 #   scripts/effigy-selfbuild.sh <effigy args...>
-#   scripts/effigy-selfbuild.sh --bin effigy-qa <args...>
+#   scripts/effigy-selfbuild.sh --bin <name> <args...>
 #
 # Escapes for when Oxide itself is broken:
 #   scripts/effigy-selfbuild.sh --cargo <args...>

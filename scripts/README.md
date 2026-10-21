@@ -36,10 +36,11 @@ pool instead of `target/`, so the bulk of the writes stay off the internal SSD
 - Every routed selector also carries a named `:cargo` sibling in
   `config/tasks.toml` (`effigy <selector>:cargo`) with the plain-Cargo command
   it replaced; aggregates point their siblings at sibling leaves.
-- The `cargo qa*` / `prepush-ci` aliases run `src/bin/effigy-qa.rs`, which maps
-  the old flags to the same tasks (`qa:gates`, `qa:docs`, `qa:json`,
-  `qa:json:ci`, `release gates`, `prepush:ci`) and launches the wrapper, so the
-  alias selects what it always did and never builds Effigy with plain Cargo.
+- There are no Cargo aliases. A Cargo alias cannot run a wrapper (`!sh` is
+  rejected, and `run --bin ...` compiles Effigy's dependency graph with plain
+  Cargo first), so the former `qa*`/`prepush-ci` aliases are replaced by the
+  tasks they selected: `qa:gates`, `qa:docs`, `qa:json`, `qa:json:ci`,
+  `release gates` and `prepush:ci`.
 - Selectors that pin a `target/` binary path, a non-Oxide Cargo profile
   (`discovery-proof`, `fixture-proof`, `doctor-process`) or a scrubbed `HOME`
   keep calling Cargo directly.

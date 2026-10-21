@@ -19,7 +19,7 @@ The plan (lanes, their documents and their order), leads, papercuts, brief draft
 - `effigy tasks` for selector inventory; `effigy doctor` for routing or health ambiguity.
 - `effigy test --plan` when test selection matters; narrow Effigy selectors for task validation.
 - Without an installed binary, use `sh scripts/effigy-selfbuild.sh <command>`. It builds this checkout through Oxide and runs the built `target/debug/effigy`. `cargo run --bin effigy -- <command>` is the plain-Cargo escape.
-- The `cargo qa`, `qa-docs`, `qa-json`, `qa-json-ci`, `qa-release` and `prepush-ci` aliases run the `effigy-qa` shim, which selects the same task as before and builds through the same wrapper; `EFFIGY_OXIDE_ESCAPE=cargo` keeps that whole path on Cargo.
+- The old `cargo qa`, `qa-docs`, `qa-json`, `qa-json-ci`, `qa-release` and `prepush-ci` aliases are gone: a Cargo alias either needs unsupported `!sh` syntax or makes plain Cargo compile Effigy's dependency graph first. Use the tasks they selected - `effigy qa:gates`, `effigy qa:docs`, `effigy qa:json`, `effigy qa:json:ci`, `effigy release gates`, `effigy prepush:ci` - or `sh scripts/effigy-selfbuild.sh <task>` without an installed binary.
 
 ## Guardrails
 
