@@ -42,6 +42,7 @@
       "crates/effigy-secrets/Cargo.toml",
       "crates/effigy-state/Cargo.toml",
       "crates/effigy-tasks/Cargo.toml",
+      "crates/effigy-test-support/Cargo.toml",
       "crates/effigy-tui/Cargo.toml",
       "crates/effigy-ui/Cargo.toml"
     ],

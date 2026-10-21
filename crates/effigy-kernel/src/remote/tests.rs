@@ -138,7 +138,7 @@ fn in_band_frames_are_stripped_before_all_sinks_and_bound_to_identity() {
         r.nonce.as_str()
     );
     for split in 0..=frame.len() {
-        let mut s = stream::RegistrationStream::new(i.clone());
+        let mut s = stream::RegistrationStream::new(i.clone(), false);
         assert_eq!(s.push(b"ordinary\n", false), b"ordinary\n");
         let mut output = s.push(&frame.as_bytes()[..split], false);
         output.extend(s.push(&frame.as_bytes()[split..], false));
@@ -154,11 +154,11 @@ fn in_band_frames_are_stripped_before_all_sinks_and_bound_to_identity() {
         frame.replace("100 boot", "0 boot"),
         format!("\x1eEFFIGY-CUSTODY {}\n", "a".repeat(3000)),
     ] {
-        let mut s = stream::RegistrationStream::new(i.clone());
+        let mut s = stream::RegistrationStream::new(i.clone(), false);
         assert!(s.push(frame.as_bytes(), true).is_empty());
         assert!(s.registration().unwrap().is_err());
     }
-    let mut s = stream::RegistrationStream::new(i);
+    let mut s = stream::RegistrationStream::new(i, false);
     assert!(s.push(b"\x1eEFFIGY-CUSTODY v1 unfinished", true).is_empty());
     assert!(s.registration().unwrap().is_err());
 }
@@ -209,14 +209,26 @@ fn settlement_observes_remote_after_kill_and_rejects_unknown_or_foreign_proofs()
             EffectState::Residue
         );
     }
+    // A positive, complete inventory without the nonce proves the workload
+    // never started (R5); an unobservable one stays residue under K5.
     let mut fake = remote(vec![step(
         RemoteCall::Find(container(), r.nonce.clone()),
         RemoteReply::Find(Observed::Verified(None, evidence())),
     )]);
     assert_eq!(
         settle_effect(&effect(&r, false), &clean, Some(&mut fake)).0,
+        EffectState::Released
+    );
+    fake.tape.assert_finished();
+    let mut fake = remote(vec![step(
+        RemoteCall::Find(container(), r.nonce.clone()),
+        RemoteReply::Find(Observed::Unknown(UnknownReason::PermissionDenied)),
+    )]);
+    assert_eq!(
+        settle_effect(&effect(&r, false), &clean, Some(&mut fake)).0,
         EffectState::Residue
     );
+    fake.tape.assert_finished();
 }
 #[test]
 fn remote_signals_require_live_leader_or_member_nonce_and_start_ticks() {
@@ -406,6 +418,7 @@ fn launch_spec() -> RemoteLaunch {
         command: RemoteCommand {
             argv: vec!["workload".into()],
             env: BTreeMap::new(),
+            terminal: RemoteTerminal::None,
         },
         ack_timeout: Duration::from_secs(1),
         call_timeout: Duration::from_secs(1),
@@ -975,6 +988,7 @@ fn wrapper_is_posix_shell_preserves_argv_and_never_embeds_nonce_or_host_paths() 
             "EFFIGY_CUSTODY_NONCE".into(),
             EnvValue::Secret(SecretValue::new(b"private-nonce-value".to_vec()).unwrap()),
         )]),
+        terminal: RemoteTerminal::None,
     };
     let argv = cmd.wrapper_argv();
     assert_eq!(&argv[5..], &cmd.argv);
@@ -1072,6 +1086,7 @@ fn linux_wrapper_emits_real_namespace_and_start_identity_before_exec() {
     let command = RemoteCommand {
         argv: vec!["/bin/sh".into(), "-c".into(), "printf 'workload\\n'".into()],
         env: BTreeMap::new(),
+        terminal: RemoteTerminal::None,
     };
     let argv = command.wrapper_argv();
     let output = Command::new(&argv[0])
@@ -1088,7 +1103,7 @@ fn linux_wrapper_emits_real_namespace_and_start_identity_before_exec() {
         .to_owned();
     let mut i = intent(&r);
     i.container.vm_boot_id = boot;
-    let mut stream = stream::RegistrationStream::new(i);
+    let mut stream = stream::RegistrationStream::new(i, false);
     assert!(stream.push(&output.stderr, true).is_empty());
     let receipt = stream.registration().unwrap().unwrap();
     assert!(receipt.session_isolated);
@@ -1132,4 +1147,398 @@ fn killed_exec_client_leaves_remote_alive_until_independent_settlement() {
     assert_eq!(adapter.0.tape.resources()["owned-remote"], json!("closed"));
     assert_eq!(adapter.0.tape.resources()["foreign"], json!("alive"));
     adapter.0.tape.assert_finished();
+}
+/// Another environment run: every bring-up advances the generation (053 §3).
+fn advance_env(home: &Path) {
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home).unwrap();
+    let mut store = crate::store::Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| txn.next_generation(&env().resource).map(|_| ()))
+        .unwrap();
+}
+#[test]
+fn concurrent_environment_runs_leave_the_remote_outcome_truthful() {
+    let home = tempfile::tempdir().unwrap();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut steps = launch_steps(home.path(), true);
+    let RemoteReply::Launch(launch) = std::mem::replace(
+        &mut steps[1].reply,
+        RemoteReply::Find(Observed::Unknown(UnknownReason::Injected)),
+    ) else {
+        unreachable!("launch step")
+    };
+    let bump = home.path().to_owned();
+    // Between intent and acknowledgement.
+    steps[1].reply = RemoteReply::Launch(Box::new(move |command| {
+        advance_env(&bump);
+        launch(command)
+    }));
+    let mut a = Adapter(remote(steps));
+    let mut run = begin(&cx, &root, &mut a);
+    let expected = expected(&run);
+    let mut remote = RemoteCustody::launch(&mut run, launch_spec(), &cx, &mut a.0).unwrap();
+    // The registration keeps the generation bound at launch.
+    assert_eq!(remote.registration, expected);
+    // Between acknowledgement and completion.
+    advance_env(home.path());
+    let exit = *remote
+        .client()
+        .wait(&cx.operation().child(Duration::from_secs(1)))
+        .verified()
+        .unwrap();
+    assert_eq!(exit.code, 0);
+    remote.client().complete(&mut run, exit).unwrap();
+    remote
+        .complete(
+            &mut run,
+            crate::outcome::RequiredObligation::ProcessExit(exit.code),
+        )
+        .unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    a.0.tape.expect(step(
+        RemoteCall::Observe(expected),
+        session(SessionState::Closed),
+    ));
+    let outcome = run
+        .settle(
+            &cx.operation().cleanup(Duration::from_secs(3)).unwrap(),
+            &mut a,
+        )
+        .unwrap();
+    assert_eq!(outcome.cleanup(), CleanupOutcome::Complete);
+    assert_eq!(outcome.workload(), &WorkloadOutcome::Succeeded);
+    a.0.tape.assert_finished();
+}
+#[test]
+fn intent_still_binds_the_current_environment_generation() {
+    let home = tempfile::tempdir().unwrap();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut a = Adapter(remote(vec![step(
+        RemoteCall::Identity(ContainerTarget("selected".into())),
+        RemoteReply::Identity(Observed::Verified(container(), evidence())),
+    )]));
+    let mut run = begin(&cx, &root, &mut a);
+    advance_env(home.path());
+    let before = run.effects().unwrap().len();
+    assert!(matches!(
+        RemoteCustody::launch(&mut run, launch_spec(), &cx, &mut a.0),
+        Err(RemoteError::Run(RunError::StaleGeneration { .. }))
+    ));
+    assert_eq!(run.effects().unwrap().len(), before);
+    a.0.tape.assert_finished();
+    // The refusal wrote nothing and poisons nothing: re-reading the fence
+    // and launching again succeeds on the same run.
+    for step in launch_steps(home.path(), true) {
+        a.0.tape.expect(step);
+    }
+    let mut spec = launch_spec();
+    spec.env.generation = Generation::new(2);
+    let current = expected(&run);
+    let remote = RemoteCustody::launch(&mut run, spec, &cx, &mut a.0).unwrap();
+    assert_eq!(remote.registration.nonce, current.nonce);
+    assert_eq!(remote.registration.env.generation, Generation::new(2));
+    a.0.tape.expect(step(
+        RemoteCall::Observe(remote.registration.clone()),
+        session(SessionState::Closed),
+    ));
+    let mut remote = remote;
+    let _ = remote
+        .client()
+        .wait(&cx.operation().child(Duration::from_secs(1)));
+    run.settle(
+        &cx.operation().cleanup(Duration::from_secs(3)).unwrap(),
+        &mut a,
+    )
+    .unwrap();
+    a.0.tape.assert_finished();
+}
+#[test]
+fn a_replaced_container_or_rebooted_vm_is_refused_whatever_the_generation() {
+    use session::*;
+    let mut r = reg();
+    // A registration bound before later environment runs.
+    r.env.generation = Generation::new(1);
+    let member = Member {
+        pid: 42,
+        start_ticks: 100,
+        pgid: 42,
+        sid: 42,
+        nonce: Observed::Verified(r.nonce.as_str().to_owned(), evidence()),
+        descendant: false,
+    };
+    let replaced = Snapshot {
+        container: ContainerIdentity {
+            id: "full-container-b".into(),
+            ..container()
+        },
+        pid_ns: 401,
+        leader: Some(member.clone()),
+        members: vec![member.clone()],
+    };
+    assert!(matches!(plan_signal(&r, &replaced), Observed::Unknown(_)));
+    assert!(matches!(
+        observe(&r, Observed::Verified(replaced, evidence())),
+        Observed::Unknown(_)
+    ));
+    let rebooted = Snapshot {
+        container: ContainerIdentity {
+            vm_boot_id: "boot-b".into(),
+            ..container()
+        },
+        pid_ns: 401,
+        leader: Some(member.clone()),
+        members: vec![member],
+    };
+    assert!(matches!(plan_signal(&r, &rebooted), Observed::Unknown(_)));
+    assert!(matches!(
+        observe(&r, Observed::Verified(rebooted, evidence())),
+        Observed::Absent(AbsenceProof::BootChanged { .. })
+    ));
+}
+#[test]
+fn nonce_recovery_binds_the_intent_fence_the_adapter_cannot_know() {
+    let cx = cx();
+    let clean = cx.operation().cleanup(Duration::from_secs(3)).unwrap();
+    let r = reg();
+    let found = RemoteRegistration {
+        env: Fence {
+            resource: r.env.resource.clone(),
+            generation: Generation::new(9),
+        },
+        ..r.clone()
+    };
+    let mut steps = vec![step(
+        RemoteCall::Find(container(), r.nonce.clone()),
+        RemoteReply::Find(Observed::Verified(Some(found), evidence())),
+    )];
+    steps.extend(closed_steps(&r));
+    let mut fake = remote(steps);
+    assert_eq!(
+        settle_effect(&effect(&r, false), &clean, Some(&mut fake)).0,
+        EffectState::Released
+    );
+    fake.tape.assert_finished();
+    // The identity is still the adapter's to prove.
+    let mut fake = remote(vec![step(
+        RemoteCall::Find(container(), r.nonce.clone()),
+        RemoteReply::Find(Observed::Verified(
+            Some(RemoteRegistration {
+                container: ContainerIdentity {
+                    id: "full-container-b".into(),
+                    ..container()
+                },
+                ..r.clone()
+            }),
+            evidence(),
+        )),
+    )]);
+    assert_eq!(
+        settle_effect(&effect(&r, false), &clean, Some(&mut fake)).0,
+        EffectState::Residue
+    );
+    fake.tape.assert_finished();
+}
+#[test]
+fn a_backend_terminal_frames_on_stdout_with_its_line_ending() {
+    let r = reg();
+    let i = intent(&r);
+    let frame = format!(
+        "\x1eEFFIGY-CUSTODY v1 {} 42 42 100 boot-a 401\r\n",
+        r.nonce.as_str()
+    );
+    let mut tty = stream::RegistrationStream::new(i.clone(), true);
+    assert_eq!(tty.stream(), 0);
+    let mut output = tty.push(frame.as_bytes(), false);
+    output.extend(tty.push(b"prompt> ", true));
+    assert_eq!(output, b"prompt> ");
+    assert_eq!(tty.registration(), Some(Ok(r.clone())));
+    let mut plain = stream::RegistrationStream::new(i, false);
+    assert_eq!(plain.stream(), 1);
+    assert!(plain.push(frame.as_bytes(), true).is_empty());
+    assert!(plain.registration().unwrap().is_err());
+}
+#[test]
+fn terminal_launch_inherits_stdin_and_strips_the_stdout_frame() {
+    let home = tempfile::tempdir().unwrap();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let cwd = home.path().to_owned();
+    let mut a = Adapter(remote(vec![
+        step(
+            RemoteCall::Identity(ContainerTarget("selected".into())),
+            RemoteReply::Identity(Observed::Verified(container(), evidence())),
+        ),
+        step(
+            RemoteCall::Launch(container()),
+            RemoteReply::Launch(Box::new(move |command| {
+                assert_eq!(command.terminal, RemoteTerminal::Tty);
+                let mut env = command.env;
+                let nonce = env.remove(&OsString::from("EFFIGY_CUSTODY_NONCE")).unwrap();
+                env.insert("TEST_REMOTE_NONCE".into(), nonce);
+                Ok(ProcessSpec {
+                    argv: vec![
+                        "/bin/sh".into(),
+                        "-c".into(),
+                        "printf '\\036EFFIGY-CUSTODY v1 %s 42 42 100 boot-a 401\\r\\n' \"$TEST_REMOTE_NONCE\"; printf 'tty-output\\r\\n'".into(),
+                    ],
+                    cwd,
+                    env,
+                    grace: Duration::from_millis(20),
+                    lifetime: crate::custody::Lifetime::Finite(Duration::from_secs(5)),
+                    terminal: Terminal::None,
+                    label: "remote fake tty exec".into(),
+                })
+            })),
+        ),
+    ]));
+    let mut run = begin(&cx, &root, &mut a);
+    let expected = expected(&run);
+    let mut spec = launch_spec();
+    spec.command.terminal = RemoteTerminal::Tty;
+    let mut remote = RemoteCustody::launch(&mut run, spec, &cx, &mut a.0).unwrap();
+    assert_eq!(remote.registration, expected);
+    let exit = remote
+        .client()
+        .wait(&cx.operation().child(Duration::from_secs(1)));
+    assert_eq!(exit.verified().unwrap().code, 0);
+    let (stdout, stderr) = remote.client().take_stream_output();
+    assert_eq!(stdout, b"tty-output\r\n");
+    assert!(stderr.is_empty());
+    a.0.tape.expect(step(
+        RemoteCall::Observe(expected),
+        session(SessionState::Closed),
+    ));
+    run.settle(
+        &cx.operation().cleanup(Duration::from_secs(3)).unwrap(),
+        &mut a,
+    )
+    .unwrap();
+    a.0.tape.assert_finished();
+}
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_wrapper_keeps_an_existing_session_leader_instead_of_forking() {
+    use std::process::Command;
+    let r = reg();
+    let command = RemoteCommand {
+        argv: vec!["/bin/sh".into(), "-c".into(), "printf 'workload\\n'".into()],
+        env: BTreeMap::new(),
+        terminal: RemoteTerminal::Tty,
+    };
+    // A backend terminal makes the exec a session leader, as setsid(1) does.
+    let child = Command::new("setsid")
+        .args(command.wrapper_argv())
+        .env("EFFIGY_CUSTODY_NONCE", r.nonce.as_str())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"workload\n");
+    let mut i = intent(&r);
+    i.container.vm_boot_id = crate::ident::boot_identity()
+        .verified()
+        .unwrap()
+        .as_str()
+        .to_owned();
+    let mut stream = stream::RegistrationStream::new(i, false);
+    assert!(stream.push(&output.stderr, true).is_empty());
+    let receipt = stream.registration().unwrap().unwrap();
+    // The process the client waits on is the registered leader.
+    assert_eq!(receipt.leader_pid, pid);
+    assert!(receipt.session_isolated);
+}
+/// A backend that reports a fixed terminal for every request.
+struct Reports(StrictRemote, RemoteTerminal);
+impl RemoteExecAdapter for Reports {
+    fn identity(
+        &mut self,
+        target: &ContainerTarget,
+        cx: &OperationContext,
+    ) -> Observed<ContainerIdentity> {
+        self.0.identity(target, cx)
+    }
+    fn launch(
+        &mut self,
+        id: &ContainerIdentity,
+        cmd: RemoteCommand,
+        cx: &EffectContext,
+    ) -> Result<ProcessSpec, AdapterError> {
+        self.0.launch(id, cmd, cx)
+    }
+    fn signal_session(
+        &mut self,
+        reg: &RemoteRegistration,
+        sig: Signal,
+        cx: &CleanupContext,
+    ) -> Observed<SessionState> {
+        self.0.signal_session(reg, sig, cx)
+    }
+    fn observe_session(
+        &mut self,
+        reg: &RemoteRegistration,
+        cx: &OperationContext,
+    ) -> Observed<SessionState> {
+        self.0.observe_session(reg, cx)
+    }
+    fn find_by_nonce(
+        &mut self,
+        id: &ContainerIdentity,
+        nonce: &Nonce,
+        cx: &OperationContext,
+    ) -> Observed<Option<RemoteRegistration>> {
+        self.0.find_by_nonce(id, nonce, cx)
+    }
+    fn terminal(&self, _: &ContainerIdentity, _: RemoteTerminal) -> RemoteTerminal {
+        self.1
+    }
+}
+#[test]
+fn a_backend_terminal_downgrade_frames_on_stderr_and_never_upgrades() {
+    // Requested, reported by the backend, and what the launch must carry.
+    for (requested, reported, effective) in [
+        (
+            RemoteTerminal::Tty,
+            RemoteTerminal::Stdin,
+            RemoteTerminal::Stdin,
+        ),
+        (
+            RemoteTerminal::None,
+            RemoteTerminal::Tty,
+            RemoteTerminal::None,
+        ),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let cx = cx();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let mut a = Reports(remote(launch_steps(home.path(), true)), reported);
+        let mut settle = Adapter(remote(vec![]));
+        let mut run = begin(&cx, &root, &mut settle);
+        let expected = expected(&run);
+        let mut spec = launch_spec();
+        spec.command.terminal = requested;
+        // The model frames on stderr, as a backend without a terminal does.
+        let mut remote = RemoteCustody::launch(&mut run, spec, &cx, &mut a).unwrap();
+        assert_eq!(remote.registration, expected);
+        assert_eq!(a.0.launches[0].terminal, effective);
+        let _ = remote
+            .client()
+            .wait(&cx.operation().child(Duration::from_secs(1)));
+        settle.0.tape.expect(step(
+            RemoteCall::Observe(expected),
+            session(SessionState::Closed),
+        ));
+        run.settle(
+            &cx.operation().cleanup(Duration::from_secs(3)).unwrap(),
+            &mut settle,
+        )
+        .unwrap();
+        a.0.tape.assert_finished();
+        settle.0.tape.assert_finished();
+    }
 }

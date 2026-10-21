@@ -10,9 +10,9 @@ use crate::TASK_MANIFEST_FILE;
 mod source;
 
 pub use source::{
-    bundle_sources_need_preparation, inspect_bundle_source, prepare_bundle_sources,
-    resolve_catalog_source, sync_bundle_source, BundleSourceInspectReport, BundleSyncReport,
-    SourcePreparation, SourceSettlement,
+    bundle_sources_need_preparation, catalog_source_roots, inspect_bundle_source,
+    prepare_bundle_sources, resolve_catalog_source, sync_bundle_source, BundleSourceInspectReport,
+    BundleSyncReport, CatalogSourceRoots, SourcePreparation, SourceSettlement,
 };
 use source::{resolve_bundle_selection, resolve_materialized_bundle_source, ResolvedBundleSource};
 

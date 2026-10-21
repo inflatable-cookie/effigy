@@ -866,10 +866,9 @@ mod tests {
     fn shared_compose_receives_its_immutable_generation_root() {
         use crate::contract_test_support::EnvGuard;
         use std::os::unix::fs::PermissionsExt;
-        let fixture = tempfile::Builder::new()
-            .prefix("effigy-parent-fixtures-shared-render-")
-            .tempdir_in(crate::contract_test_support::test_fixture_parent())
-            .unwrap();
+        let fixture =
+            effigy_test_support::Fixture::workspace("effigy-parent-fixtures-shared-render-")
+                .unwrap();
         let root = fixture.path().canonicalize().unwrap();
         let generation = root.join("objects").join("a".repeat(64));
         let directory = generation.join("shared");
@@ -924,10 +923,7 @@ mod tests {
         use crate::contract_test_support::EnvGuard;
         use std::os::unix::fs::PermissionsExt;
         let _lock = crate::contract_test_support::lock_test();
-        let fixture = tempfile::Builder::new()
-            .prefix("effigy-parent-fixtures-reset-adoption-")
-            .tempdir_in(crate::contract_test_support::test_fixture_parent())
-            .unwrap();
+        let fixture = effigy_test_support::Fixture::workspace("effigy-reset-adoption-").unwrap();
         let root = fixture.path().canonicalize().unwrap();
         let bin = root.join("bin");
         std::fs::create_dir(&bin).unwrap();

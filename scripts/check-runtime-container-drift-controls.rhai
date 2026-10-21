@@ -202,10 +202,6 @@ fs::write_file(
     path::join(runner, "environment.rs"),
     "fn bypass() { let _ = ComposeBackend::Docker; }\n",
 );
-fs::write_file(
-    path::join(runner, "system_command/workspace_catalog.rs"),
-    "fn bypass() { let _ = compose_args(policy, [\"exec\"]); }\n",
-);
 
 let runner_root = path::join(fixture, "src/runner");
 let runtime_root = path::join(fixture, "crates/effigy-runtime/src");
@@ -235,7 +231,6 @@ expect_allowed("compose_args", compose_hits, "src/runner/system_command/workspac
 expect_rejected("compose_args", compose_hits, "src/runner/execute/pipeline/standard.rs");
 expect_rejected("compose_args", compose_hits, "src/runner/doctor_ports.rs");
 expect_rejected("compose_args", compose_hits, "src/runner/system_command/workspace_permissions.rs");
-expect_rejected("compose_args", compose_hits, "src/runner/system_command/workspace_catalog.rs");
 
 fs::remove(fixture);
 log("[ok] runtime/container drift-guard positive and negative controls");

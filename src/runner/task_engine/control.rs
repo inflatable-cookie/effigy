@@ -272,7 +272,7 @@ pub(in crate::runner) fn request_stop(record: &RunRecord) -> Result<StopStarted,
             record.id,
             next,
             &cleanup,
-            &mut TaskSettlement,
+            &mut TaskSettlement::default(),
         )
         .map(|_| StopStarted::Settled)
         .map_err(|error| {

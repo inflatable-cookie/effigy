@@ -341,7 +341,7 @@ pub(crate) fn translate_for_policy(
             &fragment.name,
             &fragment.service_toml,
             &fragment.compose_fragment,
-            FragmentSource::ProjectLocal(fragment.directory.clone()),
+            FragmentSource::Project(fragment.directory.clone()),
         )?;
         overlay.insert(fragment.name.clone(), loaded);
     }

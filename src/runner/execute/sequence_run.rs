@@ -300,40 +300,28 @@ fn execute_step(
                 run_embedded_task_with_output_mode(invocation, cwd, preflight.output_mode)?;
             nested_exit(output, preflight.output_json)
         }
-        StepAction::Rhai { path }
-            if !super::pipeline::standard::runs_plain_host_command(preflight, selection) =>
+        StepAction::Builtin { parsed, .. }
+            if matches!(parsed.as_ref(), Command::Exec(_))
+                && !crate::runner::container_runtime::inside_container_handoff() =>
         {
-            legacy_container_step(|| {
-                crate::runner::script_command::execute_repo_rhai_script(
-                    root,
-                    task_name,
-                    path,
-                    passthrough,
-                )
-            })?;
-            Ok((0, String::new(), String::new(), WorkloadOutcome::Succeeded))
-        }
-        StepAction::Builtin { parsed, cwd, .. }
-            if matches!(parsed.as_ref(), Command::Exec(_) | Command::Container(_)) =>
-        {
-            let output = legacy_container_step(|| {
-                crate::runner::embedded_runner::run_embedded_command(
-                    root,
-                    effigy_cli::apply_global_json_flag(*parsed.clone(), preflight.output_json),
-                    cwd,
-                    EmbeddedRepoOverrideMode::Force,
-                )
-            })?;
-            nested_exit(output, preflight.output_json)
+            let Command::Exec(args) = parsed.as_ref() else {
+                unreachable!("matched exec")
+            };
+            let exit =
+                crate::runner::exec_command::run_exec_step(args, run, preflight.output_json)?;
+            Ok((
+                exit.code,
+                String::from_utf8_lossy(&exit.stdout).into_owned(),
+                String::from_utf8_lossy(&exit.stderr).into_owned(),
+                exit.workload,
+            ))
         }
         StepAction::Command(command)
             if !super::pipeline::standard::runs_plain_host_command(preflight, selection) =>
         {
-            legacy_container_step(|| {
-                super::pipeline::standard::run_sequence_container_command(
-                    preflight, selection, command, run,
-                )
-            })
+            super::pipeline::standard::run_sequence_container_command(
+                preflight, selection, command, run,
+            )
             .and_then(|output| nested_exit(output, preflight.output_json))
         }
         _ => {
@@ -441,15 +429,6 @@ fn nested_exit(output: String, capture: bool) -> Result<StepExit, RunnerError> {
         String::new(),
         WorkloadOutcome::Succeeded,
     ))
-}
-
-/// TODO(#236): replace legacy container exec/setup with RemoteCustody and its
-/// recovery adapter once #232 publishes the environment generation. Callers
-/// admit a child Run first; this seam preserves the legacy exit status.
-pub(in crate::runner) fn legacy_container_step<T>(
-    execute: impl FnOnce() -> Result<T, RunnerError>,
-) -> Result<T, RunnerError> {
-    execute()
 }
 
 enum StepAction {

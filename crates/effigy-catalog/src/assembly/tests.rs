@@ -28,7 +28,7 @@ default = [3306]
         dockerfile: None,
         config_variants: HashMap::new(),
         param_variants: HashMap::new(),
-        source: FragmentSource::Bundled,
+        source: FragmentSource::Baseline,
     };
     fragments.insert("db".to_string(), (decl, fragment));
 

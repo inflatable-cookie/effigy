@@ -28,6 +28,7 @@ use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
 use crate::runner::container_runtime_prep::OWNED_EXEC_VERIFICATION_TIMEOUT;
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::{BoundedCommandBudget, BoundedCommandPhase};
+use crate::runner::task_engine::EnvOverride;
 
 mod colima;
 
@@ -90,6 +91,82 @@ pub(super) fn build_routed_task_exec_args(
     }
 
     args
+}
+
+/// A routed task's workload as remote custody runs it: argv, environment,
+/// user and working directory, with no Compose grammar and no secret in argv.
+pub(super) struct RoutedExec {
+    pub(super) argv: Vec<String>,
+    pub(super) env: Vec<(String, EnvOverride)>,
+    pub(super) user: Option<String>,
+    pub(super) workdir: String,
+}
+
+/// The same workload [`build_routed_task_exec_args`] renders for Compose.
+pub(super) fn routed_task_exec(
+    strategy: &effigy_exec::ExecStrategy,
+    task_env: Option<&BTreeMap<String, String>>,
+    secret_env: Option<&[(&str, &SecretString)]>,
+    workspace_identity: Option<(&str, Option<&str>)>,
+    mapped_cwd: &str,
+    tty: bool,
+) -> RoutedExec {
+    let runtime_root = match strategy {
+        effigy_exec::ExecStrategy::RawExec { working_dir, .. } => Some(working_dir.as_str()),
+        effigy_exec::ExecStrategy::Handoff { .. } => None,
+    };
+    let mut env = Vec::new();
+    for (key, value) in task_env.into_iter().flatten() {
+        let value = runtime_root.map_or_else(
+            || value.clone(),
+            |root| value.replace("{repo}", root).replace("{project}", root),
+        );
+        env.push((key.clone(), EnvOverride::Plain(value)));
+    }
+    for (key, value) in secret_env.unwrap_or(&[]) {
+        env.push((
+            (*key).to_owned(),
+            EnvOverride::Secret(value.expose().to_owned()),
+        ));
+    }
+    let color = CONTAINER_COLOR_ENV.iter().chain(
+        tty.then_some(&CONTAINER_TTY_COLOR_ENV)
+            .into_iter()
+            .flatten(),
+    );
+    for (key, value) in color {
+        env.push(((*key).to_owned(), EnvOverride::Plain((*value).to_owned())));
+    }
+    let user = workspace_identity.map(|(user, home)| {
+        if let Some(home) = home {
+            env.push(("HOME".to_owned(), EnvOverride::Plain(home.to_owned())));
+        }
+        user.to_owned()
+    });
+    match strategy {
+        effigy_exec::ExecStrategy::Handoff { args } => {
+            if let Some((key, value)) = CONTAINER_HANDOFF_ENV_ASSIGNMENT.split_once('=') {
+                env.push((key.to_owned(), EnvOverride::Plain(value.to_owned())));
+            }
+            RoutedExec {
+                argv: std::iter::once(CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH.to_owned())
+                    .chain(args.iter().cloned())
+                    .collect(),
+                env,
+                user,
+                workdir: mapped_cwd.to_owned(),
+            }
+        }
+        effigy_exec::ExecStrategy::RawExec {
+            working_dir,
+            command,
+        } => RoutedExec {
+            argv: command.clone(),
+            env,
+            user,
+            workdir: working_dir.clone(),
+        },
+    }
 }
 
 fn append_task_exec_env(

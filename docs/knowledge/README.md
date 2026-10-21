@@ -12,6 +12,7 @@ Current product truth is owned by topic. User documentation remains in [guides](
 | Runtime kernel (specified, not implemented) | [Runtime kernel contract](contracts/052-runtime-kernel-contract.md) |
 | Container environments | [Environment reconciler contract](contracts/053-environment-reconciler-contract.md) |
 | Release procedure | [Release](contracts/release.md) |
+| Test fixture ownership | [Fixture hygiene](test-fixture-hygiene.md) |
 | Domain vocabulary | [Domain](domain/README.md) |
 | Retired concepts | [Retirements](retired.toml) |
 | Open questions | [Questions](questions.md) |

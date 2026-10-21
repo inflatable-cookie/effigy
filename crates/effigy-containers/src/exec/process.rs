@@ -412,7 +412,7 @@ fn spawn_and_supervise_capture(
     deadline: Instant,
     reported_timeout: Duration,
 ) -> Result<Output, ContainerExecError> {
-    let child = spawn_capture_child(repo_root, program, args).map_err(|error| {
+    let child = spawn_capture_child(repo_root, program, args, false).map_err(|error| {
         ContainerExecError::Launch {
             command: format!("{program} {}", args.join(" ")),
             error,
@@ -446,6 +446,44 @@ fn supervise_capture_child(
             command: format!("{program} {}", args.join(" ")),
             error,
         }),
+    }
+}
+
+/// One bounded helper invocation whose private input arrives on stdin, never
+/// in argv. The caller's absolute deadline supervises the spawn unchanged;
+/// expiry terminates the helper's process group. A non-zero exit is returned,
+/// not an error: the helper's own output is the observation.
+pub fn run_input_capture_until(
+    workdir: &Path,
+    program: &str,
+    args: &[std::ffi::OsString],
+    input: &[u8],
+    deadline: Instant,
+) -> Result<Output, ContainerExecError> {
+    let launch = |error| ContainerExecError::Launch {
+        command: format!("{program} {}", format_args(args)),
+        error,
+    };
+    if Instant::now() >= deadline {
+        return Err(deadline_already_elapsed(program));
+    }
+    let mut child = spawn_capture_child(workdir, program, args, true).map_err(launch)?;
+    let stdin = child.stdin.take();
+    let input = input.to_vec();
+    // A helper that never reads must not block the supervisor: the writer
+    // ends with the pipe when the helper exits or is terminated.
+    let writer = thread::spawn(move || {
+        if let Some(mut stdin) = stdin {
+            use std::io::Write;
+            let _ = stdin.write_all(&input);
+        }
+    });
+    let output = capture_child(child, Some(deadline), PIPE_EOF_GRACE);
+    let _ = writer.join();
+    match output {
+        Ok(output) => Ok(output),
+        Err(error) if error.kind() == std::io::ErrorKind::TimedOut => Err(timeout_error(program)),
+        Err(error) => Err(launch(error)),
     }
 }
 
@@ -567,7 +605,8 @@ mod test_spawn_delay {
 fn spawn_capture_child(
     repo_root: &Path,
     program: &str,
-    args: &[&str],
+    args: &[impl AsRef<std::ffi::OsStr>],
+    input: bool,
 ) -> Result<std::process::Child, std::io::Error> {
     // Private timing seam: simulates a slow fork/exec at the spawn boundary so
     // a test can prove the supervision deadline is not rebased after spawn.
@@ -584,7 +623,7 @@ fn spawn_capture_child(
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .stdin(Stdio::null());
+        .stdin(if input { Stdio::piped() } else { Stdio::null() });
     #[cfg(unix)]
     // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
     // where only async-signal-safe work is allowed. `setpgid` is
@@ -965,7 +1004,7 @@ mod tests {
 
         // Simulated slow spawn, then the old `now + remaining` origin reset.
         thread::sleep(Duration::from_secs(3));
-        let child = spawn_capture_child(&root, "/bin/sh", &["-c", script.as_str()])
+        let child = spawn_capture_child(&root, "/bin/sh", &["-c", script.as_str()], false)
             .expect("spawn rebase control child");
         let rebased_deadline = Instant::now() + remaining;
         let output = supervise_capture_child(

@@ -8,32 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 std::thread_local! {
-    static TEST_FIXTURE_ROOT: RefCell<Option<tempfile::TempDir>> = const { RefCell::new(None) };
-}
-
-fn workspace_root() -> PathBuf {
-    for candidate in Path::new(env!("CARGO_MANIFEST_DIR")).ancestors() {
-        let manifest = candidate.join("Cargo.toml");
-        let Ok(contents) = fs::read_to_string(manifest) else {
-            continue;
-        };
-        if contents.lines().any(|line| line.trim() == "[workspace]") {
-            return fs::canonicalize(candidate)
-                .expect("canonicalize the Effigy workspace for bootstrap fixtures");
-        }
-    }
-    panic!("find the Effigy workspace root for bootstrap fixtures");
-}
-
-fn test_fixture_parent() -> PathBuf {
-    let workspace = workspace_root();
-    let target = fs::canonicalize(workspace.join("target"))
-        .expect("canonicalize the ignored Effigy target directory");
-    assert!(
-        target.starts_with(&workspace),
-        "bootstrap fixture target must remain inside the authenticated workspace"
-    );
-    target
+    static TEST_FIXTURE_ROOT: RefCell<Option<effigy_test_support::Fixture>> = const { RefCell::new(None) };
 }
 
 fn test_fixture_root() -> PathBuf {
@@ -41,10 +16,8 @@ fn test_fixture_root() -> PathBuf {
         let mut root = root.borrow_mut();
         if root.is_none() {
             *root = Some(
-                tempfile::Builder::new()
-                    .prefix("effigy-bootstrap-fixtures-")
-                    .tempdir_in(test_fixture_parent())
-                    .expect("create bootstrap test fixture root beneath ignored target"),
+                effigy_test_support::Fixture::workspace("effigy-bootstrap-fixtures-")
+                    .expect("create owned bootstrap fixture root"),
             );
         }
         root.as_ref()

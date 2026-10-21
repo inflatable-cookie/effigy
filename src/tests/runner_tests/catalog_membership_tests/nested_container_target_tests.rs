@@ -139,6 +139,8 @@ fn install_logging_fake_runtime(root: &Path, cattle_dir: &Path) {
             r#"#!/bin/sh
 log='{log}'
 printf 'docker:%s\n' "$*" >> "$log"
+# Remote custody names the exact engine first.
+case "$1" in --context|--host) shift 2 ;; esac
 if [ "$1" = compose ]; then
   shift
   service=''
@@ -178,19 +180,21 @@ if [ "$1" = compose ]; then
 fi
 if [ "$1" = inspect ]; then
   case "$2" in
-    cattle-a1b2) id=$(printf '%064d' 0 | tr 0 a); cname=cattle-a1b2; project=cattle-grid-cattle; service=cattle; checkout='{cattle}' ;;
-    workspace-a1b2) id=$(printf '%064d' 0 | tr 0 b); cname=workspace-a1b2; project=root-workspace; service=workspace; checkout='{root}' ;;
+    cattle-a1b2|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) id=$(printf '%064d' 0 | tr 0 a); cname=cattle-a1b2; project=cattle-grid-cattle; service=cattle; checkout='{cattle}' ;;
+    workspace-a1b2|bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) id=$(printf '%064d' 0 | tr 0 b); cname=workspace-a1b2; project=root-workspace; service=workspace; checkout='{root}' ;;
     *) exit 1 ;;
   esac
-  printf '[{{"Id":"%s","Name":"/%s","State":{{"Status":"running","Running":true}},"Config":{{"Labels":{{"com.docker.compose.project":"%s","com.docker.compose.service":"%s","com.docker.compose.oneoff":"False","com.effigy.checkout":"%s"}}}},"NetworkSettings":{{"Ports":{{}}}}}}]\n' "$id" "$cname" "$project" "$service" "$checkout"
+  printf '[{{"Id":"%s","Name":"/%s","Created":"2026-10-20T00:00:00Z","State":{{"Status":"running","Running":true}},"Config":{{"Labels":{{"com.docker.compose.project":"%s","com.docker.compose.service":"%s","com.docker.compose.oneoff":"False","com.effigy.checkout":"%s"}}}},"NetworkSettings":{{"Ports":{{}}}}}}]\n' "$id" "$cname" "$project" "$service" "$checkout"
   exit 0
 fi
 if [ "$1" = exec ]; then
   shift
+  envfile=''
   while [ $# -gt 0 ]; do
     case "$1" in
       -i|-t) shift ;;
       -w|-u|-e) shift 2 ;;
+      --env-file) envfile="$2"; shift 2 ;;
       *) id="$1"; shift; break ;;
     esac
   done
@@ -199,6 +203,22 @@ if [ "$1" = exec ]; then
     bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) service=workspace ;;
     *) printf 'exec did not target a verified full ID\n' >&2; exit 1 ;;
   esac
+  # Remote custody's in-container helper: a fixed boot and an empty session.
+  if [ "$1" = sh ] && [ "$2" = -c ] && [ "$4" = effigy-custody ]; then
+    case "$5" in
+      boot) printf 'fake-boot\n' ;;
+      snap) printf 'boot fake-boot\nns pid:[1]\n' ;;
+      *) printf 'gone\n' ;;
+    esac
+    exit 0
+  fi
+  # The kernel's registration wrapper: frame from the forwarded nonce, then
+  # the workload. A Linux guest's /proc facts are modelled.
+  if [ -n "$envfile" ] && [ "$1" = sh ] && [ "$2" = -c ]; then
+    nonce=$(sed -n 's/^EFFIGY_CUSTODY_NONCE=//p' "$envfile")
+    printf '\036EFFIGY-CUSTODY v1 %s 4242 4242 100 fake-boot 1\n' "$nonce" >&2
+    shift 5
+  fi
   printf 'native:exec:%s:%s\n' "$service" "$*" >> "$log"
   if [ "$1" = which ]; then exit 1; fi
   if [ "$1" = sh ] && [ "$2" = -lc ]; then sh -lc "$3"; exit $?; fi
@@ -289,19 +309,31 @@ fn docker_log(fixture: &NestedContainerFixture) -> String {
     fs::read_to_string(&log_path).expect("read fake docker log")
 }
 
+/// Environment records and task runs share one state root, as they do under
+/// `$HOME/.effigy/state`: a remote workload's intent is fenced to the
+/// environment's resource row in the run's own store.
+fn in_shared_state<T>(run: impl FnOnce() -> T) -> T {
+    effigy_containers::with_test_effigy_home(
+        &crate::runner::task_engine::test_state_home().join(".effigy"),
+        run,
+    )
+}
+
 fn run_task_from_root(
     fixture: &NestedContainerFixture,
     selector: &str,
 ) -> Result<String, RunnerError> {
     let context =
         EffigyRuntimeContext::capture(Some(fixture.root.clone()), None).expect("runtime context");
-    run_command_with_context(
-        Command::Task(TaskInvocation {
-            name: selector.to_owned(),
-            args: Vec::new(),
-        }),
-        &context,
-    )
+    in_shared_state(|| {
+        run_command_with_context(
+            Command::Task(TaskInvocation {
+                name: selector.to_owned(),
+                args: Vec::new(),
+            }),
+            &context,
+        )
+    })
 }
 
 fn plan_task_from_root(fixture: &NestedContainerFixture, selector: &str) -> serde_json::Value {
@@ -349,13 +381,15 @@ fn child_scope_nested_container_task_still_executes_in_declared_container() {
     let _lock = lock_test();
     let fixture = nested_container_fixture("nested-child-scope-container-exec");
 
-    run_manifest_task_with_cwd(
-        &TaskInvocation {
-            name: "check".to_owned(),
-            args: Vec::new(),
-        },
-        fixture.cattle.clone(),
-    )
+    in_shared_state(|| {
+        run_manifest_task_with_cwd(
+            &TaskInvocation {
+                name: "check".to_owned(),
+                args: Vec::new(),
+            },
+            fixture.cattle.clone(),
+        )
+    })
     .expect("child scope container run");
 
     let log = docker_log(&fixture);

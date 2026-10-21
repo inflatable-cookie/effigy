@@ -26,6 +26,27 @@ During v0.x, MINOR bumps may include breaking changes.
   started. A run that holds an environment stays up when
   its workloads exit, until a stop. A live v0.14 headless session is refused
   with its stop command. `--run-id` is refused for managed tasks.
+- Container tasks, sequence container steps, built-in `exec` steps and
+  named-container managed setup run under kernel remote custody: the run
+  journals the container workload before it starts, a stop, signal or timeout
+  reaches the container session (not only the local `docker`/`colima`
+  client), and the run settles only once that session is observed closed.
+  A killed Effigy is settled on its next run from what the backend reports.
+  A step whose exec client dies while its container session runs on is
+  recorded as interrupted, not with the client's exit status, and the session
+  is stopped.
+  Values for the container never appear in a command line. A value that spans
+  lines can no longer be passed to a container workload and is refused.
+- A built-in `exec` step in a sequence reports the command's own exit code and
+  streams under `--json`, instead of exit 0 with an `effigy.exec.v1` envelope.
+- Managed container `setup` steps without a lifecycle entry run in the typed
+  sequence engine: each step is a child run, task references resolve on the
+  host, and `run` steps execute at the task root like other sequence steps.
+- Rhai steps of container-routed tasks run as host steps under the run's
+  custody, like those of host tasks.
+- Container tasks get a terminal when Effigy runs in one, and keep the
+  operator's stdin otherwise. On Colima the container gets stdin but no
+  terminal.
 - Container environments now have one kernel record each (contract 053).
   Every stop, restart, recreation, reset, handover and idle stop is a
   transition that refuses while any run holds the environment, except that
@@ -77,6 +98,17 @@ During v0.x, MINOR bumps may include breaking changes.
   migrated.
 - `effigy container eject` and `container::eject` are retired: generated
   Compose stays internal. Use `effigy container render <name>`.
+- The catalog-pack runtime is retired (Q-005). `effigy service pack`
+  (`status`, `install`, `update`, `rollback`, `reset`) refuses with the
+  replacement, the workspace pack handoff is gone, and
+  `release.sync-catalog-pack-support-policy` is a manifest error. Installed
+  pack state in `~/.effigy/catalog-packs/` is ignored with a notice and left
+  untouched. Pack v1.2.0 was byte-identical to the compiled baseline, so
+  existing projects resolve the same services.
+- `effigy service list --json` is `effigy.service.list.v2`: fragments carry
+  `source`, `layer`, `path`, `qualified` and `shadows`, and the pack
+  `selection` object is gone. Text output labels the compiled catalog
+  `baseline` instead of `bundled`.
 - Each environment's backend is recorded in the kernel store when its
   generation is prepared, and every Compose, volume and data action uses it.
   Volume actions no longer infer Docker or Colima from the profile name, and
@@ -191,6 +223,16 @@ During v0.x, MINOR bumps may include breaking changes.
   lists the families still present.
 
 ### Added
+- Catalog sources (Q-005). Services resolve from the project catalog
+  (`infra/dev/catalog/`), the bundle's shipped `catalog/`, declared
+  `[catalog.sources.<name>]` git, OCI or path sources, then the compiled
+  baseline. Declared sources share the bundle's checkout pins and move only on
+  `effigy bundle sync`; reads never fetch. Qualify a name as
+  `<source>/<service>` to pick one source. `service list` and
+  `container render` name each service's source.
+- Fragments can declare `[requires]` (`effigy` range, `schema`,
+  `capabilities`) in `service.toml`; a release that cannot meet them refuses
+  the fragment and names what it needs.
 - `effigy container status` and `effigy doctor` show each environment's
   backend, why it was chosen, and its record: active or stopped, persistent or
   held, the applied generation, a partial generation and its holders. Status
@@ -601,6 +643,15 @@ During v0.x, MINOR bumps may include breaking changes.
   startup and retirement coherently within its observation deadline.
 - Gateway parser and descriptorless-process controls now run on Linux and
   macOS; idle shutdown proofs wait for completion instead of fixed sleeps.
+- Test fixture guards remove sealed kernel object trees on success and unwind;
+  ordinary fixture roots live outside the checkout, with documented workspace
+  exceptions and a suite leak assertion. Shared process guards stop registered
+  child groups and detached fake workloads before fixture removal. The kill-matrix
+  reclaim proof holds its first run at a barrier until SIGKILL. Fixture child
+  identity is registered before exec, including immediate exits. Fixture removal
+  shares native child custody with live guards until their groups close.
+  Detached private fixture gateways publish custody before serving, even if their
+  startup client fails or is killed before returning a successful response.
 - Container preparation detects missing or changed named-volume mounts before
   reusing a running stack, including worktree `isolated_dirs`. Status and doctor
   report drift, guarded `up` applies the current render, and permission repair

@@ -1,6 +1,5 @@
 use super::*;
 use crate::policy::load::load_container_policy;
-use crate::sealed_fixture;
 
 const FIXTURES: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -21,13 +20,13 @@ fn copy_tree(from: &Path, to: &Path) {
 }
 
 struct Checkout {
-    fixture: sealed_fixture::SealedFixture,
+    fixture: effigy_test_support::Fixture,
     root: PathBuf,
     home: PathBuf,
 }
 
 fn checkout(files: &[(&str, &str)]) -> Checkout {
-    let fixture = sealed_fixture::SealedFixture(tempfile::tempdir().unwrap());
+    let fixture = effigy_test_support::Fixture::new("effigy-container-policy-").unwrap();
     let root = fixture.path().join("checkout");
     let home = fixture.path().join("home/.effigy");
     std::fs::create_dir_all(&home).unwrap();

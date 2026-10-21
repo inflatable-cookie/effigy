@@ -56,16 +56,20 @@ pub(super) fn state_home() -> Option<PathBuf> {
     }
     #[cfg(test)]
     {
-        static TEST_HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
+        static TEST_HOME: OnceLock<PathBuf> = OnceLock::new();
         // Short: a detached run's control socket lives under this home, and
         // a Unix socket path is bounded (SUN_LEN).
-        let home = TEST_HOME.get_or_init(|| {
-            tempfile::Builder::new()
-                .prefix("effigy-te-")
-                .tempdir_in("/tmp")
-                .expect("private test home")
-        });
-        Some(home.path().to_path_buf())
+        Some(
+            TEST_HOME
+                .get_or_init(|| {
+                    effigy_test_support::Fixture::process_lifetime_in(
+                        "effigy-te-",
+                        std::path::Path::new("/tmp"),
+                    )
+                    .expect("private test home")
+                })
+                .clone(),
+        )
     }
     #[cfg(not(test))]
     {
@@ -347,13 +351,41 @@ fn cancel_token() -> CancelToken {
         .unwrap_or_default()
 }
 
-/// Task runs record kernel effects (custody); managed runs add their own
-/// engine effects, settled by the run supervisor's adapter. Any other effect
-/// is no engine's here, so recovery observes it as `Unknown` and leaves
-/// residue rather than guessing (R3).
-#[derive(Debug, Default)]
-pub(in crate::runner) struct TaskSettlement;
+/// Task runs record kernel effects: local custody and remote custody.
+/// Remote sessions settle through the Compose backend their identity names,
+/// also in sentinel recovery. Managed runs add their own engine effects,
+/// settled by the run supervisor's adapter. Any other effect is no engine's
+/// here, so recovery observes it as `Unknown` and leaves residue (R3).
+#[derive(Default)]
+pub(in crate::runner) struct TaskSettlement {
+    remote: Option<Box<dyn effigy_kernel::remote::RemoteExecAdapter>>,
+}
+impl std::fmt::Debug for TaskSettlement {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TaskSettlement")
+    }
+}
+#[cfg(test)]
+type RemoteFactory = std::rc::Rc<dyn Fn() -> Box<dyn effigy_kernel::remote::RemoteExecAdapter>>;
+#[cfg(test)]
+thread_local! {
+    /// A test's strict remote model, used by every settle on its thread.
+    pub(in crate::runner) static TEST_REMOTE: std::cell::RefCell<Option<RemoteFactory>> =
+        const { std::cell::RefCell::new(None) };
+}
+fn recovery_adapter() -> Box<dyn effigy_kernel::remote::RemoteExecAdapter> {
+    #[cfg(test)]
+    if let Some(factory) = TEST_REMOTE.with(|factory| factory.borrow().clone()) {
+        return factory();
+    }
+    Box::new(effigy_containers::environment::ComposeRemote::<
+        effigy_containers::environment::HostCli,
+    >::recovery())
+}
 impl SettlementAdapter for TaskSettlement {
+    fn remote(&mut self) -> Option<&mut dyn effigy_kernel::remote::RemoteExecAdapter> {
+        Some(self.remote.get_or_insert_with(recovery_adapter).as_mut())
+    }
     fn observe(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<Fence> {
         if crate::runner::managed_run::owns_effect(&effect.spec.kind) {
             return crate::runner::managed_run::observe_effect(effect, cx);
@@ -429,7 +461,7 @@ pub fn run_internal_kernel_entry(entry: &str) -> Option<i32> {
     // One helper serves every engine's runs: a task run records its selector,
     // source preparation records `bundle sync`, the gateway records `gateway up`.
     // A managed run's detached supervisor is this binary's engine (§5.8).
-    let mut adapter = TaskSettlement;
+    let mut adapter = TaskSettlement::default();
     let validate = |argv: &[OsString]| {
         valid_next(argv) || argv == ["bundle", "sync"] || argv == ["gateway", "up"]
     };

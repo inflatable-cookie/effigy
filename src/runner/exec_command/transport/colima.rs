@@ -409,11 +409,10 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[cfg(unix)]
-    fn deadline_fresh_root(label: &str) -> (tempfile::TempDir, std::path::PathBuf) {
-        let temp = tempfile::Builder::new()
-            .prefix(&format!("effigy-deadline-continuity-{label}-"))
-            .tempdir()
-            .expect("tempdir");
+    fn deadline_fresh_root(label: &str) -> (effigy_test_support::Fixture, std::path::PathBuf) {
+        let temp =
+            effigy_test_support::Fixture::new(&format!("effigy-deadline-continuity-{label}-"))
+                .expect("tempdir");
         let root = std::fs::canonicalize(temp.path()).expect("canonicalize fixture root");
         std::fs::write(
             root.join("effigy.toml"),

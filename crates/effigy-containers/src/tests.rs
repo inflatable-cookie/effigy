@@ -15,7 +15,6 @@ use effigy_manifest::{load_task_manifest, ManifestInlineWorkspaceContainerConfig
 use std::fs;
 use std::path::{Path, PathBuf};
 
-mod catalog_pack_fallback;
 mod compose;
 mod data_from;
 mod policies;

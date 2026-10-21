@@ -29,3 +29,6 @@ target-*/
 .effigy/
 # END EFFIGY LOCAL STATE
 effigy.local.toml
+
+# Parent-directory fixtures some runner tests create beside the crates.
+/crates/effigy-parent-fixtures-*/

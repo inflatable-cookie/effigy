@@ -48,62 +48,12 @@ jobs:
 "#
 }
 
-struct CliProcessTestGuard {
-    _thread_guard: std::sync::MutexGuard<'static, ()>,
-    lock_path: PathBuf,
-}
-
-impl Drop for CliProcessTestGuard {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.lock_path);
-    }
-}
-
-fn lock_cli_process_tests() -> CliProcessTestGuard {
-    let thread_guard = CLI_PROCESS_TEST_LOCK
+// Fixtures now own distinct roots and child groups; only process-global test
+// state in the shared libtest process needs serialization.
+fn lock_cli_process_tests() -> std::sync::MutexGuard<'static, ()> {
+    CLI_PROCESS_TEST_LOCK
         .lock()
-        .unwrap_or_else(|poison| poison.into_inner());
-    let lock_path = std::env::temp_dir().join("effigy-cli-process-tests.lock");
-    let started = Instant::now();
-
-    loop {
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock_path)
-        {
-            Ok(mut file) => {
-                writeln!(file, "{}", std::process::id()).expect("write cli process test lock pid");
-                return CliProcessTestGuard {
-                    _thread_guard: thread_guard,
-                    lock_path,
-                };
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                if let Ok(metadata) = fs::metadata(&lock_path) {
-                    if metadata
-                        .modified()
-                        .ok()
-                        .and_then(|modified| modified.elapsed().ok())
-                        .is_some_and(|elapsed| elapsed > Duration::from_secs(120))
-                    {
-                        let _ = fs::remove_file(&lock_path);
-                        continue;
-                    }
-                }
-                assert!(
-                    started.elapsed() < Duration::from_secs(120),
-                    "timed out waiting for cross-process CLI process test lock: {}",
-                    lock_path.display()
-                );
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(error) => panic!(
-                "failed to create cross-process CLI process test lock {}: {error}",
-                lock_path.display()
-            ),
-        }
-    }
+        .unwrap_or_else(|poison| poison.into_inner())
 }
 
 fn install_rejecting_pre_receive_hook(remote: &std::path::Path) {
@@ -3965,7 +3915,8 @@ fn doctor_git_cli_deliberately_late_descendant() {
 
 #[cfg(unix)]
 fn doctor_git_cli_readiness_proof(arrangement: &str) {
-    let temp = tempfile::tempdir().expect("private CLI doctor fixture directory");
+    let temp = effigy_test_support::Fixture::new("effigy-cli-private-")
+        .expect("private CLI doctor fixture directory");
     let root = temp.path();
     fs::write(root.join("package.json"), "{}\n").expect("write package marker");
     fs::create_dir_all(root.join("src")).expect("mkdir src");
@@ -3986,6 +3937,18 @@ fn doctor_git_cli_readiness_proof(arrangement: &str) {
     // graph dirty-paths gets the real Git response and its distinct argv and
     // caller tag remain in the receipt.
     let real_git = real_path_binary("git");
+    // The checkout is immutable during this proof. Freeze its real index so
+    // an unrelated Git startup cannot consume the status-hang deadline. The
+    // controlled status child still starts and is reaped by the real doctor.
+    let index_response = evidence_dir.join("index-response");
+    let index = Command::new(&real_git)
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "--stage", "-z", "--", "."])
+        .output_owned()
+        .expect("snapshot the fixture index");
+    assert!(index.status.success(), "{index:?}");
+    fs::write(&index_response, index.stdout).expect("write frozen fixture index");
     let source_events = evidence_dir.join("doctor-process-evidence.jsonl");
     let fixture_events = evidence_dir.join("fixture-process-evidence.jsonl");
     let text_ready = evidence_dir.join("text-inventory-descendant-ready");
@@ -3998,12 +3961,15 @@ fn doctor_git_cli_readiness_proof(arrangement: &str) {
     write_doctor_git_process_shim(&bin, &real_git, arrangement);
     let path_value = shim_path_value(&bin);
     let fixture_exe = std::env::current_exe().expect("current test executable");
+    let git_script = bin.join("git");
     let cli_fixture = DoctorGitCliFixture {
         root,
         path_value: &path_value,
         fixture_exe: &fixture_exe,
         source_events: &source_events,
         fixture_events: &fixture_events,
+        index_response: &index_response,
+        git_script: &git_script,
     };
 
     // This sentinel has its own group and does no fixture initialization for
@@ -4011,7 +3977,11 @@ fn doctor_git_cli_readiness_proof(arrangement: &str) {
     let mut sentinel_command = Command::new("/bin/sleep");
     use std::os::unix::process::CommandExt;
     sentinel_command.arg("30").process_group(0);
-    let mut sentinel = DoctorGitSentinel(sentinel_command.spawn().expect("spawn foreign sentinel"));
+    let mut sentinel = DoctorGitSentinel(
+        sentinel_command
+            .spawn_owned()
+            .expect("spawn foreign sentinel"),
+    );
     let sentinel_pid = sentinel.0.id();
     let sentinel_generation =
         effigy_process::process_start_identity(sentinel_pid).expect("foreign sentinel generation");
@@ -4146,6 +4116,8 @@ struct DoctorGitCliFixture<'a> {
     fixture_exe: &'a std::path::Path,
     source_events: &'a std::path::Path,
     fixture_events: &'a std::path::Path,
+    index_response: &'a std::path::Path,
+    git_script: &'a std::path::Path,
 }
 
 #[cfg(unix)]
@@ -4178,6 +4150,8 @@ fn run_doctor_git_cli(
         .env("EFFIGY_TEST_DOCTOR_FIXTURE_DELAY_MS", "12000")
         .env("EFFIGY_TEST_DOCTOR_FIXTURE_HOLD_MS", "12000")
         .env("PATH", fixture.path_value)
+        .env("EFFIGY_TEST_DOCTOR_GIT_SCRIPT", fixture.git_script)
+        .env("EFFIGY_TEST_DOCTOR_GIT_INDEX", fixture.index_response)
         .env("EFFIGY_TEST_DOCTOR_GIT_EVIDENCE", fixture.source_events)
         .env("EFFIGY_TEST_DOCTOR_GIT_INVOCATION", invocation)
         .env("EFFIGY_TEST_DOCTOR_GIT_READY", ready)
@@ -4198,7 +4172,7 @@ fn run_doctor_git_cli(
     if invocation == "json" {
         command.arg("--json");
     }
-    let mut child = command.spawn().expect("spawn bounded deep doctor");
+    let mut child = command.spawn_owned().expect("spawn bounded deep doctor");
     fixture_guard.track_process(child.id(), "doctor CLI");
     // The budget is 4s; this independent bound only force-exits a doctor that
     // leaked past its own cleanup. Seven times the budget leaves room for
@@ -4248,6 +4222,7 @@ fn write_doctor_git_process_shim(bin: &std::path::Path, real: &std::path::Path, 
     let script = format!(
         r##"#!/bin/sh
 case " $* " in
+  *" ls-files --stage -z -- . "*) exec /bin/cat "$EFFIGY_TEST_DOCTOR_GIT_INDEX" ;;
   *--porcelain=v1*)
     export EFFIGY_TEST_DOCTOR_GIT_CALLER_PID="$PPID"
     export EFFIGY_TEST_DOCTOR_GIT_ARGS_TEXT="$*"
@@ -4279,17 +4254,9 @@ exec "{real}" "$@"
 }
 
 #[cfg(unix)]
-struct DoctorGitSentinel(std::process::Child);
+struct DoctorGitSentinel(OwnedCliChild);
 
 #[cfg(unix)]
-impl Drop for DoctorGitSentinel {
-    fn drop(&mut self) {
-        // The unreaped Child retains this exact PID generation.
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 #[cfg(unix)]
 struct DoctorGitReceiptGuard {
     paths: Vec<PathBuf>,
@@ -8765,7 +8732,14 @@ case "$*" in
                   ;;
                   *)
                   done_marker="$EFFIGY_TEST_REMOTE_DONE_DIR/exec-$$.done"
-                  sh -c '( sh -c "$1" >/dev/null 2>&1; : > "$2" ) &' sh "$last_arg" "$done_marker"
+                  if [ -n "${EFFIGY_TEST_PROCESS_HELPER:-}" ]; then
+                    "$EFFIGY_TEST_PROCESS_HELPER" run "$EFFIGY_TEST_REMOTE_OWNER" "$done_marker" "$last_arg" >/dev/null 2>&1 &
+                  else
+                    EFFIGY_FIXTURE_PROCESS_OWNER="$EFFIGY_TEST_REMOTE_OWNER" \
+                    EFFIGY_FIXTURE_PROCESS_DONE="$done_marker" \
+                    EFFIGY_FIXTURE_PROCESS_SCRIPT="$last_arg" \
+                    "$EFFIGY_TEST_FIXTURE_PROCESS_BINARY" --ignored --exact support::fixture_remote_process_child --nocapture >/dev/null 2>&1 &
+                  fi
                   i=0
                   while [ ! -f "$done_marker" ] && [ "$i" -lt 1500 ]; do
                     sleep 0.2
@@ -9042,9 +9016,7 @@ esac
 
 #[test]
 fn cli_container_status_json_reports_default_container_contract() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-158-private-")
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
@@ -9098,9 +9070,7 @@ fn cli_container_status_json_reports_default_container_contract() {
 
 #[test]
 fn cli_container_status_succeeds_with_unrelated_required_container_secrets() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-158-private-")
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
@@ -9146,7 +9116,8 @@ fn cli_container_status_succeeds_with_unrelated_required_container_secrets() {
 
 #[test]
 fn cli_container_retire_named_environment_refuses_before_effects() {
-    let fixture = tempfile::tempdir().expect("private CLI fixture");
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("private CLI fixture");
     let root = fixture.path();
     let refusal = "`effigy container <NAME> retire` is unsupported; use `effigy container retire` for the checkout or `effigy container retire --scope <TOKEN>` for one recorded scope";
 
@@ -9185,9 +9156,7 @@ fn cli_container_retire_named_environment_refuses_before_effects() {
 
 #[test]
 fn cli_container_reset_succeeds_with_unrelated_required_container_secrets() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-158-private-")
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
@@ -9234,9 +9203,7 @@ fn cli_container_reset_succeeds_with_unrelated_required_container_secrets() {
 
 #[test]
 fn cli_container_data_list_json_reports_managed_volumes() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-158-private-")
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
@@ -9291,9 +9258,7 @@ fn cli_container_data_list_json_reports_managed_volumes() {
 
 #[test]
 fn cli_container_cache_list_json_reports_purge_safe_isolated_volumes() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-158-private-")
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
@@ -9343,9 +9308,7 @@ fn cli_container_cache_list_json_reports_purge_safe_isolated_volumes() {
 
 #[test]
 fn cli_generated_container_status_json_reports_media_mounts() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-158-private-")
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
@@ -9411,9 +9374,7 @@ fn cli_generated_container_status_json_reports_media_mounts() {
 
 #[test]
 fn cli_container_data_export_json_reports_transfer_contract() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-158-private-")
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
@@ -9473,9 +9434,7 @@ fn cli_container_data_export_json_reports_transfer_contract() {
 
 #[test]
 fn cli_container_data_import_json_reports_transfer_contract() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-158-private-")
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
@@ -9536,9 +9495,7 @@ fn cli_container_data_import_json_reports_transfer_contract() {
 
 #[test]
 fn cli_container_data_pull_production_json_reports_hook_contract() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-158-private-")
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
@@ -9867,9 +9824,7 @@ fn command_matches_reaper_root(command: &str, root: &std::path::Path) -> bool {
 
 #[test]
 fn cli_container_up_detached_starts_colima_and_reports_ready() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-158-private-")
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
@@ -10017,21 +9972,13 @@ fn cli_managed_headless_lifecycle_reaches_running_on_healthy_stack() {
     let _guard = CLI_PROCESS_TEST_LOCK
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let private = tempfile::Builder::new()
-        .prefix("effigy-headless-lifecycle-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-headless-lifecycle-")
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
-    // Keep the fixture for post-mortem when the operator asks for it.
-    if std::env::var_os("EFFIGY_TEST_KEEP_FIXTURE").is_some() {
-        eprintln!("kept headless fixture at {}", private.keep().display());
-    }
-    let home = super::sealed_fixture::SealedFixture(
-        tempfile::Builder::new()
-            .prefix("e235h.")
-            .tempdir_in("/tmp")
-            .expect("short private home"),
-    );
+    // A short private HOME: the run's control socket must fit the platform's
+    // Unix socket limit.
+    let home = effigy_test_support::Fixture::in_parent("e235h.", std::path::Path::new("/tmp"))
+        .expect("short private home");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::create_dir_all(root.join("app")).expect("mkdir app dir");
     fs::write(
@@ -10191,7 +10138,7 @@ mounts = ["./app:/workspace"]
             .envs(extra_env.iter().copied())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+            .spawn_owned()
             .expect("spawn headless run");
         let deadline = Instant::now() + Duration::from_secs(240);
         loop {
@@ -10277,25 +10224,13 @@ fn cli_managed_headless_stop_settles_remote_exec_children_and_locks() {
     let _guard = CLI_PROCESS_TEST_LOCK
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let private = tempfile::Builder::new()
-        .prefix("effigy-headless-settle-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-headless-settle-")
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
-    if std::env::var_os("EFFIGY_TEST_KEEP_FIXTURE").is_some() {
-        eprintln!(
-            "kept headless settle fixture at {}",
-            private.keep().display()
-        );
-    }
-    // A short private HOME: run control sockets must fit the platform's
-    // Unix socket limit. The remote holder shares it to read its gate.
-    let home = super::sealed_fixture::SealedFixture(
-        tempfile::Builder::new()
-            .prefix("e235s.")
-            .tempdir_in("/tmp")
-            .expect("short private home"),
-    );
+    // A short private HOME: the run's control socket must fit the platform's
+    // Unix socket limit.
+    let home = effigy_test_support::Fixture::in_parent("e235s.", std::path::Path::new("/tmp"))
+        .expect("short private home");
     let home_display = home.path().display();
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::write(
@@ -10421,7 +10356,15 @@ detach_timeout_secs = 1
             "EFFIGY_TEST_LOG_FOLLOW_FILE".to_owned(),
             log_follow.display().to_string(),
         ),
-        // The fake exec runs each payload in its own detached session,
+        (
+            "EFFIGY_TEST_REMOTE_OWNER".to_owned(),
+            root.display().to_string(),
+        ),
+        (
+            "EFFIGY_TEST_FIXTURE_PROCESS_BINARY".to_owned(),
+            std::env::current_exe().unwrap().display().to_string(),
+        ),
+        // The fake exec runs each payload in its own dedicated group,
         // outside the exec CLI's process tree, like a real container exec.
         ("EFFIGY_TEST_EXEC_REMOTE_MODE".to_owned(), "1".to_owned()),
         (
@@ -10449,7 +10392,7 @@ detach_timeout_secs = 1
         )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("spawn first headless run");
     // The run's exec-group effect marker: "<pgid> <nonce>".
     let marker = root.join(".effigy/runtime/managed-exec/dev+default/api.pgid");
@@ -10609,7 +10552,7 @@ detach_timeout_secs = 1
         )
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
+        .spawn_owned()
         .expect("spawn restart headless run");
     let restart_deadline = Instant::now() + Duration::from_secs(60);
     while hold_state().as_deref() != Some("running") {
@@ -10682,25 +10625,13 @@ fn cli_forward_handover_waits_for_owner_whose_stop_cascade_is_slow() {
     let _guard = CLI_PROCESS_TEST_LOCK
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let private = tempfile::Builder::new()
-        .prefix("effigy-handover-slow-down-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-handover-slow-down-")
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
-    if std::env::var_os("EFFIGY_TEST_KEEP_FIXTURE").is_some() {
-        eprintln!(
-            "kept slow-down handover fixture at {}",
-            private.keep().display()
-        );
-    }
-    // A short private HOME: run control sockets must fit the platform's
+    // A short private HOME: the run's control socket must fit the platform's
     // Unix socket limit.
-    let home = super::sealed_fixture::SealedFixture(
-        tempfile::Builder::new()
-            .prefix("e235f.")
-            .tempdir_in("/tmp")
-            .expect("short private home"),
-    );
+    let home = effigy_test_support::Fixture::in_parent("e235f.", std::path::Path::new("/tmp"))
+        .expect("short private home");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::write(
         root.join("infra/dev/docker-compose.yml"),
@@ -10865,7 +10796,7 @@ detach_timeout_secs = 1
             .envs(extra_env.iter().copied())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
+            .spawn_owned()
             .expect("spawn headless run")
     };
 
@@ -11020,9 +10951,7 @@ fn cli_container_attached_session_stops_environment_on_sigint() {
     let _guard = CLI_PROCESS_TEST_LOCK
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-attached-")
-        .tempdir()
+    let private = effigy_test_support::Fixture::new("effigy-158-attached-")
         .expect("exclusive private fixture");
     let root = fs::canonicalize(private.path()).expect("canonical private fixture");
     write_container_fixture(&root, None, "./app:/workspace");
@@ -11078,9 +11007,7 @@ fn cli_container_attached_stream_session_reports_operator_overview() {
     let _guard = CLI_PROCESS_TEST_LOCK
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-attached-")
-        .tempdir()
+    let private = effigy_test_support::Fixture::new("effigy-158-attached-")
         .expect("exclusive private fixture");
     let root = fs::canonicalize(private.path()).expect("canonical private fixture");
     write_container_fixture(&root, None, "./app:/workspace");
@@ -11142,9 +11069,7 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
     let _guard = CLI_PROCESS_TEST_LOCK
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-158-private-")
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
@@ -11263,9 +11188,7 @@ fn cli_container_attached_session_terminates_log_process_group() {
     let _guard = CLI_PROCESS_TEST_LOCK
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-attached-")
-        .tempdir()
+    let private = effigy_test_support::Fixture::new("effigy-158-attached-")
         .expect("exclusive private fixture");
     let root = fs::canonicalize(private.path()).expect("canonical private fixture");
     write_container_fixture(&root, None, "./app:/workspace");
@@ -11353,9 +11276,7 @@ fn cli_container_attached_session_terminates_log_process_group() {
 
 #[test]
 fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-158-private-")
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
@@ -11401,9 +11322,7 @@ fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
 
 #[test]
 fn cli_container_shell_command_runs_via_sh_lc() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-158-private-")
         .expect("exclusive fake runtime fixture");
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     fs::write(root.join("package.json"), "{}\n").expect("fixture marker");
@@ -11456,9 +11375,7 @@ fn cli_container_shell_command_runs_via_sh_lc() {
 
 #[test]
 fn cli_container_rejects_mounts_that_escape_repo_root() {
-    let private = tempfile::Builder::new()
-        .prefix("effigy-158-private-")
-        .tempdir_in(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+    let private = effigy_test_support::Fixture::workspace("effigy-158-private-")
         .expect("exclusive fake runtime fixture");
     let root = private.path().join("repo");
     fs::create_dir(&root).expect("owned checkout");

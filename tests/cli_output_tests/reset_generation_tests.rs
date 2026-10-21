@@ -1,5 +1,5 @@
 //! Public reset/teardown must never send Compose an unpublished generation.
-use super::sealed_fixture::SealedFixture;
+use effigy_test_support::Fixture as FixtureRoot;
 use serde_json::{json, Value};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -7,17 +7,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 struct Fixture {
-    owner: SealedFixture,
+    owner: FixtureRoot,
     repo: PathBuf,
 }
 impl Fixture {
     fn new() -> Self {
-        let owner = SealedFixture(
-            tempfile::Builder::new()
-                .prefix("effigy-parent-fixtures-reset-")
-                .tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
-                .unwrap(),
-        );
+        let owner =
+            effigy_test_support::Fixture::workspace("effigy-parent-fixtures-reset-").unwrap();
         let root = owner.path().canonicalize().unwrap();
         let repo = root.join("checkout");
         for directory in [repo.join(".git"), root.join("home"), root.join("bin")] {

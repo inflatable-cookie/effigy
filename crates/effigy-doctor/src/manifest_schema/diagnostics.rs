@@ -31,6 +31,11 @@ impl<'a, 'b> SchemaContext<'a, 'b> {
     pub(super) fn unsupported_key(&mut self, key_path: &str) {
         let remediation = if key_path == "catalog.discovery" {
             remediation::DECLARE_CATALOG_MEMBERS
+        } else if matches!(
+            key_path,
+            "release.sync-catalog-pack-support-policy" | "release.sync_catalog_pack_support_policy"
+        ) {
+            remediation::REMOVE_CATALOG_PACK_SUPPORT_POLICY
         } else {
             remediation::SCHEMA_REMOVE_UNSUPPORTED_KEYS
         };

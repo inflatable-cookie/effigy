@@ -4,8 +4,9 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 
-fn fixture(body: &str) -> tempfile::TempDir {
-    let root = tempfile::tempdir().expect("fresh fixture directory");
+fn fixture(body: &str) -> effigy_test_support::Fixture {
+    let root =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("fresh fixture directory");
     fs::create_dir(root.path().join("home")).expect("isolated HOME");
     fs::write(root.path().join("effigy.toml"), body).expect("fixture manifest");
     root

@@ -9,7 +9,9 @@
 
 use super::*;
 use effigy_kernel::fault_injection::with_hook;
+use effigy_test_support::process::FixtureCommandExt;
 use std::cell::Cell;
+use std::os::unix::process::ExitStatusExt;
 
 const CHILD: &str = "EFFIGY_TEST_ENVIRONMENT_FAULT";
 const CHILD_HOME: &str = "EFFIGY_TEST_ENVIRONMENT_HOME";
@@ -245,18 +247,39 @@ fn recover_and_check(scenario: Scenario, home: &Path, label: &str) {
 }
 
 #[test]
-fn faults_reconciler_boundaries() {
+fn faults_reconciler_boundaries_up() {
+    faults_reconciler_boundaries(Scenario::Up);
+}
+#[test]
+fn faults_reconciler_boundaries_down() {
+    faults_reconciler_boundaries(Scenario::Down);
+}
+#[test]
+fn faults_reconciler_boundaries_reset() {
+    faults_reconciler_boundaries(Scenario::Reset);
+}
+#[test]
+fn faults_reconciler_boundaries_import() {
+    faults_reconciler_boundaries(Scenario::Import);
+}
+
+fn faults_reconciler_boundaries(scenario: Scenario) {
     if let Ok(target) = std::env::var(CHILD) {
         let target: usize = target.parse().expect("crossing");
         let home = PathBuf::from(std::env::var_os(CHILD_HOME).expect("home"));
-        let scenario = Scenario::parse(&std::env::var(CHILD_SCENARIO).expect("scenario"));
+        assert_eq!(
+            scenario,
+            Scenario::parse(&std::env::var(CHILD_SCENARIO).expect("scenario"))
+        );
         let mut count = 0;
         let _ = with_hook(
             move |_| {
                 if count == target {
-                    let _ = std::process::Command::new("/bin/kill")
-                        .args(["-KILL", &std::process::id().to_string()])
-                        .status();
+                    nix::sys::signal::kill(
+                        nix::unistd::Pid::this(),
+                        nix::sys::signal::Signal::SIGKILL,
+                    )
+                    .expect("kill only this fault child");
                     panic!("SIGKILL did not terminate the child");
                 }
                 count += 1;
@@ -266,83 +289,84 @@ fn faults_reconciler_boundaries() {
         );
         panic!("fault #{target} not delivered");
     }
-    for scenario in Scenario::ALL {
-        let traced = home();
-        prepare(scenario, traced.path());
-        let points = Rc::new(RefCell::new(Vec::new()));
-        let trace = points.clone();
-        with_hook(
-            move |point| {
-                trace.borrow_mut().push(point);
-                Ok(())
-            },
-            || operate(scenario, traced.path()),
-        )
-        .unwrap_or_else(|error| panic!("{scenario:?} trace: {error}"));
-        let points = points.borrow().clone();
-        for required in scenario.required() {
-            assert!(
-                points.contains(required),
-                "{scenario:?} never crosses {required}"
-            );
-        }
-        for (target, point) in points.iter().enumerate() {
-            for errno in [libc_eperm(), libc_enospc()] {
-                let fresh = home();
-                prepare(scenario, fresh.path());
-                let fired = Rc::new(Cell::new(false));
-                let delivered = fired.clone();
-                let mut count = 0;
-                let _ = with_hook(
-                    move |_| {
-                        let here = count;
-                        count += 1;
-                        if here == target {
-                            delivered.set(true);
-                            Err(std::io::Error::from_raw_os_error(errno))
-                        } else {
-                            Ok(())
-                        }
-                    },
-                    || operate(scenario, fresh.path()),
-                );
-                assert!(fired.get(), "{scenario:?}: undelivered {point} #{target}");
-                recover_and_check(
-                    scenario,
-                    fresh.path(),
-                    &format!(
-                        "{scenario:?} errno {errno} at {point} #{target} after {:?}",
-                        &points[target.saturating_sub(4)..target]
-                    ),
-                );
-            }
+    let traced = home();
+    prepare(scenario, traced.path());
+    let points = Rc::new(RefCell::new(Vec::new()));
+    let trace = points.clone();
+    with_hook(
+        move |point| {
+            trace.borrow_mut().push(point);
+            Ok(())
+        },
+        || operate(scenario, traced.path()),
+    )
+    .unwrap_or_else(|error| panic!("{scenario:?} trace: {error}"));
+    let points = points.borrow().clone();
+    for required in scenario.required() {
+        assert!(
+            points.contains(required),
+            "{scenario:?} never crosses {required}"
+        );
+    }
+    for (target, point) in points.iter().enumerate() {
+        for errno in [libc_eperm(), libc_enospc()] {
             let fresh = home();
             prepare(scenario, fresh.path());
-            let status = std::process::Command::new(std::env::current_exe().expect("test exe"))
-                .args([
-                    "--exact",
-                    "environment::tests::faults::faults_reconciler_boundaries",
-                    "--nocapture",
-                ])
-                .env(CHILD, target.to_string())
-                .env(CHILD_HOME, fresh.path())
-                .env(CHILD_SCENARIO, scenario.name())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .expect("kill fixture");
-            use std::os::unix::process::ExitStatusExt;
-            assert_eq!(
-                status.signal(),
-                Some(9),
-                "{scenario:?} kill at {point} #{target}"
+            let fired = Rc::new(Cell::new(false));
+            let delivered = fired.clone();
+            let mut count = 0;
+            let _ = with_hook(
+                move |_| {
+                    let here = count;
+                    count += 1;
+                    if here == target {
+                        delivered.set(true);
+                        Err(std::io::Error::from_raw_os_error(errno))
+                    } else {
+                        Ok(())
+                    }
+                },
+                || operate(scenario, fresh.path()),
             );
+            assert!(fired.get(), "{scenario:?}: undelivered {point} #{target}");
             recover_and_check(
                 scenario,
                 fresh.path(),
-                &format!("{scenario:?} SIGKILL at {point} #{target}"),
+                &format!(
+                    "{scenario:?} errno {errno} at {point} #{target} after {:?}",
+                    &points[target.saturating_sub(4)..target]
+                ),
             );
         }
+        let fresh = home();
+        prepare(scenario, fresh.path());
+        let status = std::process::Command::new(std::env::current_exe().expect("test exe"))
+            .arg("--exact")
+            .arg(format!(
+                "environment::tests::faults::faults_reconciler_boundaries_{}",
+                scenario.name()
+            ))
+            .arg("--nocapture")
+            .current_dir(fresh.path())
+            .env(CHILD, target.to_string())
+            .env(CHILD_HOME, fresh.path())
+            .env(CHILD_SCENARIO, scenario.name())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn_owned()
+            .expect("owned fault child")
+            .wait()
+            .expect("kill fixture");
+        assert_eq!(
+            status.signal(),
+            Some(9),
+            "{scenario:?} kill at {point} #{target}"
+        );
+        recover_and_check(
+            scenario,
+            fresh.path(),
+            &format!("{scenario:?} SIGKILL at {point} #{target}"),
+        );
     }
 }
 

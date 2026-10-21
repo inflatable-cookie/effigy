@@ -14,6 +14,7 @@ mod identity;
 mod kernel;
 mod legacy;
 mod process;
+mod remote;
 mod run;
 mod spawn_env;
 mod status;
@@ -27,7 +28,8 @@ pub(in crate::runner) use holders::{live_holders, HolderKind};
 pub(in crate::runner) use identity::TaskTarget;
 pub use kernel::{adopt_signal_router, capture_startup_executable, run_internal_kernel_entry};
 pub(in crate::runner) use legacy::{legacy_families, refuse_live_legacy_holder};
-pub(in crate::runner) use process::{run_plain, EnvOverride, PlainCommand, RunExec};
+pub(in crate::runner) use process::{run_plain, EnvOverride, PlainCommand, PlainExit, RunExec};
+pub(in crate::runner) use remote::{remote_tty, run_remote, RemoteTask};
 pub(in crate::runner) use run::{resolve_lock_wait_ms, RunKey, TaskRun, TaskRunRequest};
 pub(in crate::runner) use status::{
     run_liveness, task_status, RunLiveness, RunView, TaskStatusView, HISTORY_LIMIT,

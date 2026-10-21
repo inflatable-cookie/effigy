@@ -1,22 +1,15 @@
 //! Private production CLI fixtures. No real engine, VM or gateway daemon.
+use effigy_test_support::process::{FixtureCommandExt, OwnedChild};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
+use std::path::PathBuf;
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
-struct Process(Child);
-impl Drop for Process {
-    fn drop(&mut self) {
-        if self.0.try_wait().ok().flatten().is_none() {
-            let _ = self.0.kill();
-        }
-        let _ = self.0.wait();
-    }
-}
+struct Process(OwnedChild);
 
 struct Stack {
     root: PathBuf,
@@ -25,7 +18,7 @@ struct Stack {
     port: u16,
 }
 struct Fixture {
-    root: super::sealed_fixture::SealedFixture,
+    root: effigy_test_support::Fixture,
     stacks: Vec<Stack>,
 }
 impl Drop for Fixture {
@@ -35,9 +28,7 @@ impl Drop for Fixture {
 }
 impl Fixture {
     fn new() -> Self {
-        let root = tempfile::Builder::new()
-            .prefix("effigy-158-private-")
-            .tempdir_in(Path::new(env!("CARGO_MANIFEST_DIR")).join("crates"))
+        let root = effigy_test_support::Fixture::workspace("effigy-158-private-")
             .expect("fresh private root");
         fs::create_dir(root.path().join("bin")).expect("bin");
         fs::create_dir(root.path().join("home")).expect("home");
@@ -65,7 +56,7 @@ impl Fixture {
         )
         .expect("mode");
         let mut fixture = Self {
-            root: super::sealed_fixture::SealedFixture(root),
+            root,
             stacks: Vec::new(),
         };
         for i in 0..3 {
@@ -90,7 +81,7 @@ impl Fixture {
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .spawn()
+                .spawn_owned()
                 .expect("own service/exec fixture"),
         );
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -445,7 +436,7 @@ fn private_state_publication_preserves_concurrent_inventory() {
     let mut healthy = Process(
         fixture
             .command(1, &["container", "up", "--detach", "--json"])
-            .spawn()
+            .spawn_owned()
             .unwrap(),
     );
     let ready = fixture.stacks[1].root.join("compose-up-ready");
@@ -460,7 +451,7 @@ fn private_state_publication_preserves_concurrent_inventory() {
     let mut owner = Process(
         fixture
             .command(0, &["container", "up", "--detach", "--json"])
-            .spawn()
+            .spawn_owned()
             .unwrap(),
     );
     let publishing = fixture.stacks[0].root.join("state-publish-ready");
@@ -736,7 +727,7 @@ fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
         launches.push(Process(
             fixture
                 .command(i, &args)
-                .spawn()
+                .spawn_owned()
                 .expect("concurrent scoped up"),
         ));
     }
@@ -888,7 +879,7 @@ fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .spawn()
+            .spawn_owned()
             .expect("own replacement service"),
     );
     let deadline = Instant::now() + Duration::from_secs(5);

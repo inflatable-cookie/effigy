@@ -139,7 +139,6 @@ changelog = "CHANGELOG.md"
 tag-format = "v{version}"
 initial-tag-current-version = true
 sync-files = ["Cargo.lock"]
-sync-catalog-pack-support-policy = "support/catalog-pack-update.toml"
 
 [release.hosted-evidence]
 workflow = "ci.yml"
@@ -180,6 +179,30 @@ mystery = true
             .iter()
             .any(|finding| finding.evidence.contains("docs_policy.graph.mystery")),
         "expected unknown graph key to be flagged, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_names_the_retired_catalog_pack_support_policy() {
+    let manifest: Value = toml::from_str(
+        r#"
+[release]
+version-file = "Cargo.toml"
+sync-catalog-pack-support-policy = "support/catalog-pack-update.toml"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.iter().any(|finding| finding
+            .evidence
+            .contains("release.sync-catalog-pack-support-policy")
+            && finding.remediation.contains("catalog-pack runtime")),
+        "expected the retired key to be flagged, got: {:?}",
         sink.findings
     );
 }

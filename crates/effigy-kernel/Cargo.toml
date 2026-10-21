@@ -9,6 +9,8 @@ description = "Synchronous runtime foundation for Effigy engines"
 [features]
 # Injection hooks are absent from ordinary builds; no production default.
 fault-injection = []
+# Native Child adapters for repository fixture harnesses only.
+test-support = []
 
 [dependencies]
 libc = "0.2"
@@ -19,6 +21,7 @@ sha2 = "0.11"
 unicode-normalization = "0.1"
 
 [dev-dependencies]
+effigy-test-support = { path = "../effigy-test-support" }
 # Interpreter conformance only: product engines still own script integration.
 rhai = "1"
 syn = { version = "2", features = ["full", "visit", "extra-traits"] }

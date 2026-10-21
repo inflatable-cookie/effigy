@@ -340,7 +340,7 @@ impl TaskRun {
                         custody: None,
                     },
                     &cleanup,
-                    &mut TaskSettlement,
+                    &mut TaskSettlement::default(),
                 )
                 .map_err(|error| {
                     begin_error(
@@ -389,9 +389,16 @@ impl TaskRun {
                         ..opts
                     },
                     &cleanup,
-                    &mut TaskSettlement,
+                    &mut TaskSettlement::default(),
                 ),
-            None => Run::begin(&cx, root, &invocation, opts, &cleanup, &mut TaskSettlement),
+            None => Run::begin(
+                &cx,
+                root,
+                &invocation,
+                opts,
+                &cleanup,
+                &mut TaskSettlement::default(),
+            ),
         }
         .map_err(|error| match request.key {
             // The racing first invocation with this key holds the gate, or
@@ -563,7 +570,7 @@ impl TaskRun {
                     }),
                 },
                 &kernel::cleanup()?,
-                &mut TaskSettlement,
+                &mut TaskSettlement::default(),
             )
             .map_err(|error| {
                 RunnerError::task_invocation(format!("cannot admit step `{label}`: {error}"))
@@ -707,7 +714,7 @@ impl Drop for TaskRun {
             .flatten()
         {
             if let Ok(cleanup) = cleanup.as_ref() {
-                let _ = run.settle(cleanup, &mut TaskSettlement);
+                let _ = run.settle(cleanup, &mut TaskSettlement::default());
             }
         }
     }
@@ -746,7 +753,7 @@ fn close_run_settled(
             run_error(&error)
         ));
     }
-    match run.settle(&cleanup, &mut TaskSettlement) {
+    match run.settle(&cleanup, &mut TaskSettlement::default()) {
         Ok(outcome) => {
             if outcome.cleanup() == CleanupOutcome::Incomplete {
                 warnings.push(

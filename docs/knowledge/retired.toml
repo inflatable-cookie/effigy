@@ -1,4 +1,29 @@
 [[retired]]
+id = "effigy-catalog-pack-runtime"
+retired = "2026-10-20"
+replacement = "Catalog sources (Q-005): services resolve from infra/dev/catalog/, the bundle's catalog/, declared [catalog.sources.<name>] pinned by effigy bundle sync, then the compiled baseline; effigy service list shows each source. The service pack commands refuse with this replacement, the workspace pack handoff and the release support-policy mutation are gone, and ~/.effigy/catalog-packs/ is ignored with a one-release notice and left untouched."
+owner = "docs/knowledge/architecture/026-feature-placement-and-command-surface.md"
+terms = ["effigy service pack", "service pack install", "service pack update", "catalog-pack-update.toml", "sync-catalog-pack-support-policy", "effigy.catalog-pack.fallback.v1", "effigy.service.pack.status.v1", "effigy.service.list.v1"]
+paths = ["crates/effigy-catalog/src/pack/", "crates/effigy-catalog/src/support_policy/", "crates/effigy-catalog/catalog-pack.lock.toml", "src/runner/system_command/workspace_catalog.rs", "src/runner/service_command/pack.rs"]
+config_keys = ["release.sync-catalog-pack-support-policy"]
+allow = [
+  "CHANGELOG.md",
+  "docs/guides/067-catalog-services-reference.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/contracts/005-container-runtime-contract.md",
+  "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md",
+  "docs/knowledge/contracts/release.md",
+  "crates/effigy-cli/src/command_parsing_runtime.rs",
+  "crates/effigy-doctor/src/contracts.rs",
+  "crates/effigy-doctor/src/manifest_schema/diagnostics.rs",
+  "crates/effigy-doctor/src/manifest_schema/tests.rs",
+  "crates/effigy-manifest/src/config_sections/release.rs",
+  "crates/effigy-release/src/tests.rs",
+  "src/tests/lib_tests_parse_tests/catalog_and_container_option_tests.rs",
+  "tests/catalog_sources.rs",
+]
+
+[[retired]]
 id = "effigy-draft-task-namespace"
 retired = "2026-10-19"
 replacement = "Use ordinary tasks with visibility = internal and optional group. Legacy task tables and draft step/member references translate for one release; invoke tasks by name. The old inventory command names tasks --all and tasks --json as replacements."

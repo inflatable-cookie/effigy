@@ -2,6 +2,7 @@
 default-members = [".", "crates/effigy-kernel"]
 exclude = ["crates/effigy-parent-fixtures-*"]
 members = [
+    "crates/effigy-test-support",
     "crates/effigy-kernel",
     "crates/effigy-bootstrap",
     "crates/effigy-artifacts",
@@ -63,6 +64,12 @@ opt-level = 3
 [profile.discovery-proof]
 inherits = "release"
 strip = "symbols"
+
+# Lifecycle fixtures also exercise debug-only process evidence seams. Retain
+# optimization for cold CLI deadlines while enabling those refusing oracles.
+[profile.fixture-proof]
+inherits = "discovery-proof"
+debug-assertions = true
 
 [package]
 name = "effigy"
@@ -145,6 +152,7 @@ rpassword = "7"
 tempfile = "3"
 
 [dev-dependencies]
+effigy-test-support = { path = "crates/effigy-test-support" }
 base64 = "0.22"
 # Ordinary HTTP/1 server fixture for the managed listener readiness probe.
 bytes = "1"

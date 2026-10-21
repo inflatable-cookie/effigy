@@ -667,7 +667,8 @@ fn temporary_groups_require_explicit_files_and_stay_inside_the_repository() {
     // Symlink escape is rejected.
     #[cfg(unix)]
     {
-        let outside_owner = tempfile::tempdir().expect("owned foreign group fixture");
+        let outside_owner = effigy_test_support::Fixture::new("effigy-cli-private-")
+            .expect("owned foreign group fixture");
         let outside = outside_owner.path().join("escape.toml");
         fs::write(&outside, "[qa_group]\nname = \"binding-check\"\n").expect("write outside");
         #[allow(unused_must_use)]

@@ -204,7 +204,7 @@ pub fn select(repo_root: &Path, policy: &EffectiveContainerPolicy) -> BackendSel
     selection_for(exact.id, &policy.profile, reason)
 }
 
-fn docker_kind() -> BackendKind {
+pub(super) fn docker_kind() -> BackendKind {
     if cfg!(target_os = "macos") {
         BackendKind::DockerDesktop
     } else {

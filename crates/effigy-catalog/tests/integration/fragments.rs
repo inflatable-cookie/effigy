@@ -43,7 +43,7 @@ fn list_bundled_fragments() {
 
     // All should be bundled source.
     for f in &fragments {
-        assert_eq!(f.source, FragmentSource::Bundled);
+        assert_eq!(f.source, FragmentSource::Baseline);
     }
 }
 

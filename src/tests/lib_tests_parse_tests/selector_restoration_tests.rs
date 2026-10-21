@@ -96,7 +96,7 @@ fn genuine_command_owned_subcommands_stay_nested() {
     ));
     assert!(matches!(parse(&["release", "gates"]), Command::Release(_)));
     assert!(matches!(
-        parse(&["service", "pack", "status"]),
+        parse(&["service", "extract", "redis"]),
         Command::Service(_)
     ));
 }

@@ -1,11 +1,10 @@
 use super::*;
 use crate::policy::admission::PolicyAdmission;
 use crate::policy::load::{load_container_policy, prepare_container_policy};
-use crate::sealed_fixture;
 use std::os::unix::fs::PermissionsExt;
 
-fn fixture() -> (sealed_fixture::SealedFixture, PathBuf, PathBuf) {
-    let fixture = sealed_fixture::SealedFixture(tempfile::tempdir().unwrap());
+fn fixture() -> (effigy_test_support::Fixture, PathBuf, PathBuf) {
+    let fixture = effigy_test_support::Fixture::new("effigy-render-").unwrap();
     let checkout = fixture.path().join("checkout");
     let home = fixture.path().join("home/.effigy");
     std::fs::create_dir_all(&checkout).unwrap();

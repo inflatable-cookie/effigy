@@ -833,7 +833,7 @@ fn default_workspace_identity_for_primary_service(
     primary_service: &str,
 ) -> Option<(&'static str, &'static str)> {
     let service = config.services.get(primary_service)?;
-    match service.catalog.as_str() {
+    match effigy_catalog::service_name(&service.catalog) {
         "php-fpm" => Some(("dev", "/home/dev")),
         "node" => Some(("node", "/home/node")),
         _ => None,

@@ -113,6 +113,21 @@ back into the baseline. Architecture
 [026](architecture/026-feature-placement-and-command-surface.md) §Service
 Catalogs is superseded and is rewritten by the implementing change.
 
+Implementation notes (2026-10-20, #234), for Tom to confirm:
+
+- The project source stays at the committed `infra/dev/catalog/`, not
+  `.effigy/catalog/`. `.effigy/` is gitignored local state that Effigy writes
+  into its own ignore block, project fragments must be committed, and #230's
+  `container migrate` already writes there.
+- "`config` shows where each service came from" is met by
+  `effigy container render`, which lists each environment service's catalog
+  and source; Effigy has no per-service `config` command.
+- Declared sources resolve in handle order. Precedence between two declared
+  sources is visible in `service list` (`shadows`) and can be pinned with a
+  qualified name.
+- Archiving the pack repository is an operator action; Effigy no longer reads
+  it.
+
 ## Q-006 — Heavy tasks
 
 Status: answered
@@ -152,3 +167,28 @@ Implemented by effigy#227 (2026-10-19): contract
 [049](contracts/049-heavy-validation-admission-contract.md) holds the hook
 protocol and run control, and `retired.toml` `effigy-host-run-client` the
 retirement.
+
+## Q-007 — Dev session shape
+
+Status: answered
+Asked: 2026-10-21
+Answered: 2026-10-21 by Tom
+
+Tom: "Python should not be needed. Minio should have been replaced with Silo.
+The TUI should work effectively the same way regardless of hybrid or
+container mode. We shouldn't need a `*:tui` selector at all."
+
+- **One dev session.** The managed dev TUI looks and behaves the same whether
+  the environment runs in hybrid or container mode. Placement is a property of
+  the environment, not of the selector. There are no `*:tui` selector
+  variants; the dev entry point itself is the session.
+- **No consumer glue scripts.** Projects and bundles don't need Python (or
+  other external-language) wrappers to run a dev environment. Resolved names,
+  ports, URLs and trust material reach processes from Effigy, readiness waits
+  and output following are Effigy's job, and bundle-specific setup steps are
+  Rhai.
+- **Object storage** in the Underlay bundle is Silo, not MinIO. That's a
+  bundle change, owned by the Underlay side.
+
+Implementation is planned in the v0.15 environment lane (the
+environment-owned host-process and unified-session work after effigy#235).

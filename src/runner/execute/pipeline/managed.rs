@@ -1,6 +1,4 @@
-use super::super::super::container_command::{
-    run_container_exec_operation_capture, support::validate_running_container_runtime_match,
-};
+use super::super::super::container_command::support::validate_running_container_runtime_match;
 use super::super::super::gateway_command::gateway_up_for_managed_task;
 use super::super::super::managed_shell::{
     managed_readiness_probe_urls, render_inline_compose_command,
@@ -26,17 +24,17 @@ use crate::runner::task_engine::{
 };
 use effigy_containers::compose::compose_args;
 use effigy_containers::session::{
-    container_exec_command, managed_exec_command, managed_gateway_command, managed_shell_command,
+    managed_exec_command, managed_gateway_command, managed_shell_command,
     resolve_effigy_invocation_prefix, ManagedExecRequest,
 };
-use effigy_containers::{ContainerCapturedExecOperation, EffectiveContainerPolicy};
+use effigy_containers::EffectiveContainerPolicy;
 use effigy_env::secret::SecretString;
 use effigy_execution::{ExecutionBindingInput, ExecutionSelectionPlan};
 use effigy_managed::command::resolve_managed_task_plan;
 use effigy_managed::ManagedProcessRole;
 use effigy_managed::{
-    managed_execution_mode, parse_managed_invocation, render_managed_plan,
-    render_run_step_sequence, wrap_command_with_env, ManagedExecutionMode, ManagedInvocation,
+    managed_execution_mode, parse_managed_invocation, render_managed_plan, wrap_command_with_env,
+    ManagedExecutionMode, ManagedInvocation,
 };
 use effigy_manifest::ManifestTaskSecretsMode;
 use effigy_manifest::TaskSelection;
@@ -524,7 +522,6 @@ fn own_managed_run(
                     binding_resolution: context.binding_resolution,
                     container_binding: context.binding_resolution.binding(),
                     container_handoff: context.container_handoff,
-                    container_repo_root: container_repo_root.as_deref(),
                     managed_task_secret_pairs: &secrets,
                 },
             )?;
@@ -584,7 +581,6 @@ struct ManagedSetupContext<'a, 'catalog> {
     binding_resolution: &'a super::super::api::ExecutionBindingResolution,
     container_binding: &'a ContainerExecutionBinding,
     container_handoff: bool,
-    container_repo_root: Option<&'a std::path::Path>,
     managed_task_secret_pairs: &'a [(String, SecretString)],
 }
 
@@ -600,7 +596,6 @@ fn run_managed_setup_steps(
         binding_resolution,
         container_binding,
         container_handoff,
-        container_repo_root,
         managed_task_secret_pairs,
     } = context;
     let plan_has_lifecycle = plan
@@ -643,100 +638,21 @@ fn run_managed_setup_steps(
             super::super::api::ExecutionBindingKind::NamedContainer
         ) && !plan_has_lifecycle
         {
-            for (index, step) in process.setup_steps.iter().enumerate() {
-                let child = run.step(index, &format!("{} setup {}", process.name, index + 1))?;
-                let result = {
-                    let _parent = child.enter();
-                    let mut single = process.clone();
-                    single.setup_steps = vec![step.clone()];
-                    crate::runner::execute::sequence_run::legacy_container_step(|| {
-                        run_named_container_managed_setup_steps(
-                            preflight,
-                            selection,
-                            &single,
-                            container_binding,
-                            container_repo_root,
-                            managed_task_secret_pairs,
-                        )
-                    })
-                };
-                let workload = result
-                    .as_ref()
-                    .map(|_| effigy_kernel::outcome::WorkloadOutcome::Succeeded)
-                    .unwrap_or_else(|error| {
-                        crate::runner::task_engine::workload_for_exit(
-                            error.task_exit_status().unwrap_or(1),
-                        )
-                    });
-                for warning in child.close(workload) {
-                    eprintln!("warning: {warning}");
-                }
-                result?;
-            }
+            // The typed engine, as for host setup: each step is a child run
+            // and container workloads run under its remote custody.
+            run_in_process_sequence_steps(
+                preflight,
+                selection,
+                &process.setup_steps,
+                env_schema_resolved,
+                local_secret_ref,
+                (&process.name, &[]),
+                run,
+            )?;
             process.setup = None;
         }
     }
     Ok(())
-}
-
-fn run_named_container_managed_setup_steps(
-    preflight: &ExecutionPreflight,
-    selection: &TaskSelection<'_>,
-    process: &effigy_managed::ManagedProcessSpec,
-    container_binding: &ContainerExecutionBinding,
-    container_repo_root: Option<&std::path::Path>,
-    managed_task_secret_pairs: &[(String, SecretString)],
-) -> Result<(), RunnerError> {
-    let resolver: effigy_manifest::TaskResolverFn<'_> = &effigy_routing::resolve_task_selection;
-    let rendered = render_run_step_sequence(
-        &process.setup_steps,
-        effigy_managed::run_spec::RunStepSequenceContext {
-            owner_label: &process.name,
-            task_env: &selection.task.env,
-            task_env_file: selection.task.env_file.as_ref(),
-            env_profiles: &selection.catalog.manifest.env,
-            repo_root: &selection.catalog.catalog_root,
-            bundle_root: selection.catalog.bundle_root.as_deref(),
-            catalogs: &preflight.catalogs,
-            task_scope_cwd: &process.cwd,
-            runtime_env_schema_override: preflight.runtime_args_raw.env_schema_override.as_deref(),
-            resolver,
-        },
-    )
-    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let rendered =
-        crate::runner::secret_session::inject_secret_passphrase_into_internal_command(rendered);
-    let rendered = wrap_with_managed_secret_env(
-        rendered,
-        managed_task_secret_pairs,
-        &selection.catalog.catalog_root,
-    );
-    let routed = container_exec_command(
-        &rendered,
-        &selection.catalog.catalog_root,
-        &process.cwd,
-        container_repo_root,
-    );
-    let output = run_container_exec_operation_capture(
-        &selection.catalog.catalog_root,
-        container_binding.container_name(),
-        ContainerCapturedExecOperation {
-            service: None,
-            command: vec!["sh".to_owned(), "-lc".to_owned(), routed.clone()],
-            stdin_file: None,
-            cwd: None,
-            env: std::collections::BTreeMap::new(),
-        },
-    )?;
-    if output.status.success() {
-        return Ok(());
-    }
-    Err(RunnerError::TaskCommandFailure {
-        command: routed,
-        code: output.status.code(),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    })
 }
 
 fn managed_setup_steps_can_run_locally(

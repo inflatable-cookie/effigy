@@ -27,10 +27,10 @@ pub use effigy_core::repo_markers::TASK_MANIFEST_FILE;
 pub use portfolio::{load_portfolio, Portfolio, PORTFOLIO_FILE};
 
 pub use bundles::{
-    bundle_sources_need_preparation, inspect_bundle_source, prepare_bundle_sources,
-    resolve_catalog_source, sync_bundle_source, BundleInputSpec, BundleInputType,
-    BundleSourceInspectReport, BundleSourceType, BundleSpec, BundleSyncReport, SourcePreparation,
-    SourceSettlement,
+    bundle_sources_need_preparation, catalog_source_roots, inspect_bundle_source,
+    prepare_bundle_sources, resolve_catalog_source, sync_bundle_source, BundleInputSpec,
+    BundleInputType, BundleSourceInspectReport, BundleSourceType, BundleSpec, BundleSyncReport,
+    CatalogSourceRoots, SourcePreparation, SourceSettlement,
 };
 pub use composition::{
     load_docs_policy_graph_config, load_task_manifest_with_inspection, LoadedTaskManifest,
@@ -288,6 +288,21 @@ impl TaskManifest {
                         path: manifest_path.to_path_buf(),
                         detail: "catalog member handles and directories must be non-empty strings"
                             .to_owned(),
+                    });
+                }
+            }
+            for name in catalog.sources.keys() {
+                if name.trim().is_empty()
+                    || name != name.trim()
+                    || name.contains('/')
+                    || name.contains(':')
+                    || matches!(name.as_str(), "project" | "bundle" | "baseline")
+                {
+                    return Err(ManifestError::Compose {
+                        path: manifest_path.to_path_buf(),
+                        detail: format!(
+                            "`[catalog.sources.{name}]` needs a plain handle: no '/' or ':', and not `project`, `bundle` or `baseline`, which name the built-in catalog sources"
+                        ),
                     });
                 }
             }

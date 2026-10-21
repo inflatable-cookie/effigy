@@ -3,6 +3,8 @@ pub(crate) mod capture;
 pub(crate) mod platform;
 pub use capture::Stream;
 pub(crate) mod spawn;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 use crate::ctx::{CleanupContext, EffectContext, OperationContext};
 use crate::ident::ProcessIdentity;
 use crate::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
@@ -29,6 +31,11 @@ impl std::fmt::Debug for SecretValue {
 impl SecretValue {
     pub(crate) fn bytes(&self) -> &[u8] {
         &self.0
+    }
+    /// Whether the value is one line: line-framed transports (an env file)
+    /// cannot carry a newline. Reveals nothing else about the value.
+    pub fn is_single_line(&self) -> bool {
+        !self.0.contains(&b'\n')
     }
     pub fn new(bytes: Vec<u8>) -> io::Result<Self> {
         if bytes.is_empty() || bytes.contains(&0) {
@@ -604,22 +611,18 @@ impl ProcessCore {
                     }
                     break;
                 }
-                if index == 1 {
-                    let bytes = if let Some(registration) = &self.registration {
-                        registration
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .push(&buf[..count as usize], false)
-                    } else {
-                        buf[..count as usize].to_vec()
-                    };
+                if let Some(registration) = self.framed(index) {
+                    let bytes = registration
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(&buf[..count as usize], false);
                     self.sink(index, &bytes, false);
                 } else {
                     self.sink(index, &buf[..count as usize], false);
                 }
             }
-            if eof && index == 1 {
-                if let Some(registration) = &self.registration {
+            if eof {
+                if let Some(registration) = self.framed(index) {
                     let bytes = registration
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -640,6 +643,22 @@ impl ProcessCore {
         if self.stdout.is_none() && self.stderr.is_none() {
             self.sink(0, &[], true);
         }
+    }
+    /// The registration stream when `index` is the stream that carries it.
+    fn framed(
+        &self,
+        index: usize,
+    ) -> Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>> {
+        self.registration
+            .as_ref()
+            .filter(|registration| {
+                registration
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .stream()
+                    == index
+            })
+            .cloned()
     }
     fn poll(&mut self) -> Observed<Exit> {
         self.drain();

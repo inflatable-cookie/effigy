@@ -787,6 +787,7 @@ dependencies = [
  "effigy-secrets",
  "effigy-state",
  "effigy-tasks",
+ "effigy-test-support",
  "effigy-tui",
  "effigy-ui",
  "globset",
@@ -827,6 +828,7 @@ name = "effigy-bootstrap"
 version = "0.14.1"
 dependencies = [
  "effigy-manifest",
+ "effigy-test-support",
  "serde_json",
  "tempfile",
 ]
@@ -860,14 +862,12 @@ dependencies = [
 name = "effigy-catalog"
 version = "0.14.1"
 dependencies = [
- "fs2",
  "indexmap",
  "minijinja",
  "rust-embed",
  "semver",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.20",
  "toml",
@@ -926,6 +926,7 @@ dependencies = [
  "effigy-gateway",
  "effigy-kernel",
  "effigy-manifest",
+ "effigy-test-support",
  "nix 0.31.3",
  "serde",
  "serde_json",
@@ -1104,6 +1105,7 @@ dependencies = [
 name = "effigy-kernel"
 version = "0.14.1"
 dependencies = [
+ "effigy-test-support",
  "libc",
  "proc-macro2",
  "rhai",
@@ -1164,7 +1166,6 @@ name = "effigy-release"
 version = "0.14.1"
 dependencies = [
  "chrono",
- "effigy-catalog",
  "effigy-changelog",
  "effigy-core",
  "effigy-manifest",
@@ -1302,6 +1303,16 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "toml",
+]
+
+[[package]]
+name = "effigy-test-support"
+version = "0.14.1"
+dependencies = [
+ "effigy-kernel",
+ "libc",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
