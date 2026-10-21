@@ -453,6 +453,40 @@ Deep dive:
 - [`050-env-schema-integration.md`](050-env-schema-integration.md)
 - [`051-release-orchestration.md`](051-release-orchestration.md)
 
+## 12) Keep Dependency Updates Edge-Stable
+
+`cargo update -p <crate> --precise <version>` is bounded in intent but not in
+effect: Cargo re-resolves the edges around the named package, so a two-crate
+bump can re-point unrelated `windows-sys` consumers or split `getrandom` into
+an extra version. Review then sees deltas nobody can explain, and the extra
+version ships unless someone catches it.
+
+When the target releases keep their dependency lists identical, keep the graph
+still:
+
+1. Name the exact crates and versions the change is for.
+2. Run the precise update once:
+   `cargo update -p <crate> --precise <version>`
+   (through Effigy: `effigy cargo update -p <crate> --precise <version>`).
+3. Copy the new `version` and `checksum` values for those entries out of the
+   resulting `Cargo.lock`, then restore the lockfile from your last commit.
+4. Apply the update surgically: edit only those `[[package]]` entries, changing
+   `version` and the registry `checksum`. Leave every `source` and
+   `dependencies` list untouched. This is the shape Dependabot commits.
+5. Validate with locked commands, which fail instead of re-resolving:
+   `cargo fetch --locked`, then the covering test selector such as
+   `effigy test:focused -p <crate> --lib`.
+6. If `--locked` refuses because the graph genuinely needs a new edge, the
+   update is not edge-stable: land the full resolution instead and call out the
+   extra deltas in review. Never accept a split version as review noise.
+
+A `Cargo.lock` diff for a bounded dependency task should be explainable line by
+line: the named crates' version and checksum, and nothing else.
+
+Deep dive:
+- [`077-local-dependency-linking.md`](077-local-dependency-linking.md)
+- [`013-testing-orchestration.md`](013-testing-orchestration.md)
+
 ## Expected Outcome
 
 After this guide, you should have a clearer default path for:
