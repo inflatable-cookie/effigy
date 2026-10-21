@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::bun::{inventory_bun_committed_file_locals, inventory_bun_file_dependencies};
 use crate::cargo::inventory_cargo_committed_path_locals;
-use crate::cargo_unlink::{classify_lockfile, git_head_file};
+use crate::cargo_unlink::{classify_lockfile_drift, git_head_file};
 use crate::{
     inspect_bun_peer_resolutions, inventory_cargo_consumer_roots, is_process_timeout,
     BunPeerDiagnostic, BunPeerResolutionStatus, BunRegistrationIndex, CargoLibraryInventory,
@@ -568,7 +568,7 @@ fn cargo_lock_hygiene(
         let baseline = git_head_file(repo_root, &path, process)?;
         let current = fs::read_to_string(&path)
             .map_err(|error| crate::DepsError::io("read Cargo lockfile", &path, error))?;
-        match classify_lockfile(&path, &baseline, &current, cargo_guard_packages)? {
+        match classify_lockfile_drift(&path, &baseline, &current, cargo_guard_packages, true)? {
             CargoLockfileState::Clean => {}
             CargoLockfileState::ActiveLinks => findings.push(error_reason(
                 "cargo-lock-active-link-state",
@@ -579,6 +579,16 @@ fn cargo_lock_hygiene(
                 None,
                 vec![path.display().to_string()],
                 Some("run `effigy deps unlink cargo <library-path>` and verify committed-source resolution before committing"),
+            )),
+            CargoLockfileState::CommittedTransition => findings.push(warning_reason(
+                "cargo-lock-committed-transition",
+                format!(
+                    "tracked lockfile `{}` carries committed source/version advances outside the active linked packages",
+                    path.display()
+                ),
+                None,
+                vec![path.display().to_string()],
+                Some("review and commit or revert those dependency updates separately from local-link state"),
             )),
             CargoLockfileState::UnexpectedDrift => findings.push(error_reason(
                 "cargo-lock-unexpected-drift",
