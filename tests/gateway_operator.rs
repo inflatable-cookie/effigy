@@ -9,10 +9,9 @@ use std::time::Duration;
 #[test]
 fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
     use std::os::unix::fs::PermissionsExt;
-    let home = tempfile::Builder::new()
-        .prefix("g219-")
-        .tempdir_in("/tmp")
-        .unwrap();
+    // The operator control socket needs a short external pathname.
+    let home =
+        effigy_test_support::Fixture::in_parent("g219-", std::path::Path::new("/tmp")).unwrap();
     let gateway = home.path().join(".effigy/gateway");
     std::fs::create_dir_all(gateway.join("certs")).unwrap();
     let mut config = GatewayConfig::standard(gateway.clone());
@@ -86,10 +85,9 @@ fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
         Ok(ready) => ready,
         Err(error) => {
             let status = operator::status(&config);
-            let retained = home.keep();
             panic!(
-                "{error}; status={status:?}; retained fixture {}",
-                retained.display()
+                "{error}; status={status:?}; fixture {}",
+                home.path().display()
             );
         }
     };

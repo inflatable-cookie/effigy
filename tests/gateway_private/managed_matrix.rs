@@ -40,7 +40,7 @@ impl MatrixProxy {
             .stdout(log.try_clone().expect("proxy stdout"))
             .stderr(log)
             .process_group(0);
-        let mut owner = ManagedSupervisor(command.spawn().expect("private Docker proxy"));
+        let mut owner = ManagedSupervisor(command.spawn_owned().expect("private Docker proxy"));
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             assert!(
@@ -65,7 +65,8 @@ impl MatrixProxy {
 
 #[test]
 fn managed_matrix_proxy_keeps_its_published_port_during_a_concurrent_claim() {
-    let fixture = tempfile::tempdir().expect("private proxy fixture");
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-private-").expect("private proxy fixture");
     let proxy = MatrixProxy::bind(fixture.path());
     let address = proxy.address;
     // Force the old gap: another listener tries to claim the published port
@@ -251,6 +252,14 @@ impl<'a> Case<'a> {
             .env("FOREIGN_CAROOT", self.foreign_ca)
             .env("FAKE_DOCKER_LOG", &self.log)
             .env("FAKE_OWNED_STATE", &self.state)
+            .env(
+                "EFFIGY_TEST_FIXTURE_LEDGER",
+                process::ledger().expect("matrix process ledger"),
+            )
+            .env(
+                "MATRIX_TEST_BINARY",
+                std::env::current_exe().expect("matrix helper image"),
+            )
             .env("MATRIX_EXEC", "1")
             .env("MATRIX_ADAPTER", self.root.join("matrix-adapter.py"))
             .env("MATRIX_ROOT", &self.root)
@@ -260,7 +269,9 @@ impl<'a> Case<'a> {
         command
     }
     fn run(&self, args: &[&str]) -> Output {
-        self.command(args).output().expect("bounded fixture CLI")
+        self.command(args)
+            .output_owned()
+            .expect("bounded fixture CLI")
     }
     fn success(&self, args: &[&str]) {
         let output = self.run(args);
@@ -335,7 +346,7 @@ impl<'a> Case<'a> {
                 .stdout(slave.try_clone().expect("PTY stdout"))
                 .stderr(slave);
             command.env("EFFIGY_MANAGED_TUI", "1");
-            let child = command.spawn().expect("TUI owner");
+            let child = command.spawn_owned().expect("TUI owner");
             let mut master = fs::File::from(pair.master);
             let reader = thread::spawn(move || {
                 let mut file = file;
@@ -367,7 +378,7 @@ impl<'a> Case<'a> {
                 .stdout(file.try_clone().expect("stdout"))
                 .stderr(file);
             Owner {
-                child: ManagedSupervisor(command.spawn().expect("headless owner")),
+                child: ManagedSupervisor(command.spawn_owned().expect("headless owner")),
                 reader: None,
                 output,
                 prior_run_token,
@@ -557,7 +568,7 @@ fn managed_matrix_process_liveness_distinguishes_live_and_unreaped_children() {
     );
     let mut child = Command::new("sh")
         .args(["-c", "exit 0"])
-        .spawn()
+        .spawn_owned()
         .expect("short child");
     let deadline = Instant::now() + Duration::from_secs(5);
     while owned_process_is_live(child.id()) && Instant::now() < deadline {
@@ -575,7 +586,8 @@ fn managed_matrix_process_liveness_distinguishes_live_and_unreaped_children() {
 /// shells/setsid). Fake down must model container death for that PID too.
 #[test]
 fn managed_matrix_down_ends_recorded_non_group_leader_workload() {
-    let private = tempfile::tempdir().expect("private fake-down fixture");
+    let private =
+        effigy_test_support::Fixture::new("effigy-private-").expect("private fake-down fixture");
     let root = private.path();
     fs::create_dir(root.join("engine")).expect("engine");
     fs::write(root.join("matrix-adapter.py"), ADAPTER).expect("adapter");
@@ -587,7 +599,7 @@ fn managed_matrix_down_ends_recorded_non_group_leader_workload() {
         ])
         .current_dir(root)
         .process_group(0);
-    let owner = ManagedSupervisor(command.spawn().expect("private process group"));
+    let owner = ManagedSupervisor(command.spawn_owned().expect("private process group"));
     let marker = root.join("work.pid");
     let deadline = Instant::now() + Duration::from_secs(5);
     while !marker.exists() && Instant::now() < deadline {
@@ -605,10 +617,16 @@ fn managed_matrix_down_ends_recorded_non_group_leader_workload() {
             .as_raw(),
         pid as i32
     );
+    owner
+        .0
+        .register_owner(&root.join("engine"))
+        .expect("fake workload group registration");
     let down = Command::new("python3")
         .arg(root.join("matrix-adapter.py"))
         .args(["down", "matrix-stack"])
         .env("MATRIX_ROOT", root)
+        .env("MATRIX_TEST_BINARY", std::env::current_exe().unwrap())
+        .env("EFFIGY_TEST_FIXTURE_LEDGER", process::ledger().unwrap())
         .output()
         .expect("fake down");
     assert!(down.status.success(), "{:?}", down);
@@ -651,6 +669,10 @@ impl Owner {
             success,
             "owner status {exit}: {}",
             fs::read_to_string(&self.output).unwrap_or_default()
+        );
+        assert!(
+            self.child.0.group_closed(),
+            "managed owner exited with surviving group members"
         );
         if let Some(reader) = self.reader.take() {
             reader.join().expect("PTY output drained");
@@ -915,13 +937,15 @@ fn authority_matrix(authority: Authority) {
         &effects,
         &foreign_ca,
     );
-    // Keep the successor in startup while the stale generation is observed.
-    if matches!(authority, Authority::PreviousGeneration) {
+    // Keep children pending beyond the suite's bounded proof window. This
+    // case stops during startup rather than racing a four-second delay.
+    let startup_only = matches!(authority, Authority::PreviousGeneration);
+    if startup_only {
         let manifest_path = case.root.join("effigy.toml");
         let manifest = fs::read_to_string(&manifest_path).expect("manifest");
         fs::write(
             manifest_path,
-            manifest.replace("start = 2", "start = 2, start_after_ms = 4000"),
+            manifest.replace("start = 2", "start = 2, start_after_ms = 3600000"),
         )
         .expect("startup delay");
     }
@@ -930,7 +954,18 @@ fn authority_matrix(authority: Authority) {
         .root
         .join(".effigy/runtime/managed/serve-default/session.json");
     let deadline = Instant::now() + Duration::from_secs(35);
-    while !session.exists() || !case.state.join("active-matrix-stack").exists() {
+    while !session.exists()
+        || !case.state.join("active-matrix-stack").exists()
+        || (startup_only
+            && !fs::read(&session)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .and_then(|state| state["processes"].as_array().cloned())
+                .is_some_and(|rows| {
+                    rows.iter()
+                        .any(|row| row["pid"].as_u64().is_some_and(|pid| pid > 0))
+                }))
+    {
         assert!(
             Instant::now() < deadline,
             "successor startup: {}",
@@ -939,7 +974,7 @@ fn authority_matrix(authority: Authority) {
         thread::sleep(Duration::from_millis(25));
     }
     let down_before = case.down_count();
-    let mut observed_pids = Vec::new();
+    let observed_pids: Vec<u32>;
     match authority {
         Authority::PreviousGeneration => {
             let mut prior: Value =
@@ -952,6 +987,15 @@ fn authority_matrix(authority: Authority) {
                     .any(|row| row["status"] == "pending"),
                 "successor must still be starting"
             );
+            observed_pids = prior["processes"]
+                .as_array()
+                .expect("processes")
+                .iter()
+                .filter_map(|row| row["pid"].as_u64().map(|pid| pid as u32))
+                .collect();
+            assert!(!observed_pids.is_empty(), "live lifecycle owns startup");
+            assert!(!case.root.join("work-api.pid").exists());
+            assert!(!case.root.join("work-jobs.pid").exists());
             prior["task"] = "prior".into();
             prior["supervisor_pid"] = 999_999_999u32.into();
             prior["run_token"] = "managedrun-prior".into();
@@ -1016,14 +1060,21 @@ fn authority_matrix(authority: Authority) {
             );
             let output =
                 fs::File::create(case.root.join("prior-lifecycle.out")).expect("prior log");
-            // The background exec makes the rendered shell a direct child
-            // of the parent we kill. Its normal parent-death loop runs EXIT.
-            let script = format!("exec {rendered} & wait");
+            // The controller and lifecycle shell have separate owned groups.
+            // Reaping the killed controller makes real parent death observable
+            // while the registered shell performs its normal EXIT trap.
+            let script = format!(
+                "exec python3 {} prior-parent {}",
+                effigy_core::shell::shell_quote(
+                    &case.root.join("matrix-adapter.py").display().to_string()
+                ),
+                effigy_core::shell::shell_quote(&rendered)
+            );
             let mut parent = ManagedSupervisor(
                 case.shell(&script)
                     .stdout(output.try_clone().expect("log"))
                     .stderr(output)
-                    .spawn()
+                    .spawn_owned()
                     .expect("prior parent"),
             );
             let marker = case
@@ -1044,7 +1095,8 @@ fn authority_matrix(authority: Authority) {
             while fs::read_to_string(&marker).unwrap_or_default().trim() != "stopped" {
                 assert!(
                     Instant::now() < deadline,
-                    "parent death must execute EXIT trap"
+                    "parent death must execute EXIT trap: {}",
+                    fs::read_to_string(case.root.join("prior-lifecycle.out")).unwrap_or_default()
                 );
                 thread::sleep(Duration::from_millis(25));
             }
@@ -1105,21 +1157,34 @@ fn managed_matrix_missing_record_handover_preserves_live_holder() {
     authority_matrix(Authority::MissingRecordHandover);
 }
 
-const ADAPTER: &str = r#"import sys,os,json,pathlib,subprocess,time,signal
+const ADAPTER: &str = r#"import sys,os,json,pathlib,subprocess,time,signal,shlex
 root=pathlib.Path(os.environ['MATRIX_ROOT']);state=root/'engine';args=sys.argv[2:];op=sys.argv[1]
+def fixture_process(action,pid=None,owner=None,nonce=None):
+ helper=os.environ.get('EFFIGY_TEST_PROCESS_HELPER')
+ owner=str(owner if owner is not None else root/'engine')
+ if helper:
+  command=[helper,action]+([str(pid),owner] if action=='register' else [owner])
+  if nonce is not None: command.append(nonce)
+  subprocess.run(command,check=True,stdout=subprocess.DEVNULL)
+ else:
+  env=dict(os.environ,EFFIGY_REGISTER_OWNER=owner,EFFIGY_REGISTER_ACTION=action)
+  if pid is not None: env['EFFIGY_REGISTER_PID']=str(pid)
+  if nonce is not None: env['EFFIGY_REGISTER_NONCE']=nonce
+  subprocess.run([env['MATRIX_TEST_BINARY'],'--ignored','--exact','register_fixture_process_child'],env=env,check=True,stdout=subprocess.DEVNULL)
+if op=='prior-parent':
+ nonce=os.urandom(16).hex()
+ # Execute the rendered sh -lc command directly: dash otherwise keeps an
+ # extra sh -c parent alive after the controller dies, unlike macOS sh.
+ child=subprocess.Popen(shlex.split(args[0]),start_new_session=True,env=dict(os.environ,EFFIGY_CUSTODY_NONCE=nonce))
+ try: fixture_process('register',child.pid,root,nonce)
+ except BaseException:
+  os.killpg(child.pid,signal.SIGKILL)
+  child.wait()
+  raise
+ sys.exit(child.wait())
 def kill_recorded():
- records=list(root.glob('*.pid'))
- # A real container down ends every workload, including non-group leaders.
- # Keep group termination for descendants, but always signal the PID too.
- for sig in (signal.SIGTERM,signal.SIGKILL):
-  for p in records:
-   try: pid=int(p.read_text())
-   except (FileNotFoundError,ValueError): continue
-   for send in (os.killpg,os.kill):
-    try: send(pid,sig)
-    except ProcessLookupError: pass
-  if sig==signal.SIGTERM: time.sleep(.1)
- for p in records: p.unlink(missing_ok=True)
+ fixture_process('stop-root')
+ for p in root.glob('*.pid'): p.unlink(missing_ok=True)
 if op=='down':
  with (state/'down-events').open('a') as events: events.write(args[0]+'\n')
  if (state/'deny-down').exists(): sys.exit(71)
@@ -1130,7 +1195,14 @@ if op=='down':
 if op=='payload' or (op=='exec' and '.pgid' in args[-1]):
  payload=args[-1].replace('/usr/local/bin/effigy',str(root/'effigy-wrapper'))
  with open(root/('remote-'+str(os.getpid())+'.out'),'wb') as log:
-  child=subprocess.Popen(['sh','-c',payload],start_new_session=True,stdout=log,stderr=log)
+  nonce=os.urandom(16).hex()
+  child=subprocess.Popen(['sh','-c',payload],start_new_session=True,stdout=log,stderr=log,env=dict(os.environ,EFFIGY_CUSTODY_NONCE=nonce))
+  try: fixture_process('register',child.pid,nonce=nonce)
+  except BaseException:
+   # This exact unreaped child created the dedicated group; rollback before reaping.
+   os.killpg(child.pid,signal.SIGKILL)
+   child.wait()
+   raise
   pid_file=root/('remote-'+str(os.getpid())+'.pid')
   pending=pid_file.with_suffix('.pid.tmp')
   pending.write_text(str(child.pid))

@@ -44,6 +44,7 @@ pub(super) fn spawn_gateway_daemon(config: &GatewayConfig) -> Result<(), RunnerE
             command.arg("--https-addr").arg(address.to_string());
         }
     }
+    super::fixture::configure(&mut command, config).map_err(RunnerError::Cwd)?;
     // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
     // where only async-signal-safe work is allowed. `setsid` is
     // async-signal-safe. On failure, `io::Error::last_os_error()` captures
@@ -92,6 +93,8 @@ pub(super) fn spawn_gateway_daemon(config: &GatewayConfig) -> Result<(), RunnerE
         thread::sleep(Duration::from_millis(50));
     }
 
+    #[cfg(debug_assertions)]
+    super::fixture::hold_client(config)?;
     Ok(())
 }
 

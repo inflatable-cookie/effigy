@@ -1,5 +1,3 @@
-#[path = "../../tests/support/sealed_fixture.rs"]
-pub(crate) mod sealed_fixture;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::fs;
@@ -9,22 +7,7 @@ use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 std::thread_local! {
-    static TEST_FIXTURE_ROOT: RefCell<Option<tempfile::TempDir>> = const { RefCell::new(None) };
-}
-
-pub(super) fn test_fixture_parent() -> PathBuf {
-    let checkout = fs::canonicalize(env!("CARGO_MANIFEST_DIR"))
-        .expect("canonicalize the Effigy checkout for test fixtures");
-    // Keep package fixtures inside the authenticated checkout so inherited
-    // parent tokens admit them. The prefix is Cargo-excluded in Cargo.toml and
-    // remains visible to graph and scan walks.
-    let parent = fs::canonicalize(checkout.join("crates"))
-        .expect("canonicalize the Effigy workspace crates directory");
-    assert!(
-        parent.starts_with(&checkout),
-        "test fixture parent must remain inside the authenticated checkout"
-    );
-    parent
+    static TEST_FIXTURE_ROOT: RefCell<Option<effigy_test_support::Fixture>> = const { RefCell::new(None) };
 }
 
 pub(super) fn parse_json(text: &str) -> serde_json::Value {
@@ -44,10 +27,8 @@ pub(super) fn temp_workspace(name: &str) -> PathBuf {
         let mut root = root.borrow_mut();
         if root.is_none() {
             *root = Some(
-                tempfile::Builder::new()
-                    .prefix("effigy-parent-fixtures-")
-                    .tempdir_in(test_fixture_parent())
-                    .expect("create test fixture root beneath the Effigy workspace"),
+                effigy_test_support::Fixture::workspace("effigy-parent-fixtures-")
+                    .expect("create owned test fixture root"),
             );
         }
         root.as_ref()
@@ -66,11 +47,15 @@ where
     F: FnOnce() -> T,
 {
     let _guard = lock_test();
-    let original = std::env::current_dir().expect("current dir");
+    struct RestoreCwd(PathBuf);
+    impl Drop for RestoreCwd {
+        fn drop(&mut self) {
+            std::env::set_current_dir(&self.0).expect("restore cwd");
+        }
+    }
+    let _restore = RestoreCwd(std::env::current_dir().expect("current dir"));
     std::env::set_current_dir(cwd).expect("set cwd");
-    let out = f();
-    std::env::set_current_dir(original).expect("restore cwd");
-    out
+    f()
 }
 
 pub(super) fn test_lock() -> &'static ReentrantTestLock {
@@ -255,4 +240,18 @@ pub(super) fn assert_waits_for_path_mutator(reader: fn(Box<dyn FnOnce() + Send>)
         "fixture must wait for the active PATH mutator"
     );
     result.expect("fixture succeeds after PATH restoration");
+}
+
+#[test]
+fn fixture_cwd_restores_after_unwind_before_root_removal() {
+    let _guard = lock_test();
+    let original = std::env::current_dir().unwrap();
+    let fixture = effigy_test_support::Fixture::new("effigy-cwd-unwind-").unwrap();
+    let result = std::panic::catch_unwind(|| {
+        with_cwd(fixture.path(), || panic!("fixture panic"));
+    });
+    assert!(result.is_err());
+    assert_eq!(std::env::current_dir().unwrap(), original);
+    drop(fixture);
+    assert_eq!(std::env::current_dir().unwrap(), original);
 }

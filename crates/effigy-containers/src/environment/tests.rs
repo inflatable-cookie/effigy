@@ -27,11 +27,8 @@ mod importer;
 
 const PROJECT: &str = "acme-stack";
 
-pub(super) fn home() -> tempfile::TempDir {
-    tempfile::Builder::new()
-        .prefix("effigy-environment-")
-        .tempdir()
-        .expect("private home")
+pub(super) fn home() -> effigy_test_support::Fixture {
+    effigy_test_support::Fixture::new("effigy-environment-").expect("private home")
 }
 
 pub(super) fn root(home: &Path) -> StateRoot {

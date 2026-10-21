@@ -41,6 +41,7 @@ use elevation::{gateway_invocation_is_escalated, prepare_gateway_state_for_eleva
 
 mod daemon;
 mod elevation;
+mod fixture;
 
 pub(super) const GATEWAY_DIR_NAME: &str = ".effigy/gateway";
 pub(super) const GATEWAY_ESCALATED_ENV: &str = "EFFIGY_GATEWAY_ESCALATED";
@@ -264,6 +265,7 @@ pub(super) fn run_internal_gateway(args: InternalGatewayArgs) -> Result<String, 
     if args.listener_handoff {
         config = config.with_listener_handoff(true);
     }
+    fixture::register(&config)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

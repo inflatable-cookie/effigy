@@ -618,6 +618,15 @@ During v0.x, MINOR bumps may include breaking changes.
   startup and retirement coherently within its observation deadline.
 - Gateway parser and descriptorless-process controls now run on Linux and
   macOS; idle shutdown proofs wait for completion instead of fixed sleeps.
+- Test fixture guards remove sealed kernel object trees on success and unwind;
+  ordinary fixture roots live outside the checkout, with documented workspace
+  exceptions and a suite leak assertion. Shared process guards stop registered
+  child groups and detached fake workloads before fixture removal. The kill-matrix
+  reclaim proof holds its first run at a barrier until SIGKILL. Fixture child
+  identity is registered before exec, including immediate exits. Fixture removal
+  shares native child custody with live guards until their groups close.
+  Detached private fixture gateways publish custody before serving, even if their
+  startup client fails or is killed before returning a successful response.
 - Container preparation detects missing or changed named-volume mounts before
   reusing a running stack, including worktree `isolated_dirs`. Status and doctor
   report drift, guarded `up` applies the current render, and permission repair

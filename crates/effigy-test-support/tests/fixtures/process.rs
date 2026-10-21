@@ -1,0 +1,35 @@
+use effigy_test_support::process;
+use std::path::Path;
+
+fn main() {
+    let args: Vec<_> = std::env::args().collect();
+    let result = match args.get(1).map(String::as_str) {
+        Some("register") if args.len() == 4 || args.len() == 5 => args[2]
+            .parse::<u32>()
+            .map_err(std::io::Error::other)
+            .and_then(|pid| process::register_detached_with_nonce(pid, Path::new(&args[3]), args.get(4).map(String::as_str).unwrap_or("")))
+            .map(|_| false),
+        Some("stop-root") if args.len() == 3 => {
+            process::close_root(Path::new(&args[2])).map(|_| false)
+        }
+        Some("wait-root") if args.len() == 3 => {
+            process::wait_kernel_helpers(Path::new(&args[2])).map(|_| false)
+        }
+        Some("run") if args.len() == 5 => process::run_recorded(
+            std::process::Command::new("sh").args(["-c", &args[4]]).current_dir(&args[2]),
+            Path::new(&args[3]),
+        ).map(|_| false),
+        Some("sweep") if args.len() == 3 => process::sweep(Path::new(&args[2]), None),
+        _ => Err(std::io::Error::other(
+            "usage: effigy-fixture-process register PID OWNER [NONCE] | stop-root OWNER | wait-root HOME | run OWNER DONE SCRIPT | sweep LEDGER",
+        )),
+    };
+    match result {
+        Ok(false) => (),
+        Ok(true) => std::process::exit(1),
+        Err(error) => {
+            eprintln!("fixture process registry: {error}");
+            std::process::exit(2);
+        }
+    }
+}

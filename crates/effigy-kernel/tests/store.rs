@@ -167,7 +167,11 @@ fn store_file_before_its_schema_commits_reads_absent_not_corrupt() {
     // A writer creates kernel.db before its schema transaction commits; a
     // reader racing it sees an empty database, which holds nothing yet.
     let home = home();
-    let root = root(home.path());
+    // This intentionally invalid Store is data, not a HOME used to launch
+    // kernel helpers. Keep it below the owned fixture's HOME observation path.
+    let store_home = home.path().join("store-case");
+    std::fs::create_dir(&store_home).unwrap();
+    let root = root(&store_home);
     std::fs::OpenOptions::new()
         .create_new(true)
         .write(true)
@@ -175,7 +179,7 @@ fn store_file_before_its_schema_commits_reads_absent_not_corrupt() {
         .open(root.path().join(DB_NAME))
         .unwrap();
     assert!(matches!(
-        reader(home.path()),
+        reader(&store_home),
         Observed::Absent(AbsenceProof::NoStore)
     ));
     // A database with tables but no schema version is still corrupt.
@@ -187,7 +191,7 @@ fn store_file_before_its_schema_commits_reads_absent_not_corrupt() {
         .unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     assert!(matches!(
-        reader(home.path()),
+        reader(&store_home),
         Observed::Unknown(UnknownReason::StoreUnreadable(_))
     ));
 }
@@ -241,7 +245,11 @@ fn store_waits_need_a_finite_deadline() {
 #[test]
 fn store_symlinked_or_foreign_db_is_untrusted() {
     let home = home();
-    let root = root(home.path());
+    // This intentionally invalid Store is data, not a HOME used to launch
+    // kernel helpers. Keep it below the owned fixture's HOME observation path.
+    let store_home = home.path().join("store-case");
+    std::fs::create_dir(&store_home).unwrap();
+    let root = root(&store_home);
     let target = home.path().join("target.db");
     std::fs::write(&target, b"").unwrap();
     std::os::unix::fs::symlink(&target, root.path().join(DB_NAME)).unwrap();
@@ -250,7 +258,7 @@ fn store_symlinked_or_foreign_db_is_untrusted() {
         Err(StoreError::Untrusted { .. })
     ));
     assert!(matches!(
-        reader(home.path()),
+        reader(&store_home),
         Observed::Unknown(UnknownReason::Untrusted(_))
     ));
     assert_eq!(std::fs::read(&target).unwrap(), b"");

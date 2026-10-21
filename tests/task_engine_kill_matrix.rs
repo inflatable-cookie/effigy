@@ -9,10 +9,11 @@
 
 #![cfg(unix)]
 
+use effigy_test_support::process::{FixtureCommandExt, OwnedChild as Child};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -20,7 +21,7 @@ const TASK: &str = r#"[tasks.hold]
 run = "sleep 300 & echo $! > grandchild.pid; echo $$ > leader.pid; wait"
 
 [tasks.serial]
-run = "echo start >> runs.log; sleep 1; echo end >> runs.log"
+run = "echo start >> runs.log; if [ \"${EFFIGY_FIXTURE_HOLD_SERIAL:-0}\" = 1 ]; then echo ready > holder.ready; while :; do sleep 1; done; fi; sleep 1; echo end >> runs.log"
 "#;
 
 /// Cargo doc/check invocations can relink the shared target while this matrix
@@ -28,45 +29,36 @@ run = "echo start >> runs.log; sleep 1; echo end >> runs.log"
 /// image so ordinary cases exercise custody, not repeated image replacement.
 /// The explicit replacement test below still replaces its own executable.
 fn matrix_binary() -> &'static Path {
-    static IMAGE: OnceLock<(tempfile::TempDir, PathBuf)> = OnceLock::new();
-    &IMAGE
-        .get_or_init(|| {
-            let dir = tempfile::Builder::new()
-                .prefix("effigy-kill-matrix-image-")
-                .tempdir()
-                .expect("private candidate image");
-            let path = dir.path().join("effigy");
-            fs::copy(env!("CARGO_BIN_EXE_effigy"), &path).expect("snapshot candidate binary");
-            // Let the platform load this fresh image before starting a workload's
-            // readiness deadline. No task or state mutation happens here.
-            let version = Command::new(&path)
-                .arg("--version")
-                .env("HOME", dir.path())
-                .output()
-                .expect("load candidate image");
-            assert!(version.status.success(), "candidate load: {version:?}");
-            (dir, path)
-        })
-        .1
+    static IMAGE: OnceLock<PathBuf> = OnceLock::new();
+    IMAGE.get_or_init(|| {
+        let dir = effigy_test_support::Fixture::process_lifetime("effigy-kill-matrix-image-")
+            .expect("private candidate image");
+        let path = dir.as_path().join("effigy");
+        fs::copy(env!("CARGO_BIN_EXE_effigy"), &path).expect("snapshot candidate binary");
+        // Let the platform load this fresh image before starting a workload's
+        // readiness deadline. No task or state mutation happens here.
+        let version = Command::new(&path)
+            .arg("--version")
+            .env("HOME", dir.as_path())
+            .output_owned()
+            .expect("load candidate image");
+        assert!(version.status.success(), "candidate load: {version:?}");
+        path
+    })
 }
 
 struct Fixture {
-    _home: tempfile::TempDir,
+    _home: effigy_test_support::Fixture,
     home: PathBuf,
-    _repo: tempfile::TempDir,
+    _repo: effigy_test_support::Fixture,
     repo: PathBuf,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let home = tempfile::Builder::new()
-            .prefix("effigy-kill-matrix-home-")
-            .tempdir()
-            .expect("home");
-        let repo = tempfile::Builder::new()
-            .prefix("effigy-kill-matrix-repo-")
-            .tempdir()
-            .expect("repo");
+        let home = effigy_test_support::Fixture::new("effigy-kill-matrix-home-").expect("home");
+        let repo = effigy_test_support::Fixture::workspace("effigy-kill-matrix-repo-")
+            .expect("external task fixture");
         fs::write(repo.path().join("effigy.toml"), TASK).expect("manifest");
         Self {
             home: fs::canonicalize(home.path()).expect("home path"),
@@ -94,7 +86,7 @@ impl Fixture {
     fn status(&self, task: &str) -> serde_json::Value {
         let output = self
             .effigy(&["tasks", "status", task, "--json"])
-            .output()
+            .output_owned()
             .expect("status");
         let text = String::from_utf8_lossy(&output.stdout);
         let value: serde_json::Value = serde_json::from_str(&text)
@@ -206,7 +198,7 @@ fn wait_state(
 
 fn kill_case(signal: i32, expected_state: &str) {
     let fixture = Fixture::new();
-    let mut owner = fixture.effigy(&["hold"]).spawn().expect("owner");
+    let mut owner = fixture.effigy(&["hold"]).spawn_owned().expect("owner");
     let grandchild = fixture.read_pid("grandchild.pid", Duration::from_secs(15));
     let leader = fixture.read_pid("leader.pid", Duration::from_secs(15));
     let live = wait_state(&fixture, "hold", &["running"], Duration::from_secs(10));
@@ -277,10 +269,14 @@ fn task_engine_kill_matrix_kill_is_settled_by_the_sentinel_and_records_interrupt
 #[test]
 fn task_engine_reclaim_race_after_holder_kill_never_overlaps_runs() {
     let fixture = Fixture::new();
-    let mut holder = fixture.effigy(&["serial"]).spawn().expect("holder");
+    let mut holder = fixture
+        .effigy(&["serial"])
+        .env("EFFIGY_FIXTURE_HOLD_SERIAL", "1")
+        .spawn_owned()
+        .expect("holder");
     let log = fixture.repo.join("runs.log");
     let started = Instant::now();
-    while !fs::read_to_string(&log).is_ok_and(|text| text.contains("start")) {
+    while !fixture.repo.join("holder.ready").exists() {
         assert!(
             started.elapsed() < Duration::from_secs(15),
             "holder never started"
@@ -291,12 +287,23 @@ fn task_engine_reclaim_race_after_holder_kill_never_overlaps_runs() {
         .map(|_| {
             fixture
                 .effigy(&["--lock-wait-ms", "30000", "serial"])
-                .spawn()
+                .spawn_owned()
                 .expect("waiter")
         })
         .collect::<Vec<_>>();
     std::thread::sleep(Duration::from_millis(200));
-    // SAFETY: our own direct child.
+    assert_eq!(
+        fs::read_to_string(&log)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        ["start"]
+    );
+    assert!(
+        holder.try_wait().unwrap().is_none(),
+        "first holder remains at its barrier"
+    );
+    // SAFETY: our own direct child, still held at the explicit barrier.
     assert_eq!(unsafe { libc::kill(holder.id() as i32, libc::SIGKILL) }, 0);
     let _ = holder.wait();
 
@@ -332,6 +339,24 @@ fn task_engine_reclaim_race_after_holder_kill_never_overlaps_runs() {
     );
 }
 
+/// Fixture deletion waits for the kernel's recorded writer after abrupt death.
+#[test]
+fn fixture_home_waits_for_kernel_sentinel_after_client_kill() {
+    let fixture = Fixture::new();
+    let mut owner = fixture.effigy(&["hold"]).spawn_owned().expect("holder");
+    let grandchild = fixture.read_sequence_pid("grandchild.pid", &mut owner, "home cleanup");
+    let home = fixture.home.clone();
+    owner.kill().expect("kill owned client");
+    owner.wait().expect("observe owned client exit");
+    drop(owner);
+    drop(fixture);
+    assert!(!home.exists(), "fixture HOME survived cleanup");
+    assert!(
+        !alive(grandchild),
+        "kernel-owned workload survived HOME cleanup"
+    );
+}
+
 /// Equivalent spellings from two processes share one gate.
 #[test]
 fn task_engine_equivalent_spellings_from_two_processes_serialize() {
@@ -347,12 +372,12 @@ fn task_engine_equivalent_spellings_from_two_processes_serialize() {
         "[catalog]\nalias = \"api\"\n\n[tasks.hold]\nrun = \"sleep 5\"\n",
     )
     .expect("catalog manifest");
-    let mut first = fixture.effigy(&["api/hold"]).spawn().expect("first");
+    let mut first = fixture.effigy(&["api/hold"]).spawn_owned().expect("first");
     let started = Instant::now();
     loop {
         let output = fixture
             .effigy(&["tasks", "status", "api/hold", "--json"])
-            .output()
+            .output_owned()
             .expect("status");
         if String::from_utf8_lossy(&output.stdout).contains("\"running\"") {
             break;
@@ -366,7 +391,7 @@ fn task_engine_equivalent_spellings_from_two_processes_serialize() {
     let second = fixture
         .effigy(&["hold"])
         .current_dir(fixture.repo.join("apps/api"))
-        .output()
+        .output_owned()
         .expect("second spelling");
     assert!(!second.status.success(), "the second spelling must not run");
     let stderr = String::from_utf8_lossy(&second.stderr);
@@ -407,7 +432,7 @@ run = "echo after >> runs.log"
         .env_remove("EFFIGY_MANAGED_RUN_TOKEN")
         .env_remove("EFFIGY_CUSTODY_NONCE")
         .stdin(Stdio::null())
-        .output()
+        .output_owned()
         .expect("run rebuild");
     assert!(
         output.status.success(),
@@ -461,7 +486,7 @@ fn sequence_signal_matrix_each_step_text_and_json_settles_the_entire_tree() {
                 } else {
                     vec!["hold"]
                 };
-                let mut owner = fixture.effigy(&args).spawn().unwrap();
+                let mut owner = fixture.effigy(&args).spawn_owned().unwrap();
                 let cell = format!("step={step}, signal={signal}, json={json}");
                 eprintln!("sequence matrix {cell}");
                 let grandchild = fixture.read_sequence_pid("grandchild.pid", &mut owner, &cell);
@@ -543,7 +568,7 @@ run = "printf '%s' \"$SEQUENCE_VALUE\" > effects"
         } else {
             vec!["hold"]
         };
-        let output = fixture.effigy(&args).output().unwrap();
+        let output = fixture.effigy(&args).output_owned().unwrap();
         assert_eq!(output.status.code(), Some(7), "{output:?}");
         assert_eq!(
             fs::read_to_string(fixture.repo.join("effects")).unwrap(),
@@ -579,7 +604,7 @@ fn sequence_reference_cycles_fail_before_waiting_on_ancestor_gate() {
     .unwrap();
     let mut child = fixture
         .effigy(&["--lock-wait-ms", "600000", "hold"])
-        .spawn()
+        .spawn_owned()
         .unwrap();
     assert!(
         wait_exit(&mut child, Duration::from_secs(20)).is_some(),
@@ -611,7 +636,7 @@ run = "sleep 300 & echo $! > grandchild.pid; echo $$ > leader.pid; wait"
         } else {
             vec!["hold"]
         };
-        let mut owner = fixture.effigy(&args).spawn().unwrap();
+        let mut owner = fixture.effigy(&args).spawn_owned().unwrap();
         let grandchild = fixture.read_pid("grandchild.pid", Duration::from_secs(20));
         let exit = wait_exit(&mut owner, Duration::from_secs(30)).unwrap();
         assert_eq!(exit.code(), Some(124));
@@ -633,7 +658,7 @@ concurrent = [{name = "api", setup = [{id = "prepare", run = "echo setup >> effe
         } else {
             vec!["dev", "--headless"]
         };
-        let output = fixture.effigy(&args).output().unwrap();
+        let output = fixture.effigy(&args).output_owned().unwrap();
         assert_eq!(output.status.code(), Some(7), "{output:?}");
         assert_eq!(
             fs::read_to_string(fixture.repo.join("effects")).unwrap(),

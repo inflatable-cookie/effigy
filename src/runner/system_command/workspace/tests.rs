@@ -186,11 +186,8 @@ use std::path::Path;
 
 /// Fresh repo-shaped fixture, exclusively owned by this test invocation.
 fn linux_artifact_fixture(label: &str) -> std::path::PathBuf {
-    let root = tempfile::Builder::new()
-        .prefix(&format!("effigy-artifact-{label}-"))
-        .tempdir()
-        .expect("fresh private artifact fixture")
-        .keep();
+    let root = effigy_test_support::Fixture::thread_lifetime(&format!("effigy-artifact-{label}-"))
+        .expect("fresh private artifact fixture");
     std::fs::create_dir_all(root.join("config")).expect("mkdir config");
     std::fs::write(root.join("effigy.toml"), "").expect("write manifest");
     std::fs::write(root.join("config/tasks.toml"), "").expect("write tasks");
@@ -492,9 +489,7 @@ fn bounded_linux_artifact_success_without_valid_output_refuses_without_rebinding
             "aarch64-unknown-linux-gnu",
         ),
     ] {
-        let fixture = tempfile::Builder::new()
-            .prefix("effigy-bounded-invalid-output-")
-            .tempdir()
+        let fixture = effigy_test_support::Fixture::new("effigy-bounded-invalid-output-")
             .expect("owned private artifact fixture");
         let root = fixture.path();
         let host = fake_effigy_host(

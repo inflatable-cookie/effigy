@@ -59,11 +59,8 @@ fn observe() -> ObserveContext {
 fn mutate() -> EffectContext {
     effects(EffectClass::Mutate)
 }
-fn home() -> tempfile::TempDir {
-    tempfile::Builder::new()
-        .prefix("effigy-kernel-fault-")
-        .tempdir()
-        .unwrap()
+fn home() -> effigy_test_support::Fixture {
+    effigy_test_support::Fixture::new("effigy-kernel-fault-").unwrap()
 }
 fn root(home: &Path) -> StateRoot {
     StateRoot::effects(&mutate(), home).unwrap()

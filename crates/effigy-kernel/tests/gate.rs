@@ -360,7 +360,7 @@ fn gate_sigkill_holder_frees_the_gate_at_once_and_its_run_reads_interrupted() {
 #[test]
 fn gate_forked_workload_never_holds_a_gate_after_the_owner_dies() {
     let home = home();
-    let holder = Helper::spawn(
+    let mut holder = Helper::spawn(
         "helper_gate_holder",
         &[
             ("HOME", home.path().to_str().unwrap()),
@@ -373,7 +373,7 @@ fn gate_forked_workload_never_holds_a_gate_after_the_owner_dies() {
         .unwrap();
     holder.expect("HELD", Duration::from_secs(60));
     holder.signal(libc::SIGKILL);
-    assert!(!holder.wait().success());
+    assert!(!holder.wait_for_exit().success());
     // SAFETY: signal 0 only checks that the workload this test caused lives.
     assert_eq!(
         unsafe { libc::kill(workload, 0) },

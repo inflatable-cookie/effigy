@@ -927,7 +927,17 @@ fn doctor_git_command() -> Command {
             .env("EFFIGY_TEST_DOCTOR_GIT_LATE_MARKER", config.late_marker);
         return command;
     }
-    Command::new("git")
+    // Whole-CLI fixtures use the canonical interpreter: macOS may delay exec
+    // of a newly written shim beyond the probe's deliberately short deadline.
+    #[cfg(all(unix, debug_assertions))]
+    let script = std::env::var_os("EFFIGY_TEST_DOCTOR_GIT_SCRIPT");
+    #[cfg(not(all(unix, debug_assertions)))]
+    let script: Option<std::ffi::OsString> = None;
+    let mut command = Command::new(if script.is_some() { "/bin/sh" } else { "git" });
+    if let Some(script) = script {
+        command.arg(script);
+    }
+    command
 }
 
 fn read_child_output(mut stream: impl std::io::Read) -> std::io::Result<Vec<u8>> {

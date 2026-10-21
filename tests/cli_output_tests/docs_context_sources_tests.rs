@@ -73,11 +73,8 @@ fn commit(repo: &Path) {
 /// repository, one checkout that never opted in, and one directory that is not
 /// a checkout at all. Both shared repositories carry the same term.
 fn unique_portfolio(label: &str) -> PathBuf {
-    let root = tempfile::Builder::new()
-        .prefix(label)
-        .tempdir()
-        .expect("fresh fixture")
-        .keep();
+    let root =
+        effigy_test_support::Fixture::thread_lifetime(label).expect("owned documentation fixture");
     let repos = root.join("repos");
 
     let atlas = repos.join("shared-atlas");

@@ -1,16 +1,15 @@
 use super::*;
 use crate::compose::{with_test_compose_backend, ComposeBackend};
 use crate::policy::load::{load_container_policy, prepare_container_policy};
-use crate::sealed_fixture;
 
 struct Fixture {
-    _fixture: sealed_fixture::SealedFixture,
+    _fixture: effigy_test_support::Fixture,
     checkout: std::path::PathBuf,
     home: std::path::PathBuf,
 }
 
 fn fixture() -> Fixture {
-    let fixture = sealed_fixture::SealedFixture(tempfile::tempdir().unwrap());
+    let fixture = effigy_test_support::Fixture::new("effigy-container-policy-").unwrap();
     let checkout = fixture.path().join("checkout");
     let home = fixture.path().join("home/.effigy");
     std::fs::create_dir_all(&home).unwrap();

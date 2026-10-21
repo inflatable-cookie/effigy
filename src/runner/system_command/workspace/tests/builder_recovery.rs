@@ -3,14 +3,20 @@
 use super::*;
 use crate::runner::execute::api::run_manifest_task_with_cwd;
 use effigy_cli::TaskInvocation;
+use effigy_test_support::process::FixtureCommandExt;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 const FAKE_DOCKER: &str = r#"#!/usr/bin/env python3
-import json, os, pathlib, re, sys, time
+import atexit, json, os, pathlib, re, sys, time
 root = pathlib.Path(os.environ['EFFIGY_RECOVERY_ROOT'])
 state = root / 'state'
 args = sys.argv[1:]
+def trace(phase):
+    with (state / 'timing').open('a') as f:
+        f.write(json.dumps([time.monotonic(), os.getpid(), phase, args]) + '\n')
+trace('start')
+atexit.register(lambda: trace('exit'))
 with (state / 'calls').open('a') as f: f.write(json.dumps(args) + '\n')
 mode = (state / 'mode').read_text()
 cmd = next((a for a in args if a in ['ps', 'inspect', 'up', 'exec', 'down', 'info']), '')
@@ -87,8 +93,30 @@ if cmd == 'exec':
 raise SystemExit('unauthorized backend operation: ' + repr(args))
 "#;
 
+// Establish the private shims before testing production command deadlines.
+// Fresh executable loading is setup, as in the kill-matrix candidate fixture.
+fn initialize_backend(root: &Path, backend: &str) {
+    let mut command = std::process::Command::new(root.join("bin").join(backend));
+    command.current_dir(root);
+    if backend == "colima" {
+        command.args(["nerdctl", "--"]);
+    }
+    let output = command
+        .arg("info")
+        .output_owned()
+        .expect("load private backend");
+    assert!(output.status.success(), "private backend setup: {output:?}");
+    // Preserve setup evidence separately; product refusal oracles start empty.
+    for name in ["calls", "timing", "colima-calls"] {
+        let source = root.join("state").join(name);
+        if source.exists() {
+            std::fs::rename(source, root.join("state").join(format!("setup-{name}"))).unwrap();
+        }
+    }
+}
+
 struct Fixture {
-    _temp: tempfile::TempDir,
+    _temp: effigy_test_support::Fixture,
     root: PathBuf,
     policy: effigy_containers::EffectiveContainerPolicy,
     _env: EnvGuard,
@@ -105,21 +133,6 @@ impl Drop for Fixture {
                 );
             }
         }
-        // Only our private temporary tree: never follow a fixture symlink.
-        fn unlock(path: &Path) -> std::io::Result<()> {
-            use std::os::unix::fs::PermissionsExt;
-            if !std::fs::symlink_metadata(path)?.is_dir() {
-                return Ok(());
-            }
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
-            for entry in std::fs::read_dir(path)? {
-                unlock(&entry?.path())?;
-            }
-            Ok(())
-        }
-        if let Err(error) = unlock(&self.root) {
-            eprintln!("private builder fixture cleanup failed: {error}");
-        }
     }
 }
 
@@ -134,22 +147,66 @@ fn private_builder_fixture_removes_sealed_object_directories() {
     assert!(!root.exists());
 }
 
+// The real Colima preflight rejects OS temp paths on Linux as well as macOS.
+fn builder_fixture() -> effigy_test_support::Fixture {
+    #[cfg(target_os = "macos")]
+    return effigy_test_support::Fixture::workspace("effigy-parent-fixtures-recovery-").unwrap();
+    #[cfg(not(target_os = "macos"))]
+    {
+        let home = std::env::var_os("HOME").expect("host HOME for shared Colima fixture");
+        effigy_test_support::Fixture::in_parent(
+            "effigy-parent-fixtures-recovery-",
+            Path::new(&home),
+        )
+        .unwrap()
+    }
+}
+
+#[test]
+fn builder_fixture_passes_colima_guard_while_os_temp_still_refuses() {
+    let _lock = crate::contract_test_support::lock_test();
+    let shared = builder_fixture();
+    let unshared = effigy_test_support::Fixture::new("effigy-unshared-recovery-").unwrap();
+    let _env = EnvGuard::set_many(&[
+        ("EFFIGY_COMPOSE_BACKEND", Some("colima".to_owned())),
+        ("EFFIGY_TEST_SKIP_COLIMA_TEMP_ROOT_CHECK", None),
+        ("EFFIGY_TEST_COLIMA_ARGS_FILE", None),
+    ]);
+    for (dir, allowed) in [(&shared, true), (&unshared, false)] {
+        let _cache = EnvGuard::set_many(&[(
+            "EFFIGY_TEST_CONTAINERS_HOME",
+            Some(dir.path().join(".effigy").display().to_string()),
+        )]);
+        std::fs::write(
+            dir.path().join("effigy.toml"),
+            "[containers.web]\ncompose_file = 'compose.yml'\nprimary_service = 'app'\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("compose.yml"),
+            "services:\n  app:\n    image: example\n",
+        )
+        .unwrap();
+        let policy = effigy_containers::load_container_policy(dir.path(), Some("web")).unwrap();
+        let result = effigy_containers::validate_compose_backend_runtime(dir.path(), &policy);
+        if allowed {
+            result.expect("shared fixture must satisfy the real Colima path guard");
+        } else {
+            assert!(result
+                .expect_err("OS temp control must still be refused")
+                .to_string()
+                .contains("under a temp directory that Colima may not share"));
+        }
+    }
+}
+
 impl Fixture {
     fn new(retained: bool, changed: bool, backend: &str) -> Self {
         Self::with_declaration(retained, changed, backend, true)
     }
 
     fn with_declaration(retained: bool, changed: bool, backend: &str, scoped: bool) -> Self {
-        let mut builder = tempfile::Builder::new();
-        builder.prefix("effigy-builder-recovery-");
-        // No retired parent-token authority requires fixtures in a checkout.
-        // Colima's macOS path contract still requires a host-shared directory.
-        let temp = if cfg!(target_os = "macos") {
-            builder.tempdir_in("/Users/Shared")
-        } else {
-            builder.tempdir()
-        }
-        .unwrap();
+        let temp = builder_fixture();
         let root = temp.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join(".git")).unwrap();
         std::fs::write(
@@ -237,6 +294,7 @@ esac
             effigy_containers::load_container_policy(&root, Some("linux-release")).unwrap();
         std::env::set_var("EFFIGY_RECOVERY_PROJECT", &policy.project_name);
         std::fs::write(root.join("state/mode"), "success").unwrap();
+        initialize_backend(&root, backend);
         if retained {
             let mut labels = json!({"com.effigy.checkout": root, "com.docker.compose.project": policy.project_name, "com.docker.compose.service": "builder", "com.docker.compose.oneoff": "False"});
             if let Some(scope) = effigy_core::worktree_scope::resolve(&root).unwrap() {
@@ -361,7 +419,7 @@ esac
             .count()
     }
 
-    fn host(&self) -> PathBuf {
+    fn compiled_cli() -> PathBuf {
         let executable = std::env::current_exe().unwrap();
         let binary = executable
             .parent()
@@ -373,6 +431,11 @@ esac
             binary.is_file(),
             "build the artifact-recovery selector prerequisite"
         );
+        binary
+    }
+
+    fn host(&self) -> PathBuf {
+        let binary = Self::compiled_cli();
         let host = self.root.join("fixture-host");
         write_executable(
             &host,
@@ -381,6 +444,13 @@ esac
                 effigy_core::shell::shell_quote(&binary.display().to_string())
             ),
         );
+        // Load this fresh shim before a handoff or signal readiness deadline.
+        let version = std::process::Command::new(&host)
+            .arg("--version")
+            .current_dir(&self.root)
+            .output_owned()
+            .expect("load private host executable");
+        assert!(version.status.success(), "private host setup: {version:?}");
         host
     }
 
@@ -418,6 +488,9 @@ esac
         std::fs::write(self.root.join("state/mode"), mode).unwrap();
     }
     fn task(&self) -> Result<(), String> {
+        let _executable = effigy_core::executable_override::set_scoped(Some(
+            Self::compiled_cli().display().to_string(),
+        ));
         run_manifest_task_with_cwd(
             &TaskInvocation {
                 name: "workspace:linux:artifact".to_owned(),
@@ -426,7 +499,13 @@ esac
             self.root.clone(),
         )
         .map(|_| ())
-        .map_err(|error| error.to_string())
+        .map_err(|error| {
+            format!(
+                "{error}\nprivate backend timing:\n{}\ncolima calls:\n{}",
+                std::fs::read_to_string(self.root.join("state/timing")).unwrap_or_default(),
+                std::fs::read_to_string(self.root.join("state/colima-calls")).unwrap_or_default(),
+            )
+        })
     }
     fn mutate(&self, update: impl FnOnce(&mut Value)) {
         let path = self.root.join("state/identity.json");
@@ -818,47 +897,36 @@ fn interrupted_successful_backend_cannot_publish_task_success() {
         .root
         .join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
     write_linux_artifact(&artifact, "stale bytes", Some(STALE_IDENTITY));
-    struct ChildGuard(std::process::Child);
-    impl Drop for ChildGuard {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-    let stderr_path = fixture.root.join("interrupted-child.stderr");
-    let mut child = ChildGuard(
-        std::process::Command::new(host)
-            .arg("workspace:linux:artifact")
-            .current_dir(&fixture.root)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::fs::File::create(&stderr_path).unwrap())
-            .spawn()
-            .unwrap(),
-    );
+    let output_path = fixture.root.join("state/signal-client-output");
+    let output = std::fs::File::create(&output_path).unwrap();
+    let mut child = std::process::Command::new(host)
+        .arg("workspace:linux:artifact")
+        .current_dir(&fixture.root)
+        .stdout(output.try_clone().unwrap())
+        .stderr(output)
+        .spawn_owned()
+        .unwrap();
     // Startup includes kernel admission and several real backend captures.
     let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while !fixture.root.join("state/await-signal").exists() {
-        if let Some(exit) = child.0.try_wait().unwrap() {
-            panic!(
-                "private build exited before signal boundary: {exit}; {}",
-                std::fs::read_to_string(&stderr_path).unwrap()
-            );
-        }
+        let status = child.try_wait().unwrap();
         assert!(
-            std::time::Instant::now() < ready_deadline,
-            "private build did not reach signal boundary"
+            status.is_none() && std::time::Instant::now() < ready_deadline,
+            "private build did not reach signal boundary: status={status:?}\n{}\nbackend timing:\n{}",
+            std::fs::read_to_string(&output_path).unwrap_or_default(),
+            std::fs::read_to_string(fixture.root.join("state/timing")).unwrap_or_default(),
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     nix::sys::signal::kill(
-        nix::unistd::Pid::from_raw(child.0.id() as i32),
+        nix::unistd::Pid::from_raw(child.id() as i32),
         nix::sys::signal::Signal::SIGTERM,
     )
     .unwrap();
     // Preserve the 10s stop bound independently of startup time.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     let exit = loop {
-        if let Some(exit) = child.0.try_wait().unwrap() {
+        if let Some(exit) = child.try_wait().unwrap() {
             break exit;
         }
         assert!(

@@ -256,18 +256,19 @@ printf '%s' "ok"
 exit 0
 "#;
 
-fn fixture(name: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
+fn fixture(name: &str) -> (effigy_test_support::Fixture, PathBuf, PathBuf) {
     fixture_in(name, None)
 }
 
-fn fixture_in(name: &str, parent: Option<&Path>) -> (tempfile::TempDir, PathBuf, PathBuf) {
+fn fixture_in(
+    name: &str,
+    parent: Option<&Path>,
+) -> (effigy_test_support::Fixture, PathBuf, PathBuf) {
     let dir = if let Some(parent) = parent {
-        tempfile::Builder::new()
-            .prefix("effigy-bounded-exec-")
-            .tempdir_in(parent)
+        effigy_test_support::Fixture::in_parent("effigy-bounded-exec-", parent)
             .expect("create fixture under the shared temp root")
     } else {
-        tempfile::tempdir().expect("tempdir")
+        effigy_test_support::Fixture::new("effigy-bounded-exec-").expect("tempdir")
     };
     let bin_dir = dir.path().join("bin");
     fs::create_dir_all(&bin_dir).expect("mkdir bin");
@@ -287,7 +288,10 @@ fn fixture_in(name: &str, parent: Option<&Path>) -> (tempfile::TempDir, PathBuf,
     (dir, bin_dir, repo_root)
 }
 
-fn public_fixture(name: &str, workspace_identity: bool) -> (tempfile::TempDir, PathBuf, PathBuf) {
+fn public_fixture(
+    name: &str,
+    workspace_identity: bool,
+) -> (effigy_test_support::Fixture, PathBuf, PathBuf) {
     let shared_parent = cfg!(target_os = "macos").then_some(Path::new("/Users/Shared"));
     let (dir, bin_dir, repo_root) = fixture_in(name, shared_parent);
     let home = dir.path().join("home");
@@ -462,7 +466,7 @@ struct GuardedPublicOutcome {
 
 #[cfg(unix)]
 fn run_guarded_public_case(
-    dir: &tempfile::TempDir,
+    dir: &effigy_test_support::Fixture,
     bin_dir: &Path,
     repo_root: &Path,
     case: GuardedPublicCase<'_>,
@@ -1798,7 +1802,13 @@ mod handoff_local_tests {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
-    fn handoff_repo(name: &str) -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+    fn handoff_repo(
+        name: &str,
+    ) -> (
+        effigy_test_support::Fixture,
+        std::path::PathBuf,
+        std::path::PathBuf,
+    ) {
         let shared_parent =
             cfg!(target_os = "macos").then_some(std::path::Path::new("/Users/Shared"));
         let (dir, bin_dir, repo_root) = super::fixture_in(name, shared_parent);

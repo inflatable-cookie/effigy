@@ -3,7 +3,8 @@ use std::process::Command;
 
 #[test]
 fn retirement_commands_emit_json_errors_without_effects() {
-    let fixture = tempfile::tempdir().expect("private fixture");
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("private fixture");
     fs::write(
         fixture.path().join("effigy.toml"),
         "[tasks.build]\nrun = \"touch started\"\n",
@@ -34,7 +35,8 @@ fn retirement_commands_emit_json_errors_without_effects() {
 
 #[test]
 fn retirement_user_catalog_warns_and_preserves_ignored_fragments() {
-    let fixture = tempfile::tempdir().expect("private fixture");
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("private fixture");
     let home = fixture.path().join("home");
     let old = home.join(".effigy/catalog/retired-only");
     fs::create_dir_all(&old).unwrap();

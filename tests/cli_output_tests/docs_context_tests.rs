@@ -36,11 +36,8 @@ labels = ["See also"]
 "#;
 
 fn unique_repo(label: &str, manifest: Option<&str>) -> PathBuf {
-    let root = tempfile::Builder::new()
-        .prefix(label)
-        .tempdir()
-        .expect("fresh fixture")
-        .keep();
+    let root =
+        effigy_test_support::Fixture::thread_lifetime(label).expect("owned documentation fixture");
     std::fs::create_dir_all(root.join("handbook/playbooks")).expect("mkdir playbooks");
     std::fs::create_dir_all(root.join("handbook/bulletins")).expect("mkdir bulletins");
     std::fs::write(
@@ -779,11 +776,8 @@ fn documentation_graph_runtime_logic_carries_no_northstar_vocabulary() {
 /// gives it just enough documentation to query. Nothing else is written: the
 /// emitted `effigy.toml` is the only configuration the process may read.
 fn northstar_consumer_repo(label: &str) -> PathBuf {
-    let root = tempfile::Builder::new()
-        .prefix(label)
-        .tempdir()
-        .expect("fresh fixture")
-        .keep();
+    let root =
+        effigy_test_support::Fixture::thread_lifetime(label).expect("owned documentation fixture");
     std::fs::create_dir_all(&root).expect("mkdir consumer root");
     let init = run_docs(&root, &["init", "northstar"]);
     assert!(init.status.success(), "init northstar failed: {init:?}");
@@ -942,7 +936,7 @@ fn installed_skill_and_template_directories_never_reach_the_query() {
 
 #[test]
 fn cold_docs_context_names_explicit_index_without_creating_state() {
-    let owner = tempfile::tempdir().unwrap();
+    let owner = effigy_test_support::Fixture::new("effigy-cli-private-").unwrap();
     let output = run_docs(owner.path(), &["--json", "docs", "context", "widget"]);
     assert!(!output.status.success());
     assert!(stdout(&output).contains("effigy graph index"));
