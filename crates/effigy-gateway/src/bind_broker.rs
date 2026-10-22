@@ -259,13 +259,19 @@ pub fn entry(uid: u32) -> io::Result<()> {
     // launchd may report the activated socket as /var/run/... (/var is a
     // symlink to /private/var) or as unnamed; the root-owned plist pins the
     // path. Compare canonical paths when a name is present.
-    if let Some(path) = listener.local_addr()?.as_pathname() {
+    if let Some(raw) = listener.local_addr()?.as_pathname() {
+        // launchd's activated socket can report the whole NUL-padded
+        // sun_path buffer; the address ends at the first NUL.
+        use std::os::unix::ffi::OsStrExt;
+        let bytes = raw.as_os_str().as_bytes();
+        let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
+        let path = Path::new(std::ffi::OsStr::from_bytes(&bytes[..end]));
         let expected = socket_path(uid);
         let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
         if canonical(path) != canonical(&expected) {
             eprintln!(
-                "effigy bind broker: unexpected socket {} (expected {})",
-                path.display(),
+                "effigy bind broker: unexpected socket {:?} (expected {})",
+                path,
                 expected.display()
             );
             return Err(error("unexpected broker socket"));
