@@ -5,24 +5,42 @@
 //! file descriptor-relative (regular, operator-owned, 0600, one link, bounded)
 //! inside a verified 0700 root, and SQLite then opens it with
 //! `SQLITE_OPEN_NOFOLLOW`, so no symlinked component is followed (K13).
+//!
+//! Writes run in write-ahead logging (§5.5): one short `BEGIN IMMEDIATE`
+//! transaction at a time, serialized by the kernel's own store writer gate so
+//! a busy store always names its holder. A caller's workload deadline never
+//! shortens the wait below the store's own window, and settle keeps waiting
+//! for two minutes: a busy store delays a run, it never loses its outcome.
 use crate::ctx::{EffectClass, EffectContext, Interrupt, ObserveContext};
 use crate::fs::{FileName, FsError, IoError, Trust, FILE_MODE};
-use crate::gate::{self, Gate, GateError, OwnerState, RunPhaseFact, Wait};
+use crate::gate::{self, Gate, GateError, GateGuard, HolderDiag, OwnerState, RunPhaseFact, Wait};
 use crate::id::{CheckoutId, Generation, IdentityError, ResourceId, RunId, Scope};
 use crate::ident::BootInstant;
 use crate::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
 use crate::root::StateRoot;
-use rusqlite::{params, Connection, ErrorCode, OpenFlags, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, ErrorCode, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const SCHEMA_VERSION: i64 = 1;
 pub const DB_NAME: &str = "kernel.db";
 /// Size bound for `kernel.db`; retention keeps it far below this.
 pub const MAX_DB_BYTES: u64 = 1 << 30;
 const PAGE_SIZE: u64 = 4096;
+/// The least one write waits for the store writer gate. Admission uses it
+/// even when the caller's remaining operation budget is shorter (§5.5).
+pub const STORE_BUSY_WAIT: Duration = Duration::from_secs(30);
+/// Settle and outcome writes keep trying long after any workload deadline:
+/// a busy store must never cost a run its recorded outcome (K4).
+pub const SETTLE_BUSY_WAIT: Duration = Duration::from_secs(120);
+/// A checkpoint truncates the write-ahead log to at most this size.
+const WAL_LIMIT_BYTES: u64 = 16 << 20;
+const BUSY_RETRY_MIN: Duration = Duration::from_millis(10);
+const BUSY_RETRY_MAX: Duration = Duration::from_millis(250);
+/// The writer gate every store transaction holds: the store resource itself.
+const WRITER_GATE: &str = "kernel";
 const BUILD: &str = concat!("effigy-kernel ", env!("CARGO_PKG_VERSION"));
 const SQLITE_READONLY_ROLLBACK: i32 = 776;
 
@@ -63,8 +81,13 @@ pub enum StoreError {
         code: i32,
         message: String,
     },
-    /// The busy timeout from the context elapsed.
-    Busy,
+    /// The store's writer wait elapsed. The holder is a fresh gate
+    /// diagnostic naming the process (and run) that still holds the store
+    /// open for writing; the condition is environmental, not a task failure.
+    Busy {
+        waited: Duration,
+        holder: Box<Observed<HolderDiag>>,
+    },
     /// Mutate refuses; `Store::repair` is the explicit repair (moves it aside).
     Corrupt(String),
     /// A hot rollback journal; the next Mutate open recovers it.
@@ -98,6 +121,13 @@ impl std::fmt::Display for StoreError {
             Self::Corrupt(reason) => write!(
                 f,
                 "kernel.db is unreadable ({reason}); the explicit store repair moves it aside"
+            ),
+            Self::Busy { waited, holder } => write!(
+                f,
+                "the state store kernel.db stayed busy for {:.1}s{}; another Effigy process is \
+                 writing its run journal (an environment condition, not a task failure)",
+                waited.as_secs_f64(),
+                holder_note(holder)
             ),
             other => write!(f, "store refused: {other:?}"),
         }
@@ -144,7 +174,12 @@ impl From<rusqlite::Error> for StoreError {
             ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt => {
                 Self::Corrupt(error.to_string())
             }
-            ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked => Self::Busy,
+            ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked => Self::Busy {
+                waited: Duration::ZERO,
+                holder: Box::new(Observed::Unknown(UnknownReason::Inconsistent(
+                    "SQLite reported a busy store without a writer gate holder".into(),
+                ))),
+            },
             ErrorCode::DiskFull => io(libc::ENOSPC),
             ErrorCode::PermissionDenied | ErrorCode::CannotOpen | ErrorCode::ReadOnly
                 if code.extended_code == SQLITE_READONLY_ROLLBACK =>
@@ -165,17 +200,49 @@ impl From<std::io::Error> for StoreError {
     }
 }
 
+/// How long one store write waits for the store's writer gate (§5.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BusyWait {
+    /// Exactly the caller's remaining operation budget: optional maintenance
+    /// and diagnostics that may skip a busy store.
+    Context,
+    /// At least this window, or the caller's later deadline. A short workload
+    /// budget never turns a concurrent writer into an immediate refusal.
+    AtLeast(Duration),
+}
+impl BusyWait {
+    fn window(self, cx: &EffectContext) -> Duration {
+        let left = cx.operation().remaining();
+        let wanted = match self {
+            Self::Context => left.unwrap_or(Duration::ZERO),
+            Self::AtLeast(minimum) => left.map_or(minimum, |left| left.max(minimum)),
+        };
+        wanted.min(Duration::from_millis(i32::MAX as u64))
+    }
+}
+
 /// A writable store handle. Hold one per operation; never across a
 /// subprocess, prompt or network call (I-S2).
 #[derive(Debug)]
 pub struct Store {
     conn: Connection,
+    root: StateRoot,
+    /// The run this store writes for, for the writer gate's diagnostic body.
+    run: Option<RunId>,
 }
 impl Store {
     /// Opens for writing: creates `kernel.db` 0600, applies the settings in
     /// §5.5, and creates or checks the schema (I-S5).
     pub fn open(cx: &EffectContext, root: &StateRoot) -> Result<Self, StoreError> {
-        let busy = busy_timeout(cx.operation().remaining())?;
+        Self::open_within(cx, root, BusyWait::AtLeast(STORE_BUSY_WAIT))
+    }
+    /// An open with an explicit wait policy. Optional work (a retention pass)
+    /// passes `BusyWait::Context`, so a busy store is skipped, not waited for.
+    pub fn open_within(
+        cx: &EffectContext,
+        root: &StateRoot,
+        wait: BusyWait,
+    ) -> Result<Self, StoreError> {
         if !root.writable() {
             return Err(StoreError::Untrusted {
                 path: root.path().into(),
@@ -192,35 +259,91 @@ impl Store {
                 limit: MAX_DB_BYTES,
             });
         }
-        check_journal(root)?;
+        check_store_files(root).map_err(StoreError::from)?;
         let conn = Connection::open_with_flags(
             root.dir().join(root.database_name()),
             OpenFlags::SQLITE_OPEN_READ_WRITE
                 | OpenFlags::SQLITE_OPEN_NOFOLLOW
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
-        conn.busy_timeout(busy)?;
-        let mode: String = conn.query_row("PRAGMA journal_mode=DELETE", [], |row| row.get(0))?;
-        if mode != "delete" {
-            return Err(StoreError::Corrupt(format!("journal mode {mode}")));
-        }
-        conn.execute_batch(&format!(
-            "PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; \
-             PRAGMA cell_size_check=ON; PRAGMA max_page_count={};",
-            MAX_DB_BYTES / PAGE_SIZE
-        ))?;
-        let mut store = Self { conn };
-        store.schema(cx)?;
+        let mut store = Self {
+            conn,
+            root: root.clone(),
+            run: None,
+        };
+        store.configure(cx, wait)?;
         Ok(store)
     }
-    /// Read-only open (R2): no file is created or written, and no lock other
-    /// than SQLite's shared read lock is taken.
+    /// Names the run this store writes for, so a refused writer wait names it.
+    pub fn set_run(&mut self, run: RunId) {
+        self.run = Some(run);
+    }
+    /// Write-ahead logging, the durable settings and the schema, under the
+    /// store's own writer gate. A current store is only read here: opening it
+    /// never takes the write lock (a hot path with many concurrent runs).
+    fn configure(&mut self, cx: &EffectContext, wait: BusyWait) -> Result<(), StoreError> {
+        let window = wait.window(cx);
+        let patient = cx.patience(window);
+        let started = Instant::now();
+        let _gate = self.writer_gate(&patient, window)?;
+        // Incremental auto-vacuum must be chosen while the store is empty, and
+        // before write-ahead logging materialises its header. On an existing
+        // store this is only pending until retention's one-time `VACUUM`.
+        self.conn.execute_batch("PRAGMA auto_vacuum=INCREMENTAL")?;
+        self.set_journal_mode(&patient, started + window)?;
+        self.conn.execute_batch(&format!(
+            "PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; \
+             PRAGMA cell_size_check=ON; PRAGMA max_page_count={}; \
+             PRAGMA journal_size_limit={WAL_LIMIT_BYTES}; PRAGMA wal_autocheckpoint=1000;",
+            MAX_DB_BYTES / PAGE_SIZE
+        ))?;
+        self.schema(&patient)?;
+        Ok(())
+    }
+    /// `journal_mode=WAL` is persistent in the file. A store last written in
+    /// rollback mode needs a moment of exclusive access to change it, so a
+    /// concurrent open is retried inside this write's own window.
+    fn set_journal_mode(&self, cx: &EffectContext, deadline: Instant) -> Result<(), StoreError> {
+        let mut pause = BUSY_RETRY_MIN;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            self.conn
+                .busy_timeout(left.min(Duration::from_millis(i32::MAX as u64)))?;
+            match self
+                .conn
+                .query_row("PRAGMA journal_mode=WAL", [], |row| row.get::<_, String>(0))
+            {
+                Ok(mode) if mode.eq_ignore_ascii_case("wal") => return Ok(()),
+                // Another connection keeps the old mode until it closes.
+                Ok(_) if !left.is_zero() => {}
+                Ok(mode) => return Err(StoreError::Corrupt(format!("journal mode {mode}"))),
+                Err(error) => match StoreError::from(error) {
+                    StoreError::Busy { .. } if !left.is_zero() => {}
+                    other => return Err(other),
+                },
+            }
+            if !left.is_zero() {
+                cx.operation()
+                    .check("store journal mode")
+                    .map_err(StoreError::Interrupted)?;
+                std::thread::sleep(pause.min(left));
+                pause = (pause * 2).min(BUSY_RETRY_MAX);
+            }
+        }
+    }
+    /// Read-only open (R2): no record or schema file is created or written.
+    /// A WAL store's shared-memory index (`kernel.db-shm`) is SQLite's, so a
+    /// read on a writable root may create it; on a read-only root the same
+    /// read is an immutable open, which creates nothing (§5.5).
     pub fn read(cx: &ObserveContext, root: &StateRoot) -> Observed<StoreReader> {
         #[cfg(all(test, feature = "fault-injection"))]
         if let Some(injected) = crate::fault::injected() {
             return injected;
         }
         let busy = cx.remaining();
+        if let Err(error) = check_store_files(root) {
+            return Observed::Unknown(crate::root::unknown(&error));
+        }
         let name = FileName::new(root.database_name()).expect("fixed name");
         match root
             .dir()
@@ -233,27 +356,28 @@ impl Store {
             Ok(None) => return Observed::Absent(AbsenceProof::NoStore),
             Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
         }
-        let opened = Connection::open_with_flags(
-            root.dir().join(root.database_name()),
-            OpenFlags::SQLITE_OPEN_READ_ONLY
-                | OpenFlags::SQLITE_OPEN_NOFOLLOW
-                | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )
-        .map_err(StoreError::from)
-        .and_then(|conn| {
-            conn.busy_timeout(busy)?;
-            conn.execute_batch("PRAGMA query_only=1; PRAGMA trusted_schema=OFF;")?;
-            // A writer creates the file before its schema transaction
-            // commits: no schema object yet is a store still being created,
-            // with nothing in it, not a corrupt one.
-            let objects: i64 =
-                conn.query_row("SELECT count(*) FROM sqlite_schema", [], |row| row.get(0))?;
-            if objects == 0 {
-                return Ok(None);
+        let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let opened = match Connection::open_with_flags(root.dir().join(root.database_name()), flags) {
+            Ok(conn) => match verify_reader(conn, busy) {
+                // A WAL store on a read-only root cannot create its `-shm`
+                // index: SQLite refuses on open or on the first read with
+                // CANTOPEN, READONLY or PERM. Nothing can write such a root,
+                // so its checkpointed file is read immutably and no file is
+                // created.
+                Err(error) if needs_writable_root(&error) => read_immutable(root, busy),
+                other => other,
+            },
+            Err(error) => {
+                let error = StoreError::from(error);
+                if needs_writable_root(&error) {
+                    read_immutable(root, busy)
+                } else {
+                    Err(error)
+                }
             }
-            let version = schema_version(&conn)?;
-            Ok(Some(StoreReader { conn, version }))
-        });
+        };
         match opened {
             Ok(Some(reader)) => Observed::Verified(reader, evidence("kernel store")),
             Ok(None) => Observed::Absent(AbsenceProof::NoStore),
@@ -261,7 +385,8 @@ impl Store {
         }
     }
     /// One `BEGIN IMMEDIATE` transaction. The closure's records commit
-    /// together or not at all (I-S1). The busy wait comes from the context.
+    /// together or not at all (I-S1). The write waits for the store's own
+    /// writer window, never just for the caller's remaining budget.
     pub fn txn<T>(
         &mut self,
         cx: &EffectContext,
@@ -275,26 +400,200 @@ impl Store {
         cx: &EffectContext,
         f: impl FnOnce(&mut Txn<'_>) -> Result<T, E>,
     ) -> Result<T, E> {
-        cx.operation()
+        self.transaction_within(cx, BusyWait::AtLeast(STORE_BUSY_WAIT), f)
+    }
+    /// A write with an explicit wait policy. Settle and outcome writes pass
+    /// `SETTLE_BUSY_WAIT`: they keep trying after the workload's own deadline
+    /// has passed, so a busy store never costs the run its outcome (K4).
+    pub fn transaction_within<T, E: From<StoreError>>(
+        &mut self,
+        cx: &EffectContext,
+        wait: BusyWait,
+        f: impl FnOnce(&mut Txn<'_>) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let window = wait.window(cx);
+        // Cancellation still wins; only the deadline is replaced.
+        let patient = cx.patience(window);
+        patient
+            .operation()
             .check("store transaction")
             .map_err(StoreError::Interrupted)?;
-        self.conn
-            .busy_timeout(busy_timeout(cx.operation().remaining())?)
-            .map_err(StoreError::from)?;
+        let deadline = Instant::now() + window;
+        let _gate = self.writer_gate(&patient, window)?;
         let flag = TxnFlag::enter()?;
-        let tx = self
-            .conn
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(StoreError::from)?;
+        self.begin_immediate(&patient, deadline)?;
         let value = f(&mut Txn {
-            conn: &tx,
+            conn: &self.conn,
             now: wall_ms(),
-        })?;
-        crate::fault_point!(StoreCommitBefore).map_err(StoreError::from)?;
-        tx.commit().map_err(StoreError::from)?;
+        });
+        let value = match value {
+            Ok(value) => match crate::fault_point!(StoreCommitBefore) {
+                Ok(()) => Ok(value),
+                Err(error) => Err(StoreError::from(error).into()),
+            },
+            Err(error) => Err(error),
+        };
+        let committed = match value {
+            Ok(value) => match self.conn.execute_batch("COMMIT") {
+                Ok(()) => Ok(value),
+                Err(error) => {
+                    // A commit that did not return is rolled back: the
+                    // closure's records never land half-written (I-S1).
+                    let _ = self.conn.execute_batch("ROLLBACK");
+                    Err(StoreError::from(error).into())
+                }
+            },
+            Err(error) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(error)
+            }
+        };
         drop(flag);
+        let value = committed?;
         crate::fault_point!(StoreCommitAfter).map_err(StoreError::from)?;
         Ok(value)
+    }
+    /// The store's own writer lock (§5.5). It serializes Effigy's writers, so
+    /// a refusal names the process and run that still holds the store. A
+    /// caller that already holds it in this process (`Store::repair`) writes
+    /// without taking it twice: a second flock would wait on itself.
+    fn writer_gate(
+        &self,
+        cx: &EffectContext,
+        window: Duration,
+    ) -> Result<Option<GateGuard>, StoreError> {
+        let id = ResourceId::store(Scope::Machine, WRITER_GATE)?;
+        let name = |guard: GateGuard| {
+            if let Some(run) = &self.run {
+                guard.set_run(run);
+            }
+            guard
+        };
+        match Gate::acquire(cx, &self.root, std::slice::from_ref(&id), Wait::FailFast) {
+            Ok(guard) => Ok(Some(name(guard))),
+            Err(GateError::Busy { holder, .. }) | Err(GateError::TimedOut { holder, .. })
+                if holds_here(&holder) =>
+            {
+                Ok(None)
+            }
+            Err(GateError::Busy { .. }) => {
+                let deadline = Instant::now() + window;
+                match Gate::acquire(cx, &self.root, &[id], Wait::Until(deadline)) {
+                    Ok(guard) => Ok(Some(name(guard))),
+                    Err(error) if holds_here(&holder_of(&error)) => Ok(None),
+                    Err(error) => Err(busy(error)),
+                }
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+    fn begin_immediate(&self, cx: &EffectContext, deadline: Instant) -> Result<(), StoreError> {
+        let mut pause = BUSY_RETRY_MIN;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            self.conn
+                .busy_timeout(left.min(Duration::from_millis(i32::MAX as u64)))?;
+            match self.conn.execute_batch("BEGIN IMMEDIATE") {
+                Ok(()) => return Ok(()),
+                Err(error) => match StoreError::from(error) {
+                    StoreError::Busy { .. } if !left.is_zero() => {}
+                    other => return Err(other),
+                },
+            }
+            if left.is_zero() {
+                return Err(StoreError::Busy {
+                    waited: Duration::ZERO,
+                    holder: Box::new(Observed::Unknown(UnknownReason::Inconsistent(
+                        "SQLite reported a busy store without a writer gate holder".into(),
+                    ))),
+                });
+            }
+            cx.operation()
+                .check("store transaction")
+                .map_err(StoreError::Interrupted)?;
+            std::thread::sleep(pause.min(left));
+            pause = (pause * 2).min(BUSY_RETRY_MAX);
+        }
+    }
+    /// The store file's size on disk, from the open connection.
+    fn db_bytes(&self, page_size: i64) -> Result<u64, StoreError> {
+        let pages: i64 = self
+            .conn
+            .query_row("PRAGMA page_count", [], |row| row.get(0))?;
+        Ok(pages.max(0) as u64 * page_size.max(0) as u64)
+    }
+    /// Bounded maintenance (§7.4): checkpoint the log, migrate a *small* old
+    /// store to incremental auto-vacuum once, then release at most `pages`
+    /// free pages. It never rewrites a large store.
+    pub fn maintain(
+        &mut self,
+        cx: &EffectContext,
+        pages: u32,
+    ) -> Result<MaintainReport, StoreError> {
+        let started = Instant::now();
+        let mut report = MaintainReport::default();
+        let window = BusyWait::AtLeast(STORE_BUSY_WAIT).window(cx);
+        let patient = cx.patience(window);
+        let _gate = self.writer_gate(&patient, window)?;
+        cx.operation()
+            .check("store maintenance")
+            .map_err(StoreError::Interrupted)?;
+        // Never blocks a reader; the log is truncated at the next checkpoint.
+        let (_busy, _log, checkpointed): (i64, i64, i64) =
+            self.conn
+                .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?;
+        report.checkpointed = checkpointed as u32;
+        let mode: i64 = self
+            .conn
+            .query_row("PRAGMA auto_vacuum", [], |row| row.get(0))?;
+        let migrated: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM meta WHERE key='auto_vacuum' AND value='incremental')",
+            [],
+            |row| row.get(0),
+        )?;
+        let page_size: i64 = self
+            .conn
+            .query_row("PRAGMA page_size", [], |row| row.get(0))?;
+        if mode == 0 && !migrated && legacy_vacuum_allowed(self.db_bytes(page_size)?) {
+            // One-time migration of a *small* store created before incremental
+            // auto-vacuum: only `VACUUM` applies it, and a sweep must never
+            // rewrite a large legacy store inside its write window. A larger
+            // one keeps its high-water mark and reuses freed pages instead.
+            let free: i64 = self
+                .conn
+                .query_row("PRAGMA freelist_count", [], |row| row.get(0))?;
+            if free > 0 {
+                self.conn
+                    .execute_batch("PRAGMA auto_vacuum=INCREMENTAL; VACUUM;")?;
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES ('auto_vacuum', 'incremental')",
+                    [],
+                )?;
+                report.migrated_auto_vacuum = true;
+            }
+        }
+        let vacuum: i64 = self
+            .conn
+            .query_row("PRAGMA auto_vacuum", [], |row| row.get(0))?;
+        let free: i64 = self
+            .conn
+            .query_row("PRAGMA freelist_count", [], |row| row.get(0))?;
+        report.free_before = free as u32;
+        report.auto_vacuum = vacuum;
+        let take = i64::from(pages).min(free);
+        if vacuum == 2 && take > 0 {
+            self.conn
+                .execute_batch(&format!("PRAGMA incremental_vacuum({take})"))?;
+            report.freed_pages = take as u32;
+        }
+        report.free_after = self
+            .conn
+            .query_row("PRAGMA freelist_count", [], |row| row.get::<_, i64>(0))?
+            as u32;
+        report.elapsed_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
+        Ok(report)
     }
     /// O6: integrity and foreign-key checks.
     pub fn check_integrity(&self) -> Result<(), StoreError> {
@@ -331,10 +630,14 @@ impl Store {
         }
         let stamp = wall_ms();
         let aside = FileName::new(&format!("{}.corrupt-{stamp}", root.database_name()))?;
-        let journal = FileName::new(&format!("{}-journal", root.database_name()))?;
-        if root.dir().entry(&journal)?.is_some() {
-            root.dir()
-                .rename(&journal, &aside.with_suffix("-journal")?)?;
+        // The journal and the write-ahead log and index are the store's own
+        // files: they move with it, or the next `kernel.db` inherits a foreign
+        // log written by the repaired one (§5.5).
+        for suffix in ["-journal", "-wal", "-shm"] {
+            let side = FileName::new(&format!("{}{suffix}", root.database_name()))?;
+            if root.dir().entry(&side)?.is_some() {
+                root.dir().rename(&side, &aside.with_suffix(suffix)?)?;
+            }
         }
         root.dir()
             .rename(&FileName::new(root.database_name())?, &aside)?;
@@ -345,27 +648,49 @@ impl Store {
         &self.conn
     }
     fn schema(&mut self, cx: &EffectContext) -> Result<(), StoreError> {
-        self.txn(cx, |txn| {
-            let tables: i64 = txn.conn.query_row(
-                "SELECT count(*) FROM sqlite_master WHERE type='table'",
-                [],
-                |row| row.get(0),
-            )?;
-            if tables == 0 {
+        // Pure read first: a current store needs no write transaction, and so
+        // never takes the write lock just to be opened (I-S5, §5.5).
+        let tables: i64 = self.conn.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table'",
+            [],
+            |row| row.get(0),
+        )?;
+        if tables == 0 {
+            // Incremental auto-vacuum must be chosen before the first table.
+            self.conn.execute_batch("PRAGMA auto_vacuum=INCREMENTAL")?;
+            return self.txn(cx, |txn| {
                 txn.conn.execute_batch(SCHEMA_V1)?;
                 txn.conn.execute(
                     "INSERT INTO meta(key, value) VALUES ('schema_version', ?1), \
-                     ('created_by', ?2), ('last_written_by', ?2)",
+                     ('created_by', ?2), ('last_written_by', ?2), \
+                     ('auto_vacuum', 'incremental')",
                     params![SCHEMA_VERSION.to_string(), BUILD],
                 )?;
-                return Ok(());
-            }
-            let found = schema_version(txn.conn)?;
-            if found != SCHEMA_VERSION {
-                return Err(StoreError::UnknownSchema { found });
-            }
-            // Schema 1 additive column: old readers select explicit columns;
-            // Observe reads an older store without migrating it.
+                Ok(())
+            });
+        }
+        let found = schema_version(&self.conn)?;
+        if found != SCHEMA_VERSION {
+            return Err(StoreError::UnknownSchema { found });
+        }
+        let stale_build: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM meta WHERE key='last_written_by' AND value<>?1)",
+            [BUILD],
+            |row| row.get(0),
+        )?;
+        let adds_index = ADDITIVE_INDEXES
+            .iter()
+            .any(|(name, _)| !has_index(&self.conn, name).unwrap_or(false));
+        if has_backend(&self.conn)?
+            && has_column(&self.conn, "engine")?
+            && !stale_build
+            && !adds_index
+        {
+            return Ok(());
+        }
+        // Schema 1 additive changes: old readers select explicit columns;
+        // Observe reads an older store without migrating it.
+        self.txn(cx, |txn| {
             if !has_backend(txn.conn)? {
                 txn.conn
                     .execute_batch("ALTER TABLE resources ADD COLUMN backend TEXT")?;
@@ -374,6 +699,11 @@ impl Store {
                 txn.conn
                     .execute_batch("ALTER TABLE resources ADD COLUMN engine TEXT")?;
             }
+            for (name, sql) in ADDITIVE_INDEXES {
+                if !has_index(txn.conn, name)? {
+                    txn.conn.execute_batch(sql)?;
+                }
+            }
             txn.conn.execute(
                 "UPDATE meta SET value=?1 WHERE key='last_written_by' AND value<>?1",
                 params![BUILD],
@@ -381,6 +711,24 @@ impl Store {
             Ok(())
         })
     }
+}
+
+/// What one bounded maintenance pass did (§7.4).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MaintainReport {
+    /// Free pages the write-ahead log checkpoint carried into the store.
+    pub checkpointed: u32,
+    /// A store created before incremental auto-vacuum was migrated once.
+    pub migrated_auto_vacuum: bool,
+    /// Free pages released to the filesystem by incremental vacuum.
+    pub freed_pages: u32,
+    /// Free pages the vacuum pass saw, and those left afterwards.
+    pub free_before: u32,
+    pub free_after: u32,
+    /// The auto-vacuum mode the pass observed.
+    pub auto_vacuum: i64,
+    /// Wall time this pass spent inside maintenance.
+    pub elapsed_ms: u32,
 }
 
 /// Typed operations inside one transaction. Not `Send`: it cannot leave the
@@ -756,27 +1104,132 @@ pub(crate) fn token(checkout: &CheckoutId) -> String {
 fn evidence(source: &str) -> Evidence {
     Evidence::new(source.into(), None).expect("fixed source")
 }
-fn busy_timeout(remaining: Option<Duration>) -> Result<Duration, StoreError> {
-    match remaining {
-        Some(left) if left.is_zero() => Err(StoreError::Interrupted(Interrupt::TimedOut {
-            phase: "store busy wait".into(),
-            elapsed: Duration::ZERO,
-        })),
-        Some(left) => Ok(left.min(Duration::from_millis(i32::MAX as u64))),
-        None => Err(StoreError::Unbounded),
+/// The gate diagnostic body names the writer's pid and, when it writes for a
+/// run, its run id (§5.4, I-G2).
+fn holder_note(holder: &Observed<HolderDiag>) -> String {
+    match holder.verified() {
+        Some(diag) => match &diag.run {
+            Some(run) => format!(" (pid {} of run {run})", diag.pid),
+            None => format!(" (pid {} outside any run)", diag.pid),
+        },
+        None => String::new(),
     }
 }
-fn check_journal(root: &StateRoot) -> Result<(), StoreError> {
-    let journal = FileName::new(&format!("{}-journal", root.database_name()))?;
-    if let Some(stat) = root.dir().entry(&journal)? {
-        crate::fs::check(
-            &stat,
-            Trust::Private,
-            crate::fs::Kind::File,
-            &root.dir().join(journal.as_str()),
-        )?;
+/// Whether a gate diagnostic names this process: an outer gate in the same
+/// process (the explicit repair) is already ours, so writing again must not
+/// wait for it.
+fn holds_here(holder: &Observed<HolderDiag>) -> bool {
+    holder
+        .verified()
+        .is_some_and(|diag| diag.pid == std::process::id())
+}
+fn holder_of(error: &GateError) -> Observed<HolderDiag> {
+    match error {
+        GateError::Busy { holder, .. } | GateError::TimedOut { holder, .. } => (**holder).clone(),
+        _ => Observed::Unknown(UnknownReason::Inconsistent(
+            "not a store writer wait".into(),
+        )),
+    }
+}
+fn busy(error: GateError) -> StoreError {
+    match error {
+        GateError::Busy { holder, .. } => StoreError::Busy {
+            waited: Duration::ZERO,
+            holder,
+        },
+        GateError::TimedOut { waited, holder, .. } => StoreError::Busy { waited, holder },
+        other => other.into(),
+    }
+}
+/// The store's own files: the database and, during commits, its write-ahead
+/// log and shared-memory index. Each one must carry the private-file trust
+/// (§7.1), including the log and index a WAL store keeps (§5.5).
+fn check_store_files(root: &StateRoot) -> Result<(), FsError> {
+    for suffix in ["", "-journal", "-wal", "-shm"] {
+        let name = FileName::new(&format!("{}{suffix}", root.database_name()))?;
+        if let Some(stat) = root.dir().entry(&name)? {
+            crate::fs::check(
+                &stat,
+                Trust::Private,
+                crate::fs::Kind::File,
+                &root.dir().join(name.as_str()),
+            )?;
+        }
     }
     Ok(())
+}
+fn verify_reader(conn: Connection, busy: Duration) -> Result<Option<StoreReader>, StoreError> {
+    conn.busy_timeout(busy)?;
+    conn.execute_batch("PRAGMA query_only=1; PRAGMA trusted_schema=OFF;")?;
+    // A writer creates the file before its schema transaction commits: no
+    // schema object yet is a store still being created, with nothing in it.
+    let objects: i64 =
+        conn.query_row("SELECT count(*) FROM sqlite_schema", [], |row| row.get(0))?;
+    if objects == 0 {
+        return Ok(None);
+    }
+    let version = schema_version(&conn)?;
+    Ok(Some(StoreReader { conn, version }))
+}
+/// A read-only root cannot host SQLite's WAL shared-memory index, so the same
+/// read is an immutable open: no lock, no file, and no hot log to recover
+/// (nothing can write a read-only root). A non-empty log or rollback journal
+/// is `Unknown(needs recovery)` rather than a silent older read.
+fn read_immutable(root: &StateRoot, busy: Duration) -> Result<Option<StoreReader>, StoreError> {
+    for suffix in ["-wal", "-journal"] {
+        let name = FileName::new(&format!("{}{suffix}", root.database_name()))?;
+        if let Some(stat) = root.dir().entry(&name)? {
+            if stat.st_size > 0 {
+                return Err(StoreError::NeedsRecovery);
+            }
+        }
+    }
+    let uri = format!("file:{}?immutable=1", uri_path(root.path().join(root.database_name())));
+    let conn = Connection::open_with_flags(
+        uri,
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_URI
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    verify_reader(conn, busy)
+}
+/// The largest store a sweep may migrate to incremental auto-vacuum in one
+/// `VACUUM`. Above it the rewrite would hold the write lock for seconds on a
+/// store the operator is protecting; the store keeps its high-water mark and
+/// reuses freed pages, which keeps it proportionate (§7.4).
+pub(crate) const LEGACY_VACUUM_MAX_BYTES: u64 = 16 << 20;
+
+/// Whether a sweep may apply the one-time auto-vacuum migration to a store of
+/// this size. The rewrite is proportional to the file, so only a small file
+/// qualifies.
+pub(crate) fn legacy_vacuum_allowed(bytes: u64) -> bool {
+    bytes <= LEGACY_VACUUM_MAX_BYTES
+}
+
+/// Whether this failure is SQLite's "this root cannot host a WAL index": the
+/// only case where an immutable open is both possible and safe.
+fn needs_writable_root(error: &StoreError) -> bool {
+    match error {
+        StoreError::Io(io) => io.is_permission(),
+        StoreError::Sqlite { code, .. } => {
+            let primary = code & 0xff;
+            // SQLITE_READONLY, SQLITE_PERM and SQLITE_CANTOPEN.
+            matches!(primary, 8 | 3 | 14)
+        }
+        _ => false,
+    }
+}
+/// Percent-escapes the characters a SQLite URI reserves.
+fn uri_path(path: PathBuf) -> String {
+    let path = path.to_string_lossy();
+    let mut out = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        match byte {
+            b'%' | b'?' | b'#' => out.push_str(&format!("%{byte:02X}")),
+            other => out.push(other as char),
+        }
+    }
+    out
 }
 fn schema_version(conn: &Connection) -> Result<i64, StoreError> {
     let value: Option<String> = conn
@@ -797,7 +1250,7 @@ fn schema_version(conn: &Connection) -> Result<i64, StoreError> {
 fn read_unknown(error: &StoreError) -> UnknownReason {
     match error {
         StoreError::NeedsRecovery => UnknownReason::StoreNeedsRecovery,
-        StoreError::Busy => UnknownReason::TimedOut {
+        StoreError::Busy { .. } => UnknownReason::TimedOut {
             phase: "store read".into(),
         },
         StoreError::Io(io) if io.is_permission() => UnknownReason::PermissionDenied,
@@ -811,6 +1264,13 @@ fn has_column(conn: &Connection, column: &str) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('resources') WHERE name=?1)",
         [column],
+        |r| r.get(0),
+    )
+}
+fn has_index(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name=?1)",
+        [name],
         |r| r.get(0),
     )
 }
@@ -862,6 +1322,52 @@ fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
             .transpose()?,
     })
 }
+
+/// Indexes §7.4 retention needs, as additive schema-1 changes. Retention's
+/// candidates and deletes are index-driven, so a sweep costs the same on a
+/// small store and a hundred-thousand-run store.
+const ADDITIVE_INDEXES: [(&str, &str); 10] = [
+    (
+        "runs_settled",
+        "CREATE INDEX IF NOT EXISTS runs_settled ON runs(created_at)",
+    ),
+    (
+        "resources_updated",
+        "CREATE INDEX IF NOT EXISTS resources_updated ON resources(updated_at)",
+    ),
+    (
+        "claims_holder",
+        "CREATE INDEX IF NOT EXISTS claims_holder ON claims(holder)",
+    ),
+    (
+        "claims_run",
+        "CREATE INDEX IF NOT EXISTS claims_run ON claims(run_id)",
+    ),
+    (
+        "runs_parent",
+        "CREATE INDEX IF NOT EXISTS runs_parent ON runs(parent_run)",
+    ),
+    (
+        "requests_run",
+        "CREATE INDEX IF NOT EXISTS requests_run ON requests(run_id)",
+    ),
+    (
+        "attachments_run",
+        "CREATE INDEX IF NOT EXISTS attachments_run ON attachments(run_id)",
+    ),
+    (
+        "object_refs_resource",
+        "CREATE INDEX IF NOT EXISTS object_refs_resource ON object_refs(resource)",
+    ),
+    (
+        "checkouts_live_seen",
+        "CREATE INDEX IF NOT EXISTS checkouts_live_seen ON checkouts(state, last_seen)",
+    ),
+    (
+        "checkouts_tombstoned",
+        "CREATE INDEX IF NOT EXISTS checkouts_tombstoned          ON checkouts(state, unreferenced_since)",
+    ),
+];
 
 /// Schema 1, the tables of §7.2. Run, event, attachment, claim and request
 /// rows are written by their owning primitives; the store owns the shape.
@@ -917,6 +1423,8 @@ CREATE TABLE runs (
   closed_at INTEGER
 ) STRICT;
 CREATE INDEX runs_owner ON runs(owner, created_at);
+CREATE INDEX runs_settled ON runs(created_at);
+
 CREATE TABLE events (
   run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
   seq INTEGER NOT NULL,
@@ -986,4 +1494,13 @@ CREATE TABLE logs (
   redaction TEXT NOT NULL,
   PRIMARY KEY (run_id, stream)
 ) STRICT;
+CREATE INDEX resources_updated ON resources(updated_at);
+CREATE INDEX claims_holder ON claims(holder);
+CREATE INDEX claims_run ON claims(run_id);
+CREATE INDEX runs_parent ON runs(parent_run);
+CREATE INDEX requests_run ON requests(run_id);
+CREATE INDEX attachments_run ON attachments(run_id);
+CREATE INDEX object_refs_resource ON object_refs(resource);
+CREATE INDEX checkouts_live_seen ON checkouts(state, last_seen);
+CREATE INDEX checkouts_tombstoned ON checkouts(state, unreferenced_since);
 ";

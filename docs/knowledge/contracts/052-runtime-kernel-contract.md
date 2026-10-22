@@ -651,7 +651,10 @@ gates/<scope-name>/<rid-name>.gate LOCK_EX by the holder; never unlinked while t
 impl Store {
     pub fn read(cx: &ObserveContext) -> Result<StoreReader, StoreError>;  // read-only open
     pub fn txn<T>(cx: &EffectContext, f: impl FnOnce(&mut Txn) -> Result<T, StoreError>)
-        -> Result<T, StoreError>;      // BEGIN IMMEDIATE; busy timeout from the context
+        -> Result<T, StoreError>;      // BEGIN IMMEDIATE; the store's own wait window
+    pub fn transaction_within<T>(cx: &EffectContext, wait: BusyWait,
+        f: impl FnOnce(&mut Txn) -> Result<T, StoreError>) -> Result<T, StoreError>;
+    pub fn maintain(cx: &EffectContext, pages: u32) -> Result<MaintainReport, StoreError>;
 }
 
 pub fn atomic_replace(
@@ -665,11 +668,32 @@ pub fn read_record<T: Record>(cx: &ObserveContext, dir: &DirFd, name: &FileName)
     -> Observed<T>;                    // never a default value
 ```
 
-SQLite settings: `journal_mode=DELETE`, `synchronous=FULL`,
-`foreign_keys=ON`, `busy_timeout` from the context. Write-ahead logging is
-not used: a read-only reader must work on a read-only filesystem (R2).
-SQLite opens files by path, so the checkout `kernel.db` and machine
-`machine.db` are the K13 exceptions to
+SQLite settings: `journal_mode=WAL` (persistent), `synchronous=FULL`,
+`foreign_keys=ON`, `journal_size_limit` and `wal_autocheckpoint` so the log
+stays small, `auto_vacuum=INCREMENTAL` chosen while the store is empty, and a
+`busy_timeout` from the store's own window. Write-ahead logging is what lets a
+reader and a writer share the store; it replaced the rollback journal in
+effigy#275 after concurrent runs refused each other with `Busy`.
+
+Reads stay pure in the record sense: `Store::read` opens read-only and writes
+no row, schema or journal. SQLite keeps the WAL's shared-memory index
+(`kernel.db-shm`) and its log (`kernel.db-wal`), so a read on a writable root
+may create or map those two store files; they are the store's, not a record.
+On a read-only root the same read is an immutable open (`?immutable=1`) of the
+checkpointed file, which creates nothing, because SQLite cannot create the
+shared-memory index there. A non-empty `-wal` or `-journal` on such a root is
+`Unknown(store needs recovery)`, never an older read.
+
+Every write takes the store's own writer gate (`Store(kernel)`), then one short
+`BEGIN IMMEDIATE` transaction, and commits it. The gate serializes Effigy's
+writers so a refused wait names a holder exactly as a resource gate does: its
+diagnostic body carries the pid and, when it writes for a run, the run id.
+A write waits for its own bounded window, never for the caller's remaining
+deadline: at least 30 s for admission and effects, and up to two minutes for
+settle and outcome writes (K4). Opening a current store reads it and takes no
+write lock, so an ordinary run's admission is one short insert transaction.
+Class-capability and trust refusal rules are unchanged. SQLite opens files by
+path, so `kernel.db` is the one K13 exception to
 descriptor-relative opens: the kernel creates or verifies it
 descriptor-relative inside the verified 0700 root (regular, operator-owned,
 0600, one link, size-bounded) and SQLite then opens it with
@@ -701,6 +725,12 @@ a transaction.
   `kernel.db`. They use `atomic_replace` under their store gate.
 - I-S7: a corrupt derived cache is a miss, never a failure of the operation
   that wanted it.
+- I-S8: a store write's wait is bounded by the store's own window, not by the
+  workload's remaining deadline. A `Busy` refusal is an environmental
+  condition that names its holder (pid and run) and never fails a task;
+  settle retries long enough that a concurrent writer cannot cost a run its
+  outcome, and a run whose settle still cannot land stays unsettled for its
+  sentinel or the next holder of its gate to reconcile (K4).
 
 #### Failure model
 
@@ -709,9 +739,11 @@ a transaction.
 | Crash, Kill mid-transaction | SQLite rolls back. The intent was not committed, so its effect never started (K3). |
 | Crash, Kill mid-replace | The target is the old or new file, never torn. A leftover temporary is removed by the next writer under the gate. |
 | ENOSPC | The commit fails and the operation stops before its effect. A replace leaves the previous file intact. |
+| Busy (another writer) | Wait the store's own window (30 s admission and effects, 120 s settle), then refuse with the holder's pid and run as an environmental condition. Settle never reports a task failure for it. |
+| Killed writer mid-transaction | SQLite rolls back the uncommitted write-ahead frames. A reader keeps the last committed snapshot without repairing anything; the next writer recovers. |
 | Perm | Mutate refuses before any effect. Observe returns `Unknown(PermissionDenied)`. |
 | Clock | Records carry wall time for display and journal sequence for order. Nothing compares wall times for authority. |
-| Corrupt `kernel.db` | Observe reports `Unknown(store unreadable)`. Mutate refuses and names the explicit repair, which moves the file aside. Resources it described become `Unknown`, so R3 protects them. |
+| Corrupt `kernel.db` | Observe reports `Unknown(store unreadable)`. Mutate refuses and names the explicit repair, which moves the store aside with its `-journal`, `-wal` and `-shm` files, so a leftover log never attaches to the next `kernel.db`. Resources it described become `Unknown`, so R3 protects them. |
 | Hot rollback journal seen by a read-only reader | `Unknown(store needs recovery)`; the next Mutate recovers it. |
 
 #### Proof
@@ -1796,7 +1828,7 @@ block; foreground admission and all reads never append it.
 
 ```text
 <checkout>/.effigy/state/
-  kernel.db                         checkout journal (+ rollback journal during commits)
+  kernel.db                         checkout journal (+ kernel.db-wal and -shm while open)
   gates/<scope>.scope               scope lock
   gates/<scope>/<rid>.gate          per-resource locks, including foreground owners
   sock/<run-id>.sock                durable supervisor socket
@@ -1805,7 +1837,7 @@ block; foreground admission and all reads never append it.
   staging/<run-id>/                 durable run-owned staging
   migration-committed.json          local import seal, only after §11.1 cutover
 ~/.effigy/state/
-  machine.db                        only §7.5 shared facts and bounded recovery
+  machine.db                        only §7.5 shared facts (+ -wal and -shm while open)
   gates/<scope>.scope               machine scope locks
   gates/<scope>/<rid>.gate          shared-resource locks
   migration/                       §11.1 receipts and cutover manifest only
@@ -1816,7 +1848,7 @@ no-follow, descriptor-verified and bounded (K13). Checkout ancestors may have
 ordinary source-directory read/execute permissions but must not be writable by
 another user; the private `.effigy/state/` subtree must pass the strict check.
 Mutation on NFS, SMB, WebDAV, FUSE or sshfs refuses. SQLite keeps §5.5's
-DELETE/FULL settings. Private fixtures use a fresh `HOME` **and independent
+WAL/FULL settings. Private fixtures use a fresh `HOME` **and independent
 checkout roots**, never real checkout links. No production state override is
 needed. Wall clocks are display only; persisted deadlines/quarantine retain
 boot identity and boot-monotonic nanoseconds. A different boot ends them.

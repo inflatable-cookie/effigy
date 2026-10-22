@@ -3,6 +3,7 @@ use crate::observe::{Evidence, Observed};
 use crate::outcome::{
     CleanupOutcome, EffectDisposition, EffectReport, ErrorCode, ErrorInfo, Residue,
 };
+use crate::store::{BusyWait, SETTLE_BUSY_WAIT};
 use std::time::Duration;
 
 /// Engine implementations must observe exact identity and make undo idempotent.
@@ -49,7 +50,7 @@ impl Run<'_> {
         let record = journal::run(self.store.conn(), self.id)?;
         let workload = record.workload.unwrap_or(WorkloadOutcome::Interrupted);
         if record.phase != Phase::Closed {
-            self.store.transaction(&cx, |txn| {
+            self.store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
                 txn.conn().execute("UPDATE runs SET phase='stopping',workload_outcome=?2,updated_at=?3 WHERE run_id=?1",
                     params![self.id.to_string(),serde_json::to_string(&workload)?,txn.now()])?;
                 Ok::<_,RunError>(())
@@ -87,29 +88,31 @@ impl Run<'_> {
                             .any(|r| matches!(r.action, RequestAction::Escalate))
                     })
                 });
-                self.store.transaction(&cx, |txn| {
-                    journal::write_effect(
-                        txn,
-                        self.id,
-                        effect.sequence,
-                        state,
-                        None,
-                        reason.as_deref(),
-                    )
-                })?;
+                self.store
+                    .transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
+                        journal::write_effect(
+                            txn,
+                            self.id,
+                            effect.sequence,
+                            state,
+                            None,
+                            reason.as_deref(),
+                        )
+                    })?;
             } else if effect.spec.kind == crate::remote::KIND {
                 let (state, reason) =
                     crate::remote::settle_effect(effect, cleanup, adapter.remote());
-                self.store.transaction(&cx, |txn| {
-                    journal::write_effect(
-                        txn,
-                        self.id,
-                        effect.sequence,
-                        state,
-                        None,
-                        reason.as_deref(),
-                    )
-                })?;
+                self.store
+                    .transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
+                        journal::write_effect(
+                            txn,
+                            self.id,
+                            effect.sequence,
+                            state,
+                            None,
+                            reason.as_deref(),
+                        )
+                    })?;
             } else if effect.spec.kind == attachments::KIND {
                 self.settle_attachment(effect, &cx)?;
             } else if effect.spec.kind == claims::KIND {
@@ -140,28 +143,33 @@ impl Run<'_> {
                 } else {
                     resolve(adapter, effect, cleanup)
                 };
-                self.store.transaction(&cx, |txn| {
-                    journal::write_effect(
-                        txn,
-                        self.id,
-                        effect.sequence,
-                        state,
-                        None,
-                        reason.as_deref(),
-                    )
-                })?;
+                self.store
+                    .transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
+                        journal::write_effect(
+                            txn,
+                            self.id,
+                            effect.sequence,
+                            state,
+                            None,
+                            reason.as_deref(),
+                        )
+                    })?;
             }
             crate::fault_point!(SettleEffectAfter)?;
         }
         let effects = self.effects()?;
         let complete = effects.iter().all(|e| e.state.terminal());
-        // ENOSPC at Closed retains liveness until commit succeeds or the cleanup
-        // deadline expires. The caller never mistakes a missing close for success.
+        // The close write keeps the store's own two-minute window, so a busy
+        // store delays it rather than losing the run's outcome. A write that
+        // still cannot land leaves the run unsettled: the sentinel or the next
+        // holder of this gate reconciles it, and the caller reports a warning,
+        // never a failed task. ENOSPC at Closed retains liveness until commit
+        // succeeds or the cleanup deadline expires; the caller never mistakes
+        // a missing close for success.
         loop {
-            cleanup.operation().check("settle close")?;
             let result = (|| {
                 crate::fault_point!(SettleCloseBefore)?;
-                self.store.transaction(&cx, |txn| {
+                self.store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
                     txn.conn().execute("UPDATE runs SET phase='closed',cleanup_outcome=?2,updated_at=?3,closed_at=coalesce(closed_at,?3) WHERE run_id=?1",
                         params![self.id.to_string(),if complete { "complete" } else { "incomplete" },txn.now()])?;
                     Ok::<_,RunError>(())
@@ -171,10 +179,13 @@ impl Run<'_> {
             })();
             match result {
                 Ok(()) => break,
-                Err(RunError::Store(StoreError::Io(_) | StoreError::Busy)) => std::thread::sleep(
-                    Duration::from_millis(5)
-                        .min(cleanup.operation().remaining().unwrap_or_default()),
-                ),
+                Err(RunError::Store(StoreError::Io(_))) => {
+                    cleanup.operation().check("settle close")?;
+                    std::thread::sleep(
+                        Duration::from_millis(5)
+                            .min(cleanup.operation().remaining().unwrap_or_default()),
+                    );
+                }
                 Err(error) => return Err(error),
             }
         }

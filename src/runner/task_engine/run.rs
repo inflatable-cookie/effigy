@@ -23,7 +23,7 @@ use effigy_kernel::ident::ProcessState;
 use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::{CleanupOutcome, WorkloadOutcome};
 use effigy_kernel::run::{BeginOpts, Run, RunError};
-use effigy_kernel::store::Store;
+use effigy_kernel::store::{Store, StoreError};
 use effigy_kernel::supervise::{LifecyclePlan, Placement as LifecyclePlacement};
 
 use super::identity::TaskTarget;
@@ -45,8 +45,6 @@ pub(in crate::runner) fn shared_scope_label(lock: &str) -> String {
 }
 /// Provenance key under which a managed run's token is recorded, as a digest.
 pub(in crate::runner) const MANAGED_RUN_PROVENANCE: &str = "managed-run-token";
-/// Retention per close: bounded, Mutate-only, never an unsettled run (K15).
-const RETENTION_PER_CLOSE: usize = 8;
 
 /// `--lock-wait-ms`, else `EFFIGY_LOCK_WAIT_MS`, else fail fast.
 pub(in crate::runner) fn resolve_lock_wait_ms(explicit: Option<u64>) -> Result<u64, RunnerError> {
@@ -693,7 +691,6 @@ impl TaskRun {
             None => (None, Vec::new()),
         };
         drop(admission);
-        retain();
         let (outcome, mut warnings) = result;
         warnings.extend(scratch);
         (outcome, warnings)
@@ -720,7 +717,6 @@ impl TaskRun {
             warnings.extend(close_run(shared, mirrored));
         }
         drop(admission);
-        retain();
         warnings
     }
 
@@ -821,6 +817,19 @@ impl Drop for TaskRun {
     }
 }
 
+/// A settle that could not write its outcome is an environment condition: the
+/// run stays unsettled for its sentinel or the next holder of its gate to
+/// reconcile, and the task's own result stands (K4, K10).
+fn settle_warning(error: &RunError) -> String {
+    match error {
+        RunError::Store(busy @ StoreError::Busy { .. }) => format!(
+            "run settle did not record its outcome: {busy}. The run stays unsettled for its \
+             sentinel or the next run of this task to reconcile; the task's own result stands"
+        ),
+        other => format!("run settle failed: {}", run_error(other)),
+    }
+}
+
 fn record_outcome(run: &mut Run<'static>, workload: WorkloadOutcome) -> Result<(), RunError> {
     let cleanup = kernel::cleanup().map_err(|error| RunError::Invalid(error.to_string()))?;
     match workload {
@@ -866,7 +875,7 @@ fn close_run_settled(
             (Some(outcome), warnings)
         }
         Err(error) => {
-            warnings.push(format!("run settle failed: {}", run_error(&error)));
+            warnings.push(settle_warning(&error));
             (None, warnings)
         }
     }
@@ -881,32 +890,6 @@ pub(in crate::runner) fn request_run_stop(id: RunId) -> Result<(), RunnerError> 
             "run {id} is not readable for a stop request"
         ))),
     }
-}
-
-fn retain() {
-    // Stopgap (2026-10-22, planner): retention on the close path scans the
-    // whole run table inside a write transaction, which holds the machine-wide
-    // store lock for seconds per close and refuses every other admission with
-    // `store refused: Busy`. Skip it unless explicitly requested; effigy#275
-    // moves retention off the close path with indexed, batched transactions.
-    if std::env::var_os("EFFIGY_RETENTION_ON_CLOSE").as_deref() != Some(std::ffi::OsStr::new("1")) {
-        return;
-    }
-    let Ok(root) = kernel::effects_root() else {
-        return;
-    };
-    let cx = kernel::effects();
-    let Ok(mut store) = Store::open(&cx.child(Duration::from_secs(5)), root) else {
-        return;
-    };
-    let _ = effigy_kernel::retention::retain(
-        &cx.child(Duration::from_secs(5)),
-        root,
-        &mut store,
-        effigy_kernel::retention::RetentionBudget {
-            max_removals: RETENTION_PER_CLOSE,
-        },
-    );
 }
 
 fn invocation(
@@ -1057,6 +1040,11 @@ fn begin_error(
             Some((lock_wait_ms, waited.as_millis() as u64)),
             started,
         ),
+        RunError::Store(error @ StoreError::Busy { .. }) => RunnerError::task_invocation(format!(
+            "`{}` could not be admitted: {error}.\nnext: nothing was started and no task failed; \
+             another Effigy process was writing the run journal. Rerun when it finishes.",
+            target.label
+        )),
         RunError::PredecessorUnsettled { run, effects } => RunnerError::task_invocation(format!(
             "`{}` cannot start: its previous run {run} left {} unsettled effect(s) that could not \
              be proven stopped. Inspect with `effigy tasks status {}`; nothing was started",

@@ -28,7 +28,7 @@ impl Family {
 
 /// An opened, verified state root. Opened for effects it is created, trusted
 /// and local; opened for observation it is never created or changed.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StateRoot {
     dir: DirFd,
     writable: bool,
