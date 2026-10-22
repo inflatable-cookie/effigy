@@ -8,7 +8,7 @@
   "msrv": {
     "cargo_manifests": [
       "Cargo.toml",
-          "crates/effigy-bootstrap/Cargo.toml",
+      "crates/effigy-bootstrap/Cargo.toml",
       "crates/effigy-builtin/Cargo.toml",
       "crates/effigy-catalog/Cargo.toml",
       "crates/effigy-changelog/Cargo.toml",
