@@ -84,9 +84,10 @@ where
         "workspace" => parse_workspace_command(args),
         "gateway" => parse_gateway_command(args),
         "service" => parse_service_command(args),
-        "demo" => Err(CliParseError::InvalidArguments(
-            "`effigy demo` is retired in v0.15 with no replacement: the demo registry, receipts and browser are gone; record terminal sessions with an external tool. See the v0.15.0 Removed entry in CHANGELOG.md".to_owned(),
-        )),
+        "demo" => Err(CliParseError::InvalidArguments(format!(
+            "`effigy demo` is retired in v0.15: the demo registry, receipts and browser are gone, and {}. See the v0.15.0 Removed entry in CHANGELOG.md",
+            effigy_core::retirement_text::DEMO_TO_TASK_RECIPE
+        ))),
         "graph" => parse_graph_command(args),
         "rhai" => parse_rhai_command(args),
         "skill" => parse_skill_command(args),

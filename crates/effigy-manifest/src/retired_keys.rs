@@ -101,6 +101,22 @@ mod tests {
     use crate::TaskManifest;
 
     #[test]
+    fn retirement_demos_table_is_refused_with_the_task_conversion_recipe() {
+        let error = toml::from_str::<TaskManifest>(
+            "[demos.checkout]\ntitle = 'Checkout'\nsummary = 'Pay for a cart'\nrun = 'bun run demo'",
+        )
+        .expect_err("retired table");
+        let error = error.to_string();
+        assert!(error.contains("`[demos]` was removed in v0.15"), "{error}");
+        assert!(error.contains("`[tasks.\"demo:<name>\"]`"), "{error}");
+        assert!(error.contains("`[demos.checkout]`"), "{error}");
+        assert!(error.contains("`[tasks.\"demo:checkout\"]`"), "{error}");
+        assert!(error.contains("group = \"Demos\""), "{error}");
+        assert!(error.contains("CHANGELOG.md"), "{error}");
+        assert!(!error.contains("external tool"), "{error}");
+    }
+
+    #[test]
     fn drafts_table_is_refused_with_the_task_namespace_replacement() {
         let error = toml::from_str::<TaskManifest>(
             "[tasks]\nproof = 'echo proof'\n[drafts.proof]\nrun = 'echo draft'",
