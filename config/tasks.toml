@@ -196,14 +196,14 @@
 # Per-test timeout and leak controls are unchanged; the environment profile
 # gives the complete case matrix its own aggregate budget.
 "test:environment:ci:isolated" = { visibility = "internal", group = "Maintenance", run = [
-  { run = "sh scripts/effigy-selfbuild.sh test:environment:ci:isolated:runner", timeout_ms = 7200000 },
+  { run = "effigy test:environment:ci:isolated:runner", timeout_ms = 7200000 },
 ] }
 "test:environment:ci:isolated:runner" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
   { run = "sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 600000 },
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/environment-nextest.toml --user-config-file none -p effigy -p effigy-containers --lib -E 'test(runtime::dns::tests::) | test(tests::compose::) | test(policy::admission::) | test(policy::render::tests::) | test(workspace::tests::host_git_mount_tests::) | test(exec::healthcheck_timer::) | test(exec::restart_recovery::) | test(bounded_exec::tests::) | test(builder_recovery::) | test(host_container_lease::tests::) | test(handover_end_owner_releases_lock_for_reverse_handover)' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1200000 },
 ] }
 "test:environment:ci:shared" = { visibility = "internal", group = "Maintenance", run = [
-  { run = "sh scripts/effigy-selfbuild.sh test:environment:ci:shared:runner", timeout_ms = 7200000 },
+  { run = "effigy test:environment:ci:shared:runner", timeout_ms = 7200000 },
 ] }
 "test:environment:ci:shared:runner" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
   { run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 600000 },
@@ -219,8 +219,8 @@
   { run = "sh scripts/oxide-selector.sh test -p effigy --lib --no-run", timeout_ms = 900000 },
 ] }
 "test:environment:builder-recovery" = { visibility = "internal", group = "Maintenance", run = [
-  { run = "sh scripts/effigy-selfbuild.sh test:environment:builder-recovery:isolated", timeout_ms = 1800000 },
-  { run = "sh scripts/effigy-selfbuild.sh test:environment:builder-recovery:shared", timeout_ms = 1800000 },
+  { run = "effigy test:environment:builder-recovery:isolated", timeout_ms = 1800000 },
+  { run = "effigy test:environment:builder-recovery:shared", timeout_ms = 1800000 },
 ] }
 "test:environment:builder-recovery:isolated" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [
   { run = "sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 600000 },
@@ -386,7 +386,7 @@
 ] }
 "test:secrets:policy:consumers" = { visibility = "internal", group = "Maintenance", run = [{ task = "test:secrets:callers" }, { task = "test:secrets:cli" }, { task = "test:secrets:policy:compatibility" }, { task = "test:secrets:policy:config-help" }] }
 "test:secrets:policy" = { visibility = "internal", group = "Maintenance", run = [{ task = "test:secrets:manifest" }, { task = "test:secrets:policy:consumers" }] }
-"qa:secrets:policy:docs" = { visibility = "internal", group = "Maintenance", run = [{ task = "qa:docs" }, { run = "sh scripts/effigy-selfbuild.sh skill run northstar/retired-concepts", timeout_ms = 600000 }] }
+"qa:secrets:policy:docs" = { visibility = "internal", group = "Maintenance", run = [{ task = "qa:docs" }, { run = "effigy skill run northstar/retired-concepts", timeout_ms = 600000 }] }
 "check:secrets:policy" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-builtin -p effigy-manifest -p effigy-rhai -p effigy-cli -p effigy-doctor -p effigy-codegraph --all-targets", timeout_ms = 900000 }] }
 "lint:secrets:policy" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-builtin -p effigy-manifest -p effigy-rhai -p effigy-cli -p effigy-doctor -p effigy-codegraph --all-targets -- -D warnings", timeout_ms = 900000 }] }
 "fmt:secrets:policy" = { visibility = "internal", group = "Maintenance", run = "rustfmt --edition 2021 --config skip_children=true crates/effigy-builtin/src/config/docs/tasks.rs crates/effigy-builtin/src/config/docs/tests.rs tests/cli_output_tests/help_and_flags_tests.rs crates/effigy-cli/src/help/topics/secrets.rs crates/effigy-codegraph/src/tests/manifest_semantics.rs crates/effigy-doctor/src/manifest_schema/tests.rs crates/effigy-manifest/src/bundles.rs crates/effigy-manifest/src/composition.rs crates/effigy-manifest/src/config_sections.rs crates/effigy-manifest/src/config_sections/secrets.rs crates/effigy-manifest/src/lib.rs crates/effigy-manifest/tests/secrets_config.rs crates/effigy-manifest/tests/workspace_app_bundle.rs crates/effigy-rhai/src/tests/mod.rs crates/effigy-rhai/src/tests/secrets.rs src/runner/container_command/secret_env.rs src/runner/secrets_command.rs src/runner/state_command.rs src/tests/runner_tests/runner_core_tests/secrets_tests.rs src/tests/runner_tests/runner_core_tests/task_env_tests.rs tests/cli_output_tests/command_behavior_tests.rs tests/cli_output_tests/qa_groups_tests.rs tests/secrets_local_dev_cli_tests.rs tests/secrets_vault_generate_cli_tests.rs" }
@@ -1358,19 +1358,19 @@
 
 
 # Documentation QA
-"qa:docs:links" = { visibility = "internal", group = "Maintenance", run = "sh scripts/effigy-selfbuild.sh docs check links" }
-"qa:docs:examples" = { visibility = "internal", group = "Maintenance", run = "sh scripts/effigy-selfbuild.sh docs check json-examples" }
-"qa:docs:agent-defaults" = { visibility = "internal", group = "Maintenance", run = "sh scripts/effigy-selfbuild.sh docs check forbidden AGENTS.md .github/workflows/json-contracts.yml docs/knowledge/contracts/json-selection-contract.json --forbid '--repo .'" }
+"qa:docs:links" = { visibility = "internal", group = "Maintenance", run = "effigy docs check links" }
+"qa:docs:examples" = { visibility = "internal", group = "Maintenance", run = "effigy docs check json-examples" }
+"qa:docs:agent-defaults" = { visibility = "internal", group = "Maintenance", run = "effigy docs check forbidden AGENTS.md .github/workflows/json-contracts.yml docs/knowledge/contracts/json-selection-contract.json --forbid '--repo .'" }
 "qa:docs:knowledge" = { visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/effigy-selfbuild.sh docs check paths README.md AGENTS.md docs/README.md docs/knowledge/README.md docs/knowledge/vision.md docs/knowledge/architecture.md docs/knowledge/contracts/README.md docs/knowledge/contracts/release.md docs/knowledge/retired.toml docs/knowledge/questions.md",
-  "sh scripts/effigy-selfbuild.sh docs check workflow-paths",
+  "effigy docs check paths README.md AGENTS.md docs/README.md docs/knowledge/README.md docs/knowledge/vision.md docs/knowledge/architecture.md docs/knowledge/contracts/README.md docs/knowledge/contracts/release.md docs/knowledge/retired.toml docs/knowledge/questions.md",
+  "effigy docs check workflow-paths",
 ] }
 # The changelog is documentation: validate its release headings with the same
 # parser `release status` uses, so an em-dash separator fails both surfaces.
-"qa:docs:changelog" = { visibility = "internal", group = "Maintenance", run = "sh scripts/effigy-selfbuild.sh changelog validate CHANGELOG.md" }
+"qa:docs:changelog" = { visibility = "internal", group = "Maintenance", run = "effigy changelog validate CHANGELOG.md" }
 "qa:docs:gateway-identity" = { visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/effigy-selfbuild.sh docs check links CHANGELOG.md docs/knowledge/architecture/020-container-infrastructure-design.md docs/knowledge/architecture/034-gateway-legacy-upgrade-recovery.md docs/knowledge/architecture/README.md docs/knowledge/questions.md docs/guides/012-dev-process-manager-tui.md docs/guides/063-container-system-guide.md docs/guides/083-v0.14.0-consumer-migration.md",
-  "sh scripts/effigy-selfbuild.sh changelog validate CHANGELOG.md",
+  "effigy docs check links CHANGELOG.md docs/knowledge/architecture/020-container-infrastructure-design.md docs/knowledge/architecture/034-gateway-legacy-upgrade-recovery.md docs/knowledge/architecture/README.md docs/knowledge/questions.md docs/guides/012-dev-process-manager-tui.md docs/guides/063-container-system-guide.md docs/guides/083-v0.14.0-consumer-migration.md",
+  "effigy changelog validate CHANGELOG.md",
 ] }
 "qa:docs" = { visibility = "public", group = "Validation", run = [
   { task = "qa:docs:links" },
@@ -1381,11 +1381,11 @@
 ] }
 
 # JSON contract QA
-"qa:json" = { visibility = "public", group = "Validation", run = "sh scripts/effigy-selfbuild.sh contracts check-json --fast --print-selected=text" }
-"qa:json:ci" = { visibility = "internal", group = "Maintenance", run = "sh scripts/effigy-selfbuild.sh contracts check-json --full --print-selected=json" }
+"qa:json" = { visibility = "public", group = "Validation", run = "effigy contracts check-json --fast --print-selected=text" }
+"qa:json:ci" = { visibility = "internal", group = "Maintenance", run = "effigy contracts check-json --full --print-selected=json" }
 "qa:ci:json" = { visibility = "internal", group = "Maintenance", run = [
   { rhai = "scripts/write-json-contract-artifacts.rhai" },
-  "sh scripts/effigy-selfbuild.sh contracts validate-selection --artifact ./json-contracts-selected.json",
+  "effigy contracts validate-selection --artifact ./json-contracts-selected.json",
   "sh scripts/oxide-selector.sh test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture",
 ] }
 
@@ -1447,7 +1447,7 @@
   "bash -lc 'if sh scripts/oxide-selector.sh nextest --version >/dev/null 2>&1; then sh scripts/oxide-selector.sh nextest run --workspace --no-fail-fast; else echo \"[warn] cargo-nextest not installed; falling back to sh scripts/oxide-selector.sh test --workspace --no-fail-fast\" >&2; sh scripts/oxide-selector.sh test --workspace --no-fail-fast; fi'",
   "sh scripts/oxide-selector.sh test --workspace --doc",
   { task = "qa:released-surface" },
-  "sh scripts/effigy-selfbuild.sh docs check links",
+  "effigy docs check links",
   { task = "qa:ci:json" },
 ]
 "qa:gates" = { visibility = "internal", group = "Maintenance", run = [{ task = "qa:docs" }, { task = "qa:json" }, { task = "qa:architecture" }] }
