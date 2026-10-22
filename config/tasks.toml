@@ -67,7 +67,9 @@
 "proof:gateway:bind-addresses" = { run = "python3 tests/scripts/gateway-bind-probe.py", timeout_ms = 10000 }
 "format:gateway:operator" = "rustfmt --edition 2021 --config skip_children=true {args}"
 # Contributor setup
-"bootstrap:local" = { visibility = "internal", group = "Maintenance", run = [
+# Renamed 2026-10-22 so it does not read as the `effigy bootstrap` feature.
+"bootstrap:local" = { visibility = "internal", group = "Maintenance", run = "echo 'bootstrap:local was renamed: run `effigy install:local`' >&2; exit 1" }
+"install:local" = { visibility = "internal", group = "Maintenance", run = [
   { rhai = "scripts/build-local-bin.rhai" },
   { rhai = "scripts/install-local-bin-links.rhai" },
 ] }

@@ -99,7 +99,7 @@ Tasks can be shell strings, refs to other tasks, or Rhai scripts. Examples:
 "release:artifacts:check" = { rhai = "scripts/check-release-artifacts.rhai" }
 
 # Mixed chain
-"bootstrap:local" = [
+"install:local" = [
   { rhai = "scripts/build-local-bin.rhai" },
   { rhai = "scripts/install-local-bin-links.rhai" },
 ]

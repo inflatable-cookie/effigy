@@ -609,6 +609,7 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- The contributor task that builds this checkout and installs it as the machine's `effigy` is renamed `bootstrap:local` → `install:local`, so it no longer reads as the `effigy bootstrap` feature (clone and start a project). `bootstrap:local` now fails with the new name.
 - Effigy's own repository builds through Oxide. Selectors run Cargo through
   `scripts/oxide-selector.sh`, which leases Oxide's shared slot pool so Rust
   intermediates stay off the internal SSD. Every routed selector keeps a

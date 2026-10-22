@@ -482,5 +482,5 @@ effigy release gates       # Check release readiness
 If `effigy` is not on `PATH` yet:
 
 ```bash
-cargo run --bin effigy -- bootstrap:local
+cargo run --bin effigy -- install:local
 ```

@@ -116,7 +116,7 @@ pub(super) fn fmt_runner_error(
             if let Some(stale) = stale_local_install.as_deref() {
                 write!(
                     f,
-                    "\n\nrepository-local install is behind this checkout: {} records {}, but {} is at {}\nrefresh it from the checkout root with: cargo run --bin effigy -- bootstrap:local",
+                    "\n\nrepository-local install is behind this checkout: {} records {}, but {} is at {}\nrefresh it from the checkout root with: cargo run --bin effigy -- install:local",
                     stale.executable.display(),
                     stale.installed_identity,
                     stale.repo_root.display(),

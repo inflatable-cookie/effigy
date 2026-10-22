@@ -30,7 +30,7 @@ cargo install --path . --root ./.local-install --force
 Build the local binary and link it into `~/.local/bin`:
 
 ```bash
-cargo run --bin effigy -- bootstrap:local
+cargo run --bin effigy -- install:local
 ```
 
 Then run directly:

@@ -30,4 +30,4 @@ skill_roots = [".agents/skills"]
 
 [bootstrap]
 submodules = "recursive"
-setup = ["bootstrap:local"]
+setup = ["install:local"]
