@@ -333,6 +333,11 @@ fn resolve_selected_container_name(
     let Some(system) = system else {
         return Ok(name);
     };
+    if let Some(name) = name {
+        return Err(RunnerError::task_invocation(format!(
+            "`effigy container {name} ...` does not accept `--system`; the container is already named"
+        )));
+    }
     let context = resolve_active_command_context(repo_override.clone())?;
     crate::runner::workspace_command::resolve_public_workspace_container(
         &context.resolved.resolved_root,
@@ -457,6 +462,65 @@ mod tests {
         assert!(error
             .to_string()
             .contains("`effigy container volume prune --global` does not accept `--repo`"));
+    }
+
+    #[test]
+    fn system_selection_resolves_the_default_workspace_container() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("repo");
+        std::fs::create_dir_all(root.join("infra/dev")).expect("mkdir");
+        std::fs::write(
+            root.join("effigy.toml"),
+            r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
+[containers.web]
+primary_service = "app"
+working_dir = "/workspace"
+
+[containers.web.services.app]
+catalog = "workspace-rust-bun"
+"#,
+        )
+        .expect("manifest");
+
+        let selected = resolve_selected_container_name(
+            &Some(root.clone()),
+            None,
+            Some("dev".to_owned()),
+            "container up",
+        )
+        .expect("system selection resolves");
+
+        assert_eq!(selected.as_deref(), Some("web"));
+        let direct = resolve_selected_container_name(
+            &Some(root),
+            Some("api".to_owned()),
+            None,
+            "container up",
+        )
+        .expect("a direct name needs no resolution");
+        assert_eq!(direct.as_deref(), Some("api"));
+    }
+
+    #[test]
+    fn named_container_refuses_system_selection_before_resolution() {
+        let error = resolve_selected_container_name(
+            &None,
+            Some("web".to_owned()),
+            Some("dev".to_owned()),
+            "container up",
+        )
+        .expect_err("both selectors cannot be combined");
+
+        assert!(error.to_string().contains("does not accept `--system`"));
     }
 
     #[test]
