@@ -186,8 +186,8 @@ Claude Code, OpenAI Codex, Cursor, and any other agent that consumes
 
 The skill front door is intentionally light (~150 lines) and routes to topic
 references for footguns, discovery loop, selector routing, common workflows,
-JSON envelopes, graph-first code navigation, config shapes, and release
-protocol. Agents read the
+JSON envelopes, code and documentation navigation, config shapes, and
+release protocol. Agents read the
 references on demand without re-fetching the front door.
 
 The skill is the recommended cross-repo entry point. The `AGENTS.md` snippet
