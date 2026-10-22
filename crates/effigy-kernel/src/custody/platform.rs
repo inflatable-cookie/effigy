@@ -67,10 +67,13 @@ pub(crate) fn numeric(pid: u32, group: bool, signal: i32) -> Observed<SignalDeli
         Observed::Verified(SignalDelivered { pid, group, signal }, evidence())
     } else {
         let e = io::Error::last_os_error();
-        if e.raw_os_error() == Some(libc::ESRCH) {
-            Observed::Absent(AbsenceProof::NoSuchProcess { pid })
-        } else {
-            Observed::Unknown(unknown(e))
+        match e.raw_os_error() {
+            Some(libc::ESRCH) => Observed::Absent(AbsenceProof::NoSuchProcess { pid }),
+            // A refused signal is an authority fact, not an inconsistent
+            // reading. Keep it distinguishable so an owner can re-verify the
+            // target instead of reading the refusal itself as failure.
+            Some(libc::EPERM | libc::EACCES) => Observed::Unknown(UnknownReason::PermissionDenied),
+            _ => Observed::Unknown(unknown(e)),
         }
     }
 }
