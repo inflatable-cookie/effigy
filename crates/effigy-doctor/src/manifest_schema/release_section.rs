@@ -12,7 +12,7 @@ pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, rele
         context,
         "release",
         release,
-        "expected table with optional keys: version_file, version_path, changelog, pre-1-0, initial-tag-current-version, sync_files, gates, tag_format, hosted-evidence",
+        "expected table with optional keys: version_file, version_path, changelog, pre-1-0, initial-tag-current-version, sync_files, gates, tag_format, hosted-evidence, identities, artifacts, targets, approve",
     ) else {
         return;
     };
@@ -37,6 +37,10 @@ pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, rele
             "tag-format",
             "hosted_evidence",
             "hosted-evidence",
+            "identities",
+            "artifacts",
+            "targets",
+            "approve",
         ],
     );
 
@@ -92,6 +96,182 @@ pub(super) fn validate_release_section(context: &mut SchemaContext<'_, '_>, rele
 
     if let Some(gates) = release_table.get("gates") {
         validate_release_gates(context, gates);
+    }
+    if let Some(approve) = release_table.get("approve") {
+        validate_optional_string_array_field(
+            context,
+            Some(approve),
+            "release.approve",
+            "expected array of stage names",
+        );
+    }
+    if let Some(identities) = release_table.get("identities") {
+        validate_release_identities(context, identities);
+    }
+    if let Some(artifacts) = release_table.get("artifacts") {
+        validate_release_artifacts(context, artifacts);
+    }
+    if let Some(targets) = release_table.get("targets") {
+        validate_release_targets(context, targets);
+    }
+}
+
+const RELEASE_IDENTITY_KINDS: [&str; 4] = ["semver", "digest", "source", "task"];
+const RELEASE_TARGET_KINDS: [&str; 2] = ["tag", "task"];
+const RELEASE_GATE_STAGES: [&str; 2] = ["pre", "certify"];
+
+fn validate_release_identities(context: &mut SchemaContext<'_, '_>, identities: &Value) {
+    let Some(table) = require_table(
+        context,
+        "release.identities",
+        identities,
+        "expected table of named identities",
+    ) else {
+        return;
+    };
+
+    for (name, value) in table {
+        let path = format!("release.identities.{name}");
+        let Some(identity) = require_table(
+            context,
+            &path,
+            value,
+            "expected table with `kind`, `version-file`, `version-path`, `tag-format`, `follows` and/or `task`",
+        ) else {
+            continue;
+        };
+        validate_allowed_keys(
+            context,
+            &path,
+            identity,
+            &[
+                "kind",
+                "version_file",
+                "version-file",
+                "version_path",
+                "version-path",
+                "tag_format",
+                "tag-format",
+                "follows",
+                "task",
+            ],
+        );
+        validate_optional_enum_field(
+            context,
+            identity.get("kind"),
+            &format!("{path}.kind"),
+            &RELEASE_IDENTITY_KINDS,
+        );
+        for (key, field) in [
+            ("version_file", "version-file"),
+            ("version_path", "version-path"),
+            ("tag_format", "tag-format"),
+        ] {
+            validate_optional_non_empty_string_field(
+                context,
+                identity.get(key).or_else(|| identity.get(field)),
+                &format!("{path}.{key}"),
+            );
+        }
+        validate_optional_non_empty_string_field(
+            context,
+            identity.get("follows"),
+            &format!("{path}.follows"),
+        );
+        validate_optional_non_empty_string_field(
+            context,
+            identity.get("task"),
+            &format!("{path}.task"),
+        );
+    }
+}
+
+fn validate_release_artifacts(context: &mut SchemaContext<'_, '_>, artifacts: &Value) {
+    let Some(table) = require_table(
+        context,
+        "release.artifacts",
+        artifacts,
+        "expected table of named artifacts",
+    ) else {
+        return;
+    };
+
+    for (name, value) in table {
+        let path = format!("release.artifacts.{name}");
+        let Some(artifact) = require_table(
+            context,
+            &path,
+            value,
+            "expected table with `task` and `path`",
+        ) else {
+            continue;
+        };
+        validate_allowed_keys(context, &path, artifact, &["task", "path"]);
+        validate_optional_non_empty_string_field(
+            context,
+            artifact.get("task"),
+            &format!("{path}.task"),
+        );
+        validate_optional_non_empty_string_field(
+            context,
+            artifact.get("path"),
+            &format!("{path}.path"),
+        );
+    }
+}
+
+fn validate_release_targets(context: &mut SchemaContext<'_, '_>, targets: &Value) {
+    let Some(table) = require_table(
+        context,
+        "release.targets",
+        targets,
+        "expected table of named targets",
+    ) else {
+        return;
+    };
+
+    for (name, value) in table {
+        let path = format!("release.targets.{name}");
+        let Some(target) = require_table(
+            context,
+            &path,
+            value,
+            "expected table with `kind` (`tag` or `task`) and optional `task`, `check`, `verify`",
+        ) else {
+            continue;
+        };
+        validate_allowed_keys(context, &path, target, &["kind", "task", "check", "verify"]);
+        validate_optional_enum_field(
+            context,
+            target.get("kind"),
+            &format!("{path}.kind"),
+            &RELEASE_TARGET_KINDS,
+        );
+        for key in ["task", "check", "verify"] {
+            validate_optional_non_empty_string_field(
+                context,
+                target.get(key),
+                &format!("{path}.{key}"),
+            );
+        }
+    }
+}
+
+fn validate_optional_enum_field(
+    context: &mut SchemaContext<'_, '_>,
+    value: Option<&Value>,
+    path: &str,
+    allowed: &[&str],
+) {
+    let Some(value) = value else {
+        return;
+    };
+    match value.as_str() {
+        Some(text) if allowed.contains(&text) => {}
+        Some(text) => {
+            context.unsupported_value(path, text, &format!("one of {}", allowed.join(", ")))
+        }
+        None => context.invalid_value_type(path, "string"),
     }
 }
 
@@ -149,7 +329,7 @@ fn validate_release_gates(context: &mut SchemaContext<'_, '_>, gates: &Value) {
             context,
             &gate_path,
             gate_value,
-            "expected string command or table with `command`/`description`/`reuse-hosted-evidence`",
+            "expected string command or table with `command`/`task`, `stage`, `description` and/or `reuse-hosted-evidence`",
         ) else {
             continue;
         };
@@ -160,10 +340,23 @@ fn validate_release_gates(context: &mut SchemaContext<'_, '_>, gates: &Value) {
             gate_table,
             &[
                 "command",
+                "task",
+                "stage",
                 "description",
                 "reuse-hosted-evidence",
                 "reuse_hosted_evidence",
             ],
+        );
+        validate_optional_non_empty_string_field(
+            context,
+            gate_table.get("task"),
+            &format!("{gate_path}.task"),
+        );
+        validate_optional_enum_field(
+            context,
+            gate_table.get("stage"),
+            &format!("{gate_path}.stage"),
+            &RELEASE_GATE_STAGES,
         );
         validate_optional_non_empty_string_field(
             context,

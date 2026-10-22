@@ -1,0 +1,19 @@
+[catalog]
+alias = "underlay"
+
+[package_manager]
+js = "bun"
+
+[release]
+version-file = "Cargo.toml"
+version-path = "workspace.package.version"
+changelog = "CHANGELOG.md"
+tag-format = "v{version}"
+pre-1-0 = true
+sync-files = ["Cargo.lock", "package.json"]
+
+[release.gates]
+version-sync = "effigy check:release-version-sync"
+validate = "effigy validate"
+clippy = "effigy rust:clippy"
+rust = "effigy rust:check"

@@ -554,6 +554,34 @@ fn container_migrate_contract_has_owned_compose_file_inputs_and_requires_its_fie
     }
 }
 
+#[test]
+fn release_platform_contract_fixture_is_a_ready_single_identity_release() {
+    let repo = tempfile::tempdir().unwrap();
+    let mut fixtures = super::ContractFixtures::new(repo.path());
+    let args = super::expand_contract_fixture_tokens(
+        "effigy --json release --plan --repo <fixture_release_platform>",
+        &mut fixtures,
+    )
+    .unwrap();
+    assert!(args
+        .iter()
+        .all(|arg| !arg.contains("<fixture_release_platform>")));
+    let root = std::path::PathBuf::from(args.last().unwrap());
+    assert!(!root.starts_with(repo.path()));
+    // A ready release: `release status` and `release --plan` both exit zero.
+    assert!(std::fs::read_to_string(root.join("effigy.toml"))
+        .unwrap()
+        .contains("changelog = \"CHANGELOG.md\""));
+    assert!(std::fs::read_to_string(root.join("Cargo.toml"))
+        .unwrap()
+        .contains("version = \"0.2.4\""));
+    assert!(std::fs::read_to_string(root.join("CHANGELOG.md"))
+        .unwrap()
+        .contains("## [Unreleased]"));
+    drop(fixtures);
+    assert!(!root.exists());
+}
+
 /// Compile one of the shipped payload schema documents.
 fn repo_payload_schema(schema_id: &str) -> effigy_json_schema::CompiledSchema {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))

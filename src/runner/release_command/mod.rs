@@ -9,15 +9,14 @@ use effigy_release::{
     render_release_executed_json as render_release_executed_json_payload,
     render_release_executed_text,
     render_release_gate_run_json as render_release_gate_run_json_payload,
-    render_release_gate_run_text,
+    render_release_gate_run_text, render_release_pipeline_plan_text,
+    render_release_plan_json as render_release_plan_json_payload,
     render_release_prepare_plan_json as render_release_prepare_plan_json_payload,
     render_release_prepare_plan_text,
     render_release_prepared_json as render_release_prepared_json_payload,
     render_release_prepared_text, render_release_resume_json as render_release_resume_json_payload,
-    render_release_resume_text,
-    render_release_simulation_json as render_release_simulation_json_payload,
-    render_release_simulation_text,
-    render_release_status_json as render_release_status_json_payload, render_release_status_text,
+    render_release_resume_text, render_release_status_json as render_release_status_json_payload,
+    render_release_status_text,
     render_release_verify_install_json as render_release_verify_install_json_payload,
     render_release_verify_install_text, ReleaseBlockedStage,
 };
@@ -32,7 +31,7 @@ use interactive::{
     run_interactive_release_resume,
 };
 use ops::{
-    collect_release_execute_plan, collect_release_prepare_plan, collect_release_simulation,
+    collect_release_execute_plan, collect_release_plan, collect_release_prepare_plan,
     collect_release_status, execute_release, execute_release_prepare,
     parse_release_version_override, run_release_verify_install, run_standalone_release_gates,
 };
@@ -333,23 +332,20 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
                 ),
             }
         }
-        ReleaseSubcommand::Simulate { version_override } => {
-            let requested_version_override = parse_release_version_override(
-                &resolved.resolved_root,
-                version_override.as_deref(),
-                "simulate",
-            )?;
-            let simulation = collect_release_simulation(&resolved, requested_version_override)?;
+        ReleaseSubcommand::Plan { version_override } => {
+            let requested_version_override =
+                parse_release_plan_version_override(&resolved.resolved_root, version_override.as_deref())?;
+            let plan = collect_release_plan(&resolved, requested_version_override)?;
             if args.output_json {
-                let rendered = render_release_simulation_json_payload(&simulation);
-                if simulation.ready {
+                let rendered = render_release_plan_json_payload(&plan);
+                if plan.ready {
                     return Ok(rendered);
                 }
                 return Err(RunnerError::CommandJsonFailure { rendered });
             }
 
-            let rendered = render_release_simulation_text(&simulation);
-            if simulation.ready {
+            let rendered = render_release_pipeline_plan_text(&plan);
+            if plan.ready {
                 Ok(rendered)
             } else {
                 Err(RunnerError::task_invocation(rendered))
@@ -441,6 +437,26 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
             || run_interactive_release_execute(&resolved, allow_stale),
         ),
     }
+}
+
+/// Parse `release --plan --version` before any resolution, so an unparseable
+/// version names the flag rather than a version file.
+fn parse_release_plan_version_override(
+    repo_root: &Path,
+    raw_version: Option<&str>,
+) -> Result<Option<semver::Version>, RunnerError> {
+    let _ = repo_root;
+    let Some(raw_version) = raw_version else {
+        return Ok(None);
+    };
+    semver::Version::parse(raw_version.trim())
+        .map(Some)
+        .map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "invalid `release --plan --version`: `{}` is not valid semver: {error}",
+                raw_version.trim()
+            ))
+        })
 }
 
 fn resolve_repo_input(repo_root: &Path, path: PathBuf) -> PathBuf {

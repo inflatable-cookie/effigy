@@ -137,6 +137,7 @@ changelog = "CHANGELOG.md"
 tag-format = "v{version}"
 initial-tag-current-version = true
 sync-files = ["Cargo.lock"]
+approve = ["publish"]
 
 [release.hosted-evidence]
 workflow = "ci.yml"
@@ -144,6 +145,20 @@ workflow = "ci.yml"
 [release.gates]
 qa = "cargo test"
 smoke = { command = "printf ok", description = "smoke gate", reuse-hosted-evidence = true }
+
+[release.identities.core]
+version-file = "packages/core/package.json"
+tag-format = "core-v{version}"
+
+[release.artifacts.core]
+task = "release:pack:core"
+path = "dist/core-*.tgz"
+
+[release.targets.npm]
+kind = "task"
+task = "release:publish:npm"
+check = "release:check:npm"
+verify = "release:verify:npm"
 "###,
     )
     .expect("parse manifest");
@@ -514,6 +529,51 @@ mode = "tui"
             .any(|finding| finding.evidence.contains("tasks.script.mode")),
         "expected unknown compact-task key to be flagged, got: {:?}",
         sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_rejects_unknown_release_identity_and_target_values() {
+    let manifest: Value = toml::from_str(
+        r#"
+[release.identities.core]
+kind = "calendar"
+
+[release.targets.npm]
+kind = "npm"
+
+[release.gates.qa]
+task = "qa"
+stage = "afterwards"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    let evidence = sink
+        .findings
+        .iter()
+        .map(|finding| finding.evidence.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        evidence
+            .iter()
+            .any(|evidence| evidence.contains("release.identities.core.kind")),
+        "expected the identity kind to be flagged, got: {evidence:?}"
+    );
+    assert!(
+        evidence
+            .iter()
+            .any(|evidence| evidence.contains("release.targets.npm.kind")),
+        "expected the target kind to be flagged, got: {evidence:?}"
+    );
+    assert!(
+        evidence
+            .iter()
+            .any(|evidence| evidence.contains("release.gates.qa.stage")),
+        "expected the gate stage to be flagged, got: {evidence:?}"
     );
 }
 

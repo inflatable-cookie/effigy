@@ -863,7 +863,9 @@ fn shell_gate(name: &str, command: &str) -> ResolvedGate {
     ResolvedGate {
         name: name.to_owned(),
         command: command.to_owned(),
+        task: None,
         description: None,
+        stage: crate::GateStage::Certify,
         reuse_hosted_evidence: false,
         hosted_evidence: None,
     }
@@ -1121,7 +1123,9 @@ fn reuse_gate(name: &str, command: &str) -> ResolvedGate {
     ResolvedGate {
         name: name.to_owned(),
         command: command.to_owned(),
+        task: None,
         description: None,
+        stage: crate::GateStage::Certify,
         reuse_hosted_evidence: true,
         hosted_evidence: Some(hosted_spec()),
     }
@@ -1465,7 +1469,11 @@ fn status_gate_check_passes_with_empty_unreleased_and_reports_no_next_version() 
 
     let report = run_release_gates(&root, &[shell_gate("ok", "true")], true);
     assert!(report.results.iter().all(|gate| gate.passed));
-    let status = collect_release_status(&context, true, report);
+    let status = collect_release_status(
+        &crate::plan_release_pipeline(&root).expect("release plan"),
+        true,
+        report,
+    );
     assert!(status.gates_passed);
     assert!(status.gate_check_passed());
     assert!(!status.ready);
@@ -1498,11 +1506,14 @@ fn status_gate_check_passes_with_empty_unreleased_and_reports_no_next_version() 
 #[test]
 fn status_gate_check_fails_when_a_gate_fails() {
     let root = write_empty_unreleased_repo("status-gate-fails");
-    let context = load_release_context(&root).expect("release context");
 
     let report = run_release_gates(&root, &[shell_gate("smoke", "exit 1")], true);
     assert!(!report.results[0].passed);
-    let status = collect_release_status(&context, true, report);
+    let status = collect_release_status(
+        &crate::plan_release_pipeline(&root).expect("release plan"),
+        true,
+        report,
+    );
     assert!(!status.gates_passed);
     assert!(!status.gate_check_passed());
     assert!(!status.ready);
@@ -1529,7 +1540,11 @@ fn status_gate_check_still_fails_for_non_version_blockers() {
     );
 
     let report = run_release_gates(&root, &[shell_gate("ok", "true")], true);
-    let status = collect_release_status(&context, true, report);
+    let status = collect_release_status(
+        &crate::plan_release_pipeline(&root).expect("release plan"),
+        true,
+        report,
+    );
     assert!(status.gates_passed);
     assert!(!status.gate_check_passed());
     assert!(!status.ready);
@@ -1568,9 +1583,12 @@ fn optional_next_version_blocker_matches_only_absent_proposals() {
 #[test]
 fn status_gate_check_is_not_passed_when_gates_were_not_checked() {
     let root = write_empty_unreleased_repo("status-gates-unchecked");
-    let context = load_release_context(&root).expect("release context");
 
-    let status = collect_release_status(&context, false, GateExecutionReport::empty());
+    let status = collect_release_status(
+        &crate::plan_release_pipeline(&root).expect("release plan"),
+        false,
+        GateExecutionReport::empty(),
+    );
     assert!(!status.gates_checked);
     assert!(!status.gates_passed);
     assert!(!status.gate_check_passed());

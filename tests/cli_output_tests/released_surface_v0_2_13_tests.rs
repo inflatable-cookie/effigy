@@ -13,7 +13,7 @@ struct ReleasedSurfaceBaseline {
     baseline_tag: String,
     help_contains: Vec<String>,
     release_status_schema: String,
-    release_simulate_schema: String,
+    release_plan_schema: String,
     release_gates_schema: String,
     release_verify_install_schema: String,
     test_plan_schema: String,
@@ -177,7 +177,7 @@ fn v0_2_13_core_help_tasks_and_test_plan_surfaces_still_work() {
 }
 
 #[test]
-fn v0_2_13_release_status_and_simulate_support_known_version_sources() {
+fn v0_2_13_release_status_supports_known_version_sources() {
     let baseline = load_baseline();
 
     for case in &baseline.release_source_cases {
@@ -208,31 +208,37 @@ fn v0_2_13_release_status_and_simulate_support_known_version_sources() {
         assert_eq!(status_json["result"]["next_version"], case.next_version);
         assert_eq!(status_json["result"]["tag"], case.tag);
 
-        let simulate = run_json_cli_command(&root, &["release", "simulate"]);
+        // v0.15 retired `release simulate` in favour of `release --plan`, which
+        // resolves the same versions, tags and version sources.
+        let plan = run_json_cli_command(&root, &["release", "--plan"]);
         assert!(
-            simulate.status.success(),
-            "release simulate failed for {}: {simulate:?}",
+            plan.status.success(),
+            "release --plan failed for {}: {plan:?}",
             case.name
         );
-        let simulate_json = parse_stdout_json(&simulate);
+        let plan_json = parse_stdout_json(&plan);
+        assert_eq!(plan_json["result"]["schema"], baseline.release_plan_schema);
         assert_eq!(
-            simulate_json["result"]["schema"],
-            baseline.release_simulate_schema
-        );
-        assert_eq!(
-            simulate_json["result"]["current_version"],
+            plan_json["result"]["identities"][0]["current_version"],
             case.current_version
         );
         assert_eq!(
-            simulate_json["result"]["suggested_version"],
+            plan_json["result"]["identities"][0]["next_version"],
             case.next_version
         );
-        assert_eq!(
-            simulate_json["result"]["planned_version"],
-            case.next_version
+        assert_eq!(plan_json["result"]["identities"][0]["tag"], case.tag);
+
+        let retired = run_cli_command(&root, &["release", "simulate"]);
+        let retired_output = format!(
+            "{}{}",
+            String::from_utf8_lossy(&retired.stdout),
+            String::from_utf8_lossy(&retired.stderr)
         );
-        assert_eq!(simulate_json["result"]["suggested_tag"], case.tag);
-        assert_eq!(simulate_json["result"]["tag"], case.tag);
+        assert!(!retired.status.success(), "got: {retired_output}");
+        assert!(
+            retired_output.contains("effigy release --plan"),
+            "the retirement names the replacement: {retired_output}"
+        );
     }
 }
 

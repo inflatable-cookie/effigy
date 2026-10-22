@@ -2,6 +2,7 @@ mod gate_reports;
 mod git;
 mod hosted_evidence;
 mod model;
+mod pipeline;
 mod prepare_helpers;
 mod render_json;
 mod review;
@@ -20,8 +21,13 @@ pub use model::{
     FileMutationApply, FileMutationPlan, GateExecutionReport, GateResult, ReleaseConfig,
     ReleaseContext, ReleaseError, ReleaseExecutePlan, ReleaseExecuted, ReleaseGateRun,
     ReleasePreparePlan, ReleasePrepared, ReleasePreparedFileFingerprint,
-    ReleasePreparedSourceFingerprints, ReleasePreparedState, ReleaseSimulation, ReleaseStatus,
-    ReleaseVerifyInstall, ReusedGateRecord, VerificationStepResult,
+    ReleasePreparedSourceFingerprints, ReleasePreparedState, ReleaseStatus, ReleaseVerifyInstall,
+    ReusedGateRecord, VerificationStepResult,
+};
+pub use pipeline::{
+    plan_release_pipeline, resolve_release_pipeline, GateStage, IdentityKind, ReleaseArtifactPlan,
+    ReleaseIdentityPlan, ReleasePipeline, ReleasePipelinePlan, ReleaseRunSummary, ResolvedArtifact,
+    ResolvedIdentity, ResolvedTarget, TargetKind, RELEASE_STAGES,
 };
 use prepare_helpers::{
     apply_bump, build_post_release_instructions, build_sync_mutations, unreleased_counts,
@@ -40,12 +46,12 @@ pub use verify_install::{
 pub use effigy_changelog::BumpKind;
 pub use git::{
     git_add_release_files, git_commit_release, git_create_tag, git_current_branch, git_head_sha,
-    git_modified_files, git_push_release, git_remote_url, git_tag_exists,
+    git_modified_files, git_push_release, git_remote_url, git_tag_exists, git_work_tree_clean,
 };
 pub use render_json::{
     render_release_execute_plan_json, render_release_executed_json, render_release_gate_run_json,
-    render_release_prepare_plan_json, render_release_prepared_json, render_release_resume_json,
-    render_release_simulation_json, render_release_status_json, render_release_verify_install_json,
+    render_release_plan_json, render_release_prepare_plan_json, render_release_prepared_json,
+    render_release_resume_json, render_release_status_json, render_release_verify_install_json,
 };
 pub use review::{
     append_indexed_review_hint, build_execute_stale_review_items,
@@ -65,8 +71,8 @@ pub use review::{
 };
 pub use text::{
     format_counts, remediation_hints_for_blockers, render_release_execute_plan_text,
-    render_release_executed_text, render_release_gate_run_text, render_release_prepare_plan_text,
-    render_release_prepared_text, render_release_resume_text, render_release_simulation_text,
+    render_release_executed_text, render_release_gate_run_text, render_release_pipeline_plan_text,
+    render_release_prepare_plan_text, render_release_prepared_text, render_release_resume_text,
     render_release_state_discarded_text, render_release_status_text,
     render_release_verify_install_text, review_label, ReleaseBlockedStage,
 };
@@ -85,9 +91,7 @@ use std::time::Instant;
 
 use chrono::Utc;
 use effigy_changelog::{self as changelog};
-use effigy_manifest::config_sections::{
-    ManifestReleaseConfig, ManifestReleaseGateConfig, ManifestReleaseGateDetails,
-};
+use effigy_manifest::config_sections::ManifestReleaseConfig;
 use effigy_manifest::load_task_manifest;
 use hosted_evidence::hosted_evidence_spec_from_manifest;
 
@@ -122,8 +126,14 @@ pub struct ResolvedVersionSource {
 #[derive(Debug, Clone)]
 pub struct ResolvedGate {
     pub name: String,
+    /// The shell command a gate runs. A `task` gate's command is `effigy
+    /// <task>`, so one runner executes both forms.
     pub command: String,
+    /// The Effigy task a `task` gate names, when it was declared that way.
+    pub task: Option<String>,
     pub description: Option<String>,
+    /// Contract 054 §4.2: `pre` runs before any version edit, `certify` after.
+    pub stage: pipeline::GateStage,
     pub reuse_hosted_evidence: bool,
     pub hosted_evidence: Option<HostedEvidenceSpec>,
 }
@@ -168,6 +178,7 @@ pub fn load_release_config(root: &Path) -> Result<ReleaseConfig, ReleaseError> {
         None
     };
     let manifest_release = manifest.as_ref().and_then(|parsed| parsed.release.as_ref());
+    reject_pipeline_release_for_single_identity_commands(manifest_release)?;
     let version_source = resolve_version_source(root, manifest_release)?;
     let changelog_path = resolve_config_path(
         root,
@@ -216,6 +227,36 @@ pub fn load_release_config(root: &Path) -> Result<ReleaseConfig, ReleaseError> {
             manifest_release.and_then(|config| config.hosted_evidence.as_ref()),
         )?,
     })
+}
+
+/// `release prepare` and `release execute` still run the single-identity
+/// shorthand. A release that declares named identities, artifacts, targets or
+/// approval checkpoints resolves in `release status` and `release --plan` today
+/// and runs through the Run pipeline; refusing here keeps `prepare` from
+/// bumping one version file of a many-identity release.
+fn reject_pipeline_release_for_single_identity_commands(
+    config: Option<&ManifestReleaseConfig>,
+) -> Result<(), ReleaseError> {
+    let Some(config) = config else {
+        return Ok(());
+    };
+    if !config.identities.is_empty() {
+        return Err(ReleaseError::TaskInvocation(format!(
+            "`release prepare` and `release execute` still run the single-identity shorthand, and this release declares named identities ({}); `effigy release status` and `effigy release --plan` resolve them today, and `release run` runs them once the Run pipeline lands (contract 054 §5)",
+            config
+                .identities
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        )));
+    }
+    if !config.artifacts.is_empty() || !config.targets.is_empty() || config.approve.is_some() {
+        return Err(ReleaseError::TaskInvocation(
+            "`release prepare` and `release execute` still run the single-identity shorthand, which has one `tag` target, no artifacts and no approval checkpoints; `effigy release status` and `effigy release --plan` resolve `release.artifacts`, `release.targets` and `release.approve` today, and `release run` runs them once the Run pipeline lands (contract 054 §5)".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 pub fn validate_sync_files(config: Option<&ManifestReleaseConfig>) -> Result<(), ReleaseError> {
@@ -344,40 +385,7 @@ pub fn resolve_config_path(
 }
 
 pub fn resolve_gates(config: &ManifestReleaseConfig) -> Result<Vec<ResolvedGate>, ReleaseError> {
-    let hosted = hosted_evidence_spec_from_manifest(config.hosted_evidence.as_ref())?;
-    let mut gates = Vec::with_capacity(config.gates.len());
-    for (name, gate) in &config.gates {
-        let (command, description, reuse_hosted_evidence) = match gate {
-            ManifestReleaseGateConfig::Command(command) => (command.trim(), None, false),
-            ManifestReleaseGateConfig::Detailed(ManifestReleaseGateDetails {
-                command,
-                description,
-                reuse_hosted_evidence,
-            }) => (command.trim(), description.clone(), *reuse_hosted_evidence),
-        };
-        if command.is_empty() {
-            return Err(ReleaseError::TaskInvocation(format!(
-                "release gate `{name}` must not have an empty command"
-            )));
-        }
-        if reuse_hosted_evidence && hosted.is_none() {
-            return Err(ReleaseError::TaskInvocation(format!(
-                "release gate `{name}` sets reuse-hosted-evidence but [release.hosted-evidence].workflow is not configured"
-            )));
-        }
-        gates.push(ResolvedGate {
-            name: name.clone(),
-            command: command.to_owned(),
-            description,
-            reuse_hosted_evidence,
-            hosted_evidence: if reuse_hosted_evidence {
-                hosted.clone()
-            } else {
-                None
-            },
-        });
-    }
-    Ok(gates)
+    pipeline::resolve_gates(Some(config))
 }
 
 pub fn resolve_sync_files(
@@ -840,34 +848,45 @@ impl ReleaseStatus {
     }
 }
 
+/// Build the `release status` report from a resolved pipeline plan.
+///
+/// Resolution is a pure read (contract 054 §2 R2): the plan already carries the
+/// next version per identity, the files to change, the gates by stage, the
+/// artifacts, the targets and the approval checkpoints. Gate execution is the
+/// only thing `status` can add, and only when asked with `--check-gates`.
 pub fn collect_release_status(
-    context: &ReleaseContext,
+    plan: &ReleasePipelinePlan,
     check_gates: bool,
     gate_report: GateExecutionReport,
 ) -> ReleaseStatus {
-    let mut blockers = context.blockers.clone();
+    let mut blockers = plan.blockers.clone();
     if check_gates {
         blockers.extend(gate_blockers(&gate_report.results));
     }
     // No failures observed is only a pass when gates actually ran: an
     // unchecked report carries no results, which must not read as passed.
     let gates_passed = check_gates && gate_blockers(&gate_report.results).is_empty();
+    let primary = plan.primary_identity();
 
     ReleaseStatus {
-        repo_root: context.repo_root.clone(),
-        current_version: context.current_version.clone(),
-        version_source: context.config.version_source.clone(),
-        changelog_path: context.config.changelog_path.clone(),
-        changelog_valid: context.changelog_diagnostics.is_empty(),
-        changelog_diagnostics: context.changelog_diagnostics.clone(),
-        unreleased_counts: context.unreleased_counts.clone(),
-        unreleased_empty: context.unreleased_empty,
-        suggested_bump: context.suggested_bump.to_string(),
-        next_version: context.next_version.clone(),
-        tag: context.tag.clone(),
+        repo_root: plan.repo_root.clone(),
+        plan: plan.clone(),
+        run: ReleaseRunSummary::none(),
+        current_version: primary.and_then(|identity| identity.current_version.clone()),
+        version_source: primary.and_then(|identity| identity.version_source.clone()),
+        changelog_path: plan.changelog_path.clone(),
+        changelog_valid: plan.changelog_valid,
+        changelog_diagnostics: plan.changelog_diagnostics.clone(),
+        unreleased_counts: plan.unreleased_counts.clone(),
+        unreleased_empty: plan.unreleased_empty,
+        suggested_bump: primary
+            .and_then(|identity| identity.bump.clone())
+            .unwrap_or_else(|| BumpKind::None.to_string()),
+        next_version: primary.and_then(|identity| identity.next_version.clone()),
+        tag: primary.and_then(|identity| identity.tag.clone()),
         gates_checked: check_gates,
         gates_passed,
-        configured_gate_count: context.config.gates.len(),
+        configured_gate_count: plan.gates.len(),
         gate_results: gate_report.results,
         environment_path: gate_report.environment_path,
         blockers: blockers.clone(),
@@ -1032,51 +1051,6 @@ pub fn build_release_prepare_plan(
         mutations,
         ready: blockers.is_empty(),
     })
-}
-
-pub fn collect_release_simulation(
-    root: &Path,
-    state_file_name: &str,
-    prepare_plan: ReleasePreparePlan,
-    gate_report: &GateExecutionReport,
-) -> ReleaseSimulation {
-    let state_file = root.join(state_file_name);
-    let state_file_exists = state_file.exists();
-    let mut blockers = prepare_plan.blockers.clone();
-    if state_file_exists {
-        blockers.push(format!(
-            "release state file already exists and would block prepare: {}",
-            state_file.display()
-        ));
-    }
-
-    ReleaseSimulation {
-        repo_root: prepare_plan.repo_root,
-        current_version: prepare_plan.current_version,
-        version_source: prepare_plan.version_source,
-        suggested_version: prepare_plan.suggested_version.clone(),
-        planned_version: prepare_plan.planned_version.clone(),
-        suggested_tag: prepare_plan.suggested_tag.clone(),
-        tag: prepare_plan.tag.clone(),
-        version_override_used: prepare_plan.version_override_used,
-        release_date: prepare_plan.release_date,
-        state_file,
-        state_file_exists,
-        state_file_written: false,
-        commit_message: prepare_plan
-            .planned_version
-            .as_ref()
-            .map(|version| format!("release: v{version}")),
-        configured_gate_count: prepare_plan.configured_gate_count,
-        executed_gate_count: gate_report.results.len(),
-        stopped_early: gate_report.stopped_early,
-        total_duration_ms: gate_report.total_duration_ms,
-        gate_results: gate_report.results.clone(),
-        environment_path: gate_report.environment_path.clone(),
-        mutations: prepare_plan.mutations,
-        blockers: blockers.clone(),
-        ready: blockers.is_empty(),
-    }
 }
 
 pub fn collect_release_execute_plan(

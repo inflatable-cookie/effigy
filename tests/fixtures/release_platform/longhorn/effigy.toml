@@ -1,0 +1,19 @@
+# Release configuration for the Longhorn workspace, copied from
+# config/release.toml. The repository root is a virtual Cargo workspace.
+[release]
+version-file = "Cargo.toml"
+version-path = "workspace.package.version"
+changelog = "CHANGELOG.md"
+pre-1-0 = true
+sync-files = ["Cargo.lock"]
+tag-format = "v{version}"
+initial-tag-current-version = true
+
+[release.gates]
+private-candidate = "bun scripts/verify-private-candidate-docs-card127.ts"
+advisories = "cargo deny check advisories"
+rustdoc = "effigy docs:rust"
+prototypes = "effigy check:prototypes"
+workspace = "effigy qa"
+floor = "effigy release:floor"
+source = "effigy release:source-consumer"

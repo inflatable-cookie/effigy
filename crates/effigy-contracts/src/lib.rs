@@ -890,6 +890,36 @@ fn expand_contract_fixture_tokens(
     }
     if args
         .iter()
+        .any(|arg| arg.contains("<fixture_release_platform>"))
+    {
+        // A ready single-identity release: `release status` and
+        // `release --plan` both resolve it and mutate nothing.
+        let fixture = create_contract_fixture_files(
+            fixtures,
+            &[
+                (
+                    "effigy.toml",
+                    "[release]\nchangelog = \"CHANGELOG.md\"\ntag-format = \"v{version}\"\n",
+                ),
+                (
+                    "Cargo.toml",
+                    "[package]\nname = \"fixture\"\nversion = \"0.2.4\"\nedition = \"2021\"\n",
+                ),
+                (
+                    "CHANGELOG.md",
+                    "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- A fix\n\n## [0.2.4] - 2026-10-01\n\n### Fixed\n- Prior release\n",
+                ),
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+        replace_contract_token(
+            &mut args,
+            "<fixture_release_platform>",
+            &fixture.to_string_lossy(),
+        );
+    }
+    if args
+        .iter()
         .any(|arg| arg.contains("<fixture_container_migrate>"))
     {
         let fixture = create_contract_fixture_files(

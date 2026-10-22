@@ -232,6 +232,20 @@
       "command": "effigy container migrate web --json --repo <fixture_container_migrate>",
       "surface": "compose_file migration to project catalog fragments",
       "status": "active"
+    },
+    {
+      "schema": "effigy.release.plan.v1",
+      "schema_version": 1,
+      "command": "effigy --json release --plan --repo <fixture_release_platform>",
+      "surface": "release pipeline plan (contract 054 §5)",
+      "status": "active"
+    },
+    {
+      "schema": "effigy.release.status.v1",
+      "schema_version": 1,
+      "command": "effigy --json release status --repo <fixture_release_platform>",
+      "surface": "release pipeline status (contract 054 §5)",
+      "status": "active"
     }
   ]
 }

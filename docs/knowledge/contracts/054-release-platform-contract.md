@@ -1,6 +1,6 @@
 # 054 - Release Platform Contract
 
-Status: accepted by Tom on 2026-10-22 ("I'll go with your recommendation … release draft questions"); not yet implemented.
+Status: accepted by Tom on 2026-10-22 ("I'll go with your recommendation … release draft questions"). §2, §4 and the `status`/`--plan` parts of §5 are implemented; the Run, prepare, publish and receipts are not yet.
 It supersedes the generic mechanics in guide 051 when implemented. Effigy's own release
 policy stays in [release.md](release.md).
 
@@ -266,3 +266,72 @@ Projects with an explicit no-release ruling stay out.
 1. **Tags are pushed at publish,** by the `tag` target, so later targets (npm, deploy) can rely on the tag existing. Closeout pushes only a release commit that no target already pushed.
 2. **Run state and receipts live in Effigy-owned state outside the repo.** History stays in git and the orchestrator. A project that wants receipts in its tree adds a `closeout` task that writes them.
 3. **Approval before publish is on by default** for any release with a non-`tag` target, and off for tag-only releases. `approve = []` or an explicit list overrides it.
+
+## 11. Implementation record: config, status and plan
+
+`effigy release --plan` and `effigy release status` resolve the whole pipeline
+from `[release]` and mutate nothing (R2). This section records what v0.15
+implements and the choices §4 left open. The Run, prepare, publish, approvals,
+receipts and the rest of §5 arrive with the Run pipeline.
+
+**Implemented here**
+
+- `[release.identities.<name>]` with `kind` (`semver`, `digest`, `source`,
+  `task`), `version-file`, `version-path`, `tag-format`, `follows` and `task`;
+- `[release.artifacts.<name>]` with `task` and `path`;
+- `[release.targets.<name>]` with `kind` (`tag` or `task`), `task`, `check` and
+  `verify`;
+- gate `stage` (`pre` or `certify`, default `certify`) and gate `task` as an
+  alternative to `command`;
+- `approve`, with the §10 ruling 3 default;
+- the `effigy.release.plan.v1` payload and the extended
+  `effigy.release.status.v1` payload;
+- `simulate` retired in favour of `--plan`, with an actionable error.
+
+**Choices §4 left open**
+
+- **The shorthand's identity is named after the repository.** Contract §4.1
+  says "one identity named after the repo"; resolution uses the release root's
+  directory name, and synthesises the shorthand's one `tag` target and no
+  artifacts.
+- **`follows` binds the follower to its leader's version number.** §4.2 says
+  "bump together with core; omit for independent bumps", and one changelog
+  feeds every identity, so the follower is released at the leader's next
+  version under its own `tag-format`, not merely with the same bump kind. A
+  follower whose leader's version is not greater than its own current version
+  is a blocker. Chains are allowed; cycles and self-references are refused.
+- **A named `semver` identity declares its own `version-file`.** The shorthand's
+  file detection does not spread across identities. Every identity in a
+  release with more than one identity also declares `tag-format`, because one
+  shared default tag would collide.
+- **A gate that declares `task` runs as `effigy <task>`.** One runner executes
+  both gate forms, and the plan reports the task name alongside the command.
+- **`sync-files` stays release-level.** §4.2 gives identities their own version
+  source but no per-identity lockfile, so the configured sync files belong to
+  the release, which also means a release with no `semver` identity refuses
+  `sync-files`.
+- **The changelog is a `semver` identity's business.** §4.3 says bump rules
+  apply only to `semver`, so a release with no `semver` identity never reads a
+  changelog: the file may be absent (`release changelog path does not exist`
+  never fires for it) or unparseable, it is neither validated nor blocked by
+  the changelog, and it lists no changelog file to change. The plan and status
+  payloads say so with `changelog.used: false`; the text surfaces say "not
+  used (no `semver` identity)".
+- **`working_tree_clean` is tri-state.** `null` means the release root is not a
+  git work tree. Status and plan still report; the Run's validate stage is what
+  refuses such a release.
+- **`release status` reports no Run yet.** The Run pipeline has not landed, so
+  the `run` object is present and inactive rather than absent; when a release
+  Run exists, status fills in its id, stage and what it waits on.
+- **`release prepare` and `release execute` still run the shorthand only.**
+  They refuse a release that declares identities, artifacts, targets or
+  `approve` instead of bumping one version file of a many-identity release.
+  `release run` replaces them (task B).
+- **`--plan --version` applies to the single `semver` identity.** It is the
+  successor of the retired `simulate --version`, and refuses a release with
+  more than one `semver` identity, because one flag cannot say which it means.
+
+**Fixtures.** `tests/fixtures/release_platform/` holds one project per §4 shape
+plus Longhorn's, Poodle's and Underlay's real `[release]` tables, so the
+shorthand compatibility claim is proven on consumer configuration rather than on
+an invented one. Nothing in those fixtures pushes, tags or publishes.

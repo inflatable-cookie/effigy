@@ -1,0 +1,12 @@
+[catalog]
+alias = "poodle"
+
+[release]
+version-file = "package.json"
+changelog = "CHANGELOG.md"
+tag-format = "v{version}"
+pre-1-0 = true
+
+[release.gates.headless]
+command = "effigy release:web-certificate"
+description = "Build, pack and source-free-certify the npm web archive set"
