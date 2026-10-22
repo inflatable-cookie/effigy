@@ -223,6 +223,9 @@ During v0.x, MINOR bumps may include breaking changes.
   lists the families still present.
 
 ### Added
+- `test:focused` runs a focused Rust test selection through Cargo with
+  `--locked`, keeping `Cargo.lock` read-only while a source-linked consumer
+  checkout is under observation.
 - The container system guide documents Colima's VM DNS proxy timing out a
   registry pull while the host resolves normally, with a bounded two-attempt
   retry and a profile restart, so a transient VM resolver outage is not
@@ -658,6 +661,28 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Cargo local links record the committed blob of every tracked lockfile they
+  resolve, and `effigy deps unlink cargo <library-path>` restores those exact
+  bytes when the record still matches `HEAD` and only link-owned packages
+  differ. A lockfile another link or an unrelated edit still holds is left
+  untouched, and a moved `HEAD` invalidates the record rather than reverting
+  committed work.
+- A committed dependency advance no longer fails a valid Cargo unlink. When the
+  only difference from `HEAD` outside the linked packages is a source/version
+  advance of the same packages (an operator `cargo update`, or a release tag
+  that moved after the consumer commit), unlink reports it as a
+  `committed-transition` and completes instead of refusing and leaving stale
+  machine-local link state. A split version, a path source, a changed
+  repository, or a parked `[[patch.unused]]` entry is still refused, and
+  link-time validation stays strict. `effigy deps status` reports a committed
+  transition as a warning, not an error.
+- A repo manifest that overrides a bundle-defined step table
+  (`[secrets.vault].generate`, a deploy hook, or the `run = { ... }` step
+  shorthand) replaces the bundle's executor instead of inheriting it. Switching
+  a generator from `rhai` to `task` no longer keeps both keys and fails the
+  exactly-one-executor rule. Unset step metadata (`run_in`, `env`, `env_file`,
+  `id`, `timeout_ms`) still defaults from the bundle, and a manifest step that
+  names two executors is still refused, never silently repaired.
 - Deleting an isolated volume's host mount-point directory (`target`,
   `node_modules`) under a running container stack no longer leaves the nested
   volume without a mount point until someone recreates the container. The mount

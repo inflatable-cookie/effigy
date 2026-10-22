@@ -105,6 +105,9 @@
       "std::fs::remove_file": 2,
       "std::fs::rename": 2
     },
+    "crates/effigy-deps/src/cargo_lock_record.rs": {
+      "std::fs::remove_file": 1
+    },
     "crates/effigy-deps/src/process.rs": {
       "nix::sys::signal::kill": 4,
       "std.process.Command.new": 2,

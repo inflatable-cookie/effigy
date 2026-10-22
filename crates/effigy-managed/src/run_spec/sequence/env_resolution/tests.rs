@@ -183,18 +183,9 @@ fn apply_from_step_profile_resolution_uses_env_schema_defaults_before_dotenv() {
     fs::write(root.join(".env"), "OTHER_VAR=from-dotenv\n").expect("write .env");
     let _env = EnvGuard::set("MY_VAR", None);
 
-    let manifest_path = root.join("effigy.toml");
-    let manifest = effigy_manifest::load_task_manifest(&manifest_path).expect("manifest");
-    let catalogs = vec![LoadedCatalog {
-        alias: "root".to_owned(),
-        catalog_root: root.clone(),
-        manifest_path,
-        bundle_root: None,
-        manifest,
-        defer_run: None,
-        deferred_builtins: std::collections::BTreeSet::new(),
-        depth: 0,
-    }];
+    let manifest =
+        effigy_manifest::load_task_manifest(&root.join("effigy.toml")).expect("manifest");
+    let catalogs = vec![LoadedCatalog::for_test("root", root.clone(), manifest, 0)];
     let mut accumulator = StepEnvAccumulator::new(None, None).expect("accumulator");
     accumulator
         .apply_from_step(
@@ -231,17 +222,9 @@ fn apply_from_step_profile_resolution_inherits_ancestor_catalog_env_schema() {
     let _env = EnvGuard::set("MY_VAR", None);
 
     let load = |catalog_root: &std::path::Path, alias: &str, depth: usize| {
-        let manifest_path = catalog_root.join("effigy.toml");
-        LoadedCatalog {
-            alias: alias.to_owned(),
-            catalog_root: catalog_root.to_path_buf(),
-            manifest: effigy_manifest::load_task_manifest(&manifest_path).expect("manifest"),
-            manifest_path,
-            bundle_root: None,
-            defer_run: None,
-            deferred_builtins: std::collections::BTreeSet::new(),
-            depth,
-        }
+        let manifest = effigy_manifest::load_task_manifest(&catalog_root.join("effigy.toml"))
+            .expect("manifest");
+        LoadedCatalog::for_test(alias, catalog_root, manifest, depth)
     };
     let catalogs = vec![load(&root, "root", 0), load(&child, "cp-api", 1)];
     let mut accumulator = StepEnvAccumulator::new(None, None).expect("accumulator");

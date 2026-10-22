@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use effigy_manifest::{load_task_manifest_with_inspection, ManifestManagedRun};
+use effigy_manifest::{
+    load_task_manifest_with_inspection, ManifestManagedRun, ManifestManagedRunStep,
+};
 
 fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
@@ -374,4 +376,147 @@ base_path = "bundle"
             .contains("`[bundle].base_path` has been removed"),
         "{error}"
     );
+}
+
+/// A bundle whose defaults carry step-shaped tables: a vault generator and a
+/// task whose `run` names a Rhai executor plus step metadata.
+fn step_override_bundle(dir: &Path) {
+    let bundle_dir = dir.join("bundles/steps");
+    std::fs::create_dir_all(&bundle_dir).expect("mkdir bundle");
+    std::fs::write(
+        bundle_dir.join("bundle.toml"),
+        r#"
+[bundle]
+name = "steps"
+"#,
+    )
+    .expect("write descriptor");
+    std::fs::write(
+        bundle_dir.join("effigy.toml"),
+        r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+generate = { rhai = "generate-dev-secrets.rhai", run_in = "host" }
+
+[tasks.seed]
+run = { rhai = "seed.rhai", timeout_ms = 1200, env = { SEED_PHASE = "default" } }
+"#,
+    )
+    .expect("write defaults");
+}
+
+fn load_step_override_manifest(manifest: &str) -> effigy_manifest::TaskManifest {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    step_override_bundle(tmp.path());
+    std::fs::write(tmp.path().join("effigy.toml"), manifest).expect("write manifest");
+    std::fs::create_dir(tmp.path().join(".git")).expect("git dir");
+    load_task_manifest_with_inspection(&tmp.path().join("effigy.toml"))
+        .expect("load manifest")
+        .manifest
+}
+
+fn first_step(manifest: &effigy_manifest::TaskManifest) -> &ManifestManagedRunStep {
+    let task = manifest.tasks.get("seed").expect("seed task");
+    let Some(ManifestManagedRun::Sequence(steps)) = task.run.as_ref() else {
+        panic!("seed should use a managed sequence");
+    };
+    steps.first().expect("seed step")
+}
+
+#[test]
+fn bundle_step_override_replaces_the_default_executor_group() {
+    let manifest = load_step_override_manifest(
+        r#"
+[bundle]
+base = { type = "path", dir = "bundles/steps" }
+
+[secrets.vault]
+generate = { task = "secrets generate" }
+
+[tasks.seed]
+run = { task = "db seed" }
+"#,
+    );
+
+    let generate = manifest
+        .secrets
+        .as_ref()
+        .expect("secrets")
+        .vault
+        .as_ref()
+        .expect("vault")
+        .generate
+        .as_ref()
+        .expect("generate");
+    assert_eq!(generate.task.as_deref(), Some("secrets generate"));
+    assert_eq!(
+        generate.rhai, None,
+        "a task override must not keep the bundle's rhai executor"
+    );
+    assert_eq!(
+        generate.run_in,
+        Some(effigy_manifest::ManifestTaskRunIn::Host),
+        "unset step metadata still defaults from the bundle"
+    );
+
+    let ManifestManagedRunStep::Step(step) = first_step(&manifest) else {
+        panic!("seed step should be a step table");
+    };
+    assert_eq!(step.task.as_deref(), Some("db seed"));
+    assert_eq!(
+        step.rhai, None,
+        "a task override must not keep the bundle's rhai executor"
+    );
+    assert_eq!(
+        step.timeout_ms,
+        Some(1200),
+        "unset step metadata still defaults from the bundle"
+    );
+    assert!(
+        step.env.is_some(),
+        "unset step metadata still defaults from the bundle"
+    );
+}
+
+#[test]
+fn bundle_step_override_keeps_explicit_metadata_over_bundle_defaults() {
+    let manifest = load_step_override_manifest(
+        r#"
+[bundle]
+base = { type = "path", dir = "bundles/steps" }
+
+[tasks.seed]
+run = { task = "db seed", timeout_ms = 50 }
+"#,
+    );
+
+    let ManifestManagedRunStep::Step(step) = first_step(&manifest) else {
+        panic!("seed step should be a step table");
+    };
+    assert_eq!(step.task.as_deref(), Some("db seed"));
+    assert_eq!(step.timeout_ms, Some(50));
+}
+
+#[test]
+fn bundle_step_override_never_rewrites_a_malformed_manifest_step() {
+    // A manifest step that names two executors keeps both: composition must not
+    // silently repair a step the exactly-one-executor validation has to refuse.
+    let manifest = load_step_override_manifest(
+        r#"
+[bundle]
+base = { type = "path", dir = "bundles/steps" }
+
+[tasks.seed]
+run = { task = "db seed", rhai = "seed.rhai" }
+"#,
+    );
+
+    let ManifestManagedRunStep::Step(step) = first_step(&manifest) else {
+        panic!("seed step should be a step table");
+    };
+    assert_eq!(step.task.as_deref(), Some("db seed"));
+    assert_eq!(step.rhai.as_deref(), Some("seed.rhai"));
 }
