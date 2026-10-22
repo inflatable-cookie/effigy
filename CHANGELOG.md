@@ -611,8 +611,7 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Changed
 - Effigy's own repository builds through Oxide. Selectors run Cargo through
   `scripts/oxide-selector.sh`, which leases Oxide's shared slot pool so Rust
-  intermediates stay off the internal SSD, and `scripts/effigy-selfbuild.sh`
-  builds the checkout's binary before running it. Every routed selector keeps a
+  intermediates stay off the internal SSD. Every routed selector keeps a
   named `<selector>:cargo` escape with the plain-Cargo command it replaced;
   `EFFIGY_OXIDE_ESCAPE=cargo`, `effigy cargo <args>` and `cargo run --bin
   effigy --` keep the rest. The `cargo qa*` and `prepush-ci` aliases are
