@@ -289,6 +289,25 @@ Guide: `docs/guides/079-documentation-graph-profiles-and-context.md`.
 `[docs_policy.graph]` repository-defined Markdown graph profile.
 Details: `references/config-shapes.md`.
 
+**Program fallbacks** — `[programs.<name>]` is user-config only
+(`~/.effigy/config.toml`), never a project `effigy.toml`:
+`fallback = "<program>"`, optional `allow = ["<first argument>", ...]`, optional
+`force = true`. The fallback is active when `<name>` is not an executable on the
+inherited PATH, or when `force = true`; Effigy then puts a per-run shim named
+`<name>` first on that run's PATH and prints an honest notice. `force` changes
+only inherited-PATH name resolution: absolute paths, a replaced PATH (including
+a task `env` PATH), shell aliases and shell functions are untouched. An omitted
+`allow` means unrestricted exact argv; a present `allow` runs only those exact
+first arguments and refuses anything else (including no argument) before exec.
+The shim execs the fallback with the exact argv — no translation, nothing added,
+no retry — and the fallback's exit status is the shim's. The original program's
+behaviour and safeguards are lost: for `oxide` -> `cargo`, `oxide clean` becomes
+`cargo clean` without Oxide's ownership checks or managed storage, and cargo
+plugins and cargo-subcommand exec run as plain cargo would. The fallback is
+resolved to an absolute path on the inherited PATH, so it never re-enters a shim
+and fallbacks never chain. Guide:
+`docs/guides/069-workspace-host-integration.md`.
+
 **State stacks** — `effigy state plan`, `apply`, `capture`.
 Guide: `docs/guides/073-state-stack-guide.md`.
 

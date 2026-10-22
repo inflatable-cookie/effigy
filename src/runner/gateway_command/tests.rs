@@ -2091,3 +2091,95 @@ fn listener_handoff_maintenance_report_json_envelope_is_bounded_and_unexecuted()
         "absence carries no observed file"
     );
 }
+
+/// Papercut 0694ef12: a headless caller cannot read a root-owned gateway's
+/// identity. Status must keep that truth (`ok: false`, exit non-zero, status
+/// unknown) and additionally expose the supported observation labels, so a
+/// plan gates on `record=authenticated` + `process=running` + a recorded PID
+/// instead of on exit 0.
+#[test]
+fn gateway_status_refusal_exposes_headless_observations_without_claiming_known() {
+    use effigy_gateway::server::{
+        GatewayIdentityOutcome, GatewayProcessProbe, GatewayRecordKind, GatewayStatusDiagnosis,
+    };
+    let diagnosis = GatewayStatusDiagnosis {
+        pid: Some(75661),
+        record: GatewayRecordKind::Authenticated,
+        process_probe: Some(GatewayProcessProbe::Running),
+        identity: GatewayIdentityOutcome::PermissionDenied,
+    };
+    let refusal = gateway_status_refusal_json(
+        "gateway_status_unverified",
+        "I/O error: identity is unreadable to this user",
+        &diagnosis,
+        unverified_gateway_recovery(),
+    );
+    assert_eq!(refusal["ok"], false);
+    assert_eq!(refusal["exit_code"], 1);
+    assert_eq!(refusal["status"], "unknown");
+    assert_eq!(refusal["error"], "gateway_status_unverified");
+    assert_eq!(refusal["pid"], 75661);
+    assert_eq!(refusal["observations"]["record"], "authenticated");
+    assert_eq!(refusal["observations"]["process"], "running");
+    assert_eq!(refusal["observations"]["identity"], "permission-denied");
+    assert_eq!(refusal["headless"]["satisfied"], true);
+    assert_eq!(refusal["headless"]["requires_exit_zero"], false);
+    assert!(refusal["headless"]["precondition"]
+        .as_str()
+        .expect("precondition text")
+        .contains("record=authenticated"));
+}
+
+#[test]
+fn gateway_status_refusal_keeps_an_unreadable_record_unknown() {
+    use effigy_gateway::server::{
+        GatewayIdentityOutcome, GatewayRecordKind, GatewayStatusDiagnosis,
+    };
+    let diagnosis = GatewayStatusDiagnosis {
+        pid: None,
+        record: GatewayRecordKind::Unreadable,
+        process_probe: None,
+        identity: GatewayIdentityOutcome::NotChecked,
+    };
+    let refusal = gateway_status_refusal_json(
+        "gateway_status_unverified",
+        "I/O error: permission denied",
+        &diagnosis,
+        unverified_gateway_recovery(),
+    );
+    assert_eq!(refusal["observations"]["record"], "unreadable");
+    assert_eq!(refusal["observations"]["process"], "not-probed");
+    assert_eq!(refusal["headless"]["satisfied"], false);
+    assert_eq!(refusal["pid"], serde_json::Value::Null);
+}
+
+/// The private status command renders the same structured refusal, so one
+/// document shape carries the headless observations in both gateway modes.
+#[cfg(unix)]
+#[test]
+fn private_status_json_refusal_carries_observation_labels() {
+    let root = tempfile::tempdir().expect("private fixture directory");
+    // A private state root must be its own canonical path with owner-only
+    // permissions.
+    let private_root = root.path().canonicalize().expect("canonical root");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&private_root, std::fs::Permissions::from_mode(0o700))
+            .expect("owner-only private root");
+    }
+    let config = GatewayConfig::private(private_root);
+    std::fs::create_dir_all(config.pid_file_path.parent().expect("gateway directory"))
+        .expect("create gateway directory");
+    std::fs::write(&config.pid_file_path, "4242").expect("legacy PID record");
+    let error = resolve_status_for_status_command(&config, verified_gateway_status(&config), true)
+        .expect_err("a legacy record is not a provable status");
+    let rendered = error.rendered_output().expect("structured refusal");
+    let refusal: serde_json::Value = serde_json::from_str(rendered).expect("status refusal JSON");
+    assert_eq!(refusal["schema"], "effigy.gateway.status.v1");
+    assert_eq!(refusal["ok"], false);
+    assert_eq!(refusal["status"], "unknown");
+    assert_eq!(refusal["error"], "legacy_identity_required", "{rendered}");
+    assert_eq!(refusal["pid"], 4242);
+    assert_eq!(refusal["observations"]["record"], "legacy-pid-only");
+    assert_eq!(refusal["headless"]["satisfied"], false);
+}

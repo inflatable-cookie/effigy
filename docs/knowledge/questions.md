@@ -230,6 +230,21 @@ and `force = false`.
 - **Consumers** remove their `:cargo` selectors and CI switches only after the
   reviewed feature has shipped, and each owner scopes its own migration.
 
+**Implemented** (effigy#250, 2026-10-21). `[programs.<name>]` is read from the
+Effigy user config (`~/.effigy/config.toml`) and from no other layer: a project
+`effigy.toml` that declares `programs` is refused as an unknown manifest field,
+because program availability is a property of the machine, not the checkout.
+The shim directory belongs to the run that activates it (inside the run's
+`[scratch]` directory when one exists) and is removed at settle; a nested run
+or step inherits it. The fallback is resolved to an absolute path on the
+inherited `PATH` when the shim is written, so a shim cannot re-enter itself,
+fallbacks never chain, and a nested real `$CARGO` cannot reach a shim. An
+omitted `allow` is unrestricted exact argv; a present one matches only the
+literal first argument and refuses, before exec, anything else including no
+argument. Every condition above is stated in `effigy help`, in both shipped
+Effigy skill copies, and in the user guide section
+`docs/guides/069-workspace-host-integration.md`.
+
 ## Q-009 — v0.15 user-facing surface cuts
 
 Status: answered

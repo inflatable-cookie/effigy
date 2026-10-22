@@ -321,7 +321,6 @@ pub(in crate::runner) fn run_inline_task_with_cwd_and_env(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
     use std::path::PathBuf;
 
     use effigy_manifest::TaskManifest;
@@ -339,17 +338,7 @@ mod tests {
         manifest: TaskManifest,
         depth: usize,
     ) -> LoadedCatalog {
-        let root = PathBuf::from(root);
-        LoadedCatalog {
-            alias: alias.to_owned(),
-            manifest_path: root.join("effigy.toml"),
-            catalog_root: root,
-            bundle_root: None,
-            manifest,
-            defer_run: None,
-            deferred_builtins: BTreeSet::new(),
-            depth,
-        }
+        LoadedCatalog::for_test(alias, PathBuf::from(root), manifest, depth)
     }
 
     #[test]

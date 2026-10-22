@@ -163,6 +163,15 @@ Unix.
 - Every affected lockfile is part of the link transaction. It is snapshotted
   before the first write, and a failed apply, refresh, or verification restores
   it byte-for-byte alongside the config and ignore-file changes.
+- Link records the committed Git blob each affected tracked lockfile had when
+  it was applied, in `.effigy/local/cargo-lock-baselines.json`. The record is
+  bookkeeping under the repo-local ignore rule, not desired state: it never
+  makes a link active, and a missing record falls back to the tracked baseline.
+- Unlink restores a tracked lockfile from that record when the record still
+  matches `HEAD` and the current content differs from it only in packages the
+  unlinked link owned. A lockfile that also carries another link's state or an
+  unrelated edit is left untouched for review, and its record is kept for a
+  later unlink.
 - Post-link verification, status, and unlink inspect only the persisted
   consumer workspace roots. A repo-root patch must not cause unrelated nested
   workspace lockfiles to be resolved as an observation side effect.
@@ -180,6 +189,15 @@ Unix.
 - After unlink, the same packages must resolve from the committed git source.
 - Verification failure leaves an explicit failed/drifted report; it must not be
   rendered as success.
+- Lockfile classification distinguishes four states against `HEAD`: clean
+  (byte-identical), active-link state (only owned packages differ),
+  committed-transition (only a source/version advance of the same packages), and
+  unexpected drift (anything else, including a split version, a path source, a
+  changed repository, or a parked `[[patch.unused]]` entry).
+- Unlink accepts a committed transition: the difference keeps every package
+  name, entry count, and source identity, and changes only version, checksum, or
+  a package's own dependency list. It never overwrites or reverts that work.
+  Link-time and re-link lock validation stays strict and refuses it.
 
 ## Bun Rules
 

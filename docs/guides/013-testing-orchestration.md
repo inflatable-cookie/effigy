@@ -193,8 +193,32 @@ Result rendering:
 TUI diagnostics:
 - set `EFFIGY_TUI_DIAGNOSTICS=1` when running `effigy test --tui` to emit post-run runtime diagnostics and recent trace lines for emulator/debug troubleshooting.
 
+## Locked Focused Runs
+
+Passthrough reaches the runner verbatim, so a focused Rust run can require a
+lockfile that is already up to date:
+
+```sh
+effigy test -p app-api --locked
+```
+
+Use it whenever the checkout resolves sibling crates from local paths, for
+example while `effigy deps link cargo` is active, or when a planning checkout
+must stay clean. `--locked` fails with the resolver's diagnostic instead of
+rewriting `Cargo.lock`, so read-only evidence collection cannot dirty the tree.
+An update that is genuinely wanted is a separate, reviewed change to the
+lockfile.
+
+This repository routes the same guarantee through `test:focused`, which always
+passes `--locked`:
+
+```sh
+effigy test:focused -p effigy-deps --lib -E 'test(cargo_unlink::tests::)'
+```
+
 ## Related Guides
 
+- [`077-local-dependency-linking.md`](077-local-dependency-linking.md)
 - [`048-built-in-test-suite-lifecycle-and-env.md`](048-built-in-test-suite-lifecycle-and-env.md)
 - [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
 - [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)

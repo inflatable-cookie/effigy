@@ -244,6 +244,36 @@ returns to its tracked baseline, or contains only another active link's owned
 drift. It does not run `git checkout`, `git restore`, or discard unrelated
 changes.
 
+### Recovering a lockfile the link or Cargo rewrote
+
+Link records the committed Git blob of every tracked lockfile it resolves in
+`.effigy/local/cargo-lock-baselines.json`, under the same repo-local ignore
+rule as the link ledger. That record is what makes recovery exact:
+
+- if the record still matches `HEAD` and the lockfile differs from it only in
+  packages this link owned, `effigy deps unlink cargo <library-path>` writes the
+  recorded bytes back, byte for byte, instead of trusting a fresh resolution;
+- if another link, or your own edit, also holds the file, nothing is
+  overwritten and the record stays for a later unlink;
+- if `HEAD` itself moved since the link, the record no longer names the
+  committed baseline and is left alone.
+
+Review the unlink report's per-lockfile state instead of running `git restore`.
+A `clean` result means the file matches the committed baseline; `active-links`
+means another link still owns its resolution; `committed-transition` means the
+file carries a source/version advance of packages no link owns, which Effigy
+reports and never reverts; `unexpected-drift` names a change to separate before
+committing.
+
+A dependency advance you made while a link was active is not drift. Effigy
+accepts it when every package name, entry count, and source identity is
+unchanged and only versions, checksums, or a package's own dependency list
+moved, so an unrelated `cargo update` no longer blocks a valid unlink. Anything
+else — a split version, a package switching to a path source, a changed
+repository, or a parked `[[patch.unused]]` entry — is still refused as
+unexpected drift. Link-time validation stays strict: link refuses a dirty
+lockfile it cannot attribute to an existing link.
+
 ## Bun Workflow
 
 Bun mode inventories the library's root/workspace packages and matches the

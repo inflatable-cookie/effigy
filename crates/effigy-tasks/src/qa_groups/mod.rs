@@ -479,7 +479,6 @@ pub fn canonical_definition_digest(group: &effigy_manifest::ManifestQaGroup) -> 
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use std::collections::BTreeSet;
     use std::path::PathBuf;
 
     use effigy_manifest::{LoadedCatalog, TaskManifest};
@@ -490,17 +489,12 @@ pub(crate) mod test_support {
         manifest_body: &str,
         depth: usize,
     ) -> LoadedCatalog {
-        let root = PathBuf::from(root);
-        LoadedCatalog {
-            alias: alias.to_owned(),
-            catalog_root: root.clone(),
-            manifest_path: root.join("effigy.toml"),
-            bundle_root: None,
-            manifest: toml::from_str::<TaskManifest>(manifest_body).expect("parse manifest"),
-            defer_run: None,
-            deferred_builtins: BTreeSet::new(),
+        LoadedCatalog::for_test(
+            alias,
+            PathBuf::from(root),
+            toml::from_str::<TaskManifest>(manifest_body).expect("parse manifest"),
             depth,
-        }
+        )
     }
 }
 

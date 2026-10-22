@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use crate::cargo_apply::{
     apply_exact_change, not_run_verification, rollback_physical_changes, validate_all_preconditions,
 };
+use crate::cargo_lock_record::{blob_contents, head_blob, CargoLockBaselineStore};
 use crate::cargo_plan::{cargo_config_patches_library, plan_adopted_cargo_unlink, plan_cargo_link};
+use crate::state::write_atomic;
 use crate::{
     inventory_cargo_consumer_roots, inventory_cargo_consumers, inventory_cargo_library,
     plan_cargo_unlink, CargoDependencyPlan, CargoExpectedResolution, CargoLibraryInventory,
@@ -83,6 +85,7 @@ pub fn apply_cargo_unlink_plan(
         &plan,
         &plan.lockfile_guard_packages,
         &plan.lockfile_guard_packages,
+        true,
         process,
     )?;
     let unexpected_before = lock_errors(&before_locks, true);
@@ -138,10 +141,12 @@ pub fn apply_cargo_unlink_plan(
     }
 
     let verification = verify_cargo_unlink(&plan, process);
+    let (restored_lockfiles, restore_errors) = restore_recorded_lockfile_baselines(&plan, process)?;
     let mut after_locks = inspect_lockfiles(
         &plan,
         &plan.lockfile_guard_packages,
         &plan.remaining_linked_packages,
+        true,
         process,
     )?;
     for lock in &mut after_locks {
@@ -154,13 +159,16 @@ pub fn apply_cargo_unlink_plan(
         .iter()
         .filter_map(|evidence| evidence.message.clone())
         .collect::<Vec<_>>();
+    errors.extend(restore_errors);
     errors.extend(lock_errors(&after_locks, false));
+    let mut applied_files = applied_paths(&applied);
+    applied_files.extend(restored_lockfiles.iter().cloned());
     if verification.status != VerificationStatus::Passed || !errors.is_empty() {
         return Ok(report(
             plan,
             CargoUnlinkOutcome::VerificationFailed,
             CargoUnlinkReportDetails {
-                applied_files: applied_paths(&applied),
+                applied_files,
                 removed_directories: Vec::new(),
                 verification,
                 lockfiles: after_locks,
@@ -177,7 +185,7 @@ pub fn apply_cargo_unlink_plan(
                 plan,
                 CargoUnlinkOutcome::ApplyFailed,
                 CargoUnlinkReportDetails {
-                    applied_files: applied_paths(&applied),
+                    applied_files,
                     removed_directories: Vec::new(),
                     verification,
                     lockfiles: after_locks,
@@ -199,7 +207,7 @@ pub fn apply_cargo_unlink_plan(
         plan,
         outcome,
         CargoUnlinkReportDetails {
-            applied_files: applied_paths(&applied),
+            applied_files,
             removed_directories,
             verification,
             lockfiles: after_locks,
@@ -445,6 +453,7 @@ fn inspect_lockfiles(
     plan: &CargoDependencyPlan,
     before_allowed: &[String],
     after_allowed: &[String],
+    tolerate_committed_transitions: bool,
     process: &impl ReadOnlyProcess,
 ) -> Result<Vec<CargoLockfileEvidence>, DepsError> {
     plan.affected_lockfiles
@@ -453,11 +462,23 @@ fn inspect_lockfiles(
             let baseline = git_head_file(&plan.operation.key.consumer_repo, path, process)?;
             let current = fs::read_to_string(path)
                 .map_err(|error| DepsError::io("read Cargo lockfile", path, error))?;
-            let before_state = classify_lockfile(path, &baseline, &current, before_allowed)?;
-            let after_state = classify_lockfile(path, &baseline, &current, after_allowed)?;
+            let before_state = classify_lockfile_drift(
+                path,
+                &baseline,
+                &current,
+                before_allowed,
+                tolerate_committed_transitions,
+            )?;
+            let after_state = classify_lockfile_drift(
+                path,
+                &baseline,
+                &current,
+                after_allowed,
+                tolerate_committed_transitions,
+            )?;
             let message = (after_state == CargoLockfileState::UnexpectedDrift).then(|| {
                 format!(
-                    "tracked lockfile `{}` differs from HEAD outside packages owned by active dependency links",
+                    "tracked lockfile `{}` differs from HEAD outside the packages owned by active dependency links and outside committed source/version transitions",
                     path.display()
                 )
             });
@@ -480,6 +501,7 @@ pub(crate) fn validate_owned_lockfile_drift(
         plan,
         &plan.lockfile_guard_packages,
         &plan.lockfile_guard_packages,
+        false,
         process,
     )?;
     let errors = lock_errors(&evidence, true);
@@ -525,6 +547,23 @@ pub(crate) fn classify_lockfile(
     current: &str,
     allowed_packages: &[String],
 ) -> Result<CargoLockfileState, DepsError> {
+    classify_lockfile_drift(path, baseline, current, allowed_packages, false)
+}
+
+/// Classify a lockfile against its committed baseline.
+///
+/// Packages owned by active links are removed before the comparison, so their
+/// path resolution is link state, not drift. With
+/// `tolerate_committed_transitions`, a remaining difference that is only a
+/// source/version advance of the same packages is a committed release-pin move
+/// and reports [`CargoLockfileState::CommittedTransition`] instead of drift.
+pub(crate) fn classify_lockfile_drift(
+    path: &Path,
+    baseline: &str,
+    current: &str,
+    allowed_packages: &[String],
+    tolerate_committed_transitions: bool,
+) -> Result<CargoLockfileState, DepsError> {
     if baseline == current {
         return Ok(CargoLockfileState::Clean);
     }
@@ -534,11 +573,197 @@ pub(crate) fn classify_lockfile(
         .collect::<BTreeSet<_>>();
     let baseline = lock_without_packages(path, baseline, &allowed)?;
     let current = lock_without_packages(path, current, &allowed)?;
-    Ok(if baseline == current {
-        CargoLockfileState::ActiveLinks
-    } else {
-        CargoLockfileState::UnexpectedDrift
-    })
+    if baseline == current {
+        return Ok(CargoLockfileState::ActiveLinks);
+    }
+    if tolerate_committed_transitions && only_committed_transitions(&baseline, &current) {
+        return Ok(CargoLockfileState::CommittedTransition);
+    }
+    Ok(CargoLockfileState::UnexpectedDrift)
+}
+
+/// Whether two parsed lockfiles differ only by package versions and the
+/// dependency lists that follow those versions.
+///
+/// A committed source/version advance keeps the resolved package names and the
+/// source identity (registry or repository URL) of each one. Anything else is
+/// drift: an added or removed package (a split version), a package that moved
+/// to a path source, a changed repository, or a parked `[[patch.unused]]`
+/// entry.
+fn only_committed_transitions(baseline: &toml::Value, current: &toml::Value) -> bool {
+    if baseline.get("version") != current.get("version") {
+        return false;
+    }
+    if baseline.get("patch") != current.get("patch") {
+        return false;
+    }
+    let (Some(baseline_packages), Some(current_packages)) =
+        (lock_packages(baseline), lock_packages(current))
+    else {
+        return false;
+    };
+    if baseline_packages.len() != current_packages.len() {
+        return false;
+    }
+    for (name, baseline_entries) in &baseline_packages {
+        let Some(current_entries) = current_packages.get(name) else {
+            return false;
+        };
+        if baseline_entries.len() != current_entries.len() {
+            return false;
+        }
+        let mut baseline_sources = baseline_entries
+            .iter()
+            .map(|entry| source_of(entry).map(source_identity))
+            .collect::<Vec<_>>();
+        let mut current_sources = current_entries
+            .iter()
+            .map(|entry| source_of(entry).map(source_identity))
+            .collect::<Vec<_>>();
+        baseline_sources.sort();
+        current_sources.sort();
+        if baseline_sources != current_sources {
+            return false;
+        }
+        for (baseline_entry, current_entry) in baseline_entries.iter().zip(current_entries) {
+            if baseline_entry == current_entry {
+                continue;
+            }
+            if !is_committed_transition(baseline_entry, current_entry) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+type LockPackageTable = toml::map::Map<String, toml::Value>;
+
+/// `name -> entry tables`, each group ordered by source then version so two
+/// lockfiles that pin one package more than once pair their entries the same
+/// way.
+fn lock_packages(value: &toml::Value) -> Option<BTreeMap<&str, Vec<&LockPackageTable>>> {
+    let packages = value.get("package")?.as_array()?;
+    let mut by_name: BTreeMap<&str, Vec<&LockPackageTable>> = BTreeMap::new();
+    for package in packages {
+        let table = package.as_table()?;
+        let name = table.get("name")?.as_str()?;
+        by_name.entry(name).or_default().push(table);
+    }
+    for entries in by_name.values_mut() {
+        entries.sort_by(|left, right| {
+            (source_of(left), version_of(left)).cmp(&(source_of(right), version_of(right)))
+        });
+    }
+    Some(by_name)
+}
+
+fn version_of(table: &LockPackageTable) -> &str {
+    table
+        .get("version")
+        .and_then(toml::Value::as_str)
+        .unwrap_or_default()
+}
+
+fn source_of(table: &LockPackageTable) -> Option<&str> {
+    table.get("source").and_then(toml::Value::as_str)
+}
+
+/// Whether two entries are the same package at two committed releases.
+///
+/// Only a registry or Git entry can move: it must keep its source identity and
+/// may change only `version`, `checksum`, and its own `dependencies` list. A
+/// path entry is never a committed transition.
+fn is_committed_transition(baseline: &LockPackageTable, current: &LockPackageTable) -> bool {
+    if source_of(baseline).is_none() || source_of(current).is_none() {
+        return false;
+    }
+    // `source` is compared by identity in the caller: only the resolved Git
+    // query and revision may move.
+    const VERSION_KEYS: [&str; 4] = ["version", "checksum", "dependencies", "source"];
+    baseline
+        .keys()
+        .chain(current.keys())
+        .filter(|key| !VERSION_KEYS.contains(&key.as_str()))
+        .all(|key| baseline.get(key) == current.get(key))
+}
+
+/// A source without its resolved Git query and revision.
+///
+/// `git+https://example.test/repo.git?tag=v0.4.3#0123abc` and
+/// `git+https://example.test/repo.git?tag=v0.4.4#4567def` name the same source:
+/// only the resolved release moved.
+fn source_identity(source: &str) -> String {
+    source.split(['?', '#']).next().unwrap_or(source).to_owned()
+}
+
+/// Restore the tracked lockfiles this link resolved to the committed bytes
+/// recorded when the link was applied.
+///
+/// Restoration is deliberately narrow: it only writes a lockfile whose current
+/// content differs from the record solely in the packages this link owned, and
+/// only while `HEAD` still holds the recorded blob. A moved `HEAD` or an
+/// unrelated edit leaves both the file and the record alone for review.
+fn restore_recorded_lockfile_baselines(
+    plan: &CargoDependencyPlan,
+    process: &impl ReadOnlyProcess,
+) -> Result<(Vec<PathBuf>, Vec<String>), DepsError> {
+    let repo_root = &plan.operation.key.consumer_repo;
+    let store = CargoLockBaselineStore::for_checkout(repo_root);
+    let record = store.read()?;
+    if record.entries.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let unlinked_packages = plan
+        .expected_resolutions
+        .iter()
+        .map(|resolution| resolution.package.clone())
+        .collect::<Vec<_>>();
+    let mut restored = Vec::new();
+    let mut errors = Vec::new();
+    let mut retained = Vec::new();
+    let mut record_changed = false;
+    for entry in record.entries {
+        if !plan.affected_lockfiles.contains(&entry.lockfile) {
+            retained.push(entry);
+            continue;
+        }
+        let current = fs::read_to_string(&entry.lockfile)
+            .map_err(|error| DepsError::io("read Cargo lockfile", &entry.lockfile, error))?;
+        let head = head_blob(repo_root, &entry.lockfile, process)?;
+        if head.as_deref() != Some(entry.blob.as_str()) {
+            // The commit moved since the link, so the record no longer names
+            // the committed baseline. Leave the file to that baseline.
+            retained.push(entry);
+            continue;
+        }
+        let clean = blob_contents(repo_root, &entry.blob, process)?;
+        if clean == current {
+            record_changed = true;
+            continue;
+        }
+        let state = classify_lockfile(&entry.lockfile, &clean, &current, &unlinked_packages)?;
+        if state == CargoLockfileState::UnexpectedDrift {
+            // Another active link, or an edit this unlink does not own, still
+            // holds the file. Keep the record for a later unlink and leave the
+            // content alone; the caller's own lockfile evidence reports it.
+            retained.push(entry);
+            continue;
+        }
+        if let Err(error) = write_atomic(&entry.lockfile, clean.as_bytes(), false) {
+            errors.push(error.to_string());
+            retained.push(entry);
+            continue;
+        }
+        restored.push(entry.lockfile);
+        record_changed = true;
+    }
+    if record_changed {
+        let mut record = store.read()?;
+        record.entries = retained;
+        store.save(&record)?;
+    }
+    Ok((restored, errors))
 }
 
 fn lock_without_packages(
@@ -645,6 +870,148 @@ fn remove_owned_empty_directories(plan: &CargoDependencyPlan) -> (Vec<PathBuf>, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const CONSUMER: &str = r#"
+[[package]]
+name = "consumer"
+version = "0.1.0"
+dependencies = [
+ "signal-core",
+]
+"#;
+
+    fn lock(extra: &str) -> String {
+        format!("version = 4\n{CONSUMER}{extra}")
+    }
+
+    fn released(rev: &str, version: &str) -> String {
+        format!(
+            r#"
+[[package]]
+name = "signal-core"
+version = "{version}"
+source = "git+https://example.test/signal.git?tag=v{version}#{rev}"
+"#
+        )
+    }
+
+    #[test]
+    fn a_moved_release_pin_is_a_committed_transition_not_drift() {
+        let baseline = lock(&released("aaaa1111", "0.1.0"));
+        let current = lock(&released("bbbb2222", "0.1.0"));
+        let path = Path::new("Cargo.lock");
+
+        assert_eq!(
+            classify_lockfile_drift(path, &baseline, &current, &[], true).unwrap(),
+            CargoLockfileState::CommittedTransition,
+            "a tag/rev advance of one committed package is review work, not link residue"
+        );
+        assert_eq!(
+            classify_lockfile_drift(path, &baseline, &current, &[], false).unwrap(),
+            CargoLockfileState::UnexpectedDrift,
+            "link-time lock validation stays strict"
+        );
+    }
+
+    #[test]
+    fn a_registry_version_advance_is_a_committed_transition() {
+        let baseline = lock(
+            r#"
+[[package]]
+name = "signal-core"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1111"
+"#,
+        );
+        let current = lock(
+            r#"
+[[package]]
+name = "signal-core"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2222"
+"#,
+        );
+        assert_eq!(
+            classify_lockfile_drift(Path::new("Cargo.lock"), &baseline, &current, &[], true)
+                .unwrap(),
+            CargoLockfileState::CommittedTransition
+        );
+    }
+
+    #[test]
+    fn a_split_version_or_a_changed_source_is_unrelated_drift() {
+        let baseline = lock(&released("aaaa1111", "0.1.0"));
+        let split = lock(&format!(
+            "{}{}",
+            released("aaaa1111", "0.1.0"),
+            released("cccc3333", "0.2.0")
+        ));
+        let moved_source = lock(&released("aaaa1111", "0.2.0").replace(
+            "https://example.test/signal.git",
+            "https://example.test/other-signal.git",
+        ));
+        let path = Path::new("Cargo.lock");
+
+        for current in [split, moved_source] {
+            assert_eq!(
+                classify_lockfile_drift(path, &baseline, &current, &[], true).unwrap(),
+                CargoLockfileState::UnexpectedDrift
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_resolution_or_a_parked_patch_is_unrelated_drift() {
+        let baseline = lock(&released("aaaa1111", "0.1.0"));
+        let path_resolved = lock(
+            r#"
+[[package]]
+name = "signal-core"
+version = "0.1.0"
+"#,
+        );
+        let parked = lock(&format!(
+            r#"{}
+[[patch.unused]]
+name = "signal-extra"
+version = "0.1.0"
+"#,
+            released("aaaa1111", "0.1.0")
+        ));
+        let path = Path::new("Cargo.lock");
+
+        for current in [path_resolved, parked] {
+            assert_eq!(
+                classify_lockfile_drift(path, &baseline, &current, &[], true).unwrap(),
+                CargoLockfileState::UnexpectedDrift,
+                "link residue must never look like a committed transition"
+            );
+        }
+    }
+
+    #[test]
+    fn packages_owned_by_the_active_link_are_still_active_link_state() {
+        let baseline = lock(&released("aaaa1111", "0.1.0"));
+        let linked = lock(
+            r#"
+[[package]]
+name = "signal-core"
+version = "0.1.0"
+"#,
+        );
+        assert_eq!(
+            classify_lockfile(
+                Path::new("Cargo.lock"),
+                &baseline,
+                &linked,
+                &["signal-core".to_owned()]
+            )
+            .unwrap(),
+            CargoLockfileState::ActiveLinks
+        );
+    }
 
     #[test]
     fn owned_unused_patch_entries_are_active_link_state() {

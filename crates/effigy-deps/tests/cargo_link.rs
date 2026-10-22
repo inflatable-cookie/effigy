@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use effigy_deps::{
-    execute_cargo_link, execute_cargo_unlink, CargoLinkOutcome, CargoLockfileState,
-    CargoUnlinkOutcome, CargoVersionTransition, RepoLinkStateStore, StdReadOnlyProcess,
-    VerificationStatus,
+    execute_cargo_link, execute_cargo_unlink, CargoLinkOutcome, CargoLockBaselineStore,
+    CargoLockfileState, CargoUnlinkOutcome, CargoVersionTransition, RepoLinkStateStore,
+    StdReadOnlyProcess, VerificationStatus,
 };
 use tempfile::TempDir;
 
@@ -626,4 +626,189 @@ fn failed_verification_restores_every_affected_lockfile_across_the_version_trans
         run(&repo, "git", &["status", "--porcelain=v1"]).is_empty(),
         "rolled-back link left the consumer checkout dirty"
     );
+}
+
+/// One consumer that both links a local library and depends on an unrelated
+/// library whose release tag moves after the consumer commit.
+fn prepare_consumer_with_moved_pin(
+    core_dependency: &str,
+    unrelated_dependency: &str,
+) -> (TempDir, PathBuf) {
+    let repo_temp = TempDir::new().unwrap();
+    let repo = fs::canonicalize(repo_temp.path()).unwrap();
+    write(
+        &repo.join("Cargo.toml"),
+        &format!(
+            "[package]\nname='effigy-link-consumer-0'\nversion='0.1.0'\nedition='2021'\n[dependencies]\neffigy-link-fixture-core={core_dependency}\neffigy-pin-fixture-core={unrelated_dependency}\n"
+        ),
+    );
+    write(
+        &repo.join("src/lib.rs"),
+        "pub fn consumer() -> u8 {\n    let _ = effigy_pin_fixture_core::value();\n    effigy_link_fixture_core::value()\n}\n",
+    );
+    run(
+        &repo,
+        "cargo",
+        &["generate-lockfile", "--manifest-path", "Cargo.toml"],
+    );
+    run(&repo, "git", &["init", "-q"]);
+    run(
+        &repo,
+        "git",
+        &["config", "user.email", "effigy-fixture@example.test"],
+    );
+    run(&repo, "git", &["config", "user.name", "Effigy Fixture"]);
+    run(&repo, "git", &["add", "."]);
+    run(&repo, "git", &["commit", "-qm", "consumer fixture"]);
+    (repo_temp, repo)
+}
+
+#[test]
+fn unlink_restores_the_recorded_clean_lockfile_bytes() {
+    let library = create_release_library("0.4.3");
+    let library_root = fs::canonicalize(library.path()).unwrap();
+    let git_url = format!("file://{}", library_root.display());
+    let repo_temp = TempDir::new().unwrap();
+    let repo = fs::canonicalize(repo_temp.path()).unwrap();
+    prepare_consumer(
+        &repo,
+        std::slice::from_ref(&repo),
+        &git_dependency(&git_url, "0.4.3"),
+    );
+    let baseline = fs::read_to_string(repo.join("Cargo.lock")).unwrap();
+
+    let link = execute_cargo_link(&repo, &library_root, false, &StdReadOnlyProcess).unwrap();
+    assert_eq!(link.outcome, CargoLinkOutcome::Applied, "{link:#?}");
+    let record = CargoLockBaselineStore::for_checkout(&repo).read().unwrap();
+    let recorded = record
+        .baseline_for(&repo.join("Cargo.lock"))
+        .expect("link must record the clean lockfile baseline");
+    assert_eq!(recorded.blob.len(), 40, "{recorded:#?}");
+
+    // A later tool rewrites the linked lockfile by hand: the bytes drift while
+    // the link-owned resolution is unchanged. Cargo's own re-resolution keeps
+    // that formatting, so only the recorded baseline restores the file.
+    let linked = fs::read_to_string(repo.join("Cargo.lock")).unwrap();
+    let drifted = linked.replacen("version = \"0.4.3\"", "version  = \"0.4.3\"", 1);
+    assert_ne!(drifted, linked, "the fixture must move the linked bytes");
+    fs::write(repo.join("Cargo.lock"), &drifted).unwrap();
+
+    let unlink = execute_cargo_unlink(&repo, &library_root, false, &StdReadOnlyProcess).unwrap();
+
+    assert_eq!(unlink.outcome, CargoUnlinkOutcome::Unlinked, "{unlink:#?}");
+    assert_eq!(unlink.verification.status, VerificationStatus::Passed);
+    assert!(
+        unlink
+            .lockfiles
+            .iter()
+            .all(|lock| lock.after_state == CargoLockfileState::Clean),
+        "{:#?}",
+        unlink.lockfiles
+    );
+    assert_eq!(
+        fs::read_to_string(repo.join("Cargo.lock")).unwrap(),
+        baseline,
+        "unlink must restore the exact recorded bytes"
+    );
+    assert!(
+        CargoLockBaselineStore::for_checkout(&repo)
+            .read()
+            .unwrap()
+            .entries
+            .is_empty(),
+        "the restored baseline record is consumed by the unlink"
+    );
+    let status = run(
+        &repo,
+        "git",
+        &["status", "--porcelain=v1", "--", "Cargo.lock"],
+    );
+    assert!(
+        status.is_empty(),
+        "restored unlink left Cargo.lock dirty: {status}"
+    );
+}
+
+#[test]
+fn unlink_tolerates_a_committed_pin_advance_outside_the_linked_packages() {
+    let library = create_release_library("0.4.3");
+    let library_root = fs::canonicalize(library.path()).unwrap();
+    let library_url = format!("file://{}", library_root.display());
+    let unrelated = create_named_library(
+        "effigy-pin-fixture-core",
+        "effigy-pin-fixture-protocol",
+        "0.1.0",
+    );
+    let unrelated_root = fs::canonicalize(unrelated.path()).unwrap();
+    let unrelated_url = format!("file://{}", unrelated_root.display());
+
+    let (_repo_temp, repo) = prepare_consumer_with_moved_pin(
+        &git_dependency(&library_url, "0.4.3"),
+        &git_dependency(&unrelated_url, "0.1.0"),
+    );
+    let baseline = fs::read_to_string(repo.join("Cargo.lock")).unwrap();
+
+    // The unrelated release tag moves after the consumer committed its lock.
+    bump_library_version(&unrelated_root, "0.1.0", "0.1.1");
+    run(&unrelated_root, "git", &["tag", "-f", "v0.1.0"]);
+
+    let link = execute_cargo_link(&repo, &library_root, false, &StdReadOnlyProcess).unwrap();
+    assert_eq!(link.outcome, CargoLinkOutcome::Applied, "{link:#?}");
+
+    // The operator advances that one package while the link is active, so the
+    // lockfile legitimately differs from HEAD in a package the link does not
+    // own. Before this change that unrelated drift refused the unlink and left
+    // stale machine-local link state behind.
+    run(
+        &repo,
+        "cargo",
+        &[
+            "update",
+            "-p",
+            "effigy-pin-fixture-core",
+            "--manifest-path",
+            "Cargo.toml",
+        ],
+    );
+    let advanced = fs::read_to_string(repo.join("Cargo.lock")).unwrap();
+    assert_ne!(
+        advanced, baseline,
+        "the committed pin advance must move the lockfile off the baseline"
+    );
+
+    let unlink = execute_cargo_unlink(&repo, &library_root, false, &StdReadOnlyProcess).unwrap();
+
+    assert_eq!(unlink.outcome, CargoUnlinkOutcome::Unlinked, "{unlink:#?}");
+    assert_eq!(unlink.verification.status, VerificationStatus::Passed);
+    assert!(
+        unlink
+            .lockfiles
+            .iter()
+            .all(|lock| lock.before_state == CargoLockfileState::CommittedTransition),
+        "the committed advance must be classified before the unlink writes: {:#?}",
+        unlink.lockfiles
+    );
+    assert!(
+        unlink
+            .lockfiles
+            .iter()
+            .all(|lock| lock.after_state == CargoLockfileState::CommittedTransition),
+        "{:#?}",
+        unlink.lockfiles
+    );
+    let after = fs::read_to_string(repo.join("Cargo.lock")).unwrap();
+    assert!(
+        after.contains("name = \"effigy-pin-fixture-core\"\nversion = \"0.1.1\""),
+        "an unrelated dependency update is not the unlink's to discard: {after}"
+    );
+    assert_eq!(
+        CargoLockBaselineStore::for_checkout(&repo)
+            .read()
+            .unwrap()
+            .entries
+            .len(),
+        1,
+        "a baseline that no longer matches HEAD stays recorded for a later unlink"
+    );
+    assert!(!repo.join(".cargo/config.toml").exists());
 }

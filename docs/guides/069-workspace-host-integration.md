@@ -351,6 +351,60 @@ single scratch tree is used, and neither tool leaves one behind.
 Queue worktree hooks are unaffected: Queue calls them directly rather than
 through a task run.
 
+## Program Fallbacks
+
+A machine may have a program under a different name, or not have it installed.
+The user-global `[programs.<name>]` block lets Effigy run a fallback in its
+place for host task runs. It belongs to the user config only: a project
+`effigy.toml` that declares `programs` is refused as an unknown field, because
+one committed file must not silently replace a program for every contributor.
+
+```toml
+# ~/.effigy/config.toml
+[programs.oxide]
+fallback = "cargo"        # required: the program to run instead
+allow = ["check", "build"] # optional: exact first arguments that may run
+force = false             # optional: use the fallback even when oxide is on PATH
+```
+
+**Trigger.** The fallback is active when `<name>` is not an executable on the
+inherited `PATH`, or when the block sets `force = true`. Effigy then writes a
+per-run shim named `<name>`, puts its directory first on that run's `PATH`, and
+prints one honest notice. The shim directory lives in the run's scratch
+directory when `[scratch]` is configured, and is removed when the run settles.
+Nested runs and steps reuse the shim their parent already made. A run whose
+owner is killed before it settles leaves nothing authoritative behind: the
+directory is inside the retained run scratch when `[scratch]` is set, and
+otherwise inside the operating system's temp directory for normal temp cleanup.
+
+**Scope.** Only name resolution through the inherited `PATH` changes.
+`force = true` changes nothing else: an absolute path, a replaced `PATH`
+(including one a task sets through its `env`), a shell alias and a shell
+function still reach the real program or nothing at all.
+
+**Allow list.** An omitted `allow` means unrestricted exact argv. A present
+`allow` matches the first argument exactly; anything else, including no
+argument at all, is refused before the fallback starts (exit 127). Effigy does
+not interpret global options, `--` or subcommands, so `oxide --verbose clean`
+matches `--verbose`, not `clean`.
+
+**Exact argv.** The shim `exec`s the fallback with the arguments it received.
+Effigy translates no flags, adds nothing, and never retries after a failure:
+the fallback's exit status is the shim's. The fallback is resolved to an
+absolute path on the inherited `PATH` when the shim is written, so it never
+re-enters a shim and fallbacks never chain.
+
+**Lost safeguards.** The original program's behaviour is gone. With
+`oxide` -> `cargo`, `oxide clean` becomes `cargo clean` without Oxide's
+ownership checks or managed storage, and cargo plugins and cargo-subcommand
+exec run as plain cargo would. Use `force` deliberately, for a machine where
+the original program must not run.
+
+A malformed block refuses the run instead of being ignored: a missing
+`fallback`, a fallback that names the program itself, an empty or
+non-literal `allow` entry, a fallback that is not an executable on the
+inherited `PATH`, or an unreadable user config.
+
 ## Host Git/SSH Integration
 
 Two default-on params plus one explicit opt-in param on the `php-fpm`,
