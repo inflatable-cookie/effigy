@@ -1155,7 +1155,7 @@ required = false
 [manifest]
 include = ["overlay.toml"]
 
-[shell]
+[defer]
 run = "primary"
 "#,
         );
@@ -1164,16 +1164,16 @@ run = "primary"
             "overlay.toml",
             r#"
 [manifest]
-extend = ["shell.run"]
+extend = ["defer.run"]
 
-[shell]
+[defer]
 run = "secondary"
 "#,
         );
 
         let err = load_task_manifest_with_inspection(&root).unwrap_err();
         let detail = format!("{err}");
-        assert!(detail.contains("extend path `shell.run`"), "{detail}");
+        assert!(detail.contains("extend path `defer.run`"), "{detail}");
         assert!(
             detail.contains("requires arrays or tables on both sides"),
             "{detail}"
@@ -1327,8 +1327,8 @@ paths = ["b"]
             dir,
             "effigy.toml",
             r#"
-[shell]
-run = "root"
+[tasks]
+build = "true"
 "#,
         );
         write_manifest(
@@ -1361,8 +1361,8 @@ paths = ["b"]
             dir,
             "effigy.toml",
             r#"
-[shell]
-run = "root"
+[tasks]
+build = "true"
 "#,
         );
         write_manifest(
@@ -1390,8 +1390,8 @@ paths = ["b"]
             dir,
             "effigy.toml",
             r#"
-[shell]
-run = "root"
+[tasks]
+build = "true"
 "#,
         );
         write_manifest(
@@ -1507,8 +1507,8 @@ include = ["overlay/**"]
 [manifest]
 minimum_effigy_version = "{}"
 
-[shell]
-run = "ok"
+[tasks]
+build = "true"
 "#,
                 env!("CARGO_PKG_VERSION")
             ),

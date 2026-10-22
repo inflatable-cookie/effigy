@@ -7,13 +7,6 @@ const SECTION_DEFER: &[&str] = &[
     "",
 ];
 
-const SECTION_SHELL: &[&str] = &[
-    "[shell]",
-    "# Interactive shell command used by managed shell tabs.",
-    "run = \"exec ${SHELL:-/bin/zsh} -i\"",
-    "",
-];
-
 const SECTION_SCAN: &[&str] = &[
     "[scan.god_files]",
     "# Oversized code-file scanner thresholds use code-only lines.",
@@ -154,10 +147,6 @@ const SECTION_TASKS_MINIMAL: &[&str] = &[
 
 pub(super) fn defer_lines() -> &'static [&'static str] {
     SECTION_DEFER
-}
-
-pub(super) fn shell_lines() -> &'static [&'static str] {
-    SECTION_SHELL
 }
 
 pub(super) fn scan_lines() -> &'static [&'static str] {

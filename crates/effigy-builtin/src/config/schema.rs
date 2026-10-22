@@ -31,7 +31,6 @@ pub(super) fn render_builtin_config_schema() -> String {
     append_doc_lines(&mut doc, docs::state_lines(ConfigDocProfile::Schema));
     append_doc_lines(&mut doc, docs::deploy_lines(ConfigDocProfile::Schema));
     append_doc_lines(&mut doc, docs::defer_lines().iter().copied());
-    append_doc_lines(&mut doc, docs::shell_lines().iter().copied());
     append_doc_lines(&mut doc, docs::scan_lines().iter().copied());
     append_doc_lines(
         &mut doc,
@@ -177,7 +176,6 @@ fn target_schema_lines(
         }
         ConfigSchemaTarget::Defer => Box::new(docs::defer_lines().iter().copied()),
         ConfigSchemaTarget::Scan => Box::new(docs::scan_lines().iter().copied()),
-        ConfigSchemaTarget::Shell => Box::new(docs::shell_lines().iter().copied()),
     }
 }
 

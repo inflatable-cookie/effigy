@@ -86,11 +86,6 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
     emit_doc_lines(
         &mut renderer,
         color_enabled,
-        docs::shell_lines().iter().copied(),
-    )?;
-    emit_doc_lines(
-        &mut renderer,
-        color_enabled,
         docs::scan_lines().iter().copied(),
     )?;
 

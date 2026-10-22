@@ -35,8 +35,6 @@ const CURRENT_HELP_TOPICS: &[HelpTopic] = &[
     HelpTopic::Test,
     HelpTopic::Init,
     HelpTopic::Uninstall,
-    HelpTopic::Drafts,
-    HelpTopic::Draft,
     HelpTopic::Runs,
 ];
 
@@ -66,8 +64,6 @@ const CURRENT_TOP_LEVEL_HELP_ROUTES: &[(&str, HelpTopic)] = &[
     ("release", HelpTopic::Release),
     ("doctor", HelpTopic::Doctor),
     ("tasks", HelpTopic::Tasks),
-    ("drafts", HelpTopic::Drafts),
-    ("draft", HelpTopic::Draft),
     ("test", HelpTopic::Test),
     ("init", HelpTopic::Init),
     ("uninstall", HelpTopic::Uninstall),
@@ -77,7 +73,7 @@ const CURRENT_TOP_LEVEL_HELP_ROUTES: &[(&str, HelpTopic)] = &[
 
 /// `effigy changelog --help` keeps its typed panel but stays out of the
 /// general inventory, exactly as it did before help-first grouping.
-const HELP_COMMANDS_WITHOUT_GENERAL_HELP_ROW: &[&str] = &["changelog", "draft", "drafts"];
+const HELP_COMMANDS_WITHOUT_GENERAL_HELP_ROW: &[&str] = &["changelog"];
 
 /// Primary ownership fixed by contract `043`.
 const CONTRACT_GROUP_INVENTORIES: &[(HelpGroup, &[&str])] = &[

@@ -256,9 +256,6 @@
       "std.process.Command.output": 1,
       "std.process.Command.spawn": 1
     },
-    "crates/effigy-runtime/src/task_status.rs": {
-      "nix::sys::signal::kill": 1
-    },
     "crates/effigy-scan/src/execution/doctor_inventory.rs": {
       "nix::sys::signal::kill": 2,
       "std.fs.OpenOptions.write": 6,
@@ -740,9 +737,6 @@
     },
     "crates/effigy-runtime/src/read/discovery.rs": {
       "std::fs::write": 10
-    },
-    "crates/effigy-runtime/src/task_status.rs": {
-      "std::fs::write": 4
     },
     "crates/effigy-scan/src/execution/doctor_inventory.rs": {
       "nix::sys::signal::kill": 1,

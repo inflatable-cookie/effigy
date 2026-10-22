@@ -90,10 +90,10 @@ impl ManifestQaMemberSurface {
     pub fn parse(raw: &str) -> Result<Self, String> {
         match raw {
             "published" => Ok(Self::Published),
-            "draft" => {
-                eprintln!("[warn] QA member surface `draft` is deprecated; use `published`. Internal tasks share the ordinary task namespace.");
-                Ok(Self::Published)
-            }
+            "draft" => Err(
+                "QA member `surface = \"draft\"` was removed in v0.15; internal tasks share the ordinary task namespace, so use `surface = \"published\"` (see CHANGELOG.md)"
+                    .to_owned(),
+            ),
             other => Err(format!(
                 "`{other}` is not a valid member `surface`; use published"
             )),
@@ -842,8 +842,8 @@ members = [{ id = "one", kind = "test", task = "t", targets = ["workspace:root"]
     }
 
     #[test]
-    fn legacy_member_surface_translates_and_unknown_companions_fail() {
-        let parsed = toml::from_str::<Groups>(
+    fn draft_member_surface_is_refused_and_unknown_companions_fail() {
+        let error = toml::from_str::<Groups>(
             r#"
 [groups.drafty]
 lifecycle = "maintained"
@@ -853,11 +853,10 @@ proof_limits = ["No coverage claim"]
 members = [{ id = "one", kind = "test", surface = "draft", task = "t", targets = ["workspace:root"], limits = ["nothing"] }]
 "#,
         )
-        .expect("legacy surface translates");
-        assert_eq!(
-            parsed.groups["drafty"].members[0].surface,
-            super::ManifestQaMemberSurface::Published
-        );
+        .expect_err("draft member surface is retired");
+        let error = error.to_string();
+        assert!(error.contains("was removed in v0.15"), "{error}");
+        assert!(error.contains("surface = \"published\""), "{error}");
 
         let error = toml::from_str::<Groups>(
             r#"

@@ -4,7 +4,6 @@ use effigy_execution::{ExecutionSurface, TaskExecutionRequestBuilder};
 use std::path::Path;
 
 use super::super::doctor_ports::RunnerDoctorPorts;
-use super::super::drafts_command::run_drafts;
 use super::super::run_artifact;
 use super::super::run_bundle;
 use super::super::run_changelog;
@@ -116,30 +115,6 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         }
         Command::Tasks(args) => run_tasks(args),
         Command::Runs(args) => crate::runner::run_control::run_runs(args),
-        Command::Drafts(args) => run_drafts(args),
-        Command::Draft(args) => {
-            eprintln!("[warn] `effigy draft <task>` is deprecated in v0.15; run `effigy <task>` directly. Internal tasks use the ordinary task runtime.");
-            // The captured context wins (embedded dispatch); otherwise an
-            // explicit repo override -- global or local -- must root the
-            // draft selection instead of the process cwd.
-            let runtime_context = crate::runner::command_context::active_runtime_context()
-                .filter(|context| context.task_source().is_some())
-                .unwrap_or_else(|| {
-                    let root = args
-                        .repo_override
-                        .clone()
-                        .unwrap_or_else(|| cwd.to_path_buf());
-                    EffigyRuntimeContext::capture_lossy(Some(root), None)
-                        .expect("runtime context capture should fall back to cwd")
-                });
-            let request = TaskExecutionRequestBuilder::new()
-                .runtime_context(runtime_context)
-                .task(args.selector, args.args)
-                .surface(ExecutionSurface::DirectCli)
-                .build()
-                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-            crate::runner::execute::api::run_manifest_task_request(request)
-        }
         Command::InternalGateway(args) => run_internal_gateway(args),
         Command::InternalGatewayIdentity(args) => run_internal_gateway_identity(args),
         Command::InternalScriptRun(args) => run_internal_script_run(args),

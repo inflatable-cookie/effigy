@@ -388,7 +388,7 @@ run = "echo member-failed >&2; exit 7"
 }
 
 #[test]
-fn qa_group_selector_never_falls_through_to_same_named_task_or_draft() {
+fn qa_group_selector_never_falls_through_to_same_named_task() {
     let root = temp_execution_workspace("qa-groups-no-fallback");
     write_manifest(
         &root,
@@ -405,21 +405,14 @@ run = "echo ok"
 
 [tasks.smoke]
 run = "echo task-smoke"
-
-[drafts.smoke-draft]
-created = "2026-10-01"
-purpose = "draft coexisting by name"
-run = "echo draft-smoke"
 "#,
     );
 
-    // The task and draft surfaces still resolve their own selectors.
+    // The task surface still resolves its own selector.
     let output = run_effigy(&root, &["smoke", "--plan"]);
     assert!(output.status.success(), "task selector still resolves");
-    let output = run_effigy(&root, &["draft", "smoke-draft", "--plan"]);
-    assert!(output.status.success(), "draft selector still resolves");
 
-    // A missing group name never resolves to the same-named task or draft.
+    // A missing group name never resolves to the same-named task.
     let output = run_effigy(&root, &["tasks", "qa-group", "run", "absent-group"]);
     assert!(!output.status.success());
     let text = String::from_utf8_lossy(&output.stdout).to_string()
@@ -427,44 +420,12 @@ run = "echo draft-smoke"
     assert!(text.contains("no effective catalog declares"), "{text}");
 
     // The group surface selects only the group (one member, its own list)
-    // even though a task and a draft share related names.
+    // even though a task shares related names.
     let payload = run_effigy_json(&root, &["tasks", "qa-group", "run", "smoke"]);
     let body = &payload["result"];
     assert_eq!(body["group"]["name"], "smoke");
     assert_eq!(body["members"].as_array().unwrap().len(), 1);
     assert_eq!(body["outcome"], "passed");
-}
-
-#[test]
-fn task_and_draft_same_name_stays_invalid_even_with_same_named_group() {
-    let root = temp_workspace("qa-groups-collision");
-    write_manifest(
-        &root,
-        r#"
-[qa.groups.smoke]
-lifecycle = "maintained"
-purpose = "Cannot waive contract 046"
-scope_policy = "advisory"
-proof_limits = ["none"]
-members = [{ id = "m", kind = "test", surface = "published", task = "ok", args = [], targets = ["workspace:root"], limits = ["nothing"] }]
-
-[tasks.smoke]
-run = "echo task"
-
-[drafts.smoke]
-created = "2026-10-01"
-purpose = "draft collision"
-run = "echo draft"
-"#,
-    );
-    let output = run_effigy(&root, &["tasks", "qa-groups", "list"]);
-    assert!(
-        !output.status.success(),
-        "a group definition cannot waive the published/draft same-name rule"
-    );
-    let text = String::from_utf8_lossy(&output.stdout).to_string()
-        + String::from_utf8_lossy(&output.stderr).as_ref();
-    assert!(text.contains("rename one before migrating"), "{text}");
 }
 
 #[test]
@@ -717,11 +678,9 @@ fn temporary_groups_require_explicit_files_and_stay_inside_the_repository() {
 }
 
 #[test]
-fn temporary_groups_may_name_draft_members_while_maintained_reject_them() {
+fn draft_member_surface_is_refused_with_the_published_replacement() {
     let root = temp_execution_workspace("qa-groups-draft-members");
 
-    // Maintained groups resolve published tasks only; the grammar rejects a
-    // draft member at parse time.
     write_manifest(
         &root,
         r#"
@@ -740,28 +699,13 @@ members = [{ id = "m", kind = "test", surface = "draft", task = "probe", args = 
     assert!(!output.status.success());
     let text = String::from_utf8_lossy(&output.stdout).to_string()
         + String::from_utf8_lossy(&output.stderr).as_ref();
-    assert!(text.contains("does not resolve"), "{text}");
+    assert!(text.contains("was removed in v0.15"), "{text}");
+    assert!(text.contains("surface = \"published\""), "{text}");
 
-    // A temporary group may select the draft explicitly.
-    write_manifest(
-        &root,
-        r#"
-[catalog]
-alias = "root"
-
-[drafts.probe]
-created = "2026-10-01"
-purpose = "temporary proof"
-run = "echo draft-ok"
-"#,
-    );
+    // A temporary definition is refused by the same grammar.
+    write_manifest(&root, "[catalog]\nalias = \"root\"\n");
     let file = temp_group_file(&root, "draft-proof", "probe", "draft");
-    let relative = file
-        .strip_prefix(&root)
-        .unwrap()
-        .to_string_lossy()
-        .to_string();
-    let payload = run_effigy_json(
+    let output = run_effigy(
         &root,
         &[
             "tasks",
@@ -769,44 +713,43 @@ run = "echo draft-ok"
             "run",
             "draft-proof",
             "--file",
-            relative.as_str(),
-            "--scope",
-            "workspace:root",
+            file.to_string_lossy().as_ref(),
         ],
     );
-    let body = &payload["result"];
-    assert_eq!(body["outcome"], "passed");
-    assert_eq!(body["members"][0]["surface"], "published");
+    assert!(!output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout).to_string()
+        + String::from_utf8_lossy(&output.stderr).as_ref();
+    assert!(text.contains("was removed in v0.15"), "{text}");
 }
 
 #[test]
-fn heavy_draft_admission_metadata_is_reported_for_selection() {
-    let root = temp_workspace("qa-groups-draft-heavy");
+fn heavy_internal_task_metadata_is_reported_for_selection() {
+    let root = temp_workspace("qa-groups-internal-heavy");
     write_manifest(
         &root,
         r#"
-[drafts.heavy-probe]
-created = "2026-10-01"
-purpose = "Heavy temporary proof"
+[tasks.heavy-probe]
+visibility = "internal"
 admission = "heavy"
 run = "echo heavy-ok"
 
-[drafts.light-probe]
-created = "2026-10-01"
-purpose = "Ordinary temporary proof"
+[tasks.light-probe]
+visibility = "internal"
 run = "echo light-ok"
 "#,
     );
 
-    // Migration keeps ordinary plan payloads and full inventory metadata.
-    let payload = run_effigy_json(&root, &["draft", "heavy-probe", "--plan"]);
-    assert!(payload["result"].get("surface_identity").is_none());
     let payload = run_effigy_json(&root, &["tasks", "--json"]);
     let rows = payload["result"]["catalog_tasks"].as_array().unwrap();
     for name in ["heavy-probe", "light-probe"] {
         let row = rows.iter().find(|row| row["task"] == name).unwrap();
         assert_eq!(row["visibility"], "internal");
     }
+    let heavy = rows
+        .iter()
+        .find(|row| row["task"] == "heavy-probe")
+        .unwrap();
+    assert_eq!(heavy["admission"], "heavy");
 }
 
 #[test]

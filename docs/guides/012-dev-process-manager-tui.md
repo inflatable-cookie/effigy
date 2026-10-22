@@ -167,16 +167,12 @@ Run-array note:
   invocation rather than requiring that managed task to also define an inline
   `run = ...`
 
-Optional global shell command override:
-
-```toml
-[shell]
-run = "exec ${SHELL:-/bin/zsh} -i"
-```
-
-If omitted, Effigy uses:
+Managed shell tabs always use:
 
 - `exec ${SHELL:-/bin/zsh} -i`
+
+`[shell]` was removed in v0.15: there is no manifest override, and a manifest
+that still declares it is refused with that replacement.
 
 ## 5) Profile Example
 

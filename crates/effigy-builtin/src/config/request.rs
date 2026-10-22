@@ -51,7 +51,6 @@ pub(super) enum ConfigSchemaTarget {
     Tasks,
     Defer,
     Scan,
-    Shell,
 }
 
 impl ConfigSchemaTarget {
@@ -65,7 +64,6 @@ impl ConfigSchemaTarget {
             Self::Tasks => "tasks",
             Self::Defer => "defer",
             Self::Scan => "scan",
-            Self::Shell => "shell",
         }
     }
 }
@@ -87,7 +85,7 @@ impl ConfigTestRunner {
     }
 }
 
-const CONFIG_TARGET_CHOICES: [(&str, ConfigSchemaTarget); 9] = [
+const CONFIG_TARGET_CHOICES: [(&str, ConfigSchemaTarget); 8] = [
     ("manifest", ConfigSchemaTarget::Manifest),
     ("bundle", ConfigSchemaTarget::Bundle),
     ("demos", ConfigSchemaTarget::Demos),
@@ -96,7 +94,6 @@ const CONFIG_TARGET_CHOICES: [(&str, ConfigSchemaTarget); 9] = [
     ("tasks", ConfigSchemaTarget::Tasks),
     ("defer", ConfigSchemaTarget::Defer),
     ("scan", ConfigSchemaTarget::Scan),
-    ("shell", ConfigSchemaTarget::Shell),
 ];
 
 const CONFIG_RUNNER_CHOICES: [(&str, ConfigTestRunner); 4] = [
