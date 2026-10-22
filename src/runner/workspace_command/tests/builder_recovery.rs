@@ -420,18 +420,21 @@ esac
     }
 
     fn compiled_cli() -> PathBuf {
+        // The selector builds the CLI before this proof runs. Cargo keeps it
+        // beside the test binary; Oxide runs test binaries from a shared slot
+        // pool and uplifts the final binary to the workspace target dir
+        // (Oxide #106), so look in both places.
         let executable = std::env::current_exe().unwrap();
-        let binary = executable
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("effigy");
-        assert!(
-            binary.is_file(),
-            "build the artifact-recovery selector prerequisite"
-        );
-        binary
+        let profile_dir = executable.parent().unwrap().parent().unwrap();
+        let target = std::env::var_os("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("target"));
+        let candidates = [profile_dir.join("effigy"), target.join("debug/effigy")];
+        let found = candidates.iter().find(|candidate| candidate.is_file());
+        match found {
+            Some(binary) => binary.clone(),
+            None => panic!("build the artifact-recovery selector prerequisite: {candidates:?}"),
+        }
     }
 
     fn host(&self) -> PathBuf {

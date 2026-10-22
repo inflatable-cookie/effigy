@@ -143,34 +143,56 @@ fn probe_tcp_unix_dns_and_untrusted_targets() {
 fn probe_waiter_rechecks_all_predicates_and_preserves_unknown_order() {
     struct Strict {
         calls: std::cell::Cell<usize>,
-        ready: bool,
+        // Verified from this observation round on; the deadline is only a
+        // safety net, so the proof never depends on how fast a round runs.
+        ready_after: usize,
     }
     impl Probe for Strict {
         fn observe(&self, cx: &ObserveContext) -> Observed<Readiness> {
             self.calls.set(self.calls.get() + 1);
-            if self.ready && cx.check("fake").is_ok() {
+            if self.calls.get() >= self.ready_after && cx.check("fake").is_ok() {
                 Observed::Verified(Readiness::Created, evidence())
             } else {
                 Observed::Unknown(UnknownReason::Injected)
             }
         }
     }
+    // The second predicate holds two rounds after the first: the waiter must
+    // recheck the successful one too rather than accumulate a stale success.
     let first = Strict {
         calls: 0.into(),
-        ready: true,
+        ready_after: 2,
     };
     let second = Strict {
         calls: 0.into(),
-        ready: false,
+        ready_after: 4,
     };
-    let results = wait_all(&[&first, &second], &cx(Duration::from_millis(20)));
+    let results = wait_all(&[&first, &second], &cx(Duration::from_secs(10)));
     assert_eq!(results.len(), 2);
+    assert!(matches!(results[0], Observed::Verified(..)));
+    assert!(matches!(results[1], Observed::Verified(..)));
+    assert_eq!(first.calls.get(), 4);
+    assert_eq!(second.calls.get(), 4);
+}
+#[test]
+fn probe_waiter_preserves_unknown_order_after_the_deadline() {
+    struct Strict(Observed<Readiness>);
+    impl Probe for Strict {
+        fn observe(&self, _cx: &ObserveContext) -> Observed<Readiness> {
+            self.0.clone()
+        }
+    }
+    // An elapsed budget stops the waiter after its first round, so the
+    // permanent unknown cannot turn this into a waiting proof.
+    let ready = Strict(Observed::Verified(Readiness::Created, evidence()));
+    let unknown = Strict(Observed::Unknown(UnknownReason::Injected));
+    let results = wait_all(&[&ready, &unknown], &cx(Duration::ZERO));
+    assert_eq!(results.len(), 2);
+    assert!(matches!(results[0], Observed::Verified(..)));
     assert!(matches!(
         results[1],
         Observed::Unknown(UnknownReason::Injected)
     ));
-    assert_eq!(first.calls.get(), second.calls.get());
-    assert!(first.calls.get() > 1);
 }
 #[cfg(feature = "fault-injection")]
 #[test]

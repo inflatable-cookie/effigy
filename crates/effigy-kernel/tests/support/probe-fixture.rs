@@ -110,10 +110,16 @@ pub fn run(entry: &str, args: &[OsString], cancel: CancelToken) {
     }
     let home = Path::new(&args[1]);
     let runtime = ProbeRuntime::install(Executable::current().unwrap()).unwrap();
-    let cx = op(cancel, EffectClass::Observe, Duration::from_secs(10))
-        .observe()
-        .unwrap()
-        .with_probes(runtime.clone());
+    // Startup stays off the proof's clock: spawning this fixture, installing
+    // the runtime and the warmup probe are not what the deadline measures.
+    let startup = op(
+        CancelToken::default(),
+        EffectClass::Observe,
+        Duration::from_secs(10),
+    )
+    .observe()
+    .unwrap()
+    .with_probes(runtime.clone());
     let warmup = ProbeCommand {
         argv: vec!["/usr/bin/true".into()],
         cwd: home.into(),
@@ -121,15 +127,23 @@ pub fn run(entry: &str, args: &[OsString], cancel: CancelToken) {
         deadline: Duration::from_secs(2),
         max_output: 4096,
     };
-    assert!(matches!(cx.probe_process(warmup), Observed::Verified(..)));
+    assert!(matches!(
+        startup.probe_process(warmup),
+        Observed::Verified(..)
+    ));
     println!(
         "{}",
-        json!({"observer": ident::process_identity(std::process::id()).verified().unwrap(), "guard": runtime.guard_identity(&cx).verified().unwrap()})
+        json!({"observer": ident::process_identity(std::process::id()).verified().unwrap(), "guard": runtime.guard_identity(&startup).verified().unwrap()})
     );
     std::io::stdout().flush().unwrap();
-    // Harness may kill or stop the guard before allowing registration.
+    // Harness may kill or stop the guard before allowing registration. The
+    // proof's budget starts when the harness releases it, never before.
     let mut line = String::new();
     std::io::stdin().lock().read_line(&mut line).unwrap();
+    let cx = op(cancel, EffectClass::Observe, Duration::from_secs(10))
+        .observe()
+        .unwrap()
+        .with_probes(runtime);
     let mode = args[2].to_str().unwrap();
     let mut env = BTreeMap::new();
     env.insert(
@@ -168,7 +182,14 @@ pub fn run(entry: &str, args: &[OsString], cancel: CancelToken) {
         argv,
         cwd: home.into(),
         env,
-        deadline: Duration::from_millis(1200),
+        // The workload modes prove the guard's O14 deadline (1200ms) plus
+        // grace. The one-shot observations prove what they see - an empty
+        // diff, a missing tool, a bounded capture - so they get the proof's
+        // remaining budget instead of a machine-speed assumption.
+        deadline: match mode {
+            "git" | "missing" | "capture" => cx.remaining(),
+            _ => Duration::from_millis(1200),
+        },
         max_output: if mode == "capture" { 64 } else { 4096 },
     });
     match output {
