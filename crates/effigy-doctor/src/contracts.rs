@@ -6,6 +6,7 @@ pub mod check_id {
     pub const MANIFEST_SCHEMA_UNSUPPORTED_VALUE: &str = "manifest.schema.unsupported_value";
     pub const MANIFEST_CONFLICTS: &str = "manifest.conflicts";
     pub const TASK_REFERENCES_RESOLVE: &str = "tasks.references.resolve";
+    pub const PINNED_SOURCES_DRIFT: &str = "sources.pinned-drift";
     pub const DEPENDENCY_LINK_HEALTH: &str = "dependencies.link-health";
     /// v0.14 task state families (`tasks.legacy-state.<family>`): informational,
     /// but listed so an operator knows what is safe to delete.
@@ -25,7 +26,7 @@ pub mod check_id {
     pub const CATALOG_PACK_HEALTH: &str = "catalog.pack-health";
 }
 
-pub const ALL_CHECK_IDS: [&str; 21] = [
+pub const ALL_CHECK_IDS: [&str; 22] = [
     check_id::WORKSPACE_ROOT_RESOLUTION,
     check_id::ENVIRONMENT_TOOLS_REQUIRED,
     check_id::MANIFEST_PARSE,
@@ -33,6 +34,7 @@ pub const ALL_CHECK_IDS: [&str; 21] = [
     check_id::MANIFEST_SCHEMA_UNSUPPORTED_VALUE,
     check_id::MANIFEST_CONFLICTS,
     check_id::TASK_REFERENCES_RESOLVE,
+    check_id::PINNED_SOURCES_DRIFT,
     check_id::DEPENDENCY_LINK_HEALTH,
     check_id::SCAN_GOD_FILES,
     check_id::SCAN_DUPLICATE_BLOCKS,
@@ -93,6 +95,8 @@ pub mod remediation {
         "Move each `[drafts.<name>]` definition to `[tasks.<name>]` with `visibility = \"internal\"`, replace `draft` step keys with `task = \"<name>\"`, and remove `created`/`expires`/`purpose`; the draft namespace was removed in v0.15 (see CHANGELOG.md).";
     pub const REMOVE_MANIFEST_SHELL_TABLE: &str =
         "Remove `[shell]`; managed shell tabs always run `exec ${SHELL:-/bin/zsh} -i` and there is no manifest override in v0.15 (see CHANGELOG.md).";
+    pub const RESOLVE_PINNED_SOURCE_DRIFT: &str =
+        "Resolve the pinned source by hand: commit or discard its local changes, or check out the pinned commit. Effigy never resets, fetches forward or cleans a working copy; move the pin only by editing `rev` or `rev_file` (see CHANGELOG.md).";
     pub const SCHEMA_TABLE_ROOT_REQUIRED: &str =
         "Use table-based TOML with sections like `[tasks]`.";
     pub const MANIFEST_READ_FAILURE: &str =

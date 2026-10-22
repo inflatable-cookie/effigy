@@ -184,24 +184,28 @@ from the workspace catalog crate rather than redefining.
 
 ## `[bootstrap]`
 
-First-run setup steps, executed by `effigy bootstrap`:
+The one command for downloading and starting someone else's project
+(`effigy bootstrap [<git-url>]`; no URL prepares this checkout in place):
 
 ```toml
 [bootstrap]
-run = [
-  { task = "bootstrap deps sync" },
-  { task = "doctor" },
-]
-start = "dev"                              # single selector
-# start = ["container:up", "dev"]          # or array, sequential
-# start = [{ task = "container:up" }, { task = "dev" }]   # table form
-submodules = "recursive"
+setup = ["workspace:js:prepare", "db:seed:schema"]  # ordered task selectors
+start = "dev"                                       # one selector; --no-start skips it
+submodules = true                                   # recursive init at recorded commits
+
+[sources.book]                     # pinned extra source; replaces `children`
+git = "git@github.com:contact-patch/book.git"
+rev = "<commit>"                   # or rev_file = "book.rev"; exactly one
+path = "../book"                   # relative to the manifest; siblings are normal
 ```
 
-`start` accepts a scalar selector or an array. Array entries are either
-bare selector strings or `{ task = "..." }` tables (mixed allowed).
-Args travel inline in the selector string (`"dev --foo bar"`). Arrays
-run in declaration order; the first failure aborts the chain.
+`setup` and `start` are ordinary task selectors, so environment, gateway,
+readiness, secrets and cleanup behave as they do for `effigy <selector>`.
+`[sources.<name>]` is a working copy pinned to one commit: a missing path is
+cloned at the pin, and an existing one with local changes or another HEAD is
+reported as drift and left untouched. `effigy doctor` reports that drift.
+Bootstrap never resets a working copy and never runs a package manager; a first
+database seed is a repo task in `setup`.
 
 ## `[release]`
 

@@ -50,7 +50,6 @@ pub(crate) fn resolve_project_name(
         .project_name
         .clone()
         .unwrap_or_else(|| default_project_name(default_project_name_base, name, container_count));
-    let project_name = apply_bootstrap_fresh_session_suffix(repo_root, project_name);
     let project_name = scope_project_name(repo_root, project_name, config.share_runtime_identity)?;
     Ok(sanitize_project_name_component(&project_name))
 }
@@ -143,39 +142,6 @@ pub(crate) fn validate_unique_project_names(
         "containers must resolve to unique `project_name` values when more than one container is declared; duplicate effective project names: {}",
         duplicates.join("; ")
     )))
-}
-
-fn apply_bootstrap_fresh_session_suffix(repo_root: &Path, project_name: String) -> String {
-    let Some(session_id) = bootstrap_fresh_session_id(repo_root) else {
-        return project_name;
-    };
-    format!("{project_name}-{session_id}")
-}
-
-fn bootstrap_fresh_session_id(repo_root: &Path) -> Option<String> {
-    if let Some(value) = std::env::var("EFFIGY_BOOTSTRAP_FRESH_SESSION_ID")
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-    {
-        return Some(value);
-    }
-
-    let session_file = repo_root
-        .join(".effigy")
-        .join("runtime")
-        .join("bootstrap-fresh-session.json");
-    let source = std::fs::read_to_string(session_file).ok()?;
-    let parsed = serde_json::from_str::<serde_json::Value>(&source).ok()?;
-    if parsed.get("active").and_then(serde_json::Value::as_bool) != Some(true) {
-        return None;
-    }
-    parsed
-        .get("session_id")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
 }
 
 #[cfg(test)]

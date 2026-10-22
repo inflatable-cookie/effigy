@@ -1,5 +1,5 @@
 [manifest]
-extend = ["bootstrap.children", "secrets"]
+extend = ["sources", "secrets"]
 
 {% set resolved_project_name = inputs.project_name or inputs.workspace_subdir ~ "-" ~ bundle.name %}
 
@@ -190,23 +190,23 @@ concurrent = [
 ]
 
 [bootstrap]
-run = [
-  { task = "secrets init" },
-  { task = "container up --detach" },
-  { rhai = "{{ bundle.root }}/scripts/bootstrap-minio.rhai" },
-  { task = "bootstrap deps sync {% if inputs.sources.platform %}{{ inputs.sources.platform }}{% else %}../platform{% endif %}{% if inputs.dirs.api %} {{ inputs.dirs.api }}{% else %} app-api{% endif %}{% if inputs.dirs.client %} {{ inputs.dirs.client }}{% else %} app-client{% endif %}{% if inputs.dirs.ui %} {{ inputs.dirs.ui }}{% else %} app-ui{% endif %}{% if inputs.dirs.front %} {{ inputs.dirs.front }}{% else %} app-front{% endif %}{% if inputs.dirs.admin %} {{ inputs.dirs.admin }}{% else %} app-admin{% endif %}" },
+setup = [
+  "secrets init",
+  "container up --detach",
+  "bootstrap:content",
+  "workspace:js:prepare",
 ]
 start = "dev"
 
-[[bootstrap.children]]
+[sources.platform]
+git = "git@github.com:example/platform.git"
+rev = "0000000000000000000000000000000000000001"
 path = "{% if inputs.sources.platform %}{{ inputs.sources.platform }}{% else %}../platform{% endif %}"
-repo = "git@github.com:example/platform.git"
-branch = "main"
 
-[[bootstrap.children]]
+[sources.poodle]
+git = "git@github.com:inflatable-cookie/poodle.git"
+rev = "0000000000000000000000000000000000000002"
 path = "{% if inputs.sources.poodle %}{{ inputs.sources.poodle }}{% else %}../poodle{% endif %}"
-repo = "git@github.com:inflatable-cookie/poodle.git"
-branch = "main"
 
 [deploy.model.app]
 bundle = "{{ bundle.name }}"

@@ -1,8 +1,12 @@
+//! End-to-end `effigy bootstrap` behaviour through the built binary.
+//!
+//! Every fixture is a local git remote under an owned fixture root; no real
+//! project is cloned or bootstrapped.
+
 mod support;
 
 use serde_json::Value;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use support::temp_workspace;
@@ -12,42 +16,33 @@ fn parse_stdout_json(output: &std::process::Output) -> Value {
     serde_json::from_str(&stdout).expect("json parse")
 }
 
+fn git(root: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .expect("git command");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .expect("utf8 git output")
+        .trim()
+        .to_owned()
+}
+
 fn init_git_repo(root: &Path) {
-    let init = Command::new("git")
-        .arg("init")
-        .arg(root)
-        .output()
-        .expect("git init");
-    assert!(init.status.success(), "git init failed: {init:?}");
-    let _ = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["config", "user.email", "effigy-tests@example.com"])
-        .output()
-        .expect("git config email");
-    let _ = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["config", "user.name", "Effigy Tests"])
-        .output()
-        .expect("git config name");
+    git(root, &["init", "--quiet"]);
+    git(root, &["config", "user.email", "effigy-tests@example.com"]);
+    git(root, &["config", "user.name", "Effigy Tests"]);
 }
 
 fn commit_all(root: &Path, message: &str) {
-    let add = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["add", "."])
-        .output()
-        .expect("git add");
-    assert!(add.status.success(), "git add failed: {add:?}");
-    let commit = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["commit", "-m", message])
-        .output()
-        .expect("git commit");
-    assert!(commit.status.success(), "git commit failed: {commit:?}");
+    git(root, &["add", "."]);
+    git(root, &["commit", "--quiet", "-m", message]);
 }
 
 fn init_bare_remote(path: &Path) {
@@ -73,542 +68,426 @@ fn attach_remote_and_push(worktree: &Path, remote: &Path) {
         add_remote.status.success(),
         "git remote add failed: {add_remote:?}"
     );
-    let branch = Command::new("git")
-        .arg("-C")
-        .arg(worktree)
-        .args(["symbolic-ref", "--quiet", "--short", "HEAD"])
-        .output()
-        .expect("git symbolic-ref");
-    assert!(
-        branch.status.success(),
-        "git symbolic-ref failed: {branch:?}"
-    );
-    let branch = String::from_utf8(branch.stdout)
-        .expect("utf8 branch")
-        .trim()
-        .to_owned();
+    let branch = git(worktree, &["symbolic-ref", "--quiet", "--short", "HEAD"]);
     let push = Command::new("git")
         .arg("-C")
         .arg(worktree)
-        .args(["push", "-u", "origin", &branch])
+        .args(["push", "-q", "-u", "origin", &branch])
         .output()
         .expect("git push");
     assert!(push.status.success(), "git push failed: {push:?}");
 }
 
-fn create_child_remote(name: &str) -> PathBuf {
-    let worktree = temp_workspace("effigy-bootstrap-cli", &format!("{name}-worktree"));
-    fs::create_dir_all(worktree.join("scripts")).expect("mkdir child scripts");
-    fs::write(worktree.join("README.md"), format!("# {name}\n")).expect("write child readme");
-    fs::write(
-        worktree.join("effigy.toml"),
-        r#"[tasks."bootstrap:child"]
-run = "sh ./scripts/child-setup.sh"
-"#,
-    )
-    .expect("write child manifest");
-    fs::write(
-        worktree.join("scripts/child-setup.sh"),
-        "#!/bin/sh\nset -eu\nprintf child-setup > child-setup.txt\npwd > child-pwd.txt\n",
-    )
-    .expect("write child setup");
-    let mut perms = fs::metadata(worktree.join("scripts/child-setup.sh"))
-        .expect("child setup metadata")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(worktree.join("scripts/child-setup.sh"), perms).expect("chmod child");
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init child");
+fn publish(worktree: &Path, name: &str) -> PathBuf {
+    init_git_repo(worktree);
+    commit_all(worktree, "fixture");
     let remote = temp_workspace("effigy-bootstrap-cli", &format!("{name}-bare")).join("remote.git");
     init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
+    attach_remote_and_push(worktree, &remote);
     remote
 }
 
-fn create_root_remote_with_bootstrap(child_remote: &Path) -> PathBuf {
-    let worktree = temp_workspace("effigy-bootstrap-cli", "root-worktree");
-    fs::create_dir_all(worktree.join("scripts")).expect("mkdir root scripts");
-    fs::write(
-        worktree.join("effigy.toml"),
-        format!(
-            r#"[bootstrap]
-setup = [{{ task = "bootstrap:root" }}]
-start = "bootstrap:start"
+fn create_content_remote(name: &str) -> PathBuf {
+    let worktree = temp_workspace("effigy-bootstrap-cli", &format!("{name}-content"));
+    fs::write(worktree.join("content.txt"), "pinned\n").expect("write content");
+    publish(&worktree, name)
+}
 
-[[bootstrap.children]]
-path = "child-app"
-repo = "{}"
-setup = [{{ task = "bootstrap:child" }}]
-required = true
-
-[tasks."bootstrap:root"]
-run = "sh ./scripts/root-setup.sh"
-
-[tasks."bootstrap:start"]
-run = "sh ./scripts/start.sh"
-"#,
-            child_remote.display()
-        ),
-    )
-    .expect("write root manifest");
-    fs::write(
-        worktree.join("scripts/root-setup.sh"),
-        "#!/bin/sh\nset -eu\nprintf root-setup > root-setup.txt\npwd > root-pwd.txt\n",
-    )
-    .expect("write root setup");
-    fs::write(
-        worktree.join("scripts/start.sh"),
-        "#!/bin/sh\nset -eu\nprintf started > start.txt\npwd > start-pwd.txt\n",
-    )
-    .expect("write start script");
-    for name in ["root-setup.sh", "start.sh"] {
-        let script = worktree.join("scripts").join(name);
-        let mut perms = fs::metadata(&script)
-            .expect("script metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script, perms).expect("chmod script");
+/// A project remote whose setup and start selectors append to `order.txt`.
+fn create_project_remote(
+    name: &str,
+    setup: &[&str],
+    start: Option<&str>,
+    sources: &str,
+) -> PathBuf {
+    let worktree = temp_workspace("effigy-bootstrap-cli", &format!("{name}-worktree"));
+    let setup = setup
+        .iter()
+        .map(|selector| format!("\"{selector}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut manifest = String::from("[bootstrap]\n");
+    if !setup.is_empty() {
+        manifest.push_str(&format!("setup = [{setup}]\n"));
     }
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init root");
-    let remote = temp_workspace("effigy-bootstrap-cli", "root-bare").join("remote.git");
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
-fn create_root_remote_with_array_start() -> PathBuf {
-    let worktree = temp_workspace("effigy-bootstrap-cli", "array-start-worktree");
-    fs::create_dir_all(worktree.join("scripts")).expect("mkdir array-start scripts");
-    fs::write(
-        worktree.join("effigy.toml"),
-        r#"[bootstrap]
-start = ["bootstrap:start-a", "bootstrap:start-b"]
-
-[tasks."bootstrap:start-a"]
-run = "sh ./scripts/start-a.sh"
-
-[tasks."bootstrap:start-b"]
-run = "sh ./scripts/start-b.sh"
-"#,
-    )
-    .expect("write array-start manifest");
-    fs::write(
-        worktree.join("scripts/start-a.sh"),
-        "#!/bin/sh\nset -eu\nprintf a > start-a.txt\nprintf a >> start-order.txt\n",
-    )
-    .expect("write start-a script");
-    fs::write(
-        worktree.join("scripts/start-b.sh"),
-        "#!/bin/sh\nset -eu\nprintf b > start-b.txt\nprintf b >> start-order.txt\n",
-    )
-    .expect("write start-b script");
-    for name in ["start-a.sh", "start-b.sh"] {
-        let script = worktree.join("scripts").join(name);
-        let mut perms = fs::metadata(&script)
-            .expect("script metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script, perms).expect("chmod script");
+    if let Some(start) = start {
+        manifest.push_str(&format!("start = \"{start}\"\n"));
     }
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init array-start root");
-    let remote = temp_workspace("effigy-bootstrap-cli", "array-start-bare").join("remote.git");
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
+    manifest.push_str(sources);
+    manifest.push_str(
+        "\n[tasks.\"record-a\"]\nrun = \"printf 'a\\n' >> order.txt\"\n\
+         \n[tasks.\"record-b\"]\nrun = \"printf 'b\\n' >> order.txt\"\n\
+         \n[tasks.\"record-dev\"]\nrun = \"printf 'dev\\n' >> order.txt\"\n\
+         \n[tasks.dev]\nrun = \"printf 'dev-ok\\n'\"\n",
+    );
+    fs::write(worktree.join("effigy.toml"), manifest).expect("write manifest");
+    publish(&worktree, name)
 }
 
-fn create_root_remote_with_table_start() -> PathBuf {
-    let worktree = temp_workspace("effigy-bootstrap-cli", "table-start-worktree");
-    fs::create_dir_all(worktree.join("scripts")).expect("mkdir table-start scripts");
-    fs::write(
-        worktree.join("effigy.toml"),
-        r#"[bootstrap]
-start = [{ task = "bootstrap:start-a" }, "bootstrap:start-b"]
-
-[tasks."bootstrap:start-a"]
-run = "sh ./scripts/start-a.sh"
-
-[tasks."bootstrap:start-b"]
-run = "sh ./scripts/start-b.sh"
-"#,
-    )
-    .expect("write table-start manifest");
-    fs::write(
-        worktree.join("scripts/start-a.sh"),
-        "#!/bin/sh\nset -eu\nprintf a > start-a.txt\nprintf a >> start-order.txt\n",
-    )
-    .expect("write start-a script");
-    fs::write(
-        worktree.join("scripts/start-b.sh"),
-        "#!/bin/sh\nset -eu\nprintf b > start-b.txt\nprintf b >> start-order.txt\n",
-    )
-    .expect("write start-b script");
-    for name in ["start-a.sh", "start-b.sh"] {
-        let script = worktree.join("scripts").join(name);
-        let mut perms = fs::metadata(&script)
-            .expect("script metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script, perms).expect("chmod script");
-    }
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init table-start root");
-    let remote = temp_workspace("effigy-bootstrap-cli", "table-start-bare").join("remote.git");
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
-fn create_plain_root_remote() -> PathBuf {
-    let worktree = temp_workspace("effigy-bootstrap-cli", "plain-root-worktree");
-    fs::write(worktree.join("README.md"), "# plain root\n").expect("write plain readme");
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init plain root");
-    let remote = temp_workspace("effigy-bootstrap-cli", "plain-root-bare").join("remote.git");
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
+fn effigy(args: &[&str], cwd: &Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(args)
+        .env("NO_COLOR", "1")
+        .current_dir(cwd)
+        .output()
+        .expect("run effigy")
 }
 
 #[test]
 fn bootstrap_help_is_command_specific() {
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("bootstrap")
-        .arg("--help")
-        .env("NO_COLOR", "1")
-        .output()
-        .expect("run effigy");
-
+    let root = temp_workspace("effigy-bootstrap-cli", "help");
+    let output = effigy(&["bootstrap", "--help"], &root);
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    assert!(stdout.contains("bootstrap Help"));
-    assert!(stdout.contains(
-        "effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--backend <containerd|docker>] [--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--plan] [--json]"
-    ));
-    assert!(stdout.contains("effigy bootstrap teardown [--yes] [--json]"));
-    assert!(stdout.contains("child repo checkout"));
-    assert!(!stdout.contains("release Help"));
+    assert!(stdout.contains("bootstrap Help"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "effigy bootstrap [<GIT_URL>] [--path <DIR>] [--branch <NAME>] [--no-start] [--plan] [--json]"
+        ),
+        "{stdout}"
+    );
+    assert!(stdout.contains("[sources.<name>]"), "{stdout}");
+    assert!(!stdout.contains("--db-seed"), "{stdout}");
+    assert!(!stdout.contains("bootstrap teardown"), "{stdout}");
+    assert!(!stdout.contains("release Help"), "{stdout}");
 }
 
 #[test]
-fn bootstrap_plan_json_reports_resolved_destination() {
+fn bootstrap_plan_json_reports_the_plan_and_mutates_nothing() {
     let root = temp_workspace("effigy-bootstrap-cli", "plan-json");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .arg("bootstrap")
-        .arg("git@github.com:inflatable-cookie/loophole.git")
-        .arg("--branch")
-        .arg("main")
-        .arg("--fresh")
-        .arg("--start")
-        .arg("--plan")
-        .env("NO_COLOR", "1")
-        .current_dir(&root)
-        .output()
-        .expect("run effigy bootstrap");
-
+    let output = effigy(
+        &[
+            "--json",
+            "bootstrap",
+            "git@github.com:inflatable-cookie/loophole.git",
+            "--branch",
+            "main",
+            "--plan",
+        ],
+        &root,
+    );
     assert!(output.status.success(), "bootstrap failed: {output:?}");
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["schema"], "effigy.command.v1");
     assert_eq!(parsed["command"]["kind"], "bootstrap");
     assert_eq!(parsed["result"]["schema"], "effigy.bootstrap.v1");
     assert_eq!(parsed["result"]["phase"], "plan");
-    assert_eq!(parsed["result"]["repo_name"], "loophole");
-    assert_eq!(parsed["result"]["fresh"], true);
+    assert_eq!(parsed["result"]["branch"], "main");
+    assert_eq!(parsed["result"]["plan"]["clone"]["branch"], "main");
     let canonical_root = fs::canonicalize(&root).expect("canonicalize temp root");
     assert_eq!(
         parsed["result"]["destination"],
         canonical_root.join("loophole").display().to_string()
     );
+    assert!(!root.join("loophole").exists());
 }
 
 #[test]
-fn bootstrap_teardown_json_reports_session_cleanup() {
-    let root = temp_workspace("effigy-bootstrap-cli", "teardown-json");
-    fs::write(root.join("effigy.toml"), "").expect("write manifest");
-    fs::create_dir_all(root.join(".effigy/runtime")).expect("mkdir session dir");
-    fs::write(
-        root.join(".effigy/runtime/bootstrap-fresh-session.json"),
-        format!(
-            r#"{{
-  "session_id": "fresh-test-session",
-  "root_repo": "{}",
-  "repos": ["{}"],
-  "active": true
-}}
-"#,
-            root.display(),
-            root.display()
-        ),
-    )
-    .expect("write session record");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .arg("bootstrap")
-        .arg("teardown")
-        .arg("--yes")
-        .env("NO_COLOR", "1")
-        .current_dir(&root)
-        .output()
-        .expect("run effigy bootstrap teardown");
-
-    assert!(
-        output.status.success(),
-        "bootstrap teardown failed: {output:?}"
-    );
-    let parsed = parse_stdout_json(&output);
-    assert_eq!(parsed["schema"], "effigy.command.v1");
-    assert_eq!(parsed["command"]["kind"], "bootstrap");
-    assert_eq!(parsed["result"]["schema"], "effigy.bootstrap-teardown.v1");
-    assert_eq!(parsed["result"]["ok"], true);
-    assert_eq!(
-        parsed["result"]["result"]["session_id"],
-        "fresh-test-session"
-    );
-    assert_eq!(
-        parsed["result"]["result"]["cleaned_repos"],
-        Value::Array(vec![])
-    );
-    assert!(
-        !root
-            .join(".effigy/runtime/bootstrap-fresh-session.json")
-            .exists(),
-        "session record should be removed"
-    );
-}
-
-#[test]
-fn bootstrap_executes_root_child_and_start_via_binary() {
-    let child_remote = create_child_remote("child-app");
-    let root_remote = create_root_remote_with_bootstrap(&child_remote);
+fn bootstrap_executes_setup_then_start_via_binary() {
+    let remote = create_project_remote("clean", &["record-a", "record-b"], Some("record-dev"), "");
     let cwd = temp_workspace("effigy-bootstrap-cli", "execution");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .arg("bootstrap")
-        .arg(root_remote.display().to_string())
-        .arg("--start")
-        .env("NO_COLOR", "1")
-        .current_dir(&cwd)
-        .output()
-        .expect("run effigy bootstrap");
-
+    let output = effigy(
+        &["--json", "bootstrap", &remote.display().to_string()],
+        &cwd,
+    );
     assert!(output.status.success(), "bootstrap failed: {output:?}");
     let parsed = parse_stdout_json(&output);
-    assert_eq!(parsed["command"]["kind"], "bootstrap");
-    assert_eq!(parsed["result"]["schema"], "effigy.bootstrap.v1");
     assert_eq!(parsed["result"]["phase"], "executed");
     assert_eq!(parsed["result"]["root_repo_state"], "cloned");
-    assert_eq!(parsed["result"]["start"]["requested"], true);
+    assert_eq!(parsed["result"]["setup"]["ran"][0], "record-a");
     assert_eq!(parsed["result"]["start"]["ran"], true);
+    assert_eq!(parsed["result"]["start"]["selector"], "record-dev");
 
     let destination = cwd.join("remote");
-    let canonical_destination = destination.canonicalize().expect("canonical destination");
-    let canonical_child = destination
-        .join("child-app")
-        .canonicalize()
-        .expect("canonical child destination");
     assert_eq!(
-        fs::read_to_string(destination.join("root-setup.txt")).expect("root setup marker"),
-        "root-setup"
+        fs::read_to_string(destination.join("order.txt")).expect("order file"),
+        "a\nb\ndev\n"
     );
+    assert!(!cwd.join("order.txt").exists());
+}
+
+#[test]
+fn bootstrap_clones_a_pinned_source_at_its_recorded_commit() {
+    let content = create_content_remote("pinned");
+    let pinned = git(&content, &["rev-parse", "HEAD"]);
+    let sources = format!(
+        "\n[sources.book]\ngit = \"{}\"\nrev = \"{pinned}\"\npath = \"../book\"\n",
+        content.display()
+    );
+    let remote = create_project_remote("pinned-project", &["record-a"], None, &sources);
+    let cwd = temp_workspace("effigy-bootstrap-cli", "pinned-source");
+    let output = effigy(
+        &["--json", "bootstrap", &remote.display().to_string()],
+        &cwd,
+    );
+    assert!(output.status.success(), "bootstrap failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["sources"][0]["state"], "cloned");
+    assert_eq!(parsed["result"]["sources"][0]["rev"], pinned);
+    let book = cwd.join("book");
     assert_eq!(
-        fs::read_to_string(destination.join("root-pwd.txt"))
-            .expect("root setup cwd marker")
-            .trim(),
-        canonical_destination.display().to_string()
+        git(&book, &["rev-parse", "HEAD"]),
+        pinned,
+        "the source sits exactly at its pin"
     );
-    assert_eq!(
-        fs::read_to_string(destination.join("child-app/child-setup.txt"))
-            .expect("child setup marker"),
-        "child-setup"
+}
+
+#[test]
+fn bootstrap_reports_pinned_source_drift_and_leaves_the_working_copy_alone() {
+    let content = create_content_remote("drift");
+    let pinned = git(&content, &["rev-parse", "HEAD"]);
+    let sources = format!(
+        "\n[sources.book]\ngit = \"{}\"\nrev = \"{pinned}\"\npath = \"../book\"\n",
+        content.display()
     );
-    assert_eq!(
-        fs::read_to_string(destination.join("child-app/child-pwd.txt"))
-            .expect("child setup cwd marker")
-            .trim(),
-        canonical_child.display().to_string()
+    let remote = create_project_remote("drift-project", &["record-a"], None, &sources);
+    let cwd = temp_workspace("effigy-bootstrap-cli", "drift-source");
+    let book = cwd.join("book");
+    let clone = Command::new("git")
+        .arg("clone")
+        .arg(&content)
+        .arg(&book)
+        .output()
+        .expect("git clone");
+    assert!(clone.status.success(), "clone: {clone:?}");
+    fs::write(book.join("local.txt"), "my work\n").expect("write local change");
+
+    let output = effigy(
+        &["--json", "bootstrap", &remote.display().to_string()],
+        &cwd,
     );
-    assert_eq!(
-        fs::read_to_string(destination.join("start.txt")).expect("start marker"),
-        "started"
-    );
-    assert_eq!(
-        fs::read_to_string(destination.join("start-pwd.txt"))
-            .expect("start cwd marker")
-            .trim(),
-        canonical_destination.display().to_string()
-    );
+    assert!(output.status.success(), "bootstrap failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["sources"][0]["state"], "drift");
+    assert_eq!(parsed["result"]["sources"][0]["dirty"], true);
     assert!(
-        !cwd.join("root-setup.txt").exists()
-            && !cwd.join("child-setup.txt").exists()
-            && !cwd.join("start.txt").exists(),
-        "bootstrap tasks should not write markers into invocation cwd"
-    );
-}
-
-#[test]
-fn bootstrap_runs_array_start_tasks_in_declaration_order() {
-    let root_remote = create_root_remote_with_array_start();
-    let cwd = temp_workspace("effigy-bootstrap-cli", "array-start-execution");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .arg("bootstrap")
-        .arg(root_remote.display().to_string())
-        .arg("--start")
-        .env("NO_COLOR", "1")
-        .current_dir(&cwd)
-        .output()
-        .expect("run effigy bootstrap");
-
-    assert!(output.status.success(), "bootstrap failed: {output:?}");
-    let parsed = parse_stdout_json(&output);
-    assert_eq!(parsed["result"]["start"]["requested"], true);
-    assert_eq!(parsed["result"]["start"]["ran"], true);
-    assert_eq!(parsed["result"]["start"]["task"], "bootstrap:start-a");
-    assert_eq!(
-        parsed["result"]["start"]["tasks"],
-        serde_json::json!(["bootstrap:start-a", "bootstrap:start-b"])
-    );
-
-    let destination = cwd.join("remote");
-    assert_eq!(
-        fs::read_to_string(destination.join("start-order.txt")).expect("start order"),
-        "ab"
+        parsed["result"]["warnings"][0]
+            .as_str()
+            .is_some_and(|warning| warning.contains("drift")),
+        "{parsed}"
     );
     assert_eq!(
-        fs::read_to_string(destination.join("start-a.txt")).expect("start-a marker"),
-        "a"
-    );
-    assert_eq!(
-        fs::read_to_string(destination.join("start-b.txt")).expect("start-b marker"),
-        "b"
-    );
-}
-
-#[test]
-fn bootstrap_runs_table_form_start_entries() {
-    let root_remote = create_root_remote_with_table_start();
-    let cwd = temp_workspace("effigy-bootstrap-cli", "table-start-execution");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .arg("bootstrap")
-        .arg(root_remote.display().to_string())
-        .arg("--start")
-        .env("NO_COLOR", "1")
-        .current_dir(&cwd)
-        .output()
-        .expect("run effigy bootstrap");
-
-    assert!(output.status.success(), "bootstrap failed: {output:?}");
-    let parsed = parse_stdout_json(&output);
-    assert_eq!(parsed["result"]["start"]["requested"], true);
-    assert_eq!(parsed["result"]["start"]["ran"], true);
-    assert_eq!(parsed["result"]["start"]["task"], "bootstrap:start-a");
-    assert_eq!(
-        parsed["result"]["start"]["tasks"],
-        serde_json::json!(["bootstrap:start-a", "bootstrap:start-b"])
-    );
-
-    let destination = cwd.join("remote");
-    assert_eq!(
-        fs::read_to_string(destination.join("start-order.txt")).expect("start order"),
-        "ab"
-    );
-    assert_eq!(
-        fs::read_to_string(destination.join("start-a.txt")).expect("start-a marker"),
-        "a"
-    );
-    assert_eq!(
-        fs::read_to_string(destination.join("start-b.txt")).expect("start-b marker"),
-        "b"
+        fs::read_to_string(book.join("local.txt")).expect("local change kept"),
+        "my work\n"
     );
 }
 
 #[test]
 fn bootstrap_reports_missing_bootstrap_contract_via_binary() {
-    let root_remote = create_plain_root_remote();
-    let cwd = temp_workspace("effigy-bootstrap-cli", "no-bootstrap-contract");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .arg("--json")
-        .arg("bootstrap")
-        .arg(root_remote.display().to_string())
-        .arg("--no-start")
-        .env("NO_COLOR", "1")
-        .current_dir(&cwd)
-        .output()
-        .expect("run effigy bootstrap");
-
+    let worktree = temp_workspace("effigy-bootstrap-cli", "no-contract");
+    fs::write(worktree.join("README.md"), "# plain\n").expect("write readme");
+    let remote = publish(&worktree, "no-contract");
+    let cwd = temp_workspace("effigy-bootstrap-cli", "no-contract-run");
+    let output = effigy(
+        &["--json", "bootstrap", &remote.display().to_string()],
+        &cwd,
+    );
     assert!(output.status.success(), "bootstrap failed: {output:?}");
     let parsed = parse_stdout_json(&output);
-    assert_eq!(parsed["command"]["kind"], "bootstrap");
-    assert_eq!(parsed["result"]["schema"], "effigy.bootstrap.v1");
-    assert_eq!(parsed["result"]["phase"], "executed");
-    assert_eq!(parsed["result"]["manifest"]["file_found"], false);
+    assert_eq!(parsed["result"]["manifest_found"], false);
+    assert_eq!(parsed["result"]["root_repo_state"], "cloned");
+    assert_eq!(parsed["result"]["start"]["ran"], false);
+}
+
+#[test]
+fn bootstrap_reports_a_manifest_without_a_bootstrap_contract() {
+    let worktree = temp_workspace("effigy-bootstrap-cli", "no-bootstrap-table");
+    fs::write(
+        worktree.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"printf dev\"\n",
+    )
+    .expect("write manifest");
+    let remote = publish(&worktree, "no-bootstrap-table");
+    let cwd = temp_workspace("effigy-bootstrap-cli", "no-bootstrap-table-run");
+    let output = effigy(
+        &["--json", "bootstrap", &remote.display().to_string()],
+        &cwd,
+    );
+    assert!(output.status.success(), "bootstrap failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["manifest_found"], true);
     assert_eq!(
         parsed["result"]["manifest"]["bootstrap_contract_found"],
         false
     );
-    assert_eq!(parsed["result"]["children"], serde_json::json!([]));
-    assert_eq!(parsed["result"]["root"]["repo_state"], "cloned");
+    assert_eq!(parsed["result"]["start"]["ran"], false);
 }
 
 #[test]
 fn bootstrap_custom_destination_and_no_start_keep_setup_semantics() {
-    let child = create_child_remote("custom-child");
-    let remote = create_root_remote_with_bootstrap(&child);
-    let cwd = temp_workspace("effigy-bootstrap-cli", "custom-destination");
-    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["--json", "bootstrap"])
-        .arg(&remote)
-        .args(["--path", "custom", "--no-start"])
-        .env("NO_COLOR", "1")
-        .current_dir(&cwd)
-        .output()
-        .expect("custom destination bootstrap");
+    let remote = create_project_remote("custom-path", &["record-a"], Some("record-dev"), "");
+    let cwd = temp_workspace("effigy-bootstrap-cli", "custom-path-run");
+    let output = effigy(
+        &[
+            "--json",
+            "bootstrap",
+            &remote.display().to_string(),
+            "--path",
+            "./app",
+            "--no-start",
+        ],
+        &cwd,
+    );
     assert!(output.status.success(), "bootstrap failed: {output:?}");
-    let report = parse_stdout_json(&output);
-    assert_eq!(report["result"]["start"]["requested"], false);
-    assert_eq!(report["result"]["start"]["ran"], false);
-    let destination = cwd.join("custom");
-    assert!(destination.join("root-setup.txt").exists());
-    assert!(destination.join("child-app/child-setup.txt").exists());
-    assert!(!destination.join("start.txt").exists());
-    assert!(!cwd.join("remote").exists());
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["start"]["ran"], false);
+    assert_eq!(
+        fs::read_to_string(cwd.join("app/order.txt")).expect("order file"),
+        "a\n"
+    );
 }
 
 #[test]
-fn binary_fixture_owner_cleans_nested_git_roots_on_unwind() {
-    let foreign = tempfile::tempdir().expect("foreign sentinel owner");
-    fs::write(foreign.path().join("sentinel"), "untouched").expect("foreign sentinel");
-    let (send, recv) = std::sync::mpsc::channel();
-    let thread = std::thread::spawn(move || {
-        let child = create_child_remote("cleanup-child");
-        let root = create_root_remote_with_bootstrap(&child);
-        send.send(
-            root.ancestors()
-                .nth(2)
-                .expect("fixture owner")
-                .to_path_buf(),
-        )
-        .expect("send owner");
-        panic!("controlled fixture unwind");
-    });
-    let owner = recv.recv().expect("owned path");
-    assert!(thread.join().is_err(), "expected unwind");
-    assert!(
-        !owner.exists(),
-        "exact owned root, including Git remotes, must be removed"
-    );
+fn bootstrap_without_a_url_uses_the_current_checkout() {
+    let cwd = temp_workspace("effigy-bootstrap-cli", "in-place");
+    fs::write(
+        cwd.join("effigy.toml"),
+        r#"
+[bootstrap]
+setup = ["record-a"]
+start = "record-dev"
+
+[tasks."record-a"]
+run = "printf 'a\n' >> order.txt"
+
+[tasks."record-dev"]
+run = "printf 'dev\n' >> order.txt"
+"#,
+    )
+    .expect("write manifest");
+    let output = effigy(&["--json", "bootstrap"], &cwd);
+    assert!(output.status.success(), "bootstrap failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["root_repo_state"], "existing");
     assert_eq!(
-        fs::read_to_string(foreign.path().join("sentinel")).expect("foreign sentinel survives"),
-        "untouched"
+        fs::read_to_string(cwd.join("order.txt")).expect("order file"),
+        "a\ndev\n"
+    );
+}
+
+#[test]
+fn retired_bootstrap_surfaces_fail_with_their_replacement() {
+    let root = temp_workspace("effigy-bootstrap-cli", "retired");
+    for (args, expected) in [
+        (vec!["bootstrap", "children"], "[sources.<name>]"),
+        (vec!["bootstrap", "deps"], "[bootstrap].setup"),
+        (vec!["bootstrap", "teardown"], "container <name> down"),
+        (vec!["bootstrap", "./repo", "--db-seed", "x.sql"], "setup"),
+        (
+            vec!["bootstrap", "./repo", "--fresh"],
+            "container <name> down",
+        ),
+        (
+            vec!["bootstrap", "./repo", "--backend", "docker"],
+            "environment",
+        ),
+        (
+            vec!["bootstrap", "./repo", "--start"],
+            "start is the default",
+        ),
+    ] {
+        let output = effigy(&args, &root);
+        assert!(!output.status.success(), "expected failure for {args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(expected), "{args:?}: {stderr}");
+        assert!(stderr.contains("CHANGELOG.md"), "{args:?}: {stderr}");
+    }
+}
+
+fn fake_path(root: &Path, tools: &[&str]) -> String {
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).expect("mkdir bin");
+    for tool in tools {
+        let path = bin.join(tool);
+        fs::write(&path, "#!/bin/sh\nexit 0\n").expect("write tool");
+        let mut perms = fs::metadata(&path).expect("stat tool").permissions();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&path, perms).expect("chmod tool");
+    }
+    bin.display().to_string()
+}
+
+#[test]
+fn bootstrap_collects_every_missing_prerequisite_before_it_starts() {
+    let root = temp_workspace("effigy-bootstrap-cli", "prerequisites");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[bootstrap]
+setup = ["prepare"]
+
+[tasks.prepare]
+run = "printf prepared > prepared.txt"
+
+[containers]
+default = "dev"
+
+[containers.dev]
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    let bin = fake_path(&root, &["git"]);
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("bootstrap")
+        .env("NO_COLOR", "1")
+        .env("PATH", &bin)
+        .env("HOME", root.join("home"))
+        .current_dir(&root)
+        .output()
+        .expect("run effigy bootstrap");
+
+    assert!(!output.status.success(), "expected a prerequisite failure");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("prerequisite"), "{stderr}");
+    assert!(stderr.contains("is missing"), "{stderr}");
+    assert!(
+        stderr.contains("no container runtime is available"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("effigy config set containers.backend"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("Nothing was started, configured or logged in"),
+        "{stderr}"
+    );
+    assert!(
+        !root.join("prepared.txt").exists(),
+        "no setup selector may run past a missing prerequisite"
+    );
+}
+
+#[test]
+fn the_first_dev_acquires_a_missing_pinned_source() {
+    let content = create_content_remote("first-dev");
+    let pinned = git(&content, &["rev-parse", "HEAD"]);
+    let sources = format!(
+        "\n[sources.book]\ngit = \"{}\"\nrev = \"{pinned}\"\npath = \"../first-dev-book\"\n",
+        content.display()
+    );
+    let remote = create_project_remote("first-dev-project", &["record-a"], None, &sources);
+    let cwd = temp_workspace("effigy-bootstrap-cli", "first-dev");
+    let clone = Command::new("git")
+        .arg("clone")
+        .arg(&remote)
+        .arg(cwd.join("app"))
+        .output()
+        .expect("git clone");
+    assert!(clone.status.success(), "clone: {clone:?}");
+    let app = cwd.join("app");
+    assert!(!cwd.join("first-dev-book").exists());
+
+    let output = effigy(&["dev"], &app);
+    assert!(output.status.success(), "dev failed: {output:?}");
+    let book = cwd.join("first-dev-book");
+    assert_eq!(
+        git(&book, &["rev-parse", "HEAD"]),
+        pinned,
+        "the first dev acquires the pinned source at its pin"
     );
 }

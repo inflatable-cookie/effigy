@@ -1,15 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsString;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use effigy_artifacts::{
     stage_local_artifact, stage_oci_artifact, ArtifactSourceRef, LocalArtifactRef,
     LocalArtifactStagingRequest, OciArtifactAdapter, OciArtifactPullRequest,
     OciArtifactStagingRequest,
 };
-use effigy_bootstrap::BootstrapStagedDbSeed;
 use effigy_cli::BootstrapDbSeedInput;
 use effigy_data::{
     collect_manifest_data_targets, database_seed_import_command, database_seed_reset_command,
@@ -39,7 +36,7 @@ use crate::runner::runtime_session_context::{with_runtime_session_context, Runti
 use super::error::RunnerError;
 use effigy_cli::TaskInvocation;
 
-pub(in crate::runner) const DB_SEED_TASK: &str = "bootstrap:db-seed";
+pub(in crate::runner) const DB_SEED_TASK: &str = "data:seed";
 pub(in crate::runner) const DB_SEEDS_DIR: &str = ".effigy/local/db-seeds";
 pub(in crate::runner) const DB_SEEDS_METADATA_FILE: &str = "_effigy-db-seeds.json";
 pub(in crate::runner) const LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE: &str =
@@ -71,6 +68,14 @@ struct SeedMetadataEntry {
 
 pub(in crate::runner) fn data_seed_runtime_session_context() -> RuntimeSessionContext {
     RuntimeSessionContext::default()
+}
+
+/// One database dump staged into the repository for the seed task.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::runner) struct StagedDbSeed {
+    pub target: Option<String>,
+    pub source_path: PathBuf,
+    pub staged_path: PathBuf,
 }
 
 pub(in crate::runner) fn resolve_db_seed_input_paths(
@@ -250,7 +255,7 @@ pub(in crate::runner) fn collect_db_seed_prompts_from_io<R: BufRead, W: Write>(
 pub(in crate::runner) fn stage_db_seed_files(
     repo_root: &Path,
     db_seeds: &[BootstrapDbSeedInput],
-) -> Result<Vec<BootstrapStagedDbSeed>, RunnerError> {
+) -> Result<Vec<StagedDbSeed>, RunnerError> {
     let adapter = OrasCliArtifactAdapter::default();
     stage_db_seed_files_with_adapter(repo_root, db_seeds, &adapter)
 }
@@ -301,12 +306,12 @@ fn stage_db_seed_files_with_adapter(
     repo_root: &Path,
     db_seeds: &[BootstrapDbSeedInput],
     adapter: &dyn OciArtifactAdapter,
-) -> Result<Vec<BootstrapStagedDbSeed>, RunnerError> {
+) -> Result<Vec<StagedDbSeed>, RunnerError> {
     Ok(stage_db_seed_files_report_with_adapter(repo_root, db_seeds, adapter)?.staged)
 }
 
 struct DbSeedStageReport {
-    staged: Vec<BootstrapStagedDbSeed>,
+    staged: Vec<StagedDbSeed>,
     artifact_reports: Vec<serde_json::Value>,
 }
 
@@ -369,7 +374,7 @@ fn stage_db_seed_files_report_with_adapter(
                 "failed to encode db seed artifact staging report: {error}"
             ))
         })?;
-        staged.push(BootstrapStagedDbSeed {
+        staged.push(StagedDbSeed {
             target: plan.input.target.as_ref().map(ToString::to_string),
             source_path: PathBuf::from(artifact_report.metadata.source),
             staged_path: destination,
@@ -494,9 +499,7 @@ fn stage_seed_artifact(
     }
 }
 
-pub(in crate::runner) fn db_seed_env(
-    staged_db_seeds: &[BootstrapStagedDbSeed],
-) -> BTreeMap<String, String> {
+pub(in crate::runner) fn db_seed_env(staged_db_seeds: &[StagedDbSeed]) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     if staged_db_seeds.is_empty() {
         return env;
@@ -598,28 +601,6 @@ pub(in crate::runner) fn run_db_seed_task(
     }
     prepare_builtin_db_seed_runtime(repo_root)?;
     run_builtin_db_seed_task(repo_root, &manifest, env_overrides)
-}
-
-pub(in crate::runner) fn db_seed_task_requires_container_runtime(
-    repo_root: &Path,
-) -> Result<bool, RunnerError> {
-    let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
-    if let Some(task) = manifest.tasks.get(DB_SEED_TASK) {
-        let binding_resolution = resolve_execution_binding_resolution(
-            manifest
-                .task_defaults
-                .as_ref()
-                .and_then(|defaults| defaults.run_in),
-            manifest.systems.as_ref(),
-            manifest.containers.as_ref(),
-            DB_SEED_TASK,
-            task,
-            "database seed",
-        )?;
-        return Ok(binding_resolution.is_inline_container()
-            || binding_resolution.effective_policy(repo_root)?.is_some());
-    }
-    Ok(manifest.containers.is_some())
 }
 
 fn prepare_db_seed_runtime(
@@ -1057,48 +1038,6 @@ fn db_seed_service_selection_error(
                 "database target `{}` is ambiguous; expected exactly one matching database service for `{}`",
                 target.name.as_str(), target.database
             ))
-        }
-    }
-}
-
-fn bootstrap_env_override_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
-
-pub(in crate::runner) struct ScopedDbSeedEnvOverride {
-    _guard: MutexGuard<'static, ()>,
-    original: Vec<(String, Option<OsString>)>,
-}
-
-impl ScopedDbSeedEnvOverride {
-    pub(in crate::runner) fn set(entries: &BTreeMap<String, String>) -> Self {
-        let guard = bootstrap_env_override_lock()
-            .lock()
-            .expect("db seed env override mutex should not be poisoned");
-        let mut original = Vec::with_capacity(entries.len());
-        for (key, value) in entries {
-            original.push((key.clone(), std::env::var_os(key)));
-            unsafe {
-                std::env::set_var(key, value);
-            }
-        }
-        Self {
-            _guard: guard,
-            original,
-        }
-    }
-}
-
-impl Drop for ScopedDbSeedEnvOverride {
-    fn drop(&mut self) {
-        for (key, value) in self.original.drain(..) {
-            unsafe {
-                match value {
-                    Some(value) => std::env::set_var(&key, value),
-                    None => std::env::remove_var(&key),
-                }
-            }
         }
     }
 }

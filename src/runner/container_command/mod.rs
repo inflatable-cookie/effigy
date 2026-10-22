@@ -28,7 +28,7 @@ pub(in crate::runner) use gateway_registration::{
 };
 pub(in crate::runner) use lifecycle::{
     release_managed_environment, run_container_exec_capture_with_options,
-    run_container_exec_operation_capture, run_container_exec_stream, run_container_reset_adapter,
+    run_container_exec_operation_capture, run_container_exec_stream,
 };
 pub(in crate::runner) use secret_env::container_secret_runtime_env_path;
 

@@ -69,14 +69,14 @@ example = "dairy"
 [[inputs]]
 name = "sources.platform"
 type = "string"
-description = "Relative path from the consumer repo to the sibling workspace app checkout used by bootstrap sync, bootstrap children, and the bundled UI setup helper."
+description = "Relative path from the consumer repo to the sibling workspace app checkout used by bootstrap `setup`, the pinned `[sources.<name>]` declaration and the bundled UI setup helper."
 default = "../platform"
 example = "../../platform"
 
 [[inputs]]
 name = "sources.poodle"
 type = "string"
-description = "Relative path from the consumer repo to the sibling poodle checkout used by bootstrap children and the bundled UI setup helper."
+description = "Relative path from the consumer repo to the sibling poodle checkout used by the pinned `[sources.<name>]` declaration and the bundled UI setup helper."
 default = "../poodle"
 example = "../../poodle"
 

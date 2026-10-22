@@ -57,8 +57,9 @@ For narrative workflow guidance instead of lookup, start with:
   task-local `--json` where the command supports it; see
   [`017-json-output-contracts.md`](017-json-output-contracts.md)).
 - Need repo-health scanners: use `effigy scan`.
-- Need to clone or update a repo and run its declared bring-up path: use
-  `effigy bootstrap`.
+- Need to download and start someone else's project — clone or update it,
+  materialise its pinned sources, run its `setup` selectors and its `start`
+  selector: use `effigy bootstrap`.
 - Need to run the configured `[defer]` fallback even when the selector exists
   locally: use `effigy defer`.
 - Need a host-clean local web/service environment or data lifecycle tools: use
@@ -148,7 +149,7 @@ through the help route.
 | `effigy bundle` | Inspect the active repo bundle source and refresh repo-local git/OCI bundle sources | `inspect`, `sync`, `--repo`, `--json` | `effigy.bundle.inspect.v1`, `effigy.bundle.sync.v1` | `065-external-bundle-adoption.md` |
 | `effigy deploy` | Derive a provider-neutral deployment model, export provider files, inspect plans/status/history; apply and redeploy refuse as unsupported in v0.15 (Q-003) | `model`, `export <PROVIDER>`, `plan`, `apply`, `status`, `history`, `redeploy`, `--repo`, `--path`, `--write-report`, `--deployment`, `--yes`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1`, `effigy.deploy.plan.v1`, `effigy.deploy.apply.v1`, `effigy.deploy.status.v1`, `effigy.deploy.history.v1` | `074-deployment-guide.md`, [`../contracts/002-production-deployment-model.md`](../knowledge/contracts/002-production-deployment-model.md), [`../contracts/019-deployment-transaction-system-contract.md`](../knowledge/contracts/019-deployment-transaction-system-contract.md) |
 | `effigy rhai` | Inspect the registered Rhai host API surface available to scripts, including module/function names and side-effect posture | `surface`, `--json` | `effigy.rhai.surface.v1` | `061-rhai-script-steps-guide.md`, `068-rhai-host-surface-audit.md` |
-| `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, optionally stage DB seed dumps and run the standard `bootstrap:db-seed` task, optionally prompt for missing bundle DB dumps on a real TTY, optionally isolate generated-compose runtime state with `--fresh`, optionally pin this bootstrap session to `containerd` or `docker` with `--backend`, run `[bootstrap].start` after setup by default (`--no-start` to skip), and expose `bootstrap deps sync`, `bootstrap children status/sync`, and `bootstrap teardown` for typed dependency hydration, child checkout inspection/refresh, and fresh-session cleanup | `<git-url>`, `teardown`, `deps sync`, `children status`, `children sync`, `--path`, `--branch`, `--backend <containerd|docker>`, `--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>`, `--fresh`, `--no-prompt`, `--reuse-path`, `--no-start`, `--start`, `--plan`, `--yes`, `--js-only`, `--rust-only`, `--refresh-lock`, `--fetch-only`, `--checkout`, `--json` | `effigy.bootstrap.v1`, `effigy.bootstrap.deps.v1`, `effigy.bootstrap.children-status.v1`, `effigy.bootstrap.children-sync.v1`, `effigy.bootstrap-teardown.v1` | `057-bootstrap-repo-bringup.md` |
+| `effigy bootstrap` | Clone or update a repo from a git URL (or use this checkout with no URL), materialise its pinned bundle, catalog and `[sources.<name>]` sources, initialise submodules when `[bootstrap] submodules = true`, run its `setup` selectors in order as ordinary tasks, then start its `start` selector unless `--no-start` | `[<git-url>]`, `--path`, `--branch`, `--no-start`, `--plan`, `--json` | `effigy.bootstrap.v1` | `057-bootstrap-repo-bringup.md` |
 | `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--threshold/--warn`, `--high`, `--critical`, `--include`, `--exclude`, `--source-root`, marker overrides (`--warning-marker/--high-marker/--critical-marker`), `--show-warnings`, `--no-gitignore`, `--fail-on-findings`, `--markdown`, `--out`, `--json` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `022-manifest-cookbook.md` |
 | `effigy test` | Plan or run detected and configured test suites | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
 | `effigy init` | Prepare repo setup through one front door: bounded TTY wizard for plain terminal use, baseline managed setup without a project skill copy, wider setup inventory via checklist mode, explicit optional skill snapshot action, or named starter emission | `--check`, `--apply`, `--repair`, `--checklist`, `--apply-actions`, `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1`, `effigy.init.checklist.v1`, `effigy.init.actions.v1`, `effigy.init.list.v1` | `019-init-foundation.md` |
@@ -339,11 +340,7 @@ effigy deploy status <ENV> [--repo <PATH>] [--json]
 effigy deploy history <ENV> [--repo <PATH>] [--limit <N>] [--json]
 # Unsupported in v0.15; retained spelling always refuses:
 effigy deploy redeploy <ENV> [--repo <PATH>] --deployment <ID> --yes [--json]
-effigy bootstrap <GIT_URL> [--path <DIR>] [--branch <NAME>] [--backend <containerd|docker>] [--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>]... [--fresh] [--no-prompt] [--reuse-path] [--no-start] [--plan] [--json]
-effigy bootstrap teardown [--yes] [--json]
-effigy bootstrap deps sync [<path>...] [--js-only|--rust-only] [--refresh-lock] [--json]
-effigy bootstrap children status [--json]
-effigy bootstrap children sync [--fetch-only] [--checkout] [--json]
+effigy bootstrap [<GIT_URL>] [--path <DIR>] [--branch <NAME>] [--no-start] [--plan] [--json]
 ```
 
 ### Testing and Project Workflow
