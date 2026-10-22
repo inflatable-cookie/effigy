@@ -5,7 +5,6 @@ members = [
     "crates/effigy-test-support",
     "crates/effigy-kernel",
     "crates/effigy-bootstrap",
-    "crates/effigy-artifacts",
     "crates/effigy-builtin",
     "crates/effigy-changelog",
     "crates/effigy-catalog",
@@ -91,7 +90,6 @@ fault-injection = ["effigy-kernel/fault-injection"]
 [dependencies]
 base64 = "0.22"
 effigy-bootstrap = { path = "crates/effigy-bootstrap" }
-effigy-artifacts = { path = "crates/effigy-artifacts" }
 effigy-builtin = { path = "crates/effigy-builtin" }
 effigy-catalog = { path = "crates/effigy-catalog" }
 effigy-changelog = { path = "crates/effigy-changelog" }

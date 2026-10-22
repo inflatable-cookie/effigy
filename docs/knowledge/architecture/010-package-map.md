@@ -93,7 +93,7 @@ these callers. `deny.toml` remains the dependency policy authority.
 | `effigy-runtime` | runtime metadata, data/read/write/shell adapter helpers, and manager-backed runtime IO wrappers |
 | `effigy-process` | host process/runtime process primitives used by runner surfaces |
 | `effigy-data` | data target resolution, seed/dump source normalization, artifact handoff planning, and database command rendering |
-| `effigy-artifacts` | artifact refs, OCI adapter, staging/apply/capture plans, metadata, and operation reports |
+| `effigy-state` | state-stack planning/apply/capture/lineage, plus the `artifact` module (artifact refs, OCI adapter, staging/apply/capture plans, metadata, and operation reports; folded in from `effigy-artifacts` in v0.15) |
 
 ### Operator and policy domains
 
@@ -159,9 +159,9 @@ these callers. `deny.toml` remains the dependency policy authority.
 | [`src/runner/container_command/*`](../../../src/runner/container_command/mod.rs) | container command-surface glue: parse resolved CLI model, call operation/runtime/data helpers, render operator output |
 | [`src/runner/container_command/hosts.rs`](../../../src/runner/container_command/hosts.rs) | effective host map for one checkout: declared and scoped HTTP/TCP names |
 | [`src/runner/container_command/retire.rs`](../../../src/runner/container_command/retire.rs) | labelled per-scope retirement over the durable runtime-scope record |
-| [`src/runner/container_command/data.rs`](../../../src/runner/container_command/data.rs) | container data command glue over `effigy-data`, `effigy-artifacts`, container operation plans, and runtime IO adapters |
+| [`src/runner/container_command/data.rs`](../../../src/runner/container_command/data.rs) | container data command glue over `effigy-data`, `effigy-state::artifact`, container operation plans, and runtime IO adapters |
 | [`src/runner/db_seed.rs`](../../../src/runner/db_seed.rs) | bootstrap and task-facing DB seed glue over `effigy-data` source normalization, artifact staging, and task execution requests |
-| [`src/runner/artifact_command.rs`](../../../src/runner/artifact_command.rs) | artifact command glue over `effigy-artifacts` refs, OCI transport, staging, apply, and capture plans |
+| [`src/runner/state_command_artifact.rs`](../../../src/runner/state_command_artifact.rs) | `effigy state artifact` command glue over `effigy_state::artifact` refs, OCI transport, staging, and capture plans |
 
 ### Workspace/session ownership
 
@@ -220,23 +220,24 @@ of owning every runtime/container decision locally.
 | [`effigy-runtime-plan`](../../../crates/effigy-runtime-plan/src/lib.rs) | `RuntimeActivationRequest`, `RuntimeActivationPlan`, `RuntimeReadinessPlan`, `RuntimeAliasPlan`, `RuntimeLeasePlan`, `RuntimeActivationReport` | Pure runtime activation planning and report shape. Side effects remain in runner/runtime adapters. |
 | [`effigy-containers`](../../../crates/effigy-containers/src/lib.rs) | `ContainerManager`, `ContainerOperationRequest`, `ContainerOperationPlan`, `BackendId`, operation kind structs, and side-effect/safety models | Canonical container-domain crate for backend selection, typed lifecycle/read/exec/data/cache/volume planning, compose/runtime compatibility helpers, and workspace-aware container policy handling. |
 | [`effigy-data`](../../../crates/effigy-data/src/lib.rs) | `DataTargetRef`, `ResolvedDataTarget`, `DataSeedPlan`, `DataDumpPlan`, `DatabaseCommandPlan`, `ArtifactDataHandoff` | Data seed/dump planning, logical target resolution, database command rendering, and artifact handoff normalization. |
-| [`effigy-artifacts`](../../../crates/effigy-artifacts/src/lib.rs) | artifact refs, OCI refs, staging/capture/apply requests and reports | Artifact transport/staging substrate used by seed/dump and artifact commands. |
 
 ## Artifact Substrate Ownership Map
 
-`effigy-artifacts` is now an internal module facade rather than a one-file
-domain crate.
+The artifact substrate is the `effigy_state::artifact` module. It was the
+standalone `effigy-artifacts` crate until v0.15 folded it into `effigy-state`
+(Q-009), because `effigy-state` and the binary were its only consumers.
 
 | Module | Responsibility |
 | --- | --- |
-| [`crates/effigy-artifacts/src/lib.rs`](../../../crates/effigy-artifacts/src/lib.rs) | public compatibility facade and artifact crate tests |
-| [`crates/effigy-artifacts/src/refs.rs`](../../../crates/effigy-artifacts/src/refs.rs) | local/OCI source refs, source types, artifact kinds, and reference parsing |
-| [`crates/effigy-artifacts/src/metadata.rs`](../../../crates/effigy-artifacts/src/metadata.rs) | artifact metadata schema and metadata builder |
-| [`crates/effigy-artifacts/src/staging.rs`](../../../crates/effigy-artifacts/src/staging.rs) | local and pulled-OCI staging requests, reports, copy logic, and metadata writes |
-| [`crates/effigy-artifacts/src/oci.rs`](../../../crates/effigy-artifacts/src/oci.rs) | OCI request/report models, ORAS adapter, descriptor parsing, and ORAS failure remediation |
-| [`crates/effigy-artifacts/src/reports.rs`](../../../crates/effigy-artifacts/src/reports.rs) | artifact operation report model and operation/result enums |
-| [`crates/effigy-artifacts/src/errors.rs`](../../../crates/effigy-artifacts/src/errors.rs) | artifact ref, staging, and OCI error families |
-| [`crates/effigy-artifacts/src/util.rs`](../../../crates/effigy-artifacts/src/util.rs) | private path, slug, digest, and redaction helpers |
+| [`crates/effigy-state/src/artifact/mod.rs`](../../../crates/effigy-state/src/artifact/mod.rs) | public module facade |
+| [`crates/effigy-state/src/artifact/refs.rs`](../../../crates/effigy-state/src/artifact/refs.rs) | local/OCI source refs, source types, artifact kinds, and reference parsing |
+| [`crates/effigy-state/src/artifact/metadata.rs`](../../../crates/effigy-state/src/artifact/metadata.rs) | artifact metadata schema and metadata builder |
+| [`crates/effigy-state/src/artifact/staging.rs`](../../../crates/effigy-state/src/artifact/staging.rs) | local and pulled-OCI staging requests, reports, copy logic, kind inference, and metadata writes |
+| [`crates/effigy-state/src/artifact/oci.rs`](../../../crates/effigy-state/src/artifact/oci.rs) | OCI request/report models, ORAS adapter, descriptor parsing, and ORAS failure remediation |
+| [`crates/effigy-state/src/artifact/reports.rs`](../../../crates/effigy-state/src/artifact/reports.rs) | artifact operation report model and operation/result enums |
+| [`crates/effigy-state/src/artifact/errors.rs`](../../../crates/effigy-state/src/artifact/errors.rs) | artifact ref, staging, and OCI error families |
+| [`crates/effigy-state/src/artifact/util.rs`](../../../crates/effigy-state/src/artifact/util.rs) | private path, slug, digest, and redaction helpers |
+| [`crates/effigy-state/src/artifact/tests.rs`](../../../crates/effigy-state/src/artifact/tests.rs) | artifact substrate tests |
 
 Media/object-store work should build on this artifact substrate. It should not
 reimplement OCI ref parsing, staging metadata, digest handling, or ORAS
@@ -300,8 +301,8 @@ The important live hardening seams are now:
   cache, and volume command intent
 - `effigy-data` seed/dump planning for DB targets, artifact handoff, and
   database command rendering
-- `effigy-artifacts` artifact transport/staging/capture substrate for OCI and
-  local payloads
+- `effigy-state::artifact` artifact transport/staging/capture substrate for OCI
+  and local payloads
 - typed generated-compose ownership instead of repeated YAML reparsing for the
   main generated policy seams
 - explicit workspace session and provisioning owners instead of one mixed

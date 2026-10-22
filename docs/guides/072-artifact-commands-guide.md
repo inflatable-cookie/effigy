@@ -1,10 +1,16 @@
-# 072 - Artifact Commands Guide
+# 072 - State Artifact Commands Guide
 
 Use this guide when you need to move versioned data payloads between local
 files, OCI registries, and Effigy-managed seed/dump workflows.
 
-This is the practical command guide for `effigy artifact ...` and the artifact
-surfaces inside `effigy container ...` and `effigy bootstrap ...`.
+This is the practical command guide for `effigy state artifact ...` and the
+artifact surfaces inside `effigy container ...` and `effigy bootstrap ...`.
+
+> **Moved in v0.15.** The top-level `effigy artifact` command was removed.
+> `inspect`, `stage` and `capture` keep their behaviour, flags, and JSON
+> payloads under `effigy state artifact`; the old form fails with this
+> replacement. Layered captures were always `effigy state capture` and did not
+> move.
 
 Use:
 
@@ -50,15 +56,15 @@ adapter failure. The normal fix is still:
 oras login <registry-host>
 ```
 
-## Artifact Commands
+## State Artifact Commands
 
 ### Inspect
 
 Check what Effigy would resolve before staging:
 
 ```sh
-effigy artifact inspect ./data/legacy.sql.gz --json
-effigy artifact inspect oci://ghcr.io/acme/private-data:uat --json
+effigy state artifact inspect ./data/legacy.sql.gz --json
+effigy state artifact inspect oci://ghcr.io/acme/private-data:uat --json
 ```
 
 Inspect works for local files and OCI refs. It reports the artifact kind,
@@ -69,8 +75,8 @@ staged root, primary files, and metadata.
 Copy a local file or pull an OCI artifact into the repo-owned artifact cache:
 
 ```sh
-effigy artifact stage ./data/legacy.sql.gz --json
-effigy artifact stage oci://ghcr.io/acme/private-data:uat --json
+effigy state artifact stage ./data/legacy.sql.gz --json
+effigy state artifact stage oci://ghcr.io/acme/private-data:uat --json
 ```
 
 Staging is deterministic: the same source produces the same staged root path
@@ -82,17 +88,17 @@ Package a local payload into a new artifact and optionally push it to a registry
 
 ```sh
 # Plan only: stage locally, report the planned destination
-effigy artifact capture ./dumps/uat.sql.gz \
+effigy state artifact capture ./dumps/uat.sql.gz \
   --ref oci://ghcr.io/acme/uat-content:2026-05-06 \
   --environment uat --json
 
 # Push: stage locally, then publish to the registry
-effigy artifact capture ./dumps/uat.sql.gz \
+effigy state artifact capture ./dumps/uat.sql.gz \
   --ref oci://ghcr.io/acme/uat-content:2026-05-06 \
   --environment uat --push --json
 
 # Directory/object-tree capture
-effigy artifact capture ./state/media \
+effigy state artifact capture ./state/media \
   --ref oci://ghcr.io/acme/media:uat \
   --kind object-store --push --json
 ```
@@ -178,9 +184,9 @@ are rejected.
 All artifact commands support `--json`:
 
 ```sh
-effigy --json artifact inspect oci://ghcr.io/acme/private-data:uat
-effigy --json artifact stage ./data/legacy.sql.gz
-effigy --json artifact capture ./dumps/uat.sql.gz --ref oci://ghcr.io/acme/uat-content:2026-05-06 --push
+effigy --json state artifact inspect oci://ghcr.io/acme/private-data:uat
+effigy --json state artifact stage ./data/legacy.sql.gz
+effigy --json state artifact capture ./dumps/uat.sql.gz --ref oci://ghcr.io/acme/uat-content:2026-05-06 --push
 ```
 
 Payload schemas:

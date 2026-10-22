@@ -1,4 +1,4 @@
-use crate::refs::{ArtifactKind, ArtifactSourceRef, ArtifactSourceType};
+use super::refs::{ArtifactKind, ArtifactSourceRef, ArtifactSourceType};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

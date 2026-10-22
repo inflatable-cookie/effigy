@@ -61,9 +61,8 @@ context`; use `docs/README.md` as the docs index and `rg` for exact text.
 
 | Built-in | Purpose |
 |----------|---------|
-| `state` | Layered schema/seed/capture stacks |
+| `state` | Layered schema/seed/capture stacks; `state artifact` inspects/stages/captures standalone data artifacts |
 | `deploy` | Model, export, plan/status/history; apply/redeploy refuse in v0.15 (guide 074 / Q-003) |
-| `artifact` | OCI/local data artifacts |
 | `bundle` | Bundle source inspect/sync |
 | `secrets` | Vault init/set/list/doctor/**import** |
 

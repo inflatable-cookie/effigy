@@ -73,10 +73,6 @@ const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
         render: render_contracts,
     },
     HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Artifact),
-        render: render_artifact,
-    },
-    HelpTopicDescriptor {
         command: descriptor(HelpTopic::Container),
         render: render_container,
     },
@@ -211,10 +207,6 @@ fn render_docs(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpRes
 
 fn render_contracts(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
     topics::render_contracts_help(renderer)
-}
-
-fn render_artifact(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
-    topics::render_artifact_help(renderer)
 }
 
 fn render_container(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {

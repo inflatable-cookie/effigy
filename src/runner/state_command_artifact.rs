@@ -1,47 +1,50 @@
 use std::path::{Path, PathBuf};
 
-use effigy_artifacts::{
+use effigy_cli::StateSubcommand;
+use effigy_state::artifact::{
     default_local_artifact_root, stage_local_artifact, stage_oci_artifact, ArtifactKind,
     ArtifactSourceRef, LocalArtifactRef, LocalArtifactStagingRequest, OciArtifactAdapter,
     OciArtifactDescriptor, OciArtifactInspectRequest, OciArtifactPullRequest,
     OciArtifactPushRequest, OciArtifactStagingRequest,
 };
-use effigy_cli::{ArtifactArgs, ArtifactSubcommand};
+pub(super) use effigy_state::artifact::{infer_kind_from_primary_files, OrasCliArtifactAdapter};
 use serde_json::{json, Value};
 
-use crate::runner::command_context::resolve_active_command_context;
-
-use super::artifact_transport::{infer_kind_from_primary_files, OrasCliArtifactAdapter};
 use super::error::RunnerError;
 use super::render::render_command_result;
 
-pub(super) fn run_artifact(args: ArtifactArgs) -> Result<String, RunnerError> {
-    let context = resolve_active_command_context(args.repo_override.clone())?;
-    let repo_root = context.resolved.resolved_root;
-    let invocation_cwd = context.invocation_cwd;
-
-    match args.subcommand {
-        ArtifactSubcommand::Inspect {
+/// Run one `effigy state artifact inspect|stage|capture` subcommand.
+///
+/// The caller resolves the repository context once, so this stays a pure
+/// dispatch over the three moved verbs.
+pub(super) fn run_state_artifact(
+    subcommand: StateSubcommand,
+    repo_root: &Path,
+    invocation_cwd: &Path,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    match subcommand {
+        StateSubcommand::ArtifactInspect {
             source,
             farmyard_handoff,
         } => run_artifact_inspect(
             &source,
-            &repo_root,
-            &invocation_cwd,
+            repo_root,
+            invocation_cwd,
             farmyard_handoff,
-            args.output_json,
+            output_json,
         ),
-        ArtifactSubcommand::Stage {
+        StateSubcommand::ArtifactStage {
             source,
             farmyard_handoff,
         } => run_artifact_stage(
             &source,
-            &repo_root,
-            &invocation_cwd,
+            repo_root,
+            invocation_cwd,
             farmyard_handoff,
-            args.output_json,
+            output_json,
         ),
-        ArtifactSubcommand::Capture {
+        StateSubcommand::ArtifactCapture {
             source,
             destination,
             kind,
@@ -54,13 +57,16 @@ pub(super) fn run_artifact(args: ArtifactArgs) -> Result<String, RunnerError> {
                 destination: &destination,
                 kind: kind.as_deref(),
                 environment_label: environment_label.as_deref(),
-                repo_root: &repo_root,
-                invocation_cwd: &invocation_cwd,
+                repo_root,
+                invocation_cwd,
                 farmyard_handoff,
                 push,
             },
-            args.output_json,
+            output_json,
         ),
+        other => Err(RunnerError::task_invocation(format!(
+            "internal error: `{other:?}` reached the state artifact dispatch"
+        ))),
     }
 }
 
@@ -249,7 +255,7 @@ pub(in crate::runner) fn stage_artifact_report(
     let parsed = parse_artifact_source(source)?;
     let report = match parsed {
         ArtifactSourceRef::Local(local) => {
-            let staging = effigy_artifacts::LocalArtifactStagingRequest::new(
+            let staging = effigy_state::artifact::LocalArtifactStagingRequest::new(
                 local,
                 invocation_cwd.to_path_buf(),
                 default_local_artifact_root(repo_root),
@@ -362,7 +368,10 @@ fn inspect_report(
     }
 }
 
-fn stage_report(staged: &effigy_artifacts::StagedArtifactReport, farmyard_handoff: bool) -> Value {
+fn stage_report(
+    staged: &effigy_state::artifact::StagedArtifactReport,
+    farmyard_handoff: bool,
+) -> Value {
     let handoff = farmyard_handoff.then(|| {
         farmyard_handoff_report(
             staged.metadata.source.clone(),
@@ -538,7 +547,7 @@ fn parse_artifact_kind(value: &str) -> Result<ArtifactKind, RunnerError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use effigy_artifacts::{
+    use effigy_state::artifact::{
         LocalArtifactRef, OciArtifactError, OciArtifactPullReport, OciArtifactPushReport,
     };
     use std::fs;

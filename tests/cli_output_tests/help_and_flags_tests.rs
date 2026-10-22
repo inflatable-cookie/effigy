@@ -389,7 +389,6 @@ fn cli_help_repo_group_lists_only_repository_intelligence_commands() {
         "effigy exec",
         "effigy release",
         "effigy deploy",
-        "effigy artifact",
         "effigy bundle",
         "effigy skill",
     ] {

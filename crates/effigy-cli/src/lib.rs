@@ -37,7 +37,6 @@ pub enum Command {
     Skill(SkillArgs),
     Docs(DocsArgs),
     Contracts(ContractsArgs),
-    Artifact(ArtifactArgs),
     Container(ContainerArgs),
     Bootstrap(BootstrapArgs),
     Uninstall(UninstallArgs),
@@ -129,7 +128,6 @@ pub enum HelpTopic {
     Skill,
     Docs,
     Contracts,
-    Artifact,
     Container,
     Bootstrap,
     Release,
@@ -367,6 +365,22 @@ pub enum StateSubcommand {
         limit: Option<usize>,
         lineage: Option<String>,
     },
+    ArtifactInspect {
+        source: String,
+        farmyard_handoff: bool,
+    },
+    ArtifactStage {
+        source: String,
+        farmyard_handoff: bool,
+    },
+    ArtifactCapture {
+        source: String,
+        destination: String,
+        kind: Option<String>,
+        environment_label: Option<String>,
+        farmyard_handoff: bool,
+        push: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -477,33 +491,6 @@ pub struct ServiceArgs {
     pub subcommand: ServiceSubcommand,
     pub repo_override: Option<PathBuf>,
     pub output_json: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ArtifactArgs {
-    pub subcommand: ArtifactSubcommand,
-    pub repo_override: Option<PathBuf>,
-    pub output_json: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ArtifactSubcommand {
-    Inspect {
-        source: String,
-        farmyard_handoff: bool,
-    },
-    Stage {
-        source: String,
-        farmyard_handoff: bool,
-    },
-    Capture {
-        source: String,
-        destination: String,
-        kind: Option<String>,
-        environment_label: Option<String>,
-        farmyard_handoff: bool,
-        push: bool,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

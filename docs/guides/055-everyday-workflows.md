@@ -188,13 +188,13 @@ artifact substrate instead of ad-hoc file copies:
 
 ```sh
 # Inspect an OCI artifact before using it
-effigy artifact inspect oci://ghcr.io/acme/uat-content:2026-05-06 --json
+effigy state artifact inspect oci://ghcr.io/acme/uat-content:2026-05-06 --json
 
 # Stage a local dump for seeding
-effigy artifact stage ./data/legacy.sql.gz --json
+effigy state artifact stage ./data/legacy.sql.gz --json
 
 # Capture and push a UAT snapshot
-effigy artifact capture ./dumps/uat.sql.gz \
+effigy state artifact capture ./dumps/uat.sql.gz \
   --ref oci://ghcr.io/acme/uat-content:2026-05-06 \
   --environment uat --push --json
 

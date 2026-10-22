@@ -18,7 +18,6 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy doctor"));
     assert!(rendered.contains("effigy docs"));
     assert!(rendered.contains("effigy contracts"));
-    assert!(rendered.contains("effigy artifact"));
     assert!(rendered.contains("effigy container"));
     assert!(rendered.contains("effigy bootstrap"));
     assert!(rendered.contains("effigy release"));
@@ -82,7 +81,6 @@ fn render_repo_group_help_lists_only_repository_intelligence_commands() {
         "effigy exec",
         "effigy release",
         "effigy deploy",
-        "effigy artifact",
         "effigy skill",
     ] {
         assert!(!rendered.contains(foreign), "leaked {foreign}: {rendered}");
@@ -119,16 +117,16 @@ fn render_deps_help_shows_link_and_committed_bun_pin_operations() {
 }
 
 #[test]
-fn render_artifact_help_shows_stage_and_handoff_options() {
-    let rendered = render_help_text(HelpTopic::Artifact);
-    assert!(rendered.contains("artifact Help"));
-    assert!(rendered.contains("effigy artifact inspect <REF|PATH>"));
-    assert!(rendered.contains("effigy artifact stage <REF|PATH>"));
-    assert!(rendered.contains("effigy artifact capture <SOURCE_PATH|DIR> --ref oci://<REF>"));
+fn render_state_help_shows_the_moved_artifact_verbs_and_handoff_options() {
+    let rendered = render_help_text(HelpTopic::State);
+    assert!(rendered.contains("effigy state artifact inspect <REF|PATH>"));
+    assert!(rendered.contains("effigy state artifact stage <REF|PATH>"));
+    assert!(rendered.contains("effigy state artifact capture <SOURCE_PATH|DIR> --ref oci://<REF>"));
     assert!(rendered.contains("--environment <LABEL>"));
     assert!(rendered.contains("--farmyard-handoff"));
     assert!(rendered.contains("--push"));
     assert!(rendered.contains("oci://ghcr.io/acme/private-data:uat"));
+    assert!(!rendered.contains("effigy artifact "), "{rendered}");
 }
 
 #[test]

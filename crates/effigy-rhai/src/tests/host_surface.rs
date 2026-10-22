@@ -119,18 +119,18 @@ fn execute_rhai_script_exposes_extended_rhai_feature_surface() {
             let state_history = state::history(#{ stack: "uat", limit: 5 });
             if state_history["feature"] != "state.history" || state_history["options"]["limit"] != 5 { throw("state history"); }
 
-            let artifact_inspect = artifact::inspect("oci://ghcr.io/acme/app:seed");
-            if artifact_inspect["feature"] != "artifact.inspect" { throw("artifact inspect"); }
+            let artifact_inspect = state::artifact_inspect("oci://ghcr.io/acme/app:seed");
+            if artifact_inspect["feature"] != "state.artifact_inspect" { throw("artifact inspect"); }
 
-            let artifact_stage = artifact::stage("oci://ghcr.io/acme/app:seed", #{ farmyard_handoff: true });
-            if artifact_stage["feature"] != "artifact.stage" || artifact_stage["options"]["farmyard_handoff"] != true { throw("artifact stage"); }
+            let artifact_stage = state::artifact_stage("oci://ghcr.io/acme/app:seed", #{ farmyard_handoff: true });
+            if artifact_stage["feature"] != "state.artifact_stage" || artifact_stage["options"]["farmyard_handoff"] != true { throw("artifact stage"); }
 
-            let artifact_capture = artifact::capture(
+            let artifact_capture = state::artifact_capture(
                 "tmp/seed.sql",
                 "oci://ghcr.io/acme/app:seed",
                 #{ kind: "database", environment_label: "uat", push: true },
             );
-            if artifact_capture["feature"] != "artifact.capture" || artifact_capture["options"]["push"] != true { throw("artifact capture"); }
+            if artifact_capture["feature"] != "state.artifact_capture" || artifact_capture["options"]["push"] != true { throw("artifact capture"); }
 
             let cache_list = container::cache_list(#{ global: true, project: "cbs-dev" });
             if cache_list["feature"] != "container.cache_list" || cache_list["options"]["project"] != "cbs-dev" { throw("cache list"); }

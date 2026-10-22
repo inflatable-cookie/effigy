@@ -165,9 +165,9 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.task.plan.v1`
 - `effigy.service.list.v2` (`sources` in precedence order; each fragment has `name`, `qualified`, `source`, `layer`, `path` and `shadows`)
 - `effigy.service.extract.v1`
-- `effigy.artifact.inspect.v1`
-- `effigy.artifact.stage.v1`
-- `effigy.artifact.capture.v1`
+- `effigy.artifact.inspect.v1` (`state artifact inspect --json`)
+- `effigy.artifact.stage.v1` (`state artifact stage --json`)
+- `effigy.artifact.capture.v1` (`state artifact capture --json`)
 - `effigy.container.hosts.v1`
 - `effigy.container.retire.v1`
 - `effigy.container.retire-dead.v1` (`container retire --dead --json`)

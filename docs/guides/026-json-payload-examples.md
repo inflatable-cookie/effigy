@@ -1848,7 +1848,6 @@ is the holder's liveness, so there is nothing to unlock.
   "commands": [
     "help",
     "version",
-    "artifact",
     "bootstrap",
     "bundle",
     "changelog",

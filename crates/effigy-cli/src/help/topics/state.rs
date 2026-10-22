@@ -8,6 +8,7 @@ pub(crate) fn render_state_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> H
         &[
             "Plan, apply, capture, and inspect layered state-stack reports without moving app semantics into Effigy.",
             "State stacks validate `effigy.state-stack.v1`, keep app transforms in repo-owned tasks, and write operator-visible lineage history.",
+            "`state artifact` inspects, stages, and captures standalone data artifacts (local files and explicit `oci://` refs) for seed, apply, and capture workflows; OCI transport uses the local `oras` CLI plus its normal registry auth config.",
         ],
         &[
             "effigy state plan [<STACK>] [--repo <PATH>] [--json] [--write-report]",
@@ -19,6 +20,9 @@ pub(crate) fn render_state_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> H
             "effigy state capture [<STACK>] --role <ROLE> --source-env <ENV> --key <KEY> [--json]",
             "effigy state capture [<STACK>] --role <ROLE> --source-env <ENV> --key <KEY> --source <PATH> --ref oci://<REF> --yes [--push] [--json]",
             "effigy state history [<STACK>] [--kind plan|apply|capture] [--limit <N>] [--lineage <ID>] [--json]",
+            "effigy state artifact inspect <REF|PATH> [--repo <PATH>] [--farmyard-handoff] [--json]",
+            "effigy state artifact stage <REF|PATH> [--repo <PATH>] [--farmyard-handoff] [--json]",
+            "effigy state artifact capture <SOURCE_PATH|DIR> --ref oci://<REF> [--kind <KIND>] [--environment <LABEL>] [--farmyard-handoff] [--push] [--json]",
         ],
         &[
             ("--repo <PATH>", "Override target repository path"),
@@ -29,14 +33,26 @@ pub(crate) fn render_state_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> H
             ("--key <KEY>", "Produced state-stack layer key for a planned capture"),
             ("--source <PATH>", "Already-produced local capture payload to stage when `--yes` is supplied"),
             ("--ref <REF>", "Optional planned local or OCI destination ref for the captured layer"),
-            ("--push", "Publish the captured artifact to the explicit OCI ref after local staging"),
-            ("--kind <KIND>", "Filter history by report kind: `plan`, `apply`, or `capture`"),
+            ("--push", "Publish the capture to its explicit OCI ref after local staging"),
+            ("--kind <KIND>", "Filter history by report kind, or override a captured data-artifact kind such as `sql-dump` or `content-overlay`"),
             ("--limit <N>", "Limit state history results"),
             ("--lineage <ID>", "Filter reports by `lineage_id` or `parent_lineage_id`"),
             ("--skip-layer <KEY>", "Skip a named state layer during apply; repeatable for wrapper workflows that already ran a layer"),
             ("--hook <TASK>", "Optional apply hook to record on the produced layer"),
             ("--task <TASK>", "Optional repo-owned capture task to report as planned"),
             ("--write-report", "Write the lineage report to `.effigy/reports/state/<stack>/plan.json`"),
+            (
+                "--ref oci://<REF>",
+                "Record the planned OCI destination for `state artifact capture`",
+            ),
+            (
+                "--environment <LABEL>",
+                "Attach an environment label such as `uat` to a captured data artifact",
+            ),
+            (
+                "--farmyard-handoff",
+                "Include a stable Farmyard handoff block for app-local migration tools",
+            ),
             ("--yes", "Execute supported state apply layers, or stage a state capture payload when used with `state capture --source`"),
             ("--json", "Render machine-readable state-stack lineage payloads"),
             ("-h, --help", "Print command help"),
@@ -56,6 +72,11 @@ pub(crate) fn render_state_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> H
             "effigy state history uat --kind capture --limit 5 --json",
             "effigy state plan --manifest state-stack.toml",
             "effigy state plan ./ops/acowtancy-uat.state.toml --json",
+            "effigy state artifact inspect seed.sql --json",
+            "effigy state artifact stage ./data/legacy.sql.gz --farmyard-handoff --json",
+            "effigy state artifact capture ./state/media --ref oci://ghcr.io/acme/media:uat --kind object-store --push --json",
+            "effigy state artifact capture ./dumps/uat.sql.gz --ref oci://ghcr.io/acme/uat-content:2026-05-06 --environment uat --json",
+            "effigy state artifact inspect oci://ghcr.io/acme/private-data:uat",
         ],
     )
 }
