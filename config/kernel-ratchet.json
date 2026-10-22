@@ -587,7 +587,7 @@
     },
     "crates/effigy-gateway/src/setup.rs": {
       "std::fs::remove_file": 2,
-      "std::fs::write": 9
+      "std::fs::write": 10
     },
     "crates/effigy-gateway/src/setup/broker.rs": {
       "std::fs::remove_file": 1,

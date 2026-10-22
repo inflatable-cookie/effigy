@@ -763,6 +763,15 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Sequential `Terminal::Foreground` children no longer stop their owner with
+  SIGTTOU, which suspended `effigy gateway setup` after `mkcert -install`
+  ("suspended (tty output)") while it held the `gateway-setup` gate
+  (effigy#272). The owner takes the terminal with `SIGTTOU` blocked on the
+  calling thread, for the workload's own process group (never a group an
+  anchor leads), and hands it back the moment that child's exit is observed
+  instead of at settle, so the next sequential spawn starts from the
+  foreground. A terminal another program holds is left alone, and stdin that
+  is not a terminal takes no lease at all.
 - The `[demos]` retirement error and `effigy config --target demos` now give
   the Q-009 conversion recipe instead of telling operators to delete the table
   and record sessions elsewhere: each `[demos.<name>]` becomes

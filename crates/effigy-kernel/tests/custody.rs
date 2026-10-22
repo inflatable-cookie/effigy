@@ -4,6 +4,7 @@ use effigy_kernel::{
     supervise::*,
 };
 use std::collections::BTreeMap;
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -768,6 +769,143 @@ fn custody_foreground_reads_terminal_and_restores_foreground_group() {
     // is already proven; close our master before waiting for that exit.
     drop(master);
     eventually(|| owner.0.try_wait().unwrap().is_some());
+}
+
+#[test]
+fn custody_sequential_foreground_spawns_keep_the_owner_in_the_foreground() {
+    sequential_foreground_spawns(false);
+}
+
+#[test]
+fn custody_sequential_foreground_spawns_survive_tostop() {
+    sequential_foreground_spawns(true);
+}
+
+/// Two sequential `Terminal::Foreground` children in one owner run: the first
+/// writes to the terminal and exits, the second then reads a line from it.
+/// A `TCSETPGRP` from a background owner stops the owner with `SIGTTOU`, and
+/// `TOSTOP` adds a stop on any background terminal write.
+fn sequential_foreground_spawns(tostop: bool) {
+    use std::io::Write;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::process::CommandExt;
+    let home = home();
+    let mut master = -1;
+    let mut slave = -1;
+    // SAFETY: initialized writable slots; null terminal settings request defaults.
+    assert_eq!(
+        unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+    // SAFETY: openpty transferred two fresh distinct descriptors.
+    let mut master = unsafe { std::fs::File::from_raw_fd(master) };
+    let slave = unsafe { std::fs::File::from_raw_fd(slave) };
+    // SAFETY: live master; observe it nonblocking and never inherit it.
+    unsafe {
+        let flags = libc::fcntl(master.as_raw_fd(), libc::F_GETFL);
+        assert_eq!(
+            libc::fcntl(master.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK),
+            0
+        );
+        assert_eq!(
+            libc::fcntl(master.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC),
+            0
+        );
+    }
+    if tostop {
+        // SAFETY: the live terminal's own settings; TOSTOP stops a background writer.
+        unsafe {
+            let mut termios: libc::termios = std::mem::zeroed();
+            assert_eq!(libc::tcgetattr(slave.as_raw_fd(), &mut termios), 0);
+            termios.c_lflag |= libc::TOSTOP;
+            assert_eq!(
+                libc::tcsetattr(slave.as_raw_fd(), libc::TCSANOW, &termios),
+                0
+            );
+        }
+    }
+    let mut command = Command::new(fixture());
+    command
+        .arg("inline-terminal-sequence")
+        .arg(home.path())
+        .stdin(slave)
+        .stdout(Stdio::null());
+    // SAFETY: only session and terminal syscalls run after fork, before exec.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut owner = ChildGuard(command.spawn().unwrap());
+    let pid = owner.0.id();
+    // The first child wrote to the terminal and its lease ended with its exit.
+    let mut seen = Vec::new();
+    eventually(|| {
+        assert_running(pid);
+        drain_terminal(&master, &mut seen);
+        home.path().join("first-done").exists()
+    });
+    eventually(|| {
+        assert_running(pid);
+        drain_terminal(&master, &mut seen);
+        seen.windows(8).any(|window| window == b"first-ok")
+    });
+    assert_eq!(foreground_group(&master), pid as i32);
+    master.write_all(b"terminal-input\n").unwrap();
+    eventually(|| {
+        assert_running(pid);
+        drain_terminal(&master, &mut seen);
+        home.path().join("second-done").exists()
+    });
+    assert_eq!(foreground_group(&master), pid as i32);
+    eventually(|| home.path().join("sequence-done").exists());
+    // macOS waits for its PTY peer during session-leader exit.
+    drop(master);
+    eventually(|| owner.0.try_wait().unwrap().is_some());
+    let status = owner.0.wait().unwrap();
+    assert!(status.success(), "terminal sequence failed: {status:?}");
+}
+
+fn drain_terminal(master: &std::fs::File, into: &mut Vec<u8>) {
+    let mut buffer = [0u8; 256];
+    loop {
+        // SAFETY: live nonblocking descriptor and an initialized buffer.
+        let count =
+            unsafe { libc::read(master.as_raw_fd(), buffer.as_mut_ptr().cast(), buffer.len()) };
+        if count > 0 {
+            into.extend_from_slice(&buffer[..count as usize]);
+        } else {
+            return;
+        }
+    }
+}
+
+fn foreground_group(master: &std::fs::File) -> i32 {
+    // SAFETY: the live terminal's own foreground group.
+    unsafe { libc::tcgetpgrp(master.as_raw_fd()) }
+}
+
+/// The owner of a real terminal never gets stopped: a stopped owner blocks its
+/// own sequence forever, which is exactly the reported suspension.
+fn assert_running(pid: u32) {
+    if let Observed::Verified(state, _) = effigy_kernel::ident::process_state(pid) {
+        assert_ne!(
+            state,
+            effigy_kernel::ident::ProcessState::Stopped,
+            "owner {pid} was stopped by a terminal signal"
+        );
+    }
 }
 
 #[test]

@@ -225,6 +225,16 @@ fn main() {
         &mut Strict,
     )
     .unwrap();
+    if entry == "inline-terminal-sequence" {
+        sequence_foreground(&mut run, &cx, &op, home);
+        run.finish(WorkloadOutcome::Succeeded).unwrap();
+        let settled = run.settle(&cleanup, &mut Strict).unwrap();
+        assert_eq!(settled.cleanup(), CleanupOutcome::Complete);
+        assert_eq!(settled.workload(), &WorkloadOutcome::Succeeded);
+        assert_owner_terminal(home, "sequence-settled");
+        std::fs::write(home.join("sequence-done"), b"yes").unwrap();
+        return;
+    }
     let workload = if entry == "inline-terminal" {
         ProcessSpec {
             argv: vec![
@@ -301,6 +311,55 @@ fn main() {
         assert_eq!(unsafe { libc::tcgetpgrp(0) }, unsafe { libc::getpgrp() });
         std::fs::write(home.join("terminal-restored"), b"yes").unwrap();
     }
+}
+
+/// The owner's own group is the terminal's foreground group again.
+fn assert_owner_terminal(home: &Path, marker: &str) {
+    // SAFETY: observe our controlling terminal and process group only.
+    let (foreground, owner) = unsafe { (libc::tcgetpgrp(0), libc::getpgrp()) };
+    assert_eq!(
+        foreground, owner,
+        "{marker}: the owner gave up the terminal"
+    );
+    std::fs::write(home.join(marker), b"yes").unwrap();
+}
+
+/// Two `Terminal::Foreground` children in one run: the first writes to the
+/// terminal, the second reads a line from it. Each child exits and is reaped
+/// before the next spawns, so the owner is in the foreground throughout.
+fn sequence_foreground(run: &mut Run<'_>, cx: &EffectContext, op: &OperationContext, home: &Path) {
+    let write = ProcessSpec {
+        argv: vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "test -t 0 && printf 'first-ok' > /dev/tty && printf first-captured".into(),
+        ],
+        terminal: Terminal::Foreground,
+        ..spec(home)
+    };
+    let mut child = Custody::spawn(run, write, cx).unwrap();
+    let exit = *child.wait(op).verified().unwrap();
+    assert_eq!(exit.code, 0);
+    child.complete(run, exit).unwrap();
+    assert_eq!(child.tail(), b"first-captured");
+    // Release-on-exit: the lease ended with the workload, not with settle.
+    assert_owner_terminal(home, "first-done");
+
+    let read = ProcessSpec {
+        argv: vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "IFS= read -r line < /dev/tty && printf 'second-ok:%s' \"$line\"".into(),
+        ],
+        terminal: Terminal::Foreground,
+        ..spec(home)
+    };
+    let mut child = Custody::spawn(run, read, cx).unwrap();
+    let exit = *child.wait(op).verified().unwrap();
+    assert_eq!(exit.code, 0);
+    child.complete(run, exit).unwrap();
+    assert_eq!(child.tail(), b"second-ok:terminal-input");
+    assert_owner_terminal(home, "second-done");
 }
 
 /// The engine payload a fixture client hands its supervisor: the home.

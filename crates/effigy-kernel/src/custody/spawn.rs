@@ -38,41 +38,127 @@ fn nonblock(fd: &OwnedFd) -> io::Result<()> {
     }
     Ok(())
 }
+/// The process groups this owner has handed the controlling terminal to. A
+/// handover only displaces the owner's own group or a group already leased to a
+/// foreground child, so a foreign foreground program keeps the terminal.
+static LEASES: Mutex<Vec<libc::pid_t>> = Mutex::new(Vec::new());
+
+fn leases() -> std::sync::MutexGuard<'static, Vec<libc::pid_t>> {
+    LEASES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// `SIGTTOU` is blocked on this thread while the terminal changes hands.
+/// `tcsetpgrp` and terminal writes from a background group would otherwise stop
+/// the owner: handing the terminal over is routine, never a reason to stop.
+struct Ttou(libc::sigset_t);
+impl Ttou {
+    fn block() -> Self {
+        // SAFETY: sigemptyset initializes the set the mask is built from, and
+        // only this thread's previous mask is read.
+        unsafe {
+            let mut set: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut set);
+            libc::sigaddset(&mut set, libc::SIGTTOU);
+            let mut old: libc::sigset_t = std::mem::zeroed();
+            libc::pthread_sigmask(libc::SIG_BLOCK, &set, &mut old);
+            Self(old)
+        }
+    }
+}
+impl Drop for Ttou {
+    fn drop(&mut self) {
+        // SAFETY: restores the mask this guard saved on the same thread.
+        unsafe { libc::pthread_sigmask(libc::SIG_SETMASK, &self.0, std::ptr::null_mut()) };
+    }
+}
+
+/// A group that still exists. A workload lease outlives neither the workload nor
+/// its anchor, so restoration never names a reaped group.
+fn group_live(pgid: libc::pid_t) -> bool {
+    // SAFETY: signal 0 only observes the group; EPERM still proves it exists.
+    unsafe { libc::kill(-pgid, 0) == 0 || last_errno() == libc::EPERM }
+}
+
 #[derive(Debug)]
 pub(crate) struct TerminalLease {
     fd: RawFd,
-    previous: libc::pid_t,
+    pgid: libc::pid_t,
+    owner: libc::pid_t,
 }
 impl TerminalLease {
-    fn take(pgid: u32) -> io::Result<Self> {
+    /// Hands the controlling terminal to the workload's own process group.
+    ///
+    /// `None` means this owner holds no terminal to give: stdin is not a
+    /// terminal, or another program is the terminal's foreground group. A
+    /// foreground child then runs exactly as an `Inherit` child would.
+    fn take(pid: u32) -> io::Result<Option<Self>> {
+        if pid == 0 || pid > i32::MAX as u32 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid workload group",
+            ));
+        }
+        // SAFETY: observes this process, its unreaped direct child, and the
+        // borrowed terminal only.
+        let (is_tty, owner) = unsafe { (libc::isatty(libc::STDIN_FILENO), libc::getpgrp()) };
+        if is_tty != 1 {
+            return Ok(None);
+        }
+        // The workload became its own group leader before exec, and the group
+        // anchor joins that group; the leader is never the anchor.
+        // SAFETY: getpgid only observes our own direct child.
+        let pgid = unsafe { libc::getpgid(pid as i32) };
+        if pgid <= 0 {
+            return Err(io::Error::last_os_error());
+        }
         // SAFETY: stdin is only borrowed, never closed by this guard.
         let previous = unsafe { libc::tcgetpgrp(libc::STDIN_FILENO) };
         if previous < 0 {
             return Err(io::Error::last_os_error());
         }
-        // SAFETY: positive group of a direct child in the current session.
-        if unsafe { libc::tcsetpgrp(libc::STDIN_FILENO, pgid as i32) } != 0 {
+        let mut leases = leases();
+        if previous != owner && !leases.contains(&previous) {
+            // A foreign foreground program owns the terminal. Taking it would
+            // be theft rather than custody.
+            return Ok(None);
+        }
+        let _mask = Ttou::block();
+        // SAFETY: pgid is the live group of our own child in this session.
+        if unsafe { libc::tcsetpgrp(libc::STDIN_FILENO, pgid) } != 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok(Self {
+        leases.push(pgid);
+        Ok(Some(Self {
             fd: libc::STDIN_FILENO,
-            previous,
-        })
+            pgid,
+            owner,
+        }))
     }
 }
 impl Drop for TerminalLease {
     fn drop(&mut self) {
-        // SAFETY: restores the group saved by tcgetpgrp on our borrowed terminal.
-        // Block TTOU on this thread only, so restoration from the background works.
-        unsafe {
-            let mut mask: libc::sigset_t = std::mem::zeroed();
-            libc::sigemptyset(&mut mask);
-            libc::sigaddset(&mut mask, libc::SIGTTOU);
-            let mut old = std::mem::zeroed();
-            libc::pthread_sigmask(libc::SIG_BLOCK, &mask, &mut old);
-            libc::tcsetpgrp(self.fd, self.previous);
-            libc::pthread_sigmask(libc::SIG_SETMASK, &old, std::ptr::null_mut());
+        // Restoration usually happens from the background, once the workload
+        // has exited. Block TTOU on this thread, as taking does.
+        let _mask = Ttou::block();
+        let mut leases = leases();
+        leases.retain(|pgid| *pgid != self.pgid);
+        // A newer lease or the owner already holds the terminal: leave it.
+        // SAFETY: only observes the borrowed terminal.
+        let current = unsafe { libc::tcgetpgrp(self.fd) };
+        if current != self.pgid {
+            return;
         }
+        // A lease we still own is the next holder, else the owner itself.
+        let next = leases
+            .last()
+            .copied()
+            .filter(|pgid| group_live(*pgid))
+            .unwrap_or(self.owner);
+        // SAFETY: hands the terminal to the owner's own group or to a group
+        // this owner still leases to a running foreground child.
+        unsafe { libc::tcsetpgrp(self.fd, next) };
     }
 }
 #[derive(Debug)]
@@ -473,14 +559,14 @@ impl Blocked {
             crate::fault::note_anchor(u32::from_ne_bytes(bytes));
         }
         if matches!(spec.terminal, Terminal::Foreground) {
-            child.streams.as_mut().expect("streams present").2 =
-                Some(TerminalLease::take(pid as u32)?);
+            child.streams.as_mut().expect("streams present").2 = TerminalLease::take(pid as u32)?;
         }
-        if matches!(spec.terminal, Terminal::Inherit { .. }) && owner_holds_terminal() {
+        if matches!(spec.terminal, Terminal::Inherit { .. }) {
             // Best effort: without the terminal an interactive child stops on
-            // its first read, but a non-interactive one is unaffected.
+            // its first read, but a non-interactive one is unaffected. A
+            // foreign foreground program or a non-terminal stdin takes no lease.
             child.streams.as_mut().expect("streams present").2 =
-                TerminalLease::take(pid as u32).ok();
+                TerminalLease::take(pid as u32).ok().flatten();
         }
         Ok(child)
     }
@@ -653,16 +739,6 @@ pub(crate) fn descriptor_limit() -> io::Result<i32> {
     Ok(limit)
 }
 
-/// The owner is its controlling terminal's foreground group. A background
-/// owner never takes the terminal (tcsetpgrp would stop it with SIGTTOU).
-fn owner_holds_terminal() -> bool {
-    // SAFETY: isatty, tcgetpgrp and getpgrp only observe borrowed stdin and
-    // the calling process.
-    unsafe {
-        libc::isatty(libc::STDIN_FILENO) == 1
-            && libc::tcgetpgrp(libc::STDIN_FILENO) == libc::getpgrp()
-    }
-}
 fn duplicate(fd: RawFd) -> io::Result<OwnedFd> {
     // SAFETY: borrows the live source; the returned descriptor has sole ownership.
     let copy = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 10) };
