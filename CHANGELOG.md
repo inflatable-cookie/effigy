@@ -775,6 +775,16 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- A linked worktree's container targets resolve the canonical declared TCP
+  backing-service alias (for example `postgres.<site>.test`) to that
+  worktree's own service (effigy#264, lead `5100c68d`). The alias is added to
+  the backing service on the scope's own Compose network next to the scoped
+  name, so it can only ever name this checkout's backing service; the
+  application configuration, the canonical manifest values and the
+  host-visible scoped route are unchanged. Explicit routes keep their
+  precedence, and an alias that would name the host gateway is never added.
+  Host-native execution in a scoped checkout is not covered by this
+  guarantee (contract 005).
 - `proof:containers:isolated-dirs` runs again (effigy#264, papercut
   `5d15981a`). Its strict fake backend now answers the explicit backend
   target (`--context`/`--host`), the exact-identity container inventory, the
