@@ -315,7 +315,6 @@ mod tests {
         assert!(error.contains("selector strings"), "{error}");
         assert!(error.contains("CHANGELOG.md"), "{error}");
     }
-    }
 
     #[test]
     fn draft_step_reference_is_refused_with_the_task_key() {
