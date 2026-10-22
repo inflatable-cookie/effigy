@@ -5,13 +5,18 @@ and `src/runner/environment.rs` (runner cutover), effigy#232. The
 `data_from` data claim, retire as a transition, the workspace session run and
 its host authority channel are later work (§9).
 
+Q-010 touch-points: the storage/custody amendment in contract
+[052](052-runtime-kernel-contract.md) §3.1, §7 and §11.1 is **proposed,
+awaiting planner and Tom review before implementation**. The current engine
+still uses the central store. The following specifies its required relocation.
+
 Owner: environment reconciler (Queue lane `v015-environment`)
 Kernel: [052](052-runtime-kernel-contract.md) §5.9, §10.3, §11
 Supersedes: the lease, lifecycle-marker and per-site holder-check sections of
 [005](005-container-runtime-contract.md) (see [retired concepts](../retired.toml))
 Related: [006](006-compose-backend-compatibility.md),
 [049](049-heavy-validation-admission-contract.md), [questions](../questions.md)
-Q-004 and Q-005
+Q-004, Q-005 and Q-010
 
 ## 1. Purpose
 
@@ -20,6 +25,37 @@ change to an environment's containers is a transition run that owns
 `Gate(Env)`, is journalled before its backend call (K3) and is refused while
 another run holds the environment (R4). Holders attach through one hold API.
 No lease file, timer, marker or per-call-site holder check remains.
+
+### Q-010 storage and lifetime
+
+Every environment transition, holder Session, environment-owned sidecar and
+remote/container workload is checkout-durable, even when `up`, `exec` or a task
+looks attached and short. Classification precedes setup/ensure and the first
+effect. Local foreground runs without environment obligations use memory and
+never enter the environment journal. `--headless` and TUI are presentations of
+the same durable managed owner, not a way to select foreground durability.
+
+All records below, render closures, backend metadata, holder runs, effects and
+requests live in the environment owner's `<checkout>/.effigy/state/`. A linked
+worktree owns its own state and tokens; it does not use its primary's journal.
+Attach, activation and holder protection remain local atomic transactions.
+A cross-checkout borrower uses the authority session protocol in 052 §7.2;
+unknown/missing owner state never permits down, data reuse or adoption.
+
+Endpoint/route claims and port pins alone live in the machine store. Before
+requesting one the environment run commits an intent; the machine authority
+returns an idempotent fenced receipt, then the checkout records it (052 §7.5).
+Active publication needs every required receipt. No transaction or foreign key
+spans stores, and loss of a reply retains protection rather than allocating
+again. Polling, status, holder checks, ordinary reuse and task close do not
+write machine state. Actual endpoint/port changes obey the machine write budget.
+
+Deleting a checkout loses this journal; it does not stop a container or release
+a route, port, data claim or unknown holder. Supported retire settles and
+releases first. External deletion or same-path replacement leaves resources
+as residue until verified retirement, with no fallback to a primary or central
+journal (052 §7.1). Cross-checkout doctor discovers state read-only with explicit
+coverage limits (052 §7.6).
 
 ## 2. The record
 
@@ -171,6 +207,18 @@ first Mutate waits for it, up to 10 minutes, before adopting. A later `up`
 adopts an imported stack without recreation when the v0.14.1 admission
 matches the current inputs.
 
+### Central-store relocation
+
+For current-main users the 052 §11.1 importer moves the full live environment
+closure: desired/applied/partial generations, backend, retention, object refs,
+holders, unresolved transition/sidecar/remote runs and custody receipts. Tokens,
+labels, object digests and fences stay the same; containers are not recreated.
+Endpoint claims and pins move to the machine store in the same manifest-gated
+cutover. Active custodians need verified transfer or drain; copying receipts
+alone never transfers custody. A missing checkout or unquiesceable writer
+refuses publication, preserving legacy authority. PID-only evidence remains
+Unknown, and old input stays byte-identical (M1/M3/M8).
+
 ## 8. Guest
 
 Inside a workspace container the engine runs with guest placement: every
@@ -207,3 +255,9 @@ on Docker Desktop, with cbs and Acowtancy:
 6. Upgrade from v0.14.1 with stacks running: no container restarts; the
    record imports; marker files are byte-identical.
 7. With both engines installed, the unselected engine sees no call.
+
+Q-010 adds crash recovery for each durable class, multi-checkout concurrency,
+missing/deleted checkout and large-store migration proofs in 052 §12.6. The
+selectors above and touched gateway selectors must cover the new store paths
+and fenced cross-store receipt boundaries. Phase 1 runs only `qa:docs`; no
+runtime recovery or migration proof is claimed by this amendment.

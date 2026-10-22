@@ -1,5 +1,13 @@
 # 052 - Runtime Kernel Contract
 
+Q-010 amendment (2026-10-22): **proposed contract, awaiting planner and Tom
+review before implementation**. §3.1, §7, §11.1 and §12.6 specify in-memory
+foreground runs, checkout journals and the small machine store. They supersede
+the former single-root assumptions in the API sketches, failure tables and
+implementation/adoption notes below. Those notes describe the existing binary,
+which still uses the central database; this document change does not claim a
+runtime cutover. The amendment's custody limits are explicit in §3.1.
+
 Status: foundation types are implemented in `crates/effigy-kernel/`: identity
 encoding v1, operation contexts and class capabilities, observation and Probe
 API types, outcomes, and macOS/Linux platform facts. Gates (§5.4), the store,
@@ -92,20 +100,20 @@ hidden internal entry points: `__kernel-supervise`, `__kernel-sentinel` and
 
 | Term | Meaning |
 | --- | --- |
-| Host | The machine kernel that owns the state root (§7). macOS or Linux. |
+| Host | The machine kernel that owns the checkout and machine state roots (§7). macOS or Linux. |
 | Guest | Effigy inside a container-mode workspace container managed by a host Effigy: a workspace client with no state of its own (§8). |
 | Host authority channel | The one authenticated, per-session protocol that carries a guest's requests to host engines (§8.3). |
 | Workspace session | The durable host run a container-mode workspace's terminals attach to (§8.7). |
 | Resource | Anything with one authority: task, run, environment, data, endpoint, store, gateway, checkout. |
 | Authority | The engine that alone may mutate a resource, acting while it holds the resource's gate. |
-| Gate | A never-unlinked host `flock` on a stable inode. Holding it is the holder's liveness. |
-| Run | One journalled operation by one owner resource. |
+| Gate | A host `flock` on a stable inode in the resource's owning scope (§7). Never unlinked while that scope lives. Holding it is liveness. |
+| Run | One operation by one owner resource: an in-memory foreground run or a durable run (§3.1). |
 | Effect | One external change a run makes: process, remote process, attachment, claim, file, adapter call, checkpoint. |
-| Intent | An effect's journal entry, committed before the effect starts. |
+| Intent | An effect record committed before it starts: in memory for foreground runs, durable for durable runs. |
 | Settle | The one idempotent path that resolves a run's recorded effects. |
 | Holder | A run attached to an environment. |
 | Claim | An exclusive hold on a data, endpoint or address resource. |
-| Generation | A per-resource counter. Every effect, request and callback carries it. |
+| Generation | A durable per-resource counter; foreground fences additionally bind the fresh RunId (§3.1). |
 | Residue | An effect settle could not prove released. |
 | Settled | `Closed` with `Complete` cleanup. |
 | Resolved | Settled, or `Closed` with residue an operator explicitly acknowledged. Anything else is unresolved. |
@@ -120,8 +128,8 @@ code settle it:
 
 | # | Topic | X-opus | X-sol | Decision | Ground |
 | --- | --- | --- | --- | --- | --- |
-| D1 | Runtime store | per-checkout JSON records, revision field | one SQLite store: operations, resources, attachments, claims, requests, events | SQLite `kernel.db`. The vault and user-owned files stay separate files written through `atomic_replace`. | Brief; SYNTHESIS §3 |
-| D2 | Store and gate location | `<checkout>/.effigy/kernel/` | outside disappearing worktrees | `~/.effigy/state/` on the host, gates included | Brief. A path never bind-mounted into a guest makes R1 structural. A deleted worktree cannot take a held gate's inode with it. |
+| D1 | Runtime store | per-checkout JSON records, revision field | one SQLite store: operations, resources, attachments, claims, requests, events | Q-010: memory for foreground runs; SQLite journals per checkout; a small machine store for shared facts only (§7). Vault and user-owned files stay separate. | Tom, 2026-10-22; Q-010 |
+| D2 | Store and gate location | `<checkout>/.effigy/kernel/` | outside disappearing worktrees | Q-010: `<checkout>/.effigy/state/`, independently per linked worktree; machine resources alone under `~/.effigy/state/`. Guest mounts mask local state. | Tom, 2026-10-22; deletion limits in §7.1 |
 | D3 | Settle | replay recorded undo in reverse | per-adapter semantics, positive settlement | Reverse order, with a declared `Settlement` per effect. Irreversible effects are reported, never replayed. | Both; X-sol's objection to blind undo of borrowed or irreversible effects is absorbed |
 | D4 | Meaning of a free gate | free gate + live record = interrupted | release permits reconciliation, not successor activation | Both. A free gate with a non-closed run reads `Interrupted`. A successor must settle it before its own run is admitted (K5). | X-sol §3: lock release does not prove grouped or remote work ended |
 | D5 | Effect classes | static, read, refresh, mutate | Static, Observe, RefreshDerived, PrepareSource, Mutate | Static, Observe, RefreshDerived, Prepare, Mutate | Brief |
@@ -129,12 +137,116 @@ code settle it:
 | D7 | Guest Effigy | isolate, opt-in, runs under the host run's token | cut auto-provisioning, host owner protocol | Workspace client in container mode only: local reads against a materialised context; every authority request over one authenticated host channel, re-resolved, gated and journalled on the host; a durable workspace session run; a version-locked Linux binary installed at Prepare. Hybrid mode has no guest (§8). | Lane rule 1; Tom 2026-10-18 (container mode needs full coverage); `synthesis/GUEST-EFFIGY.md` option (c) |
 | D8 | Endpoint store | `state.json` + lock | SQLite + effect outbox + reuse quarantine | Endpoint claims are kernel store rows; the gateway engine is their only writer; released addresses are quarantined | D1; X-sol gap 6 |
 | D9 | Remote registration | ack `{container_id, nonce, pgid}` | ack with namespace and start identity | In-band ack on the exec stream, plus the nonce in the remote environment for recovery; no bind-mount marker files | R1: guests never write host state |
-| D10 | Owner SIGKILL of a one-shot run | "no custody process outlives its run" incl. KILL | a small supervisor may outlive the front end | Inline runs with custody get a per-run sentinel that settles on owner death | X-opus K5 |
+| D10 | Owner SIGKILL of a one-shot run | "no custody process outlives its run" incl. KILL | a small supervisor may outlive the front end | Foreground custody has an in-memory death guard; durable custody keeps the journal-backed sentinel (§3.1). Loss of foreground evidence leaves residue, never numeric recovery authority. | Q-010; X-opus K5 for durable runs |
 
 Not decided here: Q-003 deployment ownership, Q-004 the Compose boundary,
 Q-005 service catalogs, Q-006 heavy tasks, environment idle-stop policy,
 gateway activation mode, the ports-registry fate and graph corpus
 semantics. Kernel rules constrain those engines; they do not choose for them.
+
+### 3.1 Q-010: run classes and the durability boundary
+
+The classifier runs after resolution, before admission, setup or any spawn.
+Duration is not a classifier: a ten-hour foreground build can be in memory,
+and a one-second environment transition is durable. `--json`, pipes, CI and
+the absence of a TTY do not select durability. A foreground invocation's
+lifetime belongs to its invoking process/session even when it has no terminal.
+
+| Invocation or obligation | Class and owner |
+| --- | --- |
+| Local foreground task, sequence, test or QA group; all descendants local and terminal-bound | `Foreground`: record, intents, receipts and outcome in memory; checkout resource lock files |
+| `--run-id <key>` on a supported one-shot command | `CheckoutDurable`, even without `--detach`; idempotency, requests and logs need a journal |
+| `--detach`; managed session in TUI, attached text or `--headless`; environment-owned host sidecar | `CheckoutDurable`; detached supervisor and journal-backed sentinel. Existing managed-task refusal of `--run-id` is unchanged |
+| `container up` (attached or detached), down, handover, repair, reset, reap, retire, data mutation or environment import | `CheckoutDurable`; environment authority in its owning checkout |
+| A task that attaches to/ensures an environment, runs a container/remote workload, owns a workspace session, or publishes a route | `CheckoutDurable`; durable holder and remote-custody records before effects |
+| A workflow needing resumable checkpoints, persistent source preparation, or retained scratch metadata after the invocation | `CheckoutDurable`; the feature's authority owns the journal |
+| Gateway daemon lifecycle, endpoint/route publication, port allocation or release | `MachineDurable`; gateway authority, only the bounded records allowed in §7.5 |
+| Static/Observe, including `runs`, `run status`, doctor and gateway status | No run, admission, import or write (R2) |
+
+A run tree has one durability requirement: a durable descendant makes its
+foreground ancestors checkout-durable before the first effect. Local children
+of a durable run use that checkout journal. Late-bound scripts and adapters
+must declare durable capabilities before execution; an undeclared durable
+request is refused before that effect. There is no promotion after workload
+go and no silent fallback to the machine database. A container-free foreground
+build does not open either database, even if one is busy or corrupt.
+
+Foreground admission checks any existing checkout journal for unresolved
+predecessors read-only. Missing journal means none; unreadable evidence is
+`Unknown`, refusing that owner, not all other checkouts. Recovery of a durable
+predecessor is a separate durable operation before foreground admission.
+Without a stored checkout token, local gate identity uses the verified root
+and per-checkout Git-directory filesystem identities (device/inode), with a
+domain separate from persisted `CheckoutId`s. The same admission checks both
+names when a persisted token exists; first durable initialization serializes
+on this local identity gate. A short run never mints a Git token, registers a
+checkout, appends an ignore block, creates a database, writes a run directory,
+or fsyncs run metadata. Lock-file creation and best-effort diagnostic bytes
+are transient exclusion machinery, not durable run records. Task outputs and
+explicit user-requested exports are outside runtime-state accounting.
+
+**Foreground custody (I-P2/I-P3).** Before workload go, the owner and its
+in-memory guard acknowledge the complete custody receipt, nonce and ready
+group anchor. The existing spawn barrier still applies. The guard uses the
+existing sentinel entry point in a memory-only mode, with a private pipe; no
+control socket, log file or journal. Only that guard may inherit the owner's
+gate description; workloads never do. Each later spawn repeats the receipt/ack
+barrier before go. A free flock, not dead-looking diagnostic bytes, proves
+there is no holder. A held lock with a dead/unverifiable named owner remains
+held; the guard may refresh its own identity in the diagnostic body without
+creating durable authority. No stale-file unlink or PID-only reclaim exists. Owner and guard retain the group and
+unreaped-child/verified-anchor evidence through descendant and stream closure,
+even after leader exit. Normal settle closes the in-memory effects before
+unlocking. Owner EOF or terminal HUP/INT/TERM makes the guard stop the retained
+group within the cleanup budget, using the same positive evidence as the
+owner, then exit. While cleanup runs it keeps the owner gate held; it never
+unlocks on owner EOF alone. The owner similarly keeps custody if its guard dies.
+
+Process-group membership alone does not guarantee OS termination on owner
+SIGKILL. The terminal's HUP and the memory guard are the normal crash path,
+not proof that every descendant died. A process escaping the group, surviving
+terminal close, or losing verifiable custody evidence is **residue**. It is
+reported to the invoking stream while a custodian remains; subsequent doctor
+and runs observations report only survivors whose checkout/run tags or fresh
+identity evidence can actually be read. They never recover authority from a
+PID, PGID, session number or old lock body. If owner and guard both die, there
+is no replay, durable completion or durable residue acknowledgement. A process
+that also discarded its tags may be unidentifiable; views state that limit and
+never claim a complete inventory or successful cleanup. Discovered residue
+blocks the affected owner until positively absent or explicitly acknowledged;
+acknowledgement for a foreground run lasts only in the current custodian.
+Guaranteed restartable recovery requires a durable class.
+
+**Views and fencing.** Foreground runs have random `RunId`s and an in-memory
+incarnation fence containing that id; persistent resource generations are not
+incremented. No persisted request can address a foreground incarnation.
+`runs` may show a live foreground row from a held gate only after verifying
+its holder's boot/start identity and checkout binding. Without an owner query,
+phase/outcome/log fields are explicitly unavailable. `run status <id>` checks
+the current checkout's journal and verified live gate diagnostics; after the
+foreground run exits it says `not recorded (foreground or expired)`, never
+`succeeded` or `interrupted` from stale bytes. Discovered survivors are residue
+observations, not reconstructed journal entries. `run logs` has no foreground
+history; `run stop` may signal only a freshly verified live owner via
+`Gate::signal_holder`, otherwise refuses with the residue diagnostic. Repeated
+id or task spelling never attaches to a vanished foreground run. Use
+`--run-id` when durable status, logs, idempotency or recovery is required.
+
+**Invariant amendments.** K3, I-R1 and I-P2 mean committed in memory before
+go for foreground runs, and durably committed before effect for durable runs.
+I-P3 and I-P4's retention and signal-evidence requirements apply to both.
+K4/I-R5 resume only durable journals; foreground settle is idempotent within
+its living custodians. K5/I-R2 and O13 prohibit unresolved *recorded* durable
+predecessors and positively discovered foreground residue; they cannot promise
+a persisted predecessor check after all foreground evidence is lost. K6 and
+O1/O2 promise restartable closure only for durable runs; foreground loss is
+reported with the custody limits above. K7's foreground fence includes RunId.
+I-G4 permits a foreground owner gate across its workload; I-G5 requires memory
+closure before unlock for it. I-G6's helper-only inheritance exception above
+preserves exclusion during memory-guard cleanup. §5.6's store transactions,
+requests, `Interrupted` projection and §5.8's journal-backed sentinel apply
+only to durable runs; an inline durable `--run-id` run still uses them. These
+are deliberate Q-010 changes, not claims of the former durability without I/O.
 
 ## 4. Rules and invariants
 
@@ -426,7 +538,7 @@ pub enum GateError {
 }
 ```
 
-Layout under the state root:
+Layout under the owning checkout or machine state root (§7):
 
 ```text
 gates/<scope-name>.scope           LOCK_SH by every resource acquisition in that scope
@@ -532,7 +644,8 @@ pub fn read_record<T: Record>(cx: &ObserveContext, dir: &DirFd, name: &FileName)
 SQLite settings: `journal_mode=DELETE`, `synchronous=FULL`,
 `foreign_keys=ON`, `busy_timeout` from the context. Write-ahead logging is
 not used: a read-only reader must work on a read-only filesystem (R2).
-SQLite opens files by path, so `kernel.db` is the one K13 exception to
+SQLite opens files by path, so the checkout `kernel.db` and machine
+`machine.db` are the K13 exceptions to
 descriptor-relative opens: the kernel creates or verifies it
 descriptor-relative inside the verified 0700 root (regular, operator-owned,
 0600, one link, size-bounded) and SQLite then opens it with
@@ -549,8 +662,10 @@ a transaction.
 
 #### Invariants
 
-- I-S1: related facts commit in one transaction: a run's phase with its
-  outcome; a claim with its reservation token; an attachment with its run.
+- I-S1: related facts within one store commit in one transaction: a run's
+  phase with its outcome; a claim with its reservation token; an attachment
+  with its run. Cross-store endpoint effects use §7.5's fenced protocol; no
+  transaction or foreign key spans checkout and machine stores.
 - I-S2: no transaction spans a subprocess, prompt or network call (K14).
 - I-S3: a read returns `Verified`, `Absent` or `Unknown`. A torn, oversized,
   non-regular or unparsable file is `Unknown(reason)`, never a default.
@@ -904,8 +1019,9 @@ then `/usr/bin/sudo -H -- effigy gateway setup`. The rule has four parts.
 
 - I-P1: the owner exists before the first spawn. `spawn` takes `&mut Run`,
   which exists only after `Admitted` (K6).
-- I-P2: no workload executes without a durable custody record including its
-  ready anchor. Both share the existing barrier and go byte; the anchor holds
+- I-P2: no workload executes without a custody record including its ready
+  anchor: durable for durable runs, acknowledged in memory by both custodians
+  for foreground runs (§3.1). Both share the existing barrier and go byte; the anchor holds
   the group before either can release workload execution. No parent-side
   `setpgid` races an exec, including on macOS or for a PTY session.
 - I-P3: the owner keeps the leader unreaped, and the group retained, until
@@ -1640,84 +1756,215 @@ them; the table governs new kernel-backed surfaces.
 
 ### 7.1 Location, trust and clocks
 
-- Root: `~/.effigy/state/`, from the existing Effigy home (`$HOME/.effigy`).
-  It is outside every checkout, so it survives worktree deletion and is
-  never inside a guest's bind mount.
-- Trust: the root and every component are real directories owned by the
-  operator, mode 0700; files 0600. A symlinked or group- or other-writable
-  component refuses Mutate (K13).
-- Filesystem: local only. `statfs` rejects NFS, SMB, WebDAV, FUSE and
-  sshfs; Mutate is refused, Observe allowed.
-- Clocks: wall time is display only. Persisted deadlines and quarantine use
-  `{boot identity, boot-monotonic nanoseconds}` (`CLOCK_BOOTTIME` on Linux,
-  `mach_continuous_time` on macOS). A different boot ends both.
-- Test isolation uses a fresh `HOME`, as the fresh-HOME proofs require; no
-  new environment variable.
+Durable checkout state belongs to the resolved invocation root, not a nested
+catalog's cwd. Each linked worktree and each clone owns its own
+`<checkout>/.effigy/state/`, including a primary checkout. They never share the
+primary's journal: independent deletion, gate contention and recovery must be
+independent. Existing Git runtime-scope tokens, Compose names and volume names
+are preserved. Resource identity is distinct from storage routing: a globally
+unique RunId and its machine-scope canonical encoding do not put a task run's
+records or gate in the machine root. They are colocated with its owner checkout;
+only §7.5 authorities route to machine storage. Both token-based and initial
+filesystem-identity admissions take the local initialization gate first, so
+creating a token cannot split a resource across two lock names.
+A durable Prepare establishes the existing `.effigy/` ignore
+block; foreground admission and all reads never append it.
 
 ```text
+<checkout>/.effigy/state/
+  kernel.db                         checkout journal (+ rollback journal during commits)
+  gates/<scope>.scope               scope lock
+  gates/<scope>/<rid>.gate          per-resource locks, including foreground owners
+  sock/<run-id>.sock                durable supervisor socket
+  runs/<run-id>/                    durable redacted rotating logs
+  objects/<sha256>/                 immutable render/source closures
+  staging/<run-id>/                 durable run-owned staging
+  migration-committed.json          local import seal, only after §11.1 cutover
 ~/.effigy/state/
-  kernel.db                         runtime store (+ kernel.db-journal during commits)
-  gates/<scope>.scope               scope gate
-  gates/<scope>/<rid>.gate          resource gates
-  sock/<run-id>.sock                per-run supervisor control socket
-  runs/<run-id>/<stream>.log        redacted, rotating logs
-  objects/<sha256>/                 immutable closures (renders); read-only once published
-  staging/<run-id>/                 staging owned by one run; removed by its settle
+  machine.db                        only §7.5 shared facts and bounded recovery
+  gates/<scope>.scope               machine scope locks
+  gates/<scope>/<rid>.gate          shared-resource locks
+  migration/                       §11.1 receipts and cutover manifest only
 ```
 
-### 7.2 Tables
+Roots/components are real, operator-owned 0700 directories; files are 0600,
+no-follow, descriptor-verified and bounded (K13). Checkout ancestors may have
+ordinary source-directory read/execute permissions but must not be writable by
+another user; the private `.effigy/state/` subtree must pass the strict check.
+Mutation on NFS, SMB, WebDAV, FUSE or sshfs refuses. SQLite keeps §5.5's
+DELETE/FULL settings. Private fixtures use a fresh `HOME` **and independent
+checkout roots**, never real checkout links. No production state override is
+needed. Wall clocks are display only; persisted deadlines/quarantine retain
+boot identity and boot-monotonic nanoseconds. A different boot ends them.
+The state subtree, secrets and control sockets are masked from workspace guest
+mounts; guests continue through the host authority channel (R1).
 
-| Table | Key | Columns | Writer |
-| --- | --- | --- | --- |
-| `meta` | key | schema version, created by, last written by | kernel |
-| `checkouts` | token | kind, path hint, Git dir hint, state (live, tombstoned), first seen, last seen, tombstoned at | kernel, Mutate |
-| `resources` | resource name | canonical bytes, kind, scope, label, authority engine, generation, desired, last applied, state, backend, engine record, updated at | authority, under the resource gate |
-| `runs` (operations) | run id | owner, generation, kind, placement, phase, workload outcome, cleanup outcome, invocation and digest, owner, supervisor and sentinel identities, parent run, stop cause, residue acknowledgement, timestamps | owner gate holder |
-| `events` (journal) | run id, sequence | effect id, kind, target, settlement, state, receipt, error, deadline, wall time | owner gate holder |
-| `attachments` | environment, run | environment generation, mode, state | the attaching run; settle |
-| `claims` | claimed resource | holder, run, reservation token, state, generation, revision, quarantine end, details | owning engine, one transaction |
-| `requests` | request id | run, expected generation, action, cause, requester identity, state, created, resolved | any Mutate inserts; the owner resolves |
-| `objects` | digest | kind, path, size, referencing resources | engines through the object API |
-| `logs` | run, stream | path, bytes, truncated, redaction policy | owner |
+Deleting a checkout deletes its journal, logs, objects and local locks. It is
+not a stop or successful settle. Supported `container retire` first settles
+runs, withdraws routes/releases claims and verifies closure under scope locks;
+only then can an operator remove the directory. Effigy does not prevent an
+external `rm -rf`. Living custodians retain open gate/root descriptors and
+refuse new effects if the directory binding changes; they finish cleanup from
+their verified receipts where possible. Recreating the pathname cannot adopt
+the old generation: token and root inode must match. Missing state plus
+surviving containers or processes is residue, never permission to kill by
+number. Machine endpoint/port claims survive deletion and protect their values
+until explicit verified retirement; unknown owners are not garbage-collected.
+No machine copy of the deleted checkout's journal exists.
+
+### 7.2 Tables and transaction boundaries
+
+The §5.5/§5.6 record shapes remain in the checkout journal: `meta`, one owning
+`checkouts` identity, `resources`, `runs`, `events`, `attachments`, local `claims`,
+`requests`, `objects`/object references and `logs`. No row represents another
+checkout's task history. All environment records, renders, backend metadata,
+data ownership, remote receipts and holder runs live here. Foreground runs
+create none of these rows. A checkout journal failure affects that checkout;
+no common database is opened for task begin, spawn or settle.
+
+An environment holder and its environment authority use the same checkout
+journal, preserving atomic attach/activation and R4. An explicit borrow from
+another checkout is mediated by a durable holder session in that environment's
+owning checkout, with a fenced request/receipt from the caller's durable run;
+there is no cross-database attachment or guessed import. Loss of either side
+keeps protection until the authority session settles. Shared data keeps its
+existing machine-scoped ResourceId and host lock, but its durable ownership
+belongs to the environment's checkout; the lock serializes ownership requests,
+and references to another owner require that owner's verified authority.
+The backend's verified ownership labels locate that checkout; a gate
+diagnostic path is only a hint and never proof. An absent or unreadable owning
+checkout/label is Unknown, not an unclaimed data resource. Fresh allocation
+needs exact backend absence while the shared data gate is held. Neither data
+nor holder records are added to the machine database.
 
 ### 7.3 Path families
 
-The audit counts about 111 persistent families today. The target is 16.
-Kernel-owned families are 1–6; the kernel supplies the persistence contract
-for the rest.
+| # | Family | Location and lifetime |
+| --- | --- | --- |
+| 1 | Checkout runtime store | `<checkout>/.effigy/state/kernel.db`; durable state only |
+| 2 | Gates | owning checkout's `state/gates/`; truly shared resources alone in machine `state/gates/`; never unlink a held scope |
+| 3 | Control sockets | checkout `state/sock/`; removed at durable close; gateway socket remains in `~/.effigy/gateway/` |
+| 4 | Immutable objects | checkout `state/objects/`; referenced closures plus 3 superseded per environment |
+| 5 | Staging | checkout `state/staging/`; only the owning durable settle removes it |
+| 6 | Run logs | checkout `state/runs/`; 1 MiB segments, newest 4 per stream; 2 GiB per checkout, oldest settled first |
+| 7 | Leaf certificates | `~/.effigy/gateway/certs/`; gateway `atomic_replace`, reissued on expiry or CA change |
+| 8 | Preserved CA | mkcert `CAROOT`; external, read-only to Effigy, never touched |
+| 9 | Pinned sources | `<checkout>/.effigy/sources.lock.json`, `.effigy/cache/sources/`; config gate and `atomic_replace`, while pinned |
+| 10 | Private vault | `<checkout>/.effigy/secrets/local.vault` and `.prev`; secrets gate and pointer commit, previous generation kept; masked from guest mounts |
+| 11 | Key wraps | secrets-owned location; same pointer commit/lifetime as vault; masked from guest mounts when beside vault |
+| 12 | Machine preferences | `~/.effigy/config.toml`; user-owned, `atomic_replace` |
+| 13 | Other derived caches | per owner; RefreshDerived only, corrupt is a miss, owner-defined retention |
+| 14 | Reports and exports | explicit user-owned paths, engine `atomic_replace` |
+| 15 | Platform setup outputs | resolver, launchd, completion; setup verifies ownership before changing (R3), retained until explicit removal |
+| 16 | Machine facts | `~/.effigy/state/machine.db`; §7.5 only |
+| 17 | Migration receipts | machine `state/migration/`, local `state/migration-committed.json` and destination metadata; §11.1 |
 
-| # | Family | Location | Owner | Primitive | Retention | Guest-visible |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | Runtime store | `state/kernel.db` | kernel | `Store` | migrated, never deleted | no |
-| 2 | Gates | `state/gates/` | kernel | `Gate` | scope removal only (§7.4) | no |
-| 3 | Control sockets | `state/sock/`; gateway socket in `~/.effigy/gateway/` | supervisor; gateway | supervisor; gateway lane | removed at run close | no |
-| 4 | Immutable objects | `state/objects/` | environment engine | `Store` objects | referenced, plus the last 3 superseded per environment | read-only through a backend mount only |
-| 5 | Operation staging | `state/staging/` | kernel | `Run` | removed by the owning settle | no |
-| 6 | Run logs | `state/runs/` | owner run | `OwnedProcess` capture | 8 MiB per stream, 2 rotations; 2 GiB total, oldest settled first | no |
-| 7 | Leaf certificates | `~/.effigy/gateway/certs/` | gateway | `atomic_replace` | reissued on expiry or CA change | no |
-| 8 | Preserved CA | mkcert `CAROOT` | external | read only | never touched | no |
-| 9 | Pinned sources | `<checkout>/.effigy/sources.lock.json`; `.effigy/cache/sources/` | config | `Gate(Store bundles)` + `atomic_replace` | while pinned | no |
-| 10 | Private vault | `<checkout>/.effigy/secrets/local.vault` (+ `.prev`) | secrets | `Gate(Store vault)` + pointer commit | previous generation kept | no: masked from the workspace mount (§8.2) |
-| 11 | Key wraps | secrets lane decides | secrets | pointer commit with the vault | with the vault generation | no: masked from the workspace mount when beside the vault (§8.2) |
-| 12 | Machine preferences | `~/.effigy/config.toml` | config | `atomic_replace` | user-owned | no |
-| 13 | Other derived caches | per owner | owners | RefreshDerived; corrupt is a miss | owner-defined | — |
-| 14 | Reports and exports | explicit paths | engines | `atomic_replace` | user-owned | — |
-| 15 | Platform setup outputs | `/etc/resolver/`, launchd, completion | setup adapters | ownership verified before change (R3) | until removed by setup | no |
+Families 1–6 and 17 are host-only; family 4 may be mounted read-only by the
+backend. Certificate, source, vault, cache, report and platform families do not
+move into either database. Observe creates none of these paths. Certificate
+and platform setup remain explicit gateway/setup work, not foreground admission.
 
 ### 7.4 Retention
 
-| Item | Kept | Removed |
-| --- | --- | --- |
-| Runs | every unsettled run; the last 20 settled per owner | older settled runs, with their events and requests |
-| Logs | per §7.3 caps | oldest settled runs first |
-| Objects | referenced by a resource's desired or last-applied generation, plus 3 superseded per environment | the rest |
-| Claims | live and quarantined | released after quarantine |
-| Checkouts | live; tombstoned while any resource, claim or unsettled run references them | tombstones 30 days after their last reference ends |
-| Gate files | while their scope lives | a tombstoned scope's directory, removed under the scope gate `LOCK_EX or LOCK_NB` |
+Checkout journals keep every unresolved run and the newest 20 settled runs per
+owner; old settled logs/events/requests expire together. All referenced objects,
+live data claims, environment records and holders stay. Garbage collection is
+local, explicit or a bounded Mutate batch: at most 20 settled runs or 64 object
+candidates per invocation, with a 50 ms transaction budget; stop at either bound
+and continue next time. No global close-time scan and no checkpoint-wide VACUUM
+on settle. No timestamp refresh, history or retention scan in the machine store
+on task close. Foreground completion leaves no history to retain.
 
-A checkout is tombstoned when a Mutate observes `Verified` absence of its
-path and token. Retention runs only in Mutate, bounded per invocation, and in
-an explicit maintenance command. Never in Static or Observe (K15).
+Scope removal still needs its scope gate exclusively, with no guards alive.
+Externally deleted checkouts are reported as missing (§7.1); discovery never
+creates tombstones or cleans their external resources. Machine endpoint and
+port records expire only through verified release/quarantine, never because a
+checkout disappeared. Machine recovery records are compacted only after their
+effects are positively resolved, independently of checkout retention.
+
+### 7.5 Machine store: allowlist and write budget
+
+The allowlist is closed: gateway daemon identity/control and endpoint/route
+claims (including manual routes, loopback addresses and quarantine), the port
+registry (pins/ranges and owning checkout identities), and host admission state
+(opaque live grants/waiters if an admission provider uses this store). Schema,
+writer build and import receipts support those facts. Path hints on a claim are
+ownership evidence, not an enumeration of checkouts. No checkout catalogue,
+heartbeat, task history, task journal, environment render, holder, data claim,
+log or global object registry is permitted here.
+
+Gateway lifecycle/publication still needs durable intent. The machine store
+may keep one current operation and unresolved effect receipts per shared owner,
+with generation fences and the full §5.6 recovery semantics. It retains no
+completed run history; repeated idempotent ensure/read performs no write.
+An unresolved operation blocks that shared owner, not checkout-only work. The
+daemon writes on lifecycle/configuration change, never per request, access log,
+proxy connection, readiness poll or idle tick. Certificates stay separate files.
+
+Budgets below count successful logical database write transactions, including
+meta changes, not SQLite's physical page or fsync count. The implementation
+proof also reports physical writes/bytes. Initialization/import and explicit
+maintenance are measured separately, never hidden in the steady-state counts.
+
+| Operation | Machine write transactions (maximum) |
+| --- | --- |
+| Short foreground begin/spawn/settle; ordinary durable checkout begin/spawn/settle | **0** |
+| Status, runs, doctor, unchanged gateway ensure or existing port pin lookup | **0** |
+| Pure endpoint/route/port registry edit, all conflicts as one set | **1**: payload, claim revisions, quarantine and final disposition commit together |
+| Gateway lifecycle or endpoint change with an external bind/reload effect | **3**: intent/reservation; applied receipt plus publication; positive close/settle |
+| Admission grant/enqueue, transfer/admit or release, if stored by the provider | **1 per state transition**, no polling/heartbeat writes; Effigy itself creates no admission row for a foreground run |
+| Fault recovery | one transaction per unresolved effect disposition, plus one close; no scan or rewrite of completed runs |
+
+Contract 049's external hook remains provider-owned; its own storage is not an
+Effigy run journal and is measured separately. No-hook runs touch no admission
+state. A provider failure cannot make light, unhooked foreground work open the
+machine store.
+
+There is no atomic transaction across checkout and machine databases. Before a
+checkout asks for a shared change it commits an effect with exact target,
+`(CheckoutId, ResourceId, Generation, RunId)` and an idempotency token. The
+machine authority reserves/checks the full conflict set under its gate and
+commits the receipt before returning; the checkout then records that receipt.
+A lost reply is retried with the same token, not another allocation. Machine
+pending claims protect until positive settlement; checkout settle requests a
+fenced release, never edits machine rows. Activation follows verified shared
+publication, and a failed/unknown cross-store step stays partial with protection.
+I-A3 atomic reservation applies to each authority's complete conflict set; a
+workflow spanning data and endpoints orders these intents, compensates on
+failure and cannot publish Active until both receipts exist. Machine admission
+never waits on a checkout gate or probes under a transaction (K14).
+
+### 7.6 Discovery without a central index
+
+`runs` defaults to the current checkout. `runs --all` and cross-checkout doctor
+build a read-only candidate set from cwd, Git's linked-worktree list, configured
+search roots (`[runtime] checkout_roots = ["/path/to/workspaces"]` in user
+config), and checkout paths already present in gateway/port claims. This is
+bounded filesystem discovery, not registration at run start. Search roots are
+operator configuration; they do not grant mutation authority. Traversal never
+follows directory symlinks, reads arbitrary source files or creates state.
+Default limits are depth 8, 1,000 checkout candidates and a 5-second total
+view budget, including journal reads and probes; hitting a limit reports partial results and the omitted root/reason.
+A missing configured root is reported, an unreadable one is `Unknown`.
+
+Verify candidate root/token identities, deduplicate by checkout identity and
+read each local journal/gate directory independently under bounded Observe
+contexts. One corrupt, busy, missing or unsupported checkout appears as a
+per-checkout diagnostic; it cannot discard other results. Rows name their
+checkout and evidence source (durable, live foreground, residue); output also
+states roots searched and incomplete coverage. `--all` means all discoverable
+checkouts, not an assertion of host completeness. A checkout outside every
+search root and shared claim cannot be found after its owner exits. Supply its
+root through configuration or run the query there. Direct `run status|logs|stop`
+resolves cwd first, then this discovery set; ambiguous keys across checkouts
+refuse and name the candidate roots. Each action re-verifies its exact target.
+
+Doctor additionally reports imported-but-missing roots, legacy-store cutover
+state and verified external resource residue; it performs no import, repair or
+numeric signalling. Queue admission does not reconstruct capacity from this
+view: the contract 049 hook receives cwd/root and holds a live process/pipe
+lease, with its own identity-verified grant and nested capability. No global
+run index or database scan is needed to decide whether that lease is live.
 
 ## 8. Host and guest model
 
@@ -1735,7 +1982,7 @@ services run in containers, has no guest.
 | --- | --- | --- |
 | Exists in | every Effigy | container mode only: a workspace container of an environment that declares an operator workspace |
 | Detected by | no materialised context | a materialised context (§8.2) whose container identity matches the running container |
-| State root | `~/.effigy/state` on the host | none. The guest has no store, no gates and no runs. |
+| State roots | owning checkout `<checkout>/.effigy/state/`; machine `~/.effigy/state/` for §7.5 only | none. The guest has no store, no gates and no runs. |
 | Gates | all resources | none; `Gate::acquire` returns `HostAuthorityRequired` |
 | Store writes | yes | none |
 | Runs | yes | none of its own. Each admitted request is a host run (§8.3). |
@@ -2234,7 +2481,7 @@ A v0.14.1 user updates and everything keeps working with no manual steps
 | # | Principle |
 | --- | --- |
 | M1 | Never dual-write. Per scope: quiesce the old writer, import, cut over. Old and new code never write the same fact. |
-| M2 | One store transaction per scope, under `Gate(Store migrate:<scope>)`, recording the legacy path and digest of each import. |
+| M2 | One destination transaction per scope, under `Gate(Store migrate:<scope>)`, recording source paths/digests. Multi-destination publication uses §11.1's commit manifest, never partial authority. |
 | M3 | Import never modifies or deletes legacy files, and the new binary never writes them. Removal comes after one minor, by explicit maintenance, once the scope's import is committed. |
 | M4 | Unknown grants nothing. Unparsable, PID-only or foreign legacy state imports as `Unknown` and blocks destructive action until an explicit, label-verified `down` or `retire`. |
 | M5 | A legacy version without an importer is ignored, never guessed at. Doctor lists it. |
@@ -2263,6 +2510,107 @@ other scope gains downgrade support. The owning protocol and proofs are in
 | Gateway PID, identity, version; routes, loopback, ports | `~/.effigy/gateway/`, `~/.effigy/ports.json` | gateway-lane importer: claims byte for byte, manual routes kept | legacy daemon quiesced by the gateway lane's setup | — |
 | Vault | `<checkout>/.effigy/secrets/local.vault` | not moved; the next write uses the pointer commit | — | unreadable vault: never overwritten |
 | Host-run pending facts; retired admission store | `~/.local/state/host-run/`; `~/.cache/effigy/admission/` | untouched (contract 049) | — | — |
+
+### 11.1 Q-010 relocation from the central kernel store
+
+This is a second importer, in addition to the v0.14.1 family importers above.
+It accepts the current-main central `~/.effigy/state/kernel.db` schema and the
+v0.14.1 files; it must not assume a v0.14.1 user has a kernel database. On a
+fresh install no central store is created. Observe reports migration required
+and reads the appropriate legacy source without importing (M6). First Mutate
+requiring legacy state enters this protocol. Unrelated new foreground owners
+can run without a machine store, but must refuse unresolved or unreadable legacy
+evidence for their own owner until imported.
+
+**M1/M3 compatibility boundary.** Holding the new migration lock alone cannot
+fence an old binary that does not know that lock or schema. Before snapshotting,
+setup inventories and verifies legacy writers (owners, supervisors, sentinels,
+reapers, gateway daemon and in-flight clients), pauses admission of new legacy
+mutations through their owning launchers and waits for finite transitions to
+finish. Supported daemons use their existing quiesce/stop protocol; verified
+managed custodians drain or transfer only through a versioned custody handshake
+that keeps the gate and spawn barrier held. A process receipt copied into another
+database is not a custody transfer. Containers and environment sidecars with
+verified independent custody stay running; gateway listener continuity uses its
+existing setup protocol. An old custodian without a safe transfer must finish or
+be explicitly stopped through its legacy control before cutover; migration
+refuses with that command rather than stopping user work automatically.
+
+Acquire the legacy writer locks/owner gates and migration scope gate in canonical
+order; hold them through publication. Verify no old writer remains; recheck its
+boot/start identity and the legacy snapshot digest immediately before commit.
+Unknown writers or unavailable quiescence refuse with a diagnostic, never a
+partial import. This is a one-time coordination boundary across the old store,
+not a recurring global task gate. If an unmanaged old binary can still be
+launched against that store, setup refuses until the operator has withdrawn that
+writer. No doc can make a pre-fence binary honour a new marker. After cutover,
+M8 forbids running it; supported new binaries check the cutover/schema before
+mutation. The importer never edits the legacy database/header or takes a
+write-capable SQLite connection, including to recover a hot journal. A source
+needing recovery must be recovered by its old owner before import (M3).
+
+**Prepare, validate, publish.**
+
+1. Under quiescence read one consistent, bounded legacy snapshot and record
+   its digest/schema/build. A consistent read includes any committed WAL content
+   for schemas that used it; do not copy only the main file of a live store.
+   Select the closure of every unresolved run and live environment, including attachments, effects, requests, renders, objects,
+   backend metadata and identity evidence needed to settle it. Preserve all
+   original run ids, checkout tokens, generations, fences and reservations.
+   Preserve caller-key-to-run mappings as checkout-local aliases so retrying an
+   imported `--run-id` finds its original run despite the new key derivation.
+2. For each verified checkout create a private staging database/object tree
+   *inside that checkout's state root*, tagged with one migration id. Import
+   the selected closure in one destination transaction. Import endpoint/route
+   claims, manual routes, quarantine and port pins byte-for-byte into a staged
+   `machine.db`, with owning checkout references and exact unknown fields.
+   Active gateway recovery belongs there; active task/environment runs belong
+   only to their checkout. Completed run history, unreferenced logs/objects and
+   obsolete free-gate diagnostics may be dropped; no unresolved evidence may be.
+3. A missing, changed-token or unwritable checkout is not redirected to its
+   primary or silently dropped. Refuse publication and report it; the legacy
+   source remains authoritative. Explicit operator retirement may later resolve
+   it, retaining unknown endpoint/port claims. PID-only legacy custody imports
+   as `Unknown` and can never gain signalling authority (M4).
+4. Verify integrity, local foreign keys, object digests and every cross-store
+   reference. Fsync each staged closure, publish its prepared root under the
+   destination scope gate, and fsync each parent. Prepared roots carry the
+   migration id and are inert: all new readers/mutators use legacy authority
+   until a matching commit manifest exists.
+5. One `atomic_replace` publishes `state/migration/cutover.json`: migration id,
+   source digest, destination identities/closure digests, format and writing
+   build. Fsync it and its directory before acknowledging cutover. This is the
+   single authority switch across filesystems; no claim of multi-file rename
+   atomicity. Destination schema/import receipts must match it before use.
+   Failure before it leaves legacy authority; failure after it resumes the new
+   authority. New binary startup gates access on that match, so incomplete
+   prepared state is never mistaken for a fresh empty checkout or machine.
+6. After verifying the committed manifest, `atomic_replace` a local
+   `migration-committed.json` seal in each destination, containing migration id,
+   committed-manifest digest, destination identity and imported-closure digest.
+   This is a local publication receipt, not a second data import. Until sealed,
+   a prepared destination consults the commit manifest and can only resume
+   migration if it is missing/unreadable. Once sealed, it verifies its own schema
+   and import metadata locally: ordinary checkout runs no longer read the
+   machine manifest or any other checkout. Seal the machine destination likewise.
+   A crash between seals resumes the remaining seals from the committed manifest;
+   an already sealed checkout remains independently usable.
+7. Resume only new writers and gateway control, verify imported live resources
+   by exact labels/start identities, and reconnect transferred custody. Do not
+   recreate containers, change names, repin ports or reassign routes because of
+   import (M7). Old files remain byte-identical backups for one minor (M3).
+   The source is never a fallback after the manifest commits; an unreadable new
+   destination is `Unknown`, not permission to revive an old writer.
+
+A crash before the commit manifest retries the same import id and revalidates
+quiescence/source digest; a changed source invalidates all prepared closures.
+A crash after publication verifies destinations and resumes; it never reimports
+or replays a completed effect. Manifest and schema prevent a supported older
+new-format writer from mutating newer state (M8). Genuine pre-fence binaries
+remain unsupported after cutover, as explicitly stated above. Existing explicit
+gateway export-on-remove is the only downgrade exception; it must export from
+the new machine store under its own freeze protocol. Completed import receipts
+are provenance, not a live checkout registry or runtime lookup service.
 
 ## 12. Proof plan
 
@@ -2298,7 +2646,7 @@ other scope gains downgrade support. The owning protocol and proofs are in
 | O3 | At most one non-closed run per owner. |
 | O4 | Every gate is free unless a live process holds it. |
 | O5 | Strict-fake call logs show no non-idempotent effect applied twice, and exactly one release per attachment. |
-| O6 | `kernel.db` passes integrity and foreign-key checks. |
+| O6 | Every checkout `kernel.db` and `machine.db` passes integrity and local foreign-key checks; cross-store references have fenced, recoverable receipts (§7.5). |
 | O7 | Every `atomic_replace` target parses as its old or new generation. |
 | O8 | No destructive call targeted anything whose observation was `Unknown`. |
 | O9 | Observability faults never changed a workload outcome or exit code. |
@@ -2346,6 +2694,39 @@ recorded contract change.
 Each primitive's proof list in §5 is mandatory before that primitive merges.
 The fault suite (§12.1), with every oracle green, is mandatory before any
 engine migrates onto the kernel.
+
+### 12.6 Q-010 acceptance proofs (after amendment approval)
+
+Phase 1 is documentation only: run `qa:docs`. The following are implementation
+acceptance requirements, not results claimed by this amendment. Every fixture
+uses a fresh `mktemp -d` HOME, state roots and independent checkouts, never the
+operator's `~/.effigy` or live gateway. Record started PIDs/process groups, stop
+only those identities, remove fixtures and preserve exit codes before reporting.
+
+| Proof | Required evidence |
+| --- | --- |
+| Classification | Table-driven CLI coverage of every §3.1 row, with text/JSON, TTY/pipe, heavy/no hook, nested scripts and late durable requests; no effect before refusal or durable admission |
+| Write count | Instrument database opens/commits and filesystem writes/fsyncs before/after fresh and warm foreground tasks, sequences, test suites and QA groups: **0 database writes, 0 durable runtime records**, no machine DB dependency. Show transient lock writes separately. Repeat with configured retained scratch/source preparation and prove honest durable classification. Detached runs report commits by admission, spawn, requests, settle, bytes and fsyncs; no per-output, poll or heartbeat journal writes |
+| Isolation/concurrency | At least 20 overlapping short runs across at least 3 independent checkouts, while long detached runs and an environment transition run; zero cross-project lock refusals, including a deliberately stalled local retention writer. Same-resource contention still returns the specified Busy result. Busy/corrupt machine store cannot block local-only foreground work |
+| Foreground custody | macOS/Linux: leader exit with live descendants, HUP/INT/TERM, owner SIGKILL, guard SIGKILL, both dead, cleared tags, escaped session, reused/foreign PGIDs and SIGSTOP; positive cleanup or explicit evidence-limited residue, no numeric recovery signal, no false persisted success, no unlock while the surviving custodian cleans up |
+| Durable crash recovery | Kill/ENOSPC/EPERM/Unknown at every intent, receipt, activation and settle crossing for `--run-id`, detached one-shot, each managed front end, environment transition, sidecar, workspace session, remote/container run, and gateway lifecycle/publication. Preserve O1–O14 with local integrity and cross-store receipts; one authority and no double release |
+| Gates/layout/deletion | Fresh checkout, linked worktree, primary, non-Git root, same-path replacement, explicit retire and external deletion; gate inode continuity while held, token-init races, host-only guest masking, unknown residue/claims protected, no primary journal fallback |
+| Discovery/admission | Configured/unconfigured roots, linked worktrees, duplicate/ambiguous keys, symlink, missing/unreadable/corrupt checkout, depth/count/time limits, empty roots; R2 filesystem diff empty. Nested live/dead/forged admission capabilities and hook death/owner death do not use a central run lookup |
+| Migration scale and faults | Private copy of a large current store (at least the outage scale: 138 MB and 18,700 runs), plus v0.14.1 fixtures; live environments, verified active custody, manual routes, pins, unknown fields and quarantine survive. Kill/ENOSPC at each staging/fsync/manifest/custody-handoff crossing: exactly one authority, byte-identical legacy hashes, no restarts or new identities, completed history dropped safely. Old/unquiesceable writer and missing destination refuse before publication |
+| Gateway/environment regression | Private gateway and disposable engine fixtures: unchanged pins/routes after migration, proxy readiness, container reuse, R4 holder refusal, idle-stop and interrupted recovery; no calls to the unselected backend or operator's gateway |
+
+Use installed Effigy selectors, and build the changed binary once per source
+head for binary-level proofs (`oxide build --bin effigy`). Extend the covering
+selectors rather than raw test commands: `test:kernel:*` families touched,
+`test:run-control`, `test:run-control:cli`, `test:supervisor:faults`,
+`test:kernel:environment`, `test:containers:environment`,
+`test:environment:runner`, and the touched gateway endpoint/operator/migration
+selectors. Include task-engine/sequence/test/QA-group coverage for classification.
+New acceptance harnesses need narrow bounded Effigy selectors if none exists;
+a missing harness is not a waived proof. Run `check:kernel`,
+`qa:kernel-ratchet`, the covering strict-clippy selectors, `fmt:check` and
+`qa:docs` once for the implementation change. Tests keep their declared timeout
+and forced-exit settings. Hosted CI is not a gate; milestone QA belongs on main.
 
 ## 13. Fix and defect mapping
 

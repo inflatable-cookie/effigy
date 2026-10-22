@@ -334,3 +334,9 @@ grew by about 18,700 runs in four days and about 20 MB in 15 minutes. The ruling
   from the current machine store. Contract 052 is amended to match, and the
   kernel's crash-recovery guarantees still hold for every run that outlives its
   terminal.
+
+The proposed contract amendment is owned by [052 §3.1](contracts/052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary),
+with storage in §7, migration in §11.1 and acceptance proofs in §12.6; contracts
+[053](contracts/053-environment-reconciler-contract.md) and
+[049](contracts/049-heavy-validation-admission-contract.md) specify their
+touch-points. The runtime cutover is not implemented by the amendment.
