@@ -102,6 +102,24 @@ impl ReleaseReceipt {
     }
 }
 
+/// The `effigy.release.run.v1` payload a `release run` prints: the receipt,
+/// where it lives and what the invocation did.
+pub fn render_release_run_json(
+    receipt: &ReleaseReceipt,
+    messages: &[String],
+    receipt_path: &str,
+) -> String {
+    let payload = serde_json::json!({
+        "schema": "effigy.release.run.v1",
+        "receipt_path": receipt_path,
+        "messages": messages,
+        "receipt": receipt,
+    });
+    serde_json::to_string_pretty(&payload).unwrap_or_else(|error| {
+        format!("{{\"schema\":\"effigy.release.run.v1\",\"error\":{error:?}}}")
+    })
+}
+
 pub fn render_release_receipt_json(receipt: &ReleaseReceipt) -> String {
     serde_json::to_string_pretty(receipt).unwrap_or_else(|error| {
         format!("{{\"schema\":\"{RELEASE_RECEIPT_SCHEMA}\",\"error\":{error:?}}}")

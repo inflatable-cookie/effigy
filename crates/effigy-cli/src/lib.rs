@@ -835,9 +835,6 @@ pub enum ReleaseSubcommand {
         check_gates: bool,
     },
     Gates,
-    Resume {
-        allow_stale: bool,
-    },
     VerifyInstall {
         tag: Option<String>,
         repo_url: Option<String>,
@@ -871,16 +868,21 @@ pub enum ReleaseSubcommand {
     Plan {
         version_override: Option<String>,
     },
-    Prepare {
-        plan: bool,
-        check_gates: bool,
-        yes: bool,
-        version_override: Option<String>,
+    /// `effigy release run [--to <stage>]`: one durable Run (054 §3, §5).
+    Run {
+        to: Option<String>,
     },
-    Execute {
-        plan: bool,
-        yes: bool,
-        allow_stale: bool,
+    /// `effigy release resume <run>`: continue from the last checkpoint.
+    ResumeRun {
+        run: String,
+    },
+    /// `effigy release approve <run>`: pass an approval checkpoint.
+    Approve {
+        run: String,
+    },
+    /// `effigy release receipt <run>`: print the Run's receipt.
+    Receipt {
+        run: Option<String>,
     },
 }
 

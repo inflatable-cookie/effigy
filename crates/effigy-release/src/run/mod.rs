@@ -25,9 +25,14 @@ pub use effects::{approver_name, GitEffects, ReleaseEffects, TaskRequest, TaskRe
 pub use input::{
     release_input_value, RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV, RELEASE_TASK_INPUT_SCHEMA,
 };
-pub use kernel::{new_run_id, release_owner, ReleaseSession, ReleaseState, ReportsOnly};
+pub use kernel::{
+    new_run_id, release_home, release_owner, ReleaseSession, ReleaseState, ReportsOnly,
+};
 pub use kernel::{read_release_record, read_release_record_for_root};
-pub use receipt::{render_release_receipt_json, render_release_receipt_text, ReleaseReceipt};
+pub use receipt::{
+    render_release_receipt_json, render_release_receipt_text, render_release_run_json,
+    ReleaseReceipt,
+};
 pub use record::{
     RecordApproval, RecordArtifact, RecordArtifactFile, RecordCheckpoint, RecordDestination,
     RecordGate, RecordIdentity, RecordTarget, RecordTargetState, RecordVerification,

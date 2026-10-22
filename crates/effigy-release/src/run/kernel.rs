@@ -103,6 +103,17 @@ fn operation() -> OperationContext {
     )
 }
 
+/// The user's home, which holds Effigy-owned release state.
+pub fn release_home() -> Result<PathBuf, ReleaseError> {
+    StateRoot::home_from_env().ok_or_else(|| {
+        ReleaseError::TaskInvocation(
+            "a release Run needs an absolute HOME: its state and receipts live in \
+             `$HOME/.effigy/state` (contract 054 §10 ruling 2)"
+                .into(),
+        )
+    })
+}
+
 /// A fresh run id from supplied entropy.
 pub fn new_run_id() -> Result<RunId, ReleaseError> {
     let mut random = [0u8; 10];
