@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-10-16
+Last Updated: 2026-10-22
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -1232,10 +1232,17 @@ must not rediscover invocation cwd or handoff state after request construction.
 For Colima-backed `effigy container up`, Compose must not start until the
 runtime is usable. A running VM is not enough: both a profile-scoped
 `nerdctl info` and `buildctl debug workers` inside that profile must succeed.
-A warm profile returns after those probes. If a running profile stays
-unavailable through the bounded grace period, Effigy repairs that profile once
-and probes again; a newly started profile also waits for both probes. Failures
-identify the runtime stage and include the last probe result.
+A warm profile returns after those probes. A running profile that stays
+unavailable through the bounded grace period gets one bounded start of the
+`containerd` and `buildkit` units inside Effigy's own profile, then the same
+probes again. Unit start and the re-probe are both bounded. If the runtime is
+still not ready, Effigy refuses before Compose: the failure names the profile,
+both readiness observations and the explicit
+`effigy container profile repair` and `effigy container profile reset-runtime`
+commands. A task bring-up never stops or restarts the VM, because that would
+take down every stack on the profile; other Colima profiles are never touched.
+A newly started profile also waits for both probes. Failures identify the
+runtime stage and include the last probe result.
 
 After Compose up, Effigy waits before registering gateway routes until the
 runtime reports the matching project and declared service publishing each
@@ -1760,6 +1767,21 @@ That means:
 Effigy must not invent a second alias naming scheme for container-local
 resolution.
 
+A linked worktree or marked ephemeral clone is included in the guarantee. Its
+container targets resolve both the canonical declared alias
+(`postgres.<apex>`, the value application configuration carries) and the
+scope's effective alias. The canonical name is
+attached to the backing service on that scope's own Compose project network,
+next to the scoped name, so it can only ever name this checkout's backing
+service. Compose projects, networks and volumes stay per scope; the
+host-visible HTTP route keeps the scoped apex and application configuration is
+never rewritten. An explicit route for the canonical name keeps its precedence
+over the generated alias.
+
+Host-native execution in a scoped checkout is outside this guarantee: a host
+process resolving the canonical alias reaches the host-visible route, which
+belongs to the scope that published it (normally the primary checkout).
+
 ## Fallback ownership
 
 Compose backends do not all materialize runtime features equally.
@@ -2034,16 +2056,22 @@ A bounded process-table observation can be unavailable while Effigy still owns
 an unreaped child and its created process group. That unavailable observation
 must not abort the existing TERM/KILL sequence or reset its clocks. The original
 grace (minimum 100 ms) and fixed two-second force phase remain unchanged.
-Production uses the fixed bounded OS observer; tests inject only negative
-outcomes and use real owned children for positive completion.
+Production observes exit with the kernel's own non-reaping child peek and
+inventories group members through a bounded process-table capture; tests inject
+only negative outcomes and use real owned children for positive completion.
 
 Only positive root-exit and whole-group settlement evidence followed by the
 actual owned wait permits reaping and a successful exit status. Persistent
 observation uncertainty leaves the generation held. An actual wait failure
 remains fatal and held; it is not retried as observation unavailability. A signal
 permission refusal remains a refusal unless positive settlement and actual wait
-resolve the race. Process IDs and status observations grant no signal authority,
-and no signal is sent after reaping.
+resolve the race. Because macOS answers a group signal with `EPERM` when every
+remaining member is a zombie (papercut 91d3fd91), a refusal from a group this
+spawn path created is decided by a fresh live-member inventory: no live member
+settles the group, while a live member that refused and an unreadable inventory
+both keep the refusal. A zombie member holds no workload, so it keeps no group
+open. Process IDs and status observations grant no signal authority, and no
+signal is sent after reaping.
 
 The retained macOS CI failure proves an observation deadline was reported; its
 exact historical interleaving remains unknown. This correction does not change
@@ -2052,23 +2080,22 @@ APIs. Existing unsafe proof-comment observations remain report-only in the
 scoped Rust audit, without a soundness or whole-product certification claim.
 
 
-### Exit capture evidence and published dependent replacement
+### Exit observation evidence and published dependent replacement
 
-The fixed `/bin/ps -p <owned-child> -o stat=` observation remains completion
-evidence only. Its 500 ms per-capture cap, 64-byte stdout and 128-byte stderr
-limits and original stop-phase deadlines are unchanged. Active state tokens
-remain active; only a complete valid exited-state observation can participate
-in group settlement and the owned wait. Empty, unsuccessful, invalid UTF-8,
-multiple-token, unknown-state and incomplete captures remain refusals. No
-parser fallback or absent-PID inference authorizes reaping or signals.
+The owned child's exit is no longer sampled from `/bin/ps`. `waitid` with
+`WNOHANG | WNOWAIT` reports the retained child's exit without reaping it, so the
+Child keeps pinning the PID and group and only the actual owned wait supplies a
+status (papercut 24e9c4ab). The observation is retained once the kernel reports
+the exit: macOS consumes the wait state for a repeated non-reaping peek and an
+exit is monotone. `ECHILD` after the owned wait, and an expired deadline, remain
+unavailable observations, never clean ones. The earlier `ps`-based typed
+categories, its 500 ms per-capture cap, its 64/128-byte limits and its SHA-256
+diagnostics are retired with the sampler; no parser fallback or absent-PID
+inference authorizes reaping or signals.
 
-A refusal retains only its typed category, owned PID, exit code, bounded byte
-counts and SHA-256 correspondence, UTF-8/token classification and elapsed
-milliseconds. Captured output, arguments, environment and credentials are
-excluded. Launch, read, overflow, incomplete-output and deadline failures keep
-their typed capture category; unavailable retained bytes are not invented.
-This private diagnostic change does not change listener-state or transition
-receipt schemas.
+Group membership still comes from a finite bounded `ps -Ao pid=,pgid=,stat=`
+inventory, which retains only member PIDs and whether each holds workload.
+Captured output, arguments, environment and credentials are excluded.
 
 The controlled public proof publishes both a dependency and its dependent,
 selects dependency unavailability in the published phase, then requires a new

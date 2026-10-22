@@ -1,0 +1,4 @@
+[bundle]
+name = "retired-bootstrap"
+description = "v0.14.1 `[bootstrap]` composition fixture: run steps and children reach the consumer through bundle defaults and `[manifest].extend`."
+defaults = "export.toml"

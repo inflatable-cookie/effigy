@@ -559,6 +559,7 @@ fn build_effective_policy(
         let runtime_routes = runtime_route_domains(
             &dns_routes,
             &service_aliases,
+            dns_base_domain.as_deref(),
             runtime_dns_base_domain.as_deref(),
         );
         materialize_runtime_dns_override(

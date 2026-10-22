@@ -94,6 +94,11 @@ fn run_selected_task(
     selection_plan: &effigy_execution::ExecutionSelectionPlan,
     run_key: Option<&RunKey>,
 ) -> Result<String, RunnerError> {
+    // A task's own `--help` is answered from its declaration before any run,
+    // gate or managed supervisor starts, exactly like a built-in's.
+    if preflight.help {
+        return super::pipeline::render_selected_task_help(preflight, selection);
+    }
     let result =
         super::pipeline::managed::run_managed_task(preflight, selection, selection_plan, run_key)
             .and_then(|output| match output {

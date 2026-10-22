@@ -34,6 +34,8 @@ mod skill_command_tests;
 mod state_command_tests;
 #[path = "cli_output_tests/support.rs"]
 mod support;
+#[path = "cli_output_tests/task_description_tests.rs"]
+mod task_description_tests;
 #[path = "cli_output_tests/tasks_rendering_tests/mod.rs"]
 mod tasks_rendering_tests;
 #[path = "cli_output_tests/visibility_tests.rs"]

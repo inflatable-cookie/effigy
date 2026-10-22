@@ -63,6 +63,11 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
                 .map_err(|error| BootstrapError::task_invocation(error.to_string()))?;
             let manifest = load_task_manifest(manifest_path)
                 .map_err(|error| BootstrapError::task_invocation(error.to_string()))?;
+            // A v0.14.1 manifest loads for every other command; bootstrap alone
+            // refuses the retired-only declarations it cannot honour any more.
+            if let Some(message) = manifest.retired_bootstrap.refusal_message() {
+                return Err(BootstrapError::task_invocation(message));
+            }
             let checkout = manifest_path.parent().unwrap_or(manifest_path);
             let missing = prerequisites::collect_checkout(checkout, &manifest);
             if !missing.is_empty() {

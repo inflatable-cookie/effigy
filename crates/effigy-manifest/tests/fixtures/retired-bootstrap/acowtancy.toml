@@ -1,0 +1,14 @@
+# Copied from acowtancy's v0.14.1 infra/bootstrap.toml (included manifest).
+[bootstrap]
+run = [
+  { task = "secrets init" },
+  { task = "bootstrap:state" },
+]
+
+[[bootstrap.children]]
+path = "../longhorn"
+repo = "git@github.com:inflatable-cookie/longhorn.git"
+branch = "main"
+
+[tasks."bootstrap:state"]
+run = "printf state"

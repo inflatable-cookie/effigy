@@ -1091,6 +1091,34 @@ fn validate_manifest_schema_names_the_retired_shell_table() {
 }
 
 #[test]
+fn validate_manifest_schema_accepts_the_one_release_bootstrap_retirement_spellings() {
+    let manifest: Value = toml::from_str(
+        r#"
+[bootstrap]
+run = [
+  { task = "secrets init" },
+  { rhai = "scripts/bootstrap.rhai" },
+]
+start = [{ task = "container:up" }, { task = "dev" }]
+submodules = "recursive"
+
+[[bootstrap.children]]
+path = "../book"
+repo = "git@example.test:book.git"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+    assert!(
+        sink.findings.is_empty(),
+        "v0.14.1 bootstrap keys must load for one release, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
 fn validate_manifest_schema_accepts_contracts_section() {
     let manifest: Value = toml::from_str(
         r#"
@@ -1124,6 +1152,35 @@ fn validate_manifest_schema_rejects_unknown_contracts_keys() {
             .iter()
             .any(|finding| finding.evidence.contains("contracts.artifact")),
         "expected contracts.artifact to be unsupported, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_accepts_a_task_description_on_every_shape() {
+    let manifest: Value = toml::from_str(
+        r#"
+[tasks.dev]
+run = "cargo run"
+description = "Run the dev stack"
+
+[tasks.capture]
+rhai = "scripts/capture.rhai"
+description = "Capture fixture output"
+
+[tasks.proof]
+task = "dev"
+description = "Alias for the dev stack"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.is_empty(),
+        "expected `description` to validate, got: {:?}",
         sink.findings
     );
 }

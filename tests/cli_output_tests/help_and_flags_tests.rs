@@ -814,30 +814,39 @@ fn cli_help_for_builtin_owned_help_emits_the_same_json_envelope() {
 }
 
 /// Help must never execute repository work. When a selector owns `config` or
-/// `scan`, the direct form runs the repo task, so the help route refuses rather
-/// than following it.
+/// `scan`, the direct flag answers from the repository task's declaration and
+/// the `help` route refuses rather than following the shadowing selector.
 #[test]
 fn cli_help_for_builtin_owned_help_refuses_to_run_a_shadowing_selector() {
     let root = temp_execution_workspace("help-builtin-owned-shadowed");
     fs::write(
         root.join("effigy.toml"),
-        "[tasks.config]\nrun = \"printf CONFIG-TASK-RAN\"\n[tasks.scan]\nrun = \"printf SCAN-TASK-RAN\"\n",
+        "[tasks.config]\nrun = \"touch config-task-ran.txt\"\n[tasks.scan]\nrun = \"touch scan-task-ran.txt\"\n",
     )
     .expect("write manifest");
 
-    for (command, marker) in [("config", "CONFIG-TASK-RAN"), ("scan", "SCAN-TASK-RAN")] {
+    for command in ["config", "scan"] {
+        let marker = root.join(format!("{command}-task-ran.txt"));
         let direct = run_help_cli(&root, &[command, "--help"]);
         let direct_stdout = String::from_utf8(direct.stdout).expect("utf8 stdout");
         assert!(
-            direct_stdout.contains(marker),
-            "`effigy {command} --help` should run the repository task here: {direct_stdout}"
+            direct_stdout.contains(&format!("Task: {command}")),
+            "`effigy {command} --help` should answer with the repository task: {direct_stdout}"
+        );
+        assert!(
+            !marker.exists(),
+            "`effigy {command} --help` must not execute repository work: {direct_stdout}"
         );
 
         let via_help = run_help_cli(&root, &["help", command]);
         assert_eq!(via_help.status.code(), Some(2));
         let help_stdout = String::from_utf8(via_help.stdout).expect("utf8 stdout");
         assert!(
-            !help_stdout.contains(marker),
+            !help_stdout.contains(&format!("{command} Help")),
+            "`effigy help {command}` must not resurface the built-in panel: {help_stdout}"
+        );
+        assert!(
+            !marker.exists(),
             "`effigy help {command}` must not execute repository work: {help_stdout}"
         );
         let stderr = String::from_utf8(via_help.stderr).expect("utf8 stderr");

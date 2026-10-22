@@ -101,7 +101,15 @@ fn validate_compact_inline_task_table(
         context,
         &task_path,
         task_table,
-        &["run", "task", "rhai", "run_in", "visibility", "group"],
+        &[
+            "run",
+            "task",
+            "rhai",
+            "run_in",
+            "visibility",
+            "group",
+            "description",
+        ],
     );
     validate_optional_non_empty_string_field(
         context,
@@ -155,6 +163,7 @@ fn validate_task_table_keys(
         &[
             "visibility",
             "group",
+            "description",
             "run",
             "run_in",
             "system",

@@ -237,6 +237,18 @@ render --json` adds a `services` array naming each environment service's
 
 See `026-json-payload-examples.md` for realistic sample responses for each schema.
 
+### Task rows (`effigy.tasks.v1`)
+
+`effigy.tasks.v1` catalog task rows carry the task's optional one-line
+`description` beside `visibility`, `visibility_reason` and `group`. The field is
+always present and `null` when the task declares none, so a reader can rely on
+its shape without a version bump; filtered payload `matches` rows carry it the
+same way. `effigy --json <task> --help` renders the existing `effigy.help.v1`
+payload with `topic` set to the task selector and the task's group,
+description, run preview and manifest in `text`; nothing runs. The row field is
+an additive change within `effigy.tasks.v1`, and task help reuses an existing
+schema, so neither version moves.
+
 ### Tasks selector inventory (`selectors`)
 
 `effigy.tasks.v1` keeps `catalog_tasks`, `managed_profiles`, and

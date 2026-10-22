@@ -17,6 +17,7 @@ mod loaded_catalog;
 mod manifest_section;
 pub mod portfolio;
 mod qa_groups;
+mod retired_bootstrap;
 mod retired_keys;
 pub mod sources;
 mod task_defs;
@@ -25,6 +26,10 @@ mod test_config;
 pub mod user_config;
 
 pub use effigy_core::repo_markers::TASK_MANIFEST_FILE;
+/// Longest task `description` Effigy accepts, in characters. A description is
+/// one line of human context, not documentation: the guide and the task's own
+/// `--help` carry the detail.
+pub const TASK_DESCRIPTION_MAX_CHARS: usize = 200;
 pub use portfolio::{load_portfolio, Portfolio, PORTFOLIO_FILE};
 
 pub use bundles::{
@@ -77,6 +82,7 @@ pub use qa_groups::{
     ManifestQaMemberSurface, ManifestQaScopePolicy, ManifestQaSection, QaGroupDefinitionContext,
     QaScopeToken,
 };
+pub use retired_bootstrap::RetiredBootstrapDeclaration;
 pub use sources::{
     inspect_pinned_sources, prepare_pinned_sources, resolve_pinned_sources, PinnedSourceReport,
     PinnedSourceSpec, PinnedSourceState,
@@ -211,6 +217,12 @@ pub struct TaskManifest {
     pub task_defaults: Option<ManifestTaskDefaultsConfig>,
     #[serde(default)]
     pub bootstrap: Option<ManifestBootstrapConfig>,
+    /// What the one-release `[bootstrap]` retirement translation read for this
+    /// manifest. It is never part of the TOML shape:
+    /// [`load_task_manifest_with_inspection`] emits its notice once per run and
+    /// `effigy bootstrap` refuses with its refusals.
+    #[serde(skip)]
+    pub retired_bootstrap: RetiredBootstrapDeclaration,
     /// Pinned extra sources acquired beside this checkout (contract 020).
     /// Declared as `[sources.<name>]`; replaces the removed
     /// `[bootstrap].children`.
@@ -379,6 +391,7 @@ impl TaskManifest {
                     detail: format!("task `{task_name}` group must be a non-empty string"),
                 });
             }
+            validate_task_description(manifest_path, task_name, task.description.as_deref())?;
         }
         if let Some(docs_policy) = self.docs_policy.as_ref() {
             docs_policy.validate(manifest_path)?;
@@ -399,6 +412,41 @@ impl TaskManifest {
         }
         Ok(())
     }
+}
+
+/// Validate an optional task `description`: one non-empty line of at most
+/// [`TASK_DESCRIPTION_MAX_CHARS`] characters.
+fn validate_task_description(
+    manifest_path: &Path,
+    task_name: &str,
+    description: Option<&str>,
+) -> Result<(), ManifestError> {
+    let Some(description) = description else {
+        return Ok(());
+    };
+    let reject = |detail: String| {
+        Err(ManifestError::Compose {
+            path: manifest_path.to_path_buf(),
+            detail,
+        })
+    };
+    if description.trim().is_empty() {
+        return reject(format!(
+            "task `{task_name}` description must be a non-empty string; remove the key or write one line of context"
+        ));
+    }
+    if description.contains('\n') || description.contains('\r') {
+        return reject(format!(
+            "task `{task_name}` description must be a single line; move the detail into the task's run command or a guide"
+        ));
+    }
+    let length = description.chars().count();
+    if length > TASK_DESCRIPTION_MAX_CHARS {
+        return reject(format!(
+            "task `{task_name}` description is {length} characters; keep it to {TASK_DESCRIPTION_MAX_CHARS} or fewer so `effigy tasks` stays readable"
+        ));
+    }
+    Ok(())
 }
 
 /// Validate every `[containers.<env>].data_from` reference at manifest load.
@@ -1479,5 +1527,73 @@ mod top_level_keys_tests {
             .filter(|key| !matches!(*key, "manifest"))
             .collect();
         assert_eq!(declared, fields);
+    }
+}
+
+#[cfg(test)]
+mod task_description_validation_tests {
+    use super::{TaskManifest, TASK_DESCRIPTION_MAX_CHARS};
+    use std::path::Path;
+
+    fn error_for(text: &str) -> String {
+        let manifest: TaskManifest = toml::from_str(text).expect("parse manifest");
+        manifest
+            .validate(Path::new("/tmp/effigy.toml"))
+            .expect_err("description must be refused")
+            .to_string()
+    }
+
+    #[test]
+    fn an_empty_description_is_refused_with_the_fix() {
+        let detail = error_for("[tasks.demo]\ndescription = \"   \"\nrun = \"printf demo\"\n");
+        assert!(detail.contains("task `demo` description"), "{detail}");
+        assert!(
+            detail.contains("remove the key or write one line of context"),
+            "{detail}"
+        );
+    }
+
+    #[test]
+    fn a_multi_line_description_is_refused() {
+        let detail = error_for(
+            "[tasks.demo]\ndescription = \"first line\\nsecond line\"\nrun = \"printf demo\"\n",
+        );
+        assert!(
+            detail.contains("must be a single line"),
+            "a multi-line description must name the rule: {detail}"
+        );
+    }
+
+    #[test]
+    fn a_description_over_the_limit_names_the_length_and_limit() {
+        let too_long = "x".repeat(TASK_DESCRIPTION_MAX_CHARS + 1);
+        let detail = error_for(&format!(
+            "[tasks.demo]\ndescription = \"{too_long}\"\nrun = \"printf demo\"\n"
+        ));
+        assert!(
+            detail.contains(&format!(
+                "{} characters; keep it to {} or fewer",
+                TASK_DESCRIPTION_MAX_CHARS + 1,
+                TASK_DESCRIPTION_MAX_CHARS
+            )),
+            "{detail}"
+        );
+    }
+
+    #[test]
+    fn a_description_at_the_limit_and_a_unicode_one_are_accepted() {
+        let at_limit = "é".repeat(TASK_DESCRIPTION_MAX_CHARS);
+        let manifest: TaskManifest = toml::from_str(&format!(
+            "[tasks.demo]\ndescription = \"{at_limit}\"\nrun = \"printf demo\"\n"
+        ))
+        .expect("parse manifest");
+        manifest
+            .validate(Path::new("/tmp/effigy.toml"))
+            .expect("a 200-character description is accepted");
+
+        assert_eq!(
+            manifest.tasks["demo"].description.as_deref(),
+            Some(at_limit.as_str())
+        );
     }
 }

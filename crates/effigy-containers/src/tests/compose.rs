@@ -699,6 +699,86 @@ catalog = "workspace-rust-bun"
 }
 
 #[test]
+fn linked_worktree_container_target_resolves_its_own_declared_database_alias() {
+    // Two scoped checkouts of one manifest. Each container target must resolve
+    // the canonical declared TCP alias to its own backing service, because the
+    // Compose network (and its project) belongs to that scope.
+    with_temp_effigy_home("scoped-database-aliases", |_| {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("scoped-database-aliases");
+        let manifest = r#"
+[containers]
+default = "web"
+[containers.web]
+project_name = "app-dev"
+primary_service = "workspace"
+[containers.web.dns]
+base_domain = "acme.test"
+routes = [
+  { domain = "app.acme.test", tls = false, service = "workspace" },
+]
+[containers.web.services.workspace]
+catalog = "workspace-rust-bun"
+working_subdir = "scoped-database-aliases"
+[containers.web.services.postgres]
+catalog = "postgres"
+"#;
+        let mut scopes = Vec::new();
+        for name in ["clone-one", "clone-two"] {
+            let checkout = root.join(name);
+            fs::create_dir_all(checkout.join(".git")).unwrap();
+            fs::write(
+                checkout.join(".git/config"),
+                "[effigy]\n\truntimeScope = ephemeral\n",
+            )
+            .unwrap();
+            fs::write(checkout.join("effigy.toml"), manifest).unwrap();
+            effigy_core::worktree_scope::prepare_checkout_token(&checkout).unwrap();
+            let policy = load_container_policy(&checkout, None).unwrap();
+            assert!(
+                policy.compose_files.len() >= 2,
+                "generated render plus DNS override"
+            );
+            let dns_override = policy.read_compose(&policy.compose_files[1]).unwrap();
+            let effective_base = policy
+                .dns_routes
+                .first()
+                .expect("declared HTTP route")
+                .domain
+                .strip_prefix("app.")
+                .expect("scoped route keeps the declared label")
+                .to_owned();
+            let generated = policy.read_compose(&policy.compose_files[0]).unwrap();
+            assert!(
+                generated.contains("networks:") && generated.contains("com.effigy.scope"),
+                "the scope owns its Compose network: {generated}"
+            );
+            assert!(
+                dns_override.contains(&format!("postgres.{effective_base}")),
+                "the scoped alias stays reachable: {dns_override}"
+            );
+            assert!(
+                dns_override.contains("postgres.acme.test"),
+                "the canonical declared alias resolves inside this scope's target: {dns_override}"
+            );
+            assert!(
+                !dns_override.contains("postgres.acme.test:192.168.5.2"),
+                "the canonical alias is a network alias, never the host gateway: {dns_override}"
+            );
+            scopes.push((policy.project_name.clone(), effective_base));
+        }
+        assert_ne!(
+            scopes[0].0, scopes[1].0,
+            "each scope keeps its own Compose project network"
+        );
+        assert_ne!(
+            scopes[0].1, scopes[1].1,
+            "each scope keeps its own host apex"
+        );
+    });
+}
+
+#[test]
 fn linked_translated_compose_with_fixed_port_allocates_a_scoped_port() {
     let root = temp_repo("linked-direct-fixed-port");
     let checkout = root.join("worker");

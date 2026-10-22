@@ -61,9 +61,18 @@ are public and grouped. Consumers need no manifest migration to keep running.
 - `effigy tasks --all` includes internal tasks in the same grouped text view.
 - `effigy tasks --json` always includes every task, independently of `--all`.
   Existing `effigy.tasks.v1` and filtered payloads gain additive `visibility`,
-  `visibility_reason` and `group` fields on each catalog task row. Group is
-  `null` when undeclared; empty-catalog placeholder rows have null metadata.
-  `selectors` remains the complete machine inventory.
+  `visibility_reason`, `group` and `description` fields on each catalog task
+  row. Group and description are `null` when undeclared; empty-catalog
+  placeholder rows have null metadata. `selectors` remains the complete
+  machine inventory.
+- A task definition may declare one `description` line (200 characters
+  maximum, non-empty, single line) on every task shape, including
+  bundle-provided tasks. `effigy tasks` prints it under the task in its group.
+  `effigy <task> --help` answers from the declaration — selector, group,
+  description, run preview and manifest — before any run, gate or managed
+  supervisor starts, and emits the built-in `effigy.help.v1` payload under
+  `--json`. A `--help` after the invocation's `--` is still the task's own
+  argument and is passed through.
 - Filtering with `--task` preserves the selected output's visibility policy;
   `--resolve` and direct invocation resolve internal tasks normally.
 - Shell completion offers public tasks only. Its cache observes composed task

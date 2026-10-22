@@ -1,0 +1,6 @@
+# Copied from longhorn's v0.14.1 effigy.toml.
+[bootstrap]
+setup = [{ task = "bootstrap:deps" }]
+
+[tasks]
+"bootstrap:deps" = "bun install --frozen-lockfile"

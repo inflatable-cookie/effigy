@@ -535,7 +535,8 @@ group = "Proofs"
 
 `effigy tasks` shows public tasks grouped by `group`, with `General` for
 ungrouped tasks. `tasks --all` and `tasks --json` include every task; JSON gives
-effective visibility, its reason and group. Internal tasks run directly:
+effective visibility, its reason, group and description. Internal tasks run
+directly:
 
 ```sh
 effigy provider-smoke --verbose
@@ -556,6 +557,34 @@ commands). Each definition is refused with the fix: move it to
 run it by name. Task expiry checks and the separate inventory are gone.
 Includes remain explicit; Effigy never scans for or deletes temporary task
 files.
+
+## Task descriptions
+
+Give a public selector one line of context when its name is not enough:
+
+```toml
+[tasks."demo:hello-cube"]
+group = "Demos"
+description = "Hello Cube: windowed harness sample (wgpu, interactive)"
+run = "cargo run -p jetstream-demos --bin demo-hello-cube -- {args}"
+```
+
+`description` is optional on every task-definition shape — full tables, the
+`run`/`task`/`rhai` compact forms, run-step tables and bundle-provided tasks —
+and never changes routing. `effigy tasks` prints it under the task in its group,
+`effigy tasks --json` exposes it as `catalog_tasks[].description` (`null` when
+undeclared), and `effigy <task> --help` prints it with the task's group, run
+preview and manifest instead of running anything. A description must be one
+non-empty line of 200 characters or fewer; anything else is refused with the
+fix. Put the detail in a guide and keep this to a phrase a reader can scan:
+
+```sh
+effigy tasks --json | jq -r '.catalog_tasks[] | select(.description) | "-\(.task): \(.description)"'
+effigy "demo:hello-cube" --help
+```
+
+Anything after `--` still belongs to the task, so `effigy <task> -- --help`
+passes the flag through to the wrapped command.
 
 ## Testing and Legacy Interop
 
@@ -664,7 +693,14 @@ Behavior:
 - `effigy doctor` reports pinned-source drift (`sources.pinned-drift`)
 - inline run steps, `{ task = ... }` entries, `[bootstrap].children`,
   `bootstrap deps sync`, `--db-seed`, `--fresh`, `--backend` and `--start` are
-  retired in v0.15 and refuse with their replacement (Q-009)
+  retired in v0.15 (Q-009). For the whole v0.15 line a v0.14.1 manifest still
+  loads: `run` is read as `setup`, `{ task = ... }` entries and inline steps
+  are read as selectors and internal tasks, a `submodules` policy string is
+  read as a boolean, and a multi-selector `start` chain runs as one internal
+  task, with one deprecation notice per manifest. Only `effigy bootstrap`
+  refuses the retired-only surfaces (children, `bootstrap deps sync`,
+  `bootstrap:db-seed`) with their replacement; see
+  [guide 085](085-v0.15.0-consumer-migration.md).
 
 ## Developer Session Patterns
 

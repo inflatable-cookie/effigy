@@ -15,10 +15,14 @@ where
         .map(|(name, mut value)| {
             // Discovery metadata belongs to every task shorthand, including a
             // run-step table with timeout/retry fields.
-            let (visibility, group) = if let Some(table) = value.as_table_mut() {
-                (table.remove("visibility"), table.remove("group"))
+            let (visibility, group, description) = if let Some(table) = value.as_table_mut() {
+                (
+                    table.remove("visibility"),
+                    table.remove("group"),
+                    table.remove("description"),
+                )
             } else {
-                (None, None)
+                (None, None, None)
             };
             let definition: ManifestTaskLikeDefinition =
                 value.try_into().map_err(serde::de::Error::custom)?;
@@ -31,6 +35,15 @@ where
                 .map(toml::Value::try_into)
                 .transpose()
                 .map_err(serde::de::Error::custom)?;
+            task.description =
+                description
+                    .map(toml::Value::try_into)
+                    .transpose()
+                    .map_err(|error| {
+                        serde::de::Error::custom(format!(
+                            "task `{name}` description must be a string: {error}"
+                        ))
+                    })?;
             Ok((name, task))
         })
         .collect()
@@ -181,6 +194,51 @@ run = "cargo test"
             .expect_err("unknown admission class must fail closed");
 
         assert!(error.to_string().contains("urgent"));
+    }
+
+    #[test]
+    fn task_description_survives_every_task_definition_shape() {
+        let parsed: TasksEnvelope = toml::from_str(
+            r#"
+[tasks]
+full = { run = "echo full", description = "Full table" }
+compact-task = { task = "full", description = "Compact task reference" }
+compact-rhai = { rhai = "scripts/capture.rhai", description = "Compact Rhai step" }
+step = { run = "echo step", timeout_ms = 500, description = "Run-step table" }
+sequence = { run = ["echo one", "echo two"], description = "Step list" }
+shorthand = "echo shorthand"
+"#,
+        )
+        .expect("task descriptions");
+
+        for (name, description) in [
+            ("full", "Full table"),
+            ("compact-task", "Compact task reference"),
+            ("compact-rhai", "Compact Rhai step"),
+            ("step", "Run-step table"),
+            ("sequence", "Step list"),
+        ] {
+            assert_eq!(
+                parsed.tasks[name].description.as_deref(),
+                Some(description),
+                "{name} kept its description"
+            );
+        }
+        assert_eq!(parsed.tasks["shorthand"].description, None);
+    }
+
+    #[test]
+    fn a_non_string_task_description_is_refused() {
+        let error =
+            toml::from_str::<TasksEnvelope>("[tasks.demo]\nrun = 'echo demo'\ndescription = 5")
+                .expect_err("a non-string description must be refused");
+
+        assert!(
+            error
+                .to_string()
+                .contains("task `demo` description must be a string"),
+            "{error}"
+        );
     }
 
     #[test]

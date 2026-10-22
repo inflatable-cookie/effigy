@@ -1,0 +1,14 @@
+# Copied from contact-patch's v0.14.1 effigy.toml.
+[manifest]
+minimum_effigy_version = "0.11.0"
+
+[catalog]
+alias = "contact-patch"
+
+[[bootstrap.children]]
+path = "../book"
+repo = "git@github.com:contact-patch/book.git"
+branch = "main"
+
+[tasks."book:meta:test"]
+run = "cargo test -p cp-book-meta"

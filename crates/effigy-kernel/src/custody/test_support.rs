@@ -1,11 +1,11 @@
 //! Test-only native Child adapter. Production effects still require journalled
 //! Custody::spawn; fixtures reuse its generation observations and recovery.
-use super::{platform, Closure, ProcessReceipt};
+use super::{platform, Closure, ProcessReceipt, SignalDelivered};
 use crate::ctx::{
     CancelToken, CleanupContext, Deadline, EffectClass, Limits, OperationContext, Placement,
 };
 use crate::ident;
-use crate::observe::Observed;
+use crate::observe::{Observed, UnknownReason};
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
@@ -173,6 +173,18 @@ pub fn poll(child: &Child) -> io::Result<Option<std::process::ExitStatus>> {
 /// Retain the direct leader until the group is closed, including when it is a
 /// zombie. This avoids depending on readable argv of protected macOS children.
 pub fn stop_child(child: &mut Child, receipt: &ProcessReceipt) -> io::Result<()> {
+    stop_child_with(child, receipt, platform::owner_signal, closed)
+}
+
+/// Teardown policy for an owned fixture group: observe closure, signal within
+/// the receipt's grace, then escalate. The observations are injectable so the
+/// refusal policy is provable without a privileged live member.
+fn stop_child_with(
+    child: &mut Child,
+    receipt: &ProcessReceipt,
+    mut send: impl FnMut(&ProcessReceipt, i32) -> Observed<SignalDelivered>,
+    mut closed: impl FnMut(&ProcessReceipt) -> Observed<Closure>,
+) -> io::Result<()> {
     if child.id() != receipt.identity.pid || receipt.pgid != child.id() {
         return Err(io::Error::other("invalid direct fixture receipt"));
     }
@@ -208,12 +220,32 @@ pub fn stop_child(child: &mut Child, receipt: &ProcessReceipt) -> io::Result<()>
             libc::SIGKILL
         };
         // The unreaped Child pins its PID and group throughout this loop.
-        if let Observed::Unknown(reason) = platform::owner_signal(receipt, signal) {
-            return Err(io::Error::other(format!(
-                "fixture group signal: {reason:?}"
-            )));
+        match send(receipt, signal) {
+            Observed::Verified(..) => {}
+            // macOS answers a group signal with EPERM when every remaining
+            // member is a zombie (papercut 4e974573). A zombie holds no
+            // workload, so re-check closure before calling the refusal a
+            // failure: an identity-matched live member still fails below.
+            Observed::Unknown(UnknownReason::PermissionDenied) => {
+                if matches!(
+                    closed(receipt),
+                    Observed::Verified(..) | Observed::Absent(_)
+                ) {
+                    return Ok(());
+                }
+                return Err(io::Error::other(
+                    "fixture group signal: permission denied while a live member remained",
+                ));
+            }
+            Observed::Unknown(reason) => {
+                return Err(io::Error::other(format!(
+                    "fixture group signal: {reason:?}"
+                )))
+            }
+            // ESRCH between the closure check and the signal is closure.
+            Observed::Absent(_) => return Ok(()),
         }
-        let _ = platform::owner_signal(receipt, libc::SIGCONT);
+        let _ = send(receipt, libc::SIGCONT);
         std::thread::sleep(Duration::from_millis(5));
     }
 }
@@ -343,5 +375,43 @@ mod tests {
         assert!(other.0.try_wait().unwrap().is_none());
         stop_child(&mut child.0, &child.1).unwrap();
         stop_child(&mut other.0, &other.1).unwrap();
+    }
+
+    /// macOS refuses a group signal with EPERM when every remaining member is a
+    /// zombie (papercut 4e974573). A refused signal is only a teardown failure
+    /// while a live, identity-matched member remains: a group that observes
+    /// closure afterwards has settled, and teardown keeps its leak assertion
+    /// for a group whose closure stays unknown.
+    #[test]
+    fn fixture_group_signal_permission_refusal_is_decided_by_closure() {
+        let (mut child, receipt) =
+            spawn(Command::new("sleep").arg("60"), "fixture-signal-refusal").unwrap();
+        stop_child_with(
+            &mut child,
+            &receipt,
+            |_, _| Observed::Unknown(UnknownReason::PermissionDenied),
+            |_| Observed::Verified(Closure, super::super::evidence()),
+        )
+        .expect("a refused group signal followed by observed closure has settled");
+        // The injected refusal did not stop the real child; the fixture's own
+        // receipt retires it before the leader is reaped.
+        stop(&receipt).unwrap();
+        let _ = child.wait().unwrap();
+    }
+
+    #[test]
+    fn fixture_group_signal_permission_refusal_with_unknown_closure_still_fails() {
+        let (mut child, receipt) =
+            spawn(Command::new("sleep").arg("60"), "fixture-signal-unknown").unwrap();
+        let error = stop_child_with(
+            &mut child,
+            &receipt,
+            |_, _| Observed::Unknown(UnknownReason::PermissionDenied),
+            |_| Observed::Unknown(UnknownReason::PermissionDenied),
+        )
+        .expect_err("an unavailable closure cannot settle a refused group signal");
+        assert!(error.to_string().contains("permission denied"), "{error}");
+        stop(&receipt).unwrap();
+        let _ = child.wait().unwrap();
     }
 }

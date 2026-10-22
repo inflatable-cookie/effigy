@@ -294,7 +294,7 @@ During v0.x, MINOR bumps may include breaking changes.
   table, `config/demos.toml` in this repository, the `effigy-demo` crate, the
   `demo.*` Rhai host features and the TUI demo browser. Each demo converts to
   an ordinary task: `[tasks."demo:<name>"]` with the same `run`, `title` and
-  `summary` kept as a TOML comment, and optional `group = "Demos"`. `effigy
+  `summary` merged into `description`, and optional `group = "Demos"`. `effigy
   demo` and a `[demos]` table both refuse with that recipe, and `effigy config
   --target demos` is gone with the section.
 - v0.14 lease locks (`.effigy/locks/`), task status records
@@ -312,10 +312,12 @@ During v0.x, MINOR bumps may include breaking changes.
 - Rebuild `effigy bootstrap` as one command over ordinary task selectors and
   pinned sources (Q-009, effigy#262). `[bootstrap].setup` is an ordered list of
   selectors, `start` is one selector and `submodules = true` initialises
-  submodules recursively at their recorded commits. Every retired spelling
-  refuses with its replacement: `[bootstrap].run` and the `setup` alias for it
-  became `setup`; inline run steps and `{ task = ... }`/array `start` entries
-  moved into the task they name; `[bootstrap].children` and
+  submodules recursively at their recorded commits. The retired spellings keep
+  loading for the whole v0.15 line so a v0.14.1 project still works (see
+  Fixed, effigy#273); inline run steps and `{ task = ... }`/array `start`
+  entries are read as internal tasks, and only `effigy bootstrap` refuses the
+  retired-only ones, with their replacement: `[bootstrap].run` and the `setup`
+  alias for it became `setup`; `[bootstrap].children` and
   `bootstrap children status|sync` became pinned `[sources.<name>]` (`git`,
   `rev` or `rev_file`, `path`); `bootstrap deps sync` became a repo-owned
   selector in `setup`; `--db-seed`, the dump prompts and the
@@ -365,7 +367,18 @@ During v0.x, MINOR bumps may include breaking changes.
   `lint:release:platform` selectors, with their `:cargo` escapes.
 - `tests/fixtures/release_platform/` holds one project per `[release]` shape
   from contract 054 §4 plus Longhorn's, Poodle's and Underlay's real tables.
-
+- Optional task `description` (effigy#271). Every task-definition shape — a
+  full table, the `run`/`task`/`rhai` compact forms, a run-step table and a
+  bundle-provided task — may declare one `description` of at most 200
+  characters on a single line; an empty or multi-line value is refused with the
+  fix. `effigy tasks` prints it under the task inside its group, `effigy tasks
+  --json` adds `description` to every `catalog_tasks` row (`null` when
+  undeclared, an additive change to `effigy.tasks.v1`), and `effigy <task>
+  --help` prints the task's group, description, run preview and manifest
+  (`effigy.help.v1` under `--json`) instead of running it. Arguments after
+  `--` still belong to the task, so `effigy <task> -- --help` reaches the
+  wrapped command. The `[demos]` retirement recipe puts a demo's `title` and
+  `summary` in `description` instead of a comment.
 - `test:focused` runs a focused Rust test selection through Cargo with
   `--locked`, keeping `Cargo.lock` read-only while a source-linked consumer
   checkout is under observation.
@@ -863,6 +876,59 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- A v0.14.1 project keeps loading after an update (effigy#273): the retired
+  `[bootstrap]` spellings are read for the whole v0.15 line instead of failing
+  the parse, so `effigy tasks`, selectors, `container`, `test` and every other
+  non-bootstrap command work unchanged. One deprecation notice per manifest is
+  printed on stderr (and by `effigy doctor`) and never in `--json` stdout:
+  `run` is read as `setup` (`{ task = ... }` entries become selectors, inline
+  `run`/`rhai`/command steps become internal tasks that `setup` selects in
+  order), `submodules = "none"|"init"|"recursive"` becomes a boolean, a
+  multi-selector `start` chain runs as one internal task, and
+  `[bootstrap].children`/the `bootstrap:db-seed` callback keep loading. Only
+  `effigy bootstrap` refuses the retired-only surfaces, with today's migration
+  message: pinned `[sources.<name>]` for children, a first-seed task in `setup`
+  for `bootstrap:db-seed`, and a repo-owned dependency task for
+  `bootstrap deps sync`. Bundles and `[manifest].extend = ["bootstrap.children"]`
+  follow the same rules. The translation is removed after v0.15.
+- A Colima profile that reports Running while `containerd`/`buildkit` are
+  stopped is recovered in place: Effigy starts those units inside its own
+  profile, re-probes with a bounded deadline, and otherwise refuses with the
+  profile, both observations and the explicit
+  `effigy container profile repair` / `profile reset-runtime` commands
+  (effigy#264, papercuts `27e54f95` and `5f9db1a0`). It no longer stops or
+  restarts the VM from a task bring-up, which took every stack on the profile
+  down; other profiles are never touched.
+- A linked worktree's container targets resolve the canonical declared TCP
+  backing-service alias (for example `postgres.<site>.test`) to that
+  worktree's own service (effigy#264, lead `5100c68d`). The alias is added to
+  the backing service on the scope's own Compose network next to the scoped
+  name, so it can only ever name this checkout's backing service; the
+  application configuration, the canonical manifest values and the
+  host-visible scoped route are unchanged. Explicit routes keep their
+  precedence, and an alias that would name the host gateway is never added.
+  Host-native execution in a scoped checkout is not covered by this
+  guarantee (contract 005).
+- `proof:containers:isolated-dirs` runs again (effigy#264, papercut
+  `5d15981a`). Its strict fake backend now answers the explicit backend
+  target (`--context`/`--host`), the exact-identity container inventory, the
+  custody helper and the remote registration frame, reports the required
+  `Created` field, and expects the current read-only drift report for missing
+  isolated host mount points. The live holder finishes its own workload
+  instead of being signalled, so its run settles through the production path.
+- A managed host child group that macOS reports as refusing a group signal
+  with `EPERM` keeps its stop authority when every remaining member is a
+  zombie. The stop now re-inventories live members instead of treating the
+  refusal itself as failure, so a macOS stop no longer reports "cannot signal
+  directly owned child group" for a group that has already quiesced. A live
+  member that refuses the signal, and a group whose liveness cannot be read,
+  still leave the generation held (papercut 91d3fd91).
+- A managed host child's exit is observed through the kernel's non-reaping
+  `waitid` peek instead of a bounded `/bin/ps` sample, so a loaded host can no
+  longer report a live child's exit state as unavailable and fail its stop
+  (papercut 24e9c4ab). The retained child still pins its PID and group until
+  the actual owned wait, and a reaped child or an expired observation stays
+  unavailable rather than clean.
 - Sequential `Terminal::Foreground` children no longer stop their owner with
   SIGTTOU, which suspended `effigy gateway setup` after `mkcert -install`
   ("suspended (tty output)") while it held the `gateway-setup` gate
