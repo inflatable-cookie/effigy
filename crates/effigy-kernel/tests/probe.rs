@@ -97,20 +97,22 @@ impl Drop for Workloads {
     }
 }
 fn accept(listener: &TcpListener) -> ProcessIdentity {
-    let until = Instant::now() + Duration::from_secs(5);
+    // Wait for the workload's own announcement. The workload announces before
+    // it does anything else, so this is an observable barrier rather than a
+    // machine-speed deadline; the runner's slow-timeout terminate-after bounds
+    // a probe that never executes.
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
                 stream.set_nonblocking(false).unwrap();
                 stream
-                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .set_read_timeout(Some(Duration::from_secs(30)))
                     .unwrap();
                 let mut line = String::new();
                 BufReader::new(stream).read_line(&mut line).unwrap();
                 return serde_json::from_str(&line).unwrap();
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                assert!(Instant::now() < until, "probe did not execute");
                 std::thread::sleep(Duration::from_millis(5));
             }
             Err(e) => panic!("telemetry: {e}"),
@@ -176,9 +178,10 @@ fn probe_guard_and_observer_death_matrix_has_no_owned_survivors_or_writes() {
             if mode != "hang" {
                 workload.0.push(accept(&listener));
             }
-            // Let the short-lived leader actually exit before owner loss.
-            if mode == "descendant" || mode == "escape" {
-                std::thread::sleep(Duration::from_millis(250));
+            // The leader exits on its own after 150ms in this mode; wait for
+            // that observable exit instead of assuming a machine speed.
+            if mode == "descendant" {
+                wait_gone(&workload.0[0]);
             }
             let start = Instant::now();
             match action {

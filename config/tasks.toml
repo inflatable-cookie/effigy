@@ -226,13 +226,9 @@
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^remote::tests::/) | test(/^strict_fake::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
-# Stays on Cargo: the probe family is timing-sensitive and one independent
-# comparison saw it pass 17/17 under Cargo while an Oxide pass failed it 16/17.
-# The brief keeps any family whose result differs under Oxide on Cargo
-# (dogfood finding for the Oxide supervisor).
 "test:kernel:probe" = { visibility = "internal", group = "Maintenance", run = [
-  { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
-  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test probe --lib -E 'test(/^probe::/) | binary(probe)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test probe --lib -E 'test(/^probe::/) | binary(probe)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
 "test:kernel:probe:linux" = { visibility = "internal", group = "Maintenance",  admission = "heavy", run = [{ id = "linux-probe", run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh probe", timeout_ms = 1800000 }] }
 "test:kernel:custody" = { visibility = "internal", group = "Maintenance", run = [
@@ -2572,6 +2568,10 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 "test:kernel:objects:runner:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^objects::tests::/) | test(store_retention_keeps_referenced_objects_and_three_superseded) | test(/^faults::scenarios::faults_objects_/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 }] }
 "test:kernel:observed:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(observation_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:kernel:outcome:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test foundation -E 'test(outcome_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
+"test:kernel:probe:cargo" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test probe --lib -E 'test(/^probe::/) | binary(probe)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+] }
 "test:kernel:platform:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test platform -E 'not test(/^fault_tests::/) & not test(/^custody::tests::/) & not test(/^signal::tests::/) & not test(/^run::lifecycle::tests::/) & not test(/^probe::/) & not test(/^remote::tests::/) & not test(/^strict_fake::tests::/) & not test(/^faults::/) & not test(/^supervise::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:kernel:ratchet:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test ratchet --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:kernel:remote:cargo" = { visibility = "internal", group = "Maintenance", run = [

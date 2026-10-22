@@ -563,7 +563,11 @@ never converted into readiness.
 `test:kernel:probe` runs strict signal-policy fakes, transport/status/budget and
 fault-boundary proofs, plus native owner/guard death, SIGSTOP, descendants,
 both-dead maintenance and read-only filesystem oracles. Its telemetry travels
-over private sockets so probes and helpers produce no fixture files.
+over private sockets so probes and helpers produce no fixture files. The proofs
+wait on the workload's own announcement and on the guard's own deadline; the
+fixture's startup and the harness's handshake are outside the observed budget,
+so a loaded host cannot turn a filesystem or owner-loss proof into a timeout.
+The family runs through the Oxide route like the rest of the kernel selectors.
 `test:kernel:probe:linux` uses the isolated Colima qualification transport with
 an unprivileged Linux test user; the proof's denied-root assertion cannot be
 bypassed by root. It leaves its stopped private VM and printed artifact directory
