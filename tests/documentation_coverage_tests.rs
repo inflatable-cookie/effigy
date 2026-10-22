@@ -167,6 +167,49 @@ fn public_help_families_and_current_contract_paths_are_documented() {
     }
 }
 
+/// Q-008's acceptance condition: the per-program fallback's conditions are in
+/// `effigy help` and in both shipped Effigy skill copies. Whitespace is
+/// normalised so a wrapped line does not hide a condition.
+#[test]
+fn program_fallback_conditions_are_documented_in_help_and_both_skill_copies() {
+    fn normalized(contents: &str) -> String {
+        contents.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("help")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy help");
+    assert!(output.status.success(), "effigy help failed");
+    let help = normalized(&String::from_utf8_lossy(&output.stdout));
+
+    let shared = [
+        "not an executable on the inherited PATH",
+        "`force = true`",
+        "unrestricted exact argv",
+        "exact first arguments",
+        "before exec",
+        "exact argv",
+        "`oxide clean` becomes `cargo clean`",
+        "cargo plugins and cargo-subcommand exec",
+        "absolute paths, a replaced PATH",
+        "shell aliases and shell functions",
+    ];
+    assert_contains_all("effigy help", &help, &shared);
+    assert_contains_all(
+        "effigy help",
+        &help,
+        &["Program Fallbacks", "never retries"],
+    );
+
+    for relative in ["skills/effigy/SKILL.md", ".agents/skills/effigy/SKILL.md"] {
+        let skill = normalized(&read(relative));
+        assert_contains_all(relative, &skill, &shared);
+        assert_contains_all(relative, &skill, &["Program fallbacks", "no retry"]);
+    }
+}
+
 #[test]
 fn managed_runtime_seed_behavior_has_active_discovery_routes() {
     let seed_tokens = [

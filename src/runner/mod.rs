@@ -36,6 +36,7 @@ mod managed_run;
 mod managed_shell;
 mod manifest;
 mod owned_children;
+mod program_fallback;
 mod qa_group_command;
 mod release_command;
 mod render;

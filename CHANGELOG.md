@@ -230,6 +230,28 @@ During v0.x, MINOR bumps may include breaking changes.
   registry pull while the host resolves normally, with a bounded two-attempt
   retry and a profile restart, so a transient VM resolver outage is not
   mistaken for a failed catalog image or wrong pull credentials.
+- Generic per-program fallback (Q-008, effigy#250). An Effigy user config may
+  declare `[programs.<name>]` with `fallback = "<program>"`, an optional
+  `allow = ["<first argument>", ...]` and an optional `force =
+  true`. When `<name>` is not an executable on the inherited `PATH`, or
+  `force = true`, the run gets a shim named `<name>` first on its `PATH`, prints
+  one honest notice, and settles the shim with the run. The shim execs the
+  fallback with the exact argv: no flag translation, nothing added and no retry,
+  and the fallback's exit status stands. An omitted allow list is unrestricted
+  exact argv; a present one runs only those exact first arguments and refuses
+  anything else (including no argument) before exec. The fallback resolves to an
+  absolute path on the inherited `PATH`, so it never re-enters a shim and
+  fallbacks never chain. Only inherited-PATH name resolution is affected;
+  absolute paths, a replaced `PATH` (including a task `env` one), shell aliases
+  and shell functions are not, and `force` changes nothing else. The original
+  program's behaviour and safeguards are lost: with `oxide` -> `cargo`,
+  `oxide clean` becomes `cargo clean` without Oxide's ownership checks or
+  managed storage, and cargo plugins and cargo-subcommand exec run as plain
+  cargo would. The block is user-config only; a project `effigy.toml` that
+  declares `programs` is refused as an unknown field. `effigy help`, the shipped
+  Effigy skill and the user guide section
+  ([069](docs/guides/069-workspace-host-integration.md)) document every
+  condition.
 - Per-run scratch on a configured external volume (effigy#244). Setting
   `[scratch] root` in `~/.effigy/config.toml` to a mounted volume's root gives
   every host-placed run — the built-in `effigy test` route included — its own

@@ -140,6 +140,8 @@ pub(in crate::runner) struct TaskRun {
     admission: Option<super::admission::Admission>,
     /// The configured scratch directory this run holds, when it has one.
     scratch: Option<crate::runner::scratch::Handle>,
+    /// The program-fallback shims first on this run's PATH, when one is active.
+    programs: Option<crate::runner::program_fallback::Handle>,
     /// Named by a caller's `--run-id` key: its output is logged for
     /// `effigy run logs`.
     keyed: bool,
@@ -399,6 +401,7 @@ impl TaskRun {
                 _custody_scope: custody_scope,
                 admission: None,
                 scratch: None,
+                programs: None,
                 keyed: false,
             };
             run.admit(request.admission, admission, request.cwd)?;
@@ -407,6 +410,9 @@ impl TaskRun {
             // holds the same scratch a task run does.
             if request.scratch {
                 run.scratch = crate::runner::scratch::for_run(&mut run, true);
+                run.programs = crate::runner::program_fallback::for_run().map_err(|error| {
+                    RunnerError::task_invocation(format!("program fallback: {error}"))
+                })?;
             }
             return Ok(run);
         }
@@ -467,6 +473,7 @@ impl TaskRun {
             _custody_scope: custody_scope,
             admission: None,
             scratch: None,
+            programs: None,
             keyed: request.key.is_some(),
         };
         run.admit(request.admission, admission, request.cwd)?;
@@ -474,6 +481,10 @@ impl TaskRun {
         // workload runs and settled with the run. A nested run reuses the
         // scratch its parent already opened.
         run.scratch = crate::runner::scratch::for_run(&mut run, request.scratch);
+        // A per-program fallback shim is created for the run that activates
+        // it, inside the run's scratch when it has one, and settles with it.
+        run.programs = crate::runner::program_fallback::for_run()
+            .map_err(|error| RunnerError::task_invocation(format!("program fallback: {error}")))?;
         Ok(run)
     }
 
@@ -520,6 +531,7 @@ impl TaskRun {
                         _custody_scope: None,
                         admission: None,
                         scratch: None,
+                        programs: None,
                         keyed: false,
                     },
                 );
@@ -644,6 +656,8 @@ impl TaskRun {
             _custody_scope: Some(custody_scope),
             admission: None,
             scratch: crate::runner::scratch::inherited_handle(self.scratch.as_ref()),
+            // A step runs inside its parent's shim scope on this thread.
+            programs: None,
             keyed: false,
         })
     }
@@ -672,6 +686,7 @@ impl TaskRun {
         Vec<String>,
     ) {
         let admission = self.admission.take();
+        self.leave_programs();
         let scratch = self.conclude_scratch(&workload);
         let result = match self.run.take() {
             Some(run) => close_run_settled(owned(run), workload, kernel::cleanup_context(budget)),
@@ -690,6 +705,7 @@ impl TaskRun {
         let mut warnings = Vec::new();
         // Settle stops the admission hook; the marker goes with it.
         let admission = self.admission.take();
+        self.leave_programs();
         warnings.extend(self.conclude_scratch(&workload));
         if let Some(run) = self.run.take() {
             warnings.extend(close_run(owned(run), workload.clone()));
@@ -706,6 +722,14 @@ impl TaskRun {
         drop(admission);
         retain();
         warnings
+    }
+
+    /// Removes this run's program-fallback shims, if it opened them. A
+    /// nested run only drops its reference.
+    fn leave_programs(&mut self) {
+        if let Some(handle) = self.programs.take() {
+            crate::runner::program_fallback::leave(handle);
+        }
     }
 
     /// Records the run's scratch decision before the settle reads it. A kept
@@ -781,6 +805,7 @@ impl Drop for TaskRun {
     /// scratch leaves this thread's scope but is never concluded, so the
     /// directory is retained until the sweep removes it.
     fn drop(&mut self) {
+        self.leave_programs();
         if let Some(scratch) = self.scratch.take() {
             crate::runner::scratch::leave(&scratch);
         }

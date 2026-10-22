@@ -46,6 +46,31 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
             "Wait up to MS for a live run of the same task to finish",
         ),
     ])?;
+    renderer.text("")?;
+    render_program_fallbacks(renderer)?;
+    Ok(())
+}
+
+/// The mandatory disclosure for `[programs.<name>]` (Q-008). Every condition
+/// below is acceptance, not decoration: the trigger, `force`'s inherited-PATH
+/// scope, the optional allow list, exact argv with no translation or retry,
+/// and the loss of the original program's safeguards.
+fn render_program_fallbacks<R: HelpRenderer + ?Sized>(renderer: &mut R) -> HelpResult<()> {
+    renderer.section("Program Fallbacks")?;
+    renderer.text(
+        "`[programs.<name>]` in the Effigy user config (`~/.effigy/config.toml`), never a project `effigy.toml`: `fallback = \"<program>\"`, optional `allow = [\"<first argument>\", ...]`, optional `force = true` (default `false`).",
+    )?;
+    renderer.bullet_list(
+        "Conditions",
+        &[
+            "Trigger: the fallback is active when `<name>` is not an executable on the inherited PATH, or when its block sets `force = true`. A per-run shim named `<name>` then comes first on that run's PATH and the run prints an honest notice.".to_owned(),
+            "Scope: only name resolution through the inherited PATH changes. `force = true` changes nothing else: absolute paths, a replaced PATH (including a task `env` PATH), shell aliases and shell functions still reach the real program or nothing.".to_owned(),
+            "Allow list: omitted means unrestricted exact argv. Present means only those exact first arguments run; anything else, including no argument, is refused before exec and the fallback never starts. Effigy interprets no global options, `--` or subcommands: the first argument is matched literally.".to_owned(),
+            "Exact argv: the shim execs the fallback with the arguments it received. Effigy translates no flags, adds nothing, and never retries after the fallback fails; the fallback's exit status is the shim's.".to_owned(),
+            "Lost safeguards: the original program's behaviour is gone. For `oxide` -> `cargo`, `oxide clean` becomes `cargo clean` without Oxide's ownership checks or managed storage, and cargo plugins and cargo-subcommand exec run as plain cargo would. The fallback is resolved to an absolute path on the inherited PATH, so it never re-enters a shim and fallbacks never chain.".to_owned(),
+        ],
+    )?;
+    renderer.text("")?;
     Ok(())
 }
 
@@ -94,4 +119,67 @@ fn visible_group_rows<'a>(
             .deferred_builtin
             .is_none_or(|name| !deferred_builtins.contains(name))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct Capture {
+        lines: Vec<String>,
+    }
+
+    impl HelpRenderer for Capture {
+        fn text(&mut self, body: &str) -> HelpResult<()> {
+            self.lines.push(body.to_owned());
+            Ok(())
+        }
+        fn section(&mut self, title: &str) -> HelpResult<()> {
+            self.lines.push(title.to_owned());
+            Ok(())
+        }
+        fn notice(&mut self, _level: NoticeLevel, body: &str) -> HelpResult<()> {
+            self.lines.push(body.to_owned());
+            Ok(())
+        }
+        fn bullet_list(&mut self, title: &str, items: &[String]) -> HelpResult<()> {
+            self.lines.push(title.to_owned());
+            self.lines.extend(items.iter().cloned());
+            Ok(())
+        }
+        fn table(&mut self, _spec: &TableSpec) -> HelpResult<()> {
+            Ok(())
+        }
+        fn key_values(&mut self, _items: &[KeyValue]) -> HelpResult<()> {
+            Ok(())
+        }
+    }
+
+    /// Q-008's acceptance condition: `effigy help` states the trigger,
+    /// `force`'s inherited-PATH scope, the optional allow list, exact argv with
+    /// no translation or retry, and the lost safeguards.
+    #[test]
+    fn general_help_states_every_program_fallback_condition() {
+        let mut capture = Capture::default();
+        render_general_help(&mut capture, &BTreeSet::new()).expect("render general help");
+        let help = capture.lines.join("\n");
+        for token in [
+            "Program Fallbacks",
+            "`[programs.<name>]`",
+            "not an executable on the inherited PATH",
+            "`force = true`",
+            "unrestricted exact argv",
+            "exact first arguments",
+            "refused before exec",
+            "exact argv",
+            "never retries",
+            "`oxide clean` becomes `cargo clean`",
+            "cargo plugins and cargo-subcommand exec",
+            "absolute paths, a replaced PATH",
+            "shell aliases and shell functions",
+        ] {
+            assert!(help.contains(token), "`effigy help` is missing {token}");
+        }
+    }
 }

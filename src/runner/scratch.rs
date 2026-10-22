@@ -516,6 +516,12 @@ pub(in crate::runner) fn current() -> Option<Arc<RunScratch>> {
     CURRENT.with(|current| current.borrow().last().cloned().flatten())
 }
 
+/// The path of the scratch directory in force on this thread, if any. Other
+/// per-run files (the program shims) live inside it when it exists.
+pub(in crate::runner) fn current_dir() -> Option<PathBuf> {
+    current().map(|scratch| scratch.dir.clone())
+}
+
 /// Whether the innermost scope is a run that declined scratch.
 fn declined() -> bool {
     CURRENT.with(|current| matches!(current.borrow().last(), Some(None)))
