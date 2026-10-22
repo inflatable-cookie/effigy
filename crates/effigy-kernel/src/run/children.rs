@@ -129,7 +129,10 @@ impl<'a> Run<'a> {
             Err(error) => (EffectState::Residue, Some(error.to_string())),
         };
         self.store
-            .transaction(&settle::cleanup_effects(cleanup)?, |txn| {
+            .transaction_within(
+                &settle::cleanup_effects(cleanup)?,
+                BusyWait::AtLeast(SETTLE_BUSY_WAIT),
+                |txn| {
                 journal::write_effect(
                     txn,
                     self.id,

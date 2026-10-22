@@ -10,7 +10,7 @@ use effigy_kernel::record::*;
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::store::*;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use support::*;
 
@@ -37,6 +37,31 @@ fn reader(home: &Path) -> Observed<StoreReader> {
 fn mode(path: &Path) -> u32 {
     std::fs::metadata(path).unwrap().permissions().mode() & 0o7777
 }
+fn journal_mode(state: &Path) -> String {
+    rusqlite::Connection::open_with_flags(
+        state.join(DB_NAME),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap()
+    .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+    .unwrap()
+}
+/// Every entry except the store's own write-ahead files and the state
+/// directory's timestamps: SQLite's shared-memory index belongs to the store,
+/// not to a record a read could change.
+fn records_only(root: &Path) -> std::collections::BTreeMap<PathBuf, Entry> {
+    snapshot(root)
+        .into_iter()
+        .filter(|(path, _)| {
+            let store_side = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name == "kernel.db-wal" || name == "kernel.db-shm");
+            let state_dir = path.ends_with(".effigy/state");
+            !store_side && !state_dir && *path != PathBuf::from(".effigy")
+        })
+        .collect()
+}
 #[derive(Debug)]
 struct Text(String);
 impl Record for Text {
@@ -60,10 +85,12 @@ fn store_layout_settings_and_schema_metadata() {
     assert_eq!(mode(&home.path().join(".effigy")), 0o700);
     assert_eq!(mode(&state), 0o700);
     assert_eq!(mode(&state.join(DB_NAME)), 0o600);
-    // journal_mode=DELETE: no write-ahead files, ever.
+    // Write-ahead logging is the persistent journal mode (§5.5); closing the
+    // last connection checkpoints it and removes its two side files.
+    assert_eq!(journal_mode(&state), "wal");
+    drop(store);
     assert!(!state.join("kernel.db-wal").exists());
     assert!(!state.join("kernel.db-shm").exists());
-    drop(store);
     let reader = match reader(home.path()) {
         Observed::Verified(reader, _) => reader,
         other => panic!("{other:?}"),
@@ -85,9 +112,9 @@ fn store_transactions_commit_related_records_together_or_not_at_all() {
     let failed: Result<(), StoreError> = store.txn(&cx, |txn| {
         txn.resource(&task("a"), "task")?;
         txn.next_generation(&task("a"))?;
-        Err(StoreError::Busy)
+        Err(StoreError::Corrupt("injected".into()))
     });
-    assert_eq!(failed, Err(StoreError::Busy));
+    assert!(matches!(failed, Err(StoreError::Corrupt(_))));
     store
         .txn(&cx, |txn| {
             txn.resource(&task("b"), "task")?;
@@ -142,14 +169,15 @@ fn store_reads_are_pure_including_on_a_read_only_root() {
         .unwrap();
     drop(store);
     let state = root.path().to_path_buf();
-    let before = snapshot(home.path());
+    let before = records_only(home.path());
     {
         let reader = reader(home.path());
         let reader = reader.verified().unwrap();
         assert!(reader.resource(&task("a")).verified().is_some());
     }
-    assert_eq!(snapshot(home.path()), before, "a read changed state");
-    // Read-only directory and file: the reader still works (no WAL).
+    assert_eq!(records_only(home.path()), before, "a read changed state");
+    // Read-only directory and file: the reader drops to an immutable open of
+    // the checkpointed store, which creates nothing at all.
     std::fs::set_permissions(state.join(DB_NAME), std::fs::Permissions::from_mode(0o400)).unwrap();
     std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
     let before = snapshot(home.path());

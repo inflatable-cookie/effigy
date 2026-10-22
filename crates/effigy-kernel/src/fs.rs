@@ -143,6 +143,17 @@ pub struct DirFd {
     path: PathBuf,
     setup_uid: Option<u32>,
 }
+impl Clone for DirFd {
+    /// A duplicate descriptor for the same verified directory: SQLite and the
+    /// store keep one open for their own lifetime without re-walking paths.
+    fn clone(&self) -> Self {
+        Self {
+            fd: self.fd.try_clone().expect("duplicate directory descriptor"),
+            path: self.path.clone(),
+            setup_uid: self.setup_uid,
+        }
+    }
+}
 impl DirFd {
     /// Opens a user directory. The operator's own path spelling (for example
     /// macOS `/var` → `/private/var`) is resolved first; every component is
