@@ -7,11 +7,7 @@ mod docs_policy;
 mod release;
 mod secrets;
 
-pub use bootstrap::{
-    ManifestBootstrapChildConfig, ManifestBootstrapConfig, ManifestBootstrapRun,
-    ManifestBootstrapStart, ManifestBootstrapStartEntry, ManifestBootstrapStartTable,
-    ManifestBootstrapSubmodulesPolicy,
-};
+pub use bootstrap::{ManifestBootstrapConfig, ManifestPinnedSourceConfig};
 pub use bundle::{ManifestBundleBase, ManifestBundleConfig};
 pub use common::{
     ManifestDuplicateBlocksConfig, ManifestEnvSchemaConfig, ManifestGodFilesConfig,

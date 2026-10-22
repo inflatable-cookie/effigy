@@ -762,6 +762,34 @@ allow = [
 ]
 
 [[retired]]
+id = "bootstrap-children-and-runtime-flags"
+retired = "2026-10-22"
+replacement = "Q-009 rebuilt `effigy bootstrap` around ordinary task selectors and pinned sources. `[bootstrap].setup` is an ordered list of selectors, `start` is one selector, and `submodules = true` initialises submodules recursively at their recorded commits. `[bootstrap].children` and `bootstrap children status|sync` became pinned `[sources.<name>]` (`git`, `rev` or `rev_file`, `path`) checked by `effigy doctor`; `bootstrap deps sync` became a repo-owned selector in `setup`; `--db-seed`, the dump prompts and the `bootstrap:db-seed` bootstrap callback became a first-seed task in `setup`; `--fresh` and `bootstrap teardown` became environment lifecycle (`effigy container <name> down`); `--backend` became the declared environment plus the machine backend preference; `--start` is the default; and `run` is `setup`. The retired spellings refuse with this entry and the changelog."
+owner = "docs/knowledge/contracts/020-remote-bundle-sources-git-and-oci-delivery-contract.md"
+terms = ["bootstrap children", "bootstrap.children", "children-status", "children-sync", "bootstrap deps sync", "bootstrap:deps", "bootstrap:db-seed", "bootstrap teardown", "bootstrap-fresh-session", "BootstrapChildConfig", "BootstrapSubcommand", "bootstrap --fresh", "bootstrap --db-seed", "bootstrap --backend", "bootstrap --start", "effigy.bootstrap.children-status.v1", "effigy.bootstrap.children-sync.v1", "effigy.bootstrap.deps.v1", "effigy.bootstrap-teardown.v1"]
+paths = ["src/runner/bootstrap_command/deps.rs", "src/runner/bootstrap_command/session.rs"]
+config_keys = ["bootstrap.run", "bootstrap.children", "bootstrap.children[].path", "bootstrap.children[].repo", "bootstrap.children[].branch", "bootstrap.children[].required", "bootstrap submodules = \"none\"|\"init\"|\"recursive\""]
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-bootstrap/tests/integration.rs",
+  "crates/effigy-cli/src/command_parsing_bootstrap.rs",
+  "crates/effigy-manifest/src/retired_keys.rs",
+  "docs/knowledge/contracts/005-container-runtime-contract.md",
+  "docs/knowledge/contracts/048-managed-bun-install-contract.md",
+  "src/tests/lib_tests_help_render_tests.rs",
+  "docs/guides/022-manifest-cookbook.md",
+  "crates/effigy-doctor/src/manifest_schema/bootstrap_section.rs",
+  "docs/guides/025-command-reference-matrix.md",
+  "docs/guides/057-bootstrap-repo-bringup.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/questions.md",
+  "docs/knowledge/contracts/020-remote-bundle-sources-git-and-oci-delivery-contract.md",
+  "docs/knowledge/retired.toml",
+  "src/tests/lib_tests_parse_tests/bootstrap_option_tests.rs",
+  "tests/bootstrap_cli_tests.rs",
+]
+
+[[retired]]
 id = "effigy-code-graph"
 retired = "2026-10-21"
 replacement = "No replacement (Q-009): the code graph, its SQLite index and the three graph-backed scanners are gone. Use `rg` for code navigation, `docs/README.md` for the documentation index, and `effigy test --plan` to choose tests. `effigy graph` and `effigy docs context` refuse with this explanation; `[scan.boundary_violations]`, `[scan.dead_code]`, `[scan.validation_gaps]`, `[catalog.graph]`, `--graph-context`, `--path`/`--stdin` on `scan`, and the retired subcommand spellings are manifest or usage errors. Historical `.effigy/graph/` index state is untouched. `docs check` is unchanged."

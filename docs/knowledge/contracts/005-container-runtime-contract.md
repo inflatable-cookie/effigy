@@ -1121,11 +1121,12 @@ per process; distinct failures still print.
 Workspace archive must invoke `effigy container retire --yes` while the
 checkout still exists. After the checkout is gone, retry with
 `effigy container retire --scope <token> --yes`. Failure is non-zero and
-leaves the durable record. `bootstrap teardown` is only for `--fresh`
-bootstrap sessions, not worker scopes. The intended Paseo hook is
+leaves the durable record. Bootstrap has no teardown since v0.15 (Q-009);
+environments own reset and retirement, so worker scopes are retired exactly as
+above. The intended Paseo hook is
 `paseo.json` `worktree.teardown`; Queue `workspace.archive` does not call
-retire itself. A consumer that still calls `bootstrap teardown`, checks
-only running containers, or returns 0 on residue needs its own change.
+retire itself. A consumer that still calls the retired `bootstrap teardown`,
+checks only running containers, or returns 0 on residue needs its own change.
 This repository's own `paseo.json` hooks call `scripts/worktree-lifecycle.sh`
 instead of an installed `effigy`. `setup` discards any staged binary, builds
 `effigy` from the checkout with `CARGO_TARGET_DIR` pinned to

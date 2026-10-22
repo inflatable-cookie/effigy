@@ -71,14 +71,12 @@ headings = ["See also"]
 [bootstrap]
 setup = ["bootstrap:local", "doctor"]
 start = "dev"
-submodules = "recursive"
+submodules = true
 
-[[bootstrap.children]]
-path = "aura"
-repo = "git@github.com:inflatable-cookie/aura.git"
-branch = "main"
-setup = ["install"]
-required = true
+[sources.aura]
+git = "git@github.com:inflatable-cookie/aura.git"
+rev = "0123456789abcdef0123456789abcdef01234567"
+path = "../aura"
 
 [containers]
 default = "web"

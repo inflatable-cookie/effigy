@@ -7,7 +7,7 @@ pub const BUILTIN_TASKS: &[(&str, &str)] = &[
     ("artifact", "Inspect, stage, and capture artifact payloads"),
     (
         "bootstrap",
-        "Clone or update repos, sync dependencies and children, and run bootstrap flows",
+        "Download and start a project: clone or use this checkout, prepare pinned sources and submodules, run its setup selectors, then its start selector",
     ),
     ("bundle", "Inspect and sync bundle sources"),
     ("changelog", "Inspect and extract changelog release notes"),

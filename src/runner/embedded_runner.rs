@@ -36,17 +36,6 @@ pub(in crate::runner) fn run_embedded_command(
     )
 }
 
-pub(in crate::runner) fn run_embedded_task(
-    task: &TaskInvocation,
-    cwd: &Path,
-) -> Result<String, RunnerError> {
-    crate::runner::execute::api::run_manifest_task_with_surface(
-        task,
-        cwd.to_path_buf(),
-        ExecutionSurface::RunArray,
-    )
-}
-
 pub(in crate::runner) fn run_embedded_task_with_output_mode(
     task: &TaskInvocation,
     cwd: &Path,

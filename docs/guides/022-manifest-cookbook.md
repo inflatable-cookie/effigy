@@ -630,44 +630,41 @@ Notes:
 
 ```toml
 [bootstrap]
-run = [
-  { run = "bun install" },
-  { task = "doctor" },
-]
+setup = ["workspace:js:prepare", "db:seed:schema"]
 start = "dev"
+submodules = true
 
-[[bootstrap.children]]
-path = "aura"
-repo = "git@github.com:inflatable-cookie/aura.git"
-branch = "main"
-run = "bun install"
-required = true
+[sources.content]
+git = "git@github.com:acme/content.git"
+rev = "4a1b0c8f2d9e4f0b6a3c5d7e9f1a2b3c4d5e6f70"
+path = "../content"
+
+[sources.catalogue]
+git = "git@github.com:acme/catalogue.git"
+rev_file = "catalogue.rev"
+path = "../catalogue"
 ```
 
-Single-step bootstrap `run` values can use compact inline task syntax when they
-need task-level execution policy:
-
-```toml
-[bootstrap]
-run = { rhai = "scripts/bootstrap.rhai", run_in = "host" }
-```
-
-Use this when the repo should be able to describe its own first-run bring-up
-path after `effigy bootstrap <git-url>`.
+Use this when the repo should describe its own first-run bring-up path after
+`effigy bootstrap <git-url>`.
 
 Behavior:
-- root bootstrap `run` executes in the cloned or updated root repo
-- repos with `.gitmodules` have their submodules initialized recursively before
-  bootstrap `run`
-- child bootstrap `run` executes inside each child repo
-- `start` only runs when the operator supplies `--start`
-- child `path` values are always relative to the root repo
-- sibling repos via `../platform`-style paths are allowed when they stay under
-  the root repo's parent directory
-- optional children (`required = false`) degrade to warnings instead of failing
-  the whole bootstrap
-- existing dirty or mismatched checkouts fail fast instead of being silently
-  repurposed
+- `setup` is an ordered list of ordinary task selectors, run in the cloned or
+  updated repo after its pinned bundle, catalog and `[sources.<name>]` sources
+  are materialised
+- `start` is one ordinary selector, run last unless the operator passes
+  `--no-start`
+- `submodules = true` initialises submodules recursively at the commits
+  `.gitmodules` records; omit it when the repo has none
+- `[sources.<name>]` pins one checkout to exactly one commit (`rev` or
+  `rev_file`). A missing path is cloned at the pin; an existing checkout with
+  local changes or another HEAD is reported as drift and left untouched
+- `path` values are relative to the manifest, so `../sibling` paths are normal
+  and may sit outside the repo
+- `effigy doctor` reports pinned-source drift (`sources.pinned-drift`)
+- inline run steps, `{ task = ... }` entries, `[bootstrap].children`,
+  `bootstrap deps sync`, `--db-seed`, `--fresh`, `--backend` and `--start` are
+  retired in v0.15 and refuse with their replacement (Q-009)
 
 ## Developer Session Patterns
 

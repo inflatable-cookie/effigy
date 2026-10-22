@@ -143,15 +143,6 @@ pub(super) fn hold_group_cleanup_test_lock() -> std::sync::MutexGuard<'static, (
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Acquires the process-wide signal-proof lock before the environment lock.
-#[cfg(all(test, unix))]
-pub(super) fn hold_signal_proof_test_locks() -> (
-    std::sync::MutexGuard<'static, ()>,
-    crate::contract_test_support::ReentrantTestLockGuard,
-) {
-    hold_signal_proof_test_locks_after_serial(|| {})
-}
-
 #[cfg(all(test, unix))]
 pub(super) fn hold_signal_proof_test_locks_after_serial(
     after_serial: impl FnOnce(),

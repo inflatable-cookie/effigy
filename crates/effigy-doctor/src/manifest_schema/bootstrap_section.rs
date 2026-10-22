@@ -9,32 +9,41 @@ pub(super) fn validate_bootstrap_section(context: &mut SchemaContext<'_, '_>, va
     };
 
     for key in table.keys() {
-        if !matches!(
-            key.as_str(),
-            "run" | "setup" | "start" | "submodules" | "children"
-        ) {
+        if !matches!(key.as_str(), "setup" | "start" | "submodules") {
             context.unsupported_nested_key("bootstrap", key);
         }
     }
 
-    if let Some(children) = table.get("children") {
-        let Some(array) = children.as_array() else {
-            context.invalid_value_type("bootstrap.children", "array");
-            return;
-        };
-        for child in array {
-            let Some(child_table) = child.as_table() else {
-                context.invalid_value_type("bootstrap.children[]", "table");
-                continue;
-            };
-            for key in child_table.keys() {
-                if !matches!(
-                    key.as_str(),
-                    "path" | "repo" | "branch" | "run" | "setup" | "required"
-                ) {
-                    context.unsupported_nested_key("bootstrap.children[]", key);
+    if let Some(setup) = table.get("setup") {
+        match setup.as_array() {
+            Some(entries) => {
+                if entries
+                    .iter()
+                    .any(|entry| !matches!(entry, Value::String(_)))
+                {
+                    context.invalid_value_type(
+                        "bootstrap.setup[]",
+                        "task selector strings; move inline steps into a task",
+                    );
                 }
             }
+            None => context.invalid_value_type(
+                "bootstrap.setup",
+                "an ordered list of task selector strings",
+            ),
+        }
+    }
+    if let Some(start) = table.get("start") {
+        if !matches!(start, Value::String(_)) {
+            context.invalid_value_type(
+                "bootstrap.start",
+                "one task selector string; sequence steps inside a task",
+            );
+        }
+    }
+    if let Some(submodules) = table.get("submodules") {
+        if !matches!(submodules, Value::Boolean(_)) {
+            context.invalid_value_type("bootstrap.submodules", "true or omitted");
         }
     }
 }

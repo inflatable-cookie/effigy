@@ -1282,104 +1282,103 @@ re-entries keep their own routing.
   "schema_version": 1,
   "ok": true,
   "phase": "executed",
-  "repo_url": "git@github.com:inflatable-cookie/loophole.git",
-  "repo_name": "loophole",
-  "destination": "/workspace/sandboxes/loophole",
+  "repo_url": "git@github.com:contact-patch/contact-patch.git",
+  "destination": "/workspace/sandboxes/contact-patch",
   "destination_source": "cwd-default",
-  "branch": "main",
-  "root": {
-    "repo": "git@github.com:inflatable-cookie/loophole.git",
-    "repo_name": "loophole",
-    "destination": "/workspace/sandboxes/loophole",
-    "destination_source": "cwd-default",
-    "requested_branch": "main",
-    "repo_state": "cloned",
-    "update_strategy": "branch"
-  },
+  "branch": null,
   "root_repo_state": "cloned",
   "manifest_found": true,
   "manifest": {
-    "path": "/workspace/sandboxes/loophole/effigy.toml",
+    "path": "/workspace/sandboxes/contact-patch/effigy.toml",
     "file_found": true,
     "bootstrap_contract_found": true
   },
-  "submodules": {
-    "policy": "recursive",
-    "applied": true
-  },
-  "children": [
+  "sources": [
     {
-      "path": "aura",
-      "destination": "/workspace/sandboxes/loophole/aura",
-      "repo": "git@github.com:inflatable-cookie/aura.git",
-      "requested_branch": "main",
-      "required": true,
-      "repo_state": "cloned",
-      "setup": [
-        "install"
-      ],
-      "warning": null
-    },
-    {
-      "path": "chorus",
-      "destination": "/workspace/sandboxes/loophole/chorus",
-      "repo": "git@github.com:inflatable-cookie/chorus.git",
-      "requested_branch": null,
-      "required": false,
-      "repo_state": "failed",
-      "setup": [],
-      "warning": "optional child `chorus` failed: bootstrap destination remote mismatch: expected `git@github.com:inflatable-cookie/chorus.git`, found `git@github.com:someone-else/chorus.git`"
+      "name": "book",
+      "git": "git@github.com:contact-patch/book.git",
+      "rev": "4a1b0c8f2d9e4f0b6a3c5d7e9f1a2b3c4d5e6f70",
+      "path": "/workspace/sandboxes/book",
+      "state": "cloned",
+      "head": "4a1b0c8f2d9e4f0b6a3c5d7e9f1a2b3c4d5e6f70",
+      "dirty": false,
+      "detail": null
     }
   ],
+  "submodules": {
+    "requested": false,
+    "applied": false,
+    "drift": []
+  },
   "setup": {
-    "root": [
-      "install:local",
-      "doctor"
+    "selectors": [
+      "workspace:js:prepare"
     ],
-    "children": [
-      {
-        "path": "aura",
-        "repo": "git@github.com:inflatable-cookie/aura.git",
-        "required": true,
-        "repo_state": "cloned",
-        "setup": [
-          "install"
-        ],
-        "warning": null
-      },
-      {
-        "path": "chorus",
-        "repo": "git@github.com:inflatable-cookie/chorus.git",
-        "required": false,
-        "repo_state": "failed",
-        "setup": [],
-        "warning": "optional child `chorus` failed: bootstrap destination remote mismatch: expected `git@github.com:inflatable-cookie/chorus.git`, found `git@github.com:someone-else/chorus.git`"
-      }
+    "ran": [
+      "workspace:js:prepare"
     ]
   },
   "start": {
     "requested": true,
-    "task": "aura/dev",
+    "selector": "dev",
     "ran": true
   },
-  "warnings": [
-    "optional child `chorus` failed: bootstrap destination remote mismatch: expected `git@github.com:inflatable-cookie/chorus.git`, found `git@github.com:someone-else/chorus.git`"
-  ],
-  "display": "bootstrapped git@github.com:inflatable-cookie/loophole.git -> /workspace/sandboxes/loophole"
+  "warnings": []
 }
 ```
 
-Use `phase = "plan"` payloads when you need destination/branch/start intent
-without mutation. Use `phase = "executed"` when you need to assert what was
-actually cloned, updated, or started.
+`phase = "plan"` payloads carry `manifest_found`, `manifest_unreadable` and a
+`plan` object instead of the executed-only keys:
+
+```json
+{
+  "schema": "effigy.bootstrap.v1",
+  "schema_version": 1,
+  "ok": true,
+  "phase": "plan",
+  "repo_url": null,
+  "destination": "/workspace/contact-patch",
+  "destination_source": "existing-checkout",
+  "branch": null,
+  "manifest_found": true,
+  "manifest_unreadable": null,
+  "plan": {
+    "clone": null,
+    "sources": [
+      {
+        "name": "book",
+        "git": "git@github.com:contact-patch/book.git",
+        "rev": "4a1b0c8f2d9e4f0b6a3c5d7e9f1a2b3c4d5e6f70",
+        "path": "/workspace/book",
+        "state": "missing",
+        "head": null,
+        "dirty": false,
+        "detail": "no checkout at /workspace/book; `effigy bootstrap` clones it at the pin",
+        "drift": null
+      }
+    ],
+    "submodules": false,
+    "setup": ["workspace:js:prepare"],
+    "start": "dev",
+    "start_requested": true
+  }
+}
+```
+
+Use `phase = "plan"` when you need the resolved destination, sources, setup and
+start without mutation. Use `phase = "executed"` when you need to assert what was
+actually cloned, updated, reported as drift or run.
 
 Read these fields first:
 
-- `root` for the root checkout decision and final root repo state
-- `manifest` to distinguish “no `effigy.toml`” from “manifest exists but has no
-  `[bootstrap]` contract”
-- `children` for per-child destination, branch, repo state, and warning detail
-- `start` for whether bring-up launch was requested and whether it actually ran
+- `root_repo_state` for the checkout decision (`cloned`, `updated`, `existing`)
+- `manifest` to distinguish "no `effigy.toml`" from "manifest exists but has no
+  `[bootstrap]` contract"
+- `sources[]` for each pinned source's `state`, observed `head`, local `dirty`
+  flag and `detail`; `drift` states are reported, never repaired
+- `submodules` for whether recursive init was requested, applied, and which
+  submodules drifted
+- `setup` and `start` for which selectors were declared and which actually ran
 
 ## Scan Payloads
 

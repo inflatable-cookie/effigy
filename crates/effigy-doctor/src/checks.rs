@@ -8,6 +8,8 @@ mod definitions;
 mod executor;
 #[path = "checks/scan_checks.rs"]
 mod scan_checks;
+#[path = "checks/source_checks.rs"]
+mod source_checks;
 
 use super::progress::DoctorProgressReporter;
 use crate::{manifest_snapshot::ManifestSnapshot, DoctorRuntimePorts, DoctorState};

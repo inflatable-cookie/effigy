@@ -279,6 +279,34 @@ During v0.x, MINOR bumps may include breaking changes.
   status staleness. They are never read for exclusion or deleted; a live
   v0.14 holder still refuses its task until it exits, and `effigy doctor`
   lists the families still present.
+- Rebuild `effigy bootstrap` as one command over ordinary task selectors and
+  pinned sources (Q-009, effigy#262). `[bootstrap].setup` is an ordered list of
+  selectors, `start` is one selector and `submodules = true` initialises
+  submodules recursively at their recorded commits. Every retired spelling
+  refuses with its replacement: `[bootstrap].run` and the `setup` alias for it
+  became `setup`; inline run steps and `{ task = ... }`/array `start` entries
+  moved into the task they name; `[bootstrap].children` and
+  `bootstrap children status|sync` became pinned `[sources.<name>]` (`git`,
+  `rev` or `rev_file`, `path`); `bootstrap deps sync` became a repo-owned
+  selector in `setup`; `--db-seed`, the dump prompts and the
+  `bootstrap:db-seed` bootstrap callback became a first-seed task in `setup`;
+  `--fresh` and `bootstrap teardown` became environment lifecycle
+  (`effigy container <name> down`); `--backend` became the declared environment
+  plus the machine backend preference; `--start` is the default; and
+  `bootstrap deps sync --refresh-lock` became a deliberate repo task. A
+  non-empty foreign destination is refused instead of prompted for, and
+  `effigy bootstrap` with no URL prepares the existing checkout in place.
+  `effigy doctor` reports pinned-source drift; bootstrap and doctor never reset,
+  fetch forward or clean a developer's working copy, and the first `dev` also
+  acquires a missing pinned checkout (contract 020). Bootstrap fails once,
+  early, with a collected prerequisite list — `git`, an absolute `HOME`, a
+  container runtime when `[containers]` is declared, the JS manager and Node for
+  a `package.json`, `cargo`/`rustc` for a Rust checkout, and a running
+  user-owned gateway when routed domains are declared — and never installs a
+  toolchain, starts a runtime, sets up the gateway or impersonates a login. The
+  `effigy.bootstrap.deps`, `children-status`, `children-sync` and
+  `bootstrap-teardown` payloads are gone; `effigy.bootstrap.v1` keeps plan and
+  executed phases with `sources`, `submodules`, `setup` and `start`.
 
 ### Added
 - `test:focused` runs a focused Rust test selection through Cargo with

@@ -141,6 +141,10 @@
       "std.process.Command.new": 2,
       "std.process.Command.output": 2
     },
+    "crates/effigy-manifest/src/sources.rs": {
+      "std.process.Command.new": 1,
+      "std.process.Command.output": 1
+    },
     "crates/effigy-manifest/src/user_config.rs": {
       "std::fs::write": 1
     },
@@ -246,22 +250,6 @@
     "crates/effigy-tui/src/multiprocess/transcript.rs": {
       "std::fs::write": 1
     },
-    "src/runner/bootstrap_command/deps.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.output": 1
-    },
-    "src/runner/bootstrap_command/mod.rs": {
-      "std.process.Command.new": 2,
-      "std.process.Command.output": 2,
-      "std::env::remove_var": 1,
-      "std::env::set_var": 2
-    },
-    "src/runner/bootstrap_command/session.rs": {
-      "std::env::remove_var": 1,
-      "std::env::set_var": 2,
-      "std::fs::remove_file": 1,
-      "std::fs::write": 1
-    },
     "src/runner/container_command/data/hooks.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1
@@ -293,8 +281,6 @@
       "std::fs::remove_file": 2
     },
     "src/runner/db_seed.rs": {
-      "std::env::remove_var": 1,
-      "std::env::set_var": 2,
       "std::fs::remove_file": 2,
       "std::fs::write": 1
     },
@@ -698,11 +684,9 @@
     "crates/effigy-state/src/tests.rs": {
       "std::fs::write": 2
     },
-    "src/runner/bootstrap_command/session.rs": {
-      "std::fs::write": 1
-    },
     "src/runner/bootstrap_command/tests.rs": {
-      "std::fs::write": 64
+      "std.process.Command.new": 1,
+      "std.process.Command.output": 1
     },
     "src/runner/container_command/admission.rs": {
       "std::fs::write": 1
