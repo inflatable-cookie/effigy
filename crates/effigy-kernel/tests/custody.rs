@@ -260,7 +260,7 @@ fn custody_unreaped_leader_keeps_descendant_owned_until_stream_close() {
     let mut run = begin(&cx, &root);
     let mut child = Custody::spawn(
         &mut run,
-        spec(home.path(), "(trap '' TERM; /bin/sleep 30) & exit 0"),
+        spec(home.path(), "/bin/sh -c 'trap \"\" TERM; echo $$ > descendant; exec /bin/sleep 30' & while [ ! -f descendant ]; do :; done; exit 0"),
         &cx,
     )
     .unwrap();
@@ -290,10 +290,18 @@ fn custody_unreaped_leader_keeps_descendant_owned_until_stream_close() {
     let report = child.stop(&cx.operation().cleanup(Duration::from_secs(5)).unwrap());
     assert!(report.residue.is_empty(), "{report:?}");
     assert_eq!(report.capture, CaptureState::Complete);
+    let descendant: u32 = std::fs::read_to_string(home.path().join("descendant"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(!report.signals.is_empty());
     assert!(report
         .signals
         .iter()
-        .all(|s| s.pid == receipt.pgid && s.group));
+        // Anchored custody signals freshly verified workload identities;
+        // receipts describe those individual deliveries, including descendants.
+        .all(|s| s.pid == descendant && !s.group));
     assert!(matches!(
         effigy_kernel::ident::process_identity(receipt.identity.pid),
         Observed::Absent(_)
