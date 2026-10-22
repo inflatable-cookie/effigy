@@ -34,7 +34,6 @@ pub enum Command {
     Workspace(WorkspaceArgs),
     Gateway(GatewayArgs),
     Service(ServiceArgs),
-    Graph(GraphArgs),
     Rhai(RhaiArgs),
     Skill(SkillArgs),
     Docs(DocsArgs),
@@ -128,7 +127,6 @@ pub enum HelpTopic {
     Workspace,
     Gateway,
     Service,
-    Graph,
     Rhai,
     Skill,
     Docs,
@@ -314,15 +312,6 @@ pub struct DocsArgs {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GraphArgs {
-    pub subcommand: GraphSubcommand,
-    pub repo_override: Option<PathBuf>,
-    pub output_json: bool,
-    /// Read committed files without waiting for or starting a refresh.
-    pub stale_index: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RhaiArgs {
     pub subcommand: RhaiSubcommand,
     pub output_json: bool,
@@ -331,38 +320,6 @@ pub struct RhaiArgs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RhaiSubcommand {
     Surface,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GraphSubcommand {
-    Index,
-    Status {
-        refresh: bool,
-    },
-    Search {
-        query: String,
-        limit: Option<usize>,
-    },
-    Node {
-        id: String,
-        incoming: bool,
-        outgoing: bool,
-        limit: Option<usize>,
-    },
-    Affected {
-        changed_paths: Vec<String>,
-        read_stdin: bool,
-        depth: usize,
-        limit: Option<usize>,
-    },
-    Explore {
-        excerpts_only: bool,
-        request: String,
-        max_files: Option<usize>,
-        max_bytes: Option<usize>,
-        languages: Vec<String>,
-        paths: Vec<String>,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -434,17 +391,6 @@ pub enum DocsSubcommand {
     },
     AddLogIndex {
         log_path: PathBuf,
-    },
-    /// Bounded documentation evidence retrieval over the shared graph.
-    Context {
-        query: String,
-        max_sections: Option<usize>,
-        max_bytes: Option<usize>,
-        max_hops: Option<usize>,
-        /// Portfolio file (or directory) naming where opted-in repositories live.
-        sources: Option<PathBuf>,
-        /// Repeatable handle filter applied to the enumerated repositories.
-        only: Vec<String>,
     },
 }
 

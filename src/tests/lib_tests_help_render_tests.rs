@@ -11,7 +11,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy exec"));
     assert!(rendered.contains("effigy deploy"));
     assert!(rendered.contains("effigy deps"));
-    assert!(rendered.contains("effigy graph"));
+    assert!(!rendered.contains("effigy graph"));
     assert!(rendered.contains("effigy gateway"));
     assert!(rendered.contains("effigy config"));
     assert!(rendered.contains("effigy service"));
@@ -74,12 +74,7 @@ fn render_general_help_groups_commands_by_operator_job() {
 #[test]
 fn render_repo_group_help_lists_only_repository_intelligence_commands() {
     let rendered = render_help_group_text(HelpGroup::Repo);
-    for command in [
-        "effigy graph",
-        "effigy scan",
-        "effigy docs",
-        "effigy contracts",
-    ] {
+    for command in ["effigy scan", "effigy docs", "effigy contracts"] {
         assert!(rendered.contains(command), "missing {command}: {rendered}");
     }
     for foreign in [
@@ -244,41 +239,6 @@ fn render_deploy_help_shows_provider_package_export_surface() {
     assert!(rendered.contains("--json"));
     assert!(rendered.contains("provider-package"));
     assert!(rendered.contains("provider-neutral"));
-}
-
-#[test]
-fn render_graph_help_shows_exactly_the_retained_surface() {
-    let rendered = render_help_text(HelpTopic::Graph);
-    assert!(rendered.contains("graph Help"));
-    for command in ["index", "status", "search", "node", "affected", "explore"] {
-        assert!(rendered.contains(&format!("effigy graph {command}")));
-    }
-    for command in ["watch", "files", "callers", "callees", "impact", "context"] {
-        assert!(!rendered.contains(&format!("effigy graph {command}")));
-    }
-    for flag in [
-        "--repo <PATH>",
-        "--json",
-        "--refresh",
-        "--stale-index",
-        "EFFIGY_GRAPH_TIMEOUT_MS",
-        "--language <ID>",
-        "--path <PREFIX>",
-        "--in",
-        "--out",
-        "--excerpts-only",
-    ] {
-        assert!(rendered.contains(flag), "{flag}");
-    }
-    assert!(
-        !rendered.contains("--catalog")
-            && !rendered.contains("--all-catalogs")
-            && !rendered.contains("--debounce-ms")
-    );
-    assert!(rendered.contains("Status always reports without writing"));
-    assert!(rendered.contains("refreshing (n/N)"));
-    assert!(rendered.contains("graph.backup-"));
-    assert!(!rendered.contains("rm -rf .effigy/graph"));
 }
 
 #[test]

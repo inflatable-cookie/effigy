@@ -1642,8 +1642,7 @@ fn doctor_git_cli_readiness_proof(arrangement: &str) {
     fs::create_dir_all(&evidence_dir).expect("create private process evidence directory");
 
     // Record every porcelain v1 caller. Only the inventory caller is blocked;
-    // graph dirty-paths gets the real Git response and its distinct argv and
-    // caller tag remain in the receipt.
+    // its argv and caller tag remain in the receipt.
     let real_git = real_path_binary("git");
     // The checkout is immutable during this proof. Freeze its real index so
     // an unrelated Git startup cannot consume the status-hang deadline. The
@@ -1843,12 +1842,9 @@ fn run_doctor_git_cli(
         .arg("--repo")
         .arg(fixture.root)
         // The budget must outlast every pre-scan phase so the fixture's Git
-        // identity-tree hang is what exhausts it: on slow runners the cold
-        // graph_index build alone consumed nearly 800ms (effigy CI, twice),
-        // which put the timeout in the wrong phase and failed the proof.
-        // 4000ms keeps a wide margin over observed pre-scan cost while the
-        // two invocations stay far inside the 45s total and 30s per-run
-        // harness bounds below.
+        // identity-tree hang is what exhausts it. 4000ms keeps a wide margin
+        // over observed pre-scan cost while the two invocations stay far
+        // inside the 45s total and 30s per-run harness bounds below.
         .env("EFFIGY_DOCTOR_TIMEOUT_MS", "4000")
         // The fixture's readiness delays and descendant hold must be far
         // longer than this budget: the non-ready controls prove the deadline
@@ -2358,9 +2354,8 @@ fn assert_doctor_cli_process_evidence(
         "no porcelain v1 caller entered shim: {fixture_events:?}"
     );
     for observer in &observers {
-        assert!(
-            observer["caller"] == "effigy-scan::execution::doctor_inventory::run_git_bounded"
-                || observer["caller"] == "effigy-codegraph::git::dirty_paths",
+        assert_eq!(
+            observer["caller"], "effigy-scan::execution::doctor_inventory::run_git_bounded",
             "unclassified production Git caller entered the shim: {observer:?}"
         );
         assert_eq!(observer["pgid"], observer["parent_pgid"]);
@@ -2370,13 +2365,6 @@ fn assert_doctor_cli_process_evidence(
         assert!(observer["caller_process"]["start_identity"]
             .as_str()
             .is_some());
-        if observer["caller"] == "effigy-codegraph::git::dirty_paths" {
-            assert_eq!(observer["caller_process"]["pgid"], observer["pgid"]);
-            assert_eq!(
-                observer["argv"],
-                serde_json::json!(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
-            );
-        }
     }
     let inventory_observers = observers
         .iter()

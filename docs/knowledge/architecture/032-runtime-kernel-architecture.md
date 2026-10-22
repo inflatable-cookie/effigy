@@ -33,8 +33,8 @@ Dependency rules, enforced by `qa:architecture`:
 | engines | `effigy-kernel`, adapter traits | the façade, other engines' internals |
 | façade | engines | kernel internals beyond `Outcome` and contexts |
 
-`rusqlite` is already a workspace dependency (`crates/effigy-codegraph`). The
-kernel API is synchronous. Engines that use Tokio call it from blocking
+`rusqlite` is already a workspace dependency (the kernel pins it directly since
+v0.15 removed the `effigy-codegraph` crate). The kernel API is synchronous. Engines that use Tokio call it from blocking
 contexts.
 
 ## Modules
@@ -42,8 +42,8 @@ contexts.
 | Module | Contract § | Absorbs |
 | --- | --- | --- |
 | `id` | 5.1 | typed-selector lock names (`src/runner/manifest.rs`), the retired v0.14 FNV status keys, `safe_component` slugs, runtime-scope tokens (`crates/effigy-core/src/worktree_scope.rs`) |
-| `ctx` | 5.2, 5.3 | ad hoc budgets (`src/runner/graph_time_budget.rs`, `crates/effigy-env/src/exec.rs`) |
-| `gate` | 5.4 | the task lease (replaced by task gates in effigy#217), `RouteTableLock`, `fs2` sites; keeps the flock rationale in `crates/effigy-codegraph/src/refresh.rs` |
+| `ctx` | 5.2, 5.3 | ad hoc budgets (`crates/effigy-env/src/exec.rs`) |
+| `gate` | 5.4 | the task lease (replaced by task gates in effigy#217), `RouteTableLock`, `fs2` sites |
 | `store` | 5.5 | seven atomic-write helpers; the retired host-run client's fsynced journal was the model |
 | `run` | 5.6, 5.9 | `session.json`, task status records, environment markers, `stop.requested`, transition receipts |
 | `custody` | 5.7 | `crates/effigy-process`, `src/runner/owned_children.rs`, the retained host child identity in `src/runner/host_process.rs` |

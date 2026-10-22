@@ -7,7 +7,7 @@
 //! reentrant test boundary. Product-side readers that only needed an env fact
 //! (container handoff, deferred depth, build identity) take injected values
 //! instead. These tests prove concurrent writers do not overlap and exercise
-//! the PATH and graph-budget readers used by release-preparation proofs.
+//! the PATH and container-handoff readers used by release-preparation proofs.
 
 use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME;
 use crate::runner::tests::prelude::EnvGuard;
@@ -107,22 +107,21 @@ fn release_preparation_fixture_env_isolation_absence_reader_survives_parallel_ha
     assert!(env::var_os(CONTAINER_HANDOFF_ENV_NAME).is_none());
 }
 
-/// PATH based child spawning and graph-budget reads wait for an active scoped
+/// PATH based child spawning and container-handoff reads wait for an active scoped
 /// writer, then observe the restored process environment. The proof records the
 /// reader's queue position before release and its acquisition after release;
 /// unrelated queued holders are reported separately from writer exclusion.
 #[test]
-fn release_preparation_fixture_env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer()
-{
+fn release_preparation_fixture_env_isolation_path_and_handoff_readers_wait_for_scoped_writer() {
     const PATH: &str = "PATH";
-    const GRAPH_TIMEOUT: &str = "EFFIGY_GRAPH_TIMEOUT_MS";
+    const HANDOFF: &str = crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_NAME;
 
-    let (original_path, original_timeout, original_budget) = {
+    let (original_path, original_handoff_env, original_handoff) = {
         let _lock = crate::contract_test_support::lock_test();
         (
             env::var_os(PATH),
-            env::var_os(GRAPH_TIMEOUT),
-            crate::runner::graph_time_budget::graph_time_budget(),
+            env::var_os(HANDOFF),
+            crate::runner::container_runtime::inside_container_handoff(),
         )
     };
     assert!(original_path.is_some(), "the shell fixture requires PATH");
@@ -145,16 +144,13 @@ fn release_preparation_fixture_env_isolation_path_and_graph_budget_readers_wait_
     let writer = thread::spawn(move || {
         let env = EnvGuard::set_many(&[
             (PATH, Some(writer_path.clone())),
-            (GRAPH_TIMEOUT, Some("1".to_owned())),
+            (HANDOFF, Some("1".to_owned())),
         ]);
         assert_eq!(
             env::var_os(PATH).as_deref(),
             Some(std::ffi::OsStr::new(writer_path.as_str()))
         );
-        assert_eq!(
-            crate::runner::graph_time_budget::graph_time_budget(),
-            Some(Duration::from_millis(1))
-        );
+        assert!(crate::runner::container_runtime::inside_container_handoff());
         unrelated_start_tx
             .send(())
             .expect("start unrelated lock holder");
@@ -240,8 +236,8 @@ fn release_preparation_fixture_env_isolation_path_and_graph_budget_readers_wait_
         reader_entered_tx.send(()).expect("notify reader entered");
         assert_eq!(env::var_os(PATH), reader_original_path);
         assert_eq!(
-            crate::runner::graph_time_budget::graph_time_budget(),
-            original_budget
+            crate::runner::container_runtime::inside_container_handoff(),
+            original_handoff
         );
         let status = Command::new("sh")
             .arg("-c")
@@ -256,14 +252,11 @@ fn release_preparation_fixture_env_isolation_path_and_graph_budget_readers_wait_
     reader.join().expect("reader thread");
 
     let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _env = EnvGuard::set_many(&[
-            (PATH, Some(empty_path)),
-            (GRAPH_TIMEOUT, Some("1".to_owned())),
-        ]);
+        let _env = EnvGuard::set_many(&[(PATH, Some(empty_path)), (HANDOFF, Some("1".to_owned()))]);
         std::panic::resume_unwind(Box::new("injected fixture unwind"));
     }));
     assert!(unwind.is_err(), "fixture unwind was not observed");
     let _lock = crate::contract_test_support::lock_test();
     assert_eq!(env::var_os(PATH), original_path);
-    assert_eq!(env::var_os(GRAPH_TIMEOUT), original_timeout);
+    assert_eq!(env::var_os(HANDOFF), original_handoff_env);
 }

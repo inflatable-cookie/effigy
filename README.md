@@ -423,7 +423,6 @@ for standalone proof tasks and the built-in legacy syntax migration.
 | Cut releases | [`docs/guides/051-release-orchestration.md`](docs/guides/051-release-orchestration.md) |
 | Wire up CI | [`docs/guides/024-ci-and-automation-recipes.md`](docs/guides/024-ci-and-automation-recipes.md) |
 | Test against local library edits | [`docs/guides/077-local-dependency-linking.md`](docs/guides/077-local-dependency-linking.md) |
-| Agent repo map / code graph | [`docs/guides/076-code-graph-and-agent-workflows.md`](docs/guides/076-code-graph-and-agent-workflows.md) |
 | Full guide map | [`docs/guides/README.md`](docs/guides/README.md) |
 
 Command reference: [`docs/guides/025-command-reference-matrix.md`](docs/guides/025-command-reference-matrix.md)
@@ -438,15 +437,12 @@ Effigy was designed so that AI agents can operate a repo without tribal knowledg
 effigy --json doctor             # Repo health and routing diagnostics
 effigy --json tasks              # Every task, catalog, and description
 effigy --json test --plan        # Resolved test plan without execution
-effigy --json graph explore "<task>"   # Bounded code-understanding packet (--path <PREFIX> narrows results)
 effigy <task>                    # Execute supported repo work
 effigy --help                    # Every command and flag, grouped by job
 effigy --json release simulate   # Machine-readable dry-runs
 ```
 
-Route by job: use `effigy graph` for code understanding, `effigy tasks` for selector inventory, `effigy doctor` when routing or repo health is unclear, and `effigy test --plan` when test execution shape matters. Then run supported work through structured CLI output. No grepping Makefiles, no parsing package.json scripts, no guessing which directory to `cd` into.
-
-Graph workflow guide: [`docs/guides/076-code-graph-and-agent-workflows.md`](docs/guides/076-code-graph-and-agent-workflows.md). One graph indexes the whole checkout, including catalog members. Use `graph node <ID|PATH> --in` or `--out` for relationships and `graph explore --excerpts-only` for ranked excerpts. Concurrent reads report `refreshing (n/N)` over committed files; timeouts preserve progress.
+Route by job: use `rg` and the documentation index (`docs/README.md`) for code and documentation understanding, `effigy tasks` for selector inventory, `effigy doctor` when routing or repo health is unclear, and `effigy test --plan` when test execution shape matters. Then run supported work through structured CLI output. No grepping Makefiles, no parsing package.json scripts, no guessing which directory to `cd` into.
 
 For agents that want a head start, we ship a skill that teaches Claude Code, OpenAI Codex, Cursor, and 50+ other agents the exact patterns:
 
@@ -468,5 +464,5 @@ effigy release gates       # Check release readiness
 If `effigy` is not on `PATH` yet:
 
 ```bash
-cargo run --bin effigy -- bootstrap:local
+cargo run --bin effigy -- install:local
 ```

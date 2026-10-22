@@ -36,7 +36,7 @@ idempotently.
 When a caller wants explicit non-interactive setup execution:
 
 ```sh
-effigy init --apply-actions manifest.effigy_toml,graph_status.inspect --json
+effigy init --apply-actions manifest.effigy_toml,secrets_surface.inspect --json
 ```
 
 `--version` shows the installed version (for example `v0.4.0`). Use it to confirm
@@ -335,28 +335,6 @@ effigy --json test --plan
 ```
 
 Use JSON mode when CI, scripts, or agents are consuming Effigy output.
-
-### Build a bounded repo map before broad scanning
-
-```sh
-effigy graph index
-effigy graph status --json
-effigy graph explore "trace release orchestrator" --max-files 6 --max-bytes 12288 --json
-git diff --name-only | effigy graph affected --stdin --json
-effigy graph explore --excerpts-only "trace release orchestrator" --max-files 8 --max-bytes 4096 --json
-```
-
-Use this when an agent needs the first files to read without spraying `rg`
-across the whole repo.
-
-If `graph status --json` reports `stale_paths`, re-run `effigy graph index --json`
-before trusting query results.
-
-If the repo is changing while you work:
-
-```sh
-effigy graph index --json
-```
 
 ## 7) Manage Secrets
 

@@ -3,9 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
-use super::{
-    encode_scan_json, ScanCommonOptions, ScanGraphContext, ScanModeConfig, ScanPayloadResult,
-};
+use super::{encode_scan_json, ScanCommonOptions, ScanModeConfig, ScanPayloadResult};
 use crate::scan::request::ScanRequest;
 use crate::BuiltinError;
 use effigy_scan::{ScanRenderFormat, TextRenderOptions};
@@ -16,7 +14,6 @@ pub(super) fn build_scan_payload<TOptions, TResult>(
     mode: ScanModeConfig,
     options: &TOptions,
     result: &TResult,
-    graph_context: Option<&ScanGraphContext>,
     resolved_output_path: Option<&PathBuf>,
     rendered_text: &str,
 ) -> Value
@@ -45,9 +42,6 @@ where
         },
     );
     result.insert_payload_fields(&mut payload);
-    if let Some(graph_context) = graph_context {
-        graph_context.insert_payload_fields(&mut payload);
-    }
     payload.insert("text".into(), Value::from(rendered_text.to_owned()));
     Value::Object(payload)
 }
@@ -105,7 +99,6 @@ pub(super) struct ScanResponse<'a> {
     pub(super) mode: ScanModeConfig,
     pub(super) format: ScanRenderFormat,
     pub(super) finding_count: usize,
-    pub(super) graph_context: Option<&'a ScanGraphContext>,
     pub(super) payload: &'a serde_json::Value,
     pub(super) rendered_text: &'a str,
 }
@@ -117,30 +110,20 @@ pub(super) fn render_scan_response(response: ScanResponse<'_>) -> Result<String,
         mode,
         format,
         finding_count,
-        graph_context,
         payload,
         rendered_text,
     } = response;
     if output_json {
         return encode_scan_json(payload);
     }
-    let graph_note = graph_context.map(ScanGraphContext::display_text_note);
     if let Some(path) = output_path {
-        let mut message = format!(
+        return Ok(format!(
             "Wrote {} {} report to {} (findings: {}).",
             format.as_str(),
             mode.label,
             path.display(),
             finding_count
-        );
-        if let Some(note) = graph_note {
-            message.push(' ');
-            message.push_str(&note);
-        }
-        return Ok(message);
-    }
-    if let Some(note) = graph_note {
-        return Ok(format!("{rendered_text}\n\n{note}"));
+        ));
     }
     Ok(rendered_text.to_owned())
 }

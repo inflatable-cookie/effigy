@@ -57,7 +57,7 @@ impl HelpGroup {
             HelpGroup::Local => {
                 "Operate local containers, systems, workspaces, and the host gateway"
             }
-            HelpGroup::Repo => "Understand the repository, its code graph, and its documentation",
+            HelpGroup::Repo => "Understand the repository and its documentation",
             HelpGroup::Deliver => {
                 "Stage artifacts and state, then deploy, release, and bootstrap repositories"
             }
@@ -146,10 +146,6 @@ pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
     CommandDescriptor {
         topic: HelpTopic::Service,
         command_name: Some("service"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Graph,
-        command_name: Some("graph"),
     },
     CommandDescriptor {
         topic: HelpTopic::Rhai,
@@ -320,13 +316,6 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     // ---- repo ---------------------------------------------------------------
     GeneralHelpEntry {
         group: HelpGroup::Repo,
-        command: "effigy graph",
-        description: "Build and query the local deterministic code graph for agent navigation",
-        deferred_builtin: Some("graph"),
-        help_argument: Some("graph"),
-    },
-    GeneralHelpEntry {
-        group: HelpGroup::Repo,
         command: "effigy scan",
         description: "Run built-in repository scanners such as `god-files` and `attention-markers`",
         deferred_builtin: None,
@@ -335,7 +324,7 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     GeneralHelpEntry {
         group: HelpGroup::Repo,
         command: "effigy docs",
-        description: "Run reusable docs QA checks and bounded `docs context` documentation retrieval",
+        description: "Run reusable docs QA checks",
         deferred_builtin: Some("docs"),
         help_argument: Some("docs"),
     },
@@ -481,7 +470,6 @@ pub const HELP_COMMAND_TOPICS: &[(&str, HelpTopic)] = &[
     ("doctor", HelpTopic::Doctor),
     ("exec", HelpTopic::Exec),
     ("gateway", HelpTopic::Gateway),
-    ("graph", HelpTopic::Graph),
     ("help", HelpTopic::General),
     ("init", HelpTopic::Init),
     ("release", HelpTopic::Release),
