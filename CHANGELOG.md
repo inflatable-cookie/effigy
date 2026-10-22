@@ -257,10 +257,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - The demo feature: `effigy demo` (`list`, `inspect`, `history`, `run`,
   `stop`, `input`, `resize`, `rerun`, `browser`), the `[demos]` manifest
   table, `config/demos.toml` in this repository, the `effigy-demo` crate, the
-  `demo.*` Rhai host features and the TUI demo browser. It has no replacement:
-  record terminal sessions with an external tool. `effigy demo` and a
-  `[demos]` table both refuse with that explanation, and
-  `effigy config --target demos` is gone with the section.
+  `demo.*` Rhai host features and the TUI demo browser. Each demo converts to
+  an ordinary task: `[tasks."demo:<name>"]` with the same `run`, `title` and
+  `summary` kept as a TOML comment, and optional `group = "Demos"`. `effigy
+  demo` and a `[demos]` table both refuse with that recipe, and `effigy config
+  --target demos` is gone with the section.
 - v0.14 lease locks (`.effigy/locks/`), task status records
   (`.effigy/runtime/tasks/`, `.effigy/reports/tasks/`) and the 20-second
   status staleness. They are never read for exclusion or deleted; a live
@@ -734,6 +735,16 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- The `[demos]` retirement error and `effigy config --target demos` now give
+  the Q-009 conversion recipe instead of telling operators to delete the table
+  and record sessions elsewhere: each `[demos.<name>]` becomes
+  `[tasks."demo:<name>"]` with the same `run`, the `title` and `summary` kept as
+  a comment, and optional `group = "Demos"`, with a before/after example.
+- A retired `[secrets.vault]` key in a bundle export, such as a stale cached
+  Underlay export, refuses with the export file and line and the remedy:
+  `effigy bundle sync` for a pinned or cached bundle, or deleting the line when
+  you own the bundle. It no longer surfaces as a bare TOML parse error carrying
+  the consumer-manifest advice.
 - `effigy gateway status --json` refuses unprovable state with a structured
   `effigy.gateway.status.v1` document instead of only prose: `ok: false`,
   `status: "unknown"`, the recorded `pid`, `observations.record` /

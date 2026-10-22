@@ -92,8 +92,52 @@ fn retired_demos_table_fails_with_its_explanation() {
     assert!(stderr.contains("[demos]"), "{stderr}");
     assert!(stderr.contains("was removed in v0.15"), "{stderr}");
     assert!(
-        stderr.contains("record terminal sessions with an external tool"),
+        stderr.contains("`[tasks.\"demo:<name>\"]`"),
+        "the error must give the conversion recipe: {stderr}"
+    );
+    assert!(
+        stderr.contains("`[demos.checkout]`") && stderr.contains("`[tasks.\"demo:checkout\"]`"),
+        "the error must show the before and after shapes: {stderr}"
+    );
+    assert!(
+        stderr.contains("group = \"Demos\""),
+        "the optional demo group must be named: {stderr}"
+    );
+    assert!(
+        !stderr.contains("external tool"),
+        "recording sessions elsewhere is no longer the answer: {stderr}"
+    );
+    assert!(stderr.contains("CHANGELOG.md"), "{stderr}");
+}
+
+#[test]
+fn retired_demo_command_gives_the_task_recipe() {
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("private fixture");
+    fs::write(
+        fixture.path().join("effigy.toml"),
+        "[tasks.build]\nrun = \"true\"\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .current_dir(fixture.path())
+        .arg("demo")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("retired demo command");
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("`effigy demo` is retired in v0.15"),
         "{stderr}"
+    );
+    assert!(
+        stderr.contains("`[tasks.\"demo:<name>\"]`"),
+        "the retirement must give the conversion recipe: {stderr}"
+    );
+    assert!(
+        !stderr.contains("external tool"),
+        "recording sessions elsewhere is no longer the answer: {stderr}"
     );
     assert!(stderr.contains("CHANGELOG.md"), "{stderr}");
 }
@@ -119,7 +163,14 @@ fn retired_config_target_demos_fails_with_its_explanation() {
         stderr.contains("`effigy config --target demos` was removed in v0.15"),
         "{stderr}"
     );
-    assert!(stderr.contains("no replacement"), "{stderr}");
+    assert!(
+        stderr.contains("`[tasks.\"demo:<name>\"]`"),
+        "the config error must give the conversion recipe: {stderr}"
+    );
+    assert!(
+        stderr.contains("group = \"Demos\""),
+        "the config error must name the optional group: {stderr}"
+    );
     assert!(stderr.contains("CHANGELOG.md"), "{stderr}");
     assert!(
         !stderr.contains("supported: manifest"),

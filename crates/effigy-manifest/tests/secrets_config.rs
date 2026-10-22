@@ -256,8 +256,55 @@ fn retirement_vault_policy_keys_name_bundle_exports() {
         let error = effigy_manifest::load_task_manifest(&manifest)
             .expect_err("retired bundle key")
             .to_string();
-        assert!(error.contains(&export.display().to_string()), "{error}");
-        assert!(error.contains("line 2"), "{error}");
-        assert!(error.contains("retired"), "{error}");
+        assert!(
+            error.contains(&format!("{}:2", export.display())),
+            "{error}"
+        );
+        assert!(error.contains(&format!("[secrets.vault] {key}")), "{error}");
+        assert!(error.contains("effigy bundle sync"), "{error}");
+        assert!(error.contains("delete the line from its export"), "{error}");
+        assert!(!error.contains("TOML parse error"), "{error}");
     }
+}
+
+#[test]
+fn retirement_vault_policy_keys_name_a_cached_git_bundle_export() {
+    let root = tempfile::tempdir().expect("temporary bundle root");
+    let manifest = root.path().join("effigy.toml");
+    let url = "https://example.invalid/underlay.git";
+    std::fs::write(
+        &manifest,
+        format!("[bundle]\nbase = {{ type = \"git\", url = \"{url}\" }}\n"),
+    )
+    .expect("write root");
+    let cache = root
+        .path()
+        .join(".effigy/cache/bundles/git")
+        .join(effigy_core::git_source::sha256_hex(
+            effigy_core::git_source::canonical_git_cache_identity(url).as_bytes(),
+        ))
+        .join("main");
+    std::fs::create_dir_all(&cache).expect("create cached bundle");
+    std::fs::write(
+        cache.join("bundle.toml"),
+        "[bundle]\nname = \"underlay\"\ndefaults = \"export.toml\"\n",
+    )
+    .expect("write descriptor");
+    let export = cache.join("export.toml");
+    std::fs::write(&export, "[secrets.vault]\nidentity = \"passphrase\"\n").expect("write export");
+
+    let error = effigy_manifest::load_task_manifest(&manifest)
+        .expect_err("retired cached bundle key")
+        .to_string();
+    assert!(
+        error.contains(&format!("{}:2", export.display())),
+        "{error}"
+    );
+    assert!(error.contains("[secrets.vault] identity"), "{error}");
+    assert!(error.contains("effigy bundle sync"), "{error}");
+    assert!(
+        error.contains(&cache.display().to_string()),
+        "the cached bundle root is named: {error}"
+    );
+    assert!(!error.contains("TOML parse error"), "{error}");
 }

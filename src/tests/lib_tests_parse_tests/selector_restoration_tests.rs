@@ -91,7 +91,7 @@ fn slash_selectors_never_enter_help_group_or_builtin_parsing() {
 #[test]
 fn genuine_command_owned_subcommands_stay_nested() {
     assert!(matches!(
-        parse(&["docs", "context", "which contract governs routing"]),
+        parse(&["docs", "check", "links"]),
         Command::Docs(_)
     ));
     assert!(matches!(parse(&["release", "gates"]), Command::Release(_)));
