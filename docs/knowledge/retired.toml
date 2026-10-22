@@ -54,6 +54,7 @@ allow = [
   "crates/effigy-cli/src/command_parsing.rs",
   "crates/effigy-core/src/retirement_text.rs",
   "crates/effigy-manifest/src/lib.rs",
+  "crates/effigy-manifest/src/retired_keys.rs",
   "docs/guides/085-v0.15.0-consumer-migration.md",
   "docs/knowledge/questions.md",
   "tests/cli_output_tests/retirement_tests.rs",
