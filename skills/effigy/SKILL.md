@@ -2,8 +2,8 @@
 name: effigy
 description: >
   Effigy task-runner skill for agents: route by job instead of ritual —
-  use graph for code-navigation questions, tasks for selector inventory,
-  doctor for routing or health ambiguity, test --plan when test shape matters,
+  use rg and the docs index for code-navigation questions, tasks for selector
+  inventory, doctor for routing or health ambiguity, test --plan when test shape matters,
   run work through effigy selectors, parse --json envelopes, and avoid
   release/CI footguns. Use when the user mentions effigy, effigy.toml, or
   needs tests, dev, QA, repo navigation, deployment, or validation in an
@@ -16,7 +16,7 @@ description: >
 
 One CLI (`effigy`) + **`effigy.toml`** (often split across includes) = the
 repo's task surface. **Selectors** (`dev`, `api/test`, `qa:ci:fast`) route to
-manifest tasks or **built-ins** (`test`, `doctor`, `scan`, `graph`, …).
+manifest tasks or **built-ins** (`test`, `doctor`, `scan`, …).
 
 **`dev`** is almost always a **repo task name**, not a built-in verb.
 **`test`** is always the built-in test orchestrator. Repos configure explicit
@@ -75,9 +75,8 @@ Pick the first Effigy command that matches the job.
 
 | Job | Use when | First command |
 |-----|----------|---------------|
-| Understand code | Ownership, behavior, implementation, impact | `effigy graph explore "<question>" --json` |
-| Find documentation authority | Which contract, decision, lane, or prior decision governs the work | `effigy docs context "<question>" --json` |
-| Review graph-backed risk | Boundaries, likely isolation, or validation risk | `effigy scan <graph-aware-subcommand> --json` |
+| Understand code | Ownership, behavior, implementation, impact | `rg` for the symbol, then read `docs/README.md` for the owning knowledge |
+| Find documentation authority | Which contract, decision, lane, or prior decision governs the work | `rg` the docs tree, then `docs/README.md` for the index |
 | Find runnable selectors | You need repo tasks or QA surfaces | `effigy tasks` |
 | Inspect test shape | You need to know what `effigy test` will actually do | `effigy test --plan` |
 | Diagnose routing or repo health | Selector resolution is unclear, or health/drift is the task | `effigy doctor` |
@@ -85,24 +84,16 @@ Pick the first Effigy command that matches the job.
 | Run installed skill tasks | A skill owns task code but the current repo owns runtime effects | `effigy skill tasks --path <SKILL>` |
 | Inspect a selector without running it | You need resolved task, catalog, and command shape | `effigy --plan <selector>` or `effigy --json --plan <selector>` |
 | Execute work | A task or built-in already covers the operation | `effigy <selector>` |
-| Narrow validation | You changed code and want likely tests/files first | `git diff --name-only | effigy graph affected --stdin --json` |
+| Narrow validation | You changed code and want likely tests/files first | `effigy test --plan` |
 | Parse results | Another tool/agent will consume the output | `effigy --json <command>` |
 
-Graph data queries read existing indexes without writing or refreshing. Start
-with `explore` or `affected`; a missing or stale packet names `graph index` as
-the explicit next action. Use `graph status` for freshness diagnostics and `rg`
-for exact tokens and final pre-edit proof.
-
-The graph indexes the whole checkout, including catalog members. Use
-`graph node <ID|PATH> --in` or `--out` for relationships, and
-`graph explore --excerpts-only` for a ranked excerpt packet. During a refresh,
-queries read committed files and report `refreshing (n/N)`. No watcher is needed.
-
-Details: `references/agent-operating-loop.md`, `references/graph-assist.md`.
+Effigy has no code graph in v0.15: `rg` finds code, `docs/README.md` indexes the
+knowledge, and `effigy test --plan` answers which tests run. Details:
+`references/agent-operating-loop.md`.
 
 ## Routing rules
 
-- use `graph` first for code-understanding questions, not for every task
+- use `rg` and the docs index for code- and documentation-understanding questions
 - use `tasks` when you need selector inventory, not when you already know the task
 - use `doctor` when routing is unclear or repo health is itself the task
 - use `test --plan` when test execution shape matters, not as a greeting
@@ -111,35 +102,20 @@ Details: `references/agent-operating-loop.md`, `references/graph-assist.md`.
   output format, never a planning or safety flag
 - use `effigy --plan <selector>` to inspect command shape without executing; Effigy flags go before the task, everything after it is the task's
 
-Good graph-first question shapes:
+Good navigation question shapes:
 
-- `where are redirect responses handled`
-- `where are config migrations validated before apply`
-- `where does shell exit cleanup prompt run`
-
-Stay with `rg` first when the job is:
-
-- exact token lookup
-- missing-symbol proof
-- confirming the final pre-edit call site or string literal
+- `rg -n "redirect" crates src`
+- `rg -n "migrat.*valid" crates`
+- `rg -n "exit cleanup" crates`
 
 Full built-in lookup: `references/built-in-surfaces.md`.
-
-Use graph-aware scans when the question is risk, not navigation:
-
-- `effigy scan boundary-violations --json`
-- `effigy scan dead-code --json`
-- `git diff --name-only | effigy scan validation-gaps --stdin --json`
-
-Do not run these as a greeting. They are for bounded review questions, not
-for generic repo orientation.
 
 ## Common workflows
 
 | Goal | Command |
 |------|---------|
-| Orient in unfamiliar code | `effigy graph explore "<question>" --json` |
-| Find the governing document | `effigy docs context "<question>" --max-sections 4` |
+| Orient in unfamiliar code | `rg` the symbol, then read `docs/README.md` |
+| Find the governing document | `rg` the docs tree; start from `docs/README.md` |
 | Run focused tests | `effigy test <suite-or-runner-filter>` |
 | Inspect test plan | `effigy test --plan` |
 | Bring local dev up | `effigy container up` then `effigy dev` |
@@ -200,8 +176,7 @@ effigy --json <command>
 ```
 
 Returns `effigy.command.v1` with command-specific data in `result` (or
-`error.details` for some failures); graph reports may nest their payload under
-`result.payload`.
+`error.details` for some failures).
 
 ```bash
 effigy --json tasks | jq -r '.result.catalog_tasks[].task'
@@ -274,13 +249,10 @@ task own raw stdin/stdout/stderr and exit status for machine-to-machine calls;
 it cannot combine with `--json`. Contract:
 `docs/knowledge/contracts/042-external-skill-task-runner-contract.md`.
 
-**Documentation context** — `effigy docs context "<question>"` returns bounded
-exact Markdown sections with path, span, kind, authority, currentness, fields,
-relation path, and match reason. It is evidence, never a generated answer.
-Semantics come from the selected repository's committed `[docs_policy.graph]`
-block; no installed skill or starter is read at query time, so a skill upgrade
-never changes what a repository means. Works in baseline mode with no profile.
-Guide: `docs/guides/079-documentation-graph-profiles-and-context.md`.
+**Documentation navigation** — v0.15 removed `effigy docs context`; use
+`docs/README.md` as the docs index and `rg` for exact text. The optional
+committed `[docs_policy.graph]` profile is still validated config, but it has no
+v0.15 reader. `effigy docs check` is unchanged.
 
 **Config shapes** — `[tasks]`, `[systems]`, `[containers]`, `[bootstrap]`,
 `[release]`, `[bundle]`, `[secrets]`, `[state]`, `[deploy]`, and the optional
@@ -328,8 +300,7 @@ Sequence: `references/release-protocol.md`.
 
 | Topic | Guide |
 |-------|-------|
-| Agent + graph workflow | `docs/guides/076-code-graph-and-agent-workflows.md` |
-| Documentation graph profile | `docs/guides/079-documentation-graph-profiles-and-context.md`, `docs/knowledge/architecture/024-repository-defined-documentation-graph.md`, `docs/knowledge/contracts/041-documentation-graph-profile-contract.md` |
+| Documentation profile | `docs/knowledge/architecture/024-repository-defined-documentation-graph.md`, `docs/knowledge/contracts/041-documentation-graph-profile-contract.md` |
 | Agent adoption | `docs/guides/047-agent-and-cross-repo-adoption.md` |
 | Installed skill task execution | `docs/knowledge/contracts/042-external-skill-task-runner-contract.md`, `docs/knowledge/architecture/025-external-skill-task-execution.md` |
 | Rhai script steps | `docs/guides/061-rhai-script-steps-guide.md` |

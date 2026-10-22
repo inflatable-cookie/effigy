@@ -10,8 +10,6 @@ const DOCS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     notices: &[
         "Run reusable markdown/documentation validation checks without dropping into shell scripts.",
         "`docs check links` with no paths checks `README.md` and Markdown under `docs/`. Recursive checks skip `target/` and `node_modules/` at directory entry; explicit file paths stay in scope.",
-        "`docs context --sources` routes one query across the repositories that declare `[docs_policy.sources] share = true` under the named directories, grouped per repository and never merged into one ranked list.",
-        "`docs context` retrieves bounded exact documentation sections with provenance from the shared graph; it returns source evidence, never a generated summary.",
         "Repo-specific policy should stay in task wiring and flags; these built-ins provide the generic validation engines.",
     ],
     usage: &[
@@ -25,7 +23,6 @@ const DOCS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy docs check next-action [--repo <PATH>] [--policy <NAME>] [--json]",
         "effigy docs check workflow-paths [--repo <PATH>] [--dir <PATH>] [--json]",
         "effigy docs add-log-index [--repo <PATH>] <LOG_FILE> [--json]",
-        "effigy docs context <QUERY> [--repo <PATH>] [--sources <PATH>] [--only <HANDLE>]... [--max-sections <N>] [--max-bytes <N>] [--max-hops <N>] [--json]",
         "effigy --json docs check links [--repo <PATH>] [<FILE>...]",
     ],
     leading_common_options: &[CommonOption::Repo],
@@ -83,30 +80,6 @@ const DOCS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
             "<LOG_FILE>",
             "Log path to insert into `docs/notes/README.md` for `add-log-index`",
         ),
-        (
-            "<QUERY>",
-            "Free-text query for `docs context`; an empty query is a usage error",
-        ),
-        (
-            "--max-sections <N>",
-            "Cap returned `docs context` sections (default 8, maximum 32)",
-        ),
-        (
-            "--max-bytes <N>",
-            "Cap total `docs context` evidence bytes (default 24000, maximum 100000)",
-        ),
-        (
-            "--max-hops <N>",
-            "Cap `docs context` typed-relation traversal depth (default 1, maximum 3)",
-        ),
-        (
-            "--sources <PATH>",
-            "Route `docs context` across a `[portfolio]` file (or a directory) naming where opted-in repositories live",
-        ),
-        (
-            "--only <HANDLE>",
-            "Restrict `--sources` routing to named repository handles; repeatable",
-        ),
     ],
     trailing_common_options: &[
         CommonOption::Json("Render machine-readable validation payloads"),
@@ -115,7 +88,6 @@ const DOCS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     examples: &[
         "effigy docs check links README.md docs/guides/README.md",
         "effigy docs check json-examples",
-        "effigy docs context \"documentation graph profile contract\" --sources ~/Dev/projects/portfolio.toml --json",
         "effigy docs check headings docs/guides/024-ci-and-automation-recipes.md --require-heading \"## Vision Alignment\"",
         "effigy docs check paths README.md docs/README.md docs/knowledge/README.md",
         "effigy docs check contains docs/notes/README.md --require \"Vision Target Delta\"",
@@ -126,9 +98,6 @@ const DOCS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy docs check next-action --policy vision",
         "effigy docs check workflow-paths",
         "effigy docs add-log-index docs/notes/2026-03/02-160000-my-log.md",
-        "effigy docs context \"graph freshness\"",
-        "effigy docs context \"release gates\" --max-sections 4 --max-bytes 8000 --max-hops 2",
-        "effigy --json docs context \"documentation graph profile\"",
         "effigy --json docs check links README.md",
     ],
 };

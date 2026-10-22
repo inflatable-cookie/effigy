@@ -52,7 +52,6 @@ fn doctor_check_registry_order_is_stable() {
             "manifest_conflicts",
             "environment_tools",
             "task_references",
-            "graph_index",
             "god_files",
             "duplicate_blocks",
             "comment_ratio",
@@ -108,7 +107,6 @@ fn doctor_check_registry_is_executor_composable_without_control_flow_changes() {
             "manifest_conflicts",
             "environment_tools",
             "task_references",
-            "graph_index",
             "god_files",
             "duplicate_blocks",
             "comment_ratio",
@@ -130,7 +128,6 @@ fn doctor_check_registry_progress_labels_are_stable() {
     assert_eq!(
         labels,
         vec![
-            "Doctor check: graph index",
             "Doctor scan: god-files",
             "Doctor scan: duplicate-blocks",
             "Doctor scan: comment-ratio",

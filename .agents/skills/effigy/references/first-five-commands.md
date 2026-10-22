@@ -90,24 +90,10 @@ effigy --json tasks | jq -r '.result.catalog_tasks[].task'
 Use this when another tool or agent step needs task inventory in a stable JSON
 envelope.
 
-## Optional next: Graph (before broad `rg` / file reads)
-
-When the job is code understanding, use this directly. Do not require the
-other commands first if the question is already code-location shaped:
-
-```bash
-effigy graph explore "<task-shaped question>" --max-files 6 --max-bytes 12288 --json
-```
-
-The query reads existing committed data without refreshing. Run `graph index`
-explicitly when the packet reports missing or stale data.
-
-Details: `graph-assist.md`.
-
 ## What to do with the results
 
 - **The first command answered the job** → proceed with the work the user asked for.
-- **Need code ownership or flow next** → switch to `graph`.
+- **Need code ownership or flow next** → `rg` the symbol and read the owning knowledge file.
 - **`doctor` reports FAIL** → fix the underlying issue or hand back to user.
   Don't paper over a structural error.
 - **`tasks` is empty + user asked for a workflow** → the repo may use raw

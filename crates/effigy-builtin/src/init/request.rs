@@ -286,7 +286,7 @@ mod tests {
             &task(),
             &[
                 "--apply-actions".to_owned(),
-                "graph_status.inspect,graph_index.build".to_owned(),
+                "secrets_surface.inspect,secrets_vault.init".to_owned(),
             ],
         )
         .expect("apply actions");
@@ -294,8 +294,8 @@ mod tests {
             InitMode::ApplyActions { action_ids } => assert_eq!(
                 action_ids,
                 vec![
-                    "graph_status.inspect".to_owned(),
-                    "graph_index.build".to_owned()
+                    "secrets_surface.inspect".to_owned(),
+                    "secrets_vault.init".to_owned()
                 ]
             ),
             other => panic!("expected apply-actions mode, got {other:?}"),

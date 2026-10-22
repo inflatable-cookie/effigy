@@ -116,7 +116,7 @@ pub(super) fn fmt_runner_error(
             if let Some(stale) = stale_local_install.as_deref() {
                 write!(
                     f,
-                    "\n\nrepository-local install is behind this checkout: {} records {}, but {} is at {}\nrefresh it from the checkout root with: cargo run --bin effigy -- bootstrap:local",
+                    "\n\nrepository-local install is behind this checkout: {} records {}, but {} is at {}\nrefresh it from the checkout root with: cargo run --bin effigy -- install:local",
                     stale.executable.display(),
                     stale.installed_identity,
                     stale.repo_root.display(),
@@ -175,14 +175,6 @@ pub(super) fn fmt_runner_error(
             write!(f, "command failed (json output available)")
         }
         RunnerError::BoundedExecFailure { message, .. } => f.write_str(message),
-        RunnerError::GraphOperationTimeout {
-            command,
-            timeout_ms,
-            ..
-        } => write!(
-            f,
-            "`{command}` exceeded its {timeout_ms}ms budget; inspect `effigy graph status --json`, or raise `EFFIGY_GRAPH_TIMEOUT_MS`"
-        ),
         RunnerError::DepsOperationNonZero {
             command,
             outcome,

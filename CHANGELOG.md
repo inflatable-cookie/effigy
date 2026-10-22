@@ -218,6 +218,24 @@ During v0.x, MINOR bumps may include breaking changes.
   `[contracts].selection_contract` from the project manifest, so a project that
   declares neither is refused with "no JSON schema index configured" instead of
   being validated against Effigy's documentation tree.
+- The code graph (Q-009): `effigy graph` (`index`, `status`, `search`, `node`,
+  `affected`, `explore` and the earlier retired spellings), `effigy docs
+  context` and its `--sources` portfolio routing, the `effigy-codegraph` crate
+  and its SQLite index, `EFFIGY_GRAPH_TIMEOUT_MS`, and the `effigy.graph.*` /
+  `effigy.docs.context*` JSON contracts. Use `rg` for code navigation,
+  `docs/README.md` for the documentation index, and `effigy test --plan` to
+  choose tests; `docs check` is unchanged. The three scanners that needed the
+  graph go with it: `scan boundary-violations`, `scan dead-code` and
+  `scan validation-gaps`, plus `scan --graph-context`, `scan --path` and
+  `scan --stdin`. Their `[scan.boundary_violations]`, `[scan.dead_code]` and
+  `[scan.validation_gaps]` tables, and `[catalog.graph]`, are manifest errors.
+  The other scanners keep working without graph enrichment. The index lived in
+  `.effigy/graph/` inside each checkout, which is repository-local state, not
+  Effigy-owned machine state: `effigy uninstall` and state cleanup never remove
+  it, and an existing `.effigy/graph/` directory is ignored. Delete it by hand
+  if the disk space matters. The `[docs_policy.graph]` documentation profile
+  and `[docs_policy.sources]` table are still parsed and validated so committed
+  manifests keep working; nothing reads them in v0.15.
 - Retire the experimental gateway listener-handoff commands:
   `effigy gateway setup-listener-handoff`, `listener-handoff-status` and
   `remove-listener-handoff`, with the launchd definition generator, its strict
@@ -638,6 +656,7 @@ During v0.x, MINOR bumps may include breaking changes.
   `selected.length`, because JSON Schema cannot compare a property with an
   array length. `--json` failures now report the structured
   `effigy.contracts.check-json.v1` payload in `error.message`.
+- The contributor task that builds this checkout and installs it as the machine's `effigy` is renamed `bootstrap:local` → `install:local`, so it no longer reads as the `effigy bootstrap` feature (clone and start a project). `bootstrap:local` now fails with the new name.
 - Effigy's own repository builds through Oxide. Selectors run Cargo through
   `scripts/oxide-selector.sh`, which leases Oxide's shared slot pool so Rust
   intermediates stay off the internal SSD. Every routed selector keeps a

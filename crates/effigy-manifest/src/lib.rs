@@ -253,7 +253,7 @@ fn reject_catalog_graph<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<toml::Value>, D::Error> {
     let _: serde::de::IgnoredAny = serde::Deserialize::deserialize(deserializer)?;
-    Err(serde::de::Error::custom("`[catalog.graph]` was removed in v0.15; remove the table; `effigy graph` indexes the whole checkout (use `graph explore --path <PREFIX>` to narrow results)"))
+    Err(serde::de::Error::custom("`[catalog.graph]` was removed in v0.15; remove the table. The code graph is gone in v0.15 with no replacement: use `rg` for code navigation (see CHANGELOG.md)"))
 }
 
 #[derive(Debug, serde::Deserialize)]

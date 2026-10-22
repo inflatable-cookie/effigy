@@ -407,7 +407,7 @@ dirty local state.
 ## Refreshing A Stale Local Install
 
 Repos that self-host Effigy (this repository is one) keep a local install at
-`<checkout>/.local-install/bin/effigy` that `bootstrap:local` builds and stamps
+`<checkout>/.local-install/bin/effigy` that `install:local` builds and stamps
 with the checkout revision at install time. When the checkout moves ahead of
 that install and its manifest gains grammar the installed binary predates,
 every task fails during strict manifest parsing — before `doctor` or any task
@@ -420,7 +420,7 @@ in that checkout, and the recorded commit is a strict ancestor of the checkout
 checkout revision, and the refresh command:
 
 ```sh
-cargo run --bin effigy -- bootstrap:local
+cargo run --bin effigy -- install:local
 ```
 
 Run that from the checkout root. It builds the current source and atomically

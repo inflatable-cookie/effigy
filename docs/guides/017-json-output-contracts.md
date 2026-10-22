@@ -53,8 +53,6 @@ Start with:
 effigy --json tasks
 effigy --json doctor
 effigy --json test --plan
-effigy --json graph status
-effigy --json graph explore --excerpts-only "trace release orchestrator"
 ```
 
 ## Top-Level Contract
@@ -140,9 +138,6 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.version.v1`
 - `effigy.release.status.v1`
 - `effigy.scan.god-files.v1`
-- `effigy.scan.boundary-violations.v1`
-- `effigy.scan.dead-code.v1`
-- `effigy.scan.validation-gaps.v1`
 - `effigy.scan.duplicate-blocks.v1`
 - `effigy.scan.comment-ratio.v1`
 - `effigy.scan.generated-assets.v1`
@@ -153,14 +148,6 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.bundle.sync.v1`
 - `effigy.test.plan.v1`
 - `effigy.test.results.v1`
-- `effigy.graph.index.v1`
-- `effigy.graph.status.v1`
-- `effigy.graph.search.v1`
-- `effigy.graph.node.v1`
-- `effigy.graph.explore.v1`
-- `effigy.graph.affected.v1`
-- `effigy.docs.context.v1`
-- `effigy.docs.context.sources.v1`
 - `deploy.model.v1`
 - `effigy.deploy.export.v1`
 - `effigy.deploy.plan.v1`
@@ -228,12 +215,6 @@ effigy --json service list
 effigy --json config path
 effigy --json config get containers.backend
 effigy --json config --schema --target test
-effigy --json graph index
-effigy --json graph status
-effigy --json graph search release --limit 10
-effigy --json graph explore "trace deploy provider export" --max-files 6 --max-bytes 12288
-effigy --json graph explore --excerpts-only "trace deploy provider export" --max-files 8 --max-bytes 4096
-effigy --json graph affected src/runner/graph_command.rs --depth 2
 effigy --json deploy model --repo /path/to/workspace
 effigy --json deploy export <PROVIDER> --repo /path/to/workspace --path infra/deploy --plan
 effigy --json deploy plan uat --repo /path/to/workspace
@@ -260,33 +241,6 @@ effigy --json --plan --repo /path/to/workspace build
 `selection` object are gone with the catalog-pack runtime. `effigy container
 render --json` adds a `services` array naming each environment service's
 `catalog`, `source`, `layer` and `path`.
-
-## Graph Workflow Notes
-
-Graph uses one database for the checkout. The command envelope has no catalog
-selection or fan-out fields. Data queries refresh stale files lazily, while
-plain status is read-only. `freshness.state` includes `ready`,
-`refresh-recommended`, `degraded`, `missing-index`, `stale-index` and
-`refreshing`. Gate on `usable`; stale and refreshing data are not current.
-A concurrent writer is identified in `freshness.lock` and its committed-file
-progress is reported as `refreshing (n/N)`.
-
-`effigy.graph.node.v1` adds `target`, `direction`, `files` and `symbols` beside
-its seed `file`/`symbol`, edges, references, diagnostics and freshness.
-`--in` and `--out` select relationship direction; default is `both`.
-
-`effigy.graph.explore.v1` has two payload modes: `navigation` keeps primary
-owners, excerpts, relations, edit targets and likely tests. `excerpts-only`
-keeps ranked `items`, `request`, `overflow`, `freshness` and `notes`.
-Both modes use the same file, byte, language and path budgets.
-
-File updates commit graph, FTS and per-file freshness keys together. There is
-no snapshot copy or graph event stream. A cooperative timeout stops work at
-a safe boundary and returns `effigy.graph.timeout.v1` with the last phase,
-`done`, `total` and `committed: true`; counts can be null before indexing.
-Retries keep committed progress. `--stale-index` skips refresh and lock wait.
-Affected packets narrow likely validation and do not prove exhaustive test
-reachability. See the [graph guide](076-code-graph-and-agent-workflows.md).
 
 ## Payload Examples
 

@@ -17,7 +17,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 mod copy_if_missing;
-mod docs_context_benchmark;
 mod engine_limits;
 mod forge;
 mod git;
@@ -253,13 +252,6 @@ fn allowed_first_party_process_script(relative: &str, contents: &str) -> bool {
             contents.contains("process::stream(program, process_args, options)")
         }
         "scripts/install-local-bin-links.rhai" => contents.contains("process::run("),
-        "scripts/benchmark-graph-agent-usage.rhai" => {
-            contents.contains("process::run(program, process_args)")
-                && contents.contains("process::run(")
-        }
-        "scripts/benchmark-docs-context.rhai" => {
-            contents.contains("process::run(program, process_args)")
-        }
         "scripts/profile-container-shell-matrix.rhai" => {
             contents.contains("process::run(program, process_args)")
                 && contents.contains("process::run(\"/bin/sh\",")

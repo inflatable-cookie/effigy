@@ -49,18 +49,15 @@ fn contract_fixture_all_constructor_roots_are_owned_without_relocating_inspectio
     let mut fixtures = super::ContractFixtures::new(repo.path());
     let group = super::create_qa_groups_contract_fixture_dir(&mut fixtures).expect("group");
     let (source, consumer) = super::create_skill_contract_fixtures(&mut fixtures).expect("skill");
-    let docs = super::create_docs_context_fixture(&mut fixtures).expect("docs");
     let task = super::create_contract_fixture(&mut fixtures, "[tasks.fail]\nrun = 'exit 9'\n")
         .expect("failure task");
     for path in [&group, &source, &consumer] {
         assert!(path.starts_with(repo.path()));
     }
-    for path in [&docs, &task] {
-        assert!(
-            !path.starts_with(repo.path()),
-            "inspection root stays external"
-        );
-    }
+    assert!(
+        !task.starts_with(repo.path()),
+        "inspection root stays external"
+    );
     assert!(group.join("effigy.toml").is_file());
     let paths: Vec<_> = fixtures
         .directories

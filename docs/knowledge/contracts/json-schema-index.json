@@ -36,13 +36,6 @@
       "status": "active"
     },
     {
-      "schema": "effigy.docs.context.v1",
-      "schema_version": 1,
-      "command": "effigy --json docs context \"widget calibration\" --repo <fixture_docs_context>",
-      "surface": "bounded documentation context retrieval",
-      "status": "active"
-    },
-    {
       "schema": "effigy.command.v1",
       "schema_version": 1,
       "command": "effigy --json deps --repo <fixture_task_success>",
@@ -251,55 +244,6 @@
       "schema_version": 1,
       "command": "effigy --json tasks qa-group status <fixture_qa_groups_run_id> --repo <fixture_qa_groups>",
       "surface": "live/reconciled bounded QA-group status",
-      "status": "active"
-    },
-    {
-      "schema": "effigy.graph.index.v1",
-      "schema_version": 1,
-      "command": "effigy --json graph index --repo <fixture_task_success>",
-      "surface": "whole-checkout graph index",
-      "status": "active"
-    },
-    {
-      "schema": "effigy.graph.status.v1",
-      "schema_version": 1,
-      "command": "effigy --json graph status --repo <fixture_task_success>",
-      "surface": "whole-checkout graph status",
-      "status": "active"
-    },
-    {
-      "schema": "effigy.graph.search.v1",
-      "schema_version": 1,
-      "command": "effigy --json graph search build --limit 5 --repo <fixture_task_success>",
-      "surface": "whole-checkout graph search",
-      "status": "active"
-    },
-    {
-      "schema": "effigy.graph.node.v1",
-      "schema_version": 1,
-      "command": "effigy --json graph node effigy.toml --limit 5 --repo <fixture_task_success>",
-      "surface": "whole-checkout graph node",
-      "status": "active"
-    },
-    {
-      "schema": "effigy.graph.affected.v1",
-      "schema_version": 1,
-      "command": "effigy --json graph affected effigy.toml --depth 1 --limit 5 --repo <fixture_task_success>",
-      "surface": "whole-checkout graph affected",
-      "status": "active"
-    },
-    {
-      "schema": "effigy.graph.explore.v1",
-      "schema_version": 1,
-      "command": "effigy --json graph explore \"task build\" --max-files 2 --max-bytes 2048 --repo <fixture_task_success>",
-      "surface": "whole-checkout graph explore",
-      "status": "active"
-    },
-    {
-      "schema": "effigy.graph.explore.v1",
-      "schema_version": 1,
-      "command": "effigy --json graph explore \"task build\" --excerpts-only --max-files 2 --max-bytes 2048 --repo <fixture_task_success>",
-      "surface": "whole-checkout graph excerpts",
       "status": "active"
     },
     {

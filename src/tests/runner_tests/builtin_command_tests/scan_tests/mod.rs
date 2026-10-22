@@ -10,12 +10,9 @@ mod support;
 use support::*;
 
 mod attention_markers;
-mod boundary_violations;
 mod comment_ratio;
-mod dead_code;
 mod duplicate_blocks;
 mod generated_assets;
 mod generated_in_src;
 mod god_files;
 mod stale_suppressions;
-mod validation_gaps;

@@ -877,26 +877,6 @@ fn expand_contract_fixture_tokens(
     }
     if args
         .iter()
-        .any(|arg| arg.contains("<fixture_docs_context>"))
-    {
-        let fixture = create_docs_context_fixture(fixtures)?;
-        // Retrieval is a pure read. Prepare this fixture explicitly, keeping
-        // the graph's host gate inside its owned temporary home.
-        let executable = resolve_effigy_executable()?;
-        run_fixture_command(
-            &fixture,
-            executable.as_os_str(),
-            &["graph", "index"],
-            Some(&fixture),
-        )?;
-        replace_contract_token(
-            &mut args,
-            "<fixture_docs_context>",
-            &fixture.to_string_lossy(),
-        );
-    }
-    if args
-        .iter()
         .any(|arg| arg.contains("<fixture_container_render>"))
     {
         let fixture = create_contract_fixture(fixtures,
@@ -1124,39 +1104,6 @@ fn create_skill_contract_fixtures(
     )
     .map_err(|error| error.to_string())?;
     Ok((source, consumer))
-}
-
-/// A small repository-owned documentation profile, so the retrieval contract is
-/// exercised against configured kinds, fields, and relations rather than only
-/// baseline Markdown.
-fn create_docs_context_fixture(fixtures: &mut ContractFixtures) -> Result<PathBuf, String> {
-    let root = fixtures
-        .directory("effigy-docs-context-", FixturePlacement::External)
-        .map_err(|error| error.to_string())?;
-    std::fs::create_dir_all(root.join("handbook/playbooks")).map_err(|error| error.to_string())?;
-    std::fs::write(
-        root.join("handbook/playbooks/setup.md"),
-        "# Setup playbook\n\nState: live\n\nSee also: [ops](ops.md)\n\n## Steps\n\nCalibrate the widget before the run.\n",
-    )
-    .map_err(|error| error.to_string())?;
-    std::fs::write(
-        root.join("handbook/playbooks/ops.md"),
-        "# Ops\n\nState: live\n\n## Runbook\n\nRestart the daemon.\n",
-    )
-    .map_err(|error| error.to_string())?;
-    std::fs::write(
-        root.join("effigy.toml"),
-        concat!(
-            "[catalog]\nalias = \"docs-context-contract\"\n\n",
-            "[docs_policy.graph]\nroots = [\"handbook\"]\n\n",
-            "[docs_policy.graph.fields.state]\nlabels = [\"State\"]\ncardinality = \"one\"\n\n",
-            "[docs_policy.graph.currentness]\nfield = \"state\"\ncurrent = [\"live\"]\nhistorical = [\"retired\"]\n\n",
-            "[docs_policy.graph.kinds.playbook]\ninclude = [\"handbook/playbooks/*.md\"]\nauthority = 80\n\n",
-            "[docs_policy.graph.relations.see-also]\nlabels = [\"See also\"]\n",
-        ),
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(root)
 }
 
 fn create_deps_contract_fixtures(

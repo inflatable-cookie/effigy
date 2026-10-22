@@ -172,8 +172,6 @@ fn runnable_contextual_jobs(inventory: &[SetupJob]) -> Vec<SetupJob> {
 fn prompt_text_for_job(job: &SetupJob) -> &'static str {
     match job.id.as_str() {
         "task_surface.scan" => "Review current Effigy tasks",
-        "graph_status.inspect" => "Check graph index status",
-        "graph_index.build" => "Build the code graph index",
         "secrets_surface.inspect" => "Check declared secrets",
         "secrets_vault.init" => "Set up the local secrets vault",
         "bundle_surface.inspect" => "Inspect the bundle source",

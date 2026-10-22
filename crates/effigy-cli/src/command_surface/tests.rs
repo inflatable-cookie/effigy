@@ -20,7 +20,6 @@ const CURRENT_HELP_TOPICS: &[HelpTopic] = &[
     HelpTopic::Workspace,
     HelpTopic::Gateway,
     HelpTopic::Service,
-    HelpTopic::Graph,
     HelpTopic::Rhai,
     HelpTopic::Skill,
     HelpTopic::Docs,
@@ -51,7 +50,6 @@ const CURRENT_TOP_LEVEL_HELP_ROUTES: &[(&str, HelpTopic)] = &[
     ("workspace", HelpTopic::Workspace),
     ("gateway", HelpTopic::Gateway),
     ("service", HelpTopic::Service),
-    ("graph", HelpTopic::Graph),
     ("rhai", HelpTopic::Rhai),
     ("skill", HelpTopic::Skill),
     ("docs", HelpTopic::Docs),
@@ -101,12 +99,7 @@ const CONTRACT_GROUP_INVENTORIES: &[(HelpGroup, &[&str])] = &[
     ),
     (
         HelpGroup::Repo,
-        &[
-            "effigy graph",
-            "effigy scan",
-            "effigy docs",
-            "effigy contracts",
-        ],
+        &["effigy scan", "effigy docs", "effigy contracts"],
     ),
     (
         HelpGroup::Deliver,
@@ -405,10 +398,6 @@ fn deferred_builtin_for_help_topic_matches_the_inventory_row() {
     assert_eq!(
         deferred_builtin_for_help_topic(HelpTopic::Docs),
         Some("docs")
-    );
-    assert_eq!(
-        deferred_builtin_for_help_topic(HelpTopic::Graph),
-        Some("graph")
     );
     // Built-ins that repository routing cannot shadow keep their help panel.
     assert_eq!(deferred_builtin_for_help_topic(HelpTopic::General), None);

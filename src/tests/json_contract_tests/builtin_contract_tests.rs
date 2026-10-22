@@ -265,7 +265,7 @@ fn builtin_init_actions_json_contract_has_versioned_shape() {
         "init",
         &[
             "--apply-actions",
-            "manifest.effigy_toml,graph_explore.guidance",
+            "manifest.effigy_toml,secrets_surface.inspect",
             "--json",
         ],
     );

@@ -1322,7 +1322,6 @@ fn evaluate_god_files(
                 code_lines,
                 total_lines: observation.total_lines,
                 severity,
-                graph: None,
             });
         }
     }
@@ -1555,7 +1554,6 @@ fn evaluate_attention_markers(
                 severity: attention_severity(&hit.severity),
                 marker: hit.marker.clone(),
                 snippet: hit.snippet.clone(),
-                graph: None,
             });
         }
         matched_lines += lines.len();

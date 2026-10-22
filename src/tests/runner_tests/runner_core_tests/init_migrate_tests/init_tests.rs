@@ -38,7 +38,6 @@ fn run_manifest_task_builtin_init_creates_scaffold_when_missing() {
         &[
             "BEGIN EFFIGY AGENT CONTRACT",
             "Route by job",
-            "effigy graph",
             "installed shared Agent Skill",
             "fresh agent context",
         ],
@@ -200,11 +199,7 @@ fn run_manifest_task_builtin_init_agent_apply_is_idempotent_and_preserves_manife
     assert_file_text_contains_all(&root.join("effigy.toml"), &["custom = \"printf custom\""]);
     assert_file_text_contains_all(
         &root.join("AGENTS.md"),
-        &[
-            "BEGIN EFFIGY AGENT CONTRACT",
-            "Route by job",
-            "effigy graph",
-        ],
+        &["BEGIN EFFIGY AGENT CONTRACT", "Route by job"],
     );
     assert_path_missing(
         &root.join(".agents/skills/effigy/SKILL.md"),
@@ -292,7 +287,7 @@ fn run_manifest_task_builtin_init_checklist_json_reports_setup_inventory() {
             "\"mode\": \"checklist\"",
             "\"jobs\":",
             "\"id\": \"task_surface.scan\"",
-            "\"id\": \"graph_status.inspect\"",
+            "\"id\": \"secrets_surface.inspect\"",
             "\"id\": \"skill.codex_project\"",
             "Create or refresh a repo-local Effigy skill snapshot (explicit opt-in).",
             "\"can_run_noninteractive\": true",
@@ -325,26 +320,6 @@ fn run_manifest_task_builtin_init_apply_actions_json_reports_applied_and_guided_
         ],
     );
     assert_path_exists(&root.join("effigy.toml"), "apply-actions manifest");
-}
-
-#[test]
-fn run_manifest_task_builtin_init_apply_actions_can_run_nested_graph_status() {
-    let root = temp_workspace("builtin-init-apply-actions-graph-status");
-    let _ = run_builtin_ok(root.to_path_buf(), "init", &["--apply"]);
-
-    let out = run_builtin_ok(
-        root.to_path_buf(),
-        "init",
-        &["--apply-actions", "graph_status.inspect", "--json"],
-    );
-    assert_output_contains_all(
-        &out,
-        &[
-            "\"schema\": \"effigy.init.actions.v1\"",
-            "\"id\": \"graph_status.inspect\"",
-            "\"status\": \"inspected\"",
-        ],
-    );
 }
 
 #[test]
@@ -419,7 +394,7 @@ backend = "effigy-vault"
         "init",
         &[
             "--apply-actions",
-            "task_surface.scan,graph_status.inspect,secrets_surface.inspect,bundle_surface.inspect",
+            "task_surface.scan,secrets_surface.inspect,bundle_surface.inspect",
             "--json",
         ],
     );
@@ -428,7 +403,7 @@ backend = "effigy-vault"
         &[
             "\"schema\": \"effigy.init.actions.v1\"",
             "\"id\": \"task_surface.scan\"",
-            "\"id\": \"graph_status.inspect\"",
+            "\"id\": \"secrets_surface.inspect\"",
             "\"status\": \"inspected\"",
             "\"id\": \"secrets_surface.inspect\"",
             "\"id\": \"bundle_surface.inspect\"",

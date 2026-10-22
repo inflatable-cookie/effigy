@@ -381,12 +381,7 @@ fn cli_help_repo_group_lists_only_repository_intelligence_commands() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("Repo Commands"), "got: {stdout}");
-    for command in [
-        "effigy graph",
-        "effigy scan",
-        "effigy docs",
-        "effigy contracts",
-    ] {
+    for command in ["effigy scan", "effigy docs", "effigy contracts"] {
         assert!(stdout.contains(command), "missing {command}: {stdout}");
     }
     for foreign in [
@@ -406,9 +401,7 @@ fn cli_help_repo_group_lists_only_repository_intelligence_commands() {
 #[test]
 fn cli_help_command_and_direct_command_help_render_the_same_facts() {
     let root = temp_workspace("help-command-parity");
-    for command in [
-        "docs", "graph", "release", "tasks", "state", "config", "scan",
-    ] {
+    for command in ["docs", "release", "tasks", "state", "config", "scan"] {
         let via_help = run_help_cli(&root, &["help", command]);
         let via_flag = run_help_cli(&root, &[command, "--help"]);
         assert!(via_help.status.success(), "`effigy help {command}` failed");
@@ -552,7 +545,7 @@ fn cli_manifest_selector_named_after_a_help_group_keeps_task_routing() {
     assert!(help.status.success());
     let help_stdout = String::from_utf8(help.stdout).expect("utf8 stdout");
     assert!(help_stdout.contains("Repo Commands"), "got: {help_stdout}");
-    assert!(help_stdout.contains("effigy graph"), "got: {help_stdout}");
+    assert!(!help_stdout.contains("effigy graph"), "got: {help_stdout}");
 }
 
 #[cfg(unix)]
@@ -722,7 +715,7 @@ fn cli_help_command_topic_defers_with_the_direct_command_when_a_selector_shadows
     assert!(group.status.success());
     let group_stdout = String::from_utf8(group.stdout).expect("utf8 stdout");
     assert!(!group_stdout.contains("effigy docs"), "got: {group_stdout}");
-    assert!(group_stdout.contains("effigy graph"), "got: {group_stdout}");
+    assert!(group_stdout.contains("effigy scan"), "got: {group_stdout}");
 }
 
 /// `config` and `scan` own their detailed help inside the built-in rather than
