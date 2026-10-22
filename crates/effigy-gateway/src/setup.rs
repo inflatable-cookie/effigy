@@ -229,12 +229,12 @@ pub fn session<T>(
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
             .open(source)?;
-        if !file.metadata()?.is_file() || file.metadata()?.len() > 128 << 20 {
+        if !file.metadata()?.is_file() || file.metadata()?.len() > 512 << 20 {
             return Err(error("setup executable is not a bounded regular file"));
         }
         let mut bytes = Vec::new();
-        file.take((128 << 20) + 1).read_to_end(&mut bytes)?;
-        if bytes.len() > 128 << 20 {
+        file.take((512 << 20) + 1).read_to_end(&mut bytes)?;
+        if bytes.len() > 512 << 20 {
             return Err(error("setup executable changed while staging"));
         }
         let dir = DirFd::open(temp.path()).map_err(error)?;
