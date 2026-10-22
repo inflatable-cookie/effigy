@@ -1086,9 +1086,10 @@ selection_contract = "docs/knowledge/contracts/json-selection-contract.json"
 
 #[test]
 fn validate_manifest_schema_rejects_unknown_contracts_keys() {
-    let manifest: Value =
-        toml::from_str("[contracts]\nschema_index = \"index.json\"\nartifact = \"selected.json\"\n")
-            .expect("parse manifest");
+    let manifest: Value = toml::from_str(
+        "[contracts]\nschema_index = \"index.json\"\nartifact = \"selected.json\"\n",
+    )
+    .expect("parse manifest");
 
     let mut sink = TestSink::default();
     validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
