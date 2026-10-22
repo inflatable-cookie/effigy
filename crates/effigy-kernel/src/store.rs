@@ -487,11 +487,7 @@ impl Store {
             Err(error) => Err(error.into()),
         }
     }
-    fn begin_immediate(
-        &self,
-        cx: &EffectContext,
-        deadline: Instant,
-    ) -> Result<(), StoreError> {
+    fn begin_immediate(&self, cx: &EffectContext, deadline: Instant) -> Result<(), StoreError> {
         let mut pause = BUSY_RETRY_MIN;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -521,7 +517,11 @@ impl Store {
     }
     /// Bounded maintenance (§7.4): checkpoint the log, migrate an old store to
     /// incremental auto-vacuum once, then release at most `pages` free pages.
-    pub fn maintain(&mut self, cx: &EffectContext, pages: u32) -> Result<MaintainReport, StoreError> {
+    pub fn maintain(
+        &mut self,
+        cx: &EffectContext,
+        pages: u32,
+    ) -> Result<MaintainReport, StoreError> {
         let started = Instant::now();
         let mut report = MaintainReport::default();
         let window = BusyWait::AtLeast(STORE_BUSY_WAIT).window(cx);
@@ -531,11 +531,11 @@ impl Store {
             .check("store maintenance")
             .map_err(StoreError::Interrupted)?;
         // Never blocks a reader; the log is truncated at the next checkpoint.
-        let (_busy, _log, checkpointed): (i64, i64, i64) = self.conn.query_row(
-            "PRAGMA wal_checkpoint(PASSIVE)",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )?;
+        let (_busy, _log, checkpointed): (i64, i64, i64) =
+            self.conn
+                .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?;
         report.checkpointed = checkpointed as u32;
         let mode: i64 = self
             .conn
@@ -664,7 +664,10 @@ impl Store {
         let adds_index = ADDITIVE_INDEXES
             .iter()
             .any(|(name, _)| !has_index(&self.conn, name).unwrap_or(false));
-        if has_backend(&self.conn)? && has_column(&self.conn, "engine")? && !stale_build && !adds_index
+        if has_backend(&self.conn)?
+            && has_column(&self.conn, "engine")?
+            && !stale_build
+            && !adds_index
         {
             return Ok(());
         }
@@ -1143,7 +1146,8 @@ fn verify_reader(conn: Connection, busy: Duration) -> Result<Option<StoreReader>
     conn.execute_batch("PRAGMA query_only=1; PRAGMA trusted_schema=OFF;")?;
     // A writer creates the file before its schema transaction commits: no
     // schema object yet is a store still being created, with nothing in it.
-    let objects: i64 = conn.query_row("SELECT count(*) FROM sqlite_schema", [], |row| row.get(0))?;
+    let objects: i64 =
+        conn.query_row("SELECT count(*) FROM sqlite_schema", [], |row| row.get(0))?;
     if objects == 0 {
         return Ok(None);
     }

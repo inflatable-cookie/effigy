@@ -1,9 +1,9 @@
 use super::*;
-use crate::store::{BusyWait, SETTLE_BUSY_WAIT};
 use crate::observe::{Evidence, Observed};
 use crate::outcome::{
     CleanupOutcome, EffectDisposition, EffectReport, ErrorCode, ErrorInfo, Residue,
 };
+use crate::store::{BusyWait, SETTLE_BUSY_WAIT};
 use std::time::Duration;
 
 /// Engine implementations must observe exact identity and make undo idempotent.
@@ -88,29 +88,31 @@ impl Run<'_> {
                             .any(|r| matches!(r.action, RequestAction::Escalate))
                     })
                 });
-                self.store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
-                    journal::write_effect(
-                        txn,
-                        self.id,
-                        effect.sequence,
-                        state,
-                        None,
-                        reason.as_deref(),
-                    )
-                })?;
+                self.store
+                    .transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
+                        journal::write_effect(
+                            txn,
+                            self.id,
+                            effect.sequence,
+                            state,
+                            None,
+                            reason.as_deref(),
+                        )
+                    })?;
             } else if effect.spec.kind == crate::remote::KIND {
                 let (state, reason) =
                     crate::remote::settle_effect(effect, cleanup, adapter.remote());
-                self.store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
-                    journal::write_effect(
-                        txn,
-                        self.id,
-                        effect.sequence,
-                        state,
-                        None,
-                        reason.as_deref(),
-                    )
-                })?;
+                self.store
+                    .transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
+                        journal::write_effect(
+                            txn,
+                            self.id,
+                            effect.sequence,
+                            state,
+                            None,
+                            reason.as_deref(),
+                        )
+                    })?;
             } else if effect.spec.kind == attachments::KIND {
                 self.settle_attachment(effect, &cx)?;
             } else if effect.spec.kind == claims::KIND {
@@ -141,16 +143,17 @@ impl Run<'_> {
                 } else {
                     resolve(adapter, effect, cleanup)
                 };
-                self.store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
-                    journal::write_effect(
-                        txn,
-                        self.id,
-                        effect.sequence,
-                        state,
-                        None,
-                        reason.as_deref(),
-                    )
-                })?;
+                self.store
+                    .transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
+                        journal::write_effect(
+                            txn,
+                            self.id,
+                            effect.sequence,
+                            state,
+                            None,
+                            reason.as_deref(),
+                        )
+                    })?;
             }
             crate::fault_point!(SettleEffectAfter)?;
         }

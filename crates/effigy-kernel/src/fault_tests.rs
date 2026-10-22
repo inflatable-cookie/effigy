@@ -447,7 +447,11 @@ fn store_killed_writer_leaves_no_partial_commit_and_the_next_mutate_recovers_it(
         }
         other => panic!("a reader refused a killed writer's log: {other:?}"),
     }
-    assert_eq!(std::fs::read(&wal).unwrap(), before, "a reader rewrote the log");
+    assert_eq!(
+        std::fs::read(&wal).unwrap(),
+        before,
+        "a reader rewrote the log"
+    );
     let store = Store::open(&mutate(), &root(home.path())).unwrap();
     store.check_integrity().unwrap();
     let rows: i64 = store
@@ -936,11 +940,7 @@ fn store_retention_keeps_unsettled_and_the_newest_twenty_settled_runs() {
         21
     );
     for kept in [incomplete, active, held, settled(5), settled(24)] {
-        assert_eq!(
-            run_count(&store, &format!("run_id='{kept}'")),
-            1,
-            "{kept}"
-        );
+        assert_eq!(run_count(&store, &format!("run_id='{kept}'")), 1, "{kept}");
     }
     for gone in 0..5 {
         let id = settled(gone);
@@ -1229,17 +1229,18 @@ fn store_retention_queries_are_index_driven_and_pass_bounded() {
         let mut prepared = store.conn().prepare(&statement).unwrap();
         let plan: Vec<String> = prepared
             .query_map(
-                rusqlite::params_from_iter(
-                    std::iter::repeat(rusqlite::types::Value::Null)
-                        .take(prepared.parameter_count()),
-                ),
+                rusqlite::params_from_iter(std::iter::repeat_n(
+                    rusqlite::types::Value::Null,
+                    prepared.parameter_count(),
+                )),
                 |row| row.get::<_, String>(3),
             )
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
         assert!(
-            plan.iter().any(|line| line.contains("USING") && line.contains("INDEX")),
+            plan.iter()
+                .any(|line| line.contains("USING") && line.contains("INDEX")),
             "no index in plan for {sql}: {plan:?}"
         );
         assert!(

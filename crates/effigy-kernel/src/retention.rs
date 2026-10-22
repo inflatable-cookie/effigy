@@ -89,10 +89,12 @@ const NOT_SUCCEEDED: &str = "NOT (cleanup_outcome='complete' AND workload_outcom
 
 /// Whether a sweep is due. One indexed read; an admission asks nothing else.
 pub fn due(store: &Store) -> Result<bool, StoreError> {
-    Ok(match meta_value(store, "retention_next")?.and_then(|value| value.parse::<i64>().ok()) {
-        Some(at) => wall_ms() >= at,
-        None => true,
-    })
+    Ok(
+        match meta_value(store, "retention_next")?.and_then(|value| value.parse::<i64>().ok()) {
+            Some(at) => wall_ms() >= at,
+            None => true,
+        },
+    )
 }
 
 /// A rate-limited, bounded retention pass for an admission to run (§7.4).
@@ -231,11 +233,12 @@ pub fn retain(
 
     // Log cap: oldest settled runs' logs first, until the total fits.
     while left > 0 {
-        let total: i64 = store
-            .conn()
-            .query_row("SELECT coalesce(sum(bytes),0) FROM logs", [], |row| {
-                row.get(0)
-            })?;
+        let total: i64 =
+            store
+                .conn()
+                .query_row("SELECT coalesce(sum(bytes),0) FROM logs", [], |row| {
+                    row.get(0)
+                })?;
         if total <= LOG_TOTAL_MAX {
             break;
         }

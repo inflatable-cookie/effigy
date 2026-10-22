@@ -329,7 +329,8 @@ impl<'a> Run<'a> {
                             params![predecessor.id.to_string(), txn.now()],
                         )?;
                         Ok::<_, RunError>(())
-                    })?;
+                    },
+                )?;
             }
             store = previous.store;
             guard = previous.guard;

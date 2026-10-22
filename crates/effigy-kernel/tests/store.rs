@@ -63,7 +63,7 @@ fn records_only(root: &Path) -> std::collections::BTreeMap<PathBuf, Entry> {
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name == "kernel.db-wal" || name == "kernel.db-shm");
             let state_dir = path.ends_with(".effigy/state");
-            !store_side && !state_dir && *path != PathBuf::from(".effigy")
+            !store_side && !state_dir && path != Path::new(".effigy")
         })
         .collect()
 }
@@ -777,10 +777,12 @@ fn store_helper_hold_writer() {
     let root = StateRoot::effects(&cx, &stress_home()).unwrap();
     let mut store = Store::open(&cx, &root).unwrap();
     let holding = ResourceId::store(Scope::Machine, "stress-hold").unwrap();
-    println!("HOLDING");
     store
         .txn(&cx, |txn| {
+            // Inside the transaction: the parent must see a store that is
+            // really held, not one about to be.
             txn.resource(&holding, "test")?;
+            println!("HOLDING");
             std::thread::sleep(Duration::from_millis(2500));
             Ok(())
         })
@@ -852,7 +854,10 @@ fn store_one_heavy_run_and_twenty_short_runs_never_see_busy() {
         );
         assert!(helper.wait_for_exit().success(), "a short run failed");
     }
-    assert_eq!(heavy.expect("STRESS-DONE", Duration::from_secs(120)), "heavy");
+    assert_eq!(
+        heavy.expect("STRESS-DONE", Duration::from_secs(120)),
+        "heavy"
+    );
     assert!(heavy.wait_for_exit().success(), "the heavy run failed");
     drop(short);
     drop(heavy);
@@ -886,8 +891,8 @@ fn store_one_heavy_run_and_twenty_short_runs_never_see_busy() {
 fn store_settle_write_survives_another_process_holding_the_store() {
     let home = home();
     let cx = effects(EffectClass::Mutate);
-    let root = StateRoot::effects(&cx, &home.path()).unwrap();
-    let (_, invocation, id) = stress_invocation(&home.path(), "settle-busy", &cx);
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let (_, invocation, id) = stress_invocation(home.path(), "settle-busy", &cx);
     let cleanup = cx.operation().cleanup(Duration::from_secs(1)).unwrap();
     let mut adapter = StressAdapter;
     let run = Run::begin(
@@ -946,10 +951,14 @@ fn store_backlog_prune_shrinks_a_large_store_without_busy_refusals() {
     let home = home();
     // The backlog catches up in short passes; the proof's own context is long
     // because there are many passes, not because any write waits.
-    let cx = operation(EffectClass::Mutate, Placement::Host, Duration::from_secs(900))
-        .effects()
-        .unwrap();
-    let root = StateRoot::effects(&cx, &home.path()).unwrap();
+    let cx = operation(
+        EffectClass::Mutate,
+        Placement::Host,
+        Duration::from_secs(900),
+    )
+    .effects()
+    .unwrap();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
     let mut store = Store::open(&cx, &root).unwrap();
     let total: usize = std::env::var("EFFIGY_STORE_BACKLOG_RUNS")
         .ok()
