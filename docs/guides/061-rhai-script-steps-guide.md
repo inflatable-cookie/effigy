@@ -295,8 +295,6 @@ Current v1 helpers:
   - `contracts::validate_selection(options_map)`
   - `deploy::model()`
   - `deploy::emit(#{ provider: "render", ... })`
-  - `system::status(options_map)`
-  - `system::logs(options_map)`
   - `changelog::validate(options_map)`
   - `changelog::extract(options_map)`
   - `test::plan(options_map)`

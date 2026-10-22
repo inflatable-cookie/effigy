@@ -46,7 +46,6 @@ pub const BUILTIN_TASKS: &[(&str, &str)] = &[
     ("secrets", "Inspect and manage local secret and encrypted vault surfaces"),
     ("service", "Run typed service command surfaces"),
     ("state", "Plan, apply, and capture state stacks, and inspect, stage, or capture data artifacts"),
-    ("system", "Run system and workspace provisioning surfaces"),
     ("tasks", "List effective catalogs and available tasks"),
     (
         "test",

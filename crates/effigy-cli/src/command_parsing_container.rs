@@ -77,6 +77,7 @@ where
     let mut output_json = false;
     let mut attach = false;
     let mut detach = false;
+    let mut system: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -84,6 +85,7 @@ where
             "--json" => output_json = true,
             "--attach" => attach = true,
             "--detach" => detach = true,
+            "--system" => system = Some(parse_system_selector(&mut args, name.as_deref())?),
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other => return Err(unknown_argument(other)),
         }
@@ -92,6 +94,7 @@ where
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Up {
             name,
+            system,
             attach,
             detach,
         },
@@ -108,12 +111,14 @@ where
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
     let mut global = false;
+    let mut system: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
             "--global" => global = true,
+            "--system" => system = Some(parse_system_selector(&mut args, name.as_deref())?),
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other => return Err(unknown_argument(other)),
         }
@@ -124,9 +129,18 @@ where
             "`effigy container <NAME> down` does not accept `--global`; use `effigy container down --global` for cross-project shutdown".to_owned(),
         ));
     }
+    if global && system.is_some() {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container down --global` does not accept `--system`; it stops every project, not one system".to_owned(),
+        ));
+    }
 
     Ok(Command::Container(ContainerArgs {
-        subcommand: ContainerSubcommand::Down { name, global },
+        subcommand: ContainerSubcommand::Down {
+            name,
+            system,
+            global,
+        },
         repo_override,
         output_json,
     }))
@@ -140,12 +154,14 @@ where
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
     let mut global = false;
+    let mut system: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
             "--global" => global = true,
+            "--system" => system = Some(parse_system_selector(&mut args, name.as_deref())?),
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
             other => return Err(unknown_argument(other)),
         }
@@ -156,9 +172,18 @@ where
             "`effigy container <NAME> status` does not accept `--global`; use `effigy container status --global` for cross-project discovery".to_owned(),
         ));
     }
+    if global && system.is_some() {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy container status --global` does not accept `--system`; it discovers every project, not one system".to_owned(),
+        ));
+    }
 
     Ok(Command::Container(ContainerArgs {
-        subcommand: ContainerSubcommand::Status { name, global },
+        subcommand: ContainerSubcommand::Status {
+            name,
+            system,
+            global,
+        },
         repo_override,
         output_json,
     }))
@@ -458,14 +483,14 @@ where
 {
     if name.is_some() {
         return Err(CliParseError::InvalidArguments(
-            "`effigy container <NAME> profile` is not supported; use `effigy container profile status` for Colima profile sizing".to_owned(),
+            "`effigy container <NAME> profile` is not supported; use `effigy container profile status` for Colima profile sizing, or `effigy container profile repair --system <NAME>` for runtime recovery".to_owned(),
         ));
     }
 
     let mut args = args.into_iter();
     let Some(subcmd) = args.next() else {
         return Err(CliParseError::InvalidArguments(
-            "`effigy container profile` requires a subcommand; use `status`, `resize`, `purge`, or `recreate`"
+            "`effigy container profile` requires a subcommand; use `status`, `resize`, `purge`, `recreate`, `repair`, or `reset-runtime`"
                 .to_owned(),
         ));
     };
@@ -476,8 +501,70 @@ where
         "resize" => parse_container_profile_resize(args),
         "purge" => parse_container_profile_purge(args),
         "recreate" => parse_container_profile_recreate(args),
+        "repair" => parse_container_profile_runtime_recovery(args, false),
+        "reset-runtime" => parse_container_profile_runtime_recovery(args, true),
         other => Err(unknown_argument(other)),
     }
+}
+
+/// `repair` and `reset-runtime` keep the repository and system selection the
+/// retired `effigy system` recovery verbs accepted.
+fn parse_container_profile_runtime_recovery<I>(
+    args: I,
+    reset_runtime: bool,
+) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut system: Option<String> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--system" => system = Some(parse_system_selector(&mut args, None)?),
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    let subcommand = if reset_runtime {
+        ContainerProfileSubcommand::ResetRuntime { system }
+    } else {
+        ContainerProfileSubcommand::Repair { system }
+    };
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Profile { subcommand },
+        repo_override,
+        output_json,
+    }))
+}
+
+/// `--system <NAME>` selects an environment through `[systems.<NAME>]` instead
+/// of naming its container. A directly named container cannot be combined with
+/// it.
+fn parse_system_selector<I>(
+    args: &mut I,
+    named_container: Option<&str>,
+) -> Result<String, CliParseError>
+where
+    I: Iterator<Item = String>,
+{
+    if let Some(name) = named_container {
+        return Err(CliParseError::InvalidArguments(format!(
+            "`effigy container {name} ...` does not accept `--system`; the container is already named"
+        )));
+    }
+    next_required_value(
+        args,
+        CliParseError::MissingFlagValue {
+            flag: "--system".to_owned(),
+        },
+    )
 }
 
 fn parse_container_volume<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
@@ -928,12 +1015,14 @@ where
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
     let mut service: Option<String> = None;
+    let mut system: Option<String> = None;
     let mut follow = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
+            "--system" => system = Some(parse_system_selector(&mut args, name.as_deref())?),
             "--service" => {
                 service = Some(next_required_value(
                     &mut args,
@@ -951,6 +1040,7 @@ where
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Logs {
             name,
+            system,
             service,
             follow,
         },

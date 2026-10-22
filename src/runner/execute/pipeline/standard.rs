@@ -1,10 +1,10 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use super::super::super::container_command::is_primary_service_running;
 use super::super::super::exec_command::{
     run_routed_task_remote, RoutedTaskExecRequest, RoutedTaskExecSurface,
 };
-use super::super::super::system_command::is_primary_service_running;
 use super::super::api::{
     effective_task_binding_inputs, execution_scope_root, resolve_execution_binding_resolution,
     ContainerExecutionBinding, ExecutionBindingResolution,

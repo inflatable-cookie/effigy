@@ -157,7 +157,7 @@ pub(in crate::runner) fn activate_container_runtime_for_task(
         &plan,
         policy,
         ensure_container_runtime_prepared,
-        crate::runner::system_command::ensure_workspace_permissions_ready,
+        crate::runner::workspace_command::ensure_workspace_permissions_ready,
         ensure_runtime_gateway_readiness_stage,
     )
 }

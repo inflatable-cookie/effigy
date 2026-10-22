@@ -641,7 +641,7 @@ allow = [
   "crates/effigy-containers/src/environment/tests/faults.rs",
   "crates/effigy-containers/src/environment/tests/importer.rs",
   "crates/effigy-containers/src/policy/render/tests.rs",
-  "src/runner/system_command/workspace/tests/builder_recovery.rs",
+  "src/runner/workspace_command/tests/builder_recovery.rs",
 ]
 
 [[retired]]
@@ -753,6 +753,29 @@ allow = [
   "docs/knowledge/questions.md",
   "skills/effigy/references/built-in-surfaces.md",
   ".agents/skills/effigy/references/built-in-surfaces.md",
+]
+
+[[retired]]
+id = "effigy-system-command"
+retired = "2026-10-22"
+replacement = "Use `effigy container [<NAME>] up|down|status|logs`; without a name it resolves `[containers].default` and then the `[systems].default` workspace container, and `--system <NAME>` selects one declared system. `effigy system repair` and `effigy system reset-runtime` are `effigy container profile repair` and `effigy container profile reset-runtime`, keeping their refusals and the `effigy.system.recover.v1` JSON envelope. `[systems]`, `effigy workspace` and `effigy exec` are unchanged. The Rhai `system` module (`system::status`, `system::logs`) has no replacement; invoke a task that runs `effigy container` instead. The retired spelling refuses with its exact replacement and points at CHANGELOG.md."
+owner = "docs/guides/064-system-workspace-and-dev-contract.md"
+terms = ["effigy system", "effigy system up", "effigy system down", "effigy system status", "effigy system logs", "effigy system repair", "effigy system reset-runtime", "system::status", "system::logs", "system.status", "system.logs"]
+paths = ["src/runner/system_command.rs", "src/runner/system_command/", "crates/effigy-cli/src/help/topics/system.rs"]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/guides/064-system-workspace-and-dev-contract.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/questions.md",
+  "crates/effigy-cli/src/command_parsing_runtime.rs",
+  "crates/effigy-cli/src/command_parsing_container.rs",
+  "crates/effigy-cli/src/lib.rs",
+  "crates/effigy-containers/src/policy/load.rs",
+  "crates/effigy-rhai/src/surface.rs",
+  "src/runner/container_command/profile.rs",
+  "src/tests/lib_tests_parse_tests/catalog_and_container_option_tests.rs",
+  "src/tests/lib_tests_parse_tests/help_and_flag_tests.rs",
 ]
 
 [[retired]]

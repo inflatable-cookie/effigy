@@ -29,7 +29,6 @@ Built-in Tasks
 - secrets : Inspect and manage local secret and encrypted vault surfaces
 - service : Run typed service command surfaces
 - state : Plan, apply, and capture state stacks, and inspect, stage, or capture data artifacts
-- system : Run system and workspace provisioning surfaces
 - tasks : List effective catalogs and available tasks
 - test : Built-in test runner detection, supports <catalog>/test fallback, optional --plan
 - workspace : Run workspace command surfaces

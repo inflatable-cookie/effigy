@@ -45,10 +45,6 @@ const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
         render: render_state,
     },
     HelpTopicDescriptor {
-        command: descriptor(HelpTopic::System),
-        render: render_system,
-    },
-    HelpTopicDescriptor {
         command: descriptor(HelpTopic::Workspace),
         render: render_workspace,
     },
@@ -183,10 +179,6 @@ fn render_exec(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpRes
 
 fn render_state(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
     topics::render_state_help(renderer)
-}
-
-fn render_system(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
-    topics::render_system_help(renderer)
 }
 
 fn render_workspace(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {

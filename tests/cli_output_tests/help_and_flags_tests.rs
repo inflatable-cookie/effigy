@@ -388,7 +388,6 @@ fn cli_help_repo_group_lists_only_repository_intelligence_commands() {
     for foreign in [
         "effigy container",
         "effigy exec",
-        "effigy system",
         "effigy release",
         "effigy deploy",
         "effigy bundle",

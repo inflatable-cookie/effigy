@@ -30,7 +30,6 @@ pub enum Command {
     Defer(DeferArgs),
     Exec(ExecArgs),
     State(StateArgs),
-    System(SystemArgs),
     Workspace(WorkspaceArgs),
     Gateway(GatewayArgs),
     Service(ServiceArgs),
@@ -122,7 +121,6 @@ pub enum HelpTopic {
     Defer,
     Exec,
     State,
-    System,
     Workspace,
     Gateway,
     Service,
@@ -503,14 +501,6 @@ pub struct ContainerArgs {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SystemArgs {
-    pub subcommand: SystemSubcommand,
-    pub system: Option<String>,
-    pub repo_override: Option<PathBuf>,
-    pub output_json: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceArgs {
     pub workspace: Option<String>,
     pub system: Option<String>,
@@ -592,15 +582,20 @@ pub struct InternalGatewayIdentityArgs {
 pub enum ContainerSubcommand {
     Up {
         name: Option<String>,
+        /// Select the container through `[systems.<NAME>]`'s default
+        /// workspace instead of naming it directly.
+        system: Option<String>,
         attach: bool,
         detach: bool,
     },
     Down {
         name: Option<String>,
+        system: Option<String>,
         global: bool,
     },
     Status {
         name: Option<String>,
+        system: Option<String>,
         global: bool,
     },
     Stats {
@@ -608,6 +603,7 @@ pub enum ContainerSubcommand {
     },
     Logs {
         name: Option<String>,
+        system: Option<String>,
         service: Option<String>,
         follow: bool,
     },
@@ -710,6 +706,15 @@ pub enum ContainerPortsSubcommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContainerProfileSubcommand {
+    /// Recover the Colima runtime in place, as `effigy system repair` did.
+    Repair {
+        system: Option<String>,
+    },
+    /// Stop the Colima runtime without deleting it, as
+    /// `effigy system reset-runtime` did.
+    ResetRuntime {
+        system: Option<String>,
+    },
     Status {
         profile: Option<String>,
     },
@@ -725,16 +730,6 @@ pub enum ContainerProfileSubcommand {
         disk_gib: Option<u64>,
         yes: bool,
     },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SystemSubcommand {
-    Up,
-    Down,
-    Status,
-    Logs { follow: bool },
-    Repair,
-    ResetRuntime,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -59,7 +59,7 @@ The exact primary help taxonomy is:
 | Topic | Primary commands and shapes |
 | --- | --- |
 | work | `<task>`, `<catalog>/<task>`, `tasks`, `test`, `doctor`, `init` |
-| `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
+| `local` | `container`, `workspace`, `gateway`, `service`, `exec` |
 | `repo` | `scan`, `docs`, `contracts` |
 | `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap` |
 | `extend` | `skill`, `rhai` |

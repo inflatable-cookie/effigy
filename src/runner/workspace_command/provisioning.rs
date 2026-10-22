@@ -12,7 +12,7 @@ use crate::runner::exec_command::{
     BoundedCommandBudget, BoundedCommandPhase,
 };
 
-use super::{workspace, RunnerError};
+use super::RunnerError;
 
 const CONTAINER_WORKSPACE_EFFIGY_STAGING_PATH_PREFIX: &str = "/tmp/effigy-host";
 const CONTAINER_WORKSPACE_EFFIGY_INSTALL_PATH: &str = "/usr/local/bin/effigy";
@@ -116,13 +116,13 @@ pub(super) fn ensure_workspace_permissions_ready(
     };
     let perm_plan = plan_workspace_permission_prep(&plan.owned_disposable_paths());
     let progress_label = render_workspace_permission_progress_label(&perm_plan);
-    let mut progress = workspace::WorkspaceTransientProgressReporter::new(
+    let mut progress = super::WorkspaceTransientProgressReporter::new(
         repo_override.is_some(),
         &progress_label,
         false,
     );
-    let mut backend = super::workspace_permissions::compose_backend(workspace_repo_root, policy);
-    super::workspace_permissions::ensure_workspace_permissions_ready_with(
+    let mut backend = super::permissions::compose_backend(workspace_repo_root, policy);
+    super::permissions::ensure_workspace_permissions_ready_with(
         policy,
         container_name,
         allow_repair,
@@ -322,7 +322,7 @@ pub(super) fn ensure_workspace_binary_available_for_policy(
     let staging_path = render_workspace_effigy_staging_path();
     let active_version_staging_path = format!("{staging_path}.active-version");
     let install_identity_staging_path = format!("{staging_path}.install-identity");
-    let mut progress = workspace::WorkspaceTransientProgressReporter::new(
+    let mut progress = super::WorkspaceTransientProgressReporter::new(
         repo_override.is_some(),
         "installing linux effigy into workspace container",
         false,
@@ -407,7 +407,7 @@ pub(super) fn ensure_workspace_binary_available_for_policy_bounded(
     let staging_path = render_workspace_effigy_staging_path();
     let active_version_staging_path = format!("{staging_path}.active-version");
     let install_identity_staging_path = format!("{staging_path}.install-identity");
-    let mut progress = workspace::WorkspaceTransientProgressReporter::new(
+    let mut progress = super::WorkspaceTransientProgressReporter::new(
         false,
         "installing linux effigy into workspace container",
         false,
@@ -892,7 +892,7 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact_bounded(
     )? {
         return bind_verified_linux_workspace_effigy_artifact(&artifact_path, &install_identity);
     }
-    workspace::emit_workspace_info(
+    super::emit_workspace_info(
         "building linux effigy artifact for workspace container access",
         false,
     );
@@ -1092,7 +1092,7 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
     )? {
         return bind_verified_linux_workspace_effigy_artifact(&artifact_path, &install_identity);
     }
-    workspace::emit_workspace_info(
+    super::emit_workspace_info(
         "building linux effigy artifact for workspace container access",
         false,
     );
@@ -1439,7 +1439,7 @@ pub(super) fn ensure_downloaded_linux_workspace_effigy_artifact(
     })?;
 
     let url = linux_workspace_effigy_release_url(target);
-    workspace::emit_workspace_info(
+    super::emit_workspace_info(
         &format!("downloading linux effigy release artifact from `{url}`"),
         false,
     );
@@ -1492,7 +1492,7 @@ fn ensure_downloaded_linux_workspace_effigy_artifact_bounded(
     })?;
 
     let url = linux_workspace_effigy_release_url(target);
-    workspace::emit_workspace_info(
+    super::emit_workspace_info(
         "downloading linux effigy release artifact for workspace preparation",
         false,
     );

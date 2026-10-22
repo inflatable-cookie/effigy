@@ -362,22 +362,22 @@
       "std::fs::remove_file": 2,
       "std::fs::write": 1
     },
-    "src/runner/system_command/workspace_permissions_gnu_accept.rs": {
+    "src/runner/uninstall_command.rs": {
+      "std.process.Command.new": 1,
+      "std.process.Command.output": 1,
+      "std::fs::remove_file": 1
+    },
+    "src/runner/workspace_command/permissions_gnu_accept.rs": {
       "std.process.Command.new": 2,
       "std.process.Command.output": 1,
       "std.process.Command.spawn": 1,
       "std::fs::File::create": 2
     },
-    "src/runner/system_command/workspace_provisioning.rs": {
+    "src/runner/workspace_command/provisioning.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.status": 1,
       "std::fs::rename": 2,
       "std::fs::write": 5
-    },
-    "src/runner/uninstall_command.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.output": 1,
-      "std::fs::remove_file": 1
     }
   },
   "tests": {
@@ -811,28 +811,6 @@
       "std::env::set_var": 2,
       "std::fs::write": 17
     },
-    "src/runner/system_command/workspace/tests.rs": {
-      "std::fs::remove_file": 3,
-      "std::fs::write": 62
-    },
-    "src/runner/system_command/workspace/tests/builder_recovery.rs": {
-      "nix::sys::signal::kill": 1,
-      "std.process.Command.new": 3,
-      "std::env::set_var": 1,
-      "std::fs::File::create": 1,
-      "std::fs::remove_file": 1,
-      "std::fs::rename": 1,
-      "std::fs::write": 22
-    },
-    "src/runner/system_command/workspace_permissions.rs": {
-      "nix::sys::signal::kill": 3,
-      "std.fs.OpenOptions.write": 2,
-      "std.process.Command.new": 4,
-      "std.process.Command.output": 3,
-      "std.process.Command.spawn": 1,
-      "std::fs::remove_file": 1,
-      "std::fs::write": 14
-    },
     "src/runner/task_engine/legacy.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.spawn": 1,
@@ -846,6 +824,28 @@
     },
     "src/runner/uninstall_command.rs": {
       "std::fs::write": 2
+    },
+    "src/runner/workspace_command/permissions.rs": {
+      "nix::sys::signal::kill": 3,
+      "std.fs.OpenOptions.write": 2,
+      "std.process.Command.new": 4,
+      "std.process.Command.output": 3,
+      "std.process.Command.spawn": 1,
+      "std::fs::remove_file": 1,
+      "std::fs::write": 14
+    },
+    "src/runner/workspace_command/tests.rs": {
+      "std::fs::remove_file": 3,
+      "std::fs::write": 62
+    },
+    "src/runner/workspace_command/tests/builder_recovery.rs": {
+      "nix::sys::signal::kill": 1,
+      "std.process.Command.new": 3,
+      "std::env::set_var": 1,
+      "std::fs::File::create": 1,
+      "std::fs::remove_file": 1,
+      "std::fs::rename": 1,
+      "std::fs::write": 22
     },
     "src/tests/contract_test_support.rs": {
       "std::env::remove_var": 2,
