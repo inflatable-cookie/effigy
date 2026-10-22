@@ -280,8 +280,11 @@ mod tests {
         verify_artifact_digests(std::slice::from_ref(&artifact)).expect("unchanged");
 
         fs::write(root.join("candidate/app/app.tgz"), b"rebuilt").expect("rebuild");
-        let error = verify_artifact_digests(std::slice::from_ref(&artifact))
-            .expect_err("changed artifact");
-        assert!(error.to_string().contains("changed after certify"), "{error}");
+        let error =
+            verify_artifact_digests(std::slice::from_ref(&artifact)).expect_err("changed artifact");
+        assert!(
+            error.to_string().contains("changed after certify"),
+            "{error}"
+        );
     }
 }

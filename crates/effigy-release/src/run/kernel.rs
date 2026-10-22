@@ -55,11 +55,7 @@ pub const COMMIT_PUSH_EFFECT: &str = "release:commit-push";
 pub struct ReportsOnly;
 
 impl SettlementAdapter for ReportsOnly {
-    fn observe(
-        &mut self,
-        _: &effigy_kernel::run::Effect,
-        _: &CleanupContext,
-    ) -> Observed<Fence> {
+    fn observe(&mut self, _: &effigy_kernel::run::Effect, _: &CleanupContext) -> Observed<Fence> {
         Observed::Unknown(UnknownReason::Inconsistent(
             "release effects are irreversible and reconciled by the release run".into(),
         ))
@@ -170,7 +166,9 @@ fn next_invocation() -> Invocation {
 /// The release owner: one per release root, machine-scoped, so two checkouts of
 /// the same project never share a run.
 pub fn release_owner(repo_root: &Path) -> ResourceId {
-    let canonical = repo_root.canonicalize().unwrap_or_else(|_| repo_root.into());
+    let canonical = repo_root
+        .canonicalize()
+        .unwrap_or_else(|_| repo_root.into());
     ResourceId::store(
         effigy_kernel::id::Scope::Machine,
         &format!("release {}", canonical.display()),
@@ -331,11 +329,7 @@ impl ReleaseSession {
         checkpoint_from_reader(&reader, &self.owner)
     }
 
-    pub fn begin(
-        &self,
-        id: RunId,
-        adapter: &mut ReportsOnly,
-    ) -> Result<Run<'_>, ReleaseError> {
+    pub fn begin(&self, id: RunId, adapter: &mut ReportsOnly) -> Result<Run<'_>, ReleaseError> {
         let deadline = std::time::Instant::now() + OWNER_GATE_WAIT;
         Run::begin(
             &self.cx,

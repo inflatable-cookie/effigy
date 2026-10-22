@@ -70,12 +70,14 @@ mod tests {
     fn the_input_names_the_candidate_and_its_artifacts() {
         let mut record = ReleaseRecord::new("run-1", &std::path::PathBuf::from("/repo"), "now");
         record.candidate_commit = Some("abc".into());
-        record.identities.push(super::super::record::RecordIdentity {
-            name: "core".into(),
-            kind: "semver".into(),
-            identity: Some("1.2.3".into()),
-            tag: Some("core-v1.2.3".into()),
-        });
+        record
+            .identities
+            .push(super::super::record::RecordIdentity {
+                name: "core".into(),
+                kind: "semver".into(),
+                identity: Some("1.2.3".into()),
+                tag: Some("core-v1.2.3".into()),
+            });
         let value = release_input_value(&record, ReleaseStage::Certify, Some("core"));
         assert_eq!(value["schema"], RELEASE_TASK_INPUT_SCHEMA);
         assert_eq!(value["candidate_commit"], "abc");

@@ -5,10 +5,9 @@ use effigy_distribution::{effective_brew_formula, effective_repo_url, load_distr
 use effigy_release::{
     load_release_config, render_release_gate_run_json as render_release_gate_run_json_payload,
     render_release_gate_run_text, render_release_pipeline_plan_text,
-    render_release_plan_json as render_release_plan_json_payload,
-    render_release_receipt_json, render_release_receipt_text, render_release_run_json,
-    render_release_status_json as render_release_status_json_payload,
-    render_release_status_text,
+    render_release_plan_json as render_release_plan_json_payload, render_release_receipt_json,
+    render_release_receipt_text, render_release_run_json,
+    render_release_status_json as render_release_status_json_payload, render_release_status_text,
     render_release_verify_install_json as render_release_verify_install_json_payload,
     render_release_verify_install_text, ReleaseAction, ReleaseRunOutcome, ReleaseStage,
 };
@@ -16,12 +15,12 @@ use effigy_release::{
 use super::command_context::resolve_active_repo_root;
 use super::distribution_command::ops as distribution_ops;
 use super::RunnerError;
+#[cfg(test)]
+use ops::resolve_verify_install_repo_url;
 use ops::{
     collect_release_plan, collect_release_status, release_receipt, release_run_action,
     run_release_verify_install, run_standalone_release_gates,
 };
-#[cfg(test)]
-use ops::resolve_verify_install_repo_url;
 
 mod ops;
 
@@ -169,17 +168,18 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
                     expect_homebrew,
                 } => distribution_ops::run_generate_closeout(
                     distribution_ops::GenerateCloseoutRequest {
-                    repo_root: &resolved.resolved_root,
-                    distribution_policy: &distribution_policy,
-                    tag: &tag,
-                    artifacts_dir: &resolve_repo_input(&resolved.resolved_root, artifacts_dir),
-                    output_path: output_path
-                        .as_ref()
-                        .map(|path| resolve_repo_input(&resolved.resolved_root, path.clone())),
-                    owner: &owner,
-                    expect_homebrew,
-                    output_json: args.output_json,
-                }),
+                        repo_root: &resolved.resolved_root,
+                        distribution_policy: &distribution_policy,
+                        tag: &tag,
+                        artifacts_dir: &resolve_repo_input(&resolved.resolved_root, artifacts_dir),
+                        output_path: output_path
+                            .as_ref()
+                            .map(|path| resolve_repo_input(&resolved.resolved_root, path.clone())),
+                        owner: &owner,
+                        expect_homebrew,
+                        output_json: args.output_json,
+                    },
+                ),
                 ReleaseEvidenceSubcommand::Summary {
                     tag,
                     artifacts_dir,
@@ -192,16 +192,10 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
                     effigy_distribution::DistributionSummaryRequest {
                         distribution_policy: &distribution_policy,
                         tag: &tag,
-                        artifacts_dir: &resolve_repo_input(
-                            &resolved.resolved_root,
-                            artifacts_dir,
-                        ),
+                        artifacts_dir: &resolve_repo_input(&resolved.resolved_root, artifacts_dir),
                         crate_version: crate_version.as_deref(),
                         repo_url: &effective_repo_url(&distribution_policy, &repo_url),
-                        brew_formula: &effective_brew_formula(
-                            &distribution_policy,
-                            &brew_formula,
-                        ),
+                        brew_formula: &effective_brew_formula(&distribution_policy, &brew_formula),
                         homebrew_executed,
                         log_files: &log_files,
                         output_json: args.output_json,
@@ -210,8 +204,10 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
             }
         }
         ReleaseSubcommand::Plan { version_override } => {
-            let requested_version_override =
-                parse_release_plan_version_override(&resolved.resolved_root, version_override.as_deref())?;
+            let requested_version_override = parse_release_plan_version_override(
+                &resolved.resolved_root,
+                version_override.as_deref(),
+            )?;
             let plan = collect_release_plan(&resolved, requested_version_override)?;
             if args.output_json {
                 let rendered = render_release_plan_json_payload(&plan);

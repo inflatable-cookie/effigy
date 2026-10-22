@@ -144,9 +144,7 @@ impl ReleaseEffects for GitEffects {
             .env("GIT_OPTIONAL_LOCKS", "0")
             .output()
             .map_err(|error| {
-                ReleaseError::TaskInvocation(format!(
-                    "failed to inspect git working tree: {error}"
-                ))
+                ReleaseError::TaskInvocation(format!("failed to inspect git working tree: {error}"))
             })?;
         if !status.status.success() {
             return Err(command_error("`git status`", &status));
@@ -173,7 +171,10 @@ impl ReleaseEffects for GitEffects {
         let output = self.git(&["ls-remote", "--tags", &self.remote])?;
         if !output.status.success() {
             return Err(command_error(
-                &format!("`git ls-remote {remote} refs/tags/{tag}`", remote = self.remote),
+                &format!(
+                    "`git ls-remote {remote} refs/tags/{tag}`",
+                    remote = self.remote
+                ),
                 &output,
             ));
         }
@@ -214,7 +215,10 @@ impl ReleaseEffects for GitEffects {
         if output.status.success() {
             Ok(())
         } else {
-            Err(command_error(&format!("`git push {remote} {reference}`", remote = self.remote), &output))
+            Err(command_error(
+                &format!("`git push {remote} {reference}`", remote = self.remote),
+                &output,
+            ))
         }
     }
 
@@ -224,7 +228,10 @@ impl ReleaseEffects for GitEffects {
         if output.status.success() {
             Ok(())
         } else {
-            Err(command_error(&format!("`git push {remote} {reference}`", remote = self.remote), &output))
+            Err(command_error(
+                &format!("`git push {remote} {reference}`", remote = self.remote),
+                &output,
+            ))
         }
     }
 
@@ -257,10 +264,13 @@ impl ReleaseEffects for GitEffects {
             return Ok(());
         }
         let mut command = Command::new("git");
-        command
-            .arg("-C")
-            .arg(&self.repo_root)
-            .args(["restore", "--source=HEAD", "--staged", "--worktree", "--"]);
+        command.arg("-C").arg(&self.repo_root).args([
+            "restore",
+            "--source=HEAD",
+            "--staged",
+            "--worktree",
+            "--",
+        ]);
         for path in paths {
             let relative = path.strip_prefix(&self.repo_root).unwrap_or(path);
             command.arg(relative);

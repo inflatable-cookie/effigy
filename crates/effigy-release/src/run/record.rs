@@ -267,7 +267,9 @@ impl ReleaseRecord {
     }
 
     pub fn identity(&self, name: &str) -> Option<&RecordIdentity> {
-        self.identities.iter().find(|identity| identity.name == name)
+        self.identities
+            .iter()
+            .find(|identity| identity.name == name)
     }
 
     pub fn target(&self, name: &str) -> Option<&RecordTarget> {
@@ -381,6 +383,9 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(artifact.identity_digest().as_deref(), Some(crate::run::artifacts::sha256_bytes(b"aa\nbb\n").as_str()));
+        assert_eq!(
+            artifact.identity_digest().as_deref(),
+            Some(crate::run::artifacts::sha256_bytes(b"aa\nbb\n").as_str())
+        );
     }
 }

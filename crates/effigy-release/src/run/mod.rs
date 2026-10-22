@@ -18,9 +18,7 @@ mod record;
 #[cfg(test)]
 mod tests;
 
-pub use artifacts::{
-    capture_artifact, sha256_bytes, verify_artifact_digests,
-};
+pub use artifacts::{capture_artifact, sha256_bytes, verify_artifact_digests};
 pub use effects::{approver_name, GitEffects, ReleaseEffects, TaskRequest, TaskResponse};
 pub use input::{
     release_input_value, RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV, RELEASE_TASK_INPUT_SCHEMA,
@@ -49,14 +47,14 @@ use effigy_kernel::observe::UnknownReason;
 use effigy_kernel::outcome::WorkloadOutcome;
 use effigy_kernel::run::{EffectTicket, Run, Settlement};
 
+use crate::model::{FileMutationApply, FileMutationPlan};
 use crate::pipeline::{
     plan_release_pipeline, GateStage, IdentityKind, ReleaseIdentityPlan, ReleasePipelinePlan,
     TargetKind,
 };
-use crate::ResolvedGate;
-use crate::model::{FileMutationApply, FileMutationPlan};
 use crate::prepare_helpers::build_sync_mutations;
 use crate::version::render_updated_version_contents;
+use crate::ResolvedGate;
 use crate::{
     render_prepared_changelog_contents, run_release_gates, ReleaseError, ResolvedSyncFile,
 };
@@ -181,12 +179,14 @@ pub fn run_release(
             "the kernel could not record the release Run's outcome: {error}"
         ))
     })?;
-    let settled = run.settle(session.cleanup(), &mut adapter).map_err(|error| {
-        ReleaseError::TaskInvocation(format!(
+    let settled = run
+        .settle(session.cleanup(), &mut adapter)
+        .map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
             "the release Run could not be settled: {error}; `effigy release resume {}` settles it",
             record.release_id
         ))
-    })?;
+        })?;
     if settled.cleanup() != effigy_kernel::outcome::CleanupOutcome::Complete {
         record.errors.push(format!(
             "release Run {} left unresolved cleanup; `effigy release receipt {}` lists it",
@@ -291,11 +291,7 @@ fn continue_record(
                     record.status.label()
                 )));
             }
-            let Some(stage) = record
-                .waiting_on
-                .as_deref()
-                .and_then(ReleaseStage::parse)
-            else {
+            let Some(stage) = record.waiting_on.as_deref().and_then(ReleaseStage::parse) else {
                 return Err(ReleaseError::TaskInvocation(format!(
                     "release Run {} is awaiting approval but records no stage boundary",
                     record.release_id
@@ -529,7 +525,13 @@ impl<'a, 's> Runner<'a, 's> {
                 })?;
                 let response =
                     self.run_release_task(&task, ReleaseStage::Validate, Some(&identity.name))?;
-                let value = response.stdout.lines().next().unwrap_or("").trim().to_owned();
+                let value = response
+                    .stdout
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_owned();
                 if value.is_empty() {
                     return Err(ReleaseError::TaskInvocation(format!(
                         "release identity `{}` ran task `{task}` and it printed no identity",
@@ -635,7 +637,10 @@ impl<'a, 's> Runner<'a, 's> {
             })
             .collect();
         let message = prepare_commit_message(&versions);
-        let paths: Vec<PathBuf> = mutations.iter().map(|mutation| mutation.path.clone()).collect();
+        let paths: Vec<PathBuf> = mutations
+            .iter()
+            .map(|mutation| mutation.path.clone())
+            .collect();
         match self.effects.commit_paths(&paths, &message) {
             Ok(commit) => {
                 self.record.candidate_commit = Some(commit);
@@ -696,7 +701,9 @@ impl<'a, 's> Runner<'a, 's> {
         }
 
         let semver = self.semver_identities();
-        let Some(primary) = semver.first().and_then(|identity| identity.next_version.clone())
+        let Some(primary) = semver
+            .first()
+            .and_then(|identity| identity.next_version.clone())
         else {
             return Ok(mutations);
         };
@@ -1220,10 +1227,7 @@ impl<'a, 's> Runner<'a, 's> {
             "EFFIGY_RELEASE_RUN".to_owned(),
             self.record.release_id.clone(),
         );
-        env.insert(
-            "EFFIGY_RELEASE_STAGE".to_owned(),
-            stage.label().to_owned(),
-        );
+        env.insert("EFFIGY_RELEASE_STAGE".to_owned(), stage.label().to_owned());
         self.effects.run_task(&TaskRequest {
             task: task.to_owned(),
             label: format!("release {} task `{task}`", stage.label()),
@@ -1249,7 +1253,9 @@ fn version_write_mutation(
         },
         before_preview: format!(
             "version {}",
-            current.map(ToString::to_string).unwrap_or_else(|| "unknown".to_owned())
+            current
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "unknown".to_owned())
         ),
         after_preview: format!("version {next}"),
         detail_lines: vec![format!("{} carries the release version", path.display())],

@@ -9,11 +9,11 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use super::support::{
-    git_commit_all, init_git_repo, parse_stdout_json,
-    run_cli_command, run_json_cli_command, run_json_cli_command_with_manifest,
-    run_json_task_success, temp_execution_workspace, temp_workspace, wait_for_path_exists,
-    wait_for_positive_pid, write_effigy_release_root_marker, write_fake_effigy_install_repo,
-    write_release_changelog, write_release_manifest, FixtureCommandExt, OwnedCliChild,
+    git_commit_all, init_git_repo, parse_stdout_json, run_cli_command, run_json_cli_command,
+    run_json_cli_command_with_manifest, run_json_task_success, temp_execution_workspace,
+    temp_workspace, wait_for_path_exists, wait_for_positive_pid, write_effigy_release_root_marker,
+    write_fake_effigy_install_repo, write_release_changelog, write_release_manifest,
+    FixtureCommandExt, OwnedCliChild,
 };
 
 static CLI_PROCESS_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));

@@ -529,7 +529,10 @@ fn release_run_writes_a_receipt_and_pushes_the_candidate_tag() {
 
     // The receipt is durable Effigy-owned state outside the repo.
     let receipt_path = result["receipt_path"].as_str().expect("receipt path");
-    assert!(receipt_path.starts_with(home.to_string_lossy().as_ref()), "{receipt_path}");
+    assert!(
+        receipt_path.starts_with(home.to_string_lossy().as_ref()),
+        "{receipt_path}"
+    );
     assert!(Path::new(receipt_path).exists());
     assert!(!root.join(".release-prepared.json").exists());
 

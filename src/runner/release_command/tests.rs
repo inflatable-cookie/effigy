@@ -5,9 +5,9 @@ mod release_test_support;
 use effigy_release::{
     build_diff_preview, detect_cargo_version_path, detect_pyproject_version_path,
     detect_version_file_kind, json_value_at_path, normalize_verify_install_repo_url,
-    render_prepared_changelog_contents, render_updated_version_contents,
-    replace_json_string_at_path_preserving_layout, resolve_version_field_path, suggested_bump,
-    render_changelog_preview_line as changelog_preview_line, toml_value_at_path, BumpKind,
+    render_changelog_preview_line as changelog_preview_line, render_prepared_changelog_contents,
+    render_updated_version_contents, replace_json_string_at_path_preserving_layout,
+    resolve_version_field_path, suggested_bump, toml_value_at_path, BumpKind,
     ResolvedVersionSource, SyncFileKind, VersionFileKind,
 };
 use effigy_tasks::ResolutionMode;
@@ -197,7 +197,6 @@ fn suggested_bump_respects_pre_1_0_breaking_policy() {
     );
 }
 
-
 #[test]
 fn build_diff_preview_limits_to_concise_changed_lines() {
     let before = "alpha\nbeta\ncharlie\ndelta\necho\nfoxtrot\ngolf\n";
@@ -219,10 +218,6 @@ fn build_diff_preview_limits_to_concise_changed_lines() {
         ]
     );
 }
-
-
-
-
 
 #[test]
 fn normalize_verify_install_repo_url_rewrites_scp_style_ssh_remotes() {
@@ -296,7 +291,6 @@ fn resolve_verify_install_repo_url_normalizes_origin_ssh_remote() {
     let repo_url = resolve_verify_install_repo_url(&resolved, None).expect("resolve repo remote");
     assert_eq!(repo_url, "ssh://git@github.com/betterthanclay/effigy.git");
 }
-
 
 #[test]
 fn current_repo_release_config_matches_self_hosting_release_surfaces() {

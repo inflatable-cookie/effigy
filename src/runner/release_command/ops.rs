@@ -2,18 +2,16 @@ use std::path::Path;
 
 use effigy_core::resolver::ResolvedTarget;
 use effigy_release::{
-    read_release_record as read_release_record_via_release,
-    release_home as release_home_via_release,
-    run_release as run_release_via_release, GitEffects, ReleaseAction, ReleaseRunOutcome,
-    ReleaseRunRequest, ReleaseStage,
     collect_release_gate_run, collect_release_status as collect_release_status_via_release,
     git_remote_url as git_remote_url_via_release,
     plan_release_pipeline as plan_release_pipeline_via_release,
+    read_release_record as read_release_record_via_release,
+    release_home as release_home_via_release,
     resolve_verify_install_tag as resolve_verify_install_tag_via_release,
-    run_release_gates_with_progress,
-    run_release_verify_install as run_release_verify_install_via_release,
-    GateExecutionReport, ReleaseGateRun, ReleasePipelinePlan, ReleaseStatus,
-    ReleaseVerifyInstall, ResolvedGate,
+    run_release as run_release_via_release, run_release_gates_with_progress,
+    run_release_verify_install as run_release_verify_install_via_release, GateExecutionReport,
+    GitEffects, ReleaseAction, ReleaseGateRun, ReleasePipelinePlan, ReleaseRunOutcome,
+    ReleaseRunRequest, ReleaseStage, ReleaseStatus, ReleaseVerifyInstall, ResolvedGate,
 };
 
 use super::*;
@@ -138,8 +136,8 @@ pub(super) fn release_receipt(
     run: Option<&str>,
 ) -> Result<effigy_release::ReleaseReceipt, RunnerError> {
     let home = release_home_via_release()?;
-    let record = read_release_record_via_release(&home, &resolved.resolved_root)?
-        .ok_or_else(|| {
+    let record =
+        read_release_record_via_release(&home, &resolved.resolved_root)?.ok_or_else(|| {
             RunnerError::task_invocation(format!(
                 "there is no release Run for {}; `effigy release run` starts one",
                 resolved.resolved_root.display()

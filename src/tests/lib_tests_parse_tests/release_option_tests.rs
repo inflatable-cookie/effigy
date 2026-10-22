@@ -119,8 +119,8 @@ fn parse_release_resume_approve_and_receipt_take_a_run_id() {
         })
     );
 
-    let receipt = parse_command(vec!["release".to_owned(), "receipt".to_owned()])
-        .expect("receipt parse");
+    let receipt =
+        parse_command(vec!["release".to_owned(), "receipt".to_owned()]).expect("receipt parse");
     assert_eq!(
         receipt,
         Command::Release(ReleaseArgs {

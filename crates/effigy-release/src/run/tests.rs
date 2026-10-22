@@ -83,7 +83,10 @@ fn fixture(label: &str) -> Fixture {
         .status()
         .expect("bare remote");
     assert!(status.success(), "bare remote init");
-    git(&root, &["remote", "add", "origin", &remote.display().to_string()]);
+    git(
+        &root,
+        &["remote", "add", "origin", &remote.display().to_string()],
+    );
     Fixture {
         root,
         home,
@@ -313,7 +316,11 @@ impl ReleaseEffects for TestEffects {
     }
 }
 
-fn request(fixture: &Fixture, action: ReleaseAction, to: Option<ReleaseStage>) -> ReleaseRunRequest {
+fn request(
+    fixture: &Fixture,
+    action: ReleaseAction,
+    to: Option<ReleaseStage>,
+) -> ReleaseRunRequest {
     ReleaseRunRequest {
         repo_root: fixture.root.clone(),
         home: fixture.home.clone(),
@@ -400,7 +407,15 @@ fn a_full_run_prepares_certifies_publishes_and_writes_a_receipt() {
             .iter()
             .map(|checkpoint| checkpoint.stage.as_str())
             .collect::<Vec<_>>(),
-        ["validate", "pre-gates", "prepare", "certify", "publish", "verify", "closeout"]
+        [
+            "validate",
+            "pre-gates",
+            "prepare",
+            "certify",
+            "publish",
+            "verify",
+            "closeout"
+        ]
     );
 
     // Prepare wrote the version and the changelog and committed them.
@@ -514,13 +529,15 @@ fn every_checkpoint_resumes_with_the_same_candidate() {
         // re-derives a version or rebuilds an artifact.
         if prepared_at_stop.is_some() {
             assert_eq!(
-                outcome.record.candidate_commit, prepared_at_stop,
+                outcome.record.candidate_commit,
+                prepared_at_stop,
                 "candidate changed after resuming from {}",
                 stop.label()
             );
         }
         assert_eq!(
-            outcome.record.identities, versions_at_stop,
+            outcome.record.identities,
+            versions_at_stop,
             "versions changed after resuming from {}",
             stop.label()
         );
@@ -534,7 +551,8 @@ fn every_checkpoint_resumes_with_the_same_candidate() {
         }
         // And the release is equal to the uninterrupted one.
         assert_eq!(
-            outcome.record.identities, baseline.record.identities,
+            outcome.record.identities,
+            baseline.record.identities,
             "versions differ from the uninterrupted run after {}",
             stop.label()
         );
@@ -597,7 +615,11 @@ fn an_unknown_tag_push_is_reconciled_and_never_replayed() {
     let first = run(&fixture, &mut effects, ReleaseAction::Run, None);
     assert_eq!(first.record.status, ReleaseRunStatus::Failed);
     assert!(
-        first.record.errors.iter().any(|error| error.contains("unknown")),
+        first
+            .record
+            .errors
+            .iter()
+            .any(|error| error.contains("unknown")),
         "{:?}",
         first.record.errors
     );
@@ -692,7 +714,9 @@ fn a_failed_prepare_rolls_the_tree_back() {
     // A read-only changelog fails the write after the version file was already
     // written, so the rollback has something to restore.
     let changelog = fixture.root.join("CHANGELOG.md");
-    let mut permissions = std::fs::metadata(&changelog).expect("metadata").permissions();
+    let mut permissions = std::fs::metadata(&changelog)
+        .expect("metadata")
+        .permissions();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -706,7 +730,9 @@ fn a_failed_prepare_rolls_the_tree_back() {
     let mut effects = TestEffects::new(&fixture.root);
     let outcome = run(&fixture, &mut effects, ReleaseAction::Run, None);
 
-    let mut permissions = std::fs::metadata(&changelog).expect("metadata").permissions();
+    let mut permissions = std::fs::metadata(&changelog)
+        .expect("metadata")
+        .permissions();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -769,8 +795,7 @@ fn a_failed_prepare_commit_rolls_the_tree_back() {
 fn validate_refuses_a_task_target_and_a_dirty_tree() {
     let task_target = fixture("validate");
     single_identity_project(&task_target);
-    let manifest =
-        std::fs::read_to_string(task_target.root.join("effigy.toml")).expect("manifest");
+    let manifest = std::fs::read_to_string(task_target.root.join("effigy.toml")).expect("manifest");
     std::fs::write(
         task_target.root.join("effigy.toml"),
         format!("{manifest}\n[release.targets.npm]\nkind = \"task\"\ntask = \"publish:npm\"\n"),
@@ -798,12 +823,9 @@ fn validate_refuses_a_task_target_and_a_dirty_tree() {
     let outcome = run(&dirty, &mut effects, ReleaseAction::Run, None);
     assert_eq!(outcome.record.status, ReleaseRunStatus::Failed);
     assert!(
-        outcome
-            .record
-            .errors
-            .iter()
-            .any(|error| error.contains("clean working tree")
-                || error.contains("unexpected change")),
+        outcome.record.errors.iter().any(
+            |error| error.contains("clean working tree") || error.contains("unexpected change")
+        ),
         "{:?}",
         outcome.record.errors
     );
@@ -922,7 +944,8 @@ fn a_consumer_shorthand_table_prepares_unchanged() {
     // Contract 054 §4.1: the eleven projects using `[release]` keep working
     // through the single-identity shorthand. Their own gates and artifacts are
     // project work, so this proof drives each real table to `prepare`.
-    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/release_platform");
+    let fixtures =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/release_platform");
     for consumer in ["longhorn", "poodle", "underlay"] {
         let fixture = fixture(&format!("consumer-{consumer}"));
         copy_tree(&fixtures.join(consumer), &fixture.root);

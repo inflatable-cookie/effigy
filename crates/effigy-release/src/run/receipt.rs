@@ -8,9 +8,8 @@
 use serde::Serialize;
 
 use super::record::{
-    RecordApproval, RecordArtifact, RecordCheckpoint, RecordGate, RecordIdentity,
-    RecordTargetState, RecordTarget, RecordVerification, ReleaseRecord, ReleaseRunStatus,
-    RELEASE_RECEIPT_SCHEMA,
+    RecordApproval, RecordArtifact, RecordCheckpoint, RecordGate, RecordIdentity, RecordTarget,
+    RecordTargetState, RecordVerification, ReleaseRecord, ReleaseRunStatus, RELEASE_RECEIPT_SCHEMA,
 };
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -64,7 +63,10 @@ impl ReleaseReceipt {
                 .targets
                 .iter()
                 .all(|target| target.state == RecordTargetState::Published);
-        let unverified = record.verifications.iter().any(|verification| !verification.passed);
+        let unverified = record
+            .verifications
+            .iter()
+            .any(|verification| !verification.passed);
         Self {
             schema: RELEASE_RECEIPT_SCHEMA.to_owned(),
             release: ReceiptRelease {
@@ -224,7 +226,11 @@ pub fn render_release_receipt_text(receipt: &ReleaseReceipt) -> String {
                 "    {} {} {}",
                 verification.target,
                 verification.task,
-                if verification.passed { "passed" } else { "failed" }
+                if verification.passed {
+                    "passed"
+                } else {
+                    "failed"
+                }
             ));
             if let Some(note) = &verification.note {
                 lines.push(format!("      {note}"));
