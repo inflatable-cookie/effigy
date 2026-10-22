@@ -4,7 +4,7 @@
 // casts are redundant on one platform and required on the other.
 #![allow(clippy::unnecessary_cast)]
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::ffi::{CStr, CString, OsString};
 use std::fmt;
 use std::fs::File;
@@ -93,6 +93,13 @@ impl fmt::Display for FsError {
     }
 }
 impl std::error::Error for FsError {}
+
+/// Filesystem identity of a verified open directory, independent of its path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DirectoryIdentity {
+    pub device: u64,
+    pub inode: u64,
+}
 
 /// A single path component: no separator, NUL, `.` or `..`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -370,6 +377,13 @@ impl DirFd {
         } else {
             check(stat, trust, kind, path)
         }
+    }
+    pub fn identity(&self) -> Result<DirectoryIdentity, FsError> {
+        let stat = self.stat()?;
+        Ok(DirectoryIdentity {
+            device: stat.st_dev as u64,
+            inode: stat.st_ino as u64,
+        })
     }
     pub fn path(&self) -> &Path {
         &self.path

@@ -115,6 +115,33 @@ impl StateRoot {
             Database::Machine => "machine.db",
         }
     }
+    pub(crate) fn verify_binding(&self) -> Result<(), FsError> {
+        let reopened = DirFd::walk(self.path(), Trust::Private)?;
+        if self.dir.identity()? != reopened.identity()? {
+            return Err(FsError::untrusted(
+                self.path(),
+                "state root identity changed",
+            ));
+        }
+        Ok(())
+    }
+    /// An inert migration staging root inside this verified destination. It
+    /// inherits database routing, but publication remains a separate authority
+    /// switch; normal engine callers never receive this root.
+    pub(crate) fn migration_stage(&self, name: &str) -> Result<Self, FsError> {
+        if !self.writable {
+            return Err(FsError::untrusted(self.path(), "read-only staging parent"));
+        }
+        let dir = self
+            .dir
+            .child(name, Trust::Private, true)?
+            .expect("created staging directory");
+        Ok(Self {
+            dir,
+            writable: true,
+            database: self.database.clone(),
+        })
+    }
     pub fn path(&self) -> &Path {
         self.dir.path()
     }

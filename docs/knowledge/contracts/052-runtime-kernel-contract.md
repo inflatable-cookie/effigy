@@ -16,7 +16,17 @@ still uses the durable path until whole-tree classification is connected.
 `migration::inspect` performs read-only gate and recorded process-identity
 inspection before destination work. `Store::read_sealed` refuses hot logs and
 uses a checkpointed source without creating SQLite side files; this inspection
-is diagnostic, not a transfer of custody or migration authority.
+is diagnostic, not a transfer of custody or migration authority. `migration::import`
+now selects relational closures, copies one transaction per destination and
+verified object/run files, preserves original resource/run identities, and
+publishes one commit manifest followed by directory-bound local seals. It
+requires withdrawn legacy launchers and refuses live/unknown source writers;
+existing resource/scope locks fence the source without rewriting its bytes.
+Kill, ENOSPC and EPERM tests cover staging, copying, prepared publication,
+manifest commit and sealing; retries select the committed authority. Production
+callers remain on the legacy route while command admission, local authority
+checks and the acceptance harnesses are connected. These kernel tests do not
+claim the real-store scale or live-backend migration proof.
 
 Status: foundation types are implemented in `crates/effigy-kernel/`: identity
 encoding v1, operation contexts and class capabilities, observation and Probe

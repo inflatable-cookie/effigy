@@ -1,5 +1,16 @@
 //! Legacy-source inspection. Observation never acquires migration authority,
 //! stages a destination, repairs a source, or signals a recorded process.
+mod copy;
+mod execute;
+mod fence;
+mod files;
+pub use execute::{
+    committed, import, CheckoutResolver, ImportReceipt, ImportReport, ImportedDestination,
+};
+mod plan;
+pub use fence::LegacyQuiescence;
+pub use plan::{plan, ImportPlan, Partition};
+
 use crate::ctx::ObserveContext;
 use crate::fs::{FileName, Trust};
 use crate::gate::{self, GateState, HolderDiag};
@@ -13,6 +24,45 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 const ENTRY_LIMIT: usize = 100_000;
+
+#[derive(Debug)]
+pub enum MigrationError {
+    Store(StoreError),
+    Blocked(Preflight),
+}
+impl From<StoreError> for MigrationError {
+    fn from(error: StoreError) -> Self {
+        Self::Store(error)
+    }
+}
+impl From<crate::id::IdentityError> for MigrationError {
+    fn from(error: crate::id::IdentityError) -> Self {
+        Self::Store(error.into())
+    }
+}
+impl From<crate::fs::FsError> for MigrationError {
+    fn from(error: crate::fs::FsError) -> Self {
+        Self::Store(error.into())
+    }
+}
+impl From<crate::gate::GateError> for MigrationError {
+    fn from(error: crate::gate::GateError) -> Self {
+        Self::Store(error.into())
+    }
+}
+impl std::fmt::Display for MigrationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Store(error) => error.fmt(f),
+            Self::Blocked(report) => write!(
+                f,
+                "legacy migration blocked by {} writer observations",
+                report.blockers.len()
+            ),
+        }
+    }
+}
+impl std::error::Error for MigrationError {}
 
 /// An exact legacy writer, or uncertainty that must be resolved before import.
 /// Commands to stop/drain it belong to the invoking engine's typed CLI model.
@@ -194,9 +244,30 @@ fn inspect_gates(cx: &ObserveContext, root: &StateRoot) -> Result<Vec<Blocker>, 
         let scope = scope
             .to_str()
             .ok_or_else(|| StoreError::Corrupt("non-UTF8 gate scope".into()))?;
-        if scope.ends_with(".scope") {
+        if let Some(name) = scope.strip_suffix(".scope") {
+            if name != "machine" && !gate_name(name) {
+                return Err(StoreError::Corrupt("unexpected legacy scope inode".into()));
+            }
             // The stable scope inode must be a trusted file too.
-            gates.open_file(&FileName::new(scope)?, libc::O_RDONLY, None, Trust::Private)?;
+            if let Some((file, _)) =
+                gates.open_file(&FileName::new(scope)?, libc::O_RDONLY, None, Trust::Private)?
+            {
+                if crate::fs::try_flock(&file, libc::LOCK_SH).map_err(|error| {
+                    crate::fs::FsError::io("legacy scope probe", gates.path(), &error)
+                })? {
+                    crate::fs::unlock(&file);
+                } else {
+                    let reason = UnknownReason::Inconsistent("legacy scope is exclusively fenced; holder diagnostics are unavailable on scope locks".into());
+                    blockers.push(Blocker {
+                        scope: scope.trim_end_matches(".scope").into(),
+                        resource: scope.into(),
+                        run: None,
+                        role: "scope fence".into(),
+                        process: Observed::Unknown(reason.clone()),
+                        state: Observed::Unknown(reason),
+                    });
+                }
+            }
             continue;
         }
         if scope != "machine" && !gate_name(scope) {
