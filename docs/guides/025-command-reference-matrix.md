@@ -81,8 +81,9 @@ For narrative workflow guidance instead of lookup, start with:
   and the architecture note
   [`../architecture/024-repository-defined-documentation-graph.md`](../knowledge/architecture/024-repository-defined-documentation-graph.md).
 - Need release workflows: use `effigy release`.
-- Need distribution validation, GLIBC checks, artifact validation, or
-  proof evidence: use `effigy release`.
+- Need release validation, GLIBC checks, artifact validation or proof
+  evidence: use `effigy release` for the Run, and the repository's own
+  `release:` tasks (`config/tasks.toml`) for Effigy's checks.
 - Need to inspect the planned schema/seed/import/capture layer order for a
   repo state stack: use `effigy state plan`.
 - Need dependencies to resolve from a local Cargo or Bun checkout through
@@ -142,7 +143,7 @@ through the help route.
 | `effigy doctor` | Run bounded structural checks by default, including `container.workspace-ownership`; opt into catalog-scoped scans and health with `--deep`; provide optional explain-mode selection diagnostics | `--repo`, `--fix`, `--verbose`, `--json`, `--deep`, `--catalog`, `--all-catalogs`, `--refresh` | `effigy.doctor.v1`, `effigy.doctor.explain.v1` | `018-doctor-explain-mode.md`, `063-container-system-guide.md`, [`../contracts/047-bounded-doctor-and-scan-cache-contract.md`](../knowledge/contracts/047-bounded-doctor-and-scan-cache-contract.md) |
 | `effigy docs` | Run reusable docs QA checks such as path presence, link validation, heading/content/forbidden-text checks, JSON example validation, markdown index consistency checks, next-action policy validation, workflow-path validation, and log-index entry insertion | `check <KIND>`, `add-log-index`, `--repo`, `--file`, `--section`, `--min-blocks`, `--require`, `--require-heading`, `--require-block`, `--forbid`, `--policy-index`, `--policy`, `--dir`, `--index`, `--json` | `effigy.docs.link-check.v1`, `effigy.docs.json-examples.v1`, `effigy.docs.heading-check.v1`, `effigy.docs.path-check.v1`, `effigy.docs.contains-check.v1`, `effigy.docs.forbidden-check.v1`, `effigy.docs.index-check.v1`, `effigy.docs.next-action-check.v1`, `effigy.docs.workflow-path-check.v1`, `effigy.docs.add-log-index.v1` | `029-docs-qa-checklist-and-validation.md` |
 | `effigy contracts` | Validate the project's JSON artifacts and selection payload against its own `[contracts]` schema index and selection contract | `check-json`, `--repo`, `--index`, `--contract`, `--fast`, `--full`, `--changed-only`, `--print-selected`, `--validate-selection`, `--artifact`, `--json` | `effigy.contracts.check-json.v1` | `017-json-output-contracts.md` |
-| `effigy release` | Resolve and show the release pipeline, run gates, prepare/execute releases, verify installs, run release preflight, check binary floors, capture proof evidence, validate artifacts, and generate closeout evidence | `--plan`, `status`, `gates`, `resume`, `verify-install`, `preflight`, `validate`, `check-binary`, `proof`, `evidence validate`, `evidence closeout`, `evidence summary`, `prepare`, `execute`, `--repo`, `--version`, `--tag`, `--skip-docs`, `--skip-smoke`, `--skip-homebrew`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--output`, `--owner`, `--expect-homebrew`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.release.plan.v1`, `effigy.release.status.v1`, `effigy.release.gates.v1`, `effigy.release.verify-install.v1`, `effigy.distribution.preflight.v1`, `effigy.distribution.metadata.v1`, `effigy.distribution.artifacts.v1`, `effigy.distribution.closeout.v1`, `effigy.distribution.summary.v1` | `051-release-orchestration.md`, `062-distribution-system-guide.md` |
+| `effigy release` | Resolve the release pipeline, run gates, run/resume/approve the checkpointed release Run, record an unknown publish decision, and print the receipt | `--plan`, `status`, `gates`, `run [--to <STAGE>]`, `resume <RUN>`, `approve <RUN>`, `decide <RUN> --published|--not-published`, `receipt [<RUN>]`, `--repo`, `--version`, `--json` | `effigy.release.plan.v1`, `effigy.release.status.v1`, `effigy.release.gates.v1`, `effigy.release.run.v1`, `effigy.release.receipt.v1`, plus the `effigy.release.input.v1` / `effigy.release.output.v1` release-task documents | `051-release-orchestration.md`, [`../knowledge/contracts/054-release-platform-contract.md`](../knowledge/contracts/054-release-platform-contract.md) |
 | `effigy container` | Operate manifest-defined local container environments across Colima/containerd or Docker, along with data lifecycle, cleanup surfaces, shared-service reuse, scoped identity and host discovery, and per-scope retirement | `up`, `down`, `status`, `stats`, `logs`, `shell`, `data`, `reset`, `eject`, `render`, `hosts`, `scope`, `retire`, `ports status`, `ports reclaim`, `volume`, `cache`, `profile status`, `profile resize`, `profile recreate`, `profile purge`, `profile repair`, `profile reset-runtime`, `--apply`, `--expect-plan`, `--repo`, `--system`, `--attach`, `--detach`, `--service`, `--command`, `--bounded`, `--deadline-ms`, `--stdout-limit-bytes`, `--stderr-limit-bytes`, `--follow`, `--global`, `--dormant`, `--orphans`, `--project`, `--kind`, `--profile`, `--disk`, `--db-seed`, `--db-dump`, `--no-prompt`, `--push`, `--keep-data`, `--scope`, `--yes`, `--json` | `effigy.container.up.v1`, `effigy.container.down.v1`, `effigy.container.status.v1`, `effigy.container.logs.v1`, `effigy.container.hosts.v1`, `effigy.container.scope.v1`, `effigy.container.retire.v1`, `effigy.container.ports.v1`, `effigy.container.bounded-exec.v1`, `effigy.system.recover.v1` (`profile repair` and `profile reset-runtime` keep this envelope) | `063-container-system-guide.md`, `064-system-workspace-and-dev-contract.md` |
 | `effigy workspace` | Ensure the selected system is up and then open the resolved workspace shell for the repo's declared developer surface | `<WORKSPACE>`, `--system`, `--repo` | (interactive; no JSON payload) | `064-system-workspace-and-dev-contract.md` |
 | `effigy bundle` | Inspect the active repo bundle source and refresh repo-local git/OCI bundle sources | `inspect`, `sync`, `--repo`, `--json` | `effigy.bundle.inspect.v1`, `effigy.bundle.sync.v1` | `065-external-bundle-adoption.md` |
@@ -371,8 +372,7 @@ and `--no-gitignore`.
 effigy config completion [<bash|zsh|fish>] [--install|--export] [--json]
 effigy config completion candidates [--repo <PATH>] [--prefix <value>] [--json]
 effigy changelog <validate|format|analyze|extract> [--repo <PATH>] [ARGS...] [--json]
-effigy release <--plan|status|gates|resume|prepare|execute|verify-install|preflight|validate|check-binary|proof> [ARGS...] [--json]
-effigy release evidence <validate|closeout|summary> [ARGS...] [--json]
+effigy release <--plan|status|gates|run|resume|approve|decide|receipt> [ARGS...] [--json]
 effigy state plan [<STACK>] [--repo <PATH>] [--json] [--write-report]
 effigy state plan --manifest <PATH> [--repo <PATH>] [--json] [--write-report]
 effigy state plan --stack <NAME> [--repo <PATH>] [--json] [--write-report]
@@ -517,8 +517,12 @@ environment in `session.json` so a whole-environment handover can end
   never removed by hand; `effigy tasks status <task>` names a live holder
 - release operator flows should prefer built-in `effigy release ...` commands,
   not wrapper scripts
-- there is no top-level `effigy distribution` command; distribution validation
-  and evidence live under `effigy release`
+- there is no top-level `effigy distribution` command, and the
+  `effigy release validate|preflight|proof|check-binary|verify-install|evidence`
+  commands retired in v0.15: Effigy's own checks are the `release:` repo tasks
+  in `config/tasks.toml`, and a project declares its own as `[release.gates]` or
+  a target's `verify`. `effigy release receipt <run>` replaces the evidence
+  summary
 - top-level `[env]`, task-local `env`, and run-array env directives all
   participate in task execution; use the env guide for the full fallback and
   indirection rules

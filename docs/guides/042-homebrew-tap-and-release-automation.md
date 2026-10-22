@@ -49,8 +49,9 @@ Build matrix targets:
 - `aarch64-unknown-linux-gnu` (Linux ARM64, cross-compiled)
 
 Linux GNU release artifacts are built on an Ubuntu 22.04 baseline and checked
-with `effigy release check-binary` so published binaries do not drift to
-newer glibc requirements unexpectedly.
+with Effigy's `release:check-binary` repo task (`sh scripts/release/checks.sh
+check-binary`) so published binaries do not drift to newer glibc requirements
+unexpectedly.
 
 ## 5) Formula Design
 

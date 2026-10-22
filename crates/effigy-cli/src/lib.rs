@@ -835,34 +835,6 @@ pub enum ReleaseSubcommand {
         check_gates: bool,
     },
     Gates,
-    VerifyInstall {
-        tag: Option<String>,
-        repo_url: Option<String>,
-    },
-    Validate {
-        tag: Option<String>,
-    },
-    CheckBinary {
-        binary_path: PathBuf,
-        glibc_floor: String,
-    },
-    Preflight {
-        tag: Option<String>,
-        skip_docs: bool,
-        skip_smoke: bool,
-        output_path: Option<PathBuf>,
-    },
-    Proof {
-        tag: String,
-        crate_version: Option<String>,
-        repo_url: String,
-        brew_formula: String,
-        skip_homebrew: bool,
-        artifacts_dir: Option<PathBuf>,
-    },
-    Evidence {
-        subcommand: ReleaseEvidenceSubcommand,
-    },
     /// `effigy release --plan`: the whole pipeline, no mutation (contract 054
     /// §5). Replaces the retired `simulate`.
     Plan {
@@ -889,30 +861,6 @@ pub enum ReleaseSubcommand {
     /// `effigy release receipt <run>`: print the Run's receipt.
     Receipt {
         run: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReleaseEvidenceSubcommand {
-    Validate {
-        artifacts_dir: PathBuf,
-        expect_homebrew: bool,
-    },
-    Closeout {
-        tag: String,
-        artifacts_dir: PathBuf,
-        output_path: Option<PathBuf>,
-        owner: String,
-        expect_homebrew: bool,
-    },
-    Summary {
-        tag: String,
-        artifacts_dir: PathBuf,
-        crate_version: Option<String>,
-        repo_url: String,
-        brew_formula: String,
-        homebrew_executed: bool,
-        log_files: Vec<String>,
     },
 }
 

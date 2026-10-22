@@ -49,7 +49,7 @@ Commands that require explicit human instruction:
 - `effigy release run` (its `publish` stage pushes tags)
 - `effigy release run --to certify` (its `prepare` stage commits)
 - `effigy release resume <run>` after a publish attempt
-- `effigy release verify-install`
+- `effigy release:verify:install` (installs a tag into a temporary root)
 - Anything that pushes tags, creates GitHub releases, or uploads artifacts.
 
 Read-only release commands (safe to run unprompted for inspection):

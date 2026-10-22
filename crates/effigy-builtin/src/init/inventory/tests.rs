@@ -27,7 +27,7 @@ fn init_inventory_detects_contextual_setup_surfaces() {
     .expect("package");
     fs::write(
         root.join("effigy.toml"),
-        "[bundle]\nbase = { type = \"path\", dir = \"bundle\" }\n\n[secrets]\nbackend = \"effigy-vault\"\n\n[containers]\nbackend = \"docker\"\n\n[state]\n\n[deploy]\n\n[distribution]\n\n[release]\n\n[tasks.qa]\nrun = \"printf qa\"\n",
+        "[bundle]\nbase = { type = \"path\", dir = \"bundle\" }\n\n[secrets]\nbackend = \"effigy-vault\"\n\n[containers]\nbackend = \"docker\"\n\n[state]\n\n[deploy]\n\n[release]\n\n[tasks.qa]\nrun = \"printf qa\"\n",
     )
     .expect("manifest");
     let assets = load_agent_init_assets(|| scaffold::load_starter("minimal")).expect("assets");

@@ -55,7 +55,7 @@ run with `effigy --run-id <key> <task>` and inspect, follow or stop it with
 - **Never bypass release gates.** Fix the underlying issue.
 - **Never re-tag a failed release.** Fix lands in next PATCH.
 - **Never run release mutations** (`release run`, or `release run --to certify`, which commits the prepared tree) without explicit human ask.
-- **Never use `release verify-install` for a library or service repo.** It is
+- **Never use the tagged-source install proof for a library or service repo.** It is
   Effigy's fixed self-hosting binary verifier; other repos need a repo-owned
   consumer smoke.
 - **Don't add `package.json` scripts** that re-export Effigy tasks.

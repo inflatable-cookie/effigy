@@ -137,7 +137,8 @@ supervisor without the TUI. Use `effigy dev status`, `logs [process]
 routes started by the lifecycle entry. Forced local-dev secret unlock still
 skips missing keys declared `required = false`.
 
-Typical Rhai wrappers for typed deploy / distribution helpers:
+Typical Rhai wrappers for typed deploy helpers (release checks are repo tasks,
+not Rhai features; the distribution Rhai module retired in v0.15):
 
 ```rhai
 // scripts/deploy-uat-plan.rhai
@@ -145,13 +146,13 @@ let plan = deploy::plan(#{ env: "uat", write_report: true });
 if !plan["ok"] { throw("deploy plan failed"); }
 ```
 
-```rhai
-// scripts/check-release-artifacts.rhai
-let artifacts = distribution::validate_artifacts(#{
-    artifacts_dir: "artifacts/release",
-    expect_homebrew: true,
-});
-if !artifacts["ok"] { throw("artifact validation failed"); }
+```toml
+# Release checks are ordinary tasks, wired as gates or a target's `verify`.
+[tasks."release:check-artifacts"]
+run = "sh scripts/check-release-artifacts.sh {args}"
+
+[release.gates]
+artifacts = { task = "release:check-artifacts" }
 ```
 
 ## `[systems.<name>]`

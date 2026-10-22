@@ -1,16 +1,13 @@
-use super::{load_release_config, resolve_verify_install_repo_url};
-use effigy_core::resolver::ResolvedTarget;
 #[path = "../../../crates/effigy-release/src/test_support.rs"]
 mod release_test_support;
 use effigy_release::{
     build_diff_preview, detect_cargo_version_path, detect_pyproject_version_path,
-    detect_version_file_kind, json_value_at_path, normalize_verify_install_repo_url,
+    detect_version_file_kind, json_value_at_path, plan_release_pipeline,
     render_changelog_preview_line as changelog_preview_line, render_prepared_changelog_contents,
     render_updated_version_contents, replace_json_string_at_path_preserving_layout,
-    resolve_version_field_path, suggested_bump, toml_value_at_path, BumpKind,
-    ResolvedVersionSource, SyncFileKind, VersionFileKind,
+    resolve_version_field_path, suggested_bump, toml_value_at_path, BumpKind, GateStage,
+    IdentityKind, ResolvedVersionSource, TargetKind, VersionFileKind,
 };
-use effigy_tasks::ResolutionMode;
 
 #[test]
 fn version_file_kind_detection_matches_supported_names() {
@@ -220,135 +217,94 @@ fn build_diff_preview_limits_to_concise_changed_lines() {
 }
 
 #[test]
-fn normalize_verify_install_repo_url_rewrites_scp_style_ssh_remotes() {
-    assert_eq!(
-        normalize_verify_install_repo_url("git@github.com:betterthanclay/effigy.git"),
-        "ssh://git@github.com/betterthanclay/effigy.git"
-    );
-    assert_eq!(
-        normalize_verify_install_repo_url("github.com:betterthanclay/effigy.git"),
-        "ssh://github.com/betterthanclay/effigy.git"
-    );
-}
-
-#[test]
-fn normalize_verify_install_repo_url_keeps_supported_non_ssh_forms() {
-    assert_eq!(
-        normalize_verify_install_repo_url("https://github.com/betterthanclay/effigy.git"),
-        "https://github.com/betterthanclay/effigy.git"
-    );
-    assert_eq!(
-        normalize_verify_install_repo_url("file:///tmp/effigy.git"),
-        "file:///tmp/effigy.git"
-    );
-    assert_eq!(normalize_verify_install_repo_url("../effigy"), "../effigy");
-    assert_eq!(
-        normalize_verify_install_repo_url("localhost:8080"),
-        "localhost:8080"
-    );
-}
-
-#[test]
-fn resolve_verify_install_repo_url_normalizes_origin_ssh_remote() {
-    let root = std::env::temp_dir().join(format!(
-        "effigy-release-verify-install-remote-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&root).expect("mkdir");
-
-    let init = std::process::Command::new("git")
-        .arg("-C")
-        .arg(&root)
-        .args(["init", "--quiet"])
-        .status()
-        .expect("git init");
-    assert!(init.success(), "git init should succeed");
-
-    let remote = std::process::Command::new("git")
-        .arg("-C")
-        .arg(&root)
-        .args([
-            "remote",
-            "add",
-            "origin",
-            "git@github.com:betterthanclay/effigy.git",
-        ])
-        .status()
-        .expect("git remote add");
-    assert!(remote.success(), "git remote add should succeed");
-
-    let resolved = ResolvedTarget {
-        resolved_root: root,
-        resolution_mode: ResolutionMode::Explicit,
-        evidence: vec!["test fixture".to_owned()],
-        warnings: Vec::new(),
-    };
-
-    let repo_url = resolve_verify_install_repo_url(&resolved, None).expect("resolve repo remote");
-    assert_eq!(repo_url, "ssh://git@github.com/betterthanclay/effigy.git");
-}
-
-#[test]
-fn current_repo_release_config_matches_self_hosting_release_surfaces() {
+fn current_repo_release_config_matches_the_contract_054_shape() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let config = load_release_config(root).expect("load release config");
+    let pipeline = plan_release_pipeline(root).expect("plan this repository's release");
 
-    assert_eq!(config.version_source.path, root.join("Cargo.toml"));
-    assert_eq!(
-        config.version_source.field_path.as_deref(),
-        Some("workspace.package.version")
-    );
-    assert_eq!(config.changelog_path, root.join("CHANGELOG.md"));
-    assert_eq!(config.tag_format, "v{version}");
-    assert_eq!(config.sync_files.len(), 1);
-    assert_eq!(config.sync_files[0].path, root.join("Cargo.lock"));
-    assert_eq!(config.sync_files[0].kind, SyncFileKind::CargoLock);
-
-    let gate_pairs = config
-        .gates
-        .iter()
-        .map(|gate| (gate.name.as_str(), gate.command.as_str()))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        gate_pairs,
-        vec![
-            ("ci", "sh scripts/check-release-ci.sh"),
-            ("format", "cargo fmt --all -- --check"),
-            ("test", "cargo test --workspace"),
-            (
-                "qa",
-                "cargo build --bin effigy && ./target/debug/effigy qa:ci"
-            ),
-            ("build", "cargo build --release --bin effigy"),
-            (
-                "smoke",
-                "cargo build --bin effigy && ./target/debug/effigy smoke:release"
-            ),
-            (
-                "metadata",
-                "cargo build --bin effigy && ./target/debug/effigy release validate"
-            ),
-        ]
-    );
-
-    let manifest_source =
-        std::fs::read_to_string(root.join("effigy.toml")).expect("read effigy manifest");
-    assert!(manifest_source.contains("config/release.toml"));
+    assert_eq!(pipeline.identities.len(), 1, "one semver identity");
+    let identity = &pipeline.identities[0];
+    assert_eq!(identity.name, "effigy");
+    assert_eq!(identity.kind, IdentityKind::Semver);
+    assert_eq!(identity.tag_format.as_deref(), Some("v{version}"));
 
     let release_manifest =
         std::fs::read_to_string(root.join("config/release.toml")).expect("read release manifest");
     assert!(release_manifest.contains("sync-files = [\"Cargo.lock\"]"));
-    assert!(release_manifest.contains("ci = \"sh scripts/check-release-ci.sh\""));
+    assert!(release_manifest.contains("version-path = \"workspace.package.version\""));
+    assert!(!release_manifest.contains("[distribution]"));
+
+    let names = pipeline
+        .gates
+        .iter()
+        .map(|gate| gate.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        vec![
+            "preflight",
+            "ci",
+            "format",
+            "test",
+            "qa",
+            "build",
+            "smoke",
+            "metadata"
+        ]
+    );
+    let preflight = pipeline
+        .gates
+        .iter()
+        .find(|gate| gate.name == "preflight")
+        .expect("preflight gate");
+    assert_eq!(preflight.stage, GateStage::Pre);
+    assert_eq!(preflight.task.as_deref(), Some("release:preflight"));
+    let metadata = pipeline
+        .gates
+        .iter()
+        .find(|gate| gate.name == "metadata")
+        .expect("metadata gate");
+    assert_eq!(metadata.stage, GateStage::Certify);
+    assert_eq!(metadata.task.as_deref(), Some("release:metadata"));
+    for gate in &pipeline.gates {
+        if gate.name != "preflight" && gate.name != "metadata" {
+            assert_eq!(gate.stage, GateStage::Certify, "{}", gate.name);
+        }
+    }
+
+    assert_eq!(pipeline.artifacts.len(), 1, "one certified artifact");
+    assert_eq!(pipeline.artifacts[0].name, "binary");
+    assert_eq!(pipeline.artifacts[0].task, "release:artifact");
+    assert_eq!(pipeline.artifacts[0].path, "target/release/effigy");
+
+    let targets = pipeline
+        .targets
+        .iter()
+        .map(|target| (target.name.as_str(), target.kind))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        targets,
+        vec![("tag", TargetKind::Tag), ("binaries", TargetKind::Task),]
+    );
+    let binaries = &pipeline.targets[1];
+    assert_eq!(binaries.task.as_deref(), Some("release:publish:binaries"));
+    assert_eq!(binaries.check.as_deref(), Some("release:check:binaries"));
+    assert_eq!(binaries.verify.as_deref(), Some("release:verify:binaries"));
+
+    // A non-`tag` target makes `publish` an approval checkpoint by default
+    // (contract 054 §10 ruling 3).
+    assert_eq!(pipeline.approvals, vec!["publish".to_owned()]);
+    assert!(pipeline.approval_defaulted);
+
+    let manifest_source =
+        std::fs::read_to_string(root.join("effigy.toml")).expect("read effigy manifest");
+    assert!(manifest_source.contains("config/release.toml"));
     assert!(!root.join("scripts/check-release-gates.sh").exists());
     assert!(!root
         .join("scripts/check-release-install-from-tag.sh")
         .exists());
     assert!(!root.join("scripts/check-release-smoke.sh").exists());
     assert!(!root.join("scripts/prepare-release.sh").exists());
+    assert!(root.join("scripts/release/checks.sh").is_file());
 }
 
 #[cfg(unix)]

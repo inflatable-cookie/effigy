@@ -77,7 +77,7 @@ working builds while iterating.
 Policy:
 - Pin `EFFIGY_VERSION` in CI variables.
 - Bump only via reviewed release PRs.
-- Validate with `effigy release verify-install --tag <tag>` before changing tag pins.
+- Validate with `effigy release:verify:install --tag <tag>` before changing tag pins.
 
 ## 4) Wrapper Migration (`bun effigy` -> `effigy`)
 

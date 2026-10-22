@@ -9,7 +9,6 @@ mod catalog_section;
 mod containers_section;
 mod contracts_section;
 mod diagnostics;
-mod distribution_section;
 mod docs_policy_section;
 mod env_section;
 mod manifest_section;
@@ -33,7 +32,6 @@ use catalog_section::validate_catalog_section;
 use containers_section::validate_containers_section;
 use contracts_section::validate_contracts_section;
 use diagnostics::SchemaContext;
-use distribution_section::validate_distribution_section;
 use docs_policy_section::validate_docs_policy_section;
 use env_section::validate_env_section;
 use manifest_section::validate_manifest_section;
@@ -86,9 +84,6 @@ pub fn validate_manifest_schema(manifest_path: &Path, value: &Value, sink: &mut 
     }
     if let Some(systems) = table.get("systems") {
         validate_systems_section(&mut context, systems);
-    }
-    if let Some(distribution) = table.get("distribution") {
-        validate_distribution_section(&mut context, distribution);
     }
     if let Some(release) = table.get("release") {
         validate_release_section(&mut context, release);

@@ -171,31 +171,30 @@ fn parse_release_prepare_and_execute_name_their_replacement() {
 }
 
 #[test]
-fn parse_release_verify_install_with_repo_tag_and_repo_url() {
-    let cmd = parse_command(vec![
-        "release".to_owned(),
-        "verify-install".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-        "--tag".to_owned(),
-        "v0.2.5".to_owned(),
-        "--repo-url".to_owned(),
-        "https://example.com/repo.git".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Release(ReleaseArgs {
-            subcommand: ReleaseSubcommand::VerifyInstall {
-                tag: Some("v0.2.5".to_owned()),
-                repo_url: Some("https://example.com/repo.git".to_owned()),
-            },
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            output_json: true,
-        })
-    );
+fn parse_release_effigy_only_commands_name_their_repo_task() {
+    for (retired, replacement) in [
+        ("validate", "release:metadata"),
+        ("preflight", "release:preflight"),
+        ("proof", "release:proof"),
+        ("check-binary", "release:check-binary"),
+        ("verify-install", "release:verify:install"),
+        ("evidence", "release:receipt_or_evidence"),
+    ] {
+        let error = parse_command(vec!["release".to_owned(), retired.to_owned()])
+            .expect_err("the retired subcommand refuses");
+        let message = error.to_string();
+        assert!(
+            message.contains("retired in v0.15"),
+            "{}: {message}",
+            retired
+        );
+        let expected = if replacement == "release:receipt_or_evidence" {
+            "release receipt"
+        } else {
+            replacement
+        };
+        assert!(message.contains(expected), "{}: {message}", retired);
+    }
 }
 
 #[test]

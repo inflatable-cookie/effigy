@@ -1,8 +1,33 @@
+# Effigy's own release on the contract 054 platform.
+#
+# One `semver` identity named after this repository, `certify` gates that run
+# against the prepared commit, the release binary as the certified artifact,
+# and two targets: the annotated tag, then the `task` target that dispatches
+# `.github/workflows/release-binaries.yml`. The Effigy-only checks the retired
+# commands used to perform are repo tasks in `config/tasks.toml`
+# (`release:metadata`, `release:preflight`, `release:proof`,
+# `release:check-binary`, `release:verify:*`, `release:evidence:*`).
+#
+# A non-`tag` target makes `publish` an approval checkpoint by default
+# (contract 054 §10 ruling 3), so a Run stops there until
+# `effigy release approve <run>`.
 [release]
-version-file = "Cargo.toml"
 changelog = "CHANGELOG.md"
 sync-files = ["Cargo.lock"]
+
+[release.identities.effigy]
+kind = "semver"
+version-file = "Cargo.toml"
+version-path = "workspace.package.version"
 tag-format = "v{version}"
+
+# The preflight runs before `prepare` writes a version: metadata and docs must
+# hold on the source tree. Its smoke slice is the `smoke` certify gate, which
+# runs against the prepared commit.
+[release.gates.preflight]
+task = "release:preflight"
+stage = "pre"
+description = "Effigy release metadata and docs hold on the source tree"
 
 [release.gates]
 ci = "sh scripts/check-release-ci.sh"
@@ -11,4 +36,19 @@ test = "cargo test --workspace"
 qa = "cargo build --bin effigy && ./target/debug/effigy qa:ci"
 build = "cargo build --release --bin effigy"
 smoke = "cargo build --bin effigy && ./target/debug/effigy smoke:release"
-metadata = "cargo build --bin effigy && ./target/debug/effigy release validate"
+metadata = { task = "release:metadata", description = "Version, changelog, lockfile and release-record consistency" }
+
+# Certify builds the exact binary that publish re-hashes and that the
+# release-binaries workflow will reproduce from the tag.
+[release.artifacts.binary]
+task = "release:artifact"
+path = "target/release/effigy"
+
+[release.targets.tag]
+kind = "tag"
+
+[release.targets.binaries]
+kind = "task"
+task = "release:publish:binaries"
+check = "release:check:binaries"
+verify = "release:verify:binaries"

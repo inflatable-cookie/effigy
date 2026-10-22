@@ -202,6 +202,32 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- The distribution surface (Q-009), contract 054 §4.4 and §13. Effigy's own
+  release is now one `[release]` declaration in `config/release.toml`: the
+  `effigy` `semver` identity, a `preflight` pre gate and the `ci`, `format`,
+  `test`, `qa`, `build`, `smoke` and `metadata` certify gates, the release
+  binary as the certified artifact, and two targets — the annotated `tag` and a
+  `binaries` `task` target that dispatches `release-binaries.yml` and records
+  the GitHub Release and Homebrew results.
+- `effigy release validate`, `preflight`, `proof`, `check-binary`,
+  `verify-install` and `evidence validate|closeout|summary` retired into repo
+  tasks in `config/tasks.toml`, implemented by `scripts/release/checks.sh`:
+  `release:metadata` (the `metadata` gate), `release:preflight` (the `preflight`
+  gate), `release:proof`, `release:check-binary`, `release:verify:install` (the
+  `binaries` target's `verify`), `release:evidence:validate` and
+  `release:evidence:closeout`. `effigy release receipt <run>` replaces the
+  evidence summary. Each retired command refuses with its replacement, and the
+  `effigy.distribution.*` JSON payloads, the `distribution::` Rhai module,
+  `crates/effigy-distribution` and `src/runner/distribution_command` are gone.
+- The `[distribution]` table. It only configured those retired commands, so a
+  manifest that still declares it loads and is ignored with one deprecation
+  notice per manifest (effigy#274); release settings belong under `[release]`
+  and project checks under `[tasks]`. No other project used the table.
+- Release owners: `.github/workflows/release-binaries.yml` still calls the
+  retired `effigy release check-binary` in its Linux build job, so that step
+  must move to `./scripts/release/checks.sh check-binary` in an approved
+  workflow edit before the next publication. `effigy release:metadata` warns and
+  names the exact replacement; it fails if the GLIBC guard disappears.
 - Five scanners (Q-009): `effigy scan attention-markers`, `scan comment-ratio`,
   `scan generated-assets`, `scan generated-in-src` and `scan
   stale-suppressions`, with their JSON contracts, help topics, doctor checks,

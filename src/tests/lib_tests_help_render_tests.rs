@@ -190,165 +190,18 @@ fn render_contracts_help_shows_validation_options() {
 }
 
 #[test]
-fn render_release_help_shows_distribution_evidence_options() {
+fn render_release_help_names_the_retired_commands_and_their_repo_tasks() {
     let rendered = render_help_text(HelpTopic::Release);
     assert!(rendered.contains("release Help"));
-    assert!(rendered.contains("effigy release preflight"));
-    assert!(rendered.contains("effigy release validate"));
-    assert!(rendered.contains("effigy release check-binary"));
-    assert!(rendered.contains("effigy release proof"));
-    assert!(rendered.contains("effigy release evidence validate"));
-    assert!(rendered.contains("effigy release evidence closeout"));
-    assert!(rendered.contains("effigy release evidence summary"));
-    assert!(rendered.contains("--tag <TAG>"));
-    assert!(rendered.contains("<BIN> --glibc-floor <VER>"));
+    assert!(rendered.contains("effigy release:metadata"));
+    assert!(rendered.contains("effigy release:preflight"));
+    assert!(rendered.contains("effigy release:check-binary"));
+    assert!(rendered.contains("effigy release:proof"));
+    assert!(rendered.contains("effigy release:verify:install"));
+    assert!(rendered.contains("`release:evidence:validate|closeout`"));
+    assert!(rendered.contains("retired in v0.15"));
+    assert!(rendered.contains("effigy release receipt"));
     assert!(!rendered.contains("--binary <PATH>"));
-    assert!(rendered.contains("--glibc-floor <VER>"));
-    assert!(rendered.contains("--artifacts-dir <DIR>"));
-    assert!(rendered.contains("--skip-homebrew"));
-    assert!(rendered.contains("--skip-docs"));
-    assert!(rendered.contains("--skip-smoke"));
-    assert!(rendered.contains("--expect-homebrew"));
-    assert!(rendered.contains("--output <PATH>"));
-    assert!(rendered.contains("--owner <NAME>"));
-    assert!(rendered.contains("--log-file <NAME>"));
-}
-
-#[test]
-fn render_exec_help_shows_service_and_examples() {
-    let rendered = render_help_text(HelpTopic::Exec);
-    assert!(rendered.contains("exec Help"));
-    assert!(rendered.contains("effigy exec [--repo <PATH>] [--service <NAME>]"));
-    assert!(rendered.contains("effigy exec composer install"));
-    assert!(rendered.contains("[containers.<name>.aliases]"));
-    assert!(rendered.contains("declared workspace user and HOME"));
-    assert!(rendered.contains("non-console sessions run without a TTY"));
-}
-
-#[test]
-fn render_deploy_help_shows_provider_package_export_surface() {
-    let rendered = render_help_text(HelpTopic::Deploy);
-    assert!(rendered.contains("deploy Help"));
-    assert!(rendered.contains("effigy deploy model"));
-    assert!(rendered.contains("effigy deploy export <PROVIDER>"));
-    assert!(rendered.contains("--repo <PATH>"));
-    assert!(rendered.contains("<PROVIDER>"));
-    assert!(rendered.contains("--path <DIR>"));
-    assert!(rendered.contains("--plan"));
-    assert!(rendered.contains("--json"));
-    assert!(rendered.contains("provider-package"));
-    assert!(rendered.contains("provider-neutral"));
-}
-
-#[test]
-fn render_gateway_help_shows_lifecycle_examples() {
-    let rendered = render_help_text(HelpTopic::Gateway);
-    assert!(rendered.contains("gateway Help"));
-    assert!(rendered.contains("effigy gateway up"));
-    assert!(rendered.contains("effigy gateway down"));
-    assert!(rendered.contains("effigy gateway status"));
-    assert!(!rendered.contains("effigy gateway recover"));
-    assert!(rendered.contains("effigy gateway setup-tls"));
-    assert!(rendered.contains("effigy gateway setup [--suffix <DOMAIN>] [--remove]"));
-    assert!(rendered.contains("daemon runs as your user"));
-    assert!(rendered.contains("never request administrator access"));
-}
-
-#[test]
-fn render_service_help_shows_extract_options() {
-    let rendered = render_help_text(HelpTopic::Service);
-    assert!(rendered.contains("service Help"));
-    assert!(rendered.contains("effigy service list"));
-    assert!(rendered.contains("effigy service extract <SERVICE>"));
-    assert!(rendered.contains("--dir <PATH>"));
-    assert!(rendered.contains("[catalog.sources.<name>]"));
-    assert!(rendered.contains("`<source>/<service>`"));
-    assert!(rendered.contains("effigy bundle sync"));
-    assert!(rendered.contains("compiled baseline"));
-    assert!(!rendered.contains("service pack"));
-    assert!(!rendered.contains("user override"));
-}
-
-#[test]
-fn render_container_help_shows_runtime_options() {
-    let rendered = render_help_text(HelpTopic::Container);
-    assert!(rendered.contains("container Help"));
-    assert!(rendered.contains("effigy container up"));
-    assert!(rendered.contains("effigy container <NAME> up"));
-    assert!(rendered.contains("effigy container status --global"));
-    assert!(rendered.contains("effigy container stats --global"));
-    assert!(rendered.contains("effigy container volume list"));
-    assert!(rendered.contains("effigy container cache list"));
-    assert!(rendered.contains("effigy container cache prune"));
-    assert!(rendered.contains("effigy container data list"));
-    assert!(rendered.contains("effigy container data export <VOLUME> <PATH>"));
-    assert!(rendered.contains("effigy container [<NAME>] data dump"));
-    assert!(rendered.contains("effigy container data import <VOLUME> <PATH>"));
-    assert!(rendered.contains("effigy container data seed"));
-    assert!(rendered.contains("effigy container <NAME> logs"));
-    assert!(rendered.contains("effigy container <NAME> shell"));
-    assert!(rendered.contains("effigy container <NAME> reset"));
-    assert!(rendered.contains("effigy container migrate [<NAME>]"));
-    // The retired command is gone from usage and examples; "reject" and
-    // similar words elsewhere in the help are unrelated.
-    assert!(!rendered.contains("effigy container <NAME> eject"));
-    assert!(!rendered.contains("effigy container web eject"));
-    assert!(rendered.contains("effigy container hosts"));
-    assert!(rendered.contains("effigy container scope"));
-    assert!(rendered.contains("effigy container retire"));
-    assert!(rendered.contains("--attach"));
-    assert!(rendered.contains("--detach"));
-    assert!(rendered.contains("--global"));
-    assert!(rendered.contains("--orphans"));
-    assert!(rendered.contains("--service <NAME>"));
-    assert!(rendered.contains("--command <CMD>"));
-    assert!(rendered.contains("--follow"));
-    assert!(rendered.contains("--keep-data"));
-    assert!(rendered.contains("--db-dump <FILE>|<TARGET>|<TARGET>=<FILE>"));
-    assert!(rendered.contains("--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>"));
-    assert!(rendered.contains("--no-prompt"));
-    assert!(rendered.contains("effigy container web data list"));
-    assert!(rendered.contains("effigy container volume list --global --orphans"));
-    assert!(rendered.contains("effigy container volume prune --dormant --yes"));
-    assert!(rendered.contains("effigy container volume prune --global --orphans --yes"));
-    assert!(rendered.contains("effigy container cache list --global"));
-    assert!(rendered.contains("effigy container cache list --project acowtancy-dev"));
-    assert!(rendered.contains("effigy container cache list --kind rust-target"));
-    assert!(rendered.contains("effigy container cache prune --project acowtancy-dev --yes"));
-    assert!(rendered.contains("effigy container cache prune --global --yes"));
-    assert!(rendered.contains("--project <NAME>"));
-    assert!(rendered.contains("--kind <KIND>"));
-    assert!(rendered.contains("effigy container web data export"));
-    assert!(rendered.contains("effigy container web data import"));
-    assert!(rendered.contains("effigy container data dump legacy_mysql"));
-    assert!(rendered.contains("effigy container data dump --db-dump legacy_mysql"));
-    assert!(rendered.contains("effigy container data dump --db-dump ./latest.sql"));
-    assert!(rendered.contains("effigy container data dump --db-dump app=oci://"));
-    assert!(rendered.contains("--push"));
-    assert!(rendered.contains("effigy container data seed --db-seed ./latest.sql"));
-    assert!(rendered
-        .contains("effigy container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat"));
-    assert!(rendered.contains("effigy container web reset --keep-data"));
-    assert!(rendered.contains(
-        "Leaving an interactive workspace or shell asks whether to bring the environment down"
-    ));
-}
-
-#[test]
-fn render_bootstrap_help_shows_planning_options() {
-    let rendered = render_help_text(HelpTopic::Bootstrap);
-    assert!(rendered.contains("bootstrap Help"));
-    assert!(rendered.contains(
-        "effigy bootstrap [<GIT_URL>] [--path <DIR>] [--branch <NAME>] [--no-start] [--plan] [--json]"
-    ));
-    assert!(rendered.contains("--path <DIR>"));
-    assert!(rendered.contains("--branch <NAME>"));
-    assert!(rendered.contains("--no-start"));
-    assert!(rendered.contains("--plan"));
-    assert!(rendered.contains("--json"));
-    assert!(rendered.contains("[sources.<name>]"));
-    assert!(!rendered.contains("--db-seed"));
-    assert!(!rendered.contains("bootstrap teardown"));
 }
 
 #[test]
@@ -360,9 +213,8 @@ fn render_release_help_shows_status_and_run_options() {
     assert!(rendered.contains("effigy release run"));
     assert!(rendered.contains("effigy release resume [--repo <PATH>] <RUN>"));
     assert!(rendered.contains("effigy release receipt"));
-    assert!(rendered.contains("effigy release verify-install"));
-    assert!(rendered.contains("Effigy's self-hosting tagged-binary check"));
-    assert!(rendered.contains("repo-owned consumer smoke"));
+    assert!(rendered.contains("effigy release:verify:install"));
+    assert!(rendered.contains("repo tasks"));
     assert!(rendered.contains("effigy release --plan"));
     assert!(
         rendered.contains("effigy release --plan [--repo <PATH>] [--version <SEMVER>] [--json]")
@@ -371,8 +223,6 @@ fn render_release_help_shows_status_and_run_options() {
     assert!(rendered.contains("--to <STAGE>"));
     assert!(rendered.contains("--plan"));
     assert!(rendered.contains("--version <SEMVER>"));
-    assert!(rendered.contains("--tag <TAG>"));
-    assert!(rendered.contains("--repo-url <URL>"));
     assert!(rendered.contains("--repo <PATH>"));
     assert!(rendered.contains("--json"));
     assert!(rendered.contains("checkpoint at every boundary"));

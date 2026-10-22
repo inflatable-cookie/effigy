@@ -21,13 +21,6 @@ pub(super) fn register_misc_feature_modules(
         std::rc::Rc::new(build_deploy_module(context.clone(), callbacks.clone())),
     );
     engine.register_static_module(
-        MODULE_DISTRIBUTION,
-        std::rc::Rc::new(build_distribution_module(
-            context.clone(),
-            callbacks.clone(),
-        )),
-    );
-    engine.register_static_module(
         MODULE_CHANGELOG,
         std::rc::Rc::new(build_changelog_module(context.clone(), callbacks.clone())),
     );
@@ -171,63 +164,6 @@ fn build_deploy_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) ->
             })?;
             rhai::serde::to_dynamic(value).map_err(|error| rhai_runtime_error(error.to_string()))
         },
-    );
-    module
-}
-
-fn build_distribution_module(
-    context: Arc<ScriptContext>,
-    callbacks: HostCallbacks,
-) -> rhai::Module {
-    let mut module = rhai::Module::new();
-    module_feature_options(
-        &mut module,
-        "validate_metadata",
-        FEATURE_DISTRIBUTION_VALIDATE_METADATA,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "check_glibc_floor",
-        FEATURE_DISTRIBUTION_CHECK_GLIBC_FLOOR,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "preflight",
-        FEATURE_DISTRIBUTION_PREFLIGHT,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "first_publish",
-        FEATURE_DISTRIBUTION_FIRST_PUBLISH,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "validate_artifacts",
-        FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "generate_closeout",
-        FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "write_summary",
-        FEATURE_DISTRIBUTION_WRITE_SUMMARY,
-        context,
-        callbacks,
     );
     module
 }

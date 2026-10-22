@@ -94,20 +94,19 @@ effigy qa:json:ci
 effigy release gates
 effigy release --plan
 effigy release status --check-gates
-effigy release preflight --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
-effigy release verify-install --tag v0.__.__
-effigy release proof --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
-# writes ./artifacts/distribution-v0.__.__/distribution-summary.env
-effigy release validate --tag v0.__.__
-effigy release evidence validate --artifacts-dir ./artifacts/distribution-v0.__.__
-effigy release evidence closeout --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
-cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture
+effigy release:preflight --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
+effigy release:verify:install --tag v0.__.__
+effigy release:proof --artifacts-dir ./artifacts/distribution-v0.__.__
+effigy release:metadata --tag v0.__.__
+effigy release:evidence:validate --artifacts-dir ./artifacts/distribution-v0.__.__
+effigy release:evidence:closeout --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__
+effigy release receipt <run>
 effigy qa:docs
 ```
 
-For release debugging, use the built-in release and distribution commands
+For release debugging, use the release Run and Effigy's `release:` repo tasks
 first. The only remaining workflow-bound shell reproduction path is the Linux
-glibc floor check.
+glibc floor check (`sh scripts/release/checks.sh check-binary`).
 
 Install pinning and team migration policy:
 - [`041-distribution-ci-pinning-and-wrapper-migration.md`](041-distribution-ci-pinning-and-wrapper-migration.md)
@@ -167,7 +166,7 @@ jobs:
 
 Notes:
 - `effigy contracts check-json` is the primary validator; event-aware PR vs mainline behavior should live in workflow YAML rather than a shell wrapper.
-- `effigy release preflight`, `check-binary`, `proof`, `validate`, `evidence validate`, and `evidence closeout` are the primary distribution validation/reporting surfaces.
+- `effigy release:preflight`, `release:check-binary`, `release:proof`, `release:metadata`, `release:evidence:validate` and `release:evidence:closeout` are Effigy's repo tasks for release validation and evidence; a project declares its own tasks as `[release.gates]` or a target's `verify`.
 - `set -o pipefail` ensures failures inside pipe chains fail the step.
 
 ## 4) Recipe: Nightly Full Contract Sweep
@@ -344,8 +343,8 @@ What `effigy release gates` enforces:
 - docs + JSON quality gates (`qa:ci`)
 - release binary build
 - release smoke checks (`help`, `tasks`, `catalog_a/tasks`, `test --plan`, `catalog_a/test --plan`)
-- distribution metadata validation (`effigy release validate`)
-- install validation from the pushed tag (`effigy release verify-install`)
+- release metadata validation (`effigy release:metadata`)
+- install validation from the pushed tag (`effigy release:verify:install`)
 
 ## 12) Recipe: Assert Completion Cache Policy Fields
 

@@ -3,8 +3,7 @@ use super::{container_exec_operation_from_options, parse_rhai_embedded_command};
 use effigy_cli::{Command, DocsArgs, DocsCheckKind, DocsSubcommand};
 use effigy_rhai::surface::{
     rhai_feature_descriptors, RhaiFeatureDispatch, FEATURE_DEPLOY_APPLY, FEATURE_DEPLOY_MODEL,
-    FEATURE_DEPLOY_REDEPLOY, FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS,
-    FEATURE_DISTRIBUTION_VALIDATE_METADATA,
+    FEATURE_DEPLOY_REDEPLOY,
 };
 use serde_json::json;
 use std::path::Path;
@@ -124,22 +123,6 @@ fn run_rhai_feature_dispatches_deploy_model_for_fixture_repo() {
 }
 
 #[test]
-fn run_rhai_feature_dispatches_distribution_validate_metadata_for_current_repo() {
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let current_tag = format!("v{}", env!("CARGO_PKG_VERSION"));
-    let output = run_rhai_feature(
-        repo_root,
-        FEATURE_DISTRIBUTION_VALIDATE_METADATA,
-        json!({ "tag": current_tag }),
-    )
-    .expect("distribution validate metadata should dispatch");
-    let payload: serde_json::Value = serde_json::from_str(&output).expect("json payload");
-
-    assert_eq!(payload["schema"], "effigy.distribution.metadata.v1");
-    assert_eq!(payload["ok"], true);
-}
-
-#[test]
 fn run_rhai_feature_refuses_deploy_execution() {
     let fixture = tempfile::tempdir().expect("create isolated deploy fixture");
     let repo_root = fixture.path();
@@ -169,23 +152,4 @@ fn run_rhai_feature_refuses_deploy_execution() {
     }
     assert!(!repo_root.join(".effigy/reports/deploy").exists());
     assert!(!repo_root.join(".effigy/runtime/deploy").exists());
-}
-
-#[test]
-fn run_rhai_feature_preserves_distribution_required_input_guard() {
-    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let error = run_rhai_feature(
-        repo_root,
-        FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS,
-        json!({
-            "expect_homebrew": true
-        }),
-    )
-    .expect_err("distribution validate artifacts without artifacts_dir should fail");
-
-    let rendered = error.to_string();
-    assert!(
-        rendered.contains("`artifacts_dir` is required"),
-        "unexpected error: {rendered}"
-    );
 }

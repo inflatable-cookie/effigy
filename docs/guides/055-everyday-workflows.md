@@ -292,13 +292,15 @@ dispatch `ci.yml` and watch the exact-SHA run to success.
 ```sh
 effigy release status --check-gates
 effigy release run --to certify
-effigy release preflight --tag vX.Y.Z
-effigy release evidence validate --artifacts-dir ./artifacts/distribution-vX.Y.Z
+effigy release:preflight --tag vX.Y.Z
+effigy release:evidence:validate --artifacts-dir ./artifacts/distribution-vX.Y.Z
+effigy release receipt <run>
 ```
 
-Use `release` for release readiness, mutation flow, artifact validation,
-GLIBC checks, release proof evidence, and closeout material where that built-in
-path fits your repo.
+Use `release` for release readiness, the checkpointed mutation flow, the
+certified artifact digests and the receipt. The `release:` repo tasks hold
+Effigy's own preflight, metadata, artifact-proof, GLIBC, install and evidence
+checks; a project declares its own as `[release.gates]` or a target's `verify`.
 
 Deep dive:
 - [`051-release-orchestration.md`](051-release-orchestration.md)

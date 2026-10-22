@@ -205,14 +205,6 @@ Current v1 helpers:
   - `deploy::status(options_map)`
   - `deploy::history(options_map)`
   - `deploy::redeploy(options_map)`
-- distribution helpers:
-  - `distribution::validate_metadata(options_map)`
-  - `distribution::check_glibc_floor(options_map)`
-  - `distribution::preflight(options_map)`
-  - `distribution::first_publish(options_map)`
-  - `distribution::validate_artifacts(options_map)`
-  - `distribution::generate_closeout(options_map)`
-  - `distribution::write_summary(options_map)`
 - state capture context helpers:
   - `state::capture_context()`
   - `state::capture_context_path()`
@@ -572,26 +564,18 @@ Model/export remain supported. Full execution design is in Queue's deploy lane
 [guide 074](074-deployment-guide.md) and the
 [Rhai surface audit](068-rhai-host-surface-audit.md).
 
-Distribution preflight plus artifact validation from one Rhai task:
+Release checks are repo tasks, not Rhai features. The `distribution::` module
+retired in v0.15 with the `[distribution]` table (contract 054 §4.4): declare a
+task in `[tasks]`, wire it as a `[release.gates]` gate or a target's `verify`,
+and run the checks with ordinary process calls. Effigy's own
+`scripts/release/checks.sh` is one example:
 
-```rhai
-let tag = `v${effigy::active_version()}`;
-let preflight = distribution::preflight(#{
-    tag: tag,
-    skip_docs: true,
-    output: ".effigy/tmp/release/preflight.env",
-});
-if !preflight["ok"] {
-    throw("distribution preflight failed");
-}
+```toml
+[tasks."release:check-binary"]
+run = "sh scripts/release/checks.sh check-binary {args}"
 
-let artifacts = distribution::validate_artifacts(#{
-    artifacts_dir: "artifacts/release",
-    expect_homebrew: true,
-});
-if !artifacts["ok"] {
-    throw("artifact validation failed");
-}
+[release.gates]
+metadata = { task = "release:check-binary" }
 ```
 
 Structured process call:
