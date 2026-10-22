@@ -390,6 +390,16 @@ identities resolve to different next versions refuses `prepare` when it
 declares sync files: a lockfile carries one version. `follows` is the way to
 keep them equal.
 
+**The prepared-state library is now unreachable.** `effigy-release` still
+exports `release prepare`'s prepared-state mechanics (`build_release_prepare_plan`,
+`execute_release_prepare`, `execute_release`, `collect_release_execute_plan`,
+the `.release-prepared.json` reader/writer and the review menus) although no CLI
+surface calls them. The Run reuses the parts that are still product behaviour —
+mutation snapshots and rollback, `apply_release_mutations`, `build_sync_mutations`
+and the changelog/version renderers. Deleting the rest is a bounded follow-up
+rather than part of this change, so no consumer loses a working path while both
+exist.
+
 **Publication is not requested by a selector.** `release:run` fixes `--to
 certify`. Publishing stays an explicit `release run` under the operator's
 authority.
