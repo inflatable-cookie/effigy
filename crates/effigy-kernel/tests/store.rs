@@ -6,12 +6,17 @@ use effigy_kernel::gate::*;
 use effigy_kernel::id::*;
 use effigy_kernel::ident::{boot_clock, BootInstant};
 use effigy_kernel::observe::*;
+use effigy_kernel::outcome::{Invocation, WorkloadOutcome};
 use effigy_kernel::record::*;
 use effigy_kernel::root::StateRoot;
+use effigy_kernel::run::{
+    recent, BeginOpts, Effect, EffectSpec, Fence, Phase, Reconciled, Run, Settlement,
+    SettlementAdapter,
+};
 use effigy_kernel::store::*;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use support::*;
 
 fn checkout() -> CheckoutId {
@@ -177,14 +182,20 @@ fn store_reads_are_pure_including_on_a_read_only_root() {
     }
     assert_eq!(records_only(home.path()), before, "a read changed state");
     // Read-only directory and file: the reader drops to an immutable open of
-    // the checkpointed store, which creates nothing at all.
+    // the checkpointed store, which creates nothing at all. SQLite's own
+    // write-ahead side files go first, so "creates nothing" is measured.
+    for suffix in ["-wal", "-shm"] {
+        let _ = std::fs::remove_file(state.join(format!("{DB_NAME}{suffix}")));
+    }
     std::fs::set_permissions(state.join(DB_NAME), std::fs::Permissions::from_mode(0o400)).unwrap();
     std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o500)).unwrap();
     let before = snapshot(home.path());
-    let verified = reader(home.path())
+    let observed = reader(home.path());
+    let verified = observed
         .verified()
         .map(|reader| reader.resource(&task("a")).verified().is_some());
     assert_eq!(snapshot(home.path()), before);
+    assert_eq!(verified, Some(true), "read-only root: {observed:?}");
     std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
     std::fs::set_permissions(state.join(DB_NAME), std::fs::Permissions::from_mode(0o600)).unwrap();
     assert_eq!(verified, Some(true));
@@ -252,7 +263,10 @@ fn store_corrupt_db_reads_unknown_refuses_mutate_and_repair_moves_it_aside() {
 }
 
 #[test]
-fn store_waits_need_a_finite_deadline() {
+fn store_waits_are_always_finite_and_cancellation_still_wins() {
+    // An open workload deadline no longer makes the store wait unbounded: the
+    // write takes its own finite window, so it can neither refuse early nor
+    // wait forever (§5.5, K8). Cancellation is still honoured at once.
     let home = home();
     let root = root(home.path());
     let open = OperationContext::new(
@@ -264,10 +278,27 @@ fn store_waits_need_a_finite_deadline() {
     )
     .effects()
     .unwrap();
-    assert_eq!(
-        Store::open(&open, &root).unwrap_err(),
-        StoreError::Unbounded
+    let mut store = Store::open(&open, &root).unwrap();
+    store
+        .txn(&open, |txn| txn.resource(&task("a"), "task").map(|_| ()))
+        .unwrap();
+    let cancel = OperationContext::new(
+        Deadline::Open(OpenReason::DevServer),
+        CancelToken::default(),
+        limits(),
+        EffectClass::Mutate,
+        Placement::Host,
     );
+    cancel
+        .cancel_token()
+        .cancel(StopCause::Signal(libc::SIGINT));
+    let cancelled = cancel.effects().unwrap();
+    assert!(matches!(
+        store.txn(&cancelled, |txn| txn
+            .resource(&task("b"), "task")
+            .map(|_| ())),
+        Err(StoreError::Interrupted(Interrupt::Cancelled { .. }))
+    ));
 }
 
 #[test]
@@ -572,4 +603,553 @@ fn store_setup_owner_transfer_refuses_symlinks_links_and_guest_authority() {
     assert!(dir
         .adopt_setup_entry(&guest, &FileName::new("registry").unwrap(), false, 64)
         .is_err());
+}
+
+// --- Concurrent runs and a busy store (§5.5, §5.6, §7.4) ---
+//
+// These proofs run real admissions and settles in separate processes against
+// one private HOME: a slow writer with many short runs, a settle that must
+// outlast another process's write lock, and a bounded retention pass.
+
+const STRESS_HOME: &str = "EFFIGY_STORE_STRESS_HOME";
+const STRESS_LABEL: &str = "EFFIGY_STORE_STRESS_LABEL";
+
+fn stress_home() -> PathBuf {
+    PathBuf::from(std::env::var(STRESS_HOME).expect("stress home"))
+}
+fn stress_label() -> String {
+    std::env::var(STRESS_LABEL).expect("stress label")
+}
+/// Ten deterministic bytes for a label, so each process has its own run and
+/// owner: concurrent runs must not contend on a gate.
+fn label_bytes(label: &str) -> [u8; 10] {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in label.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let mut bytes = [0u8; 10];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = hash.rotate_left(index as u32 * 7) as u8;
+    }
+    bytes
+}
+fn evidence(source: &str) -> Evidence {
+    Evidence::new(source.into(), None).unwrap()
+}
+
+/// A strict adapter: an effect stays owned until it is observed released, and
+/// these proofs' effects need no real undo.
+struct StressAdapter;
+impl SettlementAdapter for StressAdapter {
+    fn observe(&mut self, effect: &Effect, _: &CleanupContext) -> Observed<Fence> {
+        Observed::Verified(effect.spec.target.clone(), evidence("stress effect"))
+    }
+    fn release(&mut self, _: &Effect, _: &CleanupContext) -> Observed<()> {
+        Observed::Verified((), evidence("stress effect"))
+    }
+    fn reconcile(&mut self, _: &Effect, _: &CleanupContext) -> Observed<Reconciled> {
+        Observed::Verified(Reconciled::Released, evidence("stress effect"))
+    }
+}
+
+fn stress_invocation(
+    home: &Path,
+    label: &str,
+    cx: &EffectContext,
+) -> (StateRoot, ResolvedInvocation, RunId) {
+    let root = StateRoot::effects(cx, home).unwrap();
+    let token = label_bytes(label);
+    let checkout = CheckoutId::new(CheckoutKind::EphemeralClone, [token[0]; 16]);
+    let task = TaskId::new(checkout, "", Surface::Published, "stress", None).unwrap();
+    let owner = task.resource();
+    let invocation = ResolvedInvocation::new(InvocationSpec {
+        task,
+        route: Route::Task,
+        argv: vec![],
+        cwd: "".into(),
+        target: ExecutionTarget::Host,
+        env: std::collections::BTreeMap::new(),
+        owner,
+        gates: vec![],
+        attachments: vec![],
+        class: EffectClass::Mutate,
+        placement: Placement::Host,
+        provenance: std::collections::BTreeMap::new(),
+    })
+    .unwrap();
+    let id = RunId::new(1, label_bytes(label)).unwrap();
+    (root, invocation, id)
+}
+
+/// One real run: admit, write `writes` journalled effects, finish and settle.
+/// Any refusal is printed with its cause and exits non-zero, so a Busy store
+/// can never pass silently.
+fn stress_run(label: &str, writes: usize) {
+    let cx = effects(EffectClass::Mutate);
+    let (root, invocation, id) = stress_invocation(&stress_home(), label, &cx);
+    let cleanup = cx.operation().cleanup(Duration::from_secs(60)).unwrap();
+    let mut adapter = StressAdapter;
+    let mut run = match Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        BeginOpts {
+            id,
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: Invocation::validated(vec!["next".into()], |args| args == ["next"]).unwrap(),
+            custody: None,
+        },
+        &cleanup,
+        &mut adapter,
+    ) {
+        Ok(run) => run,
+        Err(error) => {
+            println!("STRESS-FAIL {label} admission: {error}");
+            std::process::exit(3);
+        }
+    };
+    let fence = run.fence().clone();
+    for index in 0..writes {
+        let written = run
+            .intend(EffectSpec {
+                target: fence.clone(),
+                kind: "test:stress".into(),
+                payload: serde_json::json!({"index": index, "padding": "p".repeat(256)}),
+                settlement: Settlement::Release(serde_json::Value::Null),
+                required: false,
+            })
+            .and_then(|ticket| run.applied(&ticket, serde_json::json!({"index": index})));
+        if let Err(error) = written {
+            println!("STRESS-FAIL {label} effect {index}: {error}");
+            std::process::exit(3);
+        }
+        // A slow writer leaves room for the short runs to interleave.
+        if writes > 1 {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    if let Err(error) = run.finish(WorkloadOutcome::Succeeded) {
+        println!("STRESS-FAIL {label} finish: {error}");
+        std::process::exit(3);
+    }
+    match run.settle(&cleanup, &mut adapter) {
+        Ok(_) => println!("STRESS-DONE {label}"),
+        Err(error) => {
+            println!("STRESS-FAIL {label} settle: {error}");
+            std::process::exit(3);
+        }
+    }
+}
+
+/// The slow writer of the stress proof: one long run writing effects.
+#[test]
+#[ignore]
+fn store_helper_stress_heavy() {
+    if !support::helper_is("store_helper_stress_heavy") {
+        return;
+    }
+    let label = stress_label();
+    println!("STRESS-READY {label}");
+    stress_run(&label, 400);
+}
+
+/// A short run of the stress proof: admit, one effect, settle.
+#[test]
+#[ignore]
+fn store_helper_stress_short() {
+    if !support::helper_is("store_helper_stress_short") {
+        return;
+    }
+    stress_run(&stress_label(), 1);
+}
+
+/// A deliberately long write transaction in another process: the settle proof
+/// needs a store that is really busy, not a simulated one.
+#[test]
+#[ignore]
+fn store_helper_hold_writer() {
+    if !support::helper_is("store_helper_hold_writer") {
+        return;
+    }
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, &stress_home()).unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    let holding = ResourceId::store(Scope::Machine, "stress-hold").unwrap();
+    println!("HOLDING");
+    store
+        .txn(&cx, |txn| {
+            txn.resource(&holding, "test")?;
+            std::thread::sleep(Duration::from_millis(2500));
+            Ok(())
+        })
+        .unwrap();
+    println!("RELEASED");
+}
+
+/// A concurrent writer that measures its own store latency: its longest write
+/// bounds how long any retention batch kept the store.
+#[test]
+#[ignore]
+fn store_helper_write_probe() {
+    if !support::helper_is("store_helper_write_probe") {
+        return;
+    }
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, &stress_home()).unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    let id = ResourceId::store(Scope::Machine, "probe").unwrap();
+    let rounds: usize = std::env::var("EFFIGY_STORE_PROBE_ROUNDS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(200);
+    let mut slowest = Duration::ZERO;
+    let mut busy = 0;
+    for _ in 0..rounds {
+        let started = Instant::now();
+        match store.transaction_within(
+            &cx.child(Duration::from_secs(5)),
+            BusyWait::Context,
+            |txn| txn.resource(&id, "test").map(|_| ()),
+        ) {
+            Ok(()) => slowest = slowest.max(started.elapsed()),
+            Err(StoreError::Busy { .. }) => busy += 1,
+            Err(error) => {
+                println!("PROBE-FAIL {error}");
+                std::process::exit(3);
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    println!("PROBE-MAX {} {}", slowest.as_millis(), busy);
+}
+
+#[test]
+fn store_one_heavy_run_and_twenty_short_runs_never_see_busy() {
+    let home = home();
+    let home_path = home.path().to_str().unwrap().to_owned();
+    let mut heavy = support::Helper::spawn(
+        "store_helper_stress_heavy",
+        &[(STRESS_HOME, &home_path), (STRESS_LABEL, "heavy")],
+    );
+    heavy.expect("STRESS-READY", Duration::from_secs(60));
+    let mut short: Vec<support::Helper> = (0..20)
+        .map(|index| {
+            support::Helper::spawn(
+                "store_helper_stress_short",
+                &[
+                    (STRESS_HOME, &home_path),
+                    (STRESS_LABEL, &format!("short-{index:02}")),
+                ],
+            )
+        })
+        .collect();
+    for (index, helper) in short.iter_mut().enumerate() {
+        assert_eq!(
+            helper.expect("STRESS-DONE", Duration::from_secs(120)),
+            format!("short-{index:02}")
+        );
+        assert!(helper.wait_for_exit().success(), "a short run failed");
+    }
+    assert_eq!(heavy.expect("STRESS-DONE", Duration::from_secs(120)), "heavy");
+    assert!(heavy.wait_for_exit().success(), "the heavy run failed");
+    drop(short);
+    drop(heavy);
+    // Every admitted run closed with its outcome recorded.
+    let root = match StateRoot::observe(&observe(), home.path()) {
+        Observed::Verified(root, _) => root,
+        other => panic!("root {other:?}"),
+    };
+    let reader = match Store::read(&observe(), &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("store {other:?}"),
+    };
+    let runs = match recent(&reader, None, 100) {
+        Observed::Verified(runs, _) => runs,
+        other => panic!("runs {other:?}"),
+    };
+    assert_eq!(runs.len(), 21, "every run was admitted and recorded");
+    for run in &runs {
+        assert_eq!(run.phase, Phase::Closed, "{} is unsettled", run.id);
+        assert_eq!(run.cleanup_complete, Some(true), "{}", run.id);
+        assert_eq!(
+            run.workload,
+            Some(WorkloadOutcome::Succeeded),
+            "{} lost its outcome",
+            run.id
+        );
+    }
+}
+
+#[test]
+fn store_settle_write_survives_another_process_holding_the_store() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, &home.path()).unwrap();
+    let (_, invocation, id) = stress_invocation(&home.path(), "settle-busy", &cx);
+    let cleanup = cx.operation().cleanup(Duration::from_secs(1)).unwrap();
+    let mut adapter = StressAdapter;
+    let run = Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        BeginOpts {
+            id,
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: Invocation::validated(vec!["next".into()], |args| args == ["next"]).unwrap(),
+            custody: None,
+        },
+        &cleanup,
+        &mut adapter,
+    )
+    .unwrap();
+    let mut holder = support::Helper::spawn(
+        "store_helper_hold_writer",
+        &[(STRESS_HOME, home.path().to_str().unwrap())],
+    );
+    holder.expect("HOLDING", Duration::from_secs(30));
+    // The cleanup budget is one second; the store's own settle window is two
+    // minutes. The settle must outlast the other process's write lock and
+    // still record the outcome (K4, §5.5).
+    let started = Instant::now();
+    let outcome = run.settle(&cleanup, &mut adapter).expect("settle lands");
+    let waited = started.elapsed();
+    assert!(
+        waited >= Duration::from_millis(1000),
+        "settle did not wait for the busy store: {waited:?}"
+    );
+    assert_eq!(outcome.workload(), &WorkloadOutcome::Interrupted);
+    assert_eq!(holder.expect("RELEASED", Duration::from_secs(60)), "");
+    assert!(holder.wait_for_exit().success());
+    let reader = match Store::read(&observe(), &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("store {other:?}"),
+    };
+    assert!(matches!(
+        reader.run_phase(&id),
+        Observed::Verified(RunPhaseFact::Closed, _)
+    ));
+}
+
+/// The capped, one-time backlog prune on a synthetic store of about 120 MB and
+/// 20k runs: bounded passes, no Busy refusal for concurrent admissions or
+/// writes, and the freed space reclaimed once the store is quiet. Run it
+/// explicitly:
+/// `nextest run -p effigy-kernel --features fault-injection --test store \
+///  -E 'test(store_backlog_)' --run-ignored only`.
+#[test]
+#[ignore]
+fn store_backlog_prune_shrinks_a_large_store_without_busy_refusals() {
+    use std::io::Write;
+    let home = home();
+    // The backlog catches up in short passes; the proof's own context is long
+    // because there are many passes, not because any write waits.
+    let cx = operation(EffectClass::Mutate, Placement::Host, Duration::from_secs(900))
+        .effects()
+        .unwrap();
+    let root = StateRoot::effects(&cx, &home.path()).unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    let total: usize = std::env::var("EFFIGY_STORE_BACKLOG_RUNS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(20_000);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    // About 6 KB per run: a successful settled run two days old, with the
+    // invocation blob a real task run carries.
+    let padding = "p".repeat(4_800);
+    let owner = ResourceId::store(Scope::Machine, "backlog").unwrap();
+    store
+        .txn(&cx, |txn| txn.resource(&owner, "test").map(|_| ()))
+        .unwrap();
+    // Fixture setup writes the rows directly: the public kernel API admits one
+    // run at a time, and this proof needs a large settled backlog quickly.
+    {
+        let connection = rusqlite::Connection::open(root.path().join(DB_NAME)).unwrap();
+        connection.busy_timeout(Duration::from_secs(30)).unwrap();
+        let mut created = 0;
+        while created < total {
+            let batch: Vec<(String, String)> = (created..(created + 500).min(total))
+                .map(|index| {
+                    let id = RunId::new(1_000 + index as u64, [0xab; 10])
+                        .unwrap()
+                        .to_string();
+                    (id, format!("{index}-{padding}"))
+                })
+                .collect();
+            connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+            {
+                let mut statement = connection
+                    .prepare(
+                        "INSERT INTO runs(run_id, owner, generation, kind, placement, phase, \
+                         cleanup_outcome, workload_outcome, invocation, created_at, updated_at, \
+                         closed_at) VALUES (?1,?2,1,'task','host','closed','complete',\
+                         '\"Succeeded\"',?3,?4,?4,?4)",
+                    )
+                    .unwrap();
+                for (id, text) in &batch {
+                    statement
+                        .execute(rusqlite::params![
+                            id,
+                            owner.name().to_string(),
+                            text,
+                            now - 2 * 86_400_000
+                        ])
+                        .unwrap();
+                }
+            }
+            connection.execute_batch("COMMIT").unwrap();
+            created += batch.len();
+        }
+    }
+    let size = std::fs::metadata(root.path().join(DB_NAME)).unwrap().len();
+    let mut probe = support::Helper::spawn(
+        "store_helper_write_probe",
+        &[(STRESS_HOME, home.path().to_str().unwrap())],
+    );
+    let mut admissions: Vec<support::Helper> = (0..4)
+        .map(|index| {
+            support::Helper::spawn(
+                "store_helper_stress_short",
+                &[
+                    (STRESS_HOME, home.path().to_str().unwrap()),
+                    (STRESS_LABEL, &format!("backlog-short-{index}")),
+                ],
+            )
+        })
+        .collect();
+    let started = Instant::now();
+    let mut passes = 0;
+    let mut skipped = 0;
+    let mut slowest = Duration::ZERO;
+    loop {
+        let pass_started = Instant::now();
+        match effigy_kernel::retention::retain(
+            &cx,
+            &root,
+            &mut store,
+            effigy_kernel::retention::RetentionBudget {
+                max_removals: effigy_kernel::retention::SWEEP_ROWS,
+            },
+        ) {
+            Ok(pass) => {
+                slowest = slowest.max(pass_started.elapsed());
+                passes += 1;
+                if std::env::var_os("EFFIGY_STORE_BACKLOG_VERBOSE").is_some() {
+                    println!(
+                        "backlog pass {passes}: {} runs removed in {:?}",
+                        pass.runs,
+                        pass_started.elapsed()
+                    );
+                }
+                if !pass.exhausted {
+                    break;
+                }
+            }
+            // A busy store skips this pass; the next sweep tries again. That
+            // is the production policy: retention never waits on a writer.
+            Err(StoreError::Busy { .. }) => skipped += 1,
+            Err(error) => panic!("retention: {error}"),
+        }
+        if passes + skipped > 2_000 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let prune = started.elapsed();
+    drop(store);
+    for helper in &mut admissions {
+        let _ = helper.expect("STRESS-DONE", Duration::from_secs(300));
+        assert!(helper.wait_for_exit().success());
+    }
+    let probe_line = probe.expect("PROBE-MAX", Duration::from_secs(300));
+    assert!(probe.wait_for_exit().success());
+    let (probe_max, probe_busy) = probe_line.split_once(' ').unwrap();
+    let after_prune = std::fs::metadata(root.path().join(DB_NAME)).unwrap().len();
+    let free_after_prune = {
+        let diagnostic = rusqlite::Connection::open(root.path().join(DB_NAME)).unwrap();
+        let pages: i64 = diagnostic
+            .query_row("PRAGMA freelist_count", [], |row| row.get(0))
+            .unwrap();
+        let page_size: i64 = diagnostic
+            .query_row("PRAGMA page_size", [], |row| row.get(0))
+            .unwrap();
+        (pages * page_size) as u64
+    };
+    // No reader may stay open here: SQLite cannot truncate a WAL database
+    // while another connection holds a read mark.
+    {
+        let reader = match Store::read(&observe(), &root) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("store {other:?}"),
+        };
+        let kept = match recent(&reader, None, 10_000) {
+            Observed::Verified(runs, _) => runs,
+            other => panic!("runs {other:?}"),
+        };
+        assert!(
+            kept.len() as i64 <= effigy_kernel::retention::SETTLED_RUNS_KEPT_TOTAL,
+            "{} settled runs were kept, over the history bound",
+            kept.len()
+        );
+    }
+    // Freed pages are reused: the store keeps writing without growing, so the
+    // file stays bounded by the retained history even before a quiet VACUUM.
+    {
+        let connection = rusqlite::Connection::open(root.path().join(DB_NAME)).unwrap();
+        connection.busy_timeout(Duration::from_secs(30)).unwrap();
+        connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+        {
+            let mut statement = connection
+                .prepare(
+                    "INSERT INTO runs(run_id, owner, generation, kind, placement, phase, \
+                     cleanup_outcome, workload_outcome, invocation, created_at, updated_at, \
+                     closed_at) VALUES (?1,?2,1,'task','host','closed','complete',\
+                     '\"Succeeded\"',?3,?4,?4,?4)",
+                )
+                .unwrap();
+            for index in 0..(total / 4) {
+                let id = RunId::new(900_000 + index as u64, [0xcd; 10])
+                    .unwrap()
+                    .to_string();
+                statement
+                    .execute(rusqlite::params![
+                        id,
+                        owner.name().to_string(),
+                        format!("{index}-{padding}"),
+                        now
+                    ])
+                    .unwrap();
+            }
+        }
+        connection.execute_batch("COMMIT").unwrap();
+    }
+    let after_reuse = std::fs::metadata(root.path().join(DB_NAME)).unwrap().len();
+    let mut report = std::io::stdout();
+    writeln!(
+        report,
+        "backlog proof: before={} MB after_prune={} MB after_reuse={} MB \
+         passes={passes} skipped={skipped} prune={:?} slowest_pass={slowest:?} \
+         slowest_concurrent_write={probe_max} ms probe_busy={probe_busy} \
+         freelist_after_prune={} MB",
+        size / (1 << 20),
+        after_prune / (1 << 20),
+        after_reuse / (1 << 20),
+        prune,
+        free_after_prune / (1 << 20)
+    )
+    .unwrap();
+    assert_eq!(probe_busy, "0", "a concurrent write was refused as busy");
+    assert!(
+        after_prune <= size,
+        "the backlog prune grew the store: {size} -> {after_prune}"
+    );
+    assert!(
+        after_reuse <= size + (4 << 20),
+        "freed pages were not reused: {size} -> {after_reuse}"
+    );
 }

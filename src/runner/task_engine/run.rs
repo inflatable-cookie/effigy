@@ -45,10 +45,6 @@ pub(in crate::runner) fn shared_scope_label(lock: &str) -> String {
 }
 /// Provenance key under which a managed run's token is recorded, as a digest.
 pub(in crate::runner) const MANAGED_RUN_PROVENANCE: &str = "managed-run-token";
-/// Retention per sweep: bounded work in short batches, Mutate-only, never an
-/// unsettled run (K15). A sweep is at most once a minute across the machine,
-/// so this ceiling is the most one close can ever spend on retention.
-const RETENTION_PER_CLOSE: usize = 1024;
 
 /// `--lock-wait-ms`, else `EFFIGY_LOCK_WAIT_MS`, else fail fast.
 pub(in crate::runner) fn resolve_lock_wait_ms(explicit: Option<u64>) -> Result<u64, RunnerError> {
@@ -695,7 +691,6 @@ impl TaskRun {
             None => (None, Vec::new()),
         };
         drop(admission);
-        retain();
         let (outcome, mut warnings) = result;
         warnings.extend(scratch);
         (outcome, warnings)
@@ -722,7 +717,6 @@ impl TaskRun {
             warnings.extend(close_run(shared, mirrored));
         }
         drop(admission);
-        retain();
         warnings
     }
 
@@ -896,37 +890,6 @@ pub(in crate::runner) fn request_run_stop(id: RunId) -> Result<(), RunnerError> 
             "run {id} is not readable for a stop request"
         ))),
     }
-}
-
-fn retain() {
-    // Stopgap (2026-10-22, planner): retention on the close path scans the
-    // whole run table inside a write transaction, which holds the machine-wide
-    // store lock for seconds per close and refuses every other admission with
-    // `store refused: Busy`. Skip it unless explicitly requested; effigy#275
-    // moves retention off the close path with indexed, batched transactions.
-    if std::env::var_os("EFFIGY_RETENTION_ON_CLOSE").as_deref() != Some(std::ffi::OsStr::new("1")) {
-        return;
-    }
-    let Ok(root) = kernel::effects_root() else {
-        return;
-    };
-    let cx = kernel::effects();
-    let Ok(mut store) = Store::open(&cx.child(Duration::from_secs(5)), root) else {
-        return;
-    };
-    // Concurrent closes must not stack retention scans: one sweep a minute,
-    // claimed before its work, keeps a close independent of store size (K15).
-    if !effigy_kernel::retention::due(&store).unwrap_or(false) {
-        return;
-    }
-    let _ = effigy_kernel::retention::retain(
-        &cx.child(Duration::from_secs(5)),
-        root,
-        &mut store,
-        effigy_kernel::retention::RetentionBudget {
-            max_removals: RETENTION_PER_CLOSE,
-        },
-    );
 }
 
 fn invocation(

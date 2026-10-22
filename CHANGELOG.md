@@ -6,6 +6,27 @@ During v0.x, MINOR bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Fixed
+- Concurrent Effigy runs no longer refuse each other with `state store: store
+  refused: Busy` (effigy#275). The runtime store moved to write-ahead logging,
+  serializes its writers on the store's own gate so a refusal names the
+  holder's pid and run, and waits for its own window (30 s for admission and
+  effects, two minutes for settle) instead of the workload's remaining
+  deadline. Opening a current store no longer takes the write lock, and settle
+  and outcome writes can no longer be lost to a busy store: a run that still
+  cannot record its close stays unsettled for its sentinel or the next holder
+  of its gate, and is never reported as a failed task.
+- Retention no longer runs its whole-table scan inside a write transaction on
+  every task close, which had held the machine-wide store lock for minutes and
+  blocked every other run. A bounded, index-driven sweep at admission, at most
+  once per ten minutes per machine, prunes settled successful runs after 24
+  hours (keeping the newest 20 per task), failed runs after 7 days, and keeps
+  the store under a 4,000-run history bound, deleting in short batches with a
+  bounded checkpoint and incremental vacuum. `runs/<id>/` goes with its row
+  and stale `gates/` scopes are removed, so `kernel.db` and its directories
+  stay proportionate. `EFFIGY_RETENTION_ON_CLOSE` is gone: retention never
+  runs on the close path.
+
 ### Breaking
 - Local custody receipts add a process-group anchor. Recovery can stop
   descendants that cleared their environment after their leader was reaped.

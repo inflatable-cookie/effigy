@@ -265,6 +265,10 @@ impl<'a> Run<'a> {
         parent: Option<RunId>,
     ) -> Result<Self, RunError> {
         crate::fault_point!(BeginBefore)?;
+        // Retention is a bounded, rate-limited pass at admission, never on the
+        // close path: every engine admits runs, and no close holds the store
+        // (K15, §7.4). It takes no gate, so the run's own acquisition is next.
+        crate::retention::sweep(cx, root);
         if cx.operation().placement() != crate::ctx::Placement::Host
             || inv.spec().placement != crate::ctx::Placement::Host
         {

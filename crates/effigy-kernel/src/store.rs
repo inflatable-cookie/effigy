@@ -234,6 +234,15 @@ impl Store {
     /// Opens for writing: creates `kernel.db` 0600, applies the settings in
     /// §5.5, and creates or checks the schema (I-S5).
     pub fn open(cx: &EffectContext, root: &StateRoot) -> Result<Self, StoreError> {
+        Self::open_within(cx, root, BusyWait::AtLeast(STORE_BUSY_WAIT))
+    }
+    /// An open with an explicit wait policy. Optional work (a retention pass)
+    /// passes `BusyWait::Context`, so a busy store is skipped, not waited for.
+    pub fn open_within(
+        cx: &EffectContext,
+        root: &StateRoot,
+        wait: BusyWait,
+    ) -> Result<Self, StoreError> {
         if !root.writable() {
             return Err(StoreError::Untrusted {
                 path: root.path().into(),
@@ -250,7 +259,7 @@ impl Store {
                 limit: MAX_DB_BYTES,
             });
         }
-        check_store_files(root)?;
+        check_store_files(root).map_err(StoreError::from)?;
         let conn = Connection::open_with_flags(
             root.dir().join(DB_NAME),
             OpenFlags::SQLITE_OPEN_READ_WRITE
@@ -262,7 +271,7 @@ impl Store {
             root: root.clone(),
             run: None,
         };
-        store.configure(cx)?;
+        store.configure(cx, wait)?;
         Ok(store)
     }
     /// Names the run this store writes for, so a refused writer wait names it.
@@ -272,11 +281,15 @@ impl Store {
     /// Write-ahead logging, the durable settings and the schema, under the
     /// store's own writer gate. A current store is only read here: opening it
     /// never takes the write lock (a hot path with many concurrent runs).
-    fn configure(&mut self, cx: &EffectContext) -> Result<(), StoreError> {
-        let window = BusyWait::AtLeast(STORE_BUSY_WAIT).window(cx);
+    fn configure(&mut self, cx: &EffectContext, wait: BusyWait) -> Result<(), StoreError> {
+        let window = wait.window(cx);
         let patient = cx.patience(window);
         let started = Instant::now();
         let _gate = self.writer_gate(&patient, window)?;
+        // Incremental auto-vacuum must be chosen while the store is empty, and
+        // before write-ahead logging materialises its header. On an existing
+        // store this is only pending until retention's one-time `VACUUM`.
+        self.conn.execute_batch("PRAGMA auto_vacuum=INCREMENTAL")?;
         self.set_journal_mode(&patient, started + window)?;
         self.conn.execute_batch(&format!(
             "PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF; \
@@ -329,7 +342,7 @@ impl Store {
         }
         let busy = cx.remaining();
         if let Err(error) = check_store_files(root) {
-            return Observed::Unknown(read_unknown(&error));
+            return Observed::Unknown(crate::root::unknown(&error));
         }
         let name = FileName::new(DB_NAME).expect("fixed name");
         match root
@@ -347,14 +360,23 @@ impl Store {
             | OpenFlags::SQLITE_OPEN_NOFOLLOW
             | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let opened = match Connection::open_with_flags(root.dir().join(DB_NAME), flags) {
-            Ok(conn) => verify_reader(conn, busy),
-            // A WAL store on a read-only root cannot create its `-shm` index.
-            // Nothing can write such a root, so its checkpointed file is read
-            // immutably and no file is created.
-            Err(error) if error.sqlite_error_code() == Some(ErrorCode::CannotOpen) => {
-                read_immutable(root, busy)
+            Ok(conn) => match verify_reader(conn, busy) {
+                // A WAL store on a read-only root cannot create its `-shm`
+                // index: SQLite refuses on open or on the first read with
+                // CANTOPEN, READONLY or PERM. Nothing can write such a root,
+                // so its checkpointed file is read immutably and no file is
+                // created.
+                Err(error) if needs_writable_root(&error) => read_immutable(root, busy),
+                other => other,
+            },
+            Err(error) => {
+                let error = StoreError::from(error);
+                if needs_writable_root(&error) {
+                    read_immutable(root, busy)
+                } else {
+                    Err(error)
+                }
             }
-            Err(error) => Err(StoreError::from(error)),
         };
         match opened {
             Ok(Some(reader)) => Observed::Verified(reader, evidence("kernel store")),
@@ -500,6 +522,7 @@ impl Store {
     /// Bounded maintenance (§7.4): checkpoint the log, migrate an old store to
     /// incremental auto-vacuum once, then release at most `pages` free pages.
     pub fn maintain(&mut self, cx: &EffectContext, pages: u32) -> Result<MaintainReport, StoreError> {
+        let started = Instant::now();
         let mut report = MaintainReport::default();
         let window = BusyWait::AtLeast(STORE_BUSY_WAIT).window(cx);
         let patient = cx.patience(window);
@@ -545,12 +568,19 @@ impl Store {
         let free: i64 = self
             .conn
             .query_row("PRAGMA freelist_count", [], |row| row.get(0))?;
+        report.free_before = free as u32;
+        report.auto_vacuum = vacuum;
         let take = i64::from(pages).min(free);
         if vacuum == 2 && take > 0 {
             self.conn
                 .execute_batch(&format!("PRAGMA incremental_vacuum({take})"))?;
             report.freed_pages = take as u32;
         }
+        report.free_after = self
+            .conn
+            .query_row("PRAGMA freelist_count", [], |row| row.get::<_, i64>(0))?
+            as u32;
+        report.elapsed_ms = u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX);
         Ok(report)
     }
     /// O6: integrity and foreign-key checks.
@@ -672,6 +702,13 @@ pub struct MaintainReport {
     pub migrated_auto_vacuum: bool,
     /// Free pages released to the filesystem by incremental vacuum.
     pub freed_pages: u32,
+    /// Free pages the vacuum pass saw, and those left afterwards.
+    pub free_before: u32,
+    pub free_after: u32,
+    /// The auto-vacuum mode the pass observed.
+    pub auto_vacuum: i64,
+    /// Wall time this pass spent inside maintenance.
+    pub elapsed_ms: u32,
 }
 
 /// Typed operations inside one transaction. Not `Send`: it cannot leave the
@@ -1087,7 +1124,7 @@ fn busy(error: GateError) -> StoreError {
 /// The store's own files: the database and, during commits, its write-ahead
 /// log and shared-memory index. Each one must carry the private-file trust
 /// (§7.1), including the log and index a WAL store keeps (§5.5).
-fn check_store_files(root: &StateRoot) -> Result<(), StoreError> {
+fn check_store_files(root: &StateRoot) -> Result<(), FsError> {
     for suffix in ["", "-journal", "-wal", "-shm"] {
         let name = FileName::new(&format!("{DB_NAME}{suffix}"))?;
         if let Some(stat) = root.dir().entry(&name)? {
@@ -1134,6 +1171,19 @@ fn read_immutable(root: &StateRoot, busy: Duration) -> Result<Option<StoreReader
             | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
     verify_reader(conn, busy)
+}
+/// Whether this failure is SQLite's "this root cannot host a WAL index": the
+/// only case where an immutable open is both possible and safe.
+fn needs_writable_root(error: &StoreError) -> bool {
+    match error {
+        StoreError::Io(io) => io.is_permission(),
+        StoreError::Sqlite { code, .. } => {
+            let primary = code & 0xff;
+            // SQLITE_READONLY, SQLITE_PERM and SQLITE_CANTOPEN.
+            matches!(primary, 8 | 3 | 14)
+        }
+        _ => false,
+    }
 }
 /// Percent-escapes the characters a SQLite URI reserves.
 fn uri_path(path: PathBuf) -> String {
@@ -1242,7 +1292,7 @@ fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
 /// Indexes §7.4 retention needs, as additive schema-1 changes. Retention's
 /// candidates and deletes are index-driven, so a sweep costs the same on a
 /// small store and a hundred-thousand-run store.
-const ADDITIVE_INDEXES: [(&str, &str); 6] = [
+const ADDITIVE_INDEXES: [(&str, &str); 10] = [
     (
         "runs_settled",
         "CREATE INDEX IF NOT EXISTS runs_settled ON runs(created_at)",
@@ -1254,6 +1304,22 @@ const ADDITIVE_INDEXES: [(&str, &str); 6] = [
     (
         "claims_holder",
         "CREATE INDEX IF NOT EXISTS claims_holder ON claims(holder)",
+    ),
+    (
+        "claims_run",
+        "CREATE INDEX IF NOT EXISTS claims_run ON claims(run_id)",
+    ),
+    (
+        "runs_parent",
+        "CREATE INDEX IF NOT EXISTS runs_parent ON runs(parent_run)",
+    ),
+    (
+        "requests_run",
+        "CREATE INDEX IF NOT EXISTS requests_run ON requests(run_id)",
+    ),
+    (
+        "attachments_run",
+        "CREATE INDEX IF NOT EXISTS attachments_run ON attachments(run_id)",
     ),
     (
         "object_refs_resource",
@@ -1324,11 +1390,6 @@ CREATE TABLE runs (
 ) STRICT;
 CREATE INDEX runs_owner ON runs(owner, created_at);
 CREATE INDEX runs_settled ON runs(created_at);
-CREATE INDEX resources_updated ON resources(updated_at);
-CREATE INDEX claims_holder ON claims(holder);
-CREATE INDEX object_refs_resource ON object_refs(resource);
-CREATE INDEX checkouts_live_seen ON checkouts(state, last_seen);
-CREATE INDEX checkouts_tombstoned ON checkouts(state, unreferenced_since);
 
 CREATE TABLE events (
   run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
@@ -1399,4 +1460,13 @@ CREATE TABLE logs (
   redaction TEXT NOT NULL,
   PRIMARY KEY (run_id, stream)
 ) STRICT;
+CREATE INDEX resources_updated ON resources(updated_at);
+CREATE INDEX claims_holder ON claims(holder);
+CREATE INDEX claims_run ON claims(run_id);
+CREATE INDEX runs_parent ON runs(parent_run);
+CREATE INDEX requests_run ON requests(run_id);
+CREATE INDEX attachments_run ON attachments(run_id);
+CREATE INDEX object_refs_resource ON object_refs(resource);
+CREATE INDEX checkouts_live_seen ON checkouts(state, last_seen);
+CREATE INDEX checkouts_tombstoned ON checkouts(state, unreferenced_since);
 ";
