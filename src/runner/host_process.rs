@@ -2881,10 +2881,9 @@ impl OwnedHostChild {
             Err(OwnedChildReapError::Observation(error)) => Some(error),
             Err(OwnedChildReapError::Wait(error)) => return Err(error),
         };
-        if let Err(error) = self.signal(Signal::SIGTERM) {
-            // On macOS a zombie-only group can reject signaling with EPERM.
+        if let Err(error) = self.send_group_signal(Signal::SIGTERM, deadline) {
             // A race to quiescence is success only after positive observation
-            // and the actual owned reap; never ignore a permission failure.
+            // and the actual owned reap; never ignore an unverified refusal.
             return match observe(self, deadline) {
                 Ok(Some(status)) => Ok(status),
                 Err(OwnedChildReapError::Wait(wait_error)) => Err(wait_error),
@@ -2903,7 +2902,7 @@ impl OwnedHostChild {
                     )));
                 }
                 deadline = Instant::now() + Duration::from_secs(2);
-                if let Err(error) = self.signal(Signal::SIGKILL) {
+                if let Err(error) = self.send_group_signal(Signal::SIGKILL, deadline) {
                     return match observe(self, deadline) {
                         Ok(Some(status)) => Ok(status),
                         Err(OwnedChildReapError::Wait(wait_error)) => Err(wait_error),
@@ -2938,8 +2937,8 @@ impl OwnedHostChild {
             return Ok(None);
         }
         // Observe exit first, then members: the exited root cannot fork
-        // between this snapshot and its reap. Any other member holds it.
-        let members = observe_owned_group_members(self.id(), deadline)
+        // between this snapshot and its reap. Any other live member holds it.
+        let members = observe_owned_group_live_members(self.id(), deadline)
             .map_err(OwnedChildReapError::Observation)?;
         if members.iter().any(|pid| *pid != self.id()) {
             return Ok(None);
@@ -2956,6 +2955,24 @@ impl OwnedHostChild {
     fn signal(&self, signal: Signal) -> Result<(), RunnerError> {
         match kill(Pid::from_raw(-(self.id() as i32)), signal) {
             Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
+            Err(error) => Err(RunnerError::task_invocation(format!(
+                "cannot signal directly owned child group: {error}"
+            ))),
+        }
+    }
+
+    /// Send `signal` to the group this spawn path created. macOS answers a
+    /// group signal with EPERM when every remaining member is a zombie, so a
+    /// refusal is verified against a fresh live-member inventory before it is
+    /// treated as lost authority (papercut 91d3fd91).
+    fn send_group_signal(&self, signal: Signal, deadline: Instant) -> Result<(), RunnerError> {
+        match kill(Pid::from_raw(-(self.id() as i32)), signal) {
+            Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
+            Err(nix::errno::Errno::EPERM) => classify_owned_signal_refusal(
+                signal,
+                nix::errno::Errno::EPERM,
+                observe_owned_group_live_members(self.id(), deadline),
+            ),
             Err(error) => Err(RunnerError::task_invocation(format!(
                 "cannot signal directly owned child group: {error}"
             ))),
@@ -3058,8 +3075,40 @@ fn classify_owned_child_exit(
     )))
 }
 
-/// Finite PID/group-only inventory: never retain arguments or command output.
-fn observe_owned_group_members(pid: u32, deadline: Instant) -> Result<Vec<u32>, RunnerError> {
+/// A group this process created can only be refused by a live member that will
+/// not accept the signal. Re-inventory before believing the refusal: no live
+/// member means the group holds no workload and the caller may keep settling.
+/// An unavailable inventory proves nothing and keeps the refusal.
+fn classify_owned_signal_refusal(
+    signal: Signal,
+    error: nix::errno::Errno,
+    live_members: Result<Vec<u32>, RunnerError>,
+) -> Result<(), RunnerError> {
+    match live_members {
+        Ok(members) if members.is_empty() => Ok(()),
+        Ok(members) => Err(RunnerError::task_invocation(format!(
+            "cannot signal directly owned child group: {error}; live members refused {signal:?}: {members:?}"
+        ))),
+        Err(observation) => Err(RunnerError::task_invocation(format!(
+            "cannot signal directly owned child group: {error}; group liveness is unavailable: {observation}"
+        ))),
+    }
+}
+
+/// A member in a zombie or dead state holds no workload, so it keeps no group
+/// open (`052` §12: an unreaped zombie supplies no workload). Any other state,
+/// including one this build cannot classify, is live: uncertainty never widens
+/// authority.
+fn member_state_is_dead(state: &str) -> bool {
+    matches!(state.as_bytes().first(), Some(b'Z' | b'X'))
+}
+
+/// Finite PID/group/state inventory: never retain arguments or command output.
+/// `holds_workload` is false only for a member in a zombie or dead state.
+fn observe_owned_group_inventory(
+    pid: u32,
+    deadline: Instant,
+) -> Result<Vec<(u32, bool)>, RunnerError> {
     use super::exec_command::{BoundedCommandBudget, BoundedCommandPhase};
     let started = Instant::now();
     let mut budget = BoundedCommandBudget::new(
@@ -3072,7 +3121,7 @@ fn observe_owned_group_members(pid: u32, deadline: Instant) -> Result<Vec<u32>, 
         .run_command(
             Path::new("/"),
             std::ffi::OsStr::new("/bin/ps"),
-            &["-Ao".into(), "pid=,pgid=".into()],
+            &["-Ao".into(), "pid=,pgid=,stat=".into()],
             None,
             &[],
             BoundedCommandPhase::CommandExecution,
@@ -3095,10 +3144,13 @@ fn observe_owned_group_members(pid: u32, deadline: Instant) -> Result<Vec<u32>, 
         let mut fields = row.split_whitespace();
         let member = fields.next().and_then(|value| value.parse::<u32>().ok());
         let group = fields.next().and_then(|value| value.parse::<u32>().ok());
-        match (member, group, fields.next()) {
-            (Some(member), Some(group), None) if member > 0 && member <= i32::MAX as u32 => {
+        let state = fields.next();
+        match (member, group, state, fields.next()) {
+            (Some(member), Some(group), Some(state), None)
+                if member > 0 && member <= i32::MAX as u32 =>
+            {
                 if group == pid {
-                    members.push(member);
+                    members.push((member, !member_state_is_dead(state)));
                 }
             }
             _ => {
@@ -3109,6 +3161,22 @@ fn observe_owned_group_members(pid: u32, deadline: Instant) -> Result<Vec<u32>, 
         }
     }
     Ok(members)
+}
+
+/// Every process the kernel still lists in the owned group, including zombies.
+fn observe_owned_group_members(pid: u32, deadline: Instant) -> Result<Vec<u32>, RunnerError> {
+    Ok(observe_owned_group_inventory(pid, deadline)?
+        .into_iter()
+        .map(|(member, _)| member)
+        .collect())
+}
+
+/// Members that still hold workload: a zombie keeps no group open.
+fn observe_owned_group_live_members(pid: u32, deadline: Instant) -> Result<Vec<u32>, RunnerError> {
+    Ok(observe_owned_group_inventory(pid, deadline)?
+        .into_iter()
+        .filter_map(|(member, holds_workload)| holds_workload.then_some(member))
+        .collect())
 }
 
 fn terminate_owned_child_group(
@@ -3862,12 +3930,73 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(
-        all(target_os = "macos", effigy_shared_process),
-        ignore = "known v0.15 rebuild defect: papercut 91d3fd91-3890-40c6-a138-ecb6fd7c4e83; owner lane v015-supervisor"
-    )]
     fn host_process_owned_observation_unavailable_after_term_keeps_stop_authority() {
         assert_owned_observation_recovers(UnavailablePhase::AfterTerm);
+    }
+
+    #[test]
+    fn host_process_owned_signal_refusal_separates_settled_groups_from_live_refusals() {
+        assert!(classify_owned_signal_refusal(
+            Signal::SIGTERM,
+            nix::errno::Errno::EPERM,
+            Ok(Vec::new())
+        )
+        .is_ok());
+        let live = classify_owned_signal_refusal(
+            Signal::SIGKILL,
+            nix::errno::Errno::EPERM,
+            Ok(vec![4242]),
+        )
+        .expect_err("a live member that refused the signal is a genuine refusal");
+        assert!(live.to_string().contains("4242"), "{live}");
+        let unknown = classify_owned_signal_refusal(
+            Signal::SIGTERM,
+            nix::errno::Errno::EPERM,
+            Err(RunnerError::task_invocation(
+                "controlled unavailable group inventory",
+            )),
+        )
+        .expect_err("an unavailable inventory cannot prove settlement");
+        assert!(
+            unknown
+                .to_string()
+                .contains("group liveness is unavailable"),
+            "{unknown}"
+        );
+    }
+
+    /// macOS refuses a group signal with EPERM when every remaining member is a
+    /// zombie (papercut 91d3fd91). That is not foreign ownership: this spawn
+    /// path created the group, the unreaped Child pins its PID, and the group
+    /// holds no live workload. With completion observation unavailable the stop
+    /// still cannot supply an exit status, so it reports the held generation
+    /// rather than lost signal authority.
+    #[test]
+    fn host_process_owned_zombie_only_group_signal_refusal_keeps_stop_authority() {
+        let mut command = ProcessCommand::new("/bin/sh");
+        command.args(["-c", "exit 7"]);
+        configure_child_process_group(&mut command);
+        let mut owned = OwnedHostChild::new(command.spawn().unwrap());
+        wait_for_owned_fixture_root_exit(owned.id(), Instant::now() + Duration::from_secs(5));
+        let error = owned
+            .stop_with_observer(Duration::from_millis(50), |_, _| {
+                Err(OwnedChildReapError::Observation(
+                    RunnerError::task_invocation("controlled unavailable completion observation"),
+                ))
+            })
+            .unwrap_err();
+        let rendered = error.to_string();
+        assert!(rendered.contains("leaving generation held"), "{rendered}");
+        assert!(
+            !rendered.contains("cannot signal directly owned child group"),
+            "a zombie-only owned group must keep stop authority: {rendered}"
+        );
+        assert!(!owned.reaped, "uncertainty cannot supply an exit status");
+        // The real positive predicate and the actual owned wait settle this
+        // private fixture, so teardown needs no extra signal or retry.
+        let status = owned.stop(Duration::from_secs(2)).unwrap();
+        assert_eq!(status.code(), Some(7));
+        assert!(owned.reaped);
     }
 
     #[test]

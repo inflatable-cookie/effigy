@@ -811,6 +811,13 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- A managed host child group that macOS reports as refusing a group signal
+  with `EPERM` keeps its stop authority when every remaining member is a
+  zombie. The stop now re-inventories live members instead of treating the
+  refusal itself as failure, so a macOS stop no longer reports "cannot signal
+  directly owned child group" for a group that has already quiesced. A live
+  member that refuses the signal, and a group whose liveness cannot be read,
+  still leave the generation held (papercut 91d3fd91).
 - Sequential `Terminal::Foreground` children no longer stop their owner with
   SIGTTOU, which suspended `effigy gateway setup` after `mkcert -install`
   ("suspended (tty output)") while it held the `gateway-setup` gate
