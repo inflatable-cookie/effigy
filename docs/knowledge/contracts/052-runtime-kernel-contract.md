@@ -2101,7 +2101,7 @@ Environment reconciler adoption, tranche 3 (effigy#230, 2026-10-20):
 | Record and transition locks | `crates/effigy-gateway/src/identity.rs:870`; `crates/effigy-gateway/src/transition_lock.rs` | `Gate(Gateway)` |
 | Routes, ports and loopback files under `RouteTableLock` | `crates/effigy-gateway/src/routes.rs:188`, `:262`; `crates/effigy-gateway/src/ports.rs:137-155`; `crates/effigy-gateway/src/ports/reclaim.rs:109-113`; `crates/effigy-gateway/src/loopback.rs:81` | endpoint claims with revisions (I-A3, I-A4) |
 | Listener claim check turns unknown into false | `crates/effigy-gateway/src/registration.rs:81` | `Observed` (R3) |
-| Reuse of an unverified gateway | `src/runner/gateway_command/mod.rs:168` | R3 |
+| Reuse of an unverified gateway | `src/runner/gateway_command/mod.rs:140` | R3 |
 
 ### 10.5 Other runs and stores
 

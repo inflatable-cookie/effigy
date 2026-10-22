@@ -10,14 +10,6 @@ use effigy_cli::{
 };
 use effigy_containers::exec::list_running_compose_containers;
 use effigy_gateway::identity::{self, GatewayIdentityProbe, GatewayRecordSnapshot};
-use effigy_gateway::listener_handoff::maintenance::{
-    observe_handoff_maintenance, observe_handoff_maintenance_for_removal, removal_plan_steps,
-    render_removal_human, render_status_human, HandoffMaintenanceReport, RemovalDisposition,
-    LAUNCHD_PLIST_PATH,
-};
-use effigy_gateway::listener_handoff::{
-    ListenerHandoffSetup, HANDOFF_HTTPS_SOCKET_NAME, HANDOFF_HTTP_SOCKET_NAME, LAUNCHD_JOB_LABEL,
-};
 use effigy_gateway::routes::RouteTable;
 use effigy_gateway::server::{
     self, GatewayConfig, GatewayProcessProbe, GatewayStatus, VerifiedGatewayStatus,
@@ -123,15 +115,6 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
             run_gateway_repair_with_config(&config, yes, args.output_json)
         }
         GatewaySubcommand::SetupTls => run_gateway_setup_tls_with_config(&config, args.output_json),
-        GatewaySubcommand::SetupListenerHandoff => {
-            run_gateway_setup_listener_handoff_with_config(&config, args.output_json)
-        }
-        GatewaySubcommand::ListenerHandoffStatus => {
-            run_gateway_listener_handoff_status(args.output_json)
-        }
-        GatewaySubcommand::RemoveListenerHandoff => {
-            run_gateway_remove_listener_handoff(args.output_json)
-        }
     }
 }
 
@@ -1415,139 +1398,6 @@ fn run_gateway_setup_tls_with_config(
             .unwrap_or_default(),
         tls_config.certs_dir.display()
     ))
-}
-
-/// Render the launchd listener-handoff setup definition for the operator.
-///
-/// SOURCE candidate only: this prints generated definition bytes and the
-/// operator-owned next steps. It never registers a launchd job, binds the
-/// privileged endpoints, or touches live gateway state; installation and
-/// verification belong to Tom alone (architecture 034, guide 063).
-fn run_gateway_setup_listener_handoff_with_config(
-    _config: &GatewayConfig,
-    output_json: bool,
-) -> Result<String, RunnerError> {
-    let setup = ListenerHandoffSetup::for_current_operator()
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let definition = setup.render_launchd_plist();
-
-    if output_json {
-        return Ok(json!({
-            "schema": "effigy.gateway.command.v1",
-            "schema_version": 1,
-            "ok": true,
-            "action": "setup-listener-handoff",
-            "result": "definition_generated",
-            "label": setup.label,
-            "program": setup.program_path.display().to_string(),
-            "user": setup.user_name,
-            "group": setup.group_name,
-            "home": setup.home.display().to_string(),
-            "registration": "operator_managed",
-            "definition": definition,
-        })
-        .to_string());
-    }
-
-    Ok(format!(
-        "[ok] listener handoff definition generated (SOURCE candidate; nothing is installed)\n\nlabel: {LAUNCHD_JOB_LABEL}\nsockets: tcp/127.0.0.1:80 ({HANDOFF_HTTP_SOCKET_NAME}), tcp/127.0.0.1:443 ({HANDOFF_HTTPS_SOCKET_NAME})\nruns as: {}:{} with HOME {}\n\n--8<-- definition (save, review, then install as an administrator) --8<--\n{definition}--8<-- end definition --8<--\n\nnext steps are operator-owned and unexecuted by this command; see docs/guides/063-container-system-guide.md (user gateway listener handoff) for the exact install, verify, and rollback plan.",
-        setup.user_name,
-        setup.group_name,
-        setup.home.display()
-    ))
-}
-
-/// Report the read-only launchd listener-handoff status.
-///
-/// Read-only: this never registers, activates, signals, removes or elevates.
-/// launchd and file observations are bounded findings, not source identity.
-fn run_gateway_listener_handoff_status(output_json: bool) -> Result<String, RunnerError> {
-    let report = observe_handoff_maintenance();
-    if output_json {
-        return Ok(gateway_handoff_report_json(
-            "listener-handoff-status",
-            "observed",
-            &report,
-            None,
-        ));
-    }
-    Ok(render_status_human(&report))
-}
-
-/// Emit a checked, unexecuted administrator removal plan, or refuse.
-///
-/// The command itself never runs `sudo`, `launchctl`, `rm`, or any elevation.
-/// It only prints fixed literal steps after the on-disk definition verifies as
-/// the exact reviewed generator for the current operator and executable and
-/// the launchd observation is determinate.
-fn run_gateway_remove_listener_handoff(output_json: bool) -> Result<String, RunnerError> {
-    let report = observe_handoff_maintenance_for_removal();
-    if output_json {
-        let (result, steps) = removal_result_for_disposition(report.removal);
-        return Ok(gateway_handoff_report_json(
-            "remove-listener-handoff",
-            result,
-            &report,
-            steps,
-        ));
-    }
-    Ok(render_removal_human(&report))
-}
-
-/// Map a removal disposition to its bounded JSON result and optional steps.
-///
-/// Pure mapping so the production `run_gateway_remove_listener_handoff`
-/// branch is fixture-proven without touching live launchd state: only an
-/// available plan carries the two fixed literal steps; nothing-installed and
-/// refusals carry none.
-fn removal_result_for_disposition(
-    removal: RemovalDisposition,
-) -> (&'static str, Option<[&'static str; 2]>) {
-    match removal {
-        RemovalDisposition::PlanAvailable => ("plan_emitted", Some(removal_plan_steps())),
-        RemovalDisposition::NothingInstalled => ("nothing_installed", None),
-        RemovalDisposition::Refused(_) => ("removal_refused", None),
-    }
-}
-
-/// Render a bounded listener-handoff report as command-envelope JSON.
-fn gateway_handoff_report_json(
-    action: &str,
-    result: &str,
-    report: &HandoffMaintenanceReport,
-    steps: Option<[&'static str; 2]>,
-) -> String {
-    let mut payload = json!({
-        "schema": "effigy.gateway.command.v1",
-        "schema_version": 1,
-        "ok": true,
-        "action": action,
-        "result": result,
-        "effects": "unexecuted",
-        "label": LAUNCHD_JOB_LABEL,
-        "definition_path": LAUNCHD_PLIST_PATH,
-        "definition": report.definition.label(),
-        "program": report.program.label(),
-        "job": report.job.label(),
-        "operator": report.operator.label(),
-        "removal": report.removal.label(),
-    });
-    if let Some(refusal) = report.removal.refusal() {
-        payload["refusal"] = json!(refusal);
-    }
-    if let Some(identity) = report.identity {
-        payload["observed_file"] = json!({
-            "uid": identity.uid,
-            "gid": identity.gid,
-            "mode": identity.mode & 0o7777,
-            "size": identity.size,
-            "inode": identity.inode,
-        });
-    }
-    if let Some(steps) = steps {
-        payload["steps"] = json!(steps);
-    }
-    payload.to_string()
 }
 
 fn ensure_gateway_tls_ca_ready(

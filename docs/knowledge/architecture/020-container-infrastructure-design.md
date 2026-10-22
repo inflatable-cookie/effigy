@@ -335,7 +335,7 @@ Main owners in `effigy-gateway`:
 | `resolver_setup` | macOS resolver file management |
 | `ports` | persistent project port allocation |
 | `tcp_alias` / `loopback` | local aliases and safe loopback binding |
-| `listener_handoff` | launchd socket-activation handoff of TCP `127.0.0.1:80`/`443` to the operator-owned gateway — SOURCE implementation candidate; the administrator install, live activation and cross-boot proof stay operator-owned (see [gateway migration and the launchd handoff ruling](034-gateway-legacy-upgrade-recovery.md)) |
+| `listener_handoff` | launchd socket-activation adoption of TCP `127.0.0.1:80`/`443` for the operator-owned gateway — the internal `--listener-handoff` opt-in; v0.15 retired the experimental definition generator and inspection/removal commands, and live activation and cross-boot proof stay operator-owned (see [gateway migration and the launchd handoff ruling](034-gateway-legacy-upgrade-recovery.md)) |
 | `server` / `stats` | daemon lifecycle and operator statistics |
 
 A manifest route can target a container service or a declared host listener:

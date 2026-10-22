@@ -190,6 +190,14 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- Retire the experimental gateway listener-handoff commands:
+  `effigy gateway setup-listener-handoff`, `listener-handoff-status` and
+  `remove-listener-handoff`, with the launchd definition generator, its strict
+  parser, and the read-only status/removal plan they used. There is no
+  replacement: the gateway runs as your user, so use `effigy gateway up` and
+  inspect it with `effigy gateway status`. Each retired spelling refuses with
+  that guidance. The descriptor adoption boundary and the internal
+  `--listener-handoff` opt-in remain.
 - Retire the host-run client: `src/runner/host_scheduler`, the
   `effigy-host-run` crate, `HOST_RUN_TOKEN`/`HOST_RUN_ID` parent tokens,
   `EFFIGY_SCHEDULER_OVERRIDE`, `EFFIGY_HOST_RUN_ROOT`, the private-parent

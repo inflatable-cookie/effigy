@@ -834,40 +834,21 @@
   { id = "gateway-permission-reuse-server", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(permission_reuse_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
   { id = "gateway-permission-reuse-runner", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(permission_reuse_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
 ] }
+# Launchd socket-activation adoption boundary retained after the v0.15 cut of
+# the experimental listener-handoff commands (Q-009): descriptor validation and
+# adoption through the production boundary on ephemeral loopback endpoints, the
+# internal `--listener-handoff` opt-in parsing, and the daemon refusal that
+# publishes no record outside launchd. Private fixtures and owned descriptors
+# only; no launchd registration, privileged endpoint or live gateway state.
+"test:gateway:handoff-adoption" = { visibility = "internal", group = "Maintenance", run = [
+  { id = "gateway-handoff-adoption", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy --lib --filterset 'test(listener_handoff) | test(parse_gateway_run_accepts_listener_handoff_flag) | test(parse_gateway_run_defaults_listener_handoff_off)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
+] }
 # User-owned gateway migration boundary (task 155): finite privilege
 # inventory, read-only readiness gate with injected setup evidence, byte-exact
 # migration preservation with an owned-child generation transition, safe
 # refusal for stale/unknown/symlink records, unchanged operator defaults,
 # and one native loopback-lowport bind proof. Synthetic fixtures and owned
 # children only; no live gateway state, sudo, or cross-UID proof is claimed.
-# Launchd loopback listener handoff (task 156): descriptor validation and
-# adoption through the production boundary on ephemeral loopback endpoints,
-# the deterministic administrator setup definition with strict parse/refuse
-# controls, and the daemon refusal that publishes no record outside launchd.
-# Private fixtures and owned descriptors only; no launchd registration, no
-# privileged endpoint, no live gateway state, and no cross-UID or cross-boot
-# proof is claimed.
-"test:release:listener-handoff-fixture-ownership" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh test -p effigy-gateway --lib listener_handoff -- --nocapture --test-threads=8", timeout_ms = 240000 }] }
-"test:gateway:listener-handoff" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "gateway-listener-handoff", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy --lib --filterset 'test(listener_handoff) | test(parse_gateway_setup_listener_handoff) | test(parse_gateway_run_accepts_listener_handoff_flag) | test(parse_gateway_run_defaults_listener_handoff_off)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
-] }
-"check:gateway:listener-handoff" = { visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh check -p effigy-gateway -p effigy-cli -p effigy --all-targets",
-  "sh scripts/oxide-selector.sh clippy -p effigy-gateway -p effigy-cli -p effigy --all-targets -- -D warnings",
-] }
-# Launchd listener-handoff status and removal plan (task 157): read-only file
-# identity observation, bounded launchd capture classification, and the checked
-# unexecuted administrator plan through the production parsers, inspection and
-# rendering boundaries. Fresh temporary definitions and owned children only; no
-# live launchd job, plist, privileged endpoint or administrator command is
-# touched.
-"test:gateway:handoff-maintenance" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "gateway-handoff-maintenance", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy --lib --filterset 'test(listener_handoff_maintenance) | test(parse_gateway_listener_handoff_status) | test(parse_gateway_remove_listener_handoff) | test(parse_gateway_handoff_maintenance)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
-] }
-"check:gateway:handoff-maintenance" = { visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh check -p effigy-gateway -p effigy-cli -p effigy --all-targets",
-  "sh scripts/oxide-selector.sh clippy -p effigy-gateway -p effigy-cli -p effigy --all-targets -- -D warnings",
-] }
 "test:install:previous-binary-preservation" = { visibility = "internal", group = "Maintenance", run = [
   { id = "install-previous-binary-preservation", run = "sh scripts/oxide-selector.sh test -p effigy -p effigy-rhai --lib previous_binary_preservation -- --nocapture", timeout_ms = 120000 },
 ] }
@@ -1808,17 +1789,9 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 ] }
 "check:gateway:cutover:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo check -p effigy -p effigy-containers -p effigy-gateway --all-targets --features effigy-gateway/endpoint-store-faults --profile test", timeout_ms = 900000 }] }
 "check:gateway:endpoints:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo check -p effigy-gateway --all-targets --features endpoint-store-faults", timeout_ms = 600000 }] }
-"check:gateway:handoff-maintenance:cargo" = { visibility = "internal", group = "Maintenance", run = [
-  "cargo check -p effigy-gateway -p effigy-cli -p effigy --all-targets",
-  "cargo clippy -p effigy-gateway -p effigy-cli -p effigy --all-targets -- -D warnings",
-] }
 "check:gateway:identity:cargo" = { visibility = "internal", group = "Maintenance", run = [
   "cargo check -p effigy-gateway -p effigy-cli -p effigy-containers -p effigy --all-targets",
   "cargo clippy -p effigy-gateway -p effigy-cli -p effigy-containers -p effigy --all-targets -- -D warnings",
-] }
-"check:gateway:listener-handoff:cargo" = { visibility = "internal", group = "Maintenance", run = [
-  "cargo check -p effigy-gateway -p effigy-cli -p effigy --all-targets",
-  "cargo clippy -p effigy-gateway -p effigy-cli -p effigy --all-targets -- -D warnings",
 ] }
 "check:gateway:operator:cargo" = { run = "cargo check -p effigy -p effigy-gateway -p effigy-kernel -p effigy-cli --all-targets --profile test", timeout_ms = 600000 }
 "check:gateway:pid-domain:cargo" = { visibility = "internal", group = "Maintenance", run = [
@@ -2517,15 +2490,12 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 "test:gateway:endpoint-daemon-faults:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --features endpoint-store-faults --lib -E 'test(faults_engine_gateway_endpoint_commit)' --no-capture --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:gateway:endpoints:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --features endpoint-store-faults --lib -E 'test(endpoint_store::) | test(ports::tests::) | test(routes::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:gateway:endpoints:withdrawal:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --features endpoint-store-faults --lib -E 'test(endpoint_store::) | test(registration::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
-"test:gateway:handoff-maintenance:cargo" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "gateway-handoff-maintenance", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy --lib --filterset 'test(listener_handoff_maintenance) | test(parse_gateway_listener_handoff_status) | test(parse_gateway_remove_listener_handoff) | test(parse_gateway_handoff_maintenance)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
+"test:gateway:handoff-adoption:cargo" = { visibility = "internal", group = "Maintenance", run = [
+  { id = "gateway-handoff-adoption", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy --lib --filterset 'test(listener_handoff) | test(parse_gateway_run_accepts_listener_handoff_flag) | test(parse_gateway_run_defaults_listener_handoff_off)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
 ] }
 "test:gateway:hybrid-switch:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private -E 'test(container_hybrid_environment_switch_)' --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }] }
 "test:gateway:identity:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { id = "gateway-identity", run = "cargo test -p effigy-gateway -p effigy-cli -p effigy --lib gateway_identity -- --nocapture", timeout_ms = 240000 },
-] }
-"test:gateway:listener-handoff:cargo" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "gateway-listener-handoff", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway -p effigy --lib --filterset 'test(listener_handoff) | test(parse_gateway_setup_listener_handoff) | test(parse_gateway_run_accepts_listener_handoff_flag) | test(parse_gateway_run_defaults_listener_handoff_off)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
 ] }
 "test:gateway:macos-inspection:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { id = "gateway-macos-inspection", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(legacy_recovery_macos_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
@@ -2691,7 +2661,6 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
   { id = "owned-help-identity-counterexample", run = "cargo nextest run -p effigy --test cli_output_tests --filter-expr 'test(cli_help_parity_is_stable_across_owned_checkout_identity_changes)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 120000 },
   { id = "help-and-version-caller-family", run = "cargo nextest run -p effigy --test cli_output_tests --filter-expr 'test(help_and_flags_tests::) & !test(cli_help_parity_is_stable_across_owned_checkout_identity_changes)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 120000 },
 ] }
-"test:release:listener-handoff-fixture-ownership:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo test -p effigy-gateway --lib listener_handoff -- --nocapture --test-threads=8", timeout_ms = 240000 }] }
 "test:release:preparation-environment-isolation:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { id = "preparation-environment-isolation", run = "cargo nextest run --config-file tests/config/release-preparation-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(release_preparation_fixture_env_isolation_path_and_graph_budget_readers_wait_for_scoped_writer) | test(graph_explore_cold_stale_index_names_next_action) | test(graph_cwd_selection_uses_captured_invocation_context) | test(docs_cold_read_is_bounded_and_never_prepares) | test(graph_timeout_uses_the_existing_two_minute_default_when_unset) | test(resolve_host_program_uses_host_cli_resolver_for_bare_names) | test(copy_file_into_service_invocation_prefers_policy_backend_over_installed_docker)' --max-fail 1:immediate --retries 0", timeout_ms = 240000 },
 ] }
