@@ -990,7 +990,7 @@
 # only; no live VM/container/cache mutation.
 "test:workspace:rust-ownership" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh test -p effigy-containers --lib workspace::ownership -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::workspace_command_permissions -- --nocapture",
+  "sh scripts/oxide-selector.sh test -p effigy --lib runner::workspace_command::permissions -- --nocapture",
   "sh scripts/oxide-selector.sh test -p effigy --lib workspace_ownership_finding_is_named_and_actionable -- --nocapture",
   "sh scripts/oxide-selector.sh test -p effigy --lib task_activation_surfaces_workspace_permission_failure_before_lease_refresh -- --nocapture",
   "sh scripts/oxide-selector.sh test -p effigy --lib run_command_capture_until -- --nocapture",
@@ -1015,7 +1015,7 @@
 # or volume is touched.
 "test:workspace:dependency-volume-ownership" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh test -p effigy-containers --lib workspace::ownership -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runner::workspace_command_permissions -- --nocapture",
+  "sh scripts/oxide-selector.sh test -p effigy --lib runner::workspace_command::permissions -- --nocapture",
   "sh scripts/oxide-selector.sh test -p effigy --lib dependency_volume_wrong_permissions_stay_a_path_specific_finding -- --nocapture",
   "sh scripts/oxide-selector.sh test -p effigy --lib shared_dependency_volume_wrong_permissions_stay_reported -- --nocapture",
   "sh scripts/oxide-selector.sh test -p effigy --lib task_activation_surfaces_workspace_permission_failure_before_lease_refresh -- --nocapture",
@@ -2804,7 +2804,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 ] }
 "test:workspace:dependency-volume-ownership:cargo" = { visibility = "internal", group = "Maintenance", run = [
   "cargo test -p effigy-containers --lib workspace::ownership -- --nocapture",
-  "cargo test -p effigy --lib runner::workspace_command_permissions -- --nocapture",
+  "cargo test -p effigy --lib runner::workspace_command::permissions -- --nocapture",
   "cargo test -p effigy --lib dependency_volume_wrong_permissions_stay_a_path_specific_finding -- --nocapture",
   "cargo test -p effigy --lib shared_dependency_volume_wrong_permissions_stay_reported -- --nocapture",
   "cargo test -p effigy --lib task_activation_surfaces_workspace_permission_failure_before_lease_refresh -- --nocapture",
@@ -2825,7 +2825,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 ] }
 "test:workspace:rust-ownership:cargo" = { visibility = "internal", group = "Maintenance", run = [
   "cargo test -p effigy-containers --lib workspace::ownership -- --nocapture",
-  "cargo test -p effigy --lib runner::workspace_command_permissions -- --nocapture",
+  "cargo test -p effigy --lib runner::workspace_command::permissions -- --nocapture",
   "cargo test -p effigy --lib workspace_ownership_finding_is_named_and_actionable -- --nocapture",
   "cargo test -p effigy --lib task_activation_surfaces_workspace_permission_failure_before_lease_refresh -- --nocapture",
   "cargo test -p effigy --lib run_command_capture_until -- --nocapture",
