@@ -195,13 +195,17 @@ This preserves descendant recovery evidence when a test runner kills the native
 parent before Drop. Kernel generation and nonce checks remain unchanged.
 
 The active forced-exit control reaps a detached group leader while its
-background child survives with an explicitly cleared environment. Following the
-planner's 2026-10-21 ruling for papercut
-`aedb6038-fe8c-4b02-ab6f-a0a7ce8aab50`, it asserts the by-design `Unknown`
-refusal: recovery retains process and directory receipts and fixture files,
-sends no signal, and leaves the descendant able to answer a pipe probe.
-The governing custody boundary and retained-group-anchor deferral to Queue
-lead `9717909b` live in [contract 052 §5.7, I-P8](contracts/052-runtime-kernel-contract.md#57-ownedprocess-and-signalrouter).
+background child survives with an explicitly cleared environment. This fixture's
+detached receipt has no retained group anchor, so recovery still returns
+`Unknown`: it retains process and directory receipts and fixture files, sends no
+signal, and leaves the descendant able to answer a pipe probe. Production
+custody now records an anchor before workload execution (effigy#252). Recovery
+can stop nonce-free descendants after their leader is reaped when the recorded
+anchor's identity, nonce and group membership verify uninterrupted group
+continuity. A lost or unverifiable anchor, or an older unanchored receipt, still
+leaves nonce-free survivors as `Unknown` residue; session escapes remain outside
+custody. These boundaries are defined in
+[contract 052 §5.7, I-P8](contracts/052-runtime-kernel-contract.md#57-ownedprocess-and-signalrouter).
 
 The test closes its private pipe in `finally`, allowing the descendant to exit
 cooperatively. A subsequent kernel custody sweep verifies group closure before
