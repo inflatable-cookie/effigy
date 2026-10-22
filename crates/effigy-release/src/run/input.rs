@@ -68,7 +68,7 @@ mod tests {
 
     #[test]
     fn the_input_names_the_candidate_and_its_artifacts() {
-        let mut record = ReleaseRecord::new("run-1", &std::path::PathBuf::from("/repo"), "now");
+        let mut record = ReleaseRecord::new("run-1", std::path::Path::new("/repo"), "now");
         record.candidate_commit = Some("abc".into());
         record
             .identities

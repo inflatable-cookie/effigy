@@ -256,7 +256,7 @@ mod tests {
     fn record() -> ReleaseRecord {
         let mut record = ReleaseRecord::new(
             "run-1",
-            &std::path::PathBuf::from("/repo"),
+            std::path::Path::new("/repo"),
             "2026-10-22T00:00:00Z",
         );
         record.status = ReleaseRunStatus::Complete;

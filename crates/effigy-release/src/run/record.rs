@@ -7,7 +7,7 @@
 //! each destination already published. Every field is restored from here, so a
 //! resumed Run never re-derives a version or rebuilds an artifact.
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -229,7 +229,7 @@ pub struct ReleaseRecord {
 }
 
 impl ReleaseRecord {
-    pub fn new(release_id: &str, root: &PathBuf, now: &str) -> Self {
+    pub fn new(release_id: &str, root: &Path, now: &str) -> Self {
         Self {
             schema: RELEASE_RECORD_SCHEMA.to_owned(),
             release_id: release_id.to_owned(),
@@ -354,7 +354,7 @@ mod tests {
 
     #[test]
     fn record_round_trips_and_denies_unknown_fields() {
-        let record = ReleaseRecord::new("run-1", &PathBuf::from("/repo"), "2026-10-22T00:00:00Z");
+        let record = ReleaseRecord::new("run-1", Path::new("/repo"), "2026-10-22T00:00:00Z");
         let encoded = serde_json::to_string(&record).expect("encode");
         let decoded: ReleaseRecord = serde_json::from_str(&encoded).expect("decode");
         assert_eq!(decoded, record);
