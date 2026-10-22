@@ -18,7 +18,7 @@ schema artifacts live beside these files.
 | [010-decodelabs-production-strategy.md](010-decodelabs-production-strategy.md) | Decodelabs local-development versus unproved production-export boundary and operator-owned concerns. |
 | [011-runtime-context-contract.md](011-runtime-context-contract.md) | boot-time runtime context contract for cwd, repo target, host facts, and container handoff state. |
 | [012-container-manager-contract.md](012-container-manager-contract.md) | manager-facade contract for backend selection, container operations, and interrupt-aware closeout. |
-| [013-task-execution-request-contract.md](013-task-execution-request-contract.md) | canonical request/plan contract for direct, embedded, Rhai, deferral, demo, and managed task execution. |
+| [013-task-execution-request-contract.md](013-task-execution-request-contract.md) | canonical request/plan contract for direct, embedded, Rhai, deferral, and managed task execution. |
 | [014-artifact-substrate-contract.md](014-artifact-substrate-contract.md) | standalone artifact contract for local and OCI data payloads used by seed, apply, capture, and Example App/UAT workflows. |
 | [015-runtime-operation-pipeline-contract.md](015-runtime-operation-pipeline-contract.md) | runtime operation pipeline contract for execution, activation, container operation, and artifact/data request-plan-adapter seams. |
 | [016-state-stack-and-layered-seed-framework-contract.md](016-state-stack-and-layered-seed-framework-contract.md) | layered state-stack contract for schema baselines, imported data, overlays, lineage, and Example App-style UAT capture/rebase workflows. |

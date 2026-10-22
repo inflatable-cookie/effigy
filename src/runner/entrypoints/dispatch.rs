@@ -9,7 +9,6 @@ use super::super::run_changelog;
 use super::super::run_container_command;
 use super::super::run_contracts;
 use super::super::run_defer;
-use super::super::run_demo;
 use super::super::run_deploy;
 use super::super::run_deps;
 use super::super::run_docs;
@@ -95,7 +94,6 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::Workspace(args) => run_workspace(args),
         Command::Gateway(args) => run_gateway(args),
         Command::Service(args) => run_service(args),
-        Command::Demo(args) => run_demo(args),
         Command::Graph(args) => run_graph(args),
         Command::Rhai(args) => run_rhai(args),
         Command::Skill(args) => run_skill(args),

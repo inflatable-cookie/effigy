@@ -47,11 +47,10 @@ pub use config_sections::{
     ManifestContainerHostProcess, ManifestContainerHostProcessRestart, ManifestContainerOnTaskExit,
     ManifestContainerSecretDelivery, ManifestContainerSecretsConfig,
     ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
-    ManifestContainersConfig, ManifestDataConfig, ManifestDataTargetConfig, ManifestDemoConfig,
-    ManifestDemoMode, ManifestDemoStatus, ManifestDistributionConfig,
-    ManifestDistributionMetadataConfig, ManifestDistributionPackageConfig,
-    ManifestDistributionPreflightConfig, ManifestDocsPolicyConfig,
-    ManifestDocsPolicyGraphCardinality, ManifestDocsPolicyGraphConfig,
+    ManifestContainersConfig, ManifestDataConfig, ManifestDataTargetConfig,
+    ManifestDistributionConfig, ManifestDistributionMetadataConfig,
+    ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig,
+    ManifestDocsPolicyConfig, ManifestDocsPolicyGraphCardinality, ManifestDocsPolicyGraphConfig,
     ManifestDocsPolicyGraphCurrentnessClass, ManifestDocsPolicyGraphCurrentnessConfig,
     ManifestDocsPolicyGraphFieldConfig, ManifestDocsPolicyGraphKindConfig,
     ManifestDocsPolicyGraphRelationConfig, ManifestDocsPolicySourcesConfig,
@@ -216,8 +215,9 @@ pub struct TaskManifest {
     pub distribution: Option<ManifestDistributionConfig>,
     #[serde(default)]
     pub release: Option<ManifestReleaseConfig>,
-    #[serde(default)]
-    pub demos: BTreeMap<String, ManifestDemoConfig>,
+    /// Retired in v0.15 with no replacement; refused with the reason.
+    #[serde(default, rename = "demos", deserialize_with = "reject_demos")]
+    _retired_demos: Option<toml::Value>,
     #[serde(default, deserialize_with = "deserialize_tasks")]
     pub tasks: BTreeMap<String, ManifestTask>,
     /// Maintained bounded QA groups keyed under `[qa.groups.<name>]`
@@ -237,6 +237,13 @@ pub struct ManifestCatalog {
     pub sources: BTreeMap<String, ManifestBundleBase>,
     #[serde(default, rename = "graph", deserialize_with = "reject_catalog_graph")]
     _retired_graph: Option<toml::Value>,
+}
+
+fn reject_demos<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<toml::Value>, D::Error> {
+    let _: serde::de::IgnoredAny = serde::Deserialize::deserialize(deserializer)?;
+    Err(serde::de::Error::custom("`[demos]` was removed in v0.15 with no replacement: the demo registry, receipts and browser are gone; delete the table and record terminal sessions with an external tool. See the v0.15.0 Removed entry in CHANGELOG.md"))
 }
 
 fn reject_catalog_graph<'de, D: serde::Deserializer<'de>>(
@@ -302,9 +309,6 @@ impl TaskManifest {
                     });
                 }
             }
-        }
-        for (demo_id, demo) in &self.demos {
-            demo.validate(manifest_path, demo_id)?;
         }
         for (task_name, task) in &self.tasks {
             if task

@@ -19,7 +19,6 @@
       "crates/effigy-contracts/Cargo.toml",
       "crates/effigy-core/Cargo.toml",
       "crates/effigy-data/Cargo.toml",
-      "crates/effigy-demo/Cargo.toml",
       "crates/effigy-deps/Cargo.toml",
       "crates/effigy-distribution/Cargo.toml",
       "crates/effigy-docs-policy/Cargo.toml",

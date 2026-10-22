@@ -14,7 +14,6 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy graph"));
     assert!(rendered.contains("effigy gateway"));
     assert!(rendered.contains("effigy config"));
-    assert!(rendered.contains("effigy demo"));
     assert!(rendered.contains("effigy service"));
     assert!(rendered.contains("effigy doctor"));
     assert!(rendered.contains("effigy docs"));
@@ -147,30 +146,6 @@ fn render_doctor_help_shows_fix_and_json_options() {
     assert!(rendered.contains("effigy doctor <task> <args>"));
     assert!(rendered.contains("effigy doctor frontend/build -- --watch"));
     assert!(rendered.contains("container.workspace-ownership"));
-}
-
-#[test]
-fn render_demo_help_shows_discovery_and_inspection_options() {
-    let rendered = render_help_text(HelpTopic::Demo);
-    assert!(rendered.contains("demo Help"));
-    assert!(rendered.contains("effigy demo browser"));
-    assert!(rendered.contains("effigy demo list"));
-    assert!(rendered.contains("effigy demo inspect <DEMO_ID>"));
-    assert!(rendered.contains("effigy demo run <DEMO_ID>"));
-    assert!(rendered.contains("effigy demo stop <DEMO_ID>"));
-    assert!(rendered.contains("effigy demo rerun <DEMO_ID>"));
-    assert!(rendered.contains("--search <TEXT>"));
-    assert!(rendered.contains("--owner <NAME>"));
-    assert!(rendered.contains("--tag <TAG>"));
-    assert!(rendered.contains("--mode <MODE>"));
-    assert!(rendered.contains("--cover <AREA>"));
-    assert!(rendered.contains("--status <STATUS>"));
-    assert!(rendered.contains("--gap <GAP>"));
-    assert!(rendered.contains("--stale-only"));
-    assert!(rendered.contains("--group-by <FIELD>"));
-    assert!(rendered.contains("--repo <PATH>"));
-    assert!(rendered.contains("--json"));
-    assert!(rendered.contains("record a new normalized attempt"));
 }
 
 #[test]

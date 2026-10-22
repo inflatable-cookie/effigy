@@ -13,8 +13,8 @@ use nix::unistd::{setpgid, Pid};
 use super::super::{ProcessEvent, ProcessManagerError, ProcessSpec};
 use super::monitor::attach_child_stream_threads;
 
-const DEMO_BROWSER_TERMINAL_COLS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_COLS";
-const DEMO_BROWSER_TERMINAL_ROWS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_ROWS";
+const BROWSER_TERMINAL_COLS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_COLS";
+const BROWSER_TERMINAL_ROWS_ENV: &str = "EFFIGY_BROWSER_TERMINAL_ROWS";
 
 pub(super) fn spawn_process_instance(
     spec: &ProcessSpec,
@@ -138,14 +138,8 @@ fn terminal_size_override(spec: &ProcessSpec) -> Option<(u16, u16)> {
 fn terminal_size_override_from_env_map(
     env: &std::collections::BTreeMap<String, String>,
 ) -> Option<(u16, u16)> {
-    let cols = env
-        .get(DEMO_BROWSER_TERMINAL_COLS_ENV)?
-        .parse::<u16>()
-        .ok()?;
-    let rows = env
-        .get(DEMO_BROWSER_TERMINAL_ROWS_ENV)?
-        .parse::<u16>()
-        .ok()?;
+    let cols = env.get(BROWSER_TERMINAL_COLS_ENV)?.parse::<u16>().ok()?;
+    let rows = env.get(BROWSER_TERMINAL_ROWS_ENV)?.parse::<u16>().ok()?;
     if cols == 0 || rows == 0 {
         return None;
     }
@@ -153,11 +147,11 @@ fn terminal_size_override_from_env_map(
 }
 
 fn browser_terminal_size_override() -> Option<(u16, u16)> {
-    let cols = std::env::var(DEMO_BROWSER_TERMINAL_COLS_ENV)
+    let cols = std::env::var(BROWSER_TERMINAL_COLS_ENV)
         .ok()?
         .parse::<u16>()
         .ok()?;
-    let rows = std::env::var(DEMO_BROWSER_TERMINAL_ROWS_ENV)
+    let rows = std::env::var(BROWSER_TERMINAL_ROWS_ENV)
         .ok()?
         .parse::<u16>()
         .ok()?;

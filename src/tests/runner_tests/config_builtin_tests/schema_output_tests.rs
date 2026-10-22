@@ -32,9 +32,6 @@ fn run_manifest_task_builtin_config_schema_prints_canonical_template() {
             "primary_service = \"app\"",
             "[containers.web.host]",
             "mounts = [\"./:/workspace\"]",
-            "[demos.login-smoke]",
-            "proof = \"Verify the default local login journey succeeds end to end.\"",
-            "covers = [\"auth.login\"]",
             "[package_manager]",
             "cargo_env_match = \"prefix-aware\"",
             "exclude_catalogs = [\"legacy\"]",
@@ -76,7 +73,6 @@ fn run_manifest_task_builtin_config_schema_minimal_prints_starter_template() {
             "[distribution.closeout]",
             "[containers]",
             "[containers.web]",
-            "[demos.login-smoke]",
             "[package_manager]",
             "[test.runners]",
             "[tasks]",
@@ -160,24 +156,6 @@ fn run_manifest_task_builtin_config_schema_target_bundle_prints_generic_bundle_s
             "Local bundle directories contain `bundle.toml` metadata plus an `effigy.toml` defaults template under that `dir`.",
             "All other keys are bundle-defined inputs.",
             "Use `effigy bundle inspect` to inspect the active repo bundle source.",
-        ],
-    );
-    assert_output_excludes_all(&out, &["[tasks]"]);
-}
-
-#[test]
-fn run_manifest_task_builtin_config_schema_target_demos_prints_demo_registry_snippet() {
-    let root = workspace_with_empty_manifest("builtin-config-schema-target-demos");
-
-    let out = run_config_ok(root, &["--schema", "--target", "demos"]);
-    assert_output_contains_all(
-        &out,
-        &[
-            "(demos target)",
-            "[demos.login-smoke]",
-            "mode = \"interactive\"",
-            "status = \"ready\"",
-            "task = \"demo:login-smoke\"",
         ],
     );
     assert_output_excludes_all(&out, &["[tasks]"]);

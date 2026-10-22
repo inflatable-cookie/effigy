@@ -75,25 +75,6 @@
     "crates/effigy-core/src/worktree_scope.rs": {
       "std.fs.OpenOptions.write": 2
     },
-    "crates/effigy-demo/src/active.rs": {
-      "std.fs.OpenOptions.write": 4,
-      "std::fs::remove_file": 3,
-      "std::fs::rename": 1,
-      "std::fs::write": 3
-    },
-    "crates/effigy-demo/src/execution.rs": {
-      "std::fs::write": 6
-    },
-    "crates/effigy-demo/src/lib.rs": {
-      "std::fs::write": 1
-    },
-    "crates/effigy-demo/src/process.rs": {
-      "std.fs.OpenOptions.write": 3,
-      "std::fs::remove_file": 1
-    },
-    "crates/effigy-demo/src/runtime.rs": {
-      "std.fs.OpenOptions.write": 2
-    },
     "crates/effigy-deps/src/bun_apply.rs": {
       "std::fs::remove_file": 2,
       "std::fs::rename": 2
@@ -265,13 +246,6 @@
     },
     "crates/effigy-state/src/paths.rs": {
       "std::fs::write": 2
-    },
-    "crates/effigy-tui/src/demo_browser.rs": {
-      "std.process.Command.new": 3
-    },
-    "crates/effigy-tui/src/demo_browser_terminal.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.spawn": 1
     },
     "crates/effigy-tui/src/multiprocess/startup_visibility.rs": {
       "libc::kill": 2,
@@ -609,9 +583,6 @@
     "crates/effigy-core/src/worktree_scope.rs": {
       "std::fs::write": 6
     },
-    "crates/effigy-demo/src/tests.rs": {
-      "std::fs::write": 1
-    },
     "crates/effigy-deps/src/bun.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.status": 1,
@@ -808,12 +779,6 @@
     "src/runner/db_seed.rs": {
       "std::fs::write": 5
     },
-    "src/runner/demo_command/execute/task/selection.rs": {
-      "std::fs::write": 3
-    },
-    "src/runner/demo_command/tests.rs": {
-      "std::fs::write": 2
-    },
     "src/runner/deps_command.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1
@@ -879,7 +844,7 @@
       "std.process.Command.status": 2
     },
     "src/runner/scratch.rs": {
-      "std::fs::write": 3
+      "std::fs::write": 6
     },
     "src/runner/script_command/tests.rs": {
       "std::fs::write": 1
@@ -966,10 +931,6 @@
       "std::fs::write": 15
     },
     "src/tests/runner_tests/runner_core_tests/secrets_tests.rs": {
-      "std::fs::write": 5
-    },
-    "src/tui/demo_browser/tests.rs": {
-      "std::fs::remove_file": 1,
       "std::fs::write": 5
     }
   }

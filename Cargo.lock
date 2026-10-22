@@ -764,7 +764,6 @@ dependencies = [
  "effigy-contracts",
  "effigy-core",
  "effigy-data",
- "effigy-demo",
  "effigy-deps",
  "effigy-distribution",
  "effigy-docs-policy",
@@ -959,18 +958,6 @@ dependencies = [
 [[package]]
 name = "effigy-data"
 version = "0.14.1"
-
-[[package]]
-name = "effigy-demo"
-version = "0.14.1"
-dependencies = [
- "crossterm",
- "effigy-core",
- "effigy-manifest",
- "effigy-ui",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "effigy-deps"
@@ -1314,7 +1301,6 @@ dependencies = [
  "crossterm",
  "effigy-cli",
  "effigy-core",
- "effigy-demo",
  "effigy-process",
  "effigy-ui",
  "libc",

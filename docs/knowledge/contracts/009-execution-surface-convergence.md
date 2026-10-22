@@ -46,7 +46,6 @@ The first covered surfaces are:
 - run-array builtin command re-entry
 - Rhai `run_effigy_command`
 - Rhai `exec::run(...)`
-- demo task re-entry through normal task dispatch
 
 This contract covers local execution semantics. It does not define provider
 export or production deployment behavior.
@@ -118,7 +117,6 @@ The table below describes the required behavior by surface.
 | Run-array builtin re-entry | parent task repo target | shared embedded-runner entry | delegated to the resolved inner surface | same as delegated inner surface | same as delegated inner surface | same as delegated inner surface | same as delegated inner surface | nested command projection rules only | same as delegated inner surface | must not invent its own recursion rules |
 | Rhai `run_effigy_command` | script repo target | shared embedded-runner entry | delegated to the resolved inner surface | same as delegated inner surface | same as delegated inner surface | same as delegated inner surface | same as delegated inner surface | nested command projection rules only | same as delegated inner surface | must not invent its own recursion rules |
 | Rhai `exec::run(...)` | script repo target from captured runtime context | `TaskExecutionRequestBuilder` command intent | resolved execution plan route | same as resolved execution route | non-shell container paths refresh lease where activation owns warm reuse | none | activation-owned | command-shaped | not applicable | container intent inside handoff resolves to local container handoff |
-| Demo task re-entry | demo repo target | shared task dispatch entry | delegated to the resolved inner surface | same as delegated inner surface | same as delegated inner surface | same as delegated inner surface | same as delegated inner surface | demo may wrap output, not runtime semantics | same as delegated inner surface | same as delegated inner surface |
 
 ## Convergence rules
 
@@ -127,7 +125,7 @@ The following must converge across covered surfaces.
 ### Repo targeting
 
 - the same embedded command must target the same repo whether it is run from
-  run-array, Rhai, bootstrap, demo re-entry, or direct CLI dispatch
+  run-array, Rhai, bootstrap, or direct CLI dispatch
 - repo targeting must be resolved once and then carried, not re-guessed in each
   nested surface
 
@@ -151,7 +149,7 @@ The following must converge across covered surfaces.
 - `stdin_file`, cwd, and env overrides must travel through
   `ExecutionEnvironmentPlan`
 - equivalent inputs across direct CLI, bootstrap, Rhai, run-array, deferral,
-  demo, and managed task surfaces should produce equivalent resolved plans
+  and managed task surfaces should produce equivalent resolved plans
   unless this contract names a deliberate surface difference
 
 ### Runtime activation
@@ -219,7 +217,6 @@ These may vary by surface:
 - exec output payloads
 - container command reports
 - bootstrap progress wrapping
-- demo-specific outer projection
 
 These are presentation differences, not runtime-contract differences.
 

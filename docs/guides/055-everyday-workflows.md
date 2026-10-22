@@ -305,27 +305,6 @@ Deep dive:
 - [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md)
 - [`026-json-payload-examples.md`](026-json-payload-examples.md)
 
-## 8) Treat Proof Demos As A First-Class Operator Surface
-
-When a repo has demo or proof scripts that people actually need to discover,
-run, inspect, and review, move them into `[demos.<id>]` instead of keeping
-them as an ad hoc script pile.
-
-```sh
-effigy demo list
-effigy demo browser
-effigy demo inspect login-smoke
-effigy demo history login-smoke --limit 5
-effigy demo run login-smoke
-```
-
-Use demos when the repo should name what the proof covers and keep review in
-one place.
-
-Deep dive:
-- [`058-demo-system-guide.md`](058-demo-system-guide.md)
-- [`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
-
 ## 9) Use Native Release And Distribution Surfaces
 
 When release or packaging work still depends on wrapper-script memory, the
@@ -497,7 +476,6 @@ After this guide, you should have a clearer default path for:
   and repo-owned dev sessions
 - using artifacts for versioned data seeds, snapshots, and OCI workflows
 - using built-ins for health, tests, and scans
-- using demos as an explicit proof path instead of script sprawl
 - using native release and distribution commands instead of wrapper-script
   bundles
 - spotting the next piece of repo friction that should move into Effigy
@@ -511,11 +489,9 @@ After this guide, you should have a clearer default path for:
 - [`048-built-in-test-suite-lifecycle-and-env.md`](048-built-in-test-suite-lifecycle-and-env.md)
 - [`050-env-schema-integration.md`](050-env-schema-integration.md)
 - [`051-release-orchestration.md`](051-release-orchestration.md)
-- [`058-demo-system-guide.md`](058-demo-system-guide.md)
 - [`062-distribution-system-guide.md`](062-distribution-system-guide.md)
 - [`063-container-system-guide.md`](063-container-system-guide.md)
 - [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
-- [`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
 - [`072-artifact-commands-guide.md`](072-artifact-commands-guide.md)
 
 ## Next Step

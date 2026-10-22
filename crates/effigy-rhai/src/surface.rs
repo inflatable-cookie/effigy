@@ -22,7 +22,6 @@ pub const MODULE_DOCS: &str = "docs";
 pub const MODULE_DEPLOY: &str = "deploy";
 pub const MODULE_DISTRIBUTION: &str = "distribution";
 pub const MODULE_SYSTEM: &str = "system";
-pub const MODULE_DEMO: &str = "demo";
 pub const MODULE_CHANGELOG: &str = "changelog";
 pub const MODULE_CACHE: &str = "cache";
 pub const MODULE_GATEWAY: &str = "gateway";
@@ -65,7 +64,6 @@ pub const MODULE_NAMES: &[&str] = &[
     MODULE_DEPLOY,
     MODULE_DISTRIBUTION,
     MODULE_SYSTEM,
-    MODULE_DEMO,
     MODULE_CHANGELOG,
     MODULE_CACHE,
     MODULE_GATEWAY,
@@ -162,9 +160,6 @@ pub const FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT: &str = "distribution.generate_
 pub const FEATURE_DISTRIBUTION_WRITE_SUMMARY: &str = "distribution.write_summary";
 pub const FEATURE_SYSTEM_STATUS: &str = "system.status";
 pub const FEATURE_SYSTEM_LOGS: &str = "system.logs";
-pub const FEATURE_DEMO_LIST: &str = "demo.list";
-pub const FEATURE_DEMO_INSPECT: &str = "demo.inspect";
-pub const FEATURE_DEMO_HISTORY: &str = "demo.history";
 pub const FEATURE_CHANGELOG_VALIDATE: &str = "changelog.validate";
 pub const FEATURE_CHANGELOG_EXTRACT: &str = "changelog.extract";
 pub const FEATURE_UNLOCK_SCOPES: &str = "unlock.scopes";
@@ -249,9 +244,6 @@ pub const FEATURE_NAMES: &[&str] = &[
     FEATURE_DISTRIBUTION_WRITE_SUMMARY,
     FEATURE_SYSTEM_STATUS,
     FEATURE_SYSTEM_LOGS,
-    FEATURE_DEMO_LIST,
-    FEATURE_DEMO_INSPECT,
-    FEATURE_DEMO_HISTORY,
     FEATURE_CHANGELOG_VALIDATE,
     FEATURE_CHANGELOG_EXTRACT,
     FEATURE_UNLOCK_SCOPES,
@@ -384,9 +376,6 @@ pub const FEATURE_DESCRIPTORS: &[RhaiFeatureDescriptor] = &[
     runner_feature(FEATURE_DISTRIBUTION_WRITE_SUMMARY),
     runner_feature(FEATURE_SYSTEM_STATUS),
     runner_feature(FEATURE_SYSTEM_LOGS),
-    runner_feature(FEATURE_DEMO_LIST),
-    runner_feature(FEATURE_DEMO_INSPECT),
-    runner_feature(FEATURE_DEMO_HISTORY),
     runner_feature(FEATURE_CHANGELOG_VALIDATE),
     runner_feature(FEATURE_CHANGELOG_EXTRACT),
     runner_feature(FEATURE_UNLOCK_SCOPES),

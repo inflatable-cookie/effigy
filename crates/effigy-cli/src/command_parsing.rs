@@ -8,8 +8,6 @@ mod changelog;
 mod container;
 #[path = "command_parsing_container_data.rs"]
 mod container_data;
-#[path = "command_parsing_demo.rs"]
-mod demo;
 #[path = "command_parsing_deploy.rs"]
 mod deploy;
 #[path = "command_parsing_docs.rs"]
@@ -38,7 +36,6 @@ use crate::{
 use bootstrap::parse_bootstrap_command;
 use changelog::parse_changelog_command;
 use container::parse_container_command;
-use demo::parse_demo_command;
 use deploy::parse_deploy_command;
 use docs::parse_docs_command;
 use graph::parse_graph_command;
@@ -84,7 +81,9 @@ where
         "workspace" => parse_workspace_command(args),
         "gateway" => parse_gateway_command(args),
         "service" => parse_service_command(args),
-        "demo" => parse_demo_command(args),
+        "demo" => Err(CliParseError::InvalidArguments(
+            "`effigy demo` is retired in v0.15 with no replacement: the demo registry, receipts and browser are gone; record terminal sessions with an external tool. See the v0.15.0 Removed entry in CHANGELOG.md".to_owned(),
+        )),
         "graph" => parse_graph_command(args),
         "rhai" => parse_rhai_command(args),
         "skill" => parse_skill_command(args),

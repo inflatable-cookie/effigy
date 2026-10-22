@@ -542,12 +542,6 @@ impl From<ManagedError> for RunnerError {
     }
 }
 
-impl From<effigy_demo::DemoStateError> for RunnerError {
-    fn from(value: effigy_demo::DemoStateError) -> Self {
-        Self::task_invocation(value.to_string())
-    }
-}
-
 impl From<effigy_distribution::DistributionPolicyError> for RunnerError {
     fn from(value: effigy_distribution::DistributionPolicyError) -> Self {
         match value {

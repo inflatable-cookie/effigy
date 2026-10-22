@@ -20,7 +20,6 @@ pub const BUILTIN_TASKS: &[(&str, &str)] = &[
         "defer",
         "Run the configured `[defer]` fallback explicitly instead of relying on selector miss routing",
     ),
-    ("demo", "Inspect and control configured demos"),
     ("deploy", "Inspect, plan, apply, and export deployment flows"),
     (
         "deps",

@@ -11,7 +11,6 @@ mod db_seed;
 mod db_services;
 mod defer_command;
 mod deferral;
-mod demo_command;
 mod deploy_command;
 mod deps_command;
 mod distribution_command;
@@ -69,7 +68,6 @@ pub(in crate::runner) use defer_command::run_defer;
 pub(crate) use deferral::{
     deferred_builtins_for_root, deferred_builtins_from_catalogs, root_manifest_declares_task,
 };
-pub(in crate::runner) use demo_command::run_demo;
 pub(in crate::runner) use deploy_command::run_deploy;
 pub(in crate::runner) use deps_command::run_deps;
 pub(in crate::runner) use docs_command::run_docs;

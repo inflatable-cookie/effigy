@@ -1872,7 +1872,7 @@ coverage matrix (`synthesis/GUEST-EFFIGY.md` §2).
 | `secrets` init, set, unset, import, unlock, lock, passphrase change; required task secrets | channel | Mutate requests to the secrets engine; task secrets arrive as per-run grants (§8.2). |
 | `deps` status, link, unlink, pin, unpin | channel | Status is Observe; changes are requests to the deps engine. |
 | `graph` index; `bundle` sync (bundle and catalog source pins); `config` user settings | channel | RefreshDerived, Prepare or Mutate requests to the owning store engine. The guest has no separate preference file. |
-| `state` apply, capture; `artifact` stage, capture, push; `init`; `docs` index writes; `release`, `deploy`, `bootstrap`, `demo`, `uninstall` | channel | Requests under the same authorisation as the host CLI. |
+| `state` apply, capture; `artifact` stage, capture, push; `init`; `docs` index writes; `release`, `deploy`, `bootstrap`, `uninstall` | channel | Requests under the same authorisation as the host CLI. |
 | `gateway` subcommands | channel | Requests to the gateway engine; never a guest gateway. |
 | Hidden internal entry points | refused | Never exposed on the channel; a guest invocation refuses. |
 
@@ -2178,7 +2178,6 @@ Environment reconciler adoption, tranche 3 (effigy#230, 2026-10-20):
 | --- | --- | --- |
 | Release prepared state written after mutations; branch and tag pushed separately | `crates/effigy-release/src/lib.rs:1456`; `crates/effigy-release/src/git.rs:241` | `Run` with checkpoints; pushes `Irreversible`, reconciled |
 | Deploy reports success for unexecuted work | `src/runner/deploy_command/transaction.rs:109`, `:287` | R5 and I-OC1; ownership is Q-003 |
-| Demo spawn and group signal | `src/runner/demo_command/execute.rs:48` | `OwnedProcess` |
 | Vault written in place, unlocked | `src/runner/secret_vault.rs:177-194`; `crates/effigy-rhai/src/rhai_secrets.rs:665` | `Gate(Store vault)` + pointer commit (§5.5) |
 | Deps state: try-only lock, local atomic helper | `crates/effigy-deps/src/state.rs:497`, `:573` | gate with deadline; `atomic_replace` |
 | Graph reads and explicit refresh | `crates/effigy-codegraph/src/refresh.rs`; `storage.rs`; graph contract 045 | RefreshDerived owns a kernel store gate; Observe probes only. Queries never refresh; rollback-journal readers create no files. Existing WAL is migrated by explicit index. |

@@ -4,11 +4,10 @@ use effigy_cli::{
     BootstrapDbSeedInput, BundleArgs, BundleSubcommand, ChangelogArgs, ChangelogSubcommand,
     ContainerArgs, ContainerCacheSubcommand, ContainerDataSubcommand, ContainerDbDumpInput,
     ContainerSubcommand, ContainerVolumeSubcommand, ContractsArgs, ContractsCheckMode,
-    ContractsSelectionPrintMode, ContractsSubcommand, DemoArgs, DemoListQuery, DemoSubcommand,
-    DeployArgs, DeploySubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs,
-    GatewayArgs, GatewaySubcommand, ReleaseArgs, ReleaseEvidenceSubcommand, ReleaseSubcommand,
-    ServiceArgs, ServiceSubcommand, StateArgs, StateSubcommand, SystemArgs, SystemSubcommand,
-    TaskInvocation, TasksArgs,
+    ContractsSelectionPrintMode, ContractsSubcommand, DeployArgs, DeploySubcommand, DocsArgs,
+    DocsBlockRequirement, DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand, ReleaseArgs,
+    ReleaseEvidenceSubcommand, ReleaseSubcommand, ServiceArgs, ServiceSubcommand, StateArgs,
+    StateSubcommand, SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs,
 };
 use effigy_execution::ExecutionSurface;
 use effigy_rhai::surface::*;
@@ -820,55 +819,6 @@ pub(super) fn run_rhai_feature(
                 }),
             )
         }
-        FEATURE_DEMO_LIST => run_typed_command(
-            repo_root,
-            effigy_cli::Command::Demo(DemoArgs {
-                subcommand: DemoSubcommand::List {
-                    query: DemoListQuery {
-                        search: string_option(&options, "search")?,
-                        owner: string_option(&options, "owner")?,
-                        tag: string_option(&options, "tag")?,
-                        mode: None,
-                        cover: string_option(&options, "cover")?,
-                        status: None,
-                        gap: None,
-                        stale_only: bool_option(&options, "stale_only")?.unwrap_or(false),
-                        group_by: None,
-                    },
-                },
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: true,
-            }),
-        ),
-        FEATURE_DEMO_INSPECT => run_typed_command(
-            repo_root,
-            effigy_cli::Command::Demo(DemoArgs {
-                subcommand: DemoSubcommand::Inspect {
-                    demo_id: required_string(&options, "demo_id")?,
-                },
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: true,
-            }),
-        ),
-        FEATURE_DEMO_HISTORY => run_typed_command(
-            repo_root,
-            effigy_cli::Command::Demo(DemoArgs {
-                subcommand: DemoSubcommand::History {
-                    demo_id: required_string(&options, "demo_id")?,
-                    limit: usize_option(&options, "limit")?,
-                    outcome: match string_option(&options, "outcome")?.as_deref() {
-                        Some("passed") => Some(effigy_cli::DemoHistoryOutcome::Passed),
-                        Some("failed") => Some(effigy_cli::DemoHistoryOutcome::Failed),
-                        Some("terminated") => Some(effigy_cli::DemoHistoryOutcome::Terminated),
-                        _ => None,
-                    },
-                    attempt_id: string_option(&options, "attempt_id")?,
-                    attempt_ordinal: usize_option(&options, "attempt_ordinal")?,
-                },
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: true,
-            }),
-        ),
         FEATURE_CHANGELOG_VALIDATE => run_typed_command(
             repo_root,
             effigy_cli::Command::Changelog(ChangelogArgs {
@@ -1031,9 +981,6 @@ pub(super) fn is_runner_dispatch_feature(feature: &str) -> bool {
             | FEATURE_DISTRIBUTION_WRITE_SUMMARY
             | FEATURE_SYSTEM_STATUS
             | FEATURE_SYSTEM_LOGS
-            | FEATURE_DEMO_LIST
-            | FEATURE_DEMO_INSPECT
-            | FEATURE_DEMO_HISTORY
             | FEATURE_CHANGELOG_VALIDATE
             | FEATURE_CHANGELOG_EXTRACT
             | FEATURE_UNLOCK_SCOPES
