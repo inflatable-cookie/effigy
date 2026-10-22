@@ -47,11 +47,11 @@ pub use config_sections::{
     ManifestContainerHostProcess, ManifestContainerHostProcessRestart, ManifestContainerOnTaskExit,
     ManifestContainerSecretDelivery, ManifestContainerSecretsConfig,
     ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
-    ManifestContainersConfig, ManifestDataConfig, ManifestDataTargetConfig, ManifestDemoConfig,
-    ManifestDemoMode, ManifestDemoStatus, ManifestDistributionConfig,
-    ManifestDistributionMetadataConfig, ManifestDistributionPackageConfig,
-    ManifestDistributionPreflightConfig, ManifestDocsPolicyConfig,
-    ManifestDocsPolicyGraphCardinality, ManifestDocsPolicyGraphConfig,
+    ManifestContainersConfig, ManifestContractsConfig, ManifestDataConfig,
+    ManifestDataTargetConfig, ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus,
+    ManifestDistributionConfig, ManifestDistributionMetadataConfig,
+    ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig,
+    ManifestDocsPolicyConfig, ManifestDocsPolicyGraphCardinality, ManifestDocsPolicyGraphConfig,
     ManifestDocsPolicyGraphCurrentnessClass, ManifestDocsPolicyGraphCurrentnessConfig,
     ManifestDocsPolicyGraphFieldConfig, ManifestDocsPolicyGraphKindConfig,
     ManifestDocsPolicyGraphRelationConfig, ManifestDocsPolicySourcesConfig,
@@ -163,6 +163,7 @@ pub const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &[
     "systems",
     "distribution",
     "release",
+    "contracts",
     "demos",
     "tasks",
     "qa",
@@ -216,6 +217,8 @@ pub struct TaskManifest {
     pub distribution: Option<ManifestDistributionConfig>,
     #[serde(default)]
     pub release: Option<ManifestReleaseConfig>,
+    #[serde(default)]
+    pub contracts: Option<ManifestContractsConfig>,
     #[serde(default)]
     pub demos: BTreeMap<String, ManifestDemoConfig>,
     #[serde(default, deserialize_with = "deserialize_tasks")]

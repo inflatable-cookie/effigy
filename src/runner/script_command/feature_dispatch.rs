@@ -585,6 +585,8 @@ pub(super) fn run_rhai_feature(
             effigy_cli::Command::Contracts(ContractsArgs {
                 subcommand: ContractsSubcommand::CheckJson {
                     index_path: path_option(&options, "index")?,
+                    contract_path: path_option(&options, "contract")?,
+                    artifact_path: path_option(&options, "artifact")?,
                     mode: match string_option(&options, "mode")?.as_deref() {
                         Some("full") => ContractsCheckMode::Full,
                         _ => ContractsCheckMode::Fast,
@@ -595,17 +597,7 @@ pub(super) fn run_rhai_feature(
                         Some("text") => ContractsSelectionPrintMode::Text,
                         _ => ContractsSelectionPrintMode::None,
                     },
-                },
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: true,
-            }),
-        ),
-        FEATURE_CONTRACTS_VALIDATE_SELECTION => run_typed_command(
-            repo_root,
-            effigy_cli::Command::Contracts(ContractsArgs {
-                subcommand: ContractsSubcommand::ValidateSelection {
-                    contract_path: path_option(&options, "contract")?,
-                    artifact_path: path_option(&options, "artifact")?,
+                    validate_selection: bool_option(&options, "validate_selection")?.unwrap_or(false),
                 },
                 repo_override: Some(repo_root.to_path_buf()),
                 output_json: true,
@@ -1014,7 +1006,6 @@ pub(super) fn is_runner_dispatch_feature(feature: &str) -> bool {
             | FEATURE_CACHE_INSPECT
             | FEATURE_CACHE_INVALIDATE
             | FEATURE_CONTRACTS_CHECK_JSON
-            | FEATURE_CONTRACTS_VALIDATE_SELECTION
             | FEATURE_DEPLOY_MODEL
             | FEATURE_DEPLOY_EMIT
             | FEATURE_DEPLOY_PLAN

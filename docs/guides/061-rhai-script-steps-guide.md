@@ -291,8 +291,7 @@ Current v1 helpers:
   - `scan::stale_suppressions(options_map)`
   - `cache::inspect(options_map)`
   - `cache::invalidate(options_map)`
-  - `contracts::check_json(options_map)`
-  - `contracts::validate_selection(options_map)`
+  - `contracts::check_json(options_map)` (`index`, `contract`, `artifact`, `mode`, `changed_only`, `print_selected`, `validate_selection`)
   - `deploy::model()`
   - `deploy::emit(#{ provider: "render", ... })`
   - `system::status(options_map)`

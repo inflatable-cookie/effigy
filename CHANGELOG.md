@@ -198,6 +198,22 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- Retire `effigy contracts validate-selection` and the Rhai feature
+  `contracts.validate_selection`. `effigy contracts check-json
+  --validate-selection` validates the selection payload of the current run
+  (implied by `--print-selected=json`), and `--validate-selection --artifact
+  <PATH>` validates a stored artifact. A violation is a failure row for
+  `effigy.json-contract-selection.v1` inside the unchanged
+  `effigy.contracts.check-json.v1` envelope. The local
+  `scripts/write-json-contract-artifacts.rhai` artifact writer is gone;
+  `qa:ci:json` runs `contracts check-json --full --print-selected=json`.
+  Selection validation options now live on `contracts::check_json`
+  (`validate_selection`, `contract`, `artifact`).
+- Retire Effigy's implicit default JSON contract paths.
+  `effigy contracts check-json` reads `[contracts].schema_index` and
+  `[contracts].selection_contract` from the project manifest, so a project that
+  declares neither is refused with "no JSON schema index configured" instead of
+  being validated against Effigy's documentation tree.
 - Retire the experimental gateway listener-handoff commands:
   `effigy gateway setup-listener-handoff`, `listener-handoff-status` and
   `remove-listener-handoff`, with the launchd definition generator, its strict
@@ -592,6 +608,19 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- `effigy contracts check-json` validates with one JSON Schema engine,
+  `effigy-json-schema` (Draft 2020-12 through `jsonschema` 0.50 with default
+  features off), instead of hand-written per-schema key assertions. A schema
+  index may declare a `payload_schemas` map from schema id to a JSON Schema
+  document, relative to the index file; Effigy's own index ships documents for
+  `effigy.command.v1`, `effigy.container.migrate.v1` and
+  `effigy.container.render.v1`. `format` is annotation-only, `$ref` never
+  leaves the document, and an invalid payload schema stops the run
+  ([contract 054](docs/knowledge/contracts/054-project-json-contract-validation-contract.md)).
+  The selection payload's `count` remains a producer guarantee derived from
+  `selected.length`, because JSON Schema cannot compare a property with an
+  array length. `--json` failures now report the structured
+  `effigy.contracts.check-json.v1` payload in `error.message`.
 - Effigy's own repository builds through Oxide. Selectors run Cargo through
   `scripts/oxide-selector.sh`, which leases Oxide's shared slot pool so Rust
   intermediates stay off the internal SSD, and `scripts/effigy-selfbuild.sh`

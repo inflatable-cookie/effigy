@@ -1,11 +1,11 @@
 use super::{command_kind_and_name, help_topic_label};
 use effigy_cli::{
     BootstrapArgs, BootstrapSubcommand, BundleArgs, BundleSubcommand, Command, ContainerArgs,
-    ContainerSubcommand, ContractsArgs, ContractsSubcommand, DemoArgs, DemoListQuery,
-    DemoSubcommand, DeployArgs, DeploySubcommand, DoctorArgs, ExecArgs, GatewayArgs,
-    GatewaySubcommand, GraphArgs, GraphSubcommand, HelpTopic, ReleaseArgs, ReleaseSubcommand,
-    SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand,
-    TaskInvocation, TasksArgs, WorkspaceArgs,
+    ContainerSubcommand, ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode,
+    ContractsSubcommand, DemoArgs, DemoListQuery, DemoSubcommand, DeployArgs, DeploySubcommand,
+    DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, GraphArgs, GraphSubcommand, HelpTopic,
+    ReleaseArgs, ReleaseSubcommand, SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand,
+    SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs, WorkspaceArgs,
 };
 
 #[test]
@@ -107,9 +107,14 @@ fn command_kind_and_name_maps_command_variants() {
         stale_index: false,
     });
     let contracts = Command::Contracts(ContractsArgs {
-        subcommand: ContractsSubcommand::ValidateSelection {
+        subcommand: ContractsSubcommand::CheckJson {
+            index_path: None,
             contract_path: None,
             artifact_path: None,
+            mode: ContractsCheckMode::Full,
+            changed_only_base: None,
+            print_selected: ContractsSelectionPrintMode::None,
+            validate_selection: false,
         },
         repo_override: None,
         output_json: false,

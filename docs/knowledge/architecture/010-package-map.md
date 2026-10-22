@@ -103,7 +103,8 @@ these callers. `deny.toml` remains the dependency policy authority.
 | `effigy-distribution` | binary distribution and install/update helpers |
 | `effigy-release` | release orchestration helpers |
 | `effigy-changelog` | changelog parsing, extraction, and release-note support |
-| `effigy-contracts` | contract file loading and contract-surface helpers |
+| `effigy-contracts` | contract file loading, project `[contracts]` configuration, and contract-surface helpers |
+| `effigy-json-schema` | the one JSON Schema (Draft 2020-12) validation engine; no Effigy dependencies, so `effigy-rhai` can depend on it ([054](../contracts/054-project-json-contract-validation-contract.md)) |
 | `effigy-docs-policy` | docs checks and policy validation helpers; recursive walks skip generated `target/` and `node_modules/` at entry ([030](030-docs-check-source-traversal.md)) |
 | `effigy-doctor` | doctor findings and diagnostics model |
 | `effigy-env` | env-schema integration and env contract helpers |

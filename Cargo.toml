@@ -39,6 +39,7 @@ members = [
     "crates/effigy-docs-policy",
     "crates/effigy-env",
     "crates/effigy-doctor",
+    "crates/effigy-json-schema",
 ]
 
 [workspace.package]

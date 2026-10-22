@@ -1106,26 +1106,34 @@ where
 
     match subcmd.as_str() {
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Contracts)),
-        "validate-selection" => parse_contracts_validate_selection(args),
+        "validate-selection" => Err(CliParseError::InvalidArguments(
+            "`effigy contracts validate-selection` was removed in v0.15: `check-json` validates the selection payload itself — run `effigy contracts check-json --validate-selection` (implied by `--print-selected=json`), or pass `--artifact <PATH>` to validate a stored artifact. The schema index and selection contract now come from `[contracts]` in effigy.toml (see CHANGELOG.md `[Unreleased]`)".to_owned(),
+        )),
         "check-json" => parse_contracts_check_json(args),
         other => Err(unknown_argument(other)),
     }
 }
 
-fn parse_contracts_validate_selection<I>(args: I) -> Result<Command, CliParseError>
+fn parse_contracts_check_json<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
     let mut args = args.into_iter();
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
+    let mut index_path: Option<PathBuf> = None;
+    let mut mode = ContractsCheckMode::Full;
+    let mut changed_only_base: Option<String> = None;
+    let mut print_selected = ContractsSelectionPrintMode::None;
     let mut contract_path: Option<PathBuf> = None;
     let mut artifact_path: Option<PathBuf> = None;
+    let mut validate_selection = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
+            "--validate-selection" => validate_selection = true,
             "--contract" => {
                 contract_path = Some(PathBuf::from(next_required_value(
                     &mut args,
@@ -1142,37 +1150,6 @@ where
                     },
                 )?));
             }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Contracts)),
-            other => return Err(unknown_argument(other)),
-        }
-    }
-
-    Ok(Command::Contracts(ContractsArgs {
-        subcommand: ContractsSubcommand::ValidateSelection {
-            contract_path,
-            artifact_path,
-        },
-        repo_override,
-        output_json,
-    }))
-}
-
-fn parse_contracts_check_json<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
-    let mut index_path: Option<PathBuf> = None;
-    let mut mode = ContractsCheckMode::Full;
-    let mut changed_only_base: Option<String> = None;
-    let mut print_selected = ContractsSelectionPrintMode::None;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
             "--index" => {
                 index_path = Some(PathBuf::from(next_required_value(
                     &mut args,
@@ -1203,9 +1180,12 @@ where
     Ok(Command::Contracts(ContractsArgs {
         subcommand: ContractsSubcommand::CheckJson {
             index_path,
+            contract_path,
+            artifact_path,
             mode,
             changed_only_base,
             print_selected,
+            validate_selection,
         },
         repo_override,
         output_json,

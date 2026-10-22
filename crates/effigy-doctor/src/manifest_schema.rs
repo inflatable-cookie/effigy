@@ -7,6 +7,7 @@ use crate::FindingSink;
 mod bootstrap_section;
 mod catalog_section;
 mod containers_section;
+mod contracts_section;
 mod demos_section;
 mod diagnostics;
 mod distribution_section;
@@ -30,6 +31,7 @@ mod tests;
 use bootstrap_section::validate_bootstrap_section;
 use catalog_section::validate_catalog_section;
 use containers_section::validate_containers_section;
+use contracts_section::validate_contracts_section;
 use demos_section::validate_demos_section;
 use diagnostics::SchemaContext;
 use distribution_section::validate_distribution_section;
@@ -90,6 +92,9 @@ pub fn validate_manifest_schema(manifest_path: &Path, value: &Value, sink: &mut 
     }
     if let Some(release) = table.get("release") {
         validate_release_section(&mut context, release);
+    }
+    if let Some(contracts) = table.get("contracts") {
+        validate_contracts_section(&mut context, contracts);
     }
     if let Some(scan) = table.get("scan") {
         validate_scan_section(&mut context, scan);

@@ -536,14 +536,35 @@ fn parse_docs_context_rejects_non_positive_budgets() {
 }
 
 #[test]
-fn parse_contracts_validate_selection_with_overrides() {
-    let cmd = parse_command(vec![
+fn parse_contracts_validate_selection_is_retired_with_its_replacement_named() {
+    let error = parse_command(vec![
         "contracts".to_owned(),
         "validate-selection".to_owned(),
+        "--artifact".to_owned(),
+        "tmp/selected.json".to_owned(),
+    ])
+    .expect_err("retired subcommand must be refused");
+
+    let message = error.to_string();
+    assert!(message.contains("validate-selection"), "{message}");
+    assert!(
+        message.contains("check-json --validate-selection"),
+        "{message}"
+    );
+    assert!(message.contains("--artifact"), "{message}");
+    assert!(message.contains("CHANGELOG.md"), "{message}");
+}
+
+#[test]
+fn parse_contracts_check_json_with_selection_validation() {
+    let cmd = parse_command(vec![
+        "contracts".to_owned(),
+        "check-json".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "--contract".to_owned(),
         "docs/knowledge/contracts/selection.json".to_owned(),
+        "--validate-selection".to_owned(),
         "--artifact".to_owned(),
         "tmp/selected.json".to_owned(),
         "--json".to_owned(),
@@ -553,9 +574,14 @@ fn parse_contracts_validate_selection_with_overrides() {
     assert_eq!(
         cmd,
         Command::Contracts(ContractsArgs {
-            subcommand: ContractsSubcommand::ValidateSelection {
+            subcommand: ContractsSubcommand::CheckJson {
+                index_path: None,
                 contract_path: Some(PathBuf::from("docs/knowledge/contracts/selection.json")),
                 artifact_path: Some(PathBuf::from("tmp/selected.json")),
+                mode: ContractsCheckMode::Full,
+                changed_only_base: None,
+                print_selected: ContractsSelectionPrintMode::None,
+                validate_selection: true,
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
@@ -585,9 +611,12 @@ fn parse_contracts_check_json_with_changed_only_and_selection_json() {
         Command::Contracts(ContractsArgs {
             subcommand: ContractsSubcommand::CheckJson {
                 index_path: Some(PathBuf::from("docs/knowledge/contracts/index.json")),
+                contract_path: None,
+                artifact_path: None,
                 mode: ContractsCheckMode::Fast,
                 changed_only_base: Some("origin/main".to_owned()),
                 print_selected: ContractsSelectionPrintMode::Json,
+                validate_selection: false,
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,

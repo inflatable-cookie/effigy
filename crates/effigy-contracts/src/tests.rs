@@ -1,5 +1,9 @@
-use super::{resolve_schema_payload, split_shell_like_args, validate_selection, SelectionPayload};
-use serde_json::json;
+use super::{
+    prepare_check_json, resolve_schema_payload, run_prepared_check_json, split_shell_like_args,
+    ContractsConfig, SelectionPayload, SelectionValidation, SELECTION_PAYLOAD_SCHEMA,
+};
+use effigy_cli::ContractsCheckMode;
+use serde_json::{json, Value};
 use std::path::Path;
 
 #[test]
@@ -108,87 +112,318 @@ fn contract_fixture_partial_io_failure_and_unwind_clean_only_owned_directories()
     );
 }
 
-#[test]
-fn validate_selection_accepts_valid_payload() {
-    let repo = tempfile::tempdir().expect("temp repo");
-    let repo_root = repo.path();
-    let contract_path = repo_root.join("contract.json");
-    let artifact_path = repo_root.join("artifact.json");
+fn write_contract_repo(root: &Path, index: &Value) {
     std::fs::write(
-        &contract_path,
+        root.join("effigy.toml"),
+        "[contracts]\nschema_index = \"index.json\"\nselection_contract = \"selection.json\"\n",
+    )
+    .expect("write manifest");
+    std::fs::write(root.join("index.json"), index.to_string()).expect("write index");
+    std::fs::write(
+        root.join("selection.json"),
         json!({
+            "type": "object",
             "required": ["selected", "count", "changed_only_base", "mode"],
             "properties": {
-                "mode": {
-                    "enum": ["full", "changed-only"]
-                }
+                "selected": { "type": "array", "items": { "type": "string" } },
+                "count": { "type": "number" },
+                "changed_only_base": { "type": ["string", "null"] },
+                "mode": { "enum": ["full", "changed-only"] }
             }
         })
         .to_string(),
     )
-    .expect("contract");
-    std::fs::write(
-        &artifact_path,
-        json!({
-            "selected": ["a", "b"],
-            "count": 2,
-            "changed_only_base": null,
-            "mode": "full"
-        })
-        .to_string(),
-    )
-    .expect("artifact");
-
-    let report = validate_selection(
-        repo_root,
-        Some(&Path::new("contract.json").to_path_buf()),
-        Some(&Path::new("artifact.json").to_path_buf()),
-    )
-    .expect("selection validation");
-    assert!(report.ok());
+    .expect("write selection contract");
 }
 
 #[test]
-fn validate_selection_rejects_wrong_count() {
-    let repo = tempfile::tempdir().expect("temp repo");
-    let repo_root = repo.path();
-    let contract_path = repo_root.join("contract.json");
-    let artifact_path = repo_root.join("artifact.json");
+fn prepare_check_json_requires_configured_schema_index() {
+    let repo = tempfile::tempdir().expect("repo");
     std::fs::write(
-        &contract_path,
+        repo.path().join("effigy.toml"),
+        "[catalog]\nalias = \"bare\"\n",
+    )
+    .expect("write manifest");
+
+    let error = prepare_check_json(
+        repo.path(),
+        &ContractsConfig::load(repo.path()).expect("config"),
+        None,
+        ContractsCheckMode::Full,
+        None,
+        &SelectionValidation::Skip,
+        None,
+    )
+    .expect_err("unconfigured project must be refused");
+
+    let message = error.to_string();
+    assert!(
+        message.contains("no JSON schema index configured"),
+        "{message}"
+    );
+    assert!(message.contains("[contracts] schema_index"), "{message}");
+    assert!(!message.contains("docs/knowledge/contracts"), "{message}");
+}
+
+#[test]
+fn prepare_check_json_validates_the_selection_payload_from_config() {
+    let repo = tempfile::tempdir().expect("repo");
+    write_contract_repo(
+        repo.path(),
+        &json!({
+            "version": 1,
+            "schemas": [{
+                "schema": "effigy.command.v1",
+                "schema_version": 1,
+                "command": "effigy --json help",
+                "status": "inactive"
+            }],
+            "payload_schemas": {}
+        }),
+    );
+
+    let prepared = prepare_check_json(
+        repo.path(),
+        &ContractsConfig::load(repo.path()).expect("config"),
+        None,
+        ContractsCheckMode::Full,
+        None,
+        &SelectionValidation::Payload,
+        None,
+    )
+    .expect("prepare");
+    assert!(prepared.validates_selection());
+    assert_eq!(prepared.index_path(), repo.path().join("index.json"));
+
+    let report = run_prepared_check_json(repo.path(), &prepared, false).expect("run");
+    assert_eq!(report.checks, 1);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+}
+
+#[test]
+fn selection_validation_reports_contract_failures() {
+    let repo = tempfile::tempdir().expect("repo");
+    write_contract_repo(
+        repo.path(),
+        &json!({ "version": 1, "schemas": [], "payload_schemas": {} }),
+    );
+    // The selection payload carries no entries, so a contract that requires one
+    // fails: the failure is reported as a contract check, not a command failure.
+    std::fs::write(
+        repo.path().join("selection.json"),
         json!({
-            "required": ["selected", "count", "changed_only_base", "mode"],
-            "properties": {
-                "mode": {
-                    "enum": ["full"]
-                }
-            }
+            "type": "object",
+            "required": ["selected"],
+            "properties": { "selected": { "minItems": 1 } }
         })
         .to_string(),
     )
-    .expect("contract");
+    .expect("write selection contract");
+
+    let prepared = prepare_check_json(
+        repo.path(),
+        &ContractsConfig::load(repo.path()).expect("config"),
+        None,
+        ContractsCheckMode::Full,
+        None,
+        &SelectionValidation::Payload,
+        None,
+    )
+    .expect("prepare");
+    let report = run_prepared_check_json(repo.path(), &prepared, false).expect("run");
+
+    assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+    assert_eq!(report.failures[0].schema, SELECTION_PAYLOAD_SCHEMA);
+    assert!(
+        report.failures[0].reason.contains("/selected"),
+        "{:?}",
+        report.failures
+    );
+    assert!(report.render_text(None).is_err());
+}
+
+#[test]
+fn artifact_selection_validation_reads_the_artifact_file() {
+    let repo = tempfile::tempdir().expect("repo");
+    write_contract_repo(
+        repo.path(),
+        &json!({ "version": 1, "schemas": [], "payload_schemas": {} }),
+    );
+
+    let valid = repo.path().join("valid.json");
     std::fs::write(
-        &artifact_path,
+        &valid,
         json!({
-            "selected": ["a", "b"],
+            "selected": ["a"],
             "count": 1,
             "changed_only_base": null,
             "mode": "full"
         })
         .to_string(),
     )
-    .expect("artifact");
-
-    let report = validate_selection(
-        repo_root,
-        Some(&Path::new("contract.json").to_path_buf()),
-        Some(&Path::new("artifact.json").to_path_buf()),
+    .expect("write artifact");
+    let prepared = prepare_check_json(
+        repo.path(),
+        &ContractsConfig::load(repo.path()).expect("config"),
+        None,
+        ContractsCheckMode::Full,
+        None,
+        &SelectionValidation::Artifact(valid),
+        None,
     )
-    .expect("selection validation");
-    assert!(report
-        .errors
-        .iter()
-        .any(|error| error.contains("`count` must equal the number of `selected` entries")));
+    .expect("prepare");
+    assert!(run_prepared_check_json(repo.path(), &prepared, false)
+        .expect("run")
+        .failures
+        .is_empty());
+
+    let invalid = repo.path().join("invalid.json");
+    std::fs::write(
+        &invalid,
+        json!({ "selected": [7], "count": 1, "changed_only_base": null, "mode": "full" })
+            .to_string(),
+    )
+    .expect("write artifact");
+    let prepared = prepare_check_json(
+        repo.path(),
+        &ContractsConfig::load(repo.path()).expect("config"),
+        None,
+        ContractsCheckMode::Full,
+        None,
+        &SelectionValidation::Artifact(invalid),
+        None,
+    )
+    .expect("prepare");
+    let report = run_prepared_check_json(repo.path(), &prepared, false).expect("run");
+    assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+    assert!(
+        report.failures[0].reason.contains("/selected/0"),
+        "{:?}",
+        report.failures
+    );
+}
+
+#[test]
+fn selection_validation_requires_a_configured_contract() {
+    let repo = tempfile::tempdir().expect("repo");
+    std::fs::write(
+        repo.path().join("effigy.toml"),
+        "[contracts]\nschema_index = \"index.json\"\n",
+    )
+    .expect("write manifest");
+    std::fs::write(
+        repo.path().join("index.json"),
+        json!({ "version": 1, "schemas": [] }).to_string(),
+    )
+    .expect("write index");
+
+    let error = prepare_check_json(
+        repo.path(),
+        &ContractsConfig::load(repo.path()).expect("config"),
+        None,
+        ContractsCheckMode::Full,
+        None,
+        &SelectionValidation::Payload,
+        None,
+    )
+    .expect_err("missing selection contract must be refused");
+
+    let message = error.to_string();
+    assert!(
+        message.contains("no selection contract configured"),
+        "{message}"
+    );
+    assert!(
+        message.contains("[contracts] selection_contract"),
+        "{message}"
+    );
+}
+
+#[test]
+fn payload_schemas_compile_relative_to_the_index() {
+    let repo = tempfile::tempdir().expect("repo");
+    std::fs::create_dir_all(repo.path().join("schemas")).expect("mkdir schemas");
+    std::fs::write(
+        repo.path().join("schemas/tasks.json"),
+        json!({
+            "type": "object",
+            "required": ["tasks"],
+            "properties": { "tasks": { "type": "array" } }
+        })
+        .to_string(),
+    )
+    .expect("write payload schema");
+    std::fs::write(
+        repo.path().join("effigy.toml"),
+        "[contracts]\nschema_index = \"index.json\"\n",
+    )
+    .expect("write manifest");
+    std::fs::write(
+        repo.path().join("index.json"),
+        json!({
+            "version": 1,
+            "payload_schemas": { "effigy.tasks.v1": "schemas/tasks.json" },
+            "schemas": []
+        })
+        .to_string(),
+    )
+    .expect("write index");
+
+    let prepared = prepare_check_json(
+        repo.path(),
+        &ContractsConfig::load(repo.path()).expect("config"),
+        None,
+        ContractsCheckMode::Full,
+        None,
+        &SelectionValidation::Skip,
+        None,
+    )
+    .expect("prepare");
+    assert!(!prepared.validates_selection());
+    assert!(prepared.payload_schemas.contains_key("effigy.tasks.v1"));
+}
+
+#[test]
+fn invalid_payload_schema_is_reported_as_an_error() {
+    let repo = tempfile::tempdir().expect("repo");
+    std::fs::write(
+        repo.path().join("broken.json"),
+        json!({ "type": "object", "required": 7 }).to_string(),
+    )
+    .expect("write payload schema");
+    std::fs::write(
+        repo.path().join("effigy.toml"),
+        "[contracts]\nschema_index = \"index.json\"\n",
+    )
+    .expect("write manifest");
+    std::fs::write(
+        repo.path().join("index.json"),
+        json!({
+            "version": 1,
+            "payload_schemas": { "effigy.tasks.v1": "broken.json" },
+            "schemas": []
+        })
+        .to_string(),
+    )
+    .expect("write index");
+
+    let error = prepare_check_json(
+        repo.path(),
+        &ContractsConfig::load(repo.path()).expect("config"),
+        None,
+        ContractsCheckMode::Full,
+        None,
+        &SelectionValidation::Skip,
+        None,
+    )
+    .expect_err("invalid payload schema must fail the run");
+
+    assert!(
+        error
+            .to_string()
+            .contains("not valid Draft 2020-12 JSON Schema"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -235,15 +470,15 @@ fn resolve_schema_payload_prefers_nested_result_schema() {
         "ok": true,
         "command": {"kind": "contracts", "name": "contracts"},
         "result": {
-            "schema": "effigy.contracts.selection-validation.v1",
+            "schema": "effigy.tasks.v1",
             "schema_version": 1,
             "ok": true
         },
         "error": null
     });
 
-    let resolved = resolve_schema_payload("effigy.contracts.selection-validation.v1", &payload);
-    assert_eq!(resolved.schema, "effigy.contracts.selection-validation.v1");
+    let resolved = resolve_schema_payload("effigy.tasks.v1", &payload);
+    assert_eq!(resolved.schema, "effigy.tasks.v1");
     assert_eq!(resolved.schema_version, "1");
     assert_eq!(resolved.payload["ok"], true);
 }
@@ -265,7 +500,8 @@ fn container_render_contract_has_owned_inputs_and_requires_its_public_fields() {
     let payload = json!({"schema":"effigy.container.render.v1", "schema_version":1,
         "environment":"web", "path":"/objects/digest", "digest":"digest",
         "compose_files":[], "environment_variables":{}, "files":[]});
-    super::assert_required_json_contract_keys("effigy.container.render.v1", &payload).unwrap();
+    let schema = repo_payload_schema("effigy.container.render.v1");
+    assert!(schema.validate(&payload).is_empty());
     for key in [
         "environment",
         "path",
@@ -277,9 +513,8 @@ fn container_render_contract_has_owned_inputs_and_requires_its_public_fields() {
         let mut incomplete = payload.clone();
         incomplete.as_object_mut().unwrap().remove(key);
         assert!(
-            super::assert_required_json_contract_keys("effigy.container.render.v1", &incomplete)
-                .is_err(),
-            "{key}"
+            !schema.validate(&incomplete).is_empty(),
+            "removing {key} must fail the payload schema"
         );
     }
     drop(fixtures);
@@ -304,7 +539,8 @@ fn container_migrate_contract_has_owned_compose_file_inputs_and_requires_its_fie
     let payload = json!({"schema":"effigy.container.migrate.v1", "schema_version":1,
         "environment":"web", "compose_file":"compose.yml", "manifest":"effigy.toml",
         "fragments":[], "render_unchanged":true});
-    super::assert_required_json_contract_keys("effigy.container.migrate.v1", &payload).unwrap();
+    let schema = repo_payload_schema("effigy.container.migrate.v1");
+    assert!(schema.validate(&payload).is_empty());
     for key in [
         "environment",
         "compose_file",
@@ -315,9 +551,20 @@ fn container_migrate_contract_has_owned_compose_file_inputs_and_requires_its_fie
         let mut incomplete = payload.clone();
         incomplete.as_object_mut().unwrap().remove(key);
         assert!(
-            super::assert_required_json_contract_keys("effigy.container.migrate.v1", &incomplete)
-                .is_err(),
-            "{key}"
+            !schema.validate(&incomplete).is_empty(),
+            "removing {key} must fail the payload schema"
         );
     }
+}
+
+/// Compile one of the shipped payload schema documents.
+fn repo_payload_schema(schema_id: &str) -> effigy_json_schema::CompiledSchema {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/knowledge/contracts/payload-schemas")
+        .join(format!("{schema_id}.json"));
+    let document = serde_json::from_str(&std::fs::read_to_string(&path).unwrap_or_else(|error| {
+        panic!("read {}: {error}", path.display());
+    }))
+    .expect("parse payload schema");
+    effigy_json_schema::CompiledSchema::compile(&document).expect("compile payload schema")
 }

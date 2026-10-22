@@ -1,6 +1,11 @@
 {
   "version": 1,
   "generated_by": "manual",
+  "payload_schemas": {
+    "effigy.command.v1": "payload-schemas/effigy.command.v1.json",
+    "effigy.container.migrate.v1": "payload-schemas/effigy.container.migrate.v1.json",
+    "effigy.container.render.v1": "payload-schemas/effigy.container.render.v1.json"
+  },
   "schemas": [
     {
       "schema": "effigy.command.v1",

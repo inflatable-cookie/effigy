@@ -1072,15 +1072,14 @@ pub enum ContainerDataSubcommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContractsSubcommand {
-    ValidateSelection {
-        contract_path: Option<PathBuf>,
-        artifact_path: Option<PathBuf>,
-    },
     CheckJson {
         index_path: Option<PathBuf>,
+        contract_path: Option<PathBuf>,
+        artifact_path: Option<PathBuf>,
         mode: ContractsCheckMode,
         changed_only_base: Option<String>,
         print_selected: ContractsSelectionPrintMode,
+        validate_selection: bool,
     },
 }
 

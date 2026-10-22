@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "effigy.command.v1 envelope",
+  "description": "The JSON envelope every `effigy --json` command returns. See docs/guides/017-json-output-contracts.md.",
+  "type": "object",
+  "required": ["schema", "schema_version", "ok", "command", "result", "error"],
+  "properties": {
+    "schema": { "const": "effigy.command.v1" },
+    "schema_version": { "type": ["string", "number"] },
+    "ok": { "type": "boolean" },
+    "command": {
+      "type": "object",
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "type": "string" },
+        "name": { "type": "string" }
+      }
+    },
+    "result": {},
+    "error": {}
+  }
+}

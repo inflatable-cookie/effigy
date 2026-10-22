@@ -2975,73 +2975,103 @@ fn cli_docs_check_forbidden_json_reports_forbidden_text() {
     assert_eq!(details["findings"][0]["kind"], "forbidden-text");
 }
 
-#[test]
-fn cli_contracts_validate_selection_json_accepts_valid_artifact() {
-    let root = temp_workspace("contracts-validate-selection");
-    fs::create_dir_all(root.join("docs/knowledge/contracts")).expect("mkdir contracts");
-    fs::write(
-        root.join("docs/knowledge/contracts/json-selection-contract.json"),
-        "{\n  \"schema\": \"effigy.selection.contract.v1\",\n  \"schema_version\": 1,\n  \"required\": [\"selected\", \"count\", \"changed_only_base\", \"mode\"],\n  \"properties\": {\n    \"mode\": {\n      \"enum\": [\"full\", \"changed-only\"]\n    }\n  }\n}\n",
-    )
-    .expect("write contract");
-    fs::write(
-        root.join("json-contracts-selected.json"),
-        "{\n  \"selected\": [\"docs/knowledge/contracts/json-selection-contract.json\"],\n  \"count\": 1,\n  \"changed_only_base\": null,\n  \"mode\": \"full\"\n}\n",
-    )
-    .expect("write artifact");
+const CONTRACT_REPO_MANIFEST: &str = "[contracts]\nschema_index = \"docs/knowledge/contracts/json-schema-index.json\"\nselection_contract = \"docs/knowledge/contracts/json-selection-contract.json\"\n";
 
-    let output = run_json_cli_command(&root, &["contracts", "validate-selection"]);
-    assert!(output.status.success());
-    let parsed = parse_stdout_json(&output);
-    assert_eq!(
-        parsed["result"]["schema"],
-        "effigy.contracts.selection-validation.v1"
-    );
-    assert_eq!(parsed["result"]["ok"], true);
-}
-
-#[test]
-fn cli_contracts_check_json_json_runs_indexed_command_checks() {
-    let root = temp_workspace("contracts-check-json");
+fn write_contract_repo(root: &std::path::Path, selection_contract: &str) {
     fs::create_dir_all(root.join("docs/knowledge/contracts")).expect("mkdir contracts");
+    fs::write(root.join("effigy.toml"), CONTRACT_REPO_MANIFEST).expect("write manifest");
     fs::write(
         root.join("docs/knowledge/contracts/json-schema-index.json"),
         "{\n  \"version\": 1,\n  \"schemas\": [\n    {\n      \"schema\": \"effigy.command.v1\",\n      \"schema_version\": 1,\n      \"command\": \"effigy --json help\",\n      \"status\": \"active\"\n    }\n  ]\n}\n",
     )
     .expect("write index");
+    fs::write(
+        root.join("docs/knowledge/contracts/json-selection-contract.json"),
+        selection_contract,
+    )
+    .expect("write selection contract");
+}
 
-    let output = run_json_cli_command(&root, &["contracts", "check-json", "--fast"]);
+#[test]
+fn cli_contracts_check_json_validates_the_selection_payload() {
+    let root = temp_workspace("contracts-selection-payload");
+    write_contract_repo(
+        &root,
+        "{\n  \"required\": [\"selected\", \"count\", \"changed_only_base\", \"mode\"],\n  \"properties\": {\n    \"selected\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"count\": { \"type\": \"number\" },\n    \"changed_only_base\": { \"type\": [\"string\", \"null\"] },\n    \"mode\": { \"enum\": [\"fast\", \"full\"] }\n  }\n}\n",
+    );
+
+    let output = run_json_cli_command(
+        &root,
+        &["contracts", "check-json", "--fast", "--print-selected=json"],
+    );
     assert!(output.status.success());
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["schema"], "effigy.contracts.check-json.v1");
     assert_eq!(parsed["result"]["ok"], true);
     assert_eq!(parsed["result"]["selection"]["count"], 1);
-    assert_eq!(parsed["result"]["checks"], 1);
+    assert_eq!(
+        parsed["result"]["selection_contract"],
+        "docs/knowledge/contracts/json-selection-contract.json"
+    );
+    // The indexed command plus the implied selection validation.
+    assert_eq!(parsed["result"]["checks"], 2);
     assert_eq!(parsed["result"]["failures"], Value::Array(Vec::new()));
 }
 
 #[test]
-fn cli_contracts_validate_selection_rejects_invalid_artifacts() {
-    let root = temp_workspace("contracts-validate-selection-invalid");
-    fs::create_dir_all(root.join("docs/knowledge/contracts")).expect("mkdir contracts");
-    fs::write(
-        root.join("docs/knowledge/contracts/json-selection-contract.json"),
-        "{\n  \"schema\": \"effigy.selection.contract.v1\",\n  \"schema_version\": 1,\n  \"required\": [\"selected\", \"count\", \"changed_only_base\", \"mode\"],\n  \"properties\": {\n    \"mode\": {\n      \"enum\": [\"fast\", \"full\"]\n    }\n  }\n}\n",
-    )
-    .expect("write contract");
+fn cli_contracts_check_json_rejects_an_unconfigured_project() {
+    let root = temp_workspace("contracts-unconfigured");
+    fs::write(root.join("effigy.toml"), "[catalog]\nalias = \"bare\"\n").expect("write manifest");
+
+    let output = run_json_cli_command(&root, &["contracts", "check-json", "--fast"]);
+    assert!(!output.status.success());
+    let parsed = parse_stdout_json(&output);
+    let message = parsed["error"]["message"]
+        .as_str()
+        .expect("json error message");
+    assert!(
+        message.contains("no JSON schema index configured"),
+        "{message}"
+    );
+    assert!(message.contains("[contracts] schema_index"), "{message}");
+}
+
+#[test]
+fn cli_contracts_validate_selection_names_its_replacement() {
+    let root = temp_workspace("contracts-retired-selection");
+    let output = run_cli_command(&root, &["contracts", "validate-selection"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("check-json --validate-selection"),
+        "unexpected stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("CHANGELOG.md"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+#[test]
+fn cli_contracts_check_json_rejects_invalid_selection_artifacts() {
+    let root = temp_workspace("contracts-selection-artifact-invalid");
+    write_contract_repo(
+        &root,
+        "{\n  \"required\": [\"selected\", \"count\", \"changed_only_base\", \"mode\"],\n  \"properties\": {\n    \"selected\": { \"type\": \"array\", \"items\": { \"type\": \"string\" } },\n    \"count\": { \"type\": \"number\" },\n    \"changed_only_base\": { \"type\": [\"string\", \"null\"] },\n    \"mode\": { \"enum\": [\"fast\", \"full\"] }\n  }\n}\n",
+    );
 
     let cases = [
         (
-            "invalid-count",
-            "{\n  \"selected\": [\"effigy.tasks.v1\"],\n  \"count\": 2,\n  \"changed_only_base\": \"HEAD\",\n  \"mode\": \"fast\"\n}\n",
+            "missing-mode",
+            "{\n  \"selected\": [\"effigy.tasks.v1\"],\n  \"count\": 1,\n  \"changed_only_base\": null\n}\n",
         ),
         (
             "invalid-mode",
-            "{\n  \"selected\": [\"effigy.tasks.v1\"],\n  \"count\": 1,\n  \"changed_only_base\": \"HEAD\",\n  \"mode\": \"unknown\"\n}\n",
+            "{\n  \"selected\": [\"effigy.tasks.v1\"],\n  \"count\": 1,\n  \"changed_only_base\": null,\n  \"mode\": \"unknown\"\n}\n",
         ),
         (
             "invalid-selected-item",
-            "{\n  \"selected\": [\"effigy.tasks.v1\", 123],\n  \"count\": 2,\n  \"changed_only_base\": \"HEAD\",\n  \"mode\": \"fast\"\n}\n",
+            "{\n  \"selected\": [\"effigy.tasks.v1\", 123],\n  \"count\": 2,\n  \"changed_only_base\": null,\n  \"mode\": \"full\"\n}\n",
         ),
     ];
 
@@ -3052,7 +3082,8 @@ fn cli_contracts_validate_selection_rejects_invalid_artifacts() {
             &root,
             &[
                 "contracts",
-                "validate-selection",
+                "check-json",
+                "--validate-selection",
                 "--artifact",
                 artifact_path.to_str().expect("utf8 path"),
             ],
@@ -3065,16 +3096,15 @@ fn cli_contracts_validate_selection_rejects_invalid_artifacts() {
                 .expect("json error payload"),
         )
         .expect("parse details");
-        assert_eq!(
-            details["schema"],
-            "effigy.contracts.selection-validation.v1"
-        );
+        assert_eq!(details["schema"], "effigy.contracts.check-json.v1");
         assert_eq!(details["ok"], false);
         assert!(
-            details["errors"]
+            details["failures"]
                 .as_array()
-                .is_some_and(|errors| !errors.is_empty()),
-            "{name} should report validation errors"
+                .is_some_and(|failures| failures
+                    .iter()
+                    .any(|failure| failure["schema"] == "effigy.json-contract-selection.v1")),
+            "{name} should report a selection contract failure: {details}"
         );
     }
 }
