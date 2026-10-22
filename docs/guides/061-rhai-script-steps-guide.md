@@ -295,9 +295,6 @@ Current v1 helpers:
   - `contracts::validate_selection(options_map)`
   - `deploy::model()`
   - `deploy::emit(#{ provider: "render", ... })`
-  - `demo::list(options_map)`
-  - `demo::inspect(options_map)`
-  - `demo::history(options_map)`
   - `changelog::validate(options_map)`
   - `changelog::extract(options_map)`
   - `test::plan(options_map)`
@@ -691,7 +688,6 @@ After this guide, you should be able to:
 - [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
 - [`025-command-reference-matrix.md`](025-command-reference-matrix.md)
 - [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
-- [`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
 - `../roadmaps/g02/004-rust-native-scripting-surface-contract.md` (in Git history)
 
 ## Next Step

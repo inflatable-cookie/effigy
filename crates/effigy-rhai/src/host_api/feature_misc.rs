@@ -32,10 +32,6 @@ pub(super) fn register_misc_feature_modules(
         )),
     );
     engine.register_static_module(
-        MODULE_DEMO,
-        std::rc::Rc::new(build_demo_module(context.clone(), callbacks.clone())),
-    );
-    engine.register_static_module(
         MODULE_CHANGELOG,
         std::rc::Rc::new(build_changelog_module(context.clone(), callbacks.clone())),
     );
@@ -304,32 +300,6 @@ fn build_distribution_module(
 
 fn required_deploy_env(name: &str) -> Result<String, Box<EvalAltResult>> {
     crate::lookup_host_env(name).map_err(|_| rhai_runtime_error(format!("missing {name}")))
-}
-
-fn build_demo_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {
-    let mut module = rhai::Module::new();
-    module_feature_options(
-        &mut module,
-        "list",
-        FEATURE_DEMO_LIST,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "inspect",
-        FEATURE_DEMO_INSPECT,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "history",
-        FEATURE_DEMO_HISTORY,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module
 }
 
 fn build_changelog_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> rhai::Module {

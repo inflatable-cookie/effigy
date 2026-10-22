@@ -243,6 +243,13 @@ During v0.x, MINOR bumps may include breaking changes.
 - The task cache: `tasks.<name>.cache` and `effigy tasks cache`. A task that
   still declares `cache` is refused with the fix; `.effigy/cache` can be
   deleted.
+- The demo feature: `effigy demo` (`list`, `inspect`, `history`, `run`,
+  `stop`, `input`, `resize`, `rerun`, `browser`), the `[demos]` manifest
+  table, `config/demos.toml` in this repository, the `effigy-demo` crate, the
+  `demo.*` Rhai host features and the TUI demo browser. It has no replacement:
+  record terminal sessions with an external tool. `effigy demo` and a
+  `[demos]` table both refuse with that explanation, and
+  `effigy config --target demos` is gone with the section.
 - v0.14 lease locks (`.effigy/locks/`), task status records
   (`.effigy/runtime/tasks/`, `.effigy/reports/tasks/`) and the 20-second
   status staleness. They are never read for exclusion or deleted; a live

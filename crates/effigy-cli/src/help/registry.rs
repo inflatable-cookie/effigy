@@ -57,10 +57,6 @@ const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
         render: render_service,
     },
     HelpTopicDescriptor {
-        command: descriptor(HelpTopic::Demo),
-        render: render_demo,
-    },
-    HelpTopicDescriptor {
         command: descriptor(HelpTopic::Graph),
         render: render_graph,
     },
@@ -203,10 +199,6 @@ fn render_gateway(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> Help
 
 fn render_service(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
     topics::render_service_help(renderer)
-}
-
-fn render_demo(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
-    topics::render_demo_help(renderer)
 }
 
 fn render_graph(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {

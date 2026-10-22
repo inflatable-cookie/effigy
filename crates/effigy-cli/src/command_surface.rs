@@ -144,10 +144,6 @@ pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
         command_name: Some("service"),
     },
     CommandDescriptor {
-        topic: HelpTopic::Demo,
-        command_name: Some("demo"),
-    },
-    CommandDescriptor {
         topic: HelpTopic::Graph,
         command_name: Some("graph"),
     },
@@ -382,13 +378,6 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
         deferred_builtin: Some("bootstrap"),
         help_argument: Some("bootstrap"),
     },
-    GeneralHelpEntry {
-        group: HelpGroup::Deliver,
-        command: "effigy demo",
-        description: "List declared demos and inspect the latest known proof state without starting execution",
-        deferred_builtin: Some("demo"),
-        help_argument: Some("demo"),
-    },
     // ---- extend -------------------------------------------------------------
     GeneralHelpEntry {
         group: HelpGroup::Extend,
@@ -475,7 +464,6 @@ pub const HELP_COMMAND_TOPICS: &[(&str, HelpTopic)] = &[
     ("container", HelpTopic::Container),
     ("contracts", HelpTopic::Contracts),
     ("defer", HelpTopic::Defer),
-    ("demo", HelpTopic::Demo),
     ("deploy", HelpTopic::Deploy),
     ("deps", HelpTopic::Deps),
     ("docs", HelpTopic::Docs),

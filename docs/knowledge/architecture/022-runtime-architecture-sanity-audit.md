@@ -38,7 +38,7 @@ backend after constructing a request.
 5. Output and cleanup report through the initiating surface.
 
 Direct CLI tasks, embedded run arrays, Rhai `exec::run`, deferral, bootstrap,
-demo re-entry, and managed tasks must converge on equivalent route plans for
+and managed tasks must converge on equivalent route plans for
 equivalent inputs. Bootstrap must keep the target repository's path authority
 rather than the caller's current directory.
 
@@ -155,7 +155,7 @@ script API is not a shortcut around runtime policy.
 | inside-container handoff | local execution without recursive host routing |
 | bootstrap | target repo identity and cwd |
 | Rhai `exec::run` with `stdin_file` | typed environment and transport |
-| run-array and demo re-entry | captured parent context |
+| run-array re-entry | captured parent context |
 | managed dev | activation and closeout ownership |
 | `effigy exec` | selected service, user, cwd, and TTY policy |
 | local and OCI data seed | staged handoff and target selection |

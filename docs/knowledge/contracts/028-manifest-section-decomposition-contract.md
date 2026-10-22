@@ -42,7 +42,7 @@ catch-all modules.
   merge helpers.
 - `config_sections.rs`: bundle base/config grammar, task defaults, isolation,
   shell, package manager, scan sections, env schema, containers/systems/
-  workspaces/services/DNS/exec aliases/lifecycle/host/data, docs/demo policy,
+  workspaces/services/DNS/exec aliases/lifecycle/host/data, docs policy,
   bootstrap, distribution, and release config.
 - `composition.rs`: manifest import/root semantics, local overlay discovery,
   source-map recording, conflict handling, and bundle default composition.
@@ -98,7 +98,7 @@ The accepted v0.6.x cleanup shape is:
   identity, sync, inspect, and source tests.
 - `config_sections.rs` remains the public facade and compatibility test owner.
 - section-owned config modules sit under `config_sections/` for bundle, common
-  config, container/data, demo/docs policy, bootstrap, distribution, and release.
+  config, container/data, docs policy, bootstrap, distribution, and release.
 
 The lane deliberately did not move deploy/state parsing into
 `effigy-manifest`. Those surfaces currently use raw manifest values so command

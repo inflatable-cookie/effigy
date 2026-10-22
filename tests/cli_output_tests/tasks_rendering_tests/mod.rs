@@ -16,7 +16,6 @@ Built-in Tasks
 - container : Operate manifest-defined local container environments
 - contracts : Validate JSON contracts and print selection sets
 - defer : Run the configured `[defer]` fallback explicitly instead of relying on selector miss routing
-- demo : Inspect and control configured demos
 - deploy : Inspect, plan, apply, and export deployment flows
 - deps : Inspect dependency state, manage machine-local links, and author committed Bun pins
 - help : Show general help (same as --help)

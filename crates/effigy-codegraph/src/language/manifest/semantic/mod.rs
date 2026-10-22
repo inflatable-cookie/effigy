@@ -105,15 +105,6 @@ pub(super) fn extract_effigy_manifest_relations(
         &loaded.manifest.tasks,
         loaded.manifest.bootstrap.as_ref(),
     )?;
-    typed::index_demos(
-        file,
-        file_record,
-        file_symbol_id,
-        sink,
-        extractor_id,
-        extractor_version,
-        &loaded.manifest.demos,
-    )?;
     if let Some(table) = loaded.effective_value.as_table() {
         raw::index_docs_policy_raw(
             file,

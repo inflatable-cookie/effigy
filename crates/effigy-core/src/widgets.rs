@@ -2,7 +2,7 @@
 //!
 //! These types are used by both the runner's rendering layer and domain
 //! crates that produce display-ready projections. Moving them here allows
-//! domain crates (effigy-demo, effigy-doctor, etc.) to build key-value
+//! domain crates (effigy-doctor, effigy-containers, etc.) to build key-value
 //! lists and table specs without depending on the runner's UI module.
 
 /// Notice severity level.

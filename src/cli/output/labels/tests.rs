@@ -1,11 +1,10 @@
 use super::{command_kind_and_name, help_topic_label};
 use effigy_cli::{
     BootstrapArgs, BootstrapSubcommand, BundleArgs, BundleSubcommand, Command, ContainerArgs,
-    ContainerSubcommand, ContractsArgs, ContractsSubcommand, DemoArgs, DemoListQuery,
-    DemoSubcommand, DeployArgs, DeploySubcommand, DoctorArgs, ExecArgs, GatewayArgs,
-    GatewaySubcommand, GraphArgs, GraphSubcommand, HelpTopic, ReleaseArgs, ReleaseSubcommand,
-    SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand, TaskInvocation, TasksArgs,
-    WorkspaceArgs,
+    ContainerSubcommand, ContractsArgs, ContractsSubcommand, DeployArgs, DeploySubcommand,
+    DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, GraphArgs, GraphSubcommand, HelpTopic,
+    ReleaseArgs, ReleaseSubcommand, SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand,
+    TaskInvocation, TasksArgs, WorkspaceArgs,
 };
 
 #[test]
@@ -21,7 +20,6 @@ fn help_topic_label_maps_all_topics() {
     assert_eq!(help_topic_label(HelpTopic::Workspace), "workspace");
     assert_eq!(help_topic_label(HelpTopic::Gateway), "gateway");
     assert_eq!(help_topic_label(HelpTopic::Service), "service");
-    assert_eq!(help_topic_label(HelpTopic::Demo), "demo");
     assert_eq!(help_topic_label(HelpTopic::Graph), "graph");
     assert_eq!(help_topic_label(HelpTopic::Docs), "docs");
     assert_eq!(help_topic_label(HelpTopic::Contracts), "contracts");
@@ -85,13 +83,6 @@ fn command_kind_and_name_maps_command_variants() {
         all_catalogs: false,
         refresh: false,
         explain: None,
-    });
-    let demo = Command::Demo(DemoArgs {
-        subcommand: DemoSubcommand::List {
-            query: DemoListQuery::default(),
-        },
-        repo_override: None,
-        output_json: false,
     });
     let graph = Command::Graph(GraphArgs {
         subcommand: GraphSubcommand::Status { refresh: false },
@@ -182,7 +173,6 @@ fn command_kind_and_name_maps_command_variants() {
         command_kind_and_name(&service),
         ("service", "service".to_owned())
     );
-    assert_eq!(command_kind_and_name(&demo), ("demo", "demo".to_owned()));
     assert_eq!(command_kind_and_name(&graph), ("graph", "graph".to_owned()));
     assert_eq!(
         command_kind_and_name(&release),

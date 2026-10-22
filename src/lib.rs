@@ -25,7 +25,6 @@
 
 mod cli;
 pub mod runner;
-pub mod tui;
 
 pub use cli::entrypoint::run_and_render_command;
 pub use cli::entrypoint::run_cli;

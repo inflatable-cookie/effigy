@@ -104,7 +104,7 @@ let glob = #{ glob: "*.rs" };
 let cwd_allow = `^src/runner/exec_command/tests\.rs$`;
 let backend_allow = `^(src/runner/doctor_ports\.rs|src/runner/exec_command/transport\.rs|src/runner/container_runtime_prep/prep\.rs|src/runner/container_command/lifecycle\.rs)$`;
 let raw_allow = `^(src/runner/doctor_ports\.rs|src/runner/bootstrap_command/mod\.rs|src/runner/workspace_command/permissions_gnu_accept\.rs)$`;
-let compose_allow = `^(crates/effigy-runtime/src/container_manager\.rs|src/runner/managed_shell\.rs|src/runner/demo_command/execute/task/selection\.rs|src/runner/exec_command/transport\.rs|src/runner/exec_command/transport/colima\.rs|src/runner/container_runtime_prep/prep\.rs|src/runner/container_runtime_prep/mod\.rs|src/runner/container_command/support\.rs|src/runner/deferral/run\.rs|src/runner/execute/pipeline/managed\.rs|src/runner/workspace_command/provisioning\.rs)$`;
+let compose_allow = `^(crates/effigy-runtime/src/container_manager\.rs|src/runner/managed_shell\.rs|src/runner/exec_command/transport\.rs|src/runner/exec_command/transport/colima\.rs|src/runner/container_runtime_prep/prep\.rs|src/runner/container_runtime_prep/mod\.rs|src/runner/container_command/support\.rs|src/runner/deferral/run\.rs|src/runner/execute/pipeline/managed\.rs|src/runner/workspace_command/provisioning\.rs)$`;
 
 require_contains(guard_source, cwd_allow, "cwd allowlist regex");
 require_contains(guard_source, backend_allow, "backend allowlist regex");
@@ -162,10 +162,6 @@ fs::write_file(
 fs::write_file(
     path::join(runner, "managed_shell.rs"),
     "fn adapter() { let _ = compose_args(policy, [\"up\"]); }\n",
-);
-fs::write_file(
-    path::join(runner, "demo_command/execute/task/selection.rs"),
-    "fn adapter() { let _ = compose_args(policy, [\"exec\"]); }\n",
 );
 fs::write_file(
     path::join(runner, "exec_command/transport/colima.rs"),
