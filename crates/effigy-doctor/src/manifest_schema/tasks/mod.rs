@@ -87,26 +87,6 @@ pub(super) fn validate_tasks_table(context: &mut SchemaContext<'_, '_>, tasks: &
     }
 }
 
-/// One-release schema translation; task bodies have one validator.
-pub(super) fn validate_drafts_table(context: &mut SchemaContext<'_, '_>, drafts: &Value) {
-    let Some(drafts) = drafts.as_table() else {
-        return;
-    };
-    let mut tasks = drafts.clone();
-    for (_, task) in tasks.iter_mut() {
-        if let Some(body) = task.as_table_mut() {
-            for key in ["created", "expires", "purpose"] {
-                body.remove(key);
-            }
-            body.insert(
-                "visibility".to_owned(),
-                Value::String("internal".to_owned()),
-            );
-        }
-    }
-    validate_tasks_table(context, &Value::Table(tasks));
-}
-
 fn is_compact_inline_task_table(task_table: &toml::map::Map<String, Value>) -> bool {
     task_table.contains_key("rhai") || task_table.contains_key("task")
 }

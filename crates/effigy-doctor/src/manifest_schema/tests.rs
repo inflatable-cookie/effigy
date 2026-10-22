@@ -1030,3 +1030,36 @@ dependencies = ["auth/session-baseline"]
         sink.findings
     );
 }
+
+#[test]
+fn validate_manifest_schema_names_the_retired_draft_namespace() {
+    for manifest in [
+        "[drafts.proof]\nrun = \"echo old\"",
+        "[tasks]\nentry = [{ draft = \"proof\" }]",
+    ] {
+        let manifest: Value = toml::from_str(manifest).expect("parse manifest");
+        let mut sink = TestSink::default();
+        validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+        assert!(
+            sink.findings.iter().any(|finding| finding
+                .remediation
+                .contains("draft namespace was removed in v0.15")),
+            "expected the retired draft namespace to be named, got: {:?}",
+            sink.findings
+        );
+    }
+}
+
+#[test]
+fn validate_manifest_schema_names_the_retired_shell_table() {
+    let manifest: Value = toml::from_str("[shell]\nrun = \"exec zsh -i\"").expect("parse manifest");
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+    assert!(
+        sink.findings.iter().any(|finding| finding
+            .remediation
+            .contains("managed shell tabs always run")),
+        "expected the retired [shell] table to be named, got: {:?}",
+        sink.findings
+    );
+}

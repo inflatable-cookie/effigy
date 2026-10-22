@@ -33,8 +33,6 @@ pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf>
         Command::Doctor(args) => args.repo_override.clone(),
         Command::Tasks(args) => args.repo_override.clone(),
         Command::Runs(args) => args.repo_override.clone(),
-        Command::Drafts(args) => args.repo_override.clone(),
-        Command::Draft(args) => args.repo_override.clone(),
         Command::InternalGateway(_) | Command::InternalGatewayIdentity(_) => None,
         Command::InternalScriptRun(_) => None,
         Command::InternalContainerLeaseReaper(_) => None,
@@ -82,8 +80,6 @@ pub(in crate::runner) fn apply_repo_target_to_embedded_command(
         Command::Doctor(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Tasks(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Runs(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
-        Command::Drafts(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
-        Command::Draft(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Bundle(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Changelog(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Version

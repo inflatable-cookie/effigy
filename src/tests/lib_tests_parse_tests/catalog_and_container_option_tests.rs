@@ -1417,6 +1417,19 @@ fn parse_system_names_the_container_replacement_for_each_subcommand() {
 }
 
 #[test]
+fn parse_unknown_system_subcommand_still_names_the_container_replacement() {
+    let error = parse_command(vec!["system".to_owned(), "foo".to_owned()])
+        .expect_err("retired command should refuse");
+    let message = error.to_string();
+    assert!(
+        message.contains("`effigy system foo` is retired in v0.15"),
+        "{message}"
+    );
+    assert!(message.contains("effigy container up|down|status|logs"));
+    assert!(message.contains("CHANGELOG.md"));
+}
+
+#[test]
 fn parse_container_rejects_a_named_container_with_system_selection() {
     let error = parse_command(vec![
         "container".to_owned(),

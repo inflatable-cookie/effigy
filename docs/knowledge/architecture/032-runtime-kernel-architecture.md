@@ -41,7 +41,7 @@ contexts.
 
 | Module | Contract § | Absorbs |
 | --- | --- | --- |
-| `id` | 5.1 | typed-selector lock names (`src/runner/manifest.rs`), FNV status keys (`crates/effigy-execution/src/task_status.rs`), `safe_component` slugs, runtime-scope tokens (`crates/effigy-core/src/worktree_scope.rs`) |
+| `id` | 5.1 | typed-selector lock names (`src/runner/manifest.rs`), the retired v0.14 FNV status keys, `safe_component` slugs, runtime-scope tokens (`crates/effigy-core/src/worktree_scope.rs`) |
 | `ctx` | 5.2, 5.3 | ad hoc budgets (`src/runner/graph_time_budget.rs`, `crates/effigy-env/src/exec.rs`) |
 | `gate` | 5.4 | the task lease (replaced by task gates in effigy#217), `RouteTableLock`, `fs2` sites; keeps the flock rationale in `crates/effigy-codegraph/src/refresh.rs` |
 | `store` | 5.5 | seven atomic-write helpers; the retired host-run client's fsynced journal was the model |

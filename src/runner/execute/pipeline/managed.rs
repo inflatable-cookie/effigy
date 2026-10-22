@@ -410,14 +410,7 @@ fn shell_command(
 ) -> Result<String, RunnerError> {
     let repo = context.repo();
     if context.container_handoff {
-        return Ok(context
-            .selection
-            .catalog
-            .manifest
-            .shell
-            .as_ref()
-            .and_then(|shell| shell.run.clone())
-            .unwrap_or_else(default_handoff_managed_shell_run));
+        return Ok(default_handoff_managed_shell_run());
     }
     if let Some(policy) = inline_policy(context)? {
         return Ok(render_inline_managed_shell_command(

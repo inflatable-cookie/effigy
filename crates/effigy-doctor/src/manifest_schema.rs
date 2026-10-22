@@ -91,9 +91,6 @@ pub fn validate_manifest_schema(manifest_path: &Path, value: &Value, sink: &mut 
     if let Some(release) = table.get("release") {
         validate_release_section(&mut context, release);
     }
-    if let Some(shell) = table.get("shell") {
-        validate_known_table(&mut context, "shell", shell, &["run"]);
-    }
     if let Some(scan) = table.get("scan") {
         validate_scan_section(&mut context, scan);
     }
@@ -105,8 +102,5 @@ pub fn validate_manifest_schema(manifest_path: &Path, value: &Value, sink: &mut 
     }
     if let Some(tasks) = table.get("tasks") {
         validate_tasks_table(&mut context, tasks);
-    }
-    if let Some(drafts) = table.get("drafts") {
-        tasks::validate_drafts_table(&mut context, drafts);
     }
 }

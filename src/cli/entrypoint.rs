@@ -179,8 +179,6 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::Doctor(_)
         | Command::Tasks(_)
         | Command::Runs(_)
-        | Command::Drafts(_)
-        | Command::Draft(_)
         | Command::InternalGateway(_)
         | Command::InternalGatewayIdentity(_)
         | Command::InternalScriptRun(_)
@@ -262,7 +260,7 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
 }
 
 fn command_owns_task_stdout(command: &Command) -> bool {
-    matches!(command, Command::Task(_) | Command::Draft(_))
+    matches!(command, Command::Task(_))
 }
 
 /// `run logs` writes a run's raw output bytes: no header, no trailing line,

@@ -166,11 +166,10 @@ pub(super) fn parse_system_command<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
+    const GENERAL_REPLACEMENT: &str = "Use `effigy container up|down|status|logs` for environment lifecycle and `effigy container profile repair|reset-runtime` for runtime recovery";
     let mut args = args.into_iter();
-    let replacement = match args.next().as_deref() {
-        None => {
-            "Use `effigy container up|down|status|logs` for environment lifecycle and `effigy container profile repair|reset-runtime` for runtime recovery"
-        }
+    let first = args.next();
+    let replacement = match first.as_deref() {
         Some("up") => "Run `effigy container up` to start the environment",
         Some("down") => "Run `effigy container down` to stop the environment",
         Some("status") => "Run `effigy container status` to read environment state",
@@ -182,10 +181,16 @@ where
         Some("--help" | "-h") => {
             "Use `effigy help container` for environment lifecycle and recovery help"
         }
-        Some(other) => return Err(unknown_argument(other)),
+        // No subcommand, or one this release never had: still name the
+        // lifecycle family rather than fall through as an unknown argument.
+        Some(_) | None => GENERAL_REPLACEMENT,
+    };
+    let spelling = match first.as_deref() {
+        Some(word) if !word.starts_with('-') => format!("`effigy system {word}`"),
+        _ => "`effigy system`".to_owned(),
     };
     Err(CliParseError::InvalidArguments(format!(
-        "`effigy system` is retired in v0.15. {replacement}. {RETIRED_SYSTEM_SUFFIX}"
+        "{spelling} is retired in v0.15. {replacement}. {RETIRED_SYSTEM_SUFFIX}"
     )))
 }
 

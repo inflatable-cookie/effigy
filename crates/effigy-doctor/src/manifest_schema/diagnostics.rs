@@ -36,6 +36,10 @@ impl<'a, 'b> SchemaContext<'a, 'b> {
             "release.sync-catalog-pack-support-policy" | "release.sync_catalog_pack_support_policy"
         ) {
             remediation::REMOVE_CATALOG_PACK_SUPPORT_POLICY
+        } else if key_path == "drafts" || key_path.ends_with(".draft") {
+            remediation::REMOVE_DRAFT_TASK_NAMESPACE
+        } else if key_path == "shell" {
+            remediation::REMOVE_MANIFEST_SHELL_TABLE
         } else {
             remediation::SCHEMA_REMOVE_UNSUPPORTED_KEYS
         };

@@ -11,8 +11,6 @@ mod deploy_fixture_support;
 mod docs_context_sources_tests;
 #[path = "cli_output_tests/docs_context_tests.rs"]
 mod docs_context_tests;
-#[path = "cli_output_tests/drafts_tests.rs"]
-mod drafts_tests;
 #[path = "cli_output_tests/flat_command_execution_tests.rs"]
 mod flat_command_execution_tests;
 #[path = "cli_output_tests/graph_surface_tests.rs"]
@@ -42,6 +40,8 @@ mod state_command_tests;
 mod support;
 #[path = "cli_output_tests/tasks_rendering_tests/mod.rs"]
 mod tasks_rendering_tests;
+#[path = "cli_output_tests/visibility_tests.rs"]
+mod visibility_tests;
 #[path = "cli_output_tests/wave1_papercuts_tests.rs"]
 mod wave1_papercuts_tests;
 #[path = "cli_output_tests/wave4_papercuts_tests.rs"]
