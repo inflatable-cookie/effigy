@@ -23,7 +23,17 @@
 //! root = "/Volumes/Builds/effigy-scratch"
 //! volume_uuid = "1E2D3C4B-5A69-4788-99AA-BBCCDDEEFF00"
 //! require_separate_volume = true
+//!
+//! [programs.oxide]
+//! fallback = "cargo"
+//! allow = ["check", "build"]
+//! force = false
 //! ```
+//!
+//! `[programs.<name>]` is host-machine policy, so only this user-global file
+//! may declare it. A project `effigy.toml` that names `programs` is refused as
+//! an unknown manifest field, because one committed file must not silently
+//! replace a program for every contributor.
 //!
 //! Each entry under `library_mounts` is a host path. When a project's
 //! manifest declares `[bundle].base = "<name>"` matching one of the
@@ -50,6 +60,31 @@ pub struct UserConfig {
     pub bundle: BTreeMap<String, UserBundleConfig>,
     #[serde(default)]
     pub scratch: UserScratchConfig,
+    /// Per-program fallbacks keyed by the program's name on `PATH`.
+    ///
+    /// The runner validates and activates these; this crate only parses the
+    /// declared shape so a malformed block is a config error rather than a
+    /// silently ignored setting.
+    #[serde(default)]
+    pub programs: BTreeMap<String, UserProgramConfig>,
+}
+
+/// One `[programs.<name>]` block: run `fallback` when `<name>` is unavailable
+/// on the inherited `PATH`, or always with `force = true`.
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UserProgramConfig {
+    /// The program to run instead. Required by the runner, which refuses a
+    /// block without one.
+    #[serde(default)]
+    pub fallback: Option<String>,
+    /// Optional first-argument allow list. Omitted means unrestricted exact
+    /// argv; present means only these first arguments run.
+    #[serde(default)]
+    pub allow: Option<Vec<String>>,
+    /// Activate the fallback even when the program is available on `PATH`.
+    #[serde(default)]
+    pub force: Option<bool>,
 }
 
 /// User-global per-run scratch directory preferences.
@@ -121,7 +156,10 @@ pub struct LibraryMount {
 
 impl UserConfig {
     pub fn is_empty(&self) -> bool {
-        self.containers.is_empty() && self.bundle.is_empty() && self.scratch.is_empty()
+        self.containers.is_empty()
+            && self.bundle.is_empty()
+            && self.scratch.is_empty()
+            && self.programs.is_empty()
     }
 
     /// Returns the configured library mounts for the named bundle, with
@@ -437,6 +475,55 @@ root = "~/scratch"
             .scratch
             .root()
             .is_none());
+    }
+
+    #[test]
+    fn parses_user_global_program_fallbacks() {
+        let tmp = tempdir().expect("tempdir");
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[programs.oxide]
+fallback = "cargo"
+allow = ["check", "build"]
+force = false
+
+[programs.turbo]
+fallback = "bun"
+"#,
+        )
+        .expect("write");
+        let cfg = load_user_config_from(&path).expect("load");
+        assert!(!cfg.is_empty());
+        let oxide = cfg.programs.get("oxide").expect("oxide block");
+        assert_eq!(oxide.fallback.as_deref(), Some("cargo"));
+        assert_eq!(
+            oxide.allow,
+            Some(vec!["check".to_owned(), "build".to_owned()])
+        );
+        assert_eq!(oxide.force, Some(false));
+        let turbo = cfg.programs.get("turbo").expect("turbo block");
+        assert_eq!(turbo.fallback.as_deref(), Some("bun"));
+        assert!(turbo.allow.is_none());
+        assert!(turbo.force.is_none());
+    }
+
+    #[test]
+    fn unknown_program_field_is_rejected() {
+        let tmp = tempdir().expect("tempdir");
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[programs.oxide]
+fallback = "cargo"
+recurse = true
+"#,
+        )
+        .expect("write");
+        let err = load_user_config_from(&path).expect_err("should fail");
+        assert!(matches!(err, ManifestError::Parse { .. }));
     }
 
     #[test]

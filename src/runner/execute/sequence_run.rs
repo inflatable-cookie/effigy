@@ -633,7 +633,6 @@ mod tests {
     use effigy_execution::ExecutionDiscoveryPlan;
     use effigy_manifest::{LoadedCatalog, TaskManifest, TaskSelection};
     use effigy_tasks::{CatalogSelectionMode, TaskRuntimeArgs, TaskSelector};
-    use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -662,17 +661,7 @@ mod tests {
         manifest: TaskManifest,
         depth: usize,
     ) -> LoadedCatalog {
-        let root = PathBuf::from(root);
-        LoadedCatalog {
-            alias: alias.to_owned(),
-            manifest_path: root.join("effigy.toml"),
-            catalog_root: root,
-            bundle_root: None,
-            manifest,
-            defer_run: None,
-            deferred_builtins: BTreeSet::new(),
-            depth,
-        }
+        LoadedCatalog::for_test(alias, PathBuf::from(root), manifest, depth)
     }
 
     #[test]

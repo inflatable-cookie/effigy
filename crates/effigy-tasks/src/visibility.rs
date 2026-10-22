@@ -113,18 +113,12 @@ mod tests {
     use std::path::Path;
 
     fn catalog(alias: &str, body: &str, depth: usize) -> LoadedCatalog {
-        let root = PathBuf::from(format!("/virtual/visibility/{alias}"));
-        LoadedCatalog {
-            alias: alias.to_owned(),
-            manifest_path: root.join("effigy.toml"),
-            catalog_root: root,
-            manifest: toml::from_str(body).expect("valid task fixture"),
-            bundle_root: None,
-            defer_run: None,
-            deferred_builtins: BTreeSet::new(),
-
+        LoadedCatalog::for_test(
+            alias,
+            PathBuf::from(format!("/virtual/visibility/{alias}")),
+            toml::from_str(body).expect("valid task fixture"),
             depth,
-        }
+        )
     }
 
     #[test]

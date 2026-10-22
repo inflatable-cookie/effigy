@@ -105,6 +105,9 @@
       "std::fs::remove_file": 2,
       "std::fs::rename": 2
     },
+    "crates/effigy-deps/src/cargo_lock_record.rs": {
+      "std::fs::remove_file": 1
+    },
     "crates/effigy-deps/src/process.rs": {
       "nix::sys::signal::kill": 4,
       "std.process.Command.new": 2,
@@ -702,7 +705,7 @@
       "std.process.Command.output": 4
     },
     "crates/effigy-manifest/src/user_config.rs": {
-      "std::fs::write": 8
+      "std::fs::write": 10
     },
     "crates/effigy-process/src/identity.rs": {
       "std.process.Command.new": 1,
@@ -878,6 +881,10 @@
     },
     "src/runner/managed_run/tests/faults.rs": {
       "libc::kill": 1
+    },
+    "src/runner/program_fallback.rs": {
+      "std.process.Command.new": 7,
+      "std.process.Command.output": 7
     },
     "src/runner/release_command/tests.rs": {
       "std.process.Command.new": 4,

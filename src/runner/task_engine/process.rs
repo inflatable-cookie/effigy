@@ -398,17 +398,32 @@ pub(super) fn environment(
         );
     }
     let local_bin = cwd.join("node_modules/.bin");
+    // A program fallback's shim is first: it shadows the program this run named,
+    // and a task that sets `PATH` explicitly still replaces both prefixes.
+    let mut prefixes: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(shims) = crate::runner::program_fallback::path_dir() {
+        prefixes.push(shims);
+    }
     if local_bin.is_dir() {
-        let path = match env.get(std::ffi::OsStr::new("PATH")) {
-            Some(EnvValue::Plain(path)) if !path.is_empty() => {
-                format!("{}:{}", local_bin.display(), path.to_string_lossy())
-            }
-            _ => local_bin.display().to_string(),
+        prefixes.push(local_bin);
+    }
+    if !prefixes.is_empty() {
+        let inherited = match env.get(std::ffi::OsStr::new("PATH")) {
+            Some(EnvValue::Plain(path)) if !path.is_empty() => Some(path.clone()),
+            _ => None,
         };
-        env.insert(
-            OsString::from("PATH"),
-            EnvValue::Plain(OsString::from(path)),
-        );
+        let mut path = OsString::new();
+        for (index, prefix) in prefixes.iter().enumerate() {
+            if index > 0 {
+                path.push(":");
+            }
+            path.push(prefix.as_os_str());
+        }
+        if let Some(inherited) = inherited {
+            path.push(":");
+            path.push(inherited);
+        }
+        env.insert(OsString::from("PATH"), EnvValue::Plain(path));
     }
     // The run's own scratch directory is the only temp directory a host
     // process sees: set only when this run owns it (neither an explicit nor a

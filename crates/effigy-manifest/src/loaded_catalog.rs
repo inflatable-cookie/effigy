@@ -46,6 +46,33 @@ pub struct LoadedCatalog {
     pub depth: usize,
 }
 
+impl LoadedCatalog {
+    /// Build a catalog fixture for tests.
+    ///
+    /// Everything a test does not vary is derived here, so a new
+    /// `LoadedCatalog` field never again edits every fixture literal across
+    /// the workspace: the manifest path is the catalog root's own manifest,
+    /// and bundle, deferral, and deferred-builtin state stay empty.
+    pub fn for_test(
+        alias: impl Into<String>,
+        catalog_root: impl Into<PathBuf>,
+        manifest: TaskManifest,
+        depth: usize,
+    ) -> Self {
+        let catalog_root = catalog_root.into();
+        Self {
+            alias: alias.into(),
+            manifest_path: catalog_root.join(crate::TASK_MANIFEST_FILE),
+            catalog_root,
+            bundle_root: None,
+            manifest,
+            defer_run: None,
+            deferred_builtins: BTreeSet::new(),
+            depth,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct TaskSelection<'a> {
     pub catalog: &'a LoadedCatalog,
@@ -88,17 +115,12 @@ mod tests {
     use super::*;
 
     fn loaded_catalog(alias: &str, root: &str, manifest_body: &str, depth: usize) -> LoadedCatalog {
-        let root = PathBuf::from(root);
-        LoadedCatalog {
-            alias: alias.to_owned(),
-            catalog_root: root.clone(),
-            manifest_path: root.join("effigy.toml"),
-            bundle_root: None,
-            manifest: toml::from_str(manifest_body).expect("parse manifest"),
-            defer_run: None,
-            deferred_builtins: BTreeSet::new(),
+        LoadedCatalog::for_test(
+            alias,
+            PathBuf::from(root),
+            toml::from_str(manifest_body).expect("parse manifest"),
             depth,
-        }
+        )
     }
 
     #[test]

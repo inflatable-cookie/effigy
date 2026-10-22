@@ -71,6 +71,35 @@ Supported input types:
 Every key under `[bundle]` other than `base` must be declared in
 `bundle.toml`. Misspelled inputs fail manifest loading.
 
+## Override Semantics
+
+A repo manifest wins wherever it sets a value; the bundle only fills what the
+manifest leaves unset. Ordinary tables merge key by key, so a repo manifest can
+add `[secrets.keys.*]` or one container route without restating the bundle.
+
+Step-shaped tables are different. A table that names an executor (`run`,
+`task`, `draft` or `rhai`) is a task step: a vault generator
+(`[secrets.vault].generate`), a deploy hook, a bootstrap entry, or the
+single-object `run = { ... }` shorthand. Naming an executor there replaces the
+bundle's whole executor group, so this override is valid:
+
+```toml
+# bundle default: generate = { rhai = "generate-dev-secrets.rhai", run_in = "host" }
+[secrets.vault]
+generate = { task = "secrets generate" }
+```
+
+The resolved step is `{ task = "secrets generate", run_in = "host" }`: the
+`rhai` executor is gone, and unset step metadata (`run_in`, `env`, `env_file`,
+`id`, `timeout_ms`) still defaults from the bundle. Metadata the manifest sets
+always wins. Composition never rewrites a manifest's own keys, so a step that
+names two executors stays malformed and the exactly-one-executor validation
+refuses it instead of one executor silently disappearing.
+
+Bundle defaults in `export.toml` should therefore keep executors and step
+metadata in the same table, and repo overrides should switch executors by
+naming the new executor rather than deleting the old one.
+
 ## Inspect and Sync
 
 Use:

@@ -656,8 +656,14 @@ impl CargoUnlinkOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CargoLockfileState {
+    /// The working lockfile matches the committed one byte for byte.
     Clean,
+    /// The only difference is resolution owned by an active local link.
     ActiveLinks,
+    /// The difference is a committed source/version advance of packages the
+    /// link does not own: a release-pin move, not link residue.
+    CommittedTransition,
+    /// The difference is neither of the above and must be reviewed first.
     UnexpectedDrift,
 }
 

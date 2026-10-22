@@ -3,14 +3,15 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::cargo_lock_record::{head_blob, CargoLockBaseline, CargoLockBaselineStore};
 use crate::cargo_unlink::validate_owned_lockfile_drift;
 use crate::state::write_atomic;
 use crate::{
     inventory_cargo_consumer_roots, inventory_cargo_consumers, inventory_cargo_library,
     plan_cargo_link, CargoDependencyPlan, CargoLibraryInventory, CargoLinkOperationReport,
     CargoLinkOutcome, CargoLinkRollback, CargoPackageInventory, CommittedSourceKind,
-    DependencyVerification, DepsError, GitCargoPlanObserver, PlannedChange, ProcessRequest,
-    ReadOnlyProcess, RepoLinkStateStore, VerificationEvidence, VerificationStatus,
+    DependencyVerification, DepsError, GitCargoPlanObserver, PlannedChange, PlannedChangeAction,
+    ProcessRequest, ReadOnlyProcess, RepoLinkStateStore, VerificationEvidence, VerificationStatus,
 };
 
 pub fn execute_cargo_link(
@@ -55,7 +56,7 @@ pub fn apply_cargo_link_plan(
     let ledger_path = RepoLinkStateStore::for_checkout(&plan.operation.key.consumer_repo)
         .path()
         .to_path_buf();
-    let (ledger_changes, physical_changes): (Vec<_>, Vec<_>) = plan
+    let (ledger_changes, mut physical_changes): (Vec<_>, Vec<_>) = plan
         .operation
         .changes
         .iter()
@@ -66,6 +67,9 @@ pub fn apply_cargo_link_plan(
             &ledger_path,
             "Cargo link plan contains duplicate desired-state changes",
         ));
+    }
+    if let Some(baseline_record) = lockfile_baseline_change(&plan, process)? {
+        physical_changes.insert(0, baseline_record);
     }
 
     let mut applied = Vec::new();
@@ -142,6 +146,51 @@ pub fn apply_cargo_link_plan(
         rollback: CargoLinkRollback::not_required(),
         errors: Vec::new(),
     })
+}
+
+/// Record the committed blob of every tracked lockfile this link resolves.
+///
+/// Cargo writes local path resolution into those lockfiles while the link is
+/// active, and a plain Cargo invocation can rewrite them again afterwards. The
+/// record is what lets a later unlink put the exact committed bytes back
+/// instead of trusting a fresh resolution.
+fn lockfile_baseline_change(
+    plan: &CargoDependencyPlan,
+    process: &impl ReadOnlyProcess,
+) -> Result<Option<PlannedChange>, DepsError> {
+    if plan.affected_lockfiles.is_empty() {
+        return Ok(None);
+    }
+    let repo_root = &plan.operation.key.consumer_repo;
+    let store = CargoLockBaselineStore::for_checkout(repo_root);
+    let mut record = store.read()?;
+    record
+        .entries
+        .retain(|entry| !plan.affected_lockfiles.contains(&entry.lockfile));
+    for lockfile in &plan.affected_lockfiles {
+        if let Some(blob) = head_blob(repo_root, lockfile, process)? {
+            record.entries.push(CargoLockBaseline {
+                lockfile: lockfile.clone(),
+                blob,
+            });
+        }
+    }
+    let before = read_optional_string(store.path())?;
+    let after = Some(store.render(&record)?);
+    if before == after {
+        return Ok(None);
+    }
+    let action = match &before {
+        Some(_) => PlannedChangeAction::Update,
+        None => PlannedChangeAction::Create,
+    };
+    Ok(Some(PlannedChange {
+        target: store.path().to_path_buf(),
+        action,
+        description: "record the clean pre-link Cargo lockfile baselines".to_owned(),
+        before,
+        after,
+    }))
 }
 
 /// A lockfile as it stood before Effigy touched the workspace.

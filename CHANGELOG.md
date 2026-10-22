@@ -223,10 +223,35 @@ During v0.x, MINOR bumps may include breaking changes.
   lists the families still present.
 
 ### Added
+- `test:focused` runs a focused Rust test selection through Cargo with
+  `--locked`, keeping `Cargo.lock` read-only while a source-linked consumer
+  checkout is under observation.
 - The container system guide documents Colima's VM DNS proxy timing out a
   registry pull while the host resolves normally, with a bounded two-attempt
   retry and a profile restart, so a transient VM resolver outage is not
   mistaken for a failed catalog image or wrong pull credentials.
+- Generic per-program fallback (Q-008, effigy#250). An Effigy user config may
+  declare `[programs.<name>]` with `fallback = "<program>"`, an optional
+  `allow = ["<first argument>", ...]` and an optional `force =
+  true`. When `<name>` is not an executable on the inherited `PATH`, or
+  `force = true`, the run gets a shim named `<name>` first on its `PATH`, prints
+  one honest notice, and settles the shim with the run. The shim execs the
+  fallback with the exact argv: no flag translation, nothing added and no retry,
+  and the fallback's exit status stands. An omitted allow list is unrestricted
+  exact argv; a present one runs only those exact first arguments and refuses
+  anything else (including no argument) before exec. The fallback resolves to an
+  absolute path on the inherited `PATH`, so it never re-enters a shim and
+  fallbacks never chain. Only inherited-PATH name resolution is affected;
+  absolute paths, a replaced `PATH` (including a task `env` one), shell aliases
+  and shell functions are not, and `force` changes nothing else. The original
+  program's behaviour and safeguards are lost: with `oxide` -> `cargo`,
+  `oxide clean` becomes `cargo clean` without Oxide's ownership checks or
+  managed storage, and cargo plugins and cargo-subcommand exec run as plain
+  cargo would. The block is user-config only; a project `effigy.toml` that
+  declares `programs` is refused as an unknown field. `effigy help`, the shipped
+  Effigy skill and the user guide section
+  ([069](docs/guides/069-workspace-host-integration.md)) document every
+  condition.
 - Per-run scratch on a configured external volume (effigy#244). Setting
   `[scratch] root` in `~/.effigy/config.toml` to a mounted volume's root gives
   every host-placed run — the built-in `effigy test` route included — its own
@@ -674,6 +699,28 @@ During v0.x, MINOR bumps may include breaking changes.
 - Operator gateway startup bounds supervisor admission and daemon readiness
   as two phases. A slow admission no longer consumes the readiness budget, and
   each phase reports its own timeout instead of one shared startup deadline.
+- Cargo local links record the committed blob of every tracked lockfile they
+  resolve, and `effigy deps unlink cargo <library-path>` restores those exact
+  bytes when the record still matches `HEAD` and only link-owned packages
+  differ. A lockfile another link or an unrelated edit still holds is left
+  untouched, and a moved `HEAD` invalidates the record rather than reverting
+  committed work.
+- A committed dependency advance no longer fails a valid Cargo unlink. When the
+  only difference from `HEAD` outside the linked packages is a source/version
+  advance of the same packages (an operator `cargo update`, or a release tag
+  that moved after the consumer commit), unlink reports it as a
+  `committed-transition` and completes instead of refusing and leaving stale
+  machine-local link state. A split version, a path source, a changed
+  repository, or a parked `[[patch.unused]]` entry is still refused, and
+  link-time validation stays strict. `effigy deps status` reports a committed
+  transition as a warning, not an error.
+- A repo manifest that overrides a bundle-defined step table
+  (`[secrets.vault].generate`, a deploy hook, or the `run = { ... }` step
+  shorthand) replaces the bundle's executor instead of inheriting it. Switching
+  a generator from `rhai` to `task` no longer keeps both keys and fails the
+  exactly-one-executor rule. Unset step metadata (`run_in`, `env`, `env_file`,
+  `id`, `timeout_ms`) still defaults from the bundle, and a manifest step that
+  names two executors is still refused, never silently repaired.
 - Deleting an isolated volume's host mount-point directory (`target`,
   `node_modules`) under a running container stack no longer leaves the nested
   volume without a mount point until someone recreates the container. The mount

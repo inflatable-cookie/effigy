@@ -1494,17 +1494,9 @@ mod tests {
     }
 
     fn load_schema_test_catalog(catalog_root: &Path, alias: &str, depth: usize) -> LoadedCatalog {
-        let manifest_path = catalog_root.join("effigy.toml");
-        LoadedCatalog {
-            alias: alias.to_owned(),
-            catalog_root: catalog_root.to_path_buf(),
-            manifest: effigy_manifest::load_task_manifest(&manifest_path).expect("manifest"),
-            manifest_path,
-            bundle_root: None,
-            defer_run: None,
-            deferred_builtins: std::collections::BTreeSet::new(),
-            depth,
-        }
+        let manifest = effigy_manifest::load_task_manifest(&catalog_root.join("effigy.toml"))
+            .expect("manifest");
+        LoadedCatalog::for_test(alias, catalog_root, manifest, depth)
     }
 
     #[test]
