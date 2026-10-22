@@ -56,13 +56,20 @@ root = Path(os.environ["EFFIGY_MOUNT_PROOF"])
 config = json.loads((root / "engine.json").read_text())
 checkout_label = "" if config.get("legacy") else config["checkout"]
 args = sys.argv[1:]
+# Remote custody and the exact-identity inventory address a backend target
+# explicitly. Strip the selector so the same fixture answers either form.
+if len(args) >= 2 and args[0] in ("--context", "--host"):
+    args = args[2:]
 with (root / "commands.jsonl").open("a") as log:
     log.write(json.dumps(args) + "\\n")
 if args[0] == "ps":
     if "--format" not in args:
         sys.exit(0)
     fmt = args[args.index("--format") + 1]
-    if "{{.ID}}" in fmt:
+    if fmt == "{{.ID}}":
+        # Exact-identity inventory: one full id per line, no compose fields.
+        print("a" * 64)
+    elif "{{.ID}}" in fmt:
         print("a" * 64 + "\\tUp\\tfalse\\t" + checkout_label + "\\t" + checkout_label + "\\t")
     else:
         print("fixture-workspace\\tUp\\t\\tacowtancy-dev\\t" + checkout_label + "\\tworkspace\\tfalse")
@@ -81,6 +88,7 @@ elif args[0] == "inspect":
                        "com.effigy.checkout":config["checkout"]})
     print(json.dumps([{
         "Id": "a" * 64, "Name": "/fixture-workspace",
+        "Created": "2026-10-21T00:00:00Z",
         "State": {"Running": True, "Status": "running"},
         "Config": {"Labels": labels},
         "NetworkSettings": {"Ports": {}}, "Mounts": config["mounts"]}]))
@@ -106,6 +114,38 @@ elif args[0] == "compose" and "up" in args:
     else:
         assert "--no-recreate" in args or config["mounts"] == mounts, "ordinary task Compose apply must see the already-reconciled mounts"
 elif args[0] == "exec" or (args[0] == "compose" and "exec" in args):
+    if "effigy-custody" in args:
+        # Remote custody helper: this fixture never keeps a guest process, so
+        # every snapshot is a stable boot and an empty process table.
+        sys.stdin.read()
+        mode = args[-1]
+        if mode == "boot":
+            print("00000000-0000-0000-0000-000000000000")
+        elif mode == "snap":
+            print("boot 00000000-0000-0000-0000-000000000000")
+            print("ns pid:[4026531836]")
+        elif mode == "kill":
+            print("gone")
+        sys.exit(0)
+    # A remote workload announces its registration on the exec client's
+    # registration stream; the nonce arrives in the relay's env file on
+    # descriptor 4.
+    nonce = None
+    if "--env-file" in args:
+        try:
+            data = os.read(4, 65536).decode("utf-8", "replace")
+        except OSError:
+            data = ""
+        for line in data.splitlines():
+            if line.startswith("EFFIGY_CUSTODY_NONCE="):
+                nonce = line.split("=", 1)[1]
+    if nonce:
+        # The kernel frames the registration on the backend terminal's stream:
+        # stdout when the backend carries a TTY, stderr otherwise.
+        frame = "\\x1eEFFIGY-CUSTODY v1 %s 4242 4242 100 00000000-0000-0000-0000-000000000000 4026531836\\n" % nonce
+        stream = sys.stdout if "-t" in args else sys.stderr
+        stream.write(frame)
+        stream.flush()
     # Exec readiness only; this fixture declares no workspace user. The
     # holder task's in-container handoff runs here, so its run holds the
     # environment while it sleeps.
@@ -166,7 +206,14 @@ esac
         before = (checkout / "effigy.toml").read_bytes()
         status = run("container", "status", "--json")
         assert status["mount_drift"]["state"] == "drift", status
-        assert len(status["mount_drift"]["details"]) == 3, status
+        details = status["mount_drift"]["details"]
+        # The stale stack lacks each isolated volume overlay AND the host
+        # mount point directories beneath them (contract 005).
+        drifted_volumes = [detail for detail in details if "live mounts differ" in detail]
+        missing_points = [detail for detail in details if "is missing on the host" in detail]
+        assert len(drifted_volumes) == 3, status
+        assert len(missing_points) == 3, status
+        assert len(details) == len(drifted_volumes) + len(missing_points), status
         doctor = subprocess.run([str(binary), "doctor", "--verbose", "--json"], cwd=checkout,
                                 env=env, capture_output=True, text=True, timeout=90)
         assert "live mounts differ" in doctor.stdout, (doctor.stdout, doctor.stderr)
@@ -207,10 +254,13 @@ esac
                                       stdout=log, stderr=log, start_new_session=True)
         print(f"owned holder pid={holder.pid}")
         try:
-            until = time.monotonic() + 10
+            # The workload's own first observation is the barrier: it touches
+            # `holder-ready` once the container command starts. The bound only
+            # caps a failure; it is not the signal.
+            until = time.monotonic() + 90
             while not (checkout / "holder-ready").exists() and holder.poll() is None and time.monotonic() < until:
                 time.sleep(0.02)
-            assert (checkout / "holder-ready").exists(), ("holder never entered its workload", holder_log.read_text())
+            assert (checkout / "holder-ready").exists(), ("holder never entered its workload", holder_log.read_text(), (root / "commands.jsonl").read_text()[-4000:])
             # The holder's own preparation reconciled its mounts; drift again
             # under the live holder.
             lose_overlays()
@@ -220,15 +270,18 @@ esac
             assert "keeps its running generation" in kept.stderr, (kept.returncode, kept.stdout, kept.stderr)
             assert sum("up" in json.loads(line) for line in (root / "commands.jsonl").read_text().splitlines()) == before_up
         finally:
-            if holder.poll() is None:
-                os.killpg(holder.pid, signal.SIGTERM)
+            # The holder's workload ends on its own (`sleep 30`). Letting it
+            # complete settles its run through the production path; the bound
+            # only caps a failure.
             try:
-                holder_exit = holder.wait(timeout=10)
+                holder_exit = holder.wait(timeout=120)
             except subprocess.TimeoutExpired:
+                os.killpg(holder.pid, signal.SIGTERM)
                 os.killpg(holder.pid, signal.SIGKILL)
                 print(f"owned holder forced exit={holder.wait(timeout=10)}")
                 raise
             print(f"owned holder exit={holder_exit}")
+            assert holder_exit == 0, (holder_exit, holder_log.read_text())
         run("--json", "mount_probe")
         assert run("container", "status", "--json")["mount_drift"]["state"] == "clean"
         assert (checkout / "effigy.toml").read_bytes() == before

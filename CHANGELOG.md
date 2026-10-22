@@ -775,6 +775,13 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- `proof:containers:isolated-dirs` runs again (effigy#264, papercut
+  `5d15981a`). Its strict fake backend now answers the explicit backend
+  target (`--context`/`--host`), the exact-identity container inventory, the
+  custody helper and the remote registration frame, reports the required
+  `Created` field, and expects the current read-only drift report for missing
+  isolated host mount points. The live holder finishes its own workload
+  instead of being signalled, so its run settles through the production path.
 - Sequential `Terminal::Foreground` children no longer stop their owner with
   SIGTTOU, which suspended `effigy gateway setup` after `mkcert -install`
   ("suspended (tty output)") while it held the `gateway-setup` gate
