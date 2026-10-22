@@ -18,12 +18,12 @@ The shortest useful onboarding pass is:
 If `effigy` is not yet available on `PATH`, bootstrap first:
 
 ```sh
-cargo run --bin effigy -- bootstrap:local
+cargo run --bin effigy -- install:local
 effigy version
 type -a effigy
 ```
 
-`bootstrap:local` installs a local binary and stamps an active build identity.
+`install:local` installs a local binary and stamps an active build identity.
 Expect `effigy version` to show the stable semver plus a local suffix such as
 `v0.5.0+local.abc123` when you are using a self-built checkout.
 
@@ -69,7 +69,7 @@ cargo run --bin effigy -- tasks
 
 Expected outcome:
 - effective catalogs/tasks are listed
-- self-hosted contributor tasks (`qa`, `qa:docs`, `bootstrap:local`, etc.) are visible
+- self-hosted contributor tasks (`qa`, `qa:docs`, `install:local`, etc.) are visible
 
 ## Minute 5-8: Health + Explain
 

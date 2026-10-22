@@ -71,7 +71,7 @@ fn build_help_group_payload_sets_schema_and_group_topic() {
     assert_eq!(payload["topic"], "repo");
     let text = payload["text"].as_str().expect("help text");
     assert!(text.contains("Repo Commands"), "got: {text}");
-    assert!(text.contains("effigy graph"), "got: {text}");
+    assert!(text.contains("effigy scan"), "got: {text}");
 }
 
 #[test]
@@ -79,21 +79,18 @@ fn build_help_group_payload_hides_explicitly_deferred_builtins() {
     let root = temp_workspace("help-group-explicit-deferral");
     fs::write(
         root.join("effigy.toml"),
-        "[defer]\nrun = \"printf deferred\"\nbuiltins = [\"graph\"]\n",
+        "[defer]\nrun = \"printf deferred\"\nbuiltins = [\"scan\"]\n",
     )
     .expect("write manifest");
 
     let group = build_help_group_payload_for_root(HelpGroup::Repo, &root);
     let group_text = group["text"].as_str().expect("group help text");
-    assert!(!group_text.contains("effigy graph"), "got: {group_text}");
+    assert!(!group_text.contains("effigy scan"), "got: {group_text}");
     assert!(group_text.contains("effigy docs"), "got: {group_text}");
 
     let general = build_help_payload_for_root(HelpTopic::General, &root);
     let general_text = general["text"].as_str().expect("general help text");
-    assert!(
-        !general_text.contains("effigy graph"),
-        "got: {general_text}"
-    );
+    assert!(!general_text.contains("effigy scan"), "got: {general_text}");
 }
 
 #[test]
@@ -108,7 +105,7 @@ fn manifest_selector_shadowing_a_builtin_hides_it_from_general_and_group_help() 
     let group = build_help_group_payload_for_root(HelpGroup::Repo, &root);
     let group_text = group["text"].as_str().expect("group help text");
     assert!(!group_text.contains("effigy docs"), "got: {group_text}");
-    assert!(group_text.contains("effigy graph"), "got: {group_text}");
+    assert!(group_text.contains("effigy scan"), "got: {group_text}");
 
     let general = build_help_payload_for_root(HelpTopic::General, &root);
     let general_text = general["text"].as_str().expect("general help text");

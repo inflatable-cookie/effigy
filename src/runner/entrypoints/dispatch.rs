@@ -15,7 +15,6 @@ use super::super::run_deps;
 use super::super::run_docs;
 use super::super::run_exec;
 use super::super::run_gateway;
-use super::super::run_graph;
 use super::super::run_internal_gateway;
 use super::super::run_internal_gateway_identity;
 use super::super::run_internal_host_process_stop;
@@ -96,7 +95,6 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::Workspace(args) => run_workspace(args),
         Command::Gateway(args) => run_gateway(args),
         Command::Service(args) => run_service(args),
-        Command::Graph(args) => run_graph(args),
         Command::Rhai(args) => run_rhai(args),
         Command::Skill(args) => run_skill(args),
         Command::Docs(args) => run_docs(args),

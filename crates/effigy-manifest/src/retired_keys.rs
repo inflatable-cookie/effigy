@@ -34,9 +34,36 @@ fn reject_retired_tables(value: &Value) -> Result<(), String> {
                 .to_owned(),
         );
     }
+    if let Some(scan) = root.get("scan").and_then(Value::as_table) {
+        reject_retired_scan_sections(scan)?;
+    }
     if let Some(tasks) = root.get("tasks").and_then(Value::as_table) {
         for task in tasks.values() {
             reject_draft_in_task(task)?;
+        }
+    }
+    Ok(())
+}
+
+/// Scan sections that only configured the graph-backed scanners. Each is a
+/// manifest error rather than a silently ignored table.
+fn reject_retired_scan_sections(scan: &toml::value::Table) -> Result<(), String> {
+    for (key, message) in [
+        (
+            "boundary_violations",
+            "`[scan.boundary_violations]` was removed in v0.15 with the code graph and has no replacement; delete the table and rely on code review (see CHANGELOG.md)",
+        ),
+        (
+            "dead_code",
+            "`[scan.dead_code]` was removed in v0.15 with the code graph and has no replacement; delete the table (see CHANGELOG.md)",
+        ),
+        (
+            "validation_gaps",
+            "`[scan.validation_gaps]` was removed in v0.15 with the code graph; delete the table and use `effigy test --plan` to choose tests for changed files (see CHANGELOG.md)",
+        ),
+    ] {
+        if scan.contains_key(key) {
+            return Err(message.to_owned());
         }
     }
     Ok(())

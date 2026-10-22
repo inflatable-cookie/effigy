@@ -2,20 +2,18 @@
 
 Common command chains, ordered by frequency.
 
-Pick the chain that matches the current job. `graph` is the right default for
-code-understanding questions, but not for every Effigy interaction.
+Pick the chain that matches the current job. `rg` plus the docs index is the
+right default for code-understanding questions, but not for every Effigy
+interaction.
 
 ## Map code before scanning
 
 ```bash
-effigy graph explore "<question>" --max-files 6 --max-bytes 12288 --json
-git diff --name-only | effigy graph affected --stdin --json
+rg -n "<symbol>" crates src
 ```
 
-Both queries read existing data without refreshing. Run `graph index` explicitly
-when the packet reports missing or stale data.
-
-See `graph-assist.md`.
+Read `docs/README.md` for the owning knowledge file. Effigy has no code graph in
+v0.15, so there is no index to build or refresh.
 
 ## Run tests
 
@@ -97,9 +95,7 @@ effigy init --check --json         # no-write setup report for agents/tools
 effigy doctor --verbose              # health + enabled scan checks
 effigy scan god-files --json
 effigy scan attention-markers --json
-effigy scan boundary-violations --json
-effigy scan dead-code --json
-git diff --name-only | effigy scan validation-gaps --stdin --json
+effigy scan duplicate-blocks --json
 ```
 
 Use this lane only when health, drift, or scanner output is the actual job.

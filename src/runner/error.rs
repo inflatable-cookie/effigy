@@ -163,11 +163,6 @@ pub enum RunnerError {
         message: String,
         json_details: String,
     },
-    GraphOperationTimeout {
-        command: String,
-        timeout_ms: u64,
-        rendered: String,
-    },
     DepsOperationNonZero {
         command: &'static str,
         outcome: &'static str,

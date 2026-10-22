@@ -1660,10 +1660,9 @@ for the rest.
 | 10 | Private vault | `<checkout>/.effigy/secrets/local.vault` (+ `.prev`) | secrets | `Gate(Store vault)` + pointer commit | previous generation kept | no: masked from the workspace mount (§8.2) |
 | 11 | Key wraps | secrets lane decides | secrets | pointer commit with the vault | with the vault generation | no: masked from the workspace mount when beside the vault (§8.2) |
 | 12 | Machine preferences | `~/.effigy/config.toml` | config | `atomic_replace` | user-owned | no |
-| 13 | Graph store | `<checkout>/.effigy/graph/` | graph | RefreshDerived, `Gate(Store graph)` | per worktree | read |
-| 14 | Other derived caches | per owner | owners | RefreshDerived; corrupt is a miss | owner-defined | — |
-| 15 | Reports and exports | explicit paths | engines | `atomic_replace` | user-owned | — |
-| 16 | Platform setup outputs | `/etc/resolver/`, launchd, completion | setup adapters | ownership verified before change (R3) | until removed by setup | no |
+| 13 | Other derived caches | per owner | owners | RefreshDerived; corrupt is a miss | owner-defined | — |
+| 14 | Reports and exports | explicit paths | engines | `atomic_replace` | user-owned | — |
+| 15 | Platform setup outputs | `/etc/resolver/`, launchd, completion | setup adapters | ownership verified before change (R3) | until removed by setup | no |
 
 ### 7.4 Retention
 
@@ -2180,7 +2179,6 @@ Environment reconciler adoption, tranche 3 (effigy#230, 2026-10-20):
 | Deploy reports success for unexecuted work | `src/runner/deploy_command/transaction.rs:109`, `:287` | R5 and I-OC1; ownership is Q-003 |
 | Vault written in place, unlocked | `src/runner/secret_vault.rs:177-194`; `crates/effigy-rhai/src/rhai_secrets.rs:665` | `Gate(Store vault)` + pointer commit (§5.5) |
 | Deps state: try-only lock, local atomic helper | `crates/effigy-deps/src/state.rs:497`, `:573` | gate with deadline; `atomic_replace` |
-| Graph reads and explicit refresh | `crates/effigy-codegraph/src/refresh.rs`; `storage.rs`; graph contract 045 | RefreshDerived owns a kernel store gate; Observe probes only. Queries never refresh; rollback-journal readers create no files. Existing WAL is migrated by explicit index. |
 | Catalog pack store lock | the retired catalog-pack runtime (removed under Q-005, effigy#234) | none: catalog sources reuse the bundle source pins |
 | Pending-facts journal with file and directory `fsync` | the retired host-run client (removed, effigy#227) | the pattern `atomic_replace` absorbs |
 | Doctor publication marker | `crates/effigy-scan/src/execution/doctor_inventory.rs:586` | `Gate` |

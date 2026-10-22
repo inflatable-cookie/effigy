@@ -14,7 +14,6 @@ Current technical authority for Effigy.
 | Repository-Defined Documentation Graph Architecture | [024-repository-defined-documentation-graph.md](024-repository-defined-documentation-graph.md) |
 | External Skill Task Execution | [025-external-skill-task-execution.md](025-external-skill-task-execution.md) |
 | Feature Placement And Command Surface Architecture | [026-feature-placement-and-command-surface.md](026-feature-placement-and-command-surface.md) |
-| Catalog-Scoped Code Graph Architecture | [027-catalog-scoped-code-graph.md](027-catalog-scoped-code-graph.md) |
 | Task Visibility And Grouping | [028-published-and-draft-task-surfaces.md](028-published-and-draft-task-surfaces.md) |
 | Bounded Doctor and Incremental Scan Architecture | [029-bounded-doctor-and-scan-cache.md](029-bounded-doctor-and-scan-cache.md) |
 | Docs-check source traversal | [030-docs-check-source-traversal.md](030-docs-check-source-traversal.md) |

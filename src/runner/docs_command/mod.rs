@@ -11,7 +11,6 @@ use effigy_cli::{DocsArgs, DocsCheckKind, DocsSubcommand};
 use super::error::RunnerError;
 
 mod checks;
-mod context;
 mod report;
 
 const DEFAULT_JSON_EXAMPLES_FILE: &str = "docs/guides/026-json-payload-examples.md";
@@ -80,23 +79,6 @@ pub(super) fn run_docs(args: DocsArgs) -> Result<String, RunnerError> {
         DocsSubcommand::AddLogIndex { log_path } => {
             checks::run_add_log_index(&repo_root, &log_path, args.output_json)
         }
-        DocsSubcommand::Context {
-            query,
-            max_sections,
-            max_bytes,
-            max_hops,
-            sources,
-            only,
-        } => context::run_context(
-            &repo_root,
-            &query,
-            max_sections,
-            max_bytes,
-            max_hops,
-            sources,
-            only,
-            args.output_json,
-        ),
     }
 }
 
@@ -117,7 +99,3 @@ fn resolve_repo_input(repo_root: &Path, path: PathBuf) -> PathBuf {
 fn map_docs_policy_error(error: DocsPolicyError) -> RunnerError {
     report::map_docs_policy_error(error)
 }
-
-#[cfg(test)]
-#[path = "tests.rs"]
-mod tests;

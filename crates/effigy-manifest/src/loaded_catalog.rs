@@ -135,7 +135,7 @@ mod tests {
             let body = format!("[catalog]\nalias = 'bovine'\n[catalog.graph]\n{fields}\n");
             let error = toml::from_str::<TaskManifest>(&body).expect_err("retired table");
             assert!(error.to_string().contains("[catalog.graph]"));
-            assert!(error.to_string().contains("graph explore --path"));
+            assert!(error.to_string().contains("no replacement"));
         }
     }
     #[test]

@@ -327,7 +327,7 @@ fn task_manifest_parse_error_with_stale_install_names_recovery() {
         "current checkout revision must be named: {rendered}"
     );
     assert!(
-        rendered.contains("cargo run --bin effigy -- bootstrap:local"),
+        rendered.contains("cargo run --bin effigy -- install:local"),
         "source-build recovery must be named: {rendered}"
     );
 }

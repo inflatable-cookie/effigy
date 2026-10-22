@@ -115,11 +115,11 @@ allow = [
 id = "effigy-graph-read-refresh"
 retired = "2026-10-19"
 replacement = "Graph reads never refresh; run effigy graph index explicitly. The old status --refresh flag warns and returns report-only status for one release."
-owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
+owner = "docs/knowledge/questions.md"
 terms = ["effigy graph status --refresh"]
 paths = []
 config_keys = []
-allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "crates/effigy-codegraph/src/index.rs", "src/tests/runner_tests/runner_core_tests/graph_tests.rs"]
+allow = ["CHANGELOG.md", "crates/effigy-codegraph/src/index.rs", "src/tests/runner_tests/runner_core_tests/graph_tests.rs"]
 
 [[retired]]
 id = "effigy-bundle-read-refresh-ttl"
@@ -165,71 +165,71 @@ allow = ["CHANGELOG.md"]
 id = "effigy-graph-watch"
 retired = "2026-10-18"
 replacement = "Use graph index to refresh explicitly. Removed spellings return replacement errors for one release."
-owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
+owner = "docs/knowledge/questions.md"
 terms = ["effigy graph watch", "effigy.graph.watch.event.v1"]
 paths = ["crates/effigy-codegraph/src/watch.rs", "src/cli/graph_watch_dispatch.rs"]
 config_keys = []
-allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "docs/knowledge/contracts/json-schema-index.json"]
+allow = ["CHANGELOG.md", "docs/knowledge/contracts/json-schema-index.json"]
 
 [[retired]]
 id = "effigy-graph-files"
 retired = "2026-10-18"
 replacement = "Use graph search <QUERY> or graph node <PATH>. Removed spellings return replacement errors for one release."
-owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
+owner = "docs/knowledge/questions.md"
 terms = ["effigy graph files", "effigy.graph.files.v1"]
 paths = []
 config_keys = []
-allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "docs/knowledge/contracts/json-schema-index.json"]
+allow = ["CHANGELOG.md", "docs/knowledge/contracts/json-schema-index.json"]
 
 [[retired]]
 id = "effigy-graph-callers"
 retired = "2026-10-18"
 replacement = "Use graph node <ID> --in. Removed spellings return replacement errors for one release."
-owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
+owner = "docs/knowledge/questions.md"
 terms = ["effigy graph callers", "effigy.graph.callers.v1"]
 paths = []
 config_keys = []
-allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "docs/knowledge/contracts/json-schema-index.json"]
+allow = ["CHANGELOG.md", "docs/knowledge/contracts/json-schema-index.json"]
 
 [[retired]]
 id = "effigy-graph-callees"
 retired = "2026-10-18"
 replacement = "Use graph node <ID> --out. Removed spellings return replacement errors for one release."
-owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
+owner = "docs/knowledge/questions.md"
 terms = ["effigy graph callees", "effigy.graph.callees.v1"]
 paths = []
 config_keys = []
-allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "docs/knowledge/contracts/json-schema-index.json"]
+allow = ["CHANGELOG.md", "docs/knowledge/contracts/json-schema-index.json"]
 
 [[retired]]
 id = "effigy-graph-impact"
 retired = "2026-10-18"
 replacement = "Use graph node <ID|PATH>. Removed spellings return replacement errors for one release."
-owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
+owner = "docs/knowledge/questions.md"
 terms = ["effigy graph impact", "effigy.graph.impact.v1"]
 paths = []
 config_keys = []
-allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "docs/knowledge/contracts/json-schema-index.json"]
+allow = ["CHANGELOG.md", "docs/knowledge/contracts/json-schema-index.json"]
 
 [[retired]]
 id = "effigy-graph-context"
 retired = "2026-10-18"
 replacement = "Use graph explore <REQUEST> --excerpts-only; its payload schema is effigy.graph.explore.v1. Removed spellings return replacement errors for one release."
-owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
+owner = "docs/knowledge/questions.md"
 terms = ["effigy graph context", "effigy.graph.context.v1"]
 paths = []
 config_keys = []
-allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "docs/knowledge/contracts/json-schema-index.json"]
+allow = ["CHANGELOG.md", "docs/knowledge/contracts/json-schema-index.json"]
 
 [[retired]]
 id = "effigy-catalog-scoped-graph"
 retired = "2026-10-18"
 replacement = "Remove the catalog graph table and graph catalog selectors. One graph indexes the whole checkout; narrow explore output with --path. Orphaned catalog stores are ignored with one warning per invocation and left untouched."
-owner = "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md"
+owner = "docs/knowledge/questions.md"
 terms = ["effigy.graph.fanout.v1", "graph index --all-catalogs", "graph status --all-catalogs", "graph index --catalog"]
 paths = []
 config_keys = ["catalog.graph"]
-allow = ["CHANGELOG.md", "docs/guides/076-code-graph-and-agent-workflows.md", "docs/knowledge/contracts/json-schema-index.json", "crates/effigy-manifest/src/lib.rs", "crates/effigy-manifest/src/loaded_catalog.rs"]
+allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "docs/knowledge/contracts/json-schema-index.json", "crates/effigy-manifest/src/lib.rs", "crates/effigy-manifest/src/loaded_catalog.rs"]
 
 [[retired]]
 id = "effigy-host-run-client"
@@ -754,5 +754,97 @@ allow = [
   "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md",
   "docs/knowledge/questions.md",
   "docs/knowledge/retired.toml",
+  "docs/knowledge/contracts/041-documentation-graph-profile-contract.md",
+  "crates/effigy-builtin/src/scan/tests.rs",
+  "src/tests/lib_tests_help_render_tests.rs",
+  "tests/cli_output_tests/help_and_flags_tests.rs",
   "src/tests/lib_tests_parse_tests/gateway_option_tests.rs",
+]
+
+[[retired]]
+id = "effigy-code-graph"
+retired = "2026-10-21"
+replacement = "No replacement (Q-009): the code graph, its SQLite index and the three graph-backed scanners are gone. Use `rg` for code navigation, `docs/README.md` for the documentation index, and `effigy test --plan` to choose tests. `effigy graph` and `effigy docs context` refuse with this explanation; `[scan.boundary_violations]`, `[scan.dead_code]`, `[scan.validation_gaps]`, `[catalog.graph]`, `--graph-context`, `--path`/`--stdin` on `scan`, and the retired subcommand spellings are manifest or usage errors. Historical `.effigy/graph/` index state is untouched. `docs check` is unchanged."
+owner = "docs/knowledge/questions.md"
+terms = [
+  "effigy graph",
+  "effigy docs context",
+  "effigy.graph.",
+  "effigy.docs.context",
+  "effigy.scan.boundary-violations",
+  "effigy.scan.dead-code",
+  "effigy.scan.validation-gaps",
+  "GraphArgs",
+  "GraphSubcommand",
+  "graph_command",
+  "effigy-codegraph",
+  "effigy_codegraph",
+  ".effigy/graph",
+  "EFFIGY_GRAPH_TIMEOUT_MS",
+]
+paths = [
+  "crates/effigy-codegraph/",
+  "src/runner/graph_command.rs",
+  "src/runner/graph_time_budget.rs",
+  "src/runner/docs_command/context.rs",
+  "crates/effigy-cli/src/command_parsing_graph.rs",
+  "crates/effigy-cli/src/help/topics/graph.rs",
+  "crates/effigy-builtin/src/scan/execution/boundaries.rs",
+  "crates/effigy-builtin/src/scan/execution/dead_code.rs",
+  "crates/effigy-builtin/src/scan/execution/validation_gaps.rs",
+  "crates/effigy-builtin/src/scan/execution/graph_helpers.rs",
+  "crates/effigy-doctor/src/checks/graph_checks.rs",
+  "crates/effigy-scan/src/model/graph.rs",
+  "crates/effigy-scan/src/render/graph.rs",
+  "docs/guides/076-code-graph-and-agent-workflows.md",
+  "docs/guides/079-documentation-graph-profiles-and-context.md",
+  "docs/knowledge/architecture/027-catalog-scoped-code-graph.md",
+  "docs/knowledge/contracts/045-catalog-scoped-code-graph-contract.md",
+  "scripts/benchmark-docs-context.rhai",
+  "scripts/benchmark-graph-agent-usage.rhai",
+  "tests/scripts/graph-checkout-smoke.py",
+  "tests/scripts/graph-test-home.sh",
+]
+config_keys = [
+  "scan.boundary_violations",
+  "scan.dead_code",
+  "scan.validation_gaps",
+  "catalog.graph",
+]
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/questions.md",
+  "docs/knowledge/retired.toml",
+  "docs/knowledge/contracts/041-documentation-graph-profile-contract.md",
+  "crates/effigy-builtin/src/scan/tests.rs",
+  "src/tests/lib_tests_help_render_tests.rs",
+  "tests/cli_output_tests/help_and_flags_tests.rs",
+  "docs/guides/017-json-output-contracts.md",
+  "docs/guides/026-json-payload-examples.md",
+  "docs/guides/047-agent-and-cross-repo-adoption.md",
+  "docs/guides/056-northstar-effigy-consumer-repo-contract.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/architecture/000-overview.md",
+  "docs/knowledge/architecture/024-repository-defined-documentation-graph.md",
+  "docs/knowledge/architecture/026-feature-placement-and-command-surface.md",
+  "docs/knowledge/architecture/032-runtime-kernel-architecture.md",
+  "docs/knowledge/architecture/codebase-sweep.md",
+  "docs/knowledge/vision.md",
+  "skills/effigy/SKILL.md",
+  "skills/effigy/references/config-shapes.md",
+  "skills/effigy/references/workflow-shortcuts.md",
+  "skills/effigy/references/agent-operating-loop.md",
+  ".agents/skills/effigy/SKILL.md",
+  ".agents/skills/effigy/references/config-shapes.md",
+  ".agents/skills/effigy/references/workflow-shortcuts.md",
+  ".agents/skills/effigy/references/agent-operating-loop.md",
+  "crates/effigy-cli/src/command_parsing.rs",
+  "crates/effigy-cli/src/command_parsing_docs.rs",
+  "crates/effigy-manifest/src/lib.rs",
+  "crates/effigy-manifest/src/retired_keys.rs",
+  "crates/effigy-builtin/src/scan/request/commands.rs",
+  "crates/effigy-builtin/src/scan/request/parser.rs",
+  "crates/effigy-builtin/src/init/inventory/tests.rs",
+  "crates/effigy-manifest/src/loaded_catalog.rs",
+  "effigy.toml",
 ]

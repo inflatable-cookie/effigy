@@ -195,22 +195,6 @@ Use `--path <dotted.path>` when the full composed view is too broad and the real
 question is “where did this one effective value come from?” or “which override
 replaced it?”
 
-### Whole-checkout Code Graph
-
-The code graph includes supported source files across the checkout and its
-catalog members. No graph-specific manifest table is required. Keep ordinary
-catalog membership declarations for task routing, then narrow a navigation
-packet with path filters:
-
-```sh
-effigy graph index --json
-effigy graph explore "checkout totals" --path apps/bovine-desktop/ --json
-```
-
-The root graph uses one database and per-file transactions. See
-[code graph workflows](076-code-graph-and-agent-workflows.md) for freshness,
-deadlines and migration guidance.
-
 ## Task and Runtime Patterns
 
 ### Full Task Table with Runtime Controls

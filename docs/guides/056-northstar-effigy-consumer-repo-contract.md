@@ -22,10 +22,10 @@ This guide's path stays stable for consumers. A new repository can start with `e
   [Queue Spec 022](https://github.com/inflatable-cookie/paseo-northstar-queue/blob/main/docs/knowledge/specs/022-queue-projects-without-manifests.md)
   and the [Queue RPC schema](https://github.com/inflatable-cookie/paseo-northstar-queue/blob/main/shared/contracts.ts).
 
-Queue also owns task status, review, closeout, and outcomes. A repository's committed `[docs_policy.graph]` profile is the only authority for `effigy docs context`; neither the starter nor an installed skill is read at query time.
+Queue also owns task status, review, closeout, and outcomes. Code and documentation navigation use `rg` and the repository's `docs/README.md` index; The v0.15 release removed both commands.
 
 ## Effigy commands
 
-Use `effigy graph` for code ownership, `effigy docs context` for document authority, `effigy tasks` for selector inventory, `effigy doctor` for routing or health, and `effigy test --plan` when test shape matters. Run `effigy qa` before a PR. A consumer's QA command must work from a fresh checkout with its own dependencies.
+Use `rg` and `docs/README.md` for code and document authority, `effigy tasks` for selector inventory, `effigy doctor` for routing or health, and `effigy test --plan` when test shape matters. Run `effigy qa` before a PR. A consumer's QA command must work from a fresh checkout with its own dependencies.
 
 The [agent adoption guide](047-agent-and-cross-repo-adoption.md) covers Effigy command usage. The repository's own `docs/knowledge/contracts/release.md` must describe its actual release steps, even if it does not release yet.

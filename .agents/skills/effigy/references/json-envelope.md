@@ -47,8 +47,7 @@ Key invariants:
 
 - `schema` is always `effigy.command.v1`.
 - Either `result` or `error` is non-null, never both.
-- `result` carries the command-specific data. Some graph reports additionally
-  nest their report under `result.payload`.
+- `result` carries the command-specific data.
 - `error.details` is structured (object), not a string.
 - A failed command may place useful command-specific report data under
   `error.details`.
@@ -67,10 +66,6 @@ These commands produce stable JSON payloads suitable for agents to consume:
 | `effigy --json config completion candidates` | `result.candidates[]` and completion cache metadata |
 | `effigy --json config` | merged config tree |
 | `effigy --json release status` | `result.gates.results[]` on success; failed gate checks may carry the same report under `error.details.gates.results[]` |
-| `effigy --json graph status` | `result.payload.freshness`, stale paths, and counts |
-| `effigy --json graph explore "<q>"` | primary owners, excerpts, relations, guidance |
-| `effigy --json graph affected` | affected files, likely tests/tasks after edits |
-| `effigy --json graph explore --excerpts-only "<q>"` | ranked context items (lower-level than explore) |
 
 
 ## Worked `jq` examples
@@ -95,15 +90,6 @@ effigy --json release status --check-gates \
   | jq -r '(.result // .error.details).gates.results[] | "\(.name): \(.passed)"'
 ```
 
-**Inspect report-only graph freshness:**
-
-```bash
-effigy --json graph status | jq '.result.payload.stale_paths'
-```
-
-Graph queries report freshness without refreshing. Run `graph index` explicitly
-when the returned packet reports missing or stale data.
-
 **Detect error envelope:**
 
 ```bash
@@ -116,4 +102,4 @@ fi
 
 ## Streaming vs single-shot
 
-Graph commands emit one JSON document; there is no graph event stream.
+Effigy emits one JSON document per command; there is no event stream.
