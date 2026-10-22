@@ -275,10 +275,20 @@ pub fn render_release_status_text(status: &ReleaseStatus) -> String {
             ),
             None => "  Version source: none".to_owned(),
         },
-        format!("  Changelog: {}", status.changelog_path.display()),
+        if status.plan.changelog_in_use {
+            format!("  Changelog: {}", status.changelog_path.display())
+        } else {
+            "  Changelog: not used (no `semver` identity)".to_owned()
+        },
         format!(
             "  Changelog valid: {}",
-            if status.changelog_valid { "yes" } else { "no" }
+            if !status.plan.changelog_in_use {
+                "n/a"
+            } else if status.changelog_valid {
+                "yes"
+            } else {
+                "no"
+            }
         ),
         format!(
             "  Unreleased entries: {}",
@@ -498,15 +508,28 @@ pub fn render_release_pipeline_plan_text(plan: &ReleasePipelinePlan) -> String {
         format!(
             "  Stages: validate -> pre-gates -> prepare -> certify -> publish -> verify -> closeout"
         ),
-        format!("  Changelog: {}", plan.changelog_path.display()),
+        if plan.changelog_in_use {
+            format!("  Changelog: {}", plan.changelog_path.display())
+        } else {
+            "  Changelog: not used (no `semver` identity)".to_owned()
+        },
         format!(
             "  Changelog valid: {}",
-            if plan.changelog_valid { "yes" } else { "no" }
+            if !plan.changelog_in_use {
+                "n/a"
+            } else if plan.changelog_valid {
+                "yes"
+            } else {
+                "no"
+            }
         ),
-        format!(
-            "  Unreleased entries: {}",
-            format_counts(&plan.unreleased_counts)
-        ),
+        match plan.changelog_in_use {
+            true => format!(
+                "  Unreleased entries: {}",
+                format_counts(&plan.unreleased_counts)
+            ),
+            false => "  Unreleased entries: n/a".to_owned(),
+        },
     ];
 
     append_pipeline_lines(&mut lines, plan);

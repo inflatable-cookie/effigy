@@ -311,8 +311,12 @@ receipts and the rest of §5 arrive with the Run pipeline.
   the release, which also means a release with no `semver` identity refuses
   `sync-files`.
 - **The changelog is a `semver` identity's business.** §4.3 says bump rules
-  apply only to `semver`, so a release with no `semver` identity is neither
-  validated nor blocked by the changelog and lists no changelog file to change.
+  apply only to `semver`, so a release with no `semver` identity never reads a
+  changelog: the file may be absent (`release changelog path does not exist`
+  never fires for it) or unparseable, it is neither validated nor blocked by
+  the changelog, and it lists no changelog file to change. The plan and status
+  payloads say so with `changelog.used: false`; the text surfaces say "not
+  used (no `semver` identity)".
 - **`working_tree_clean` is tri-state.** `null` means the release root is not a
   git work tree. Status and plan still report; the Run's validate stage is what
   refuses such a release.

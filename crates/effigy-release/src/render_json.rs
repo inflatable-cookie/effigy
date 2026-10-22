@@ -105,6 +105,9 @@ impl From<&ResolvedVersionSource> for VersionSourcePayload {
 #[derive(Serialize)]
 struct ChangelogPayload {
     path: String,
+    /// False for a release with no `semver` identity: it never reads the
+    /// changelog, so `valid` is vacuous there.
+    used: bool,
     valid: bool,
     diagnostic_count: usize,
     diagnostics: Vec<String>,
@@ -312,6 +315,7 @@ impl From<&ReleaseStatus> for ReleaseStatusPayload {
                 .map(VersionSourcePayload::from),
             changelog: ChangelogPayload {
                 path: status.changelog_path.display().to_string(),
+                used: status.plan.changelog_in_use,
                 valid: status.changelog_valid,
                 diagnostic_count: status.changelog_diagnostics.len(),
                 diagnostics: status.changelog_diagnostics.clone(),
@@ -582,6 +586,7 @@ impl From<&ReleasePipelinePlan> for ReleasePipelinePlanPayload {
             },
             changelog: ChangelogPayload {
                 path: plan.changelog_path.display().to_string(),
+                used: plan.changelog_in_use,
                 valid: plan.changelog_valid,
                 diagnostic_count: plan.changelog_diagnostics.len(),
                 diagnostics: plan.changelog_diagnostics.clone(),

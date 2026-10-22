@@ -216,6 +216,9 @@ pub struct ReleasePipelinePlan {
     pub repo_root: PathBuf,
     pub single_identity_shorthand: bool,
     pub changelog_path: PathBuf,
+    /// Whether this release reads the changelog at all: true when it has a
+    /// `semver` identity (contract 054 §4.3).
+    pub changelog_in_use: bool,
     pub changelog_valid: bool,
     pub changelog_diagnostics: Vec<String>,
     pub unreleased_counts: BTreeMap<String, usize>,
@@ -251,6 +254,12 @@ impl ReleasePipelinePlan {
     }
 }
 
+fn has_semver_identity(identities: &[ResolvedIdentity]) -> bool {
+    identities
+        .iter()
+        .any(|identity| identity.kind == IdentityKind::Semver)
+}
+
 /// Read `[release]` and resolve it to a pipeline. Reads only.
 pub fn resolve_release_pipeline(root: &Path) -> Result<ReleasePipeline, ReleaseError> {
     let manifest_path = root.join(TASK_MANIFEST_FILE);
@@ -260,19 +269,6 @@ pub fn resolve_release_pipeline(root: &Path) -> Result<ReleasePipeline, ReleaseE
         None
     };
     let config = manifest.as_ref().and_then(|parsed| parsed.release.as_ref());
-
-    let changelog_path = resolve_config_path(
-        root,
-        config.and_then(|config| config.changelog.as_deref()),
-        "CHANGELOG.md",
-        "release.changelog",
-    )?;
-    if !changelog_path.exists() {
-        return Err(ReleaseError::TaskInvocation(format!(
-            "release changelog path does not exist: {}",
-            changelog_path.display()
-        )));
-    }
 
     let single_identity_shorthand = config
         .map(|config| config.identities.is_empty())
@@ -284,6 +280,23 @@ pub fn resolve_release_pipeline(root: &Path) -> Result<ReleasePipeline, ReleaseE
     }
 
     let identities = resolve_identities(root, config, single_identity_shorthand)?;
+
+    // Contract 054 §4.3: changelog bump rules apply only to `semver`
+    // identities, so a release with none never reads — or requires — a
+    // changelog. That is the §4.3 example's shape: no `changelog` key and no
+    // file.
+    let changelog_path = resolve_config_path(
+        root,
+        config.and_then(|config| config.changelog.as_deref()),
+        "CHANGELOG.md",
+        "release.changelog",
+    )?;
+    if has_semver_identity(&identities) && !changelog_path.exists() {
+        return Err(ReleaseError::TaskInvocation(format!(
+            "release changelog path does not exist: {}",
+            changelog_path.display()
+        )));
+    }
     let gates = resolve_gates(config)?;
     let artifacts = resolve_artifacts(config);
     let targets = if single_identity_shorthand {
@@ -772,33 +785,40 @@ fn follow_cycle_error(identity: &str) -> ReleaseError {
 /// mutating anything.
 pub fn plan_release_pipeline(root: &Path) -> Result<ReleasePipelinePlan, ReleaseError> {
     let pipeline = resolve_release_pipeline(root)?;
-    let raw_changelog = std::fs::read_to_string(&pipeline.changelog_path).map_err(|error| {
-        ReleaseError::TaskInvocation(format!(
-            "failed to read changelog {}: {error}",
-            pipeline.changelog_path.display()
-        ))
-    })?;
-    let parsed_changelog = changelog::parse(&raw_changelog)
-        .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
-    let diagnostics = changelog::validate(&parsed_changelog, &raw_changelog);
-    let changelog_diagnostics = diagnostics
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
-    let counts = unreleased_counts(&parsed_changelog);
-    let unreleased_empty = counts.values().copied().sum::<usize>() == 0;
-    let initial_tag_current_version =
-        pipeline.initial_tag_current_version && parsed_changelog.latest_version().is_none();
-
+    let changelog_in_use = has_semver_identity(&pipeline.identities);
     // Changelog bump rules apply only to `semver` identities (contract 054
-    // §4.3), so a release with none is neither validated nor blocked by the
-    // changelog.
-    let has_semver_identity = pipeline
-        .identities
-        .iter()
-        .any(|identity| identity.kind == IdentityKind::Semver);
+    // §4.3), so a release with none neither reads nor is blocked by a
+    // changelog: the file may be absent or unparseable.
+    let (parsed_changelog, changelog_valid, changelog_diagnostics) = if changelog_in_use {
+        let raw_changelog = std::fs::read_to_string(&pipeline.changelog_path).map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+                "failed to read changelog {}: {error}",
+                pipeline.changelog_path.display()
+            ))
+        })?;
+        let parsed = changelog::parse(&raw_changelog)
+            .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
+        let diagnostics = changelog::validate(&parsed, &raw_changelog)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let valid = diagnostics.is_empty();
+        (Some(parsed), valid, diagnostics)
+    } else {
+        (None, true, Vec::new())
+    };
+    let counts = parsed_changelog
+        .as_ref()
+        .map(unreleased_counts)
+        .unwrap_or_default();
+    let unreleased_empty = counts.values().copied().sum::<usize>() == 0;
+    let initial_tag_current_version = pipeline.initial_tag_current_version
+        && parsed_changelog
+            .as_ref()
+            .is_some_and(|parsed| parsed.latest_version().is_none());
+
     let mut blockers = Vec::new();
-    if has_semver_identity {
+    if changelog_in_use {
         if !changelog_diagnostics.is_empty() {
             blockers.push(format!(
                 "changelog validation failed with {} issue(s)",
@@ -815,7 +835,7 @@ pub fn plan_release_pipeline(root: &Path) -> Result<ReleasePipelinePlan, Release
         identities.push(resolve_identity_plan(
             &pipeline,
             identity,
-            &parsed_changelog,
+            parsed_changelog.as_ref(),
             initial_tag_current_version,
             &mut blockers,
         )?);
@@ -823,7 +843,8 @@ pub fn plan_release_pipeline(root: &Path) -> Result<ReleasePipelinePlan, Release
     bind_followers(&mut identities, &mut blockers);
 
     let latest_changelog_version = parsed_changelog
-        .latest_version()
+        .as_ref()
+        .and_then(|parsed| parsed.latest_version())
         .and_then(|release| release.version.clone());
     if let Some(latest) = latest_changelog_version {
         for identity in identities
@@ -873,7 +894,7 @@ pub fn plan_release_pipeline(root: &Path) -> Result<ReleasePipelinePlan, Release
             }
         }
     }
-    if has_semver_identity && seen_files.insert(pipeline.changelog_path.clone()) {
+    if changelog_in_use && seen_files.insert(pipeline.changelog_path.clone()) {
         files.push(pipeline.changelog_path.clone());
     }
     for sync in &pipeline.sync_files {
@@ -888,15 +909,21 @@ pub fn plan_release_pipeline(root: &Path) -> Result<ReleasePipelinePlan, Release
         repo_root: root.to_path_buf(),
         single_identity_shorthand: pipeline.single_identity_shorthand,
         changelog_path: pipeline.changelog_path.clone(),
-        changelog_valid: changelog_diagnostics.is_empty(),
+        changelog_in_use,
+        changelog_valid,
         changelog_diagnostics,
         unreleased_counts: counts,
         unreleased_empty,
         existing_changelog_versions: parsed_changelog
-            .releases
-            .iter()
-            .filter_map(|release| release.version.as_ref().map(ToString::to_string))
-            .collect(),
+            .as_ref()
+            .map(|parsed| {
+                parsed
+                    .releases
+                    .iter()
+                    .filter_map(|release| release.version.as_ref().map(ToString::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
         identities,
         gates: pipeline.gates.clone(),
         artifacts,
@@ -913,7 +940,7 @@ pub fn plan_release_pipeline(root: &Path) -> Result<ReleasePipelinePlan, Release
 fn resolve_identity_plan(
     pipeline: &ReleasePipeline,
     identity: &ResolvedIdentity,
-    parsed_changelog: &changelog::Changelog,
+    parsed_changelog: Option<&changelog::Changelog>,
     initial_tag_current_version: bool,
     blockers: &mut Vec<String>,
 ) -> Result<ReleaseIdentityPlan, ReleaseError> {
@@ -927,7 +954,9 @@ fn resolve_identity_plan(
             let bump = if initial_tag_current_version {
                 BumpKind::None
             } else {
-                suggested_bump(parsed_changelog, &current_version, pipeline.pre_1_0)
+                parsed_changelog
+                    .map(|parsed| suggested_bump(parsed, &current_version, pipeline.pre_1_0))
+                    .unwrap_or(BumpKind::None)
             };
             let next_version = if initial_tag_current_version {
                 Some(current_version.clone())

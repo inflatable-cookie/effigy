@@ -398,7 +398,9 @@ Rule of thumb:
   `identities[]` (name, kind, current and next version, tag, `follows`,
   version file), `files[]`, `gates[]` with their `stage`, `artifacts[]`,
   `targets[]`, `approvals.checkpoints`, `working_tree_clean` (`null` outside a
-  git work tree), and `blockers[]`. `effigy.release.status.v1` gains the same
+  git work tree), and `blockers[]`. `changelog.used` is false for a release
+  with no `semver` identity, which never reads a changelog; `valid` is vacuous
+  there. `effigy.release.status.v1` gains the same
   identity, plan-summary and `run` fields additively; `current_version` and
   `version_source` are omitted when the release has no `semver` identity.
 - Breaking envelope changes require a new top-level schema/version.

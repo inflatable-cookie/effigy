@@ -4,7 +4,12 @@ use std::process::Command as ProcessCommand;
 
 use crate::ReleaseError;
 
-pub fn git_modified_files(repo_root: &Path) -> Result<Vec<String>, ReleaseError> {
+/// The working tree's changed paths.
+///
+/// `read_only` sets `GIT_OPTIONAL_LOCKS=0`, so a pure read (`release status`,
+/// `release --plan`) never takes the index lock. Commands that go on to mutate
+/// the tree leave it unset, as before.
+fn git_status_paths(repo_root: &Path, read_only: bool) -> Result<Vec<String>, ReleaseError> {
     let repo_check = ProcessCommand::new("git")
         .arg("-C")
         .arg(repo_root)
@@ -22,14 +27,17 @@ pub fn git_modified_files(repo_root: &Path) -> Result<Vec<String>, ReleaseError>
         )));
     }
 
-    let output = ProcessCommand::new("git")
+    let mut command = ProcessCommand::new("git");
+    command
         .arg("-C")
         .arg(repo_root)
-        .args(["status", "--porcelain=v1", "--untracked-files=all"])
-        .output()
-        .map_err(|error| {
-            ReleaseError::TaskInvocation(format!("failed to inspect git working tree: {error}"))
-        })?;
+        .args(["status", "--porcelain=v1", "--untracked-files=all"]);
+    if read_only {
+        command.env("GIT_OPTIONAL_LOCKS", "0");
+    }
+    let output = command.output().map_err(|error| {
+        ReleaseError::TaskInvocation(format!("failed to inspect git working tree: {error}"))
+    })?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(ReleaseError::TaskInvocation(if detail.is_empty() {
@@ -52,6 +60,10 @@ pub fn git_modified_files(repo_root: &Path) -> Result<Vec<String>, ReleaseError>
     Ok(paths)
 }
 
+pub fn git_modified_files(repo_root: &Path) -> Result<Vec<String>, ReleaseError> {
+    git_status_paths(repo_root, false)
+}
+
 /// Whether `repo_root` is a git work tree, and whether its tree is clean.
 ///
 /// `None` means "not a git work tree": resolution reports that rather than
@@ -72,7 +84,7 @@ pub fn git_work_tree_clean(repo_root: &Path) -> Result<Option<bool>, ReleaseErro
     {
         return Ok(None);
     }
-    git_modified_files(repo_root).map(|paths| Some(paths.is_empty()))
+    git_status_paths(repo_root, true).map(|paths| Some(paths.is_empty()))
 }
 
 pub fn git_current_branch(repo_root: &Path) -> Result<String, ReleaseError> {

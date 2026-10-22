@@ -356,8 +356,11 @@ During v0.x, MINOR bumps may include breaking changes.
   mutation (each identity's current and next version, files to change, gates by
   stage, artifacts, targets and approval checkpoints) as
   `effigy.release.plan.v1`, and `effigy release status` reports the same
-  pipeline alongside its readiness. The single-identity shorthand is unchanged,
-  so the 11 projects already declaring `[release]` keep working.
+  pipeline alongside its readiness. A release with no `semver` identity never
+  reads a changelog (contract 054 §4.3), so its `CHANGELOG.md` may be absent or
+  unparseable and both surfaces report `changelog.used: false`. The
+  single-identity shorthand is unchanged, so the 11 projects already declaring
+  `[release]` keep working.
 - `test:release:platform`, `check:release:platform` and
   `lint:release:platform` selectors, with their `:cargo` escapes.
 - `tests/fixtures/release_platform/` holds one project per `[release]` shape

@@ -366,7 +366,10 @@ verify = "release:verify:npm"
 
 - `kind` is `semver` (the default, a version file bumped from the changelog),
   `digest` (the artifact digest is the identity), `source` (the commit SHA) or
-  `task` (a project task prints the identity).
+  `task` (a project task prints the identity). Changelog bump rules apply only
+  to `semver`, so a release with none of them never reads a changelog: the file
+  may be absent, and `release --plan` and `release status` report
+  `changelog.used: false` rather than failing.
 - `follows` releases the follower at its leader's version under its own
   `tag-format`; omit it for an independent bump.
 - A gate runs `command` or a project `task` in `stage = "pre"` or

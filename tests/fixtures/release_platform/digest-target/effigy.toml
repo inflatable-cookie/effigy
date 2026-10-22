@@ -1,5 +1,6 @@
+# Contract 054 §4.3 verbatim: a digest release reaches a deploy task, with no
+# changelog and no version file of its own.
 [release]
-changelog = "CHANGELOG.md"
 
 [release.identities.site]
 kind = "digest"

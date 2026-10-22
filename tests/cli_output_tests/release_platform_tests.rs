@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::support::{
-    git_commit_all, init_git_repo, parse_stdout_json, run_json_cli_command, temp_workspace,
+    git_commit_all, git_stdout, init_git_repo, parse_stdout_json, run_json_cli_command,
+    temp_workspace,
 };
 
 fn fixture_root(name: &str) -> PathBuf {
@@ -222,18 +223,23 @@ fn named_identity_fixture_resolves_identities_artifacts_targets_and_approvals() 
 }
 
 #[test]
-fn digest_identity_fixture_has_no_version_and_needs_no_changelog_entry() {
+fn digest_identity_fixture_has_no_version_and_needs_no_changelog() {
     let root = workspace("digest-target");
     let plan = release_plan(&root);
 
-    // The fixture's `[Unreleased]` is empty. Changelog bump rules apply only to
-    // `semver` identities, so that is not a blocker here (§4.3).
+    // The §4.3 fixture has no `changelog` key and no CHANGELOG.md at all. A
+    // release with no `semver` identity never reads one (§4.3), so that is not
+    // a blocker.
+    assert!(!root.join("CHANGELOG.md").exists());
     assert_eq!(plan["ready"], true, "blockers: {}", plan["blockers"]);
     assert_eq!(
         plan["blockers"],
         serde_json::json!([]),
-        "a digest release has nothing to bump"
+        "a digest release has nothing to bump or validate"
     );
+    assert_eq!(plan["changelog"]["used"], false);
+    assert_eq!(plan["changelog"]["valid"], true);
+    assert_eq!(plan["changelog"]["diagnostics"], serde_json::json!([]));
 
     let site = identity(&plan, "site");
     assert_eq!(site["kind"], "digest");
@@ -266,6 +272,60 @@ fn digest_identity_fixture_has_no_version_and_needs_no_changelog_entry() {
     assert_eq!(status["current_version"], Value::Null);
     assert_eq!(status["next_version"], Value::Null);
     assert_eq!(status["identities"][0]["kind"], "digest");
+    assert_eq!(status["changelog"]["used"], false);
+}
+
+#[test]
+fn digest_release_does_not_parse_an_unparseable_changelog() {
+    // A release with no `semver` identity never reads the changelog, so a
+    // malformed one cannot block it. The file exists here on purpose.
+    let root = workspace("digest-target");
+    fs::write(root.join("CHANGELOG.md"), "this is not a changelog\n\n### ")
+        .expect("write malformed changelog");
+
+    let plan = release_plan(&root);
+    assert_eq!(plan["ready"], true, "blockers: {}", plan["blockers"]);
+    assert_eq!(plan["changelog"]["used"], false);
+    assert_eq!(plan["changelog"]["diagnostics"], serde_json::json!([]));
+    assert_eq!(plan["blockers"], serde_json::json!([]));
+}
+
+#[test]
+fn source_release_identity_is_the_commit_and_needs_no_changelog() {
+    let root = temp_workspace("release-platform-source");
+    fs::write(
+        root.join("effigy.toml"),
+        "[release]\n\n[release.identities.build]\nkind = \"source\"\n\n[release.targets.production]\nkind = \"task\"\ntask = \"deploy:production\"\n",
+    )
+    .expect("write manifest");
+    init_git_repo(&root);
+    git_commit_all(&root, "source fixture");
+    let head = git_stdout(&root, &["rev-parse", "HEAD"]);
+    assert!(!root.join("CHANGELOG.md").exists());
+
+    let plan = release_plan(&root);
+    assert_eq!(plan["ready"], true, "blockers: {}", plan["blockers"]);
+    assert_eq!(plan["changelog"]["used"], false);
+    let build = identity(&plan, "build");
+    assert_eq!(build["kind"], "source");
+    assert_eq!(build["identity"], head.as_str());
+    assert_eq!(build["next_version"], Value::Null);
+    assert_eq!(plan["files"], serde_json::json!([]));
+}
+
+#[test]
+fn semver_release_still_requires_its_changelog() {
+    let root = workspace("shorthand");
+    fs::remove_file(root.join("CHANGELOG.md")).expect("remove changelog");
+
+    let output = run_json_cli_command(&root, &["release", "--plan"]);
+    let parsed = parse_stdout_json(&output);
+    assert!(!output.status.success(), "{parsed}");
+    let message = parsed["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("release changelog path does not exist"),
+        "got: {message}"
+    );
 }
 
 #[test]
