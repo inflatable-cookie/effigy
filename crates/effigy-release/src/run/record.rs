@@ -75,6 +75,13 @@ pub enum ReleaseRunStatus {
     Paused,
     /// The last invocation stopped at an approval checkpoint.
     AwaitingApproval,
+    /// The last invocation stopped waiting for hosted evidence for one gate.
+    /// The Run holds no process open; a resume re-checks the evidence.
+    AwaitingHostedEvidence,
+    /// The last invocation stopped because a target's publish outcome is
+    /// unknown and it declares no `check` task. The operator records whether
+    /// the candidate is published before the Run continues (054 §7).
+    AwaitingDecision,
     /// The last invocation failed. A resume may continue from its checkpoint.
     Failed,
     /// Every stage completed.
@@ -86,10 +93,52 @@ impl ReleaseRunStatus {
         match self {
             Self::Paused => "paused",
             Self::AwaitingApproval => "awaiting-approval",
+            Self::AwaitingHostedEvidence => "awaiting-hosted-evidence",
+            Self::AwaitingDecision => "awaiting-decision",
             Self::Failed => "failed",
             Self::Complete => "complete",
         }
     }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        [
+            Self::Paused,
+            Self::AwaitingApproval,
+            Self::AwaitingHostedEvidence,
+            Self::AwaitingDecision,
+            Self::Failed,
+            Self::Complete,
+        ]
+        .into_iter()
+        .find(|status| status.label() == value.trim())
+    }
+}
+
+/// What an operator records for a target whose publish outcome is unknown
+/// (contract 054 §7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetDecision {
+    Published,
+    NotPublished,
+}
+
+impl TargetDecision {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Published => "published",
+            Self::NotPublished => "not-published",
+        }
+    }
+}
+
+/// One operator decision about an unknown publish outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordDecision {
+    pub target: String,
+    /// `published` or `not-published`.
+    pub decision: String,
+    pub decided_by: String,
+    pub decided_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,6 +192,10 @@ pub struct RecordGate {
     pub stage: String,
     pub name: String,
     pub passed: bool,
+    /// The hosted GitHub Actions run a hosted wait reused, when this gate was
+    /// satisfied by exact-commit evidence instead of running its command.
+    #[serde(default)]
+    pub hosted_run: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,8 +211,10 @@ pub enum RecordTargetState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordDestination {
-    /// The identity whose tag this destination is.
-    pub identity: String,
+    /// The identity whose tag this destination is. A `task` target reports
+    /// destination IDs without naming an identity (contract 054 §6).
+    #[serde(default)]
+    pub identity: Option<String>,
     pub destination: String,
     pub commit: String,
 }
@@ -221,6 +276,9 @@ pub struct ReleaseRecord {
     pub targets: Vec<RecordTarget>,
     pub verifications: Vec<RecordVerification>,
     pub approvals: Vec<RecordApproval>,
+    /// Operator rulings on unknown publish outcomes (contract 054 §7).
+    #[serde(default)]
+    pub decisions: Vec<RecordDecision>,
     pub checkpoints: Vec<RecordCheckpoint>,
     pub pushed_commit: bool,
     pub errors: Vec<String>,
@@ -247,6 +305,7 @@ impl ReleaseRecord {
             targets: Vec::new(),
             verifications: Vec::new(),
             approvals: Vec::new(),
+            decisions: Vec::new(),
             checkpoints: Vec::new(),
             pushed_commit: false,
             errors: Vec::new(),
@@ -266,6 +325,14 @@ impl ReleaseRecord {
             .any(|approval| approval.stage == stage.label())
     }
 
+    /// A gate that already passed in this stage, so a resumed gate stage never
+    /// re-runs it (a hosted wait resumes in the middle of one).
+    pub fn gate_passed(&self, stage: &str, name: &str) -> bool {
+        self.gates
+            .iter()
+            .any(|gate| gate.stage == stage && gate.name == name && gate.passed)
+    }
+
     pub fn identity(&self, name: &str) -> Option<&RecordIdentity> {
         self.identities
             .iter()
@@ -274,6 +341,10 @@ impl ReleaseRecord {
 
     pub fn target(&self, name: &str) -> Option<&RecordTarget> {
         self.targets.iter().find(|target| target.name == name)
+    }
+
+    pub fn target_mut(&mut self, name: &str) -> Option<&mut RecordTarget> {
+        self.targets.iter_mut().find(|target| target.name == name)
     }
 
     /// The kernel checkpoint pointer: stage and status only, so the store row
@@ -307,13 +378,7 @@ pub struct ReleaseCheckpoint {
 
 impl ReleaseCheckpoint {
     pub fn status(&self) -> Option<ReleaseRunStatus> {
-        match self.status.as_str() {
-            "paused" => Some(ReleaseRunStatus::Paused),
-            "awaiting-approval" => Some(ReleaseRunStatus::AwaitingApproval),
-            "failed" => Some(ReleaseRunStatus::Failed),
-            "complete" => Some(ReleaseRunStatus::Complete),
-            _ => None,
-        }
+        ReleaseRunStatus::parse(&self.status)
     }
 
     pub fn stage(&self) -> Option<ReleaseStage> {

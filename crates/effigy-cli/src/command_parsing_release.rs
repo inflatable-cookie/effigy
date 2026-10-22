@@ -23,6 +23,7 @@ where
         "run" => parse_release_run(args),
         "resume" => parse_release_resume(args),
         "approve" => parse_release_approve(args),
+        "decide" | "decision" => parse_release_decide(args),
         "receipt" => parse_release_receipt(args),
         "verify-install" => parse_release_verify_install(args),
         "validate" => parse_release_validate(args),
@@ -630,6 +631,70 @@ where
 
     Ok(Command::Release(ReleaseArgs {
         subcommand: ReleaseSubcommand::Approve { run },
+        repo_override,
+        output_json,
+    }))
+}
+
+/// `effigy release decide <run> --published|--not-published` records the
+/// operator's ruling on a publish whose outcome is unknown (contract 054 §7).
+fn parse_release_decide<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut run: Option<String> = None;
+    let mut published: Option<bool> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--published" => {
+                if published.replace(true).is_some() {
+                    return Err(CliParseError::InvalidArguments(
+                        "`effigy release decide` takes one of `--published` or `--not-published`"
+                            .to_owned(),
+                    ));
+                }
+            }
+            "--not-published" => {
+                if published.replace(false).is_some() {
+                    return Err(CliParseError::InvalidArguments(
+                        "`effigy release decide` takes one of `--published` or `--not-published`"
+                            .to_owned(),
+                    ));
+                }
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
+            other if other.starts_with('-') => return Err(unknown_argument(other)),
+            other => {
+                if run.replace(other.to_owned()).is_some() {
+                    return Err(CliParseError::InvalidArguments(
+                        "`effigy release decide` takes one release Run id".to_owned(),
+                    ));
+                }
+            }
+        }
+    }
+
+    let Some(run) = run else {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy release decide` needs the release Run id stopped at `awaiting-decision`; `effigy release status` shows it"
+                .to_owned(),
+        ));
+    };
+    let Some(published) = published else {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy release decide` needs `--published` or `--not-published`: the operator records whether the candidate reached the destination before the Run continues"
+                .to_owned(),
+        ));
+    };
+
+    Ok(Command::Release(ReleaseArgs {
+        subcommand: ReleaseSubcommand::Decide { run, published },
         repo_override,
         output_json,
     }))

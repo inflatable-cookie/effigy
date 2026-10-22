@@ -1,6 +1,6 @@
 # 054 - Release Platform Contract
 
-Status: accepted by Tom on 2026-10-22 ("I'll go with your recommendation … release draft questions"). §2, §4, §5 and the Run of §3 and §7 are implemented for `tag` targets; `task` targets and native providers are v0.16.
+Status: accepted by Tom on 2026-10-22 ("I'll go with your recommendation … release draft questions"). §2, §4 and §5, and the Run of §3, §6 and §7, are implemented for `tag` and `task` targets, including `check`, `verify`, approval and decision checkpoints and hosted waits; native providers are v0.16.
 It supersedes the generic mechanics in guide 051 when implemented. Effigy's own release
 policy stays in [release.md](release.md).
 
@@ -377,11 +377,71 @@ the sorted file digests when an artifact holds several. The artifact task runs
 with `EFFIGY_RELEASE_INPUT`, `EFFIGY_RELEASE_OUTPUT`,
 `EFFIGY_RELEASE_CANDIDATE_DIR`, `EFFIGY_RELEASE_RUN` and
 `EFFIGY_RELEASE_STAGE` set, and the input is the `effigy.release.input.v1`
-document of §6. `effigy.release.output.v1` arrives with `task` targets.
+document of §6.
 
-**`task` targets stop at validate.** v0.15 publishes `tag` targets in a Run.
-A release that declares a `task` target is refused by `validate` with that
-reason, before anything is written or pushed.
+**The task protocol.** The input document also carries `schema_version: 1` and
+a `subject` object (`{"kind": "target" | "artifact" | "identity" | "release",
+"name": …}`) plus a top-level `target` for a target or verify task, because §6
+names the target and the artifact task needs the same document. A task target's
+output is read from `$EFFIGY_RELEASE_OUTPUT` as `effigy.release.output.v1`:
+`committed` (`true`, `false` or `"unknown"`), `destinations` (an array of
+destination-ID strings) and an optional `note`. `true` publishes the target and
+records its destinations; `false` fails the target and records no destination;
+anything unreadable — a missing file after exit 0, invalid JSON, an unknown
+field or a wrong schema id — is an unknown outcome, never an assumption. A
+non-zero exit with a valid `committed: false` is a known failure, so a task
+that fails before publishing does not need an operator.
+
+**`check` writes the same document.** §6 covers target, artifact and verify
+tasks, and §7 gives a target a `check` that reports whether this candidate is
+already at the destination, so `check` writes `effigy.release.output.v1` too:
+`committed: true` means the candidate is already there, `false` means it is
+not, and `"unknown"` (or an unusable answer) stops the Run at
+`awaiting-decision`.
+
+**Decisions and hosted waits are stops, not failures.** A stop records
+`waiting_on`: the stage boundary for an approval, the gate name for hosted
+evidence, and the target name for a decision. `release decide <run>
+--published|--not-published` records the operator (same identity rule as an
+approval) and the time in the record's `decisions`, sets the target published
+or pending, and continues at `publish`.
+
+An unknown `task` result whose target declares no `check` stops that same
+invocation at `awaiting-decision`, so the operator can decide immediately
+instead of resuming a failed Run first. A target that cannot be started at all
+is an unknown outcome too, so it follows the same rule. A target that declares
+a `check` fails at `publish` with the outcome recorded unknown, and the resume
+reconciles it through the check before any retry — §7's "on resume, a target
+whose last outcome is unknown is first reconciled". A wait also stops the
+publish fan-out: every later target stays pending, and none of them publishes
+until the outcome it is waiting behind is resolved.
+
+A hosted gate is checked before its command would run, for the candidate commit
+at `certify` and the source commit at `pre-gates`. Missing or still-running
+evidence stops the Run at `awaiting-hosted-evidence` with no process open, and
+it stops the gate stage itself: `certify` captures no artifacts until the gate
+has its exact-commit evidence. A resume re-checks the evidence, skips the gates
+it already recorded as passed, and continues the stage. A failed run, the wrong
+commit or repository, an ambiguous answer or an unusable lookup fails the gate
+closed, exactly as the previous synchronous `reuse-hosted-evidence` did.
+
+**Task targets publish in declared order.** A target that succeeded stays
+recorded, so a resume continues with the remaining targets. Before a task
+target's publish task starts, the Run writes the target as `Unknown` in the
+record and journals the publish as an `Irreversible` effect. A crash mid-task
+therefore leaves `Unknown`, never the `Pending` a resume would publish again
+blind, and the kernel settles the journalled effect as `Irreversible` rather
+than blocking the next invocation. A task publish settles `Applied` once the
+task reported a definite outcome — `committed` true or false, which the record
+keeps — and `Unknown` when the task could not tell or could not run, so only a
+real unknown reaches reconciliation.
+
+**The protocol schemas are file contracts.** `effigy.release.input.v1` and
+`effigy.release.output.v1` are documents a task reads and writes, not command
+payloads, so the schema index carries them under `payload_schemas` and has no
+runnable row for them: no `effigy` command emits them. `effigy-release`'s tests
+validate the documents a real Run writes and reads against those shipped
+documents, so the protocol and its schema cannot drift apart silently.
 
 **One changelog and one lockfile version.** One changelog feeds every identity,
 so `prepare` promotes `[Unreleased]` into the first `semver` identity's next

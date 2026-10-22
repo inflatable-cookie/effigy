@@ -138,6 +138,13 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.version.v1`
 - `effigy.release.status.v1`
 - `effigy.release.plan.v1`
+- `effigy.release.run.v1` and `effigy.release.receipt.v1` (`release run`,
+  `release resume`, `release approve`, `release decide`, `release receipt`)
+- `effigy.release.input.v1` and `effigy.release.output.v1`: file contracts a
+  `task` target, artifact task or verify task reads at `$EFFIGY_RELEASE_INPUT`
+  and writes at `$EFFIGY_RELEASE_OUTPUT` (contract 054 §6). They are registered
+  in the schema index under `payload_schemas`; no `effigy` command emits them,
+  so they have no runnable index row.
 - `effigy.scan.god-files.v1`
 - `effigy.scan.duplicate-blocks.v1`
 - `effigy.config.v1`

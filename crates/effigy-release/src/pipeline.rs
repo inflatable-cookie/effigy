@@ -165,7 +165,8 @@ pub struct ReleaseRunSummary {
     pub id: Option<String>,
     pub stage: Option<String>,
     pub waiting_on: Option<String>,
-    /// `paused`, `awaiting-approval`, `failed` or `complete`.
+    /// `paused`, `awaiting-approval`, `awaiting-hosted-evidence`,
+    /// `awaiting-decision`, `failed` or `complete`.
     pub status: Option<String>,
 }
 

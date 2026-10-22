@@ -27,6 +27,8 @@ If you only need the shortest operator path, use:
 - `run --to certify`
 - `run`
 - `resume <run>`
+- `approve <run>`
+- `decide <run> --published|--not-published`
 - `receipt <run>`
 
 If you are approaching the release flow for the first time, start with:
@@ -48,8 +50,11 @@ Use the commands by intent:
   `--to certify` to prepare and certify without publishing
 - `run` for the whole pipeline: validate, gates, prepare, certify, publish,
   verify and closeout, with a checkpoint after every stage
-- `resume <run>` to continue an interrupted Run from its last checkpoint
+- `resume <run>` to continue an interrupted Run from its last checkpoint,
+  including a Run waiting on hosted evidence
 - `approve <run>` to pass an approval checkpoint
+- `decide <run> --published|--not-published` to record an unknown `task` target
+  outcome that has no `check` task to reconcile it
 - `receipt <run>` to print what the Run recorded: candidate, digests,
   destinations and verification results
 - `release gates` when you want the same local release-gate verdict CI should
@@ -108,19 +113,27 @@ Current built-in release commands:
     gates; `prepare` writes each identity's version, syncs lockfiles, renders
     the changelog notes and commits; `certify` runs `stage = "certify"` gates
     and artifact tasks, copying each artifact into the Run's candidate
-    directory and recording its sha256; `publish` pushes one annotated tag per
-    identity; `verify` runs each target's `verify` task; `closeout` pushes the
-    release commit if no target did and writes the receipt
+    directory and recording its sha256; `publish` handles each target in
+    declared order, pushing one annotated tag per identity and running each
+    `task` target's publish task with the certified candidate; `verify` runs
+    each target's `verify` task; `closeout` pushes the release commit if no
+    target did and writes the receipt
 - `effigy release resume <run>`
   - continue an interrupted Run from its last checkpoint. An interrupted tag
-    push is reconciled by looking the tag up on the remote first; a release
-    never re-publishes something it cannot prove was absent
+    push is reconciled by looking the tag up on the remote first, and an
+    interrupted `task` target by running its `check` task; a release never
+    re-publishes something it cannot prove was absent. A Run waiting on
+    hosted evidence is also resumed this way: it holds no process open
 - `effigy release approve <run>`
   - pass an approval checkpoint (`approve = ["publish"]` in `[release]`) and
     continue. The approval records who approved and when
+- `effigy release decide <run> --published|--not-published`
+  - record the operator's ruling on a `task` target whose publish outcome is
+    unknown and which declares no `check` task, then continue. The decision
+    records who decided and when
 - `effigy release receipt [<run>] [--json]`
   - print the receipt: inputs, checkpoints, gate results, artifact digests,
-    approvals, destination IDs and verification results
+    approvals, decisions, destination IDs and verification results
 - `effigy release verify-install`
   - Effigy self-hosting only: install the tagged `effigy` binary from git into
     a temporary root and validate the installed command against a fixture repo
@@ -242,10 +255,43 @@ reuse-hosted-evidence = true
 ```
 
 Gates run in declaration order. Put cheap checks first. A gate with
-`reuse-hosted-evidence = true` is satisfied by a successful GitHub Actions run
-for this repository's exact `HEAD` SHA, verified through authenticated `gh`.
-Gates without that flag still run locally. Bad hosted evidence fails closed
-instead of running the local command.
+`reuse-hosted-evidence = true` is a **hosted wait**: it is satisfied by a
+successful GitHub Actions run for this repository's exact commit — the
+candidate commit once `prepare` committed it, and the source commit before
+that — verified through authenticated `gh`. While that evidence is missing or
+still running, the Run stops with status `awaiting-hosted-evidence`, holds no
+process open and runs no later work in that stage (no artifact task runs before
+the evidence exists); `effigy release resume <run>` re-checks it and continues. A failed run, the
+wrong commit, the wrong repository or an ambiguous answer fails the gate closed
+instead of running the local command. Gates without that flag run locally.
+
+A release with a `task` target can publish to any destination without Effigy
+knowing its protocol. The task runs as an ordinary Effigy task and reads the
+candidate at `$EFFIGY_RELEASE_INPUT` (`effigy.release.input.v1`): the Run and
+invocation ids, the stage, the source and candidate commits, every identity's
+name, kind, version or ID and tag, every certified artifact's path and sha256,
+and the target name. It writes `effigy.release.output.v1` to
+`$EFFIGY_RELEASE_OUTPUT`:
+
+```json
+{
+  "schema": "effigy.release.output.v1",
+  "committed": true,
+  "destinations": ["@scope/pkg@1.4.0", "https://example.test/releases/1"],
+  "note": "uploaded by the registry task"
+}
+```
+
+`committed` is `true`, `false` or `"unknown"`. `true` publishes the candidate
+and records its destinations; `false` fails the target without recording a
+destination; `"unknown"` is never retried blind. A task that exits 0 without
+writing an output records `committed = "unknown"`. A target's `check` task
+writes the same document and answers whether this candidate is already at the
+destination (`true`), is not (`false`), or cannot tell (`"unknown"`). With no
+`check` task, an unknown outcome stops the Run at `awaiting-decision` in that
+same invocation, until the operator records `--published` or `--not-published`.
+A target is written unknown before its publish task starts, so a crash mid-task
+is reconciled the same way instead of being published again blind.
 
 For a new project that already declares its intended first release version,
 opt in explicitly:
@@ -397,8 +443,10 @@ verify = "release:verify:npm"
   `tag-format`; omit it for an independent bump.
 - A gate runs `command` or a project `task` in `stage = "pre"` or
   `stage = "certify"`; the shorthand's gates run in `certify`.
-- A target is `kind = "tag"` or `kind = "task"`; a task target may declare a
-  `check` (idempotency probe) and a `verify` task.
+- A target is `kind = "tag"` or `kind = "task"`; a task target declares the
+  `task` that publishes and may declare a `check` (idempotency probe) and a
+  `verify` task. Publish is irreversible: Effigy records it before it runs,
+  reconciles an unknown outcome before any retry, and never unpublishes.
 - `approve` names the stage boundaries that stop for approval. Absent, it
   defaults to `["publish"]` when any target is not a `tag` target, and to none
   for a tag-only release; `approve = []` means never.
@@ -698,8 +746,10 @@ Recommended migration direction:
 
 Still intentionally not shipped:
 
-- `task` release targets in a Run: v0.15 publishes `tag` targets, and a release
-  that declares a `task` target is refused by `validate` with that reason
+- native publish providers (GitHub Release, npm, Homebrew, OCI, Packagist) as
+  target kinds: v0.15 publishes `tag` targets and project `task` targets
+  through the §6 input/output protocol, and v0.16 adds the providers behind
+  the same interface
 - custom interactive editing flows beyond a single semver override, or full
   inline/unified diffs before apply
 - automatic workflow migration in `.github/workflows/` without explicit human

@@ -10,6 +10,7 @@ use effigy_release::{
     render_release_status_json as render_release_status_json_payload, render_release_status_text,
     render_release_verify_install_json as render_release_verify_install_json_payload,
     render_release_verify_install_text, ReleaseAction, ReleaseRunOutcome, ReleaseStage,
+    TargetDecision,
 };
 
 use super::command_context::resolve_active_repo_root;
@@ -245,6 +246,21 @@ pub(super) fn run_release(args: ReleaseArgs) -> Result<String, RunnerError> {
         ReleaseSubcommand::Approve { run } => render_release_run(
             args.output_json,
             release_run_action(&resolved, ReleaseAction::Approve { run }, None)?,
+        ),
+        ReleaseSubcommand::Decide { run, published } => render_release_run(
+            args.output_json,
+            release_run_action(
+                &resolved,
+                ReleaseAction::Decide {
+                    run,
+                    decision: if published {
+                        TargetDecision::Published
+                    } else {
+                        TargetDecision::NotPublished
+                    },
+                },
+                None,
+            )?,
         ),
         ReleaseSubcommand::Receipt { run } => {
             let receipt = release_receipt(&resolved, run.as_deref())?;

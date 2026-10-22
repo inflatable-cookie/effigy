@@ -1148,6 +1148,7 @@ dependencies = [
  "chrono",
  "effigy-changelog",
  "effigy-core",
+ "effigy-json-schema",
  "effigy-kernel",
  "effigy-manifest",
  "getrandom 0.4.3",

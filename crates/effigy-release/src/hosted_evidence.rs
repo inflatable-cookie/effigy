@@ -276,6 +276,20 @@ pub fn collect_hosted_evidence(
     let head_sha = git_head_sha(root).map_err(|error| HostedEvidenceError::LookupFailed {
         detail: error.to_string(),
     })?;
+    collect_hosted_evidence_at(root, spec, &head_sha, lookup)
+}
+
+/// Collect exact-commit evidence for an explicit commit.
+///
+/// A release Run waits on the commit it certified, which is not the work
+/// tree's HEAD once a later invocation has moved on, so the commit is an
+/// argument rather than something re-read here.
+pub fn collect_hosted_evidence_at(
+    root: &Path,
+    spec: &HostedEvidenceSpec,
+    head_sha: &str,
+    lookup: &dyn HostedEvidenceLookup,
+) -> Result<HostedRun, HostedEvidenceError> {
     let origin =
         git_remote_url(root, "origin").map_err(|error| HostedEvidenceError::LookupFailed {
             detail: error.to_string(),
@@ -287,7 +301,7 @@ pub fn collect_hosted_evidence(
     })?;
     let query = HostedEvidenceQuery {
         repository,
-        head_sha,
+        head_sha: head_sha.trim().to_owned(),
         workflow: spec.workflow.clone(),
         event: spec.event.clone(),
         branch: spec.branch.clone(),
@@ -395,6 +409,17 @@ fn is_successful_run(run: &HostedRun) -> bool {
             .conclusion
             .as_deref()
             .is_some_and(|value| value.trim() == "success")
+}
+
+/// Whether a hosted-evidence error means "not yet", which a Run waits on
+/// rather than failing closed. Everything else — a failed run, the wrong
+/// commit, the wrong repository, an ambiguous answer or an unusable lookup —
+/// fails the gate.
+pub fn is_waiting_evidence(error: &HostedEvidenceError) -> bool {
+    matches!(
+        error,
+        HostedEvidenceError::Missing { .. } | HostedEvidenceError::Pending { .. }
+    )
 }
 
 #[cfg(test)]
