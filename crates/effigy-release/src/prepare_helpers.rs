@@ -178,7 +178,7 @@ pub(super) fn apply_bump(version: &semver::Version, bump: BumpKind) -> Option<se
     }
 }
 
-pub(super) fn build_sync_mutations(
+pub(crate) fn build_sync_mutations(
     sync_files: &[ResolvedSyncFile],
     selected_version: &semver::Version,
 ) -> Result<Vec<FileMutationPlan>, ReleaseError> {

@@ -157,17 +157,16 @@ mod tests {
     }
 
     #[test]
-    fn release_help_keeps_plan_and_gate_rows() {
+    fn release_help_keeps_plan_and_run_rows() {
         let rows = option_rows(HelpTopic::Release);
         assert!(rows.iter().any(|row| row
             == &[
                 "--plan".to_owned(),
-                "Preview release preparation or execution checks without prompting or irreversible actions".to_owned()
+                "Preview the release pipeline with no mutation".to_owned()
             ]));
-        assert!(rows.iter().any(|row| row
-            == &[
-                "--check-gates".to_owned(),
-                "Run configured release gate commands before reporting readiness (interactive prepare auto-checks configured gates by default)".to_owned()
-            ]));
+        assert!(rows.iter().any(|row| row[0] == "--to <STAGE>"));
+        assert!(rows
+            .iter()
+            .any(|row| row == &["-h, --help".to_owned(), "Print command help".to_owned()]));
     }
 }

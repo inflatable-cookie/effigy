@@ -11,9 +11,11 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use std::process::{Command, Output};
+
 use super::support::{
-    git_commit_all, git_stdout, init_git_repo, parse_stdout_json, run_json_cli_command,
-    temp_workspace,
+    attach_bare_remote, git_commit_all, git_stdout, init_git_repo, parse_stdout_json,
+    run_json_cli_command, temp_workspace,
 };
 
 fn fixture_root(name: &str) -> PathBuf {
@@ -418,16 +420,178 @@ fn underlay_release_table_keeps_working_through_the_shorthand() {
 }
 
 #[test]
-fn named_identities_refuse_the_shorthand_only_prepare_path() {
+fn retired_prepare_and_execute_name_the_run_that_replaces_them() {
     let root = workspace("named-identities");
-    let output = run_json_cli_command(&root, &["release", "prepare", "--plan"]);
-    let parsed = parse_stdout_json(&output);
+    for retired in ["prepare", "execute"] {
+        let output = run_json_cli_command(&root, &["release", retired]);
+        let parsed = parse_stdout_json(&output);
+        assert!(!output.status.success(), "{parsed}");
+        let message = parsed["error"]["message"].as_str().unwrap_or_default();
+        assert!(message.contains("retired in v0.15"), "got: {message}");
+        assert!(message.contains("effigy release run"), "got: {message}");
+    }
 
+    let output = run_json_cli_command(&root, &["release", "resume"]);
+    let parsed = parse_stdout_json(&output);
+    assert!(!output.status.success(), "{parsed}");
+    let message = parsed["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("release Run id"), "got: {message}");
+}
+
+/// A release project whose gates and artifact task really run.
+fn writable_release_project(root: &Path) {
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.2.4\"\nedition = \"2021\"\n",
+    )
+    .expect("Cargo.toml");
+    fs::write(
+        root.join("CHANGELOG.md"),
+        "# Changelog\n\n## [Unreleased]\n\n### Added\n- A release Run.\n\n## [0.2.4] - 2026-10-01\n\n### Fixed\n- A previous release.\n",
+    )
+    .expect("changelog");
+    fs::write(root.join(".gitignore"), "dist/\n").expect("gitignore");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"[tasks."release:pack"]
+run = "mkdir -p dist && printf certified-artifact > dist/app-0.2.5.tgz"
+
+[release]
+changelog = "CHANGELOG.md"
+
+[release.identities.app]
+version-file = "Cargo.toml"
+version-path = "package.version"
+tag-format = "v{version}"
+
+[release.gates]
+certify = "sh -c 'grep -q \"version = \\\"0.2.5\\\"\" Cargo.toml'"
+
+[release.artifacts]
+app = { task = "release:pack", path = "dist/app-*.tgz" }
+
+[release.targets.tags]
+kind = "tag"
+"#,
+    )
+    .expect("effigy.toml");
+}
+
+fn run_release_cli(root: &Path, home: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--json")
+        .arg("--repo")
+        .arg(root)
+        .args(args)
+        .env("HOME", home)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy")
+}
+
+#[test]
+fn release_run_writes_a_receipt_and_pushes_the_candidate_tag() {
+    let root = temp_workspace("release-run");
+    writable_release_project(&root);
+    init_git_repo(&root);
+    git_commit_all(&root, "fixture");
+    let remote = attach_bare_remote(&root);
+    let branch = git_stdout(&root, &["symbolic-ref", "--short", "HEAD"]);
+    let home = temp_workspace("release-run-home");
+
+    let output = run_release_cli(&root, &home, &["release", "run"]);
+    let parsed = parse_stdout_json(&output);
+    assert!(
+        output.status.success(),
+        "release run failed: {}",
+        serde_json::to_string_pretty(&parsed).expect("serialize")
+    );
+    let result = &parsed["result"];
+    assert_eq!(result["schema"], "effigy.release.run.v1");
+    assert_eq!(result["receipt"]["schema"], "effigy.release.receipt.v1");
+    assert_eq!(result["receipt"]["release"]["status"], "complete");
+    assert_eq!(result["receipt"]["published"], true);
+
+    let candidate = result["receipt"]["candidate"]["commit"]
+        .as_str()
+        .expect("candidate commit")
+        .to_owned();
+    assert_eq!(git_stdout(&root, &["rev-parse", "HEAD"]), candidate);
+    assert!(fs::read_to_string(root.join("Cargo.toml"))
+        .expect("Cargo.toml")
+        .contains("version = \"0.2.5\""));
+    let tag = git_stdout(&remote, &["rev-parse", "refs/tags/v0.2.5^{commit}"]);
+    assert_eq!(tag, candidate);
+    assert_eq!(
+        git_stdout(&remote, &["rev-parse", &format!("refs/heads/{branch}")]),
+        candidate
+    );
+
+    // The receipt is durable Effigy-owned state outside the repo.
+    let receipt_path = result["receipt_path"].as_str().expect("receipt path");
+    assert!(
+        receipt_path.starts_with(home.to_string_lossy().as_ref()),
+        "{receipt_path}"
+    );
+    assert!(Path::new(receipt_path).exists());
+    assert!(!root.join(".release-prepared.json").exists());
+
+    let run_id = result["receipt"]["release"]["id"]
+        .as_str()
+        .expect("release id")
+        .to_owned();
+    let status = run_release_cli(&root, &home, &["release", "status"]);
+    let status = parse_stdout_json(&status);
+    // A released tree has no further version to propose, so status reports a
+    // blocked next release in its error detail; the Run summary is there too.
+    let status = if status["result"].is_null() {
+        status["error"]["details"].clone()
+    } else {
+        status["result"].clone()
+    };
+    assert_eq!(status["run"]["id"], run_id.as_str());
+    assert_eq!(status["run"]["status"], "complete");
+    assert_eq!(status["run"]["active"], false);
+
+    let receipt = run_release_cli(&root, &home, &["release", "receipt", &run_id]);
+    let receipt = parse_stdout_json(&receipt);
+    assert_eq!(receipt["result"]["schema"], "effigy.release.receipt.v1");
+    assert_eq!(receipt["result"]["candidate"]["commit"], candidate.as_str());
+}
+
+#[test]
+fn release_run_refuses_a_dirty_tree_and_names_the_run_for_an_unknown_id() {
+    let root = temp_workspace("release-run-dirty");
+    writable_release_project(&root);
+    init_git_repo(&root);
+    git_commit_all(&root, "fixture");
+    attach_bare_remote(&root);
+    let home = temp_workspace("release-run-dirty-home");
+    fs::write(root.join("pending.txt"), "pending\n").expect("pending file");
+
+    let output = run_release_cli(&root, &home, &["release", "run"]);
+    let parsed = parse_stdout_json(&output);
+    assert!(!output.status.success(), "{parsed}");
+    // A failed Run still prints its receipt payload as the error detail.
+    let details = &parsed["error"]["details"];
+    assert_eq!(details["schema"], "effigy.release.run.v1");
+    let errors = details["receipt"]["errors"]
+        .as_array()
+        .expect("receipt errors")
+        .iter()
+        .filter_map(|error| error.as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
+    assert!(errors.contains("clean working tree"), "got: {errors}");
+
+    // A failed Run keeps its record, so an unknown id names the active one.
+    let output = run_release_cli(&root, &home, &["release", "resume", "not-a-run"]);
+    let parsed = parse_stdout_json(&output);
     assert!(!output.status.success(), "{parsed}");
     let message = parsed["error"]["message"].as_str().unwrap_or_default();
     assert!(
-        message.contains("single-identity shorthand"),
+        message.contains("not this checkout's release Run"),
         "got: {message}"
     );
-    assert!(message.contains("effigy release --plan"), "got: {message}");
+    assert!(message.contains("release Run is"), "got: {message}");
 }

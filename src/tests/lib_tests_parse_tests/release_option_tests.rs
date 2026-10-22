@@ -44,13 +44,14 @@ fn parse_release_gates_with_repo() {
 }
 
 #[test]
-fn parse_release_resume_with_repo_and_allow_stale() {
+fn parse_release_run_with_repo_to_and_json() {
     let cmd = parse_command(vec![
         "release".to_owned(),
-        "resume".to_owned(),
+        "run".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
-        "--allow-stale".to_owned(),
+        "--to".to_owned(),
+        "certify".to_owned(),
         "--json".to_owned(),
     ])
     .expect("parse should succeed");
@@ -58,11 +59,87 @@ fn parse_release_resume_with_repo_and_allow_stale() {
     assert_eq!(
         cmd,
         Command::Release(ReleaseArgs {
-            subcommand: ReleaseSubcommand::Resume { allow_stale: true },
+            subcommand: ReleaseSubcommand::Run {
+                to: Some("certify".to_owned())
+            },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
         })
     );
+}
+
+#[test]
+fn parse_release_resume_requires_a_run_id() {
+    let error = parse_command(vec!["release".to_owned(), "resume".to_owned()])
+        .expect_err("a resume needs the Run id");
+    assert!(error.to_string().contains("release Run id"), "{error}");
+
+    let error = parse_command(vec![
+        "release".to_owned(),
+        "resume".to_owned(),
+        "--allow-stale".to_owned(),
+    ])
+    .expect_err("the prepared-state resume is retired");
+    assert!(error.to_string().contains("--allow-stale"), "{error}");
+}
+
+#[test]
+fn parse_release_resume_approve_and_receipt_take_a_run_id() {
+    let resume = parse_command(vec![
+        "release".to_owned(),
+        "resume".to_owned(),
+        "run-abc".to_owned(),
+    ])
+    .expect("resume parse");
+    assert_eq!(
+        resume,
+        Command::Release(ReleaseArgs {
+            subcommand: ReleaseSubcommand::ResumeRun {
+                run: "run-abc".to_owned()
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+
+    let approve = parse_command(vec![
+        "release".to_owned(),
+        "approve".to_owned(),
+        "run-abc".to_owned(),
+    ])
+    .expect("approve parse");
+    assert_eq!(
+        approve,
+        Command::Release(ReleaseArgs {
+            subcommand: ReleaseSubcommand::Approve {
+                run: "run-abc".to_owned()
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+
+    let receipt =
+        parse_command(vec!["release".to_owned(), "receipt".to_owned()]).expect("receipt parse");
+    assert_eq!(
+        receipt,
+        Command::Release(ReleaseArgs {
+            subcommand: ReleaseSubcommand::Receipt { run: None },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_release_prepare_and_execute_name_their_replacement() {
+    for retired in ["prepare", "execute"] {
+        let error = parse_command(vec!["release".to_owned(), retired.to_owned()])
+            .expect_err("the retired subcommand refuses");
+        let message = error.to_string();
+        assert!(message.contains("retired in v0.15"), "{message}");
+        assert!(message.contains("effigy release run"), "{message}");
+    }
 }
 
 #[test]
@@ -163,218 +240,4 @@ fn parse_release_plan_replaces_the_retired_simulate_command() {
     let message = format!("{error:?}");
     assert!(message.contains("retired"), "{message}");
     assert!(message.contains("effigy release --plan"), "{message}");
-}
-
-#[test]
-fn parse_release_prepare_plan_with_repo_and_gate_check() {
-    let cmd = parse_command(vec![
-        "release".to_owned(),
-        "prepare".to_owned(),
-        "--plan".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-        "--check-gates".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Release(ReleaseArgs {
-            subcommand: ReleaseSubcommand::Prepare {
-                plan: true,
-                check_gates: true,
-                yes: false,
-                version_override: None,
-            },
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_release_prepare_dry_run_alias_with_repo_and_gate_check() {
-    let cmd = parse_command(vec![
-        "release".to_owned(),
-        "prepare".to_owned(),
-        "--dry-run".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-        "--check-gates".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Release(ReleaseArgs {
-            subcommand: ReleaseSubcommand::Prepare {
-                plan: true,
-                check_gates: true,
-                yes: false,
-                version_override: None,
-            },
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_release_prepare_yes_with_repo_and_gate_check() {
-    let cmd = parse_command(vec![
-        "release".to_owned(),
-        "prepare".to_owned(),
-        "--yes".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-        "--check-gates".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Release(ReleaseArgs {
-            subcommand: ReleaseSubcommand::Prepare {
-                plan: false,
-                check_gates: true,
-                yes: true,
-                version_override: None,
-            },
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_release_prepare_plan_with_version_override() {
-    let cmd = parse_command(vec![
-        "release".to_owned(),
-        "prepare".to_owned(),
-        "--plan".to_owned(),
-        "--version".to_owned(),
-        "0.2.8".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Release(ReleaseArgs {
-            subcommand: ReleaseSubcommand::Prepare {
-                plan: true,
-                check_gates: false,
-                yes: false,
-                version_override: Some("0.2.8".to_owned()),
-            },
-            repo_override: None,
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_release_execute_plan_with_repo() {
-    let cmd = parse_command(vec![
-        "release".to_owned(),
-        "execute".to_owned(),
-        "--plan".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Release(ReleaseArgs {
-            subcommand: ReleaseSubcommand::Execute {
-                plan: true,
-                yes: false,
-                allow_stale: false,
-            },
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_release_execute_dry_run_alias_with_repo() {
-    let cmd = parse_command(vec![
-        "release".to_owned(),
-        "execute".to_owned(),
-        "--dry-run".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Release(ReleaseArgs {
-            subcommand: ReleaseSubcommand::Execute {
-                plan: true,
-                yes: false,
-                allow_stale: false,
-            },
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_release_execute_yes_with_repo() {
-    let cmd = parse_command(vec![
-        "release".to_owned(),
-        "execute".to_owned(),
-        "--yes".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Release(ReleaseArgs {
-            subcommand: ReleaseSubcommand::Execute {
-                plan: false,
-                yes: true,
-                allow_stale: false,
-            },
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_release_execute_allow_stale_with_repo() {
-    let cmd = parse_command(vec![
-        "release".to_owned(),
-        "execute".to_owned(),
-        "--allow-stale".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Release(ReleaseArgs {
-            subcommand: ReleaseSubcommand::Execute {
-                plan: false,
-                yes: false,
-                allow_stale: true,
-            },
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            output_json: false,
-        })
-    );
 }

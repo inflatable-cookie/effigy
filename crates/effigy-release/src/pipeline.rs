@@ -160,14 +160,13 @@ impl ReleasePipeline {
 }
 
 /// The active or last release Run, as `release status` reports it.
-///
-/// Release Runs arrive with the Run pipeline; until then a release has no Run
-/// to report and every field stays empty.
 #[derive(Debug, Clone, Default)]
 pub struct ReleaseRunSummary {
     pub id: Option<String>,
     pub stage: Option<String>,
     pub waiting_on: Option<String>,
+    /// `paused`, `awaiting-approval`, `failed` or `complete`.
+    pub status: Option<String>,
 }
 
 impl ReleaseRunSummary {
@@ -175,8 +174,9 @@ impl ReleaseRunSummary {
         Self::default()
     }
 
+    /// Whether the Run is unfinished: a complete release has no active Run.
     pub fn is_active(&self) -> bool {
-        self.id.is_some()
+        self.id.is_some() && self.status.as_deref() != Some("complete")
     }
 }
 

@@ -62,9 +62,10 @@ pub fn prepare_container_policy_ports(
         }
         for shared in &policy.shared_services {
             if registry.get(&shared.project_name).is_some() {
-                let root = shared.compose_file.parent().ok_or_else(|| {
-                    ContainerPolicyError::TaskInvocation("shared Compose file has no parent".into())
-                })?;
+                // Shared services are allocated under their machine-level state
+                // directory (see the allocation path below), not the render's
+                // Compose location, which v0.15 places in the object store.
+                let root = crate::policy_support::shared_service_output_dir(&shared.project_name)?;
                 store.retain_ports(&shared.project_name, &root.display().to_string())?;
             }
         }

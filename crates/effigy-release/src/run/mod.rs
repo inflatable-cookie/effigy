@@ -1,0 +1,1344 @@
+//! The checkpointed release Run (contract 054 §3, §5 and §7).
+//!
+//! `validate → [pre-gates] → prepare → certify → publish → verify → closeout`
+//! runs as one durable kernel Run per invocation, with a checkpoint written to
+//! Effigy-owned state after every stage boundary. A resume continues from that
+//! checkpoint with the same candidate commit, versions and artifact digests;
+//! it never re-derives or rebuilds them. Publish is irreversible and every tag
+//! push is journalled before it runs; a resume reconciles an unknown push by
+//! looking the tag up first (054 §7).
+
+mod artifacts;
+mod effects;
+mod input;
+mod kernel;
+mod receipt;
+mod record;
+
+#[cfg(test)]
+mod tests;
+
+pub use artifacts::{capture_artifact, sha256_bytes, verify_artifact_digests};
+pub use effects::{approver_name, GitEffects, ReleaseEffects, TaskRequest, TaskResponse};
+pub use input::{
+    release_input_value, RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV, RELEASE_TASK_INPUT_SCHEMA,
+};
+pub use kernel::{
+    new_run_id, release_home, release_owner, ReleaseSession, ReleaseState, ReportsOnly,
+};
+pub use kernel::{read_release_record, read_release_record_for_root};
+pub use receipt::{
+    render_release_receipt_json, render_release_receipt_text, render_release_run_json,
+    ReleaseReceipt,
+};
+pub use record::{
+    RecordApproval, RecordArtifact, RecordArtifactFile, RecordCheckpoint, RecordDestination,
+    RecordGate, RecordIdentity, RecordTarget, RecordTargetState, RecordVerification,
+    ReleaseCheckpoint, ReleaseRecord, ReleaseRunStatus, ReleaseStage, RELEASE_RECEIPT_SCHEMA,
+    RELEASE_RECORD_SCHEMA,
+};
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use chrono::Utc;
+use effigy_changelog as changelog;
+use effigy_kernel::observe::UnknownReason;
+use effigy_kernel::outcome::WorkloadOutcome;
+use effigy_kernel::run::{EffectTicket, Run, Settlement};
+
+use crate::model::{FileMutationApply, FileMutationPlan};
+use crate::pipeline::{
+    plan_release_pipeline, GateStage, IdentityKind, ReleaseIdentityPlan, ReleasePipelinePlan,
+    TargetKind,
+};
+use crate::prepare_helpers::build_sync_mutations;
+use crate::version::render_updated_version_contents;
+use crate::ResolvedGate;
+use crate::{
+    render_prepared_changelog_contents, run_release_gates, ReleaseError, ResolvedSyncFile,
+};
+
+const ANNOTATED_TAG_MESSAGE: &str = "Release {tag}";
+const RELEASE_RECEIPT_FILE: &str = "receipt.json";
+
+/// What a release invocation asks for (contract 054 §5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReleaseAction {
+    /// Start a Run, or continue the active one.
+    Run,
+    /// Continue an interrupted Run from its last checkpoint.
+    Resume { run: String },
+    /// Pass an approval checkpoint, then continue.
+    Approve { run: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct ReleaseRunRequest {
+    pub repo_root: PathBuf,
+    /// The user's home. Effigy-owned state lives at `<home>/.effigy/state`.
+    pub home: PathBuf,
+    pub action: ReleaseAction,
+    /// The stage boundary to stop after. Defaults to `closeout`.
+    pub to: Option<ReleaseStage>,
+}
+
+/// The result of one invocation: the durable record after it, and its receipt.
+#[derive(Debug, Clone)]
+pub struct ReleaseRunOutcome {
+    pub record: ReleaseRecord,
+    pub receipt_path: PathBuf,
+    pub messages: Vec<String>,
+}
+
+impl ReleaseRunOutcome {
+    /// The invocation did everything it was asked; a paused Run still counts.
+    pub fn succeeded(&self) -> bool {
+        matches!(
+            self.record.status,
+            ReleaseRunStatus::Complete | ReleaseRunStatus::Paused
+        )
+    }
+
+    pub fn receipt(&self) -> ReleaseReceipt {
+        ReleaseReceipt::from_record(&self.record)
+    }
+}
+
+fn now() -> String {
+    Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+/// Run, resume or approve a release.
+pub fn run_release(
+    request: &ReleaseRunRequest,
+    effects: &mut dyn ReleaseEffects,
+) -> Result<ReleaseRunOutcome, ReleaseError> {
+    let plan = plan_release_pipeline(&request.repo_root)?;
+    let session = ReleaseSession::open(&request.home, &request.repo_root)?;
+    let state = session.state()?;
+    let checkpoint = session.read_checkpoint()?;
+    let existing = state.read_record()?;
+    let receipt_path = state.record_path.with_file_name(RELEASE_RECEIPT_FILE);
+
+    let continuation = continue_record(request, existing, checkpoint.as_ref(), &state, effects)?;
+    let (mut record, start) = match continuation {
+        Continuation::Nothing(record) => {
+            return Ok(ReleaseRunOutcome {
+                messages: vec![format!(
+                    "release Run {} is already complete; nothing to resume",
+                    record.release_id
+                )],
+                record,
+                receipt_path,
+            })
+        }
+        Continuation::RunFrom(record, stage) => (record, stage),
+    };
+    if record.stage.is_empty() {
+        // A fresh release: its candidate directory belongs to this Run alone.
+        clear_directory(&state.candidate_dir)?;
+    }
+
+    let run_id = new_run_id()?;
+    let run_id_text = run_id.to_string();
+    record.run_id = run_id_text.clone();
+    record.release_id = if record.stage.is_empty() {
+        run_id_text.clone()
+    } else {
+        record.release_id.clone()
+    };
+    record.updated_at = now();
+
+    let to = request.to.unwrap_or(ReleaseStage::Closeout);
+    let mut adapter = ReportsOnly;
+    let mut run = session.begin(run_id, &mut adapter)?;
+    let mut runner = Runner {
+        plan: &plan,
+        record: &mut record,
+        effects,
+        run: &mut run,
+        state: &state,
+        candidate_dir: &state.candidate_dir,
+        run_id: run_id_text,
+        messages: Vec::new(),
+        prepared: Vec::new(),
+    };
+    let staged = runner.run_stages(start, to);
+
+    let workload = match &staged {
+        Ok(()) => WorkloadOutcome::Succeeded,
+        Err(_) => WorkloadOutcome::Failed { code: 1 },
+    };
+    let mut record = runner.record.clone();
+    let messages = runner.messages.clone();
+    drop(runner);
+
+    run.finish(workload).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "the kernel could not record the release Run's outcome: {error}"
+        ))
+    })?;
+    let settled = run
+        .settle(session.cleanup(), &mut adapter)
+        .map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+            "the release Run could not be settled: {error}; `effigy release resume {}` settles it",
+            record.release_id
+        ))
+        })?;
+    if settled.cleanup() != effigy_kernel::outcome::CleanupOutcome::Complete {
+        record.errors.push(format!(
+            "release Run {} left unresolved cleanup; `effigy release receipt {}` lists it",
+            record.run_id, record.release_id
+        ));
+        record.status = ReleaseRunStatus::Failed;
+        state.write_record(&record)?;
+    }
+
+    Ok(ReleaseRunOutcome {
+        record,
+        receipt_path,
+        messages,
+    })
+}
+
+enum Continuation {
+    RunFrom(ReleaseRecord, ReleaseStage),
+    Nothing(ReleaseRecord),
+}
+
+/// Decide the record to continue and the first stage to execute.
+fn continue_record(
+    request: &ReleaseRunRequest,
+    existing: Option<ReleaseRecord>,
+    checkpoint: Option<&ReleaseCheckpoint>,
+    state: &ReleaseState,
+    effects: &mut dyn ReleaseEffects,
+) -> Result<Continuation, ReleaseError> {
+    let requested = match &request.action {
+        ReleaseAction::Run => None,
+        ReleaseAction::Resume { run } | ReleaseAction::Approve { run } => {
+            Some(run.trim().to_owned())
+        }
+    };
+    let existing = match (existing, checkpoint) {
+        (Some(record), _) => Some(record),
+        (None, Some(checkpoint)) => {
+            if !kernel::record_path_is_owned(state, Path::new(&checkpoint.record)) {
+                return Err(ReleaseError::TaskInvocation(format!(
+                    "release Run {} points its state outside this release's state directory; refusing to read {}",
+                    checkpoint.release_id,
+                    checkpoint.record
+                )));
+            }
+            return Err(ReleaseError::TaskInvocation(format!(
+                "release Run {} has a checkpoint but its record is missing; the release state at {} was removed or damaged, so the Run cannot be resumed without re-deriving its candidate",
+                checkpoint.release_id,
+                state.record_path.display()
+            )));
+        }
+        (None, None) => None,
+    };
+
+    let Some(mut record) = existing else {
+        if let Some(run) = requested {
+            return Err(ReleaseError::TaskInvocation(format!(
+                "there is no release Run {run} for {}; `effigy release run` starts one",
+                request.repo_root.display()
+            )));
+        }
+        return Ok(Continuation::RunFrom(
+            ReleaseRecord::new("", &request.repo_root, &now()),
+            ReleaseStage::Validate,
+        ));
+    };
+
+    if let Some(run) = &requested {
+        if run != &record.release_id && run != &record.run_id {
+            return Err(ReleaseError::TaskInvocation(format!(
+                "`{run}` is not this checkout's release Run; the active release Run is {} (stage `{}`, status `{}`)",
+                record.release_id,
+                if record.stage.is_empty() {
+                    ReleaseStage::Validate.label()
+                } else {
+                    &record.stage
+                },
+                record.status.label()
+            )));
+        }
+    }
+
+    match request.action {
+        ReleaseAction::Run => {
+            if record.status == ReleaseRunStatus::Complete {
+                return Ok(Continuation::RunFrom(
+                    ReleaseRecord::new("", &request.repo_root, &now()),
+                    ReleaseStage::Validate,
+                ));
+            }
+        }
+        ReleaseAction::Resume { .. } => {
+            if record.status == ReleaseRunStatus::Complete {
+                return Ok(Continuation::Nothing(record));
+            }
+        }
+        ReleaseAction::Approve { .. } => {
+            if record.status != ReleaseRunStatus::AwaitingApproval {
+                return Err(ReleaseError::TaskInvocation(format!(
+                    "release Run {} is not awaiting approval (status `{}`); `effigy release approve` only continues a Run stopped at an approval checkpoint",
+                    record.release_id,
+                    record.status.label()
+                )));
+            }
+            let Some(stage) = record.waiting_on.as_deref().and_then(ReleaseStage::parse) else {
+                return Err(ReleaseError::TaskInvocation(format!(
+                    "release Run {} is awaiting approval but records no stage boundary",
+                    record.release_id
+                )));
+            };
+            record.approvals.push(RecordApproval {
+                stage: stage.label().to_owned(),
+                approved_by: approver_name(effects),
+                approved_at: now(),
+            });
+            record.status = ReleaseRunStatus::Paused;
+            record.waiting_on = None;
+            return Ok(Continuation::RunFrom(record, stage));
+        }
+    }
+
+    let start = match record.stage() {
+        // A failed closeout resumes at closeout: publish already happened.
+        Some(ReleaseStage::Closeout) if record.status == ReleaseRunStatus::Failed => {
+            ReleaseStage::Closeout
+        }
+        Some(stage) => stage.next().unwrap_or(ReleaseStage::Closeout),
+        None => ReleaseStage::Validate,
+    };
+    Ok(Continuation::RunFrom(record, start))
+}
+
+fn clear_directory(directory: &Path) -> Result<(), ReleaseError> {
+    if directory.exists() {
+        std::fs::remove_dir_all(directory).map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+                "failed to clear the previous release candidate at {}: {error}",
+                directory.display()
+            ))
+        })?;
+    }
+    std::fs::create_dir_all(directory).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to create the release candidate directory {}: {error}",
+            directory.display()
+        ))
+    })
+}
+
+struct Runner<'a, 's> {
+    plan: &'a ReleasePipelinePlan,
+    record: &'a mut ReleaseRecord,
+    effects: &'a mut dyn ReleaseEffects,
+    run: &'a mut Run<'s>,
+    state: &'a ReleaseState,
+    candidate_dir: &'a Path,
+    run_id: String,
+    messages: Vec<String>,
+    /// Paths a failed prepare must restore, with their pre-prepare bytes.
+    prepared: Vec<(PathBuf, Option<Vec<u8>>)>,
+}
+
+impl<'a, 's> Runner<'a, 's> {
+    /// Execute from `start` through `to`, one stage boundary at a time.
+    fn run_stages(&mut self, start: ReleaseStage, to: ReleaseStage) -> Result<(), ReleaseError> {
+        let mut stage = start;
+        loop {
+            if self.awaits_approval(stage) {
+                self.record.status = ReleaseRunStatus::AwaitingApproval;
+                self.record.waiting_on = Some(stage.label().to_owned());
+                self.persist()?;
+                self.messages.push(format!(
+                    "release Run {} is awaiting approval at the `{}` boundary; `effigy release approve {}` continues it",
+                    self.record.release_id,
+                    stage.label(),
+                    self.record.release_id
+                ));
+                return Ok(());
+            }
+
+            self.messages.push(format!(
+                "release Run {}: `{}` started",
+                self.record.release_id,
+                stage.label()
+            ));
+            if let Err(error) = self.run_stage(stage) {
+                self.record.errors.push(error.to_string());
+                self.record.status = ReleaseRunStatus::Failed;
+                self.record.waiting_on = None;
+                self.persist()?;
+                return Err(error);
+            }
+
+            self.record.stage = stage.label().to_owned();
+            self.record.checkpoints.push(RecordCheckpoint {
+                stage: stage.label().to_owned(),
+                run: self.run_id.clone(),
+                status: self.record.status.label().to_owned(),
+                at: now(),
+            });
+            self.messages.push(format!(
+                "release Run {}: `{}` complete",
+                self.record.release_id,
+                stage.label()
+            ));
+
+            if stage == to {
+                if stage == ReleaseStage::Closeout {
+                    self.record.status = ReleaseRunStatus::Complete;
+                } else {
+                    self.record.status = ReleaseRunStatus::Paused;
+                    self.record.waiting_on = None;
+                    self.messages.push(format!(
+                        "release Run {} stopped after `{}`; `effigy release resume {}` continues with `{}`",
+                        self.record.release_id,
+                        stage.label(),
+                        self.record.release_id,
+                        stage.next().map(ReleaseStage::label).unwrap_or("nothing")
+                    ));
+                }
+                self.persist()?;
+                return Ok(());
+            }
+            let Some(next) = stage.next() else {
+                self.record.status = ReleaseRunStatus::Complete;
+                self.persist()?;
+                return Ok(());
+            };
+            stage = next;
+        }
+    }
+
+    fn awaits_approval(&self, stage: ReleaseStage) -> bool {
+        self.plan
+            .approvals
+            .iter()
+            .any(|checkpoint| checkpoint == stage.label())
+            && !self.record.approved(stage)
+    }
+
+    /// Write the record and its kernel checkpoint pointer.
+    fn persist(&mut self) -> Result<(), ReleaseError> {
+        self.record.updated_at = now();
+        self.state.write_record(self.record)?;
+        let checkpoint = self.record.checkpoint(&self.state.record_path);
+        let value = serde_json::to_value(&checkpoint).map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+                "failed to encode the release checkpoint: {error}"
+            ))
+        })?;
+        self.run.set_engine_record(&value).map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+                "failed to record the release checkpoint in the kernel journal: {error}"
+            ))
+        })?;
+        Ok(())
+    }
+
+    fn run_stage(&mut self, stage: ReleaseStage) -> Result<(), ReleaseError> {
+        match stage {
+            ReleaseStage::Validate => self.validate(),
+            ReleaseStage::PreGates => self.run_gates(GateStage::Pre),
+            ReleaseStage::Prepare => self.prepare(),
+            ReleaseStage::Certify => self.certify(),
+            ReleaseStage::Publish => self.publish(),
+            ReleaseStage::Verify => self.verify(),
+            ReleaseStage::Closeout => self.closeout(),
+        }
+    }
+
+    fn validate(&mut self) -> Result<(), ReleaseError> {
+        if !self.plan.ready {
+            return Err(ReleaseError::TaskInvocation(format!(
+                "release validate refused the release: {}",
+                self.plan.blockers.join("; ")
+            )));
+        }
+        if self.plan.working_tree_clean != Some(true) {
+            return Err(ReleaseError::TaskInvocation(format!(
+                "release validate needs a clean working tree at {}; commit or discard the pending changes first",
+                self.plan.repo_root.display()
+            )));
+        }
+        if let Some(target) = self
+            .plan
+            .targets
+            .iter()
+            .find(|target| target.kind == TargetKind::Task)
+        {
+            return Err(ReleaseError::TaskInvocation(format!(
+                "release target `{}` is kind `task`, and this release Run publishes `tag` targets only (contract 054 §9; task targets arrive with the native provider lane). Remove the target, or publish it with a project task outside the Run",
+                target.name
+            )));
+        }
+
+        self.record.branch = Some(self.effects.current_branch()?);
+        self.record.source_commit = Some(self.effects.head_commit()?);
+        self.record.identities = Vec::new();
+        self.record.artifacts = Vec::new();
+        self.record.verifications = Vec::new();
+        self.record.errors.clear();
+        self.record.checkpoints.clear();
+        self.record.approvals.clear();
+        self.record.pushed_commit = false;
+        self.record.targets = self
+            .plan
+            .targets
+            .iter()
+            .map(|target| RecordTarget {
+                name: target.name.clone(),
+                kind: target.kind.label().to_owned(),
+                state: RecordTargetState::Pending,
+                destinations: Vec::new(),
+                note: None,
+            })
+            .collect();
+
+        let identities = self.plan.identities.clone();
+        for identity in identities {
+            let mut recorded = RecordIdentity {
+                name: identity.name.clone(),
+                kind: identity.kind.label().to_owned(),
+                identity: identity
+                    .next_version
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .or_else(|| identity.identity_value.clone()),
+                tag: identity.tag.clone(),
+            };
+            if identity.kind == IdentityKind::Task {
+                let task = identity.task.clone().ok_or_else(|| {
+                    ReleaseError::TaskInvocation(format!(
+                        "release identity `{}` is kind `task` and names no task",
+                        identity.name
+                    ))
+                })?;
+                let response =
+                    self.run_release_task(&task, ReleaseStage::Validate, Some(&identity.name))?;
+                let value = response
+                    .stdout
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_owned();
+                if value.is_empty() {
+                    return Err(ReleaseError::TaskInvocation(format!(
+                        "release identity `{}` ran task `{task}` and it printed no identity",
+                        identity.name
+                    )));
+                }
+                recorded.identity = Some(value);
+            }
+            if identity.kind == IdentityKind::Digest {
+                recorded.identity = None;
+            }
+            self.record.identities.push(recorded);
+        }
+        self.persist()
+    }
+
+    fn run_gates(&mut self, stage: GateStage) -> Result<(), ReleaseError> {
+        let gates: Vec<ResolvedGate> = self
+            .plan
+            .gates
+            .iter()
+            .filter(|gate| gate.stage == stage)
+            .cloned()
+            .collect();
+        if gates.is_empty() {
+            self.messages
+                .push(format!("no `{}` gates configured", stage.stage_name()));
+            return Ok(());
+        }
+        let report = run_release_gates(&self.plan.repo_root, &gates, true);
+        for result in &report.results {
+            self.record.gates.push(RecordGate {
+                stage: stage.stage_name().to_owned(),
+                name: result.name.clone(),
+                passed: result.passed,
+            });
+        }
+        let failed: Vec<String> = report
+            .results
+            .iter()
+            .filter(|result| !result.passed)
+            .map(|result| {
+                let detail = if result.stderr.is_empty() {
+                    result.stdout.clone()
+                } else {
+                    result.stderr.clone()
+                };
+                format!("gate `{}` failed: {detail}", result.name)
+            })
+            .collect();
+        if failed.is_empty() {
+            Ok(())
+        } else {
+            Err(ReleaseError::TaskInvocation(format!(
+                "release {} gates failed: {}",
+                stage.stage_name(),
+                failed.join("; ")
+            )))
+        }
+    }
+
+    fn prepare(&mut self) -> Result<(), ReleaseError> {
+        let source = self.record.source_commit.clone().ok_or_else(|| {
+            ReleaseError::TaskInvocation(
+                "release prepare has no source commit; the validate stage records it".into(),
+            )
+        })?;
+        let mutations = self.prepare_mutations()?;
+        if mutations.is_empty() {
+            // A release with no version file keeps the commit it validated.
+            self.record.candidate_commit = Some(source);
+            return self.persist();
+        }
+
+        let snapshots = crate::snapshot_mutation_paths(&mutations)?;
+        self.prepared = snapshots
+            .iter()
+            .map(|(path, before)| (path.clone(), before.clone()))
+            .collect();
+        if let Err(error) = crate::apply_release_mutations(&self.plan.repo_root, &mutations) {
+            let unrestored = self.rollback_prepared();
+            return Err(ReleaseError::TaskInvocation(format!(
+                "release prepare failed and the working tree was rolled back: {error}{}",
+                rollback_note(&unrestored)
+            )));
+        }
+
+        for mutation in &mutations {
+            self.messages.push(format!(
+                "prepared {}: {}",
+                mutation.path.display(),
+                mutation.summary
+            ));
+        }
+        let versions: Vec<(String, String)> = self
+            .semver_identities()
+            .iter()
+            .filter_map(|identity| {
+                Some((
+                    identity.name.clone(),
+                    identity.next_version.as_ref()?.to_string(),
+                ))
+            })
+            .collect();
+        let message = prepare_commit_message(&versions);
+        let paths: Vec<PathBuf> = mutations
+            .iter()
+            .map(|mutation| mutation.path.clone())
+            .collect();
+        match self.effects.commit_paths(&paths, &message) {
+            Ok(commit) => {
+                self.record.candidate_commit = Some(commit);
+                self.persist()
+            }
+            Err(error) => {
+                let unrestored = self.rollback_prepared();
+                Err(ReleaseError::TaskInvocation(format!(
+                    "release prepare could not commit the prepared tree: {error}{}",
+                    rollback_note(&unrestored)
+                )))
+            }
+        }
+    }
+
+    /// Restore the prepared files and unstage them: a failed prepare leaves the
+    /// pre-prepare tree behind (contract 054 §3).
+    fn rollback_prepared(&mut self) -> Vec<PathBuf> {
+        let prepared = std::mem::take(&mut self.prepared);
+        let restore: Vec<PathBuf> = prepared.iter().map(|(path, _)| path.clone()).collect();
+        let snapshots: BTreeMap<PathBuf, Option<Vec<u8>>> = prepared.into_iter().collect();
+        let unrestored = crate::restore_mutation_snapshots(&snapshots);
+        if let Err(error) = self.effects.discard_staged(&restore) {
+            self.messages.push(format!(
+                "prepared release changes could not be unstaged: {error}"
+            ));
+        }
+        unrestored
+    }
+
+    fn prepare_mutations(&mut self) -> Result<Vec<FileMutationPlan>, ReleaseError> {
+        let mut mutations = Vec::new();
+        for identity in self.plan.identities.clone() {
+            if identity.kind != IdentityKind::Semver {
+                continue;
+            }
+            let (Some(source), Some(next)) = (&identity.version_source, &identity.next_version)
+            else {
+                continue;
+            };
+            if identity.current_version.as_ref() == Some(next) {
+                continue;
+            }
+            let before = std::fs::read_to_string(&source.path).map_err(|error| {
+                ReleaseError::TaskInvocation(format!(
+                    "failed to read release version file {}: {error}",
+                    source.path.display()
+                ))
+            })?;
+            let after = render_updated_version_contents(source, next)?;
+            mutations.push(version_write_mutation(
+                &source.path,
+                &before,
+                &after,
+                identity.current_version.as_ref(),
+                next,
+            ));
+        }
+
+        let semver = self.semver_identities();
+        let Some(primary) = semver
+            .first()
+            .and_then(|identity| identity.next_version.clone())
+        else {
+            return Ok(mutations);
+        };
+
+        if self.plan.changelog_in_use {
+            let raw = std::fs::read_to_string(&self.plan.changelog_path).map_err(|error| {
+                ReleaseError::TaskInvocation(format!(
+                    "failed to read changelog {}: {error}",
+                    self.plan.changelog_path.display()
+                ))
+            })?;
+            let parsed = changelog::parse(&raw)
+                .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
+            let date = Utc::now().date_naive().to_string();
+            let after = render_prepared_changelog_contents(&parsed, &primary, &date)?;
+            if after != raw {
+                mutations.push(changelog_write_mutation(
+                    &self.plan.changelog_path,
+                    &raw,
+                    &after,
+                    &primary,
+                    &date,
+                ));
+            }
+        }
+
+        let sync_files = self.plan_sync_files();
+        if !sync_files.is_empty() {
+            for identity in semver.iter().skip(1) {
+                if identity.next_version.as_ref() != Some(&primary) {
+                    return Err(ReleaseError::TaskInvocation(format!(
+                        "release identities `{}` and `{}` have different next versions ({primary} and {}), and the release declares `sync-files`; a lockfile carries one version, so remove `release.sync-files` or give the identities the same version with `follows`",
+                        semver[0].name,
+                        identity.name,
+                        identity
+                            .next_version
+                            .as_ref()
+                            .map(ToString::to_string)
+                            .unwrap_or_else(|| "none".to_owned())
+                    )));
+                }
+            }
+            mutations.extend(build_sync_mutations(&sync_files, &primary)?);
+        }
+        Ok(mutations)
+    }
+
+    fn semver_identities(&self) -> Vec<ReleaseIdentityPlan> {
+        self.plan
+            .identities
+            .iter()
+            .filter(|identity| identity.kind == IdentityKind::Semver)
+            .cloned()
+            .collect()
+    }
+
+    /// The release-level sync files, which never repeat an identity's version
+    /// file.
+    fn plan_sync_files(&self) -> Vec<ResolvedSyncFile> {
+        self.plan
+            .files
+            .iter()
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name == "Cargo.lock" || name == "package.json")
+            })
+            .filter(|path| {
+                !self.plan.identities.iter().any(|identity| {
+                    identity
+                        .version_source
+                        .as_ref()
+                        .is_some_and(|source| &source.path == *path)
+                })
+            })
+            .filter(|path| path != &&self.plan.changelog_path)
+            .map(|path| ResolvedSyncFile {
+                path: path.clone(),
+                kind: if path.file_name().and_then(|name| name.to_str()) == Some("Cargo.lock") {
+                    crate::SyncFileKind::CargoLock
+                } else {
+                    crate::SyncFileKind::PackageJson
+                },
+            })
+            .collect()
+    }
+
+    fn certify(&mut self) -> Result<(), ReleaseError> {
+        self.run_gates(GateStage::Certify)?;
+        let candidate = self.record.candidate_commit.clone().ok_or_else(|| {
+            ReleaseError::TaskInvocation(
+                "release certify has no candidate commit; the prepare stage records it".into(),
+            )
+        })?;
+
+        let artifacts = self.plan.artifacts.clone();
+        let mut captured = Vec::new();
+        for artifact in artifacts {
+            let response =
+                self.run_release_task(&artifact.task, ReleaseStage::Certify, Some(&artifact.name))?;
+            if !response.success {
+                return Err(ReleaseError::TaskInvocation(format!(
+                    "release artifact `{}` task `{}` failed: {}",
+                    artifact.name,
+                    artifact.task,
+                    if response.stderr.is_empty() {
+                        response.stdout
+                    } else {
+                        response.stderr
+                    }
+                )));
+            }
+            let recorded = capture_artifact(
+                &self.plan.repo_root,
+                self.candidate_dir,
+                &artifact.name,
+                &artifact.task,
+                &artifact.path,
+            )?;
+            self.messages.push(format!(
+                "certified artifact `{}` from `{}`: {} file(s)",
+                artifact.name,
+                artifact.path,
+                recorded.files.len()
+            ));
+            captured.push(recorded);
+        }
+        self.record.artifacts = captured;
+
+        for index in 0..self.record.identities.len() {
+            match parse_identity_kind(&self.record.identities[index].kind) {
+                Some(IdentityKind::Digest) => {
+                    let name = self.record.identities[index].name.clone();
+                    let digest = self
+                        .record
+                        .artifacts
+                        .iter()
+                        .find(|artifact| artifact.name == name)
+                        .and_then(RecordArtifact::identity_digest);
+                    if digest.is_none() {
+                        return Err(ReleaseError::TaskInvocation(format!(
+                            "release identity `{name}` is kind `digest` and its artifact recorded no file"
+                        )));
+                    }
+                    self.record.identities[index].identity = digest;
+                }
+                Some(IdentityKind::Source) => {
+                    self.record.identities[index].identity = Some(candidate.clone());
+                }
+                _ => {}
+            }
+        }
+        self.persist()
+    }
+
+    fn publish(&mut self) -> Result<(), ReleaseError> {
+        verify_artifact_digests(&self.record.artifacts)?;
+        let candidate = self.record.candidate_commit.clone().ok_or_else(|| {
+            ReleaseError::TaskInvocation(
+                "release publish has no candidate commit; the prepare stage records it".into(),
+            )
+        })?;
+        for target in self.plan.targets.clone() {
+            let state = self
+                .record
+                .target(target.name.as_str())
+                .map(|recorded| recorded.state)
+                .unwrap_or(RecordTargetState::Pending);
+            if state == RecordTargetState::Published {
+                continue;
+            }
+            match target.kind {
+                TargetKind::Tag => self.publish_tags(&target.name, &candidate)?,
+                TargetKind::Task => {
+                    return Err(ReleaseError::TaskInvocation(format!(
+                        "release target `{}` is kind `task`, which this release Run does not publish yet",
+                        target.name
+                    )))
+                }
+            }
+        }
+        self.persist()
+    }
+
+    fn publish_tags(&mut self, target: &str, candidate: &str) -> Result<(), ReleaseError> {
+        let tags: Vec<(String, String)> = self
+            .record
+            .identities
+            .iter()
+            .filter_map(|identity| Some((identity.name.clone(), identity.tag.clone()?)))
+            .collect();
+        if tags.is_empty() {
+            return Err(ReleaseError::TaskInvocation(format!(
+                "release target `{target}` is kind `tag` and the release has no identity with a `tag-format`"
+            )));
+        }
+        for (identity, tag) in tags {
+            let already = self.record.target(target).is_some_and(|recorded| {
+                recorded
+                    .destinations
+                    .iter()
+                    .any(|destination| destination.destination == tag)
+            });
+            if already {
+                continue;
+            }
+            // Reconcile before any retry: an interrupted invocation may have
+            // pushed this tag without recording it (contract 054 §7).
+            match self.effects.remote_tag_commit(&tag) {
+                Ok(Some(sha)) if sha == candidate => {
+                    self.record_destination(target, &identity, &tag, candidate)?;
+                    continue;
+                }
+                Ok(Some(sha)) => {
+                    return Err(self.target_failed(
+                        target,
+                        format!(
+                            "release tag `{tag}` already exists on the remote at {sha}, not at the candidate commit {candidate}; a published tag is never moved"
+                        ),
+                    ))
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    return Err(self.target_unknown(
+                        target,
+                        format!(
+                            "release tag `{tag}` could not be looked up on the remote: {error}; its publish outcome is unknown"
+                        ),
+                    ))
+                }
+            }
+
+            match self.effects.local_tag_commit(&tag) {
+                Ok(Some(sha)) if sha == candidate => {}
+                Ok(Some(sha)) => {
+                    return Err(self.target_failed(
+                        target,
+                        format!(
+                            "release tag `{tag}` exists locally at {sha}, not at the candidate commit {candidate}; delete it before re-running"
+                        ),
+                    ))
+                }
+                Ok(None) => {
+                    let message = ANNOTATED_TAG_MESSAGE.replace("{tag}", &tag);
+                    self.effects.create_annotated_tag(&tag, candidate, &message)?;
+                }
+                Err(error) => {
+                    return Err(self.target_failed(
+                        target,
+                        format!("release tag `{tag}` could not be read locally: {error}"),
+                    ))
+                }
+            }
+
+            let ticket = self.intend_irreversible(
+                kernel::TAG_PUSH_EFFECT,
+                serde_json::json!({ "tag": tag, "commit": candidate }),
+            )?;
+            match self.effects.push_tag(&tag) {
+                Ok(()) => {
+                    self.record_applied(&ticket, &tag, candidate)?;
+                    self.record_destination(target, &identity, &tag, candidate)?;
+                }
+                Err(error) => {
+                    self.record_unknown(&ticket, &error)?;
+                    return Err(self.target_unknown(
+                        target,
+                        format!(
+                            "release tag `{tag}` push outcome is unknown: {error}; `effigy release resume {}` reconciles it before any retry",
+                            self.record.release_id
+                        ),
+                    ));
+                }
+            }
+        }
+        if let Some(recorded) = self
+            .record
+            .targets
+            .iter_mut()
+            .find(|recorded| recorded.name == target)
+        {
+            recorded.state = RecordTargetState::Published;
+        }
+        self.persist()
+    }
+
+    fn target_failed(&mut self, target: &str, error: String) -> ReleaseError {
+        if let Some(recorded) = self
+            .record
+            .targets
+            .iter_mut()
+            .find(|recorded| recorded.name == target)
+        {
+            recorded.state = RecordTargetState::Failed;
+        }
+        let _ = self.persist();
+        ReleaseError::TaskInvocation(error)
+    }
+
+    fn target_unknown(&mut self, target: &str, error: String) -> ReleaseError {
+        if let Some(recorded) = self
+            .record
+            .targets
+            .iter_mut()
+            .find(|recorded| recorded.name == target)
+        {
+            recorded.state = RecordTargetState::Unknown;
+        }
+        let _ = self.persist();
+        ReleaseError::TaskInvocation(error)
+    }
+
+    fn record_destination(
+        &mut self,
+        target: &str,
+        identity: &str,
+        destination: &str,
+        commit: &str,
+    ) -> Result<(), ReleaseError> {
+        if let Some(recorded) = self
+            .record
+            .targets
+            .iter_mut()
+            .find(|recorded| recorded.name == target)
+        {
+            recorded.destinations.push(RecordDestination {
+                identity: identity.to_owned(),
+                destination: destination.to_owned(),
+                commit: commit.to_owned(),
+            });
+        }
+        self.persist()
+    }
+
+    fn verify(&mut self) -> Result<(), ReleaseError> {
+        let mut failed = Vec::new();
+        for target in self.plan.targets.clone() {
+            let Some(task) = target.verify.clone() else {
+                continue;
+            };
+            let outcome = self.run_release_task(&task, ReleaseStage::Verify, Some(&target.name));
+            let (passed, note) = match &outcome {
+                Ok(response) => (
+                    response.success,
+                    (!response.success).then(|| {
+                        if response.stderr.is_empty() {
+                            response.stdout.clone()
+                        } else {
+                            response.stderr.clone()
+                        }
+                    }),
+                ),
+                Err(error) => (false, Some(error.to_string())),
+            };
+            self.record.verifications.push(RecordVerification {
+                target: target.name.clone(),
+                task: task.clone(),
+                passed,
+                note,
+            });
+            if !passed {
+                failed.push(format!(
+                    "release verify task `{task}` for target `{}` failed",
+                    target.name
+                ));
+            }
+        }
+        if !failed.is_empty() {
+            // Published but unverified: the receipt records the failure and
+            // closeout still pushes the release commit (contract 054 §7).
+            self.record.errors.push(format!(
+                "{}; the release is published but unverified",
+                failed.join("; ")
+            ));
+            self.messages.push(format!(
+                "release Run {} is published but unverified; the receipt records the failure",
+                self.record.release_id
+            ));
+        }
+        self.persist()
+    }
+
+    fn closeout(&mut self) -> Result<(), ReleaseError> {
+        if !self.record.pushed_commit {
+            let commit = self.record.candidate_commit.clone().ok_or_else(|| {
+                ReleaseError::TaskInvocation(
+                    "release closeout has no candidate commit to push; the prepare stage records it"
+                        .into(),
+                )
+            })?;
+            let branch = self.record.branch.clone().ok_or_else(|| {
+                ReleaseError::TaskInvocation(
+                    "release closeout has no branch to push; the validate stage records it".into(),
+                )
+            })?;
+            let ticket = self.intend_irreversible(
+                kernel::COMMIT_PUSH_EFFECT,
+                serde_json::json!({ "commit": commit, "branch": branch }),
+            )?;
+            match self.effects.push_commit(&commit, &branch) {
+                Ok(()) => {
+                    self.record_applied(&ticket, &branch, &commit)?;
+                    self.record.pushed_commit = true;
+                }
+                Err(error) => {
+                    self.record_unknown(&ticket, &error)?;
+                    return Err(ReleaseError::TaskInvocation(format!(
+                        "release commit {commit} push outcome is unknown: {error}; `effigy release resume {}` reconciles it",
+                        self.record.release_id
+                    )));
+                }
+            }
+        }
+        self.persist()?;
+        self.write_receipt()
+    }
+
+    fn write_receipt(&mut self) -> Result<(), ReleaseError> {
+        let receipt = ReleaseReceipt::from_record(self.record);
+        let bytes = serde_json::to_vec_pretty(&receipt).map_err(|error| {
+            ReleaseError::TaskInvocation(format!("failed to encode the release receipt: {error}"))
+        })?;
+        let path = self.state.record_path.with_file_name(RELEASE_RECEIPT_FILE);
+        std::fs::write(&path, bytes).map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+                "failed to write the release receipt {}: {error}",
+                path.display()
+            ))
+        })
+    }
+
+    fn intend_irreversible(
+        &mut self,
+        kind: &str,
+        payload: serde_json::Value,
+    ) -> Result<EffectTicket, ReleaseError> {
+        let target = self.run.fence().clone();
+        self.run
+            .intend(effigy_kernel::run::EffectSpec {
+                target,
+                kind: kind.to_owned(),
+                payload,
+                settlement: Settlement::Irreversible,
+                required: false,
+            })
+            .map_err(|error| {
+                ReleaseError::TaskInvocation(format!(
+                    "failed to journal the release effect `{kind}`: {error}"
+                ))
+            })
+    }
+
+    fn record_applied(
+        &mut self,
+        ticket: &EffectTicket,
+        destination: &str,
+        commit: &str,
+    ) -> Result<(), ReleaseError> {
+        self.run
+            .applied(
+                ticket,
+                serde_json::json!({ "destination": destination, "commit": commit }),
+            )
+            .map_err(|error| {
+                ReleaseError::TaskInvocation(format!(
+                    "failed to record the published destination `{destination}`: {error}"
+                ))
+            })
+    }
+
+    fn record_unknown(
+        &mut self,
+        ticket: &EffectTicket,
+        error: &ReleaseError,
+    ) -> Result<(), ReleaseError> {
+        self.run
+            .unknown(ticket, UnknownReason::Inconsistent(error.to_string()))
+            .map_err(|kernel_error| {
+                ReleaseError::TaskInvocation(format!(
+                    "failed to record an unknown publish outcome: {kernel_error}"
+                ))
+            })
+    }
+
+    fn run_release_task(
+        &mut self,
+        task: &str,
+        stage: ReleaseStage,
+        subject: Option<&str>,
+    ) -> Result<TaskResponse, ReleaseError> {
+        let name = subject.unwrap_or(task);
+        let stem = format!("{}-{}", sanitize(name), stage.label());
+        let input_path = self.candidate_dir.join(format!("{stem}.input.json"));
+        let output_path = self.candidate_dir.join(format!("{stem}.output.json"));
+        let input = input::release_input_value(self.record, stage, subject);
+        let bytes = serde_json::to_vec_pretty(&input).map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+                "failed to encode the release task input for `{name}`: {error}"
+            ))
+        })?;
+        std::fs::write(&input_path, bytes).map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+                "failed to write the release task input {}: {error}",
+                input_path.display()
+            ))
+        })?;
+        let mut env = BTreeMap::new();
+        env.insert(
+            input::RELEASE_INPUT_ENV.to_owned(),
+            input_path.display().to_string(),
+        );
+        env.insert(
+            input::RELEASE_OUTPUT_ENV.to_owned(),
+            output_path.display().to_string(),
+        );
+        env.insert(
+            "EFFIGY_RELEASE_CANDIDATE_DIR".to_owned(),
+            self.candidate_dir.display().to_string(),
+        );
+        env.insert(
+            "EFFIGY_RELEASE_RUN".to_owned(),
+            self.record.release_id.clone(),
+        );
+        env.insert("EFFIGY_RELEASE_STAGE".to_owned(), stage.label().to_owned());
+        self.effects.run_task(&TaskRequest {
+            task: task.to_owned(),
+            label: format!("release {} task `{task}`", stage.label()),
+            cwd: self.plan.repo_root.clone(),
+            env,
+        })
+    }
+}
+
+fn version_write_mutation(
+    path: &Path,
+    before: &str,
+    after: &str,
+    current: Option<&semver::Version>,
+    next: &semver::Version,
+) -> FileMutationPlan {
+    FileMutationPlan {
+        path: path.to_path_buf(),
+        kind: "version-file",
+        summary: match current {
+            Some(current) => format!("update version from {current} to {next}"),
+            None => format!("write version {next}"),
+        },
+        before_preview: format!(
+            "version {}",
+            current
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "unknown".to_owned())
+        ),
+        after_preview: format!("version {next}"),
+        detail_lines: vec![format!("{} carries the release version", path.display())],
+        diff_preview: crate::build_diff_preview(before, after),
+        apply: FileMutationApply::Write {
+            after_contents: after.to_owned(),
+        },
+    }
+}
+
+fn changelog_write_mutation(
+    path: &Path,
+    before: &str,
+    after: &str,
+    version: &semver::Version,
+    date: &str,
+) -> FileMutationPlan {
+    FileMutationPlan {
+        path: path.to_path_buf(),
+        kind: "changelog",
+        summary: format!("promote [Unreleased] into [{version}] - {date} and reset [Unreleased]"),
+        before_preview: "[Unreleased] holds the notes this release promotes".to_owned(),
+        after_preview: format!("[{version}] - {date} added; [Unreleased] reset"),
+        detail_lines: vec![
+            format!("{} records the release notes", path.display()),
+            "one changelog feeds every identity (contract 054 §4.2)".to_owned(),
+        ],
+        diff_preview: crate::build_diff_preview(before, after),
+        apply: FileMutationApply::Write {
+            after_contents: after.to_owned(),
+        },
+    }
+}
+
+fn parse_identity_kind(value: &str) -> Option<IdentityKind> {
+    [
+        IdentityKind::Semver,
+        IdentityKind::Digest,
+        IdentityKind::Source,
+        IdentityKind::Task,
+    ]
+    .into_iter()
+    .find(|kind| kind.label() == value.trim())
+}
+
+fn rollback_note(unrestored: &[PathBuf]) -> String {
+    if unrestored.is_empty() {
+        return "; the working tree is back at its pre-prepare state".to_owned();
+    }
+    let mut paths = unrestored
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    paths.sort();
+    format!(
+        "; these prepared files could not be restored and remain in the working tree: {}",
+        paths.join(", ")
+    )
+}
+
+fn sanitize(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn prepare_commit_message(versions: &[(String, String)]) -> String {
+    match versions {
+        [] => "release: prepare".to_owned(),
+        [(_, version)] => format!("release: v{version}"),
+        versions => format!(
+            "release: {}",
+            versions
+                .iter()
+                .map(|(name, version)| format!("{name} {version}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}

@@ -294,12 +294,10 @@ and resolve the failure before continuing.
 2. **Determine the release version.**
    - Run `effigy release status --check-gates` first.
    - Run `effigy release --plan` for the whole pipeline with no mutation.
-   - Run `effigy release prepare --plan` for the exact file mutation preview.
-   - Use `effigy release prepare` for text-mode review.
-   - Use `effigy release prepare --yes --check-gates` to write prepared state.
-   - Run `effigy release execute --plan` after prepare.
-   - Use `effigy release execute` for text-mode final review.
-   - Use `effigy release execute --yes` only for the irreversible step.
+   - Run `effigy release --plan` for the exact file mutation preview and gate staging.
+   - Use `effigy release run --to certify` to prepare and certify in place,
+     publishing nothing.
+   - Use `effigy release run` only for the irreversible publish and closeout.
    - Explicitly dispatch `release-binaries.yml` with the pushed tag and wait
      for publication.
    - Run `effigy release verify-install --tag <TAG> [--repo-url <URL>]` after
@@ -308,7 +306,7 @@ and resolve the failure before continuing.
      selection:
      - `effigy release status --check-gates`
      - `effigy release --plan`
-     - `effigy release prepare --plan`
+     - `effigy release --plan --version X.Y.Z`
    - If the human specifies a version, use it.
    - If the human says "patch" or "minor", compute the next version from the
      current release version and changelog state surfaced by the built-in
@@ -316,20 +314,20 @@ and resolve the failure before continuing.
    - Confirm the target version with the human before proceeding.
 
 3. **Prepare the version bump and changelog.**
-   - Prefer the built-in prepare flow:
-     - interactive operator path: `effigy release prepare`
-     - non-interactive apply path:
-       `effigy release prepare --yes --check-gates`
-   - For repos using `[release].sync-files`, `effigy release prepare --yes`
-     updates the primary version file, moves `[Unreleased]` entries into a
-     dated release heading, syncs configured `Cargo.lock` and secondary
-     `package.json` files, and writes `.release-prepared.json`.
+   - Prefer the Run's own prepare stage:
+     - `effigy release run --to certify` prepares, commits, gates and certifies
+       in one admitted operation
+   - For repos using `[release].sync-files`, the `prepare` stage updates the
+     primary version file, moves `[Unreleased]` entries into a dated release
+     heading, and syncs the configured `Cargo.lock` and secondary
+     `package.json` files. The Run keeps its record and checkpoint in
+     `$HOME/.effigy/state`, not in the repo.
    - Review versioned install examples in user-facing docs, especially the root
      `README.md`, and refresh any explicit release tags so the front door does
      not lag the newly prepared version.
    - Review the changes. If the human specified a different version than the
-     built-in suggestion, use the built-in custom-version path instead:
-     `effigy release prepare --yes --check-gates --version X.Y.Z`
+     built-in suggestion, review it with `effigy release --plan --version
+     X.Y.Z` and adjust the changelog before running the Run.
 
 4. **Draft release notes.**
    - Follow `036-release-notes-authoring-template-and-examples.md`.
@@ -355,8 +353,8 @@ and resolve the failure before continuing.
    - This commit must be on `main`.
 
 7. **Create and push the git tag.**
-   - Prefer `effigy release execute --yes`, which creates and pushes the
-     annotated tag after committing the prepared files.
+   - Prefer `effigy release run`, which creates and pushes the annotated tag
+     after committing the prepared files.
    - Pushing the tag does not automatically consume GitHub Actions minutes.
 
 8. **Dispatch the release pipeline.**

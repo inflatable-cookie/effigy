@@ -44,8 +44,8 @@ standalone `release gates`, and execute then share the same gate truth:
   authenticated `gh` with `--repo owner/name` taken from `origin`
 - require the exact release commit SHA; an identical tree at another SHA fails
 - reuse only the named gates; every configured gate stays in the policy
-- record each reused gate and its run URL in gate JSON, logs, and
-  `.release-prepared.json`
+- record each reused gate and its run URL in gate JSON, logs, and the release
+  Run's receipt
 - missing, pending, failed, ambiguous, wrong-repository, or wrong-SHA evidence
   fails closed with a diagnostic; the named gate does not fall back to local
   execution

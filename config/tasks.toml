@@ -444,16 +444,16 @@
 "dist:preflight:smoke" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture" }
 "test:release:macos-checksums" = { visibility = "internal", group = "Maintenance", run = "bash tests/scripts/release-macos-checksums.sh" }
 
-# Authorized in-place release preparation. Heavy admission wraps the WHOLE
-# operation (current-source build, prepared-tree gates, prepared state) before
-# any compile or file mutation. The entry point is argv-safe: it fixes the
-# subcommand to `release prepare`, rejects `--repo`, enforces `--check-gates`
-# for a mutating run, and never forwards execute, resume, tag or publish. It
-# mutates this checkout by design, unlike Queue milestone `project.qa.run`,
-# which uses a disposable checkout. Ordinary milestone QA stays on Queue.
-"release:prepare".description = "Prepare this checkout for release in place; heavy admission wraps the whole operation."
-"release:prepare".admission = "heavy"
-"release:prepare".run = "bash scripts/release-prepare.sh {args}"
+# Authorized in-place release Run. Heavy admission wraps the WHOLE operation
+# (current-source build, prepare, certify gates, artifact digests) before any
+# compile or file mutation. The stage boundary is fixed to `certify`, so this
+# selector never tags, pushes or publishes; publishing stays an explicit
+# `effigy release run` with the operator's authority. It mutates this checkout
+# by design, unlike Queue milestone `project.qa.run`, which uses a disposable
+# checkout. Ordinary milestone QA stays on Queue.
+"release:run".description = "Run this checkout's release in place up to certify: prepare, gate and certify, publish nothing."
+"release:run".admission = "heavy"
+"release:run".run = "./target/debug/effigy release run --to certify {args}"
 # The self-hosting install verifier runs from a compatible source build; keep
 # its subcommand fixed and admit the complete tagged-source install proof.
 "release:verify-install".description = "Prove the tagged-source install from a compatible source build."
@@ -1474,8 +1474,8 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 "build:tasks:visibility" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 900000 }] }
 "proof:tasks:visibility:consumers" = { visibility = "internal", group = "Maintenance", run = [{ run = "python3 tests/scripts/task-visibility-consumers.py {args}", timeout_ms = 600000 }] }
 
-"release:prepare".visibility = "public"
-"release:prepare".group = "Release"
+"release:run".visibility = "public"
+"release:run".group = "Release"
 
 "release:verify-install".visibility = "public"
 "release:verify-install".group = "Release"
