@@ -20,7 +20,7 @@
 //! ]
 //!
 //! [scratch]
-//! root = "/Volumes/Builds/effigy-scratch"
+//! root = "/Volumes/Builds/scratch"
 //! volume_uuid = "1E2D3C4B-5A69-4788-99AA-BBCCDDEEFF00"
 //! require_separate_volume = true
 //! ```
@@ -55,23 +55,26 @@ pub struct UserConfig {
 /// User-global per-run scratch directory preferences.
 ///
 /// Unset means no change: Effigy leaves the operating system's temp directory
-/// alone. A `root` moves the scratch of every host-placed run onto that
-/// volume, and Effigy refuses a root it cannot prove is a separate, trusted
-/// volume root (see the user guide). No path or UUID is hardcoded here: both
-/// come from this file.
+/// alone. A `root` moves the scratch of every host-placed run onto the drive
+/// holding that directory, and Effigy refuses a root it cannot prove sits on a
+/// separately mounted, trusted volume (see the user guide). A missing root is
+/// created (mode 0700) when its nearest existing directory passes the same
+/// proof. No path or UUID is hardcoded here: both come from this file, and
+/// Effigy knows nothing about any other tool's directories.
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UserScratchConfig {
-    /// Directory that holds one subdirectory per run. Unset disables scratch.
+    /// Directory that holds one subdirectory per run, on any drive. Unset
+    /// disables scratch.
     #[serde(default)]
     pub root: Option<String>,
     /// Volume UUID the root must live on, compared against the volume that
     /// actually holds it. Unset skips the pin.
     #[serde(default)]
     pub volume_uuid: Option<String>,
-    /// Whether the root must be a separate volume from the boot volume.
-    /// Unset (or `true`) requires it; `false` accepts any mounted volume
-    /// that passes the structural checks.
+    /// Whether the root must be on a volume separate from the boot and data
+    /// volumes. Unset (or `true`) requires it; `false` accepts any directory
+    /// that passes the ownership checks.
     #[serde(default)]
     pub require_separate_volume: Option<bool>,
 }

@@ -13,15 +13,17 @@
 //! kill leaves the effect open, so the sentinel's settle makes the same
 //! decision.
 //!
-//! The root is never trusted blindly: [`admit`] proves it is a separate,
-//! mounted volume root that Effigy may write into, and otherwise falls back to
-//! the default temp directory with a reason `effigy doctor` shows. Effigy never
-//! creates a mount point, never hardcodes a path or a UUID, and never removes a
-//! directory it did not name itself.
+//! The root is never trusted blindly: [`admit`] proves the directory sits on a
+//! mounted separate volume, that Effigy may write into it, and creates a
+//! missing root (mode 0700) only when its nearest existing ancestor passes the
+//! same volume proof. Anything else falls back to the default temp directory
+//! with a reason `effigy doctor` shows. Effigy never creates a mount point,
+//! never hardcodes a path or a UUID, knows nothing about any other tool, and
+//! never removes a directory it did not name and mark itself.
 
 use std::cell::RefCell;
 use std::os::unix::fs::MetadataExt;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -47,8 +49,6 @@ const SWEEP_SCAN_MAX: usize = 256;
 const SWEEP_REMOVE_MAX: usize = 8;
 /// A mounted volume's root, recorded by macOS. Effigy never creates it.
 const DATA_VOLUME: &str = "/System/Volumes/Data";
-/// A sibling tool's pool: never a scratch root, however it is spelled.
-const OXIDE_POOL: &str = "/Volumes/Builds/oxide-pool";
 
 /// The user's scratch configuration, with `~` already expanded.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,8 +83,6 @@ impl std::fmt::Display for Refusal {
 /// function of these facts, so every refusal is testable without a volume.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct Facts {
-    /// The root as the filesystem spells it (every symlink resolved).
-    pub canonical: PathBuf,
     /// The device holding the root.
     pub device: u64,
     /// The highest ancestor on the same device: the volume's mount point.
@@ -179,7 +177,7 @@ pub(in crate::runner) fn status() -> Status {
             reason: format!("`{DISABLE_ENV}` disables the configured scratch root"),
         };
     }
-    match admit(&config) {
+    match inspect(&config) {
         Ok(root) => Status::Admitted { root },
         Err(refusal) => Status::Refused {
             root: config.root.clone(),
@@ -188,22 +186,158 @@ pub(in crate::runner) fn status() -> Status {
     }
 }
 
-/// The configured root, proven usable, as the filesystem spells it.
+/// The configured root, proven usable, as the filesystem spells it. A root
+/// that does not exist yet is created (mode 0700) when its nearest existing
+/// ancestor passes the volume proof.
 pub(in crate::runner) fn admit(config: &Config) -> Result<PathBuf, Refusal> {
-    let canonical = std::fs::canonicalize(&config.root).map_err(|error| {
-        Refusal::new(format!(
-            "the configured scratch root `{}` cannot be resolved ({error}); Effigy never \
-             creates a mount point",
-            config.root.display()
-        ))
-    })?;
-    #[cfg(test)]
-    if test_admitted_root().as_deref() == Some(canonical.as_path()) {
-        return Ok(canonical);
+    admit_with(config, Plan::Create, &probe)
+}
+
+/// `effigy doctor`'s verdict: the same proof, without creating anything. A
+/// missing root whose ancestor proves out is still admitted, because the run
+/// about to start would create it.
+fn inspect(config: &Config) -> Result<PathBuf, Refusal> {
+    admit_with(config, Plan::Inspect, &probe)
+}
+
+/// Whether admission may create a missing root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Plan {
+    Create,
+    Inspect,
+}
+
+fn admit_with(
+    config: &Config,
+    plan: Plan,
+    probe: &dyn Fn(&Path) -> Result<Facts, Refusal>,
+) -> Result<PathBuf, Refusal> {
+    match std::fs::canonicalize(&config.root) {
+        Ok(canonical) => {
+            #[cfg(test)]
+            if test_admitted_root().as_deref() == Some(canonical.as_path()) {
+                return Ok(canonical);
+            }
+            let facts = probe(&canonical)?;
+            evaluate(config, &canonical, &facts)?;
+            Ok(canonical)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let (ancestor, missing) = nearest_existing(&config.root)?;
+            let intended = missing
+                .iter()
+                .fold(ancestor.clone(), |path, name| path.join(name));
+            // Only the volume is proved from the ancestor: the directory Effigy
+            // is about to make carries its own ownership and mode.
+            let ancestor_facts = probe(&ancestor).map_err(|refusal| {
+                Refusal::new(format!(
+                    "the configured scratch root `{}` does not exist, and its nearest existing \
+                     directory `{}` cannot be used: {}",
+                    config.root.display(),
+                    ancestor.display(),
+                    refusal.reason()
+                ))
+            })?;
+            evaluate_volume(config, &intended, &ancestor_facts)?;
+            if plan == Plan::Inspect {
+                return Ok(intended);
+            }
+            let (created, made) = create_missing(&ancestor, &missing, &intended)?;
+            let verdict = probe(&created).and_then(|facts| evaluate(config, &created, &facts));
+            match verdict {
+                Ok(()) => Ok(created),
+                Err(refusal) => {
+                    discard_created(&made);
+                    Err(refusal)
+                }
+            }
+        }
+        Err(error) => Err(unresolvable(&config.root, &error)),
     }
-    let facts = probe(&canonical)?;
-    evaluate(config, &facts)?;
-    Ok(facts.canonical)
+}
+
+/// The canonical nearest ancestor of `root`, and the plain directory names
+/// below it, outermost first. A component that exists but cannot be resolved
+/// (a dangling symlink, a loop, a permission) is never treated as absent:
+/// Effigy refuses instead of creating over it.
+fn nearest_existing(root: &Path) -> Result<(PathBuf, Vec<std::ffi::OsString>), Refusal> {
+    let mut missing: Vec<std::ffi::OsString> = Vec::new();
+    let mut candidate = root.to_path_buf();
+    loop {
+        match std::fs::canonicalize(&candidate) {
+            Ok(canonical) => {
+                missing.reverse();
+                return Ok((canonical, missing));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if std::fs::symlink_metadata(&candidate).is_ok() {
+                    return Err(unresolvable(root, &error));
+                }
+                let Some(name) = candidate.file_name().map(|name| name.to_os_string()) else {
+                    return Err(unresolvable(root, &error));
+                };
+                missing.push(name);
+                candidate = match candidate.parent() {
+                    Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+                    _ => PathBuf::from("."),
+                };
+            }
+            Err(error) => return Err(unresolvable(root, &error)),
+        }
+    }
+}
+
+fn unresolvable(root: &Path, error: &std::io::Error) -> Refusal {
+    Refusal::new(format!(
+        "the configured scratch root `{}` cannot be resolved ({error}); Effigy never \
+         creates a mount point",
+        root.display()
+    ))
+}
+
+/// Creates the missing components of `intended` with mode 0700, outermost
+/// first, and returns the created root with every directory this call made.
+/// A failure removes only the directories this call just created.
+fn create_missing(
+    ancestor: &Path,
+    missing: &[std::ffi::OsString],
+    intended: &Path,
+) -> Result<(PathBuf, Vec<PathBuf>), Refusal> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut path = ancestor.to_path_buf();
+    let mut made: Vec<PathBuf> = Vec::new();
+    for name in missing {
+        path.push(name);
+        // `set_permissions` rather than the builder's umask-masked mode: the
+        // created root is exactly 0700, whatever the operator's umask is.
+        let created = std::fs::create_dir(&path)
+            .and_then(|()| std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)));
+        if let Err(error) = created {
+            discard_created(&made);
+            return Err(Refusal::new(format!(
+                "the configured scratch root `{}` does not exist and could not be created \
+                 ({error}); Effigy never creates a mount point",
+                intended.display()
+            )));
+        }
+        made.push(path.clone());
+    }
+    match std::fs::canonicalize(intended) {
+        Ok(created) => Ok((created, made)),
+        Err(error) => {
+            discard_created(&made);
+            Err(unresolvable(intended, &error))
+        }
+    }
+}
+
+/// Removes directories this call created, deepest first. `remove_dir` never
+/// removes a non-empty directory, so anything written meanwhile stays.
+fn discard_created(made: &[PathBuf]) {
+    for dir in made.iter().rev() {
+        let _ = std::fs::remove_dir(dir);
+    }
 }
 
 /// Reads the facts the gate needs, on one opened descriptor so no check can be
@@ -233,7 +367,6 @@ fn probe(canonical: &Path) -> Result<Facts, Refusal> {
             ))
         })?;
     Ok(Facts {
-        canonical: canonical.to_path_buf(),
         device,
         mount_point,
         mount_parent_device,
@@ -273,41 +406,46 @@ fn mount_point_of(path: &Path, device: u64) -> Option<(PathBuf, u64)> {
 
 /// The one gate. Every condition must hold; the first failure is the reason
 /// `effigy doctor` reports.
-pub(in crate::runner) fn evaluate(config: &Config, facts: &Facts) -> Result<(), Refusal> {
-    if is_inside(&facts.canonical, Path::new(OXIDE_POOL)) {
-        return Err(Refusal::new(format!(
-            "the configured scratch root `{}` is inside `{OXIDE_POOL}`, which belongs to \
-             another tool",
-            facts.canonical.display()
-        )));
-    }
+pub(in crate::runner) fn evaluate(
+    config: &Config,
+    root: &Path,
+    facts: &Facts,
+) -> Result<(), Refusal> {
+    evaluate_volume(config, root, facts)?;
+    evaluate_owner(root, facts)
+}
+
+/// The volume proof: the root sits on a mounted volume that is not the boot
+/// or data volume (when a separate volume is required), and the UUID pin, when
+/// set, names the volume actually holding it.
+fn evaluate_volume(config: &Config, root: &Path, facts: &Facts) -> Result<(), Refusal> {
     if config.require_separate_volume {
         if facts.device == facts.boot_device {
             return Err(Refusal::new(format!(
                 "the configured scratch root `{}` is on the internal boot volume",
-                facts.canonical.display()
+                root.display()
             )));
         }
         if facts.data_device == Some(facts.device) {
             return Err(Refusal::new(format!(
                 "the configured scratch root `{}` is on `{DATA_VOLUME}`, the internal data \
                  volume",
-                facts.canonical.display()
+                root.display()
             )));
         }
-        // The root must be the volume's mount point itself: a mounted volume
-        // root, not a plain directory that merely lives on the volume (or under
-        // `/Volumes` after the drive went away).
+        // The root's volume must be a real mount: its mount point is above the
+        // path and its parent lives on another device. `mount_point_of` reports
+        // `/` for a stale directory left under `/Volumes` on the internal disk
+        // once the drive is gone, and the device checks above already refuse
+        // that path; this proves the mountness of the volume that remains.
         if facts.mount_point == Path::new("/")
             || facts.mount_point.as_os_str().is_empty()
             || facts.mount_parent_device == facts.device
-            || facts.canonical != facts.mount_point
         {
             return Err(Refusal::new(format!(
-                "the configured scratch root `{}` is not a mounted volume root (the volume's \
-                 mount point is `{}`); point the root at the mounted volume itself",
-                facts.canonical.display(),
-                facts.mount_point.display()
+                "the configured scratch root `{}` is not on a mounted volume (no mount point \
+                 above it); point the root at a directory on a separately mounted volume",
+                root.display()
             )));
         }
     }
@@ -318,48 +456,56 @@ pub(in crate::runner) fn evaluate(config: &Config, facts: &Facts) -> Result<(), 
                 return Err(Refusal::new(format!(
                     "the configured scratch root `{}` is on volume `{found}`, but the user \
                      config pins `{expected}`",
-                    facts.canonical.display()
+                    root.display()
                 )))
             }
             None => {
                 return Err(Refusal::new(format!(
                     "the configured scratch root `{}` has no readable volume UUID, but the \
                      user config pins `{expected}`",
-                    facts.canonical.display()
+                    root.display()
                 )))
             }
         }
     }
-    if facts.owner != 0 {
+    Ok(())
+}
+
+/// The trust proof for the directory Effigy writes into: owned by the account
+/// running Effigy or by root, closed to group and world writes, and ACL-free.
+fn evaluate_owner(root: &Path, facts: &Facts) -> Result<(), Refusal> {
+    let user = current_uid();
+    if facts.owner != 0 && facts.owner != user {
         return Err(Refusal::new(format!(
-            "the configured scratch root `{}` is owned by uid {}, not root",
-            facts.canonical.display(),
+            "the configured scratch root `{}` is owned by uid {}, neither root nor the user \
+             running Effigy (uid {user})",
+            root.display(),
             facts.owner
         )));
     }
-    if facts.mode & 0o002 != 0 {
+    // Group write is as much a hole as world write: another account could
+    // replace the run directories Effigy writes under this root.
+    if facts.mode & 0o022 != 0 {
         return Err(Refusal::new(format!(
-            "the configured scratch root `{}` is writable by others (mode {:o})",
-            facts.canonical.display(),
+            "the configured scratch root `{}` is group- or world-writable (mode {:o})",
+            root.display(),
             facts.mode & 0o7777
         )));
     }
     if facts.acl {
         return Err(Refusal::new(format!(
             "the configured scratch root `{}` carries an ACL",
-            facts.canonical.display()
+            root.display()
         )));
     }
     Ok(())
 }
 
-/// Whether `path` is `ancestor` or below it, comparing whole components.
-fn is_inside(path: &Path, ancestor: &Path) -> bool {
-    let mut rest = path.components();
-    ancestor
-        .components()
-        .all(|component| rest.next() == Some(component))
-        && !matches!(rest.next(), Some(Component::ParentDir))
+/// The uid Effigy runs as: the one account a root may be owned by, besides
+/// root.
+fn current_uid() -> u32 {
+    // SAFETY: `geteuid` has no preconditions and cannot fail.
+    unsafe { libc::geteuid() }
 }
 
 /// Whether the directory carries an ACL. macOS answers through its extended
@@ -1180,7 +1326,6 @@ mod tests {
 
     fn admitted() -> Facts {
         Facts {
-            canonical: PathBuf::from("/Volumes/Scratch"),
             device: 7,
             mount_point: PathBuf::from("/Volumes/Scratch"),
             mount_parent_device: 1,
@@ -1193,11 +1338,37 @@ mod tests {
         }
     }
 
-    fn refusal(config: &Config, facts: &Facts) -> String {
-        evaluate(config, facts)
+    fn refusal_at(config: &Config, root: &str, facts: &Facts) -> String {
+        evaluate(config, Path::new(root), facts)
             .expect_err("refused")
             .reason()
             .to_owned()
+    }
+
+    fn refusal(config: &Config, facts: &Facts) -> String {
+        refusal_at(config, "/Volumes/Scratch", facts)
+    }
+
+    /// A uid that is neither root nor the account running the tests.
+    fn foreign_uid() -> u32 {
+        current_uid().wrapping_add(1)
+    }
+
+    /// Volume facts a fake probe answers with, for the paths a test cannot
+    /// really mount. `canonical` is not part of the facts: the gate proves the
+    /// volume and the path is the one admission was asked about.
+    fn fake_facts() -> Facts {
+        Facts {
+            device: 7,
+            mount_point: PathBuf::from("/Volumes/Scratch"),
+            mount_parent_device: 1,
+            boot_device: 1,
+            data_device: Some(1),
+            owner: 0,
+            mode: 0o40755,
+            acl: false,
+            volume_uuid: None,
+        }
     }
 
     /// A deterministic real run id. Keyed runs use time zero, so tests use the
@@ -1239,20 +1410,36 @@ mod tests {
 
     #[test]
     fn a_mounted_root_owned_volume_root_is_admitted() {
-        assert_eq!(evaluate(&config(), &admitted()), Ok(()));
+        assert_eq!(
+            evaluate(&config(), Path::new("/Volumes/Scratch"), &admitted()),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_subdirectory_of_a_separate_volume_is_admitted() {
+        // `/Volumes/Scratch/effigy/runs` is not the volume's mount point; it
+        // only has to be on the mounted, separate volume.
+        let facts = admitted();
+        assert_eq!(
+            evaluate(&config(), Path::new("/Volumes/Scratch/effigy/runs"), &facts),
+            Ok(())
+        );
     }
 
     #[test]
     fn a_stale_plain_directory_under_volumes_is_refused() {
         // The drive unplugged: the path is now a plain directory on the boot
-        // volume, so both the device and the mount-root checks refuse it.
+        // volume, whose mount point is `/`.
         let facts = Facts {
             device: 1,
             mount_point: PathBuf::from("/"),
             mount_parent_device: 1,
+            data_device: Some(1),
             ..admitted()
         };
-        assert!(refusal(&config(), &facts).contains("internal boot volume"));
+        let reason = refusal_at(&config(), "/Volumes/Scratch/effigy", &facts);
+        assert!(reason.contains("internal boot volume"), "{reason}");
     }
 
     #[test]
@@ -1264,23 +1451,26 @@ mod tests {
             data_device: Some(2),
             ..admitted()
         };
-        assert!(refusal(&config(), &facts).contains("/System/Volumes/Data"));
+        assert!(refusal_at(&config(), "/Volumes/Scratch/effigy", &facts)
+            .contains("/System/Volumes/Data"));
     }
 
     #[test]
-    fn a_plain_directory_on_the_scratch_volume_is_not_a_volume_root() {
-        // `/Volumes/Scratch/tmp` is on the right volume but is not its root.
-        // `probe()` reports exactly these facts: the mount point is the volume
-        // root and the parent device is the one above it, not the volume's own.
+    fn a_path_whose_volume_has_no_mount_point_above_it_is_refused() {
+        // The volume's root is `/` on a device that is neither boot nor data:
+        // nothing above the path proves a mounted volume holds it.
         let facts = Facts {
-            canonical: PathBuf::from("/Volumes/Scratch/tmp"),
-            mount_point: PathBuf::from("/Volumes/Scratch"),
-            mount_parent_device: 1,
+            mount_point: PathBuf::from("/"),
             ..admitted()
         };
         let reason = refusal(&config(), &facts);
-        assert!(reason.contains("not a mounted volume root"), "{reason}");
-        assert!(reason.contains("/Volumes/Scratch/tmp"), "{reason}");
+        assert!(reason.contains("not on a mounted volume"), "{reason}");
+
+        let no_parent_device = Facts {
+            mount_parent_device: 7,
+            ..admitted()
+        };
+        assert!(refusal(&config(), &no_parent_device).contains("not on a mounted volume"));
     }
 
     #[test]
@@ -1303,39 +1493,46 @@ mod tests {
             volume_uuid: Some("1e2d3c4b-5a69-4788-99aa-bbccddeeff00".to_owned()),
             ..config()
         };
-        assert_eq!(evaluate(&matching, &admitted()), Ok(()));
+        assert_eq!(
+            evaluate(&matching, Path::new("/Volumes/Scratch"), &admitted()),
+            Ok(())
+        );
     }
 
     #[test]
-    fn a_root_inside_the_oxide_pool_is_refused() {
-        let pooled = Facts {
-            canonical: PathBuf::from("/Volumes/Builds/oxide-pool/scratch"),
+    fn a_user_owned_root_is_admitted_and_a_foreign_one_is_refused() {
+        let user_owned = Facts {
+            owner: current_uid(),
+            mode: 0o40700,
             ..admitted()
         };
-        assert!(refusal(&config(), &pooled).contains("oxide-pool"));
-        // Whole components only: a volume whose name merely starts the same
-        // way is not inside the pool.
-        let sibling = Facts {
-            canonical: PathBuf::from("/Volumes/oxide-pool-notes"),
-            mount_point: PathBuf::from("/Volumes/oxide-pool-notes"),
+        assert_eq!(
+            evaluate(&config(), Path::new("/Volumes/Scratch/effigy"), &user_owned),
+            Ok(())
+        );
+
+        let foreign = Facts {
+            owner: foreign_uid(),
             ..admitted()
         };
-        assert_eq!(evaluate(&config(), &sibling), Ok(()));
+        let reason = refusal(&config(), &foreign);
+        assert!(reason.contains("neither root nor the user"), "{reason}");
     }
 
     #[test]
     fn an_untrusted_root_is_refused() {
-        let pooled = Facts {
-            owner: 501,
+        let group_writable = Facts {
+            mode: 0o40775,
             ..admitted()
         };
-        assert!(refusal(&config(), &pooled).contains("owned by uid 501"));
+        let reason = refusal(&config(), &group_writable);
+        assert!(reason.contains("group- or world-writable"), "{reason}");
 
         let writable = Facts {
             mode: 0o40777,
             ..admitted()
         };
-        assert!(refusal(&config(), &writable).contains("writable by others"));
+        assert!(refusal(&config(), &writable).contains("group- or world-writable"));
 
         let acl = Facts {
             acl: true,
@@ -1345,23 +1542,143 @@ mod tests {
     }
 
     #[test]
-    fn requiring_a_separate_volume_is_the_default_but_the_structural_checks_remain() {
+    fn requiring_a_separate_volume_is_the_default_but_the_ownership_checks_remain() {
         let facts = Facts {
-            mount_point: PathBuf::from("/Volumes/Scratch"),
-            mount_parent_device: 7,
+            device: 1,
+            mount_point: PathBuf::from("/"),
+            mount_parent_device: 1,
             ..admitted()
         };
         let permissive = Config {
             require_separate_volume: false,
             ..config()
         };
-        assert_eq!(evaluate(&permissive, &facts), Ok(()));
+        assert_eq!(
+            evaluate(&permissive, Path::new("/Volumes/Scratch/tmp"), &facts),
+            Ok(())
+        );
 
         let writable = Facts {
             mode: 0o40777,
             ..facts
         };
-        assert!(refusal(&permissive, &writable).contains("writable by others"));
+        assert!(refusal(&permissive, &writable).contains("group- or world-writable"));
+    }
+
+    /// Admission over fake volume facts: no test needs a real second drive.
+    fn admit_fake(config: &Config, plan: Plan, facts: Facts) -> Result<PathBuf, Refusal> {
+        admit_with(config, plan, &move |_| Ok(facts.clone()))
+    }
+
+    /// A configured root below `ancestor`, proven on the fake separate volume.
+    fn configured_below(ancestor: &Path) -> Config {
+        Config {
+            root: ancestor.join("effigy").join("runs"),
+            volume_uuid: None,
+            require_separate_volume: true,
+        }
+    }
+
+    #[test]
+    fn a_missing_root_is_created_below_a_proven_ancestor() {
+        let volume = tempfile::tempdir().expect("volume");
+        let config = configured_below(volume.path());
+        let created = admit_fake(&config, Plan::Create, fake_facts()).expect("admitted");
+
+        assert_eq!(created, std::fs::canonicalize(&config.root).expect("root"));
+        let mode = |path: &Path| {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(path).expect("mode").mode() & 0o7777
+        };
+        assert_eq!(mode(&config.root), 0o700, "the created root is private");
+        assert_eq!(mode(config.root.parent().expect("parent")), 0o700);
+    }
+
+    #[test]
+    fn a_missing_root_whose_ancestor_is_not_proven_is_refused_and_not_created() {
+        let internal = tempfile::tempdir().expect("internal disk");
+        let config = configured_below(internal.path());
+        // The nearest existing ancestor is on the boot volume.
+        let facts = Facts {
+            device: 1,
+            mount_point: PathBuf::from("/"),
+            ..fake_facts()
+        };
+        let reason = admit_fake(&config, Plan::Create, facts).expect_err("refused");
+        assert!(reason.reason().contains("internal boot volume"), "{reason}");
+        assert!(!config.root.exists(), "a refused root is never created");
+        assert!(!config.root.parent().expect("parent").exists());
+
+        // A UUID pin that does not name the ancestor's volume refuses too.
+        let pinned = Config {
+            volume_uuid: Some("00000000-0000-0000-0000-000000000000".to_owned()),
+            ..config.clone()
+        };
+        let facts = Facts {
+            volume_uuid: Some("1E2D3C4B-5A69-4788-99AA-BBCCDDEEFF00".to_owned()),
+            ..fake_facts()
+        };
+        let reason = admit_fake(&pinned, Plan::Create, facts).expect_err("refused");
+        assert!(reason.reason().contains("pins"), "{reason}");
+        assert!(!config.root.exists());
+    }
+
+    #[test]
+    fn inspection_never_creates_a_missing_root() {
+        let volume = tempfile::tempdir().expect("volume");
+        let config = configured_below(volume.path());
+        let intended = admit_fake(&config, Plan::Inspect, fake_facts()).expect("admitted");
+        assert!(
+            intended.ends_with(Path::new("effigy").join("runs")),
+            "the intended root is reported: {}",
+            intended.display()
+        );
+        assert!(!config.root.exists(), "`effigy doctor` creates nothing");
+    }
+
+    #[test]
+    fn a_missing_root_below_a_dangling_symlink_is_refused() {
+        let volume = tempfile::tempdir().expect("volume");
+        let link = volume.path().join("gone");
+        std::os::unix::fs::symlink(volume.path().join("absent-target"), &link).expect("symlink");
+        let config = Config {
+            root: link.join("runs"),
+            volume_uuid: None,
+            require_separate_volume: false,
+        };
+        let reason = admit_fake(&config, Plan::Create, fake_facts()).expect_err("refused");
+        assert!(reason.reason().contains("cannot be resolved"), "{reason}");
+        assert!(!config.root.exists());
+    }
+
+    #[test]
+    fn a_missing_root_may_not_be_created_through_a_parent_directory_component() {
+        let volume = tempfile::tempdir().expect("volume");
+        std::fs::create_dir(volume.path().join("existing")).expect("existing");
+        let config = Config {
+            root: volume.path().join("existing").join("missing").join(".."),
+            volume_uuid: None,
+            require_separate_volume: false,
+        };
+        let reason = admit_fake(&config, Plan::Create, fake_facts()).expect_err("refused");
+        assert!(reason.reason().contains("cannot be resolved"), "{reason}");
+        assert!(!volume.path().join("existing").join("missing").exists());
+    }
+
+    #[test]
+    fn the_real_probe_refuses_a_directory_on_the_internal_disk() {
+        // The refusal direction needs no external drive: a test directory on
+        // this machine is not a separately mounted volume.
+        let root = tempfile::tempdir().expect("root");
+        let canonical = std::fs::canonicalize(root.path()).expect("canonical");
+        let config = Config {
+            root: canonical.clone(),
+            volume_uuid: None,
+            require_separate_volume: true,
+        };
+        let reason = admit(&config).expect_err("refused");
+        assert!(reason.reason().contains("volume"), "{reason}");
+        assert!(canonical.is_dir(), "a refusal touches nothing");
     }
 
     #[cfg(target_os = "macos")]
@@ -1597,6 +1914,42 @@ mod tests {
             "a directory whose name and marker disagree is no claim"
         );
         assert!(root.path().join("notours1").exists());
+    }
+
+    #[test]
+    fn the_sweep_leaves_foreign_entries_in_the_root_alone() {
+        let root = tempfile::tempdir().expect("root");
+        let old = now_ms() - RETENTION.as_millis() as i64 - 1;
+        // Effigy's own expired run: removed.
+        let ours = hold(root.path(), &run_id(23), Some(true));
+        // A foreign directory, and a foreign file, at the root itself.
+        let foreign_dir = root.path().join("build-artifacts");
+        std::fs::create_dir(&foreign_dir).expect("foreign dir");
+        std::fs::write(foreign_dir.join("lib.rlib"), b"keep me").expect("foreign file");
+        std::fs::write(root.path().join("notes.txt"), b"keep me").expect("root file");
+        // A run-shaped directory with no marker, and one whose marker names a
+        // run that does not parse: both are somebody else's.
+        let unmarked = root.path().join(name_of(&run_id(24)));
+        std::fs::create_dir(&unmarked).expect("unmarked dir");
+        std::fs::write(unmarked.join("work.txt"), b"keep me").expect("file");
+        let alien = root.path().join(name_of(&run_id(25)));
+        std::fs::create_dir(&alien).expect("alien dir");
+        write_marker(
+            &alien,
+            &Marker {
+                run: "not-a-run-id".to_owned(),
+                ..marker(&run_id(26), old, None)
+            },
+        )
+        .expect("marker");
+
+        let report = sweep_at(root.path(), now_ms(), 8, closed);
+        assert_eq!(report.removed, 1, "only Effigy's own directory is removed");
+        assert!(!ours.exists());
+        assert!(foreign_dir.join("lib.rlib").exists());
+        assert!(root.path().join("notes.txt").exists());
+        assert!(unmarked.join("work.txt").exists());
+        assert!(alien.exists());
     }
 
     #[test]
