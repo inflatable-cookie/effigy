@@ -126,13 +126,26 @@ accept a green run from another commit.
 ```bash
 effigy release --plan                  # dry-run the release flow
 effigy release status --check-gates    # show gate states
-effigy release run --to certify       # prepare and certify, publish nothing
 effigy release gates                   # list gates and current pass/fail
+effigy release receipt                 # print what the last Run recorded
 ```
 
-These are safe to run unprompted. Anything with `--yes` or that pushes a tag
-is **not** safe to run unprompted — see `release-protocol.md` and
-`footguns.md`.
+These are safe to run unprompted. They read and report; none of them writes a
+version file, commits, tags or pushes.
+
+## Release mutations (require explicit human ask)
+
+`release run` mutates. Its `prepare` stage commits, its `publish` stage pushes
+tags and its `closeout` stage pushes the release commit, so no form of it is
+safe to run unprompted:
+
+```bash
+effigy release run --to certify       # prepare and certify, publish nothing
+effigy release run                    # publish tags and the release commit
+effigy release resume <run>           # continue an interrupted Run
+```
+
+See `release-protocol.md` and `footguns.md`.
 
 Distribution evidence (`preflight`, `proof`, `evidence validate`, …) also
 lives under `effigy release`, not a separate `effigy distribution` command.
