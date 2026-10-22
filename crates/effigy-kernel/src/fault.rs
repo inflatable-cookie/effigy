@@ -52,6 +52,10 @@ points! {
     SocketBind,
     CaptureWrite,
     LogRead,
+    AnchorSpawn,
+    AnchorRecord,
+    AnchorStop,
+    AnchorStopped,
     SpawnFork,
     SpawnBeforeRecord,
     SpawnBeforeGo,
@@ -330,6 +334,13 @@ pub(crate) fn events() -> Vec<Event> {
 /// Records every spawned helper's start identity in the driver's log, so
 /// quiescence can wait for helpers that never reached registration.
 pub(crate) fn note_helper(pid: u32) {
+    note_child(pid, "");
+}
+/// Anchors cannot write; recovery must run before waiting for them to exit.
+pub(crate) fn note_anchor(pid: u32) {
+    note_child(pid, "anchor ");
+}
+fn note_child(pid: u32, prefix: &str) {
     let Some(path) = HELPERS.with(|log| log.borrow().clone()) else {
         return;
     };
@@ -342,7 +353,7 @@ pub(crate) fn note_helper(pid: u32) {
             .append(true)
             .open(path)
             .expect("helper log");
-        writeln!(file, "{line}").expect("helper log");
+        writeln!(file, "{prefix}{line}").expect("helper log");
         file.sync_all().expect("helper log");
     }
 }

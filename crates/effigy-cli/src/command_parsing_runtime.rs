@@ -33,9 +33,11 @@ where
             "`effigy gateway recover` is retired; v0.14.1 gateways use `effigy gateway up`; for a pre-0.14 gateway ask the host administrator to verify and stop it before removing its old PID/version records".to_owned(),
         )),
         "setup-tls" => GatewaySubcommand::SetupTls,
-        "setup-listener-handoff" => GatewaySubcommand::SetupListenerHandoff,
-        "listener-handoff-status" => GatewaySubcommand::ListenerHandoffStatus,
-        "remove-listener-handoff" => GatewaySubcommand::RemoveListenerHandoff,
+        "setup-listener-handoff" | "listener-handoff-status" | "remove-listener-handoff" => {
+            return Err(CliParseError::InvalidArguments(
+                "`effigy gateway setup-listener-handoff`, `listener-handoff-status` and `remove-listener-handoff` are retired in v0.15 (Q-009); there is no replacement: the gateway runs as your user, so use `effigy gateway up` and `effigy gateway status`. See CHANGELOG.md `[Unreleased]`".to_owned(),
+            ));
+        }
         other => return Err(unknown_argument(other)),
     };
 

@@ -29,16 +29,16 @@ privileged proxy. This contract states what the daemon is allowed to trust that
 file to assert, how it verifies the file's provenance, and what it does when the
 file fails verification.
 
-The launchd listener handoff (SOURCE implementation candidate;
+The launchd listener handoff (experimental; retired in v0.15 by Q-009;
 [architecture 034](../architecture/034-gateway-legacy-upgrade-recovery.md))
-adds an operator-owned daemon that adopts the two handed loopback listeners
-instead of binding them. It reads the same route table under the same checks;
-nothing in this contract changes with who owns the listener sockets, and the
-unexecuted install/activation does not alter today's elevated default. The
-read-only `effigy gateway listener-handoff-status` and the unexecuted
-`effigy gateway remove-listener-handoff` plan inspect the launchd definition
-and job only: neither reads, trusts, rewrites or removes `routes.json`, and
-neither changes route-table ownership, markers or generations.
+was an operator-owned daemon that adopted two handed loopback listeners
+instead of binding them. v0.15 removed its definition generator, read-only
+status and unexecuted removal plan; only the internal `--listener-handoff`
+adoption boundary remains, and the gateway runs as the operator through
+`effigy gateway up`. Any adoption reads the same route table under the same
+checks; nothing in this contract changes with who owns the listener sockets.
+The retired commands never read, trusted, rewrote or removed `routes.json`, and
+their removal changes no route-table ownership, markers or generations.
 
 ## Problem
 

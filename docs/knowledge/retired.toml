@@ -692,3 +692,26 @@ allow = [
   "skills/effigy/references/built-in-surfaces.md",
   ".agents/skills/effigy/references/built-in-surfaces.md",
 ]
+
+[[retired]]
+id = "effigy-gateway-listener-handoff-commands"
+retired = "2026-10-21"
+replacement = "There is no replacement: the gateway runs as the operator, so use `effigy gateway up` and inspect it with `effigy gateway status` (Q-009). The three retired spellings refuse with this guidance and name the changelog entry. The descriptor adoption boundary and the internal `--listener-handoff` opt-in remain."
+owner = "docs/knowledge/architecture/034-gateway-legacy-upgrade-recovery.md"
+terms = ["setup-listener-handoff", "listener-handoff-status", "remove-listener-handoff", "test:gateway:listener-handoff", "check:gateway:listener-handoff", "test:gateway:handoff-maintenance", "check:gateway:handoff-maintenance", "test:release:listener-handoff-fixture-ownership", "ListenerHandoffSetup", "Launchd listener-handoff"]
+paths = ["crates/effigy-gateway/src/listener_handoff/maintenance.rs", "crates/effigy-gateway/src/listener_handoff/maintenance/"]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-cli/src/command_parsing_runtime.rs",
+  "crates/effigy-gateway/src/listener_handoff.rs",
+  "docs/guides/025-command-reference-matrix.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/architecture/020-container-infrastructure-design.md",
+  "docs/knowledge/architecture/034-gateway-legacy-upgrade-recovery.md",
+  "docs/knowledge/contracts/033-gateway-route-table-trust-contract.md",
+  "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md",
+  "docs/knowledge/questions.md",
+  "docs/knowledge/retired.toml",
+  "src/tests/lib_tests_parse_tests/gateway_option_tests.rs",
+]
