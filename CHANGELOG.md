@@ -775,6 +775,14 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- A Colima profile that reports Running while `containerd`/`buildkit` are
+  stopped is recovered in place: Effigy starts those units inside its own
+  profile, re-probes with a bounded deadline, and otherwise refuses with the
+  profile, both observations and the explicit
+  `effigy container profile repair` / `profile reset-runtime` commands
+  (effigy#264, papercuts `27e54f95` and `5f9db1a0`). It no longer stops or
+  restarts the VM from a task bring-up, which took every stack on the profile
+  down; other profiles are never touched.
 - A linked worktree's container targets resolve the canonical declared TCP
   backing-service alias (for example `postgres.<site>.test`) to that
   worktree's own service (effigy#264, lead `5100c68d`). The alias is added to
