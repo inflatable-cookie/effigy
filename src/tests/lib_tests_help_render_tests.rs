@@ -339,19 +339,17 @@ fn render_container_help_shows_runtime_options() {
 fn render_bootstrap_help_shows_planning_options() {
     let rendered = render_help_text(HelpTopic::Bootstrap);
     assert!(rendered.contains("bootstrap Help"));
-    assert!(rendered.contains("effigy bootstrap <GIT_URL>"));
-    assert!(rendered.contains("effigy bootstrap teardown [--yes] [--json]"));
+    assert!(rendered.contains(
+        "effigy bootstrap [<GIT_URL>] [--path <DIR>] [--branch <NAME>] [--no-start] [--plan] [--json]"
+    ));
     assert!(rendered.contains("--path <DIR>"));
     assert!(rendered.contains("--branch <NAME>"));
-    assert!(rendered.contains("--backend <containerd|docker>"));
-    assert!(rendered.contains("--fresh"));
-    assert!(rendered.contains("--no-prompt"));
-    assert!(rendered.contains("--reuse-path"));
-    assert!(rendered.contains("--start"));
+    assert!(rendered.contains("--no-start"));
     assert!(rendered.contains("--plan"));
     assert!(rendered.contains("--json"));
-    assert!(rendered.contains("child repo checkout"));
-    assert!(rendered.contains("Phase 1"));
+    assert!(rendered.contains("[sources.<name>]"));
+    assert!(!rendered.contains("--db-seed"));
+    assert!(!rendered.contains("bootstrap teardown"));
 }
 
 #[test]

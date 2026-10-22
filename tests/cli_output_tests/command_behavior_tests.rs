@@ -6114,7 +6114,7 @@ mounts = ["./:/workspace"]
 catalog = "php-fpm"
 version = "8.3"
 
-[tasks."bootstrap:db-seed"]
+[tasks."data:seed"]
 run = "sh -lc 'printf seeded > .effigy/local/db-seed.marker'"
 "#,
     )

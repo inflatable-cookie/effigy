@@ -17,7 +17,6 @@ use effigy_tasks::CatalogSelectionMode;
 use super::planning::{
     build_execution_preflight as build_execution_preflight_impl, ExecutionPreflight,
 };
-use super::selection::{resolve_task_selection, SelectionResolution};
 use crate::runner::error::RunnerError;
 
 pub(in crate::runner) use super::binding::{
@@ -115,33 +114,6 @@ pub(in crate::runner) fn build_execution_preflight(
     cwd: PathBuf,
 ) -> Result<ExecutionPreflight, RunnerError> {
     build_execution_preflight_impl(task, cwd)
-}
-
-pub(in crate::runner) fn task_requires_container_runtime(
-    task: &TaskInvocation,
-    cwd: PathBuf,
-) -> Result<bool, RunnerError> {
-    let preflight = build_execution_preflight_impl(task, cwd)?;
-    let selection = match resolve_task_selection(task, &preflight)? {
-        SelectionResolution::Selected { selection, .. } => selection,
-        SelectionResolution::Output(_) => return Ok(false),
-    };
-    let (default_run_in, systems, containers) =
-        effective_task_binding_inputs(&preflight.invocation_cwd, &preflight.catalogs, &selection);
-
-    let binding_resolution = resolve_execution_binding_resolution(
-        default_run_in,
-        systems.as_ref(),
-        containers.as_ref(),
-        &preflight.selector.task_name,
-        selection.task,
-        "bootstrap backend selection",
-    )?;
-    Ok(binding_resolution.is_inline_container()
-        || matches!(
-            binding_resolution.kind(),
-            ExecutionBindingKind::NamedContainer
-        ))
 }
 
 /// The runtime binding inputs for one selected task, plus the catalog root

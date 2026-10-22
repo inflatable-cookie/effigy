@@ -149,10 +149,7 @@ fn run_deep_doctor_reports_missing_child_bootstrap_and_skips_health() {
 
     let err = run_deep_doctor_task(root.clone(), &["--catalog", "member"])
         .expect_err("missing child bootstrap must fail deep doctor");
-    assert_doctor_non_zero_contains(
-        err,
-        &["health.task.bootstrap", "effigy bootstrap deps sync member"],
-    );
+    assert_doctor_non_zero_contains(err, &["health.task.bootstrap", "[bootstrap].setup"]);
     assert!(
         !marker.exists(),
         "member health must not run before dependency bootstrap"

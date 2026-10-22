@@ -146,7 +146,7 @@ fn check_js_hydration(
     missing.sort();
     missing.truncate(3);
     Err(BuiltinError::task_invocation(format!(
-        "JavaScript dependencies are missing for {}; prepare this checkout with `effigy bootstrap deps sync {}` (frozen Bun install), then rerun the test",
+        "JavaScript dependencies are missing for {}; prepare {} with the repo's own dependency task (the one `[bootstrap].setup` selects, normally a frozen Bun install), then rerun the test",
         missing.join(", "),
         missing[0]
     )))
@@ -201,7 +201,7 @@ mod hydration_tests {
             nested_invocation: false,
         };
         let error = check_js_hydration(std::slice::from_ref(&suite), &root).unwrap_err();
-        assert!(error.to_string().contains("effigy bootstrap deps sync ."));
+        assert!(error.to_string().contains("[bootstrap].setup"));
         assert!(error.to_string().contains("frozen Bun install"));
         std::fs::create_dir(root.join("node_modules")).unwrap();
         check_js_hydration(&[suite], &root).unwrap();

@@ -101,7 +101,7 @@ fn health_bootstrap_template_emits_actionable_error() {
     let mut state = DoctorState::new();
     HealthFinding::bootstrap_missing(
         "observed=missing-local-install; manager=bun".to_owned(),
-        "run `effigy bootstrap deps sync child`".to_owned(),
+        "run `effigy bootstrap --path child`".to_owned(),
     )
     .emit(&mut state);
 
@@ -110,7 +110,7 @@ fn health_bootstrap_template_emits_actionable_error() {
     assert_eq!(state.findings[0].severity, DoctorSeverity::Error);
     assert_eq!(
         state.findings[0].remediation,
-        "run `effigy bootstrap deps sync child`"
+        "run `effigy bootstrap --path child`"
     );
     assert!(!state.findings[0].fixable);
 }

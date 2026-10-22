@@ -62,9 +62,10 @@ cache and timeout behavior.
    boundaries never satisfies the scope, so a scope with its own repository
    boundary cannot be satisfied by an ancestor lock or install.
 3. A scope whose `package.json` declares dependencies and that has no valid
-   local install emits a `health.task.bootstrap` error naming
-   `effigy bootstrap deps sync <path>` and the missing declared dependencies,
-   and does not run that scope's `health` task. The reported reason is
+   local install emits a `health.task.bootstrap` error naming the repo's own
+   dependency task (the one `[bootstrap].setup` selects) and the missing
+   declared dependencies, and does not run that scope's `health` task. Bootstrap
+   has no installer of its own since v0.15 (Q-009). The reported reason is
    `missing-local-lock` when no lock exists anywhere inside the scope's
    repository boundary, including a standalone child repository with no child
    lock.
