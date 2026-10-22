@@ -4,7 +4,9 @@
   "payload_schemas": {
     "effigy.command.v1": "payload-schemas/effigy.command.v1.json",
     "effigy.container.migrate.v1": "payload-schemas/effigy.container.migrate.v1.json",
-    "effigy.container.render.v1": "payload-schemas/effigy.container.render.v1.json"
+    "effigy.container.render.v1": "payload-schemas/effigy.container.render.v1.json",
+    "effigy.release.input.v1": "payload-schemas/effigy.release.input.v1.json",
+    "effigy.release.output.v1": "payload-schemas/effigy.release.output.v1.json"
   },
   "schemas": [
     {

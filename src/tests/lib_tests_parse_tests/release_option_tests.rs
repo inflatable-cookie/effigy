@@ -119,6 +119,34 @@ fn parse_release_resume_approve_and_receipt_take_a_run_id() {
         })
     );
 
+    for (flag, published) in [("--published", true), ("--not-published", false)] {
+        let decide = parse_command(vec![
+            "release".to_owned(),
+            "decide".to_owned(),
+            "run-abc".to_owned(),
+            flag.to_owned(),
+        ])
+        .expect("decide parse");
+        assert_eq!(
+            decide,
+            Command::Release(ReleaseArgs {
+                subcommand: ReleaseSubcommand::Decide {
+                    run: "run-abc".to_owned(),
+                    published,
+                },
+                repo_override: None,
+                output_json: false,
+            })
+        );
+    }
+    let unclear = parse_command(vec![
+        "release".to_owned(),
+        "decide".to_owned(),
+        "run-abc".to_owned(),
+    ])
+    .expect_err("a decision needs --published or --not-published");
+    assert!(unclear.to_string().contains("--published"), "{unclear}");
+
     let receipt =
         parse_command(vec!["release".to_owned(), "receipt".to_owned()]).expect("receipt parse");
     assert_eq!(

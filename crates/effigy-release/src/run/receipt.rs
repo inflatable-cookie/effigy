@@ -8,8 +8,9 @@
 use serde::Serialize;
 
 use super::record::{
-    RecordApproval, RecordArtifact, RecordCheckpoint, RecordGate, RecordIdentity, RecordTarget,
-    RecordTargetState, RecordVerification, ReleaseRecord, ReleaseRunStatus, RELEASE_RECEIPT_SCHEMA,
+    RecordApproval, RecordArtifact, RecordCheckpoint, RecordDecision, RecordGate, RecordIdentity,
+    RecordTarget, RecordTargetState, RecordVerification, ReleaseRecord, ReleaseRunStatus,
+    RELEASE_RECEIPT_SCHEMA,
 };
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -47,6 +48,8 @@ pub struct ReleaseReceipt {
     pub checkpoints: Vec<RecordCheckpoint>,
     pub gates: Vec<RecordGate>,
     pub approvals: Vec<RecordApproval>,
+    /// Operator rulings on unknown publish outcomes (contract 054 §7).
+    pub decisions: Vec<RecordDecision>,
     pub targets: Vec<RecordTarget>,
     pub verification: Vec<RecordVerification>,
     /// Whether every target published the candidate.
@@ -91,6 +94,7 @@ impl ReleaseReceipt {
             checkpoints: record.checkpoints.clone(),
             gates: record.gates.clone(),
             approvals: record.approvals.clone(),
+            decisions: record.decisions.clone(),
             targets: record.targets.clone(),
             verification: record.verifications.clone(),
             published,
@@ -185,10 +189,14 @@ pub fn render_release_receipt_text(receipt: &ReleaseReceipt) -> String {
         lines.push("  gates:".to_owned());
         for gate in &receipt.gates {
             lines.push(format!(
-                "    {} {} {}",
+                "    {} {} {}{}",
                 gate.stage,
                 gate.name,
-                if gate.passed { "passed" } else { "failed" }
+                if gate.passed { "passed" } else { "failed" },
+                match &gate.hosted_run {
+                    Some(url) => format!(" (hosted evidence {url})"),
+                    None => String::new(),
+                }
             ));
         }
     }
@@ -198,6 +206,15 @@ pub fn render_release_receipt_text(receipt: &ReleaseReceipt) -> String {
             lines.push(format!(
                 "    {} approved by {} at {}",
                 approval.stage, approval.approved_by, approval.approved_at
+            ));
+        }
+    }
+    if !receipt.decisions.is_empty() {
+        lines.push("  decisions:".to_owned());
+        for decision in &receipt.decisions {
+            lines.push(format!(
+                "    {} {} recorded by {} at {}",
+                decision.target, decision.decision, decision.decided_by, decision.decided_at
             ));
         }
     }
@@ -213,8 +230,13 @@ pub fn render_release_receipt_text(receipt: &ReleaseReceipt) -> String {
             lines.push(format!("    {} ({}) {}", target.name, target.kind, state));
             for destination in &target.destinations {
                 lines.push(format!(
-                    "      {} at {} ({})",
-                    destination.destination, destination.commit, destination.identity
+                    "      {} at {}{}",
+                    destination.destination,
+                    destination.commit,
+                    match &destination.identity {
+                        Some(identity) => format!(" ({identity})"),
+                        None => String::new(),
+                    }
                 ));
             }
         }

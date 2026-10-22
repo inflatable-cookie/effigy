@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "effigy.release.output.v1",
+  "description": "What a release task target, artifact task or verify task writes at $EFFIGY_RELEASE_OUTPUT (contract 054 §6, §7). A task that exits 0 without writing one records committed = unknown.",
+  "type": "object",
+  "required": ["committed"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "effigy.release.output.v1" },
+    "schema_version": { "const": 1 },
+    "committed": {
+      "description": "true: the candidate is at the destination. false: it is not. unknown: the task could not tell, and the Run reconciles before any retry.",
+      "oneOf": [{ "type": "boolean" }, { "const": "unknown" }]
+    },
+    "destinations": {
+      "description": "Destination IDs: a release URL, a package@version, an image digest or a deploy ID.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "note": { "type": ["string", "null"] }
+  }
+}

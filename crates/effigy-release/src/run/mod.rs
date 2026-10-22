@@ -19,9 +19,13 @@ mod record;
 mod tests;
 
 pub use artifacts::{capture_artifact, sha256_bytes, verify_artifact_digests};
-pub use effects::{approver_name, GitEffects, ReleaseEffects, TaskRequest, TaskResponse};
+pub use effects::{
+    approver_name, GitEffects, HostedEvidence, ReleaseEffects, TaskRequest, TaskResponse,
+};
 pub use input::{
-    release_input_value, RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV, RELEASE_TASK_INPUT_SCHEMA,
+    parse_release_task_output, read_release_task_output, release_input_value, Committed,
+    ReleaseTaskOutput, ReleaseTaskSubject, RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV,
+    RELEASE_TASK_INPUT_SCHEMA, RELEASE_TASK_OUTPUT_SCHEMA,
 };
 pub use kernel::{
     new_run_id, release_home, release_owner, ReleaseSession, ReleaseState, ReportsOnly,
@@ -32,10 +36,10 @@ pub use receipt::{
     ReleaseReceipt,
 };
 pub use record::{
-    RecordApproval, RecordArtifact, RecordArtifactFile, RecordCheckpoint, RecordDestination,
-    RecordGate, RecordIdentity, RecordTarget, RecordTargetState, RecordVerification,
-    ReleaseCheckpoint, ReleaseRecord, ReleaseRunStatus, ReleaseStage, RELEASE_RECEIPT_SCHEMA,
-    RELEASE_RECORD_SCHEMA,
+    RecordApproval, RecordArtifact, RecordArtifactFile, RecordCheckpoint, RecordDecision,
+    RecordDestination, RecordGate, RecordIdentity, RecordTarget, RecordTargetState,
+    RecordVerification, ReleaseCheckpoint, ReleaseRecord, ReleaseRunStatus, ReleaseStage,
+    TargetDecision, RELEASE_RECEIPT_SCHEMA, RELEASE_RECORD_SCHEMA,
 };
 
 use std::collections::BTreeMap;
@@ -71,6 +75,12 @@ pub enum ReleaseAction {
     Resume { run: String },
     /// Pass an approval checkpoint, then continue.
     Approve { run: String },
+    /// Record an operator's ruling on an unknown publish outcome, then
+    /// continue (contract 054 §7).
+    Decide {
+        run: String,
+        decision: TargetDecision,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -92,11 +102,17 @@ pub struct ReleaseRunOutcome {
 }
 
 impl ReleaseRunOutcome {
-    /// The invocation did everything it was asked; a paused Run still counts.
+    /// The invocation did everything it was asked. A Run stopped at a
+    /// checkpoint — for approval, hosted evidence or an operator decision —
+    /// also counts: it is waiting, not failing.
     pub fn succeeded(&self) -> bool {
         matches!(
             self.record.status,
-            ReleaseRunStatus::Complete | ReleaseRunStatus::Paused
+            ReleaseRunStatus::Complete
+                | ReleaseRunStatus::Paused
+                | ReleaseRunStatus::AwaitingApproval
+                | ReleaseRunStatus::AwaitingHostedEvidence
+                | ReleaseRunStatus::AwaitingDecision
         )
     }
 
@@ -163,6 +179,7 @@ pub fn run_release(
         run_id: run_id_text,
         messages: Vec::new(),
         prepared: Vec::new(),
+        waiting: None,
     };
     let staged = runner.run_stages(start, to);
 
@@ -218,9 +235,9 @@ fn continue_record(
 ) -> Result<Continuation, ReleaseError> {
     let requested = match &request.action {
         ReleaseAction::Run => None,
-        ReleaseAction::Resume { run } | ReleaseAction::Approve { run } => {
-            Some(run.trim().to_owned())
-        }
+        ReleaseAction::Resume { run }
+        | ReleaseAction::Approve { run }
+        | ReleaseAction::Decide { run, .. } => Some(run.trim().to_owned()),
     };
     let existing = match (existing, checkpoint) {
         (Some(record), _) => Some(record),
@@ -306,6 +323,51 @@ fn continue_record(
             record.waiting_on = None;
             return Ok(Continuation::RunFrom(record, stage));
         }
+        ReleaseAction::Decide { decision, .. } => {
+            if record.status != ReleaseRunStatus::AwaitingDecision {
+                return Err(ReleaseError::TaskInvocation(format!(
+                    "release Run {} is not awaiting a decision (status `{}`); `effigy release decide` only continues a Run whose publish outcome is unknown and whose target declares no `check` task (contract 054 §7)",
+                    record.release_id,
+                    record.status.label()
+                )));
+            }
+            let Some(target_name) = record.waiting_on.clone() else {
+                return Err(ReleaseError::TaskInvocation(format!(
+                    "release Run {} is awaiting a decision but records no target",
+                    record.release_id
+                )));
+            };
+            let Some(target) = record
+                .targets
+                .iter_mut()
+                .find(|target| target.name == target_name)
+            else {
+                return Err(ReleaseError::TaskInvocation(format!(
+                    "release Run {} is awaiting a decision about `{target_name}`, which is not one of its targets",
+                    record.release_id
+                )));
+            };
+            if target.state != RecordTargetState::Unknown {
+                return Err(ReleaseError::TaskInvocation(format!(
+                    "release target `{target_name}` records outcome `{:?}` rather than unknown; there is no unknown publish for an operator to decide",
+                    target.state
+                )));
+            }
+            target.state = match decision {
+                TargetDecision::Published => RecordTargetState::Published,
+                TargetDecision::NotPublished => RecordTargetState::Pending,
+            };
+            target.note = Some(format!("operator recorded {}", decision.label()));
+            record.decisions.push(RecordDecision {
+                target: target_name.clone(),
+                decision: decision.label().to_owned(),
+                decided_by: approver_name(effects),
+                decided_at: now(),
+            });
+            record.status = ReleaseRunStatus::Paused;
+            record.waiting_on = None;
+            return Ok(Continuation::RunFrom(record, ReleaseStage::Publish));
+        }
     }
 
     let start = match record.stage() {
@@ -347,6 +409,15 @@ struct Runner<'a, 's> {
     messages: Vec<String>,
     /// Paths a failed prepare must restore, with their pre-prepare bytes.
     prepared: Vec<(PathBuf, Option<Vec<u8>>)>,
+    /// A stage that stopped at a wait instead of finishing: the Run records the
+    /// status and what it waits on, then holds nothing open (054 §3, §7).
+    waiting: Option<Waiting>,
+}
+
+struct Waiting {
+    status: ReleaseRunStatus,
+    subject: Option<String>,
+    message: String,
 }
 
 impl<'a, 's> Runner<'a, 's> {
@@ -380,7 +451,17 @@ impl<'a, 's> Runner<'a, 's> {
                 return Err(error);
             }
 
+            if let Some(waiting) = self.waiting.take() {
+                self.record.status = waiting.status;
+                self.record.waiting_on = waiting.subject;
+                self.persist()?;
+                self.messages.push(waiting.message);
+                return Ok(());
+            }
+
             self.record.stage = stage.label().to_owned();
+            self.record.status = ReleaseRunStatus::Paused;
+            self.record.waiting_on = None;
             self.record.checkpoints.push(RecordCheckpoint {
                 stage: stage.label().to_owned(),
                 run: self.run_id.clone(),
@@ -427,6 +508,16 @@ impl<'a, 's> Runner<'a, 's> {
             && !self.record.approved(stage)
     }
 
+    /// Stop the current stage at a wait. The runner records it after the stage
+    /// returns, so a wait never records the stage as complete.
+    fn wait_for(&mut self, status: ReleaseRunStatus, subject: Option<String>, message: String) {
+        self.waiting = Some(Waiting {
+            status,
+            subject,
+            message,
+        });
+    }
+
     /// Write the record and its kernel checkpoint pointer.
     fn persist(&mut self) -> Result<(), ReleaseError> {
         self.record.updated_at = now();
@@ -470,17 +561,6 @@ impl<'a, 's> Runner<'a, 's> {
                 self.plan.repo_root.display()
             )));
         }
-        if let Some(target) = self
-            .plan
-            .targets
-            .iter()
-            .find(|target| target.kind == TargetKind::Task)
-        {
-            return Err(ReleaseError::TaskInvocation(format!(
-                "release target `{}` is kind `task`, and this release Run publishes `tag` targets only (contract 054 §9; task targets arrive with the native provider lane). Remove the target, or publish it with a project task outside the Run",
-                target.name
-            )));
-        }
 
         self.record.branch = Some(self.effects.current_branch()?);
         self.record.source_commit = Some(self.effects.head_commit()?);
@@ -490,6 +570,7 @@ impl<'a, 's> Runner<'a, 's> {
         self.record.errors.clear();
         self.record.checkpoints.clear();
         self.record.approvals.clear();
+        self.record.decisions.clear();
         self.record.pushed_commit = false;
         self.record.targets = self
             .plan
@@ -523,9 +604,13 @@ impl<'a, 's> Runner<'a, 's> {
                         identity.name
                     ))
                 })?;
-                let response =
-                    self.run_release_task(&task, ReleaseStage::Validate, Some(&identity.name))?;
-                let value = response
+                let outcome = self.run_release_task(
+                    &task,
+                    ReleaseStage::Validate,
+                    ReleaseTaskSubject::Identity(&identity.name),
+                )?;
+                let value = outcome
+                    .response
                     .stdout
                     .lines()
                     .next()
@@ -561,27 +646,81 @@ impl<'a, 's> Runner<'a, 's> {
                 .push(format!("no `{}` gates configured", stage.stage_name()));
             return Ok(());
         }
-        let report = run_release_gates(&self.plan.repo_root, &gates, true);
-        for result in &report.results {
-            self.record.gates.push(RecordGate {
-                stage: stage.stage_name().to_owned(),
-                name: result.name.clone(),
-                passed: result.passed,
-            });
-        }
-        let failed: Vec<String> = report
-            .results
-            .iter()
-            .filter(|result| !result.passed)
-            .map(|result| {
+        let mut failed = Vec::new();
+        for gate in gates {
+            if self.record.gate_passed(stage.stage_name(), &gate.name) {
+                // A resumed gate stage continues where it stopped: a gate that
+                // already passed is never re-run (contract 054 §3).
+                self.messages.push(format!(
+                    "gate `{}` already passed; it is not run again",
+                    gate.name
+                ));
+                continue;
+            }
+            if let Some(spec) = gate.hosted_evidence.clone() {
+                let commit = self.hosted_evidence_commit(stage)?;
+                match self.effects.hosted_evidence(&gate.name, &spec, &commit)? {
+                    HostedEvidence::Accepted {
+                        url,
+                        repository,
+                        commit,
+                    } => {
+                        self.record.gates.push(RecordGate {
+                            stage: stage.stage_name().to_owned(),
+                            name: gate.name.clone(),
+                            passed: true,
+                            hosted_run: Some(url.clone()),
+                        });
+                        self.messages.push(format!(
+                            "gate `{}` reused hosted evidence {url} for {repository}@{commit}",
+                            gate.name
+                        ));
+                        continue;
+                    }
+                    HostedEvidence::Waiting { detail } => {
+                        // The Run holds no process open: a resume re-checks the
+                        // evidence and continues this same gate stage.
+                        let release_id = self.record.release_id.clone();
+                        self.wait_for(
+                            ReleaseRunStatus::AwaitingHostedEvidence,
+                            Some(gate.name.clone()),
+                            format!(
+                                "release Run {release_id} is waiting on hosted evidence for gate `{}`: {detail} `effigy release resume {release_id}` re-checks it without holding a process open",
+                                gate.name
+                            ),
+                        );
+                        return Ok(());
+                    }
+                    HostedEvidence::Failed { detail } => {
+                        self.record.gates.push(RecordGate {
+                            stage: stage.stage_name().to_owned(),
+                            name: gate.name.clone(),
+                            passed: false,
+                            hosted_run: None,
+                        });
+                        return Err(ReleaseError::TaskInvocation(detail));
+                    }
+                }
+            }
+            let report = run_release_gates(&self.plan.repo_root, std::slice::from_ref(&gate), true);
+            for result in &report.results {
+                self.record.gates.push(RecordGate {
+                    stage: stage.stage_name().to_owned(),
+                    name: result.name.clone(),
+                    passed: result.passed,
+                    hosted_run: None,
+                });
+                if result.passed {
+                    continue;
+                }
                 let detail = if result.stderr.is_empty() {
                     result.stdout.clone()
                 } else {
                     result.stderr.clone()
                 };
-                format!("gate `{}` failed: {detail}", result.name)
-            })
-            .collect();
+                failed.push(format!("gate `{}` failed: {detail}", result.name));
+            }
+        }
         if failed.is_empty() {
             Ok(())
         } else {
@@ -591,6 +730,25 @@ impl<'a, 's> Runner<'a, 's> {
                 failed.join("; ")
             )))
         }
+    }
+
+    /// The commit a hosted gate's evidence must be for: the candidate once
+    /// `prepare` committed it, and the source commit before that.
+    fn hosted_evidence_commit(&self, stage: GateStage) -> Result<String, ReleaseError> {
+        let commit = match stage {
+            GateStage::Pre => self.record.source_commit.clone(),
+            GateStage::Certify => self
+                .record
+                .candidate_commit
+                .clone()
+                .or_else(|| self.record.source_commit.clone()),
+        };
+        commit.ok_or_else(|| {
+            ReleaseError::TaskInvocation(format!(
+                "release hosted evidence for the `{}` gate stage has no commit: the validate stage records the source commit",
+                stage.stage_name()
+            ))
+        })
     }
 
     fn prepare(&mut self) -> Result<(), ReleaseError> {
@@ -802,17 +960,20 @@ impl<'a, 's> Runner<'a, 's> {
         let artifacts = self.plan.artifacts.clone();
         let mut captured = Vec::new();
         for artifact in artifacts {
-            let response =
-                self.run_release_task(&artifact.task, ReleaseStage::Certify, Some(&artifact.name))?;
-            if !response.success {
+            let outcome = self.run_release_task(
+                &artifact.task,
+                ReleaseStage::Certify,
+                ReleaseTaskSubject::Artifact(&artifact.name),
+            )?;
+            if !outcome.response.success {
                 return Err(ReleaseError::TaskInvocation(format!(
                     "release artifact `{}` task `{}` failed: {}",
                     artifact.name,
                     artifact.task,
-                    if response.stderr.is_empty() {
-                        response.stdout
+                    if outcome.response.stderr.is_empty() {
+                        outcome.response.stdout
                     } else {
-                        response.stderr
+                        outcome.response.stderr
                     }
                 )));
             }
@@ -866,6 +1027,8 @@ impl<'a, 's> Runner<'a, 's> {
                 "release publish has no candidate commit; the prepare stage records it".into(),
             )
         })?;
+        // Targets publish in declared order. A target that succeeded stays
+        // recorded, so a resume continues with the remaining ones (054 §7).
         for target in self.plan.targets.clone() {
             let state = self
                 .record
@@ -875,15 +1038,171 @@ impl<'a, 's> Runner<'a, 's> {
             if state == RecordTargetState::Published {
                 continue;
             }
-            match target.kind {
-                TargetKind::Tag => self.publish_tags(&target.name, &candidate)?,
-                TargetKind::Task => {
-                    return Err(ReleaseError::TaskInvocation(format!(
-                        "release target `{}` is kind `task`, which this release Run does not publish yet",
-                        target.name
-                    )))
+            if state == RecordTargetState::Unknown && target.kind == TargetKind::Task {
+                match self.reconcile_task_target(&target)? {
+                    Reconcile::Published { destinations, note } => {
+                        self.mark_target_published(&target.name, destinations, note, &candidate)?;
+                        continue;
+                    }
+                    Reconcile::NotPublished => {
+                        self.set_target_state(&target.name, RecordTargetState::Pending)?;
+                    }
+                    Reconcile::Waiting => return Ok(()),
                 }
             }
+            match target.kind {
+                TargetKind::Tag => self.publish_tags(&target.name, &candidate)?,
+                TargetKind::Task => self.publish_task(&target, &candidate)?,
+            }
+        }
+        self.persist()
+    }
+
+    /// A `task` target publishes the certified candidate through a project
+    /// task and reads back what it reported (contract 054 §6, §7).
+    fn publish_task(
+        &mut self,
+        target: &crate::pipeline::ResolvedTarget,
+        candidate: &str,
+    ) -> Result<(), ReleaseError> {
+        let task = target.task.clone().ok_or_else(|| {
+            ReleaseError::TaskInvocation(format!(
+                "release target `{}` is kind `task` and names no task",
+                target.name
+            ))
+        })?;
+        let outcome = self.run_release_task(
+            &task,
+            ReleaseStage::Publish,
+            ReleaseTaskSubject::Target(&target.name),
+        )?;
+        match task_verdict(&outcome, task.as_str()) {
+            TaskVerdict::Committed {
+                destinations,
+                note,
+            } => {
+                self.messages.push(format!(
+                    "release target `{}` published through task `{task}`{}",
+                    target.name,
+                    match destinations.as_slice() {
+                        [] => String::new(),
+                        destinations => format!(": {}", destinations.join(", ")),
+                    }
+                ));
+                self.mark_target_published(&target.name, destinations, note, candidate)
+            }
+            TaskVerdict::NotCommitted { note } => Err(self.target_failed(
+                &target.name,
+                format!(
+                    "release target `{}` task `{task}` reported it did not publish the candidate{}{}; nothing is recorded as published and the release stops before later targets",
+                    target.name,
+                    note_suffix(note.as_deref()),
+                    stderr_suffix(&outcome.response)
+                ),
+            )),
+            TaskVerdict::Unknown { detail } => Err(self.target_unknown(
+                &target.name,
+                format!(
+                    "release target `{}` task `{task}` outcome is unknown: {detail}{}; `effigy release {}` reconciles it before any retry",
+                    target.name,
+                    stderr_suffix(&outcome.response),
+                    match target.check {
+                        Some(_) => format!("resume {}", self.record.release_id),
+                        None => format!("decide {} --published|--not-published", self.record.release_id),
+                    }
+                ),
+            )),
+        }
+    }
+
+    /// Reconcile a `task` target whose last publish outcome is unknown.
+    ///
+    /// The target's `check` task reports whether this candidate is already at
+    /// the destination. With no `check`, the operator decides (054 §7).
+    fn reconcile_task_target(
+        &mut self,
+        target: &crate::pipeline::ResolvedTarget,
+    ) -> Result<Reconcile, ReleaseError> {
+        let Some(check) = target.check.clone() else {
+            let release_id = self.record.release_id.clone();
+            if let Some(recorded) = self.record.target_mut(&target.name) {
+                recorded.note = Some(
+                    "publish outcome unknown; the operator records published or not published"
+                        .to_owned(),
+                );
+            }
+            self.wait_for(
+                ReleaseRunStatus::AwaitingDecision,
+                Some(target.name.clone()),
+                format!(
+                    "release Run {release_id} stopped at `awaiting-decision`: target `{}` declares no `check` task, so its unknown publish outcome needs an operator ruling; record it with `effigy release decide {release_id} --published` or `--not-published`",
+                    target.name
+                ),
+            );
+            return Ok(Reconcile::Waiting);
+        };
+        let outcome = self.run_release_task(
+            &check,
+            ReleaseStage::Publish,
+            ReleaseTaskSubject::Target(&target.name),
+        )?;
+        Ok(match task_verdict(&outcome, check.as_str()) {
+            TaskVerdict::Committed { destinations, note } => {
+                self.messages.push(format!(
+                    "release target `{}` check task `{check}` reports the candidate is already published",
+                    target.name
+                ));
+                Reconcile::Published { destinations, note }
+            }
+            TaskVerdict::NotCommitted { note } => {
+                self.messages.push(format!(
+                    "release target `{}` check task `{check}` reports the candidate is not published{f}; publishing it now",
+                    target.name,
+                    f = note_suffix(note.as_deref()),
+                ));
+                Reconcile::NotPublished
+            }
+            TaskVerdict::Unknown { detail } => {
+                let release_id = self.record.release_id.clone();
+                self.wait_for(
+                    ReleaseRunStatus::AwaitingDecision,
+                    Some(target.name.clone()),
+                    format!(
+                        "release Run {release_id} stopped at `awaiting-decision`: target `{}` check task `{check}` could not tell whether the candidate is published ({detail}); record it with `effigy release decide {release_id} --published` or `--not-published`",
+                        target.name
+                    ),
+                );
+                Reconcile::Waiting
+            }
+        })
+    }
+
+    fn mark_target_published(
+        &mut self,
+        target: &str,
+        destinations: Vec<String>,
+        note: Option<String>,
+        candidate: &str,
+    ) -> Result<(), ReleaseError> {
+        for destination in &destinations {
+            self.record_destination(target, None, destination, candidate)?;
+        }
+        if let Some(recorded) = self.record.target_mut(target) {
+            recorded.state = RecordTargetState::Published;
+            if note.is_some() {
+                recorded.note = note;
+            }
+        }
+        self.persist()
+    }
+
+    fn set_target_state(
+        &mut self,
+        target: &str,
+        state: RecordTargetState,
+    ) -> Result<(), ReleaseError> {
+        if let Some(recorded) = self.record.target_mut(target) {
+            recorded.state = state;
         }
         self.persist()
     }
@@ -914,7 +1233,7 @@ impl<'a, 's> Runner<'a, 's> {
             // pushed this tag without recording it (contract 054 §7).
             match self.effects.remote_tag_commit(&tag) {
                 Ok(Some(sha)) if sha == candidate => {
-                    self.record_destination(target, &identity, &tag, candidate)?;
+                    self.record_destination(target, Some(&identity), &tag, candidate)?;
                     continue;
                 }
                 Ok(Some(sha)) => {
@@ -965,7 +1284,7 @@ impl<'a, 's> Runner<'a, 's> {
             match self.effects.push_tag(&tag) {
                 Ok(()) => {
                     self.record_applied(&ticket, &tag, candidate)?;
-                    self.record_destination(target, &identity, &tag, candidate)?;
+                    self.record_destination(target, Some(&identity), &tag, candidate)?;
                 }
                 Err(error) => {
                     self.record_unknown(&ticket, &error)?;
@@ -1019,18 +1338,13 @@ impl<'a, 's> Runner<'a, 's> {
     fn record_destination(
         &mut self,
         target: &str,
-        identity: &str,
+        identity: Option<&str>,
         destination: &str,
         commit: &str,
     ) -> Result<(), ReleaseError> {
-        if let Some(recorded) = self
-            .record
-            .targets
-            .iter_mut()
-            .find(|recorded| recorded.name == target)
-        {
+        if let Some(recorded) = self.record.target_mut(target) {
             recorded.destinations.push(RecordDestination {
-                identity: identity.to_owned(),
+                identity: identity.map(str::to_owned),
                 destination: destination.to_owned(),
                 commit: commit.to_owned(),
             });
@@ -1039,20 +1353,28 @@ impl<'a, 's> Runner<'a, 's> {
     }
 
     fn verify(&mut self) -> Result<(), ReleaseError> {
+        // Verification writes nothing external, so a resumed verify stage
+        // re-runs it and records one result per target rather than appending a
+        // second copy of each.
+        self.record.verifications.clear();
         let mut failed = Vec::new();
         for target in self.plan.targets.clone() {
             let Some(task) = target.verify.clone() else {
                 continue;
             };
-            let outcome = self.run_release_task(&task, ReleaseStage::Verify, Some(&target.name));
+            let outcome = self.run_release_task(
+                &task,
+                ReleaseStage::Verify,
+                ReleaseTaskSubject::Target(&target.name),
+            );
             let (passed, note) = match &outcome {
-                Ok(response) => (
-                    response.success,
-                    (!response.success).then(|| {
-                        if response.stderr.is_empty() {
-                            response.stdout.clone()
+                Ok(outcome) => (
+                    outcome.response.success,
+                    (!outcome.response.success).then(|| {
+                        if outcome.response.stderr.is_empty() {
+                            outcome.response.stdout.clone()
                         } else {
-                            response.stderr.clone()
+                            outcome.response.stderr.clone()
                         }
                     }),
                 ),
@@ -1192,12 +1514,24 @@ impl<'a, 's> Runner<'a, 's> {
         &mut self,
         task: &str,
         stage: ReleaseStage,
-        subject: Option<&str>,
-    ) -> Result<TaskResponse, ReleaseError> {
-        let name = subject.unwrap_or(task);
+        subject: ReleaseTaskSubject<'_>,
+    ) -> Result<TaskOutcome, ReleaseError> {
+        let name = subject.name().unwrap_or(task);
         let stem = format!("{}-{}", sanitize(name), stage.label());
         let input_path = self.candidate_dir.join(format!("{stem}.input.json"));
         let output_path = self.candidate_dir.join(format!("{stem}.output.json"));
+        // A stale output from an earlier attempt must never be read as this
+        // attempt's answer.
+        match std::fs::remove_file(&output_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(ReleaseError::TaskInvocation(format!(
+                    "failed to clear the previous release task output {}: {error}",
+                    output_path.display()
+                )))
+            }
+        }
         let input = input::release_input_value(self.record, stage, subject);
         let bytes = serde_json::to_vec_pretty(&input).map_err(|error| {
             ReleaseError::TaskInvocation(format!(
@@ -1228,12 +1562,104 @@ impl<'a, 's> Runner<'a, 's> {
             self.record.release_id.clone(),
         );
         env.insert("EFFIGY_RELEASE_STAGE".to_owned(), stage.label().to_owned());
-        self.effects.run_task(&TaskRequest {
+        let response = self.effects.run_task(&TaskRequest {
             task: task.to_owned(),
             label: format!("release {} task `{task}`", stage.label()),
             cwd: self.plan.repo_root.clone(),
             env,
-        })
+            input_path,
+            output_path: output_path.clone(),
+        })?;
+        let output = input::read_release_task_output(&output_path);
+        Ok(TaskOutcome { response, output })
+    }
+}
+
+/// One task invocation and what it wrote to `$EFFIGY_RELEASE_OUTPUT`.
+struct TaskOutcome {
+    response: TaskResponse,
+    /// `Err` is an unusable output document, never a guess at its meaning.
+    output: Result<Option<ReleaseTaskOutput>, String>,
+}
+
+/// What a task target's result means for the destination.
+enum TaskVerdict {
+    Committed {
+        destinations: Vec<String>,
+        note: Option<String>,
+    },
+    NotCommitted {
+        note: Option<String>,
+    },
+    Unknown {
+        detail: String,
+    },
+}
+
+/// Read a task target's declared result.
+///
+/// Contract 054 §6: a task that exits 0 without writing an output records
+/// `committed = unknown`, and an unusable output is an unknown outcome too — it
+/// never becomes "published" or "not published" by assumption.
+fn task_verdict(outcome: &TaskOutcome, task: &str) -> TaskVerdict {
+    let output = match &outcome.output {
+        Ok(Some(output)) => output,
+        Ok(None) if outcome.response.success => {
+            return TaskVerdict::Unknown {
+                detail: format!("task `{task}` exited 0 without writing an output"),
+            }
+        }
+        Ok(None) => {
+            return TaskVerdict::Unknown {
+                detail: format!("task `{task}` failed without writing an output"),
+            }
+        }
+        Err(reason) => {
+            return TaskVerdict::Unknown {
+                detail: format!("task `{task}` output is unusable: {reason}"),
+            }
+        }
+    };
+    match output.committed {
+        Committed::Yes => TaskVerdict::Committed {
+            destinations: output.destinations.clone(),
+            note: output.note.clone(),
+        },
+        Committed::No => TaskVerdict::NotCommitted {
+            note: output.note.clone(),
+        },
+        Committed::Unknown => TaskVerdict::Unknown {
+            detail: match &output.note {
+                Some(note) => format!("task `{task}` reported committed = unknown: {note}"),
+                None => format!("task `{task}` reported committed = unknown"),
+            },
+        },
+    }
+}
+
+/// What reconciling an unknown publish found.
+enum Reconcile {
+    Published {
+        destinations: Vec<String>,
+        note: Option<String>,
+    },
+    NotPublished,
+    /// The Run stopped for an operator decision.
+    Waiting,
+}
+
+fn note_suffix(note: Option<&str>) -> String {
+    match note {
+        Some(note) => format!(" ({note})"),
+        None => String::new(),
+    }
+}
+
+fn stderr_suffix(response: &TaskResponse) -> String {
+    if response.stderr.is_empty() {
+        String::new()
+    } else {
+        format!(": {}", response.stderr)
     }
 }
 

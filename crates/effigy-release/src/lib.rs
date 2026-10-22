@@ -45,15 +45,17 @@ pub use verify_install::{
 };
 
 pub use run::{
-    new_run_id, read_release_record, read_release_record_for_root, release_home,
-    release_input_value, release_owner, render_release_receipt_json, render_release_receipt_text,
-    render_release_run_json, run_release, sha256_bytes, verify_artifact_digests, GitEffects,
-    RecordApproval, RecordArtifact, RecordArtifactFile, RecordCheckpoint, RecordDestination,
+    new_run_id, parse_release_task_output, read_release_record, read_release_record_for_root,
+    read_release_task_output, release_home, release_input_value, release_owner,
+    render_release_receipt_json, render_release_receipt_text, render_release_run_json, run_release,
+    sha256_bytes, verify_artifact_digests, GitEffects, HostedEvidence, RecordApproval,
+    RecordArtifact, RecordArtifactFile, RecordCheckpoint, RecordDecision, RecordDestination,
     RecordGate, RecordIdentity, RecordTarget, RecordTargetState, RecordVerification, ReleaseAction,
     ReleaseCheckpoint, ReleaseEffects, ReleaseReceipt, ReleaseRecord, ReleaseRunOutcome,
-    ReleaseRunRequest, ReleaseRunStatus, ReleaseSession, ReleaseStage, ReleaseState, TaskRequest,
-    TaskResponse, RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV, RELEASE_RECEIPT_SCHEMA,
-    RELEASE_RECORD_SCHEMA, RELEASE_TASK_INPUT_SCHEMA,
+    ReleaseRunRequest, ReleaseRunStatus, ReleaseSession, ReleaseStage, ReleaseState,
+    ReleaseTaskOutput, ReleaseTaskSubject, TargetDecision, TaskRequest, TaskResponse,
+    RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV, RELEASE_RECEIPT_SCHEMA, RELEASE_RECORD_SCHEMA,
+    RELEASE_TASK_INPUT_SCHEMA, RELEASE_TASK_OUTPUT_SCHEMA,
 };
 
 pub use effigy_changelog::BumpKind;

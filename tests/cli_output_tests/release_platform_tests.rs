@@ -595,3 +595,94 @@ fn release_run_refuses_a_dirty_tree_and_names_the_run_for_an_unknown_id() {
     );
     assert!(message.contains("release Run is"), "got: {message}");
 }
+
+/// A release project whose only destination is a project task that reports an
+/// unknown publish outcome, so the Run needs an operator decision (054 §7).
+fn decision_release_project(root: &Path) {
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.2.4\"\nedition = \"2021\"\n",
+    )
+    .expect("Cargo.toml");
+    fs::write(
+        root.join("CHANGELOG.md"),
+        "# Changelog\n\n## [Unreleased]\n\n### Added\n- A release Run.\n\n## [0.2.4] - 2026-10-01\n\n### Fixed\n- A previous release.\n",
+    )
+    .expect("changelog");
+    fs::write(
+        root.join("publish.sh"),
+        "#!/bin/sh\nprintf '{\"schema\":\"effigy.release.output.v1\",\"committed\":\"unknown\"}' > \"$EFFIGY_RELEASE_OUTPUT\"\n",
+    )
+    .expect("publish script");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"[tasks."release:publish:fake"]
+run = "sh publish.sh"
+
+[release]
+changelog = "CHANGELOG.md"
+
+[release.identities.app]
+version-file = "Cargo.toml"
+version-path = "package.version"
+tag-format = "v{version}"
+
+[release.targets.fake]
+kind = "task"
+task = "release:publish:fake"
+"#,
+    )
+    .expect("effigy.toml");
+}
+
+#[test]
+fn release_decide_records_an_unknown_publish_outcome_and_continues() {
+    let root = temp_workspace("release-decide");
+    decision_release_project(&root);
+    init_git_repo(&root);
+    git_commit_all(&root, "fixture");
+    attach_bare_remote(&root);
+    let home = temp_workspace("release-decide-home");
+
+    // A non-`tag` target turns the publish approval checkpoint on (054 §10).
+    let paused = run_release_cli(&root, &home, &["release", "run"]);
+    let paused = parse_stdout_json(&paused);
+    assert!(
+        paused["result"]["receipt"]["release"]["status"] == "awaiting-approval",
+        "{}",
+        serde_json::to_string_pretty(&paused).expect("serialize")
+    );
+    let run_id = paused["result"]["receipt"]["release"]["id"]
+        .as_str()
+        .expect("release id")
+        .to_owned();
+
+    let published = run_release_cli(&root, &home, &["release", "approve", &run_id]);
+    let published = parse_stdout_json(&published);
+    assert!(!published["ok"].as_bool().unwrap_or(true), "{published}");
+    assert_eq!(
+        published["error"]["details"]["receipt"]["targets"][0]["state"],
+        "unknown"
+    );
+
+    // Without a `check` task the Run stops for an operator ruling.
+    let waiting = run_release_cli(&root, &home, &["release", "resume", &run_id]);
+    let waiting = parse_stdout_json(&waiting);
+    assert!(
+        waiting["result"]["receipt"]["release"]["status"] == "awaiting-decision",
+        "{}",
+        serde_json::to_string_pretty(&waiting).expect("serialize")
+    );
+
+    let decided = run_release_cli(&root, &home, &["release", "decide", &run_id, "--published"]);
+    let decided = parse_stdout_json(&decided);
+    assert!(
+        decided["result"]["receipt"]["release"]["status"] == "complete",
+        "{}",
+        serde_json::to_string_pretty(&decided).expect("serialize")
+    );
+    let receipt = &decided["result"]["receipt"];
+    assert_eq!(receipt["published"], true);
+    assert_eq!(receipt["decisions"][0]["target"], "fake");
+    assert_eq!(receipt["decisions"][0]["decision"], "published");
+}

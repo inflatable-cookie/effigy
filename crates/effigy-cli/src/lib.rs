@@ -880,6 +880,12 @@ pub enum ReleaseSubcommand {
     Approve {
         run: String,
     },
+    /// `effigy release decide <run> --published|--not-published`: record an
+    /// operator's ruling on an unknown publish outcome (contract 054 §7).
+    Decide {
+        run: String,
+        published: bool,
+    },
     /// `effigy release receipt <run>`: print the Run's receipt.
     Receipt {
         run: Option<String>,

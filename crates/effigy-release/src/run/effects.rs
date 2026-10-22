@@ -9,6 +9,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::hosted_evidence::{
+    collect_hosted_evidence_at, is_waiting_evidence, GhCliHostedEvidenceLookup, HostedEvidenceSpec,
+};
 use crate::ReleaseError;
 
 /// One task invocation from a release stage (contract 054 §6).
@@ -19,6 +22,10 @@ pub struct TaskRequest {
     pub label: String,
     pub cwd: PathBuf,
     pub env: BTreeMap<String, String>,
+    /// Where the task reads `effigy.release.input.v1`.
+    pub input_path: PathBuf,
+    /// Where the task writes `effigy.release.output.v1`.
+    pub output_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +33,24 @@ pub struct TaskResponse {
     pub stdout: String,
     pub stderr: String,
     pub success: bool,
+}
+
+/// What a hosted wait found for one gate (contract 054 §3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostedEvidence {
+    /// Exact-commit evidence for this commit, from this repository: the gate
+    /// passes without running its command.
+    Accepted {
+        url: String,
+        repository: String,
+        commit: String,
+    },
+    /// No evidence yet, or a run still in progress: the Run waits without
+    /// holding a process open and re-checks when it resumes.
+    Waiting { detail: String },
+    /// A failed run, the wrong commit or repository, an ambiguous answer or an
+    /// unusable lookup: the gate fails closed.
+    Failed { detail: String },
 }
 
 fn command_error(context: &str, output: &std::process::Output) -> ReleaseError {
@@ -62,6 +87,13 @@ pub trait ReleaseEffects: std::fmt::Debug {
     /// prepared change that never committed leaves nothing behind.
     fn discard_staged(&mut self, paths: &[PathBuf]) -> Result<(), ReleaseError>;
     fn run_task(&mut self, request: &TaskRequest) -> Result<TaskResponse, ReleaseError>;
+    /// Exact-commit hosted evidence for one gate (contract 054 §3, §7).
+    fn hosted_evidence(
+        &mut self,
+        gate: &str,
+        spec: &HostedEvidenceSpec,
+        commit: &str,
+    ) -> Result<HostedEvidence, ReleaseError>;
     /// The identity recorded as an approval's approver.
     fn operator(&mut self) -> Option<String>;
 }
@@ -312,6 +344,29 @@ impl ReleaseEffects for GitEffects {
             stdout: String::from_utf8_lossy(&output.stdout).trim().to_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
             success: output.status.success(),
+        })
+    }
+
+    fn hosted_evidence(
+        &mut self,
+        gate: &str,
+        spec: &HostedEvidenceSpec,
+        commit: &str,
+    ) -> Result<HostedEvidence, ReleaseError> {
+        let evaluated =
+            collect_hosted_evidence_at(&self.repo_root, spec, commit, &GhCliHostedEvidenceLookup);
+        Ok(match evaluated {
+            Ok(run) => HostedEvidence::Accepted {
+                url: run.url,
+                repository: run.repository,
+                commit: run.head_sha,
+            },
+            Err(error) if is_waiting_evidence(&error) => HostedEvidence::Waiting {
+                detail: error.diagnostic(gate),
+            },
+            Err(error) => HostedEvidence::Failed {
+                detail: error.diagnostic(gate),
+            },
         })
     }
 

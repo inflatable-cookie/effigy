@@ -385,6 +385,29 @@ During v0.x, MINOR bumps may include breaking changes.
   the active or last Run's id, stage, status and what it waits on.
 - Release tasks and artifact tasks receive the candidate as
   `effigy.release.input.v1` at `$EFFIGY_RELEASE_INPUT`.
+- `task` release targets (contract 054 §6, §7). A `[release.targets.<name>]`
+  of `kind = "task"` now publishes in the Run, after the tag targets and in
+  declared order, through its project task. Every task target, artifact task
+  and verify task reads the exact certified candidate at
+  `$EFFIGY_RELEASE_INPUT` (`effigy.release.input.v1`: Run, stage, commits,
+  identities, artifact paths and sha256, target name) and writes
+  `effigy.release.output.v1` at `$EFFIGY_RELEASE_OUTPUT` with `committed`
+  (`true`, `false` or `"unknown"`), destination IDs and an optional note. An
+  unusable output is an unknown outcome, never an assumption.
+- Retries never publish blind. `effigy release resume` reconciles an unknown
+  `task` target by running its `check` task first (`committed: true` means the
+  candidate is already there, `false` means it is not), and a target with no
+  `check` stops at `awaiting-decision` until `effigy release decide <run>
+  --published|--not-published` records who decided, when, and what. A target
+  that succeeded stays recorded, so a partial fan-out resumes with the
+  remaining targets.
+- Hosted evidence is a checkpoint, not a held process. A gate with
+  `reuse-hosted-evidence = true` stops the Run at
+  `awaiting-hosted-evidence` while the exact-commit GitHub Actions evidence is
+  missing or still running, keeps the previous checkpoints and holds no process
+  open; `effigy release resume <run>` re-checks it and skips the gates that
+  already passed. A failed run, the wrong commit or repository, an ambiguous
+  answer or an unusable lookup still fails the gate closed.
 - The release platform's configuration and read surfaces (contract 054 §2, §4
   and the `status`/`--plan` half of §5). `[release]` now expresses named
   `[release.identities.<name>]` of kind `semver` (the default), `digest`,

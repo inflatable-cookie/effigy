@@ -198,6 +198,14 @@ struct TestEffects {
     /// Print this on stdout for a `task` identity.
     task_stdout: String,
     tasks: Vec<String>,
+    /// The `effigy.release.output.v1` document each task writes, by task name.
+    task_outputs: BTreeMap<String, String>,
+    /// Every input document a task was given, in invocation order.
+    inputs: Vec<serde_json::Value>,
+    /// Every output document a task wrote, in invocation order.
+    outputs: Vec<String>,
+    /// Scripted hosted evidence, one answer per check, oldest first.
+    hosted_evidence: Vec<HostedEvidence>,
     /// What an artifact task builds, relative to the release root.
     artifact_path: Option<String>,
     artifact_contents: Vec<u8>,
@@ -216,6 +224,10 @@ impl TestEffects {
             fail_commit: false,
             task_stdout: "identity-from-task\n".to_owned(),
             tasks: Vec::new(),
+            task_outputs: BTreeMap::new(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            hosted_evidence: Vec::new(),
             artifact_path: None,
             artifact_contents: b"certified artifact".to_vec(),
         }
@@ -290,6 +302,10 @@ impl ReleaseEffects for TestEffects {
 
     fn run_task(&mut self, request: &TaskRequest) -> Result<TaskResponse, ReleaseError> {
         self.tasks.push(request.task.clone());
+        let input = std::fs::read_to_string(&request.input_path).expect("release task input");
+        self.inputs.push(
+            serde_json::from_str(&input).unwrap_or_else(|error| panic!("input json: {error}")),
+        );
         if self.fail_task.as_deref() == Some(request.task.as_str()) {
             return Ok(TaskResponse {
                 stdout: String::new(),
@@ -304,11 +320,37 @@ impl ReleaseEffects for TestEffects {
             }
             std::fs::write(&path, &self.artifact_contents).expect("artifact contents");
         }
+        if let Some(output) = self.task_outputs.get(&request.task) {
+            std::fs::write(&request.output_path, output).expect("release task output");
+            self.outputs.push(output.clone());
+        }
         Ok(TaskResponse {
             stdout: self.task_stdout.trim_end().to_owned(),
             stderr: String::new(),
             success: true,
         })
+    }
+
+    fn hosted_evidence(
+        &mut self,
+        _gate: &str,
+        _spec: &crate::hosted_evidence::HostedEvidenceSpec,
+        commit: &str,
+    ) -> Result<HostedEvidence, ReleaseError> {
+        if self.hosted_evidence.is_empty() {
+            return Err(ReleaseError::TaskInvocation(
+                "no scripted hosted evidence for this check".to_owned(),
+            ));
+        }
+        let mut evidence = self.hosted_evidence.remove(0);
+        if let HostedEvidence::Accepted {
+            commit: accepted, ..
+        } = &mut evidence
+        {
+            // The fake source answers for the commit it was asked about.
+            *accepted = commit.to_owned();
+        }
+        Ok(evidence)
     }
 
     fn operator(&mut self) -> Option<String> {
@@ -378,6 +420,19 @@ fn artifact_digests(outcome: &ReleaseRunOutcome) -> Vec<(String, String)> {
         }
     }
     digests
+}
+
+/// Compile one of the shipped release protocol schema documents.
+fn shipped_schema(schema: &str) -> effigy_json_schema::CompiledSchema {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/knowledge/contracts/payload-schemas")
+        .join(format!("{schema}.json"));
+    let document: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display())),
+    )
+    .expect("parse shipped schema");
+    effigy_json_schema::CompiledSchema::compile(&document).expect("compile shipped schema")
 }
 
 // ---------------------------------------------------------------------------
@@ -792,30 +847,7 @@ fn a_failed_prepare_commit_rolls_the_tree_back() {
 }
 
 #[test]
-fn validate_refuses_a_task_target_and_a_dirty_tree() {
-    let task_target = fixture("validate");
-    single_identity_project(&task_target);
-    let manifest = std::fs::read_to_string(task_target.root.join("effigy.toml")).expect("manifest");
-    std::fs::write(
-        task_target.root.join("effigy.toml"),
-        format!("{manifest}\n[release.targets.npm]\nkind = \"task\"\ntask = \"publish:npm\"\n"),
-    )
-    .expect("write manifest");
-    commit_and_push(&task_target);
-
-    let mut effects = TestEffects::new(&task_target.root);
-    let outcome = run(&task_target, &mut effects, ReleaseAction::Run, None);
-    assert_eq!(outcome.record.status, ReleaseRunStatus::Failed);
-    assert!(
-        outcome
-            .record
-            .errors
-            .iter()
-            .any(|error| error.contains("publishes `tag` targets only")),
-        "{:?}",
-        outcome.record.errors
-    );
-
+fn validate_refuses_a_dirty_tree() {
     let dirty = fixture("dirty");
     single_identity_project(&dirty);
     write(&dirty.root, "untracked.txt", "pending work\n");
@@ -1020,4 +1052,628 @@ fn copy_tree(source: &Path, target: &Path) {
             std::fs::copy(&path, &destination).expect("copy fixture file");
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// task targets, check/verify, decisions and hosted waits (contract 054 §3, §6, §7)
+// ---------------------------------------------------------------------------
+
+/// Append `[release]` configuration to the fixture's manifest.
+fn append_manifest(fixture: &Fixture, table: &str) {
+    let manifest = std::fs::read_to_string(fixture.root.join("effigy.toml")).expect("manifest");
+    std::fs::write(
+        fixture.root.join("effigy.toml"),
+        format!("{}\n{table}\n", manifest.trim_end()),
+    )
+    .expect("write manifest");
+}
+
+const NPM_TARGET: &str = r#"[release.targets.npm]
+kind = "task"
+task = "release:publish:npm"
+verify = "release:verify:npm"
+"#;
+
+const NPM_TARGET_WITH_CHECK: &str = r#"[release.targets.npm]
+kind = "task"
+task = "release:publish:npm"
+check = "release:check:npm"
+verify = "release:verify:npm"
+"#;
+
+fn npm_output(committed: &str, destinations: &[&str]) -> String {
+    serde_json::json!({
+        "schema": RELEASE_TASK_OUTPUT_SCHEMA,
+        "committed": match committed {
+            "true" => serde_json::json!(true),
+            "false" => serde_json::json!(false),
+            _ => serde_json::json!("unknown"),
+        },
+        "destinations": destinations,
+        "note": "fake npm registry",
+    })
+    .to_string()
+}
+
+/// Drive a Run past the §10 ruling 3 approval checkpoint that a non-`tag`
+/// target turns on.
+fn approve_publish(
+    fixture: &Fixture,
+    effects: &mut TestEffects,
+    paused: &ReleaseRunOutcome,
+) -> ReleaseRunOutcome {
+    assert_eq!(
+        paused.record.status,
+        ReleaseRunStatus::AwaitingApproval,
+        "a non-`tag` target defaults the publish approval on: {:?}",
+        paused.record.errors
+    );
+    assert_eq!(paused.record.waiting_on.as_deref(), Some("publish"));
+    run(
+        fixture,
+        effects,
+        ReleaseAction::Approve {
+            run: paused.record.release_id.clone(),
+        },
+        None,
+    )
+}
+
+#[test]
+fn a_task_target_publishes_the_certified_candidate() {
+    let fixture = fixture("task-target");
+    single_identity_project(&fixture);
+    append_manifest(&fixture, NPM_TARGET);
+    commit_and_push(&fixture);
+
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    effects.task_outputs.insert(
+        "release:publish:npm".to_owned(),
+        npm_output("true", &["fixture@0.2.5"]),
+    );
+
+    let paused = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    assert!(
+        !effects
+            .tasks
+            .iter()
+            .any(|task| task == "release:publish:npm"),
+        "nothing publishes before the approval: {:?}",
+        effects.tasks
+    );
+    assert!(remote_tags(&fixture).is_empty());
+
+    let approved = approve_publish(&fixture, &mut effects, &paused);
+    assert!(
+        approved.succeeded(),
+        "approve failed: {:?}",
+        approved.record.errors
+    );
+    assert_eq!(approved.record.status, ReleaseRunStatus::Complete);
+    let candidate = approved
+        .record
+        .candidate_commit
+        .clone()
+        .expect("candidate commit");
+
+    // The task received the certified candidate and the target name (054 §6).
+    let publish_input = effects
+        .inputs
+        .iter()
+        .find(|input| input["target"] == "npm" && input["stage"] == "publish")
+        .unwrap_or_else(|| panic!("no npm publish input: {:?}", effects.inputs));
+    assert_eq!(publish_input["schema"], RELEASE_TASK_INPUT_SCHEMA);
+    assert_eq!(publish_input["candidate_commit"], candidate.as_str());
+    assert_eq!(publish_input["subject"]["kind"], "target");
+    assert_eq!(publish_input["subject"]["name"], "npm");
+    let artifact = &approved.record.artifacts[0];
+    assert_eq!(
+        publish_input["artifacts"][0]["files"][0]["sha256"],
+        artifact.files[0].sha256.as_str()
+    );
+    assert_eq!(
+        publish_input["identities"][0]["identity"],
+        approved.record.identities[0]
+            .identity
+            .as_deref()
+            .expect("identity")
+    );
+
+    // The declared result is recorded on the target and in the receipt.
+    let npm = approved.record.target("npm").expect("npm target");
+    assert_eq!(npm.state, RecordTargetState::Published);
+    assert_eq!(npm.destinations.len(), 1);
+    assert_eq!(npm.destinations[0].destination, "fixture@0.2.5");
+    assert_eq!(npm.destinations[0].commit, candidate);
+    assert_eq!(npm.destinations[0].identity, None);
+    assert_eq!(npm.note.as_deref(), Some("fake npm registry"));
+
+    let receipt = approved.receipt();
+    assert!(receipt.published);
+    assert!(!receipt.unverified);
+    assert_eq!(receipt.verification.len(), 1);
+    assert_eq!(receipt.verification[0].target, "npm");
+    assert!(receipt.verification[0].passed);
+    assert_eq!(
+        effects
+            .inputs
+            .iter()
+            .filter(|input| input["target"] == "npm" && input["stage"] == "verify")
+            .count(),
+        1,
+        "the target's verify task ran against the published candidate"
+    );
+    // The tag target published first, so later targets can rely on the tag
+    // existing (§10 ruling 1).
+    assert_eq!(remote_tags(&fixture).get("v0.2.5"), Some(&candidate));
+
+    // Every document the task protocol exchanged satisfies the shipped
+    // `effigy.release.input.v1` and `effigy.release.output.v1` schemas.
+    let input_schema = shipped_schema(RELEASE_TASK_INPUT_SCHEMA);
+    for input in &effects.inputs {
+        let errors = input_schema.validate(input);
+        assert!(errors.is_empty(), "{errors:?} in {input}");
+    }
+    let output_schema = shipped_schema(RELEASE_TASK_OUTPUT_SCHEMA);
+    for output in &effects.outputs {
+        let document: serde_json::Value = serde_json::from_str(output).expect("output document");
+        let errors = output_schema.validate(&document);
+        assert!(errors.is_empty(), "{errors:?} in {document}");
+    }
+    assert!(!effects.outputs.is_empty());
+}
+
+#[test]
+fn a_task_target_that_reports_it_did_not_publish_fails_closed() {
+    let fixture = fixture("task-not-published");
+    single_identity_project(&fixture);
+    append_manifest(&fixture, NPM_TARGET);
+    commit_and_push(&fixture);
+
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    effects
+        .task_outputs
+        .insert("release:publish:npm".to_owned(), npm_output("false", &[]));
+
+    let paused = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    let outcome = approve_publish(&fixture, &mut effects, &paused);
+
+    assert_eq!(outcome.record.status, ReleaseRunStatus::Failed);
+    assert!(
+        outcome
+            .record
+            .errors
+            .iter()
+            .any(|error| error.contains("did not publish")),
+        "{:?}",
+        outcome.record.errors
+    );
+    assert_eq!(
+        outcome.record.target("npm").expect("npm").state,
+        RecordTargetState::Failed
+    );
+    assert!(
+        outcome
+            .record
+            .target("npm")
+            .expect("npm")
+            .destinations
+            .is_empty(),
+        "a refused publish records no destination"
+    );
+    // The release stops after the failure: no verify and no closeout.
+    assert!(outcome.record.verifications.is_empty());
+    assert_eq!(outcome.record.status, ReleaseRunStatus::Failed);
+    assert!(!outcome.receipt().published);
+}
+
+#[test]
+fn an_unknown_task_publish_without_a_check_stops_for_an_operator_decision() {
+    let fixture = fixture("task-decision");
+    single_identity_project(&fixture);
+    append_manifest(&fixture, NPM_TARGET);
+    commit_and_push(&fixture);
+
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    effects
+        .task_outputs
+        .insert("release:publish:npm".to_owned(), npm_output("unknown", &[]));
+
+    let paused = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    let unknown = approve_publish(&fixture, &mut effects, &paused);
+    assert_eq!(unknown.record.status, ReleaseRunStatus::Failed);
+    assert_eq!(
+        unknown.record.target("npm").expect("npm").state,
+        RecordTargetState::Unknown
+    );
+    assert_eq!(
+        effects
+            .tasks
+            .iter()
+            .filter(|task| *task == "release:publish:npm")
+            .count(),
+        1
+    );
+
+    // A resume re-enters publish, finds the unknown outcome and stops for the
+    // operator instead of retrying blind (§7).
+    let waiting = resume(&fixture, &mut effects);
+    assert_eq!(waiting.record.status, ReleaseRunStatus::AwaitingDecision);
+    assert_eq!(waiting.record.waiting_on.as_deref(), Some("npm"));
+    assert!(waiting.succeeded(), "a waiting Run is not a failing one");
+    assert_eq!(
+        effects
+            .tasks
+            .iter()
+            .filter(|task| *task == "release:publish:npm")
+            .count(),
+        1,
+        "the unknown publish was never retried"
+    );
+
+    // The operator records "published": the Run continues without publishing
+    // again and the receipt says who decided and when.
+    let decided = run(
+        &fixture,
+        &mut effects,
+        ReleaseAction::Decide {
+            run: waiting.record.release_id.clone(),
+            decision: TargetDecision::Published,
+        },
+        None,
+    );
+    assert!(
+        decided.succeeded(),
+        "decide failed: {:?}",
+        decided.record.errors
+    );
+    assert_eq!(decided.record.status, ReleaseRunStatus::Complete);
+    assert_eq!(
+        effects
+            .tasks
+            .iter()
+            .filter(|task| *task == "release:publish:npm")
+            .count(),
+        1
+    );
+    assert_eq!(
+        decided.record.target("npm").expect("npm").state,
+        RecordTargetState::Published
+    );
+    assert_eq!(decided.record.decisions.len(), 1);
+    let decision = &decided.record.decisions[0];
+    assert_eq!(decision.target, "npm");
+    assert_eq!(decision.decision, "published");
+    assert_eq!(decision.decided_by, "release tests");
+    assert!(!decision.decided_at.is_empty());
+    let receipt = decided.receipt();
+    assert!(receipt.published);
+    assert_eq!(receipt.decisions.len(), 1);
+    assert!(render_release_receipt_text(&receipt).contains("decisions:"));
+}
+
+#[test]
+fn an_unknown_task_publish_with_a_check_reconciles_before_any_retry() {
+    // The check reports the candidate is already there: publish again would be
+    // a blind retry, so it publishes nothing.
+    let already = fixture("task-check-published");
+    single_identity_project(&already);
+    append_manifest(&already, NPM_TARGET_WITH_CHECK);
+    commit_and_push(&already);
+
+    let mut effects = TestEffects::new(&already.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    effects
+        .task_outputs
+        .insert("release:publish:npm".to_owned(), npm_output("unknown", &[]));
+    effects.task_outputs.insert(
+        "release:check:npm".to_owned(),
+        npm_output("true", &["fixture@0.2.5"]),
+    );
+
+    let paused = run(&already, &mut effects, ReleaseAction::Run, None);
+    let unknown = approve_publish(&already, &mut effects, &paused);
+    assert_eq!(
+        unknown.record.target("npm").expect("npm").state,
+        RecordTargetState::Unknown
+    );
+
+    let reconciled = resume(&already, &mut effects);
+    assert!(
+        reconciled.succeeded(),
+        "resume failed: {:?}",
+        reconciled.record.errors
+    );
+    assert_eq!(reconciled.record.status, ReleaseRunStatus::Complete);
+    assert_eq!(
+        reconciled.record.target("npm").expect("npm").state,
+        RecordTargetState::Published
+    );
+    assert_eq!(
+        reconciled.record.target("npm").expect("npm").destinations[0].destination,
+        "fixture@0.2.5"
+    );
+    assert_eq!(
+        effects
+            .tasks
+            .iter()
+            .filter(|task| *task == "release:publish:npm")
+            .count(),
+        1,
+        "the check reconciled the outcome; nothing was published twice"
+    );
+    assert_eq!(
+        effects
+            .tasks
+            .iter()
+            .filter(|task| *task == "release:check:npm")
+            .count(),
+        1
+    );
+
+    // The check reports the candidate is not there: publishing now is not
+    // blind, and the retry is recorded.
+    let missing = fixture("task-check-missing");
+    single_identity_project(&missing);
+    append_manifest(&missing, NPM_TARGET_WITH_CHECK);
+    commit_and_push(&missing);
+
+    let mut effects = TestEffects::new(&missing.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    effects
+        .task_outputs
+        .insert("release:publish:npm".to_owned(), npm_output("unknown", &[]));
+    effects
+        .task_outputs
+        .insert("release:check:npm".to_owned(), npm_output("false", &[]));
+
+    let paused = run(&missing, &mut effects, ReleaseAction::Run, None);
+    let unknown = approve_publish(&missing, &mut effects, &paused);
+    assert_eq!(unknown.record.status, ReleaseRunStatus::Failed);
+
+    // A second publish declares success this time.
+    effects.task_outputs.insert(
+        "release:publish:npm".to_owned(),
+        npm_output("true", &["fixture@0.2.5"]),
+    );
+    let retried = resume(&missing, &mut effects);
+    assert!(
+        retried.succeeded(),
+        "resume failed: {:?}",
+        retried.record.errors
+    );
+    assert_eq!(retried.record.status, ReleaseRunStatus::Complete);
+    assert_eq!(
+        effects
+            .tasks
+            .iter()
+            .filter(|task| *task == "release:check:npm")
+            .count(),
+        1
+    );
+    assert_eq!(
+        effects
+            .tasks
+            .iter()
+            .filter(|task| *task == "release:publish:npm")
+            .count(),
+        2,
+        "the check said it was not published, so the retry published it"
+    );
+    assert_eq!(
+        retried.record.target("npm").expect("npm").state,
+        RecordTargetState::Published
+    );
+}
+
+#[test]
+fn a_partial_task_target_fan_out_resumes_with_the_remaining_target() {
+    let fixture = fixture("task-fanout");
+    single_identity_project(&fixture);
+    append_manifest(
+        &fixture,
+        &format!(
+            "{NPM_TARGET}\n[release.targets.gh]\nkind = \"task\"\ntask = \"release:publish:gh\"\ncheck = \"release:check:gh\"\n"
+        ),
+    );
+    commit_and_push(&fixture);
+
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    effects.task_outputs.insert(
+        "release:publish:npm".to_owned(),
+        npm_output("true", &["fixture@0.2.5"]),
+    );
+    // The second target's publish outcome is unknown: npm stays recorded.
+    effects
+        .task_outputs
+        .insert("release:publish:gh".to_owned(), npm_output("unknown", &[]));
+    effects.task_outputs.insert(
+        "release:check:gh".to_owned(),
+        npm_output("true", &["https://example.test/releases/v0.2.5"]),
+    );
+
+    let paused = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    let partial = approve_publish(&fixture, &mut effects, &paused);
+    assert_eq!(partial.record.status, ReleaseRunStatus::Failed);
+    assert_eq!(
+        partial.record.target("npm").expect("npm").state,
+        RecordTargetState::Published
+    );
+    assert_eq!(
+        partial.record.target("gh").expect("gh").state,
+        RecordTargetState::Unknown
+    );
+
+    let resumed = resume(&fixture, &mut effects);
+    assert!(
+        resumed.succeeded(),
+        "resume failed: {:?}",
+        resumed.record.errors
+    );
+    assert_eq!(
+        resumed.record.target("npm").expect("npm").state,
+        RecordTargetState::Published
+    );
+    assert_eq!(
+        resumed.record.target("gh").expect("gh").state,
+        RecordTargetState::Published
+    );
+    assert_eq!(
+        effects
+            .tasks
+            .iter()
+            .filter(|task| *task == "release:publish:npm")
+            .count(),
+        1,
+        "a target that succeeded is not published again"
+    );
+    assert_eq!(
+        resumed.record.target("gh").expect("gh").destinations[0].destination,
+        "https://example.test/releases/v0.2.5"
+    );
+    assert!(resumed.receipt().published);
+}
+
+#[test]
+fn a_hosted_wait_stops_the_run_without_holding_a_process_open() {
+    let waited = fixture("hosted-wait");
+    single_identity_project(&waited);
+    append_manifest(
+        &waited,
+        "[release.gates.hosted]\ncommand = \"exit 7\"\nreuse-hosted-evidence = true\nstage = \"certify\"\n\n[release.hosted-evidence]\nworkflow = \"ci.yml\"\n",
+    );
+    commit_and_push(&waited);
+
+    let mut effects = TestEffects::new(&waited.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    effects.hosted_evidence = vec![HostedEvidence::Waiting {
+        detail: "hosted evidence for gate `hosted` is pending: run … status is `in_progress`."
+            .to_owned(),
+    }];
+
+    let waiting = run(&waited, &mut effects, ReleaseAction::Run, None);
+    assert!(
+        waiting.succeeded(),
+        "a hosted wait is not a failure: {:?}",
+        waiting.record.errors
+    );
+    assert_eq!(
+        waiting.record.status,
+        ReleaseRunStatus::AwaitingHostedEvidence
+    );
+    assert_eq!(waiting.record.waiting_on.as_deref(), Some("hosted"));
+    // The gate stage did not complete: the last checkpoint is still prepare.
+    assert_eq!(waiting.record.stage, "prepare");
+    assert!(waiting
+        .record
+        .gates
+        .iter()
+        .all(|gate| gate.stage != "certify" || gate.passed));
+    assert!(
+        remote_tags(&waited).is_empty(),
+        "nothing publishes while waiting"
+    );
+
+    // A resume re-checks the same gate and continues with the evidence now in
+    // hand. The gate's `exit 7` command never runs.
+    effects.hosted_evidence = vec![HostedEvidence::Accepted {
+        url: "https://github.com/acme/demo/actions/runs/1".to_owned(),
+        repository: "acme/demo".to_owned(),
+        commit: String::new(),
+    }];
+    let resumed = resume(&waited, &mut effects);
+    assert!(
+        resumed.succeeded(),
+        "resume failed: {:?}",
+        resumed.record.errors
+    );
+    assert_eq!(resumed.record.status, ReleaseRunStatus::Complete);
+    let hosted = resumed
+        .record
+        .gates
+        .iter()
+        .find(|gate| gate.name == "hosted")
+        .expect("hosted gate");
+    assert!(hosted.passed);
+    assert_eq!(
+        hosted.hosted_run.as_deref(),
+        Some("https://github.com/acme/demo/actions/runs/1")
+    );
+    // The candidate commit is the commit the evidence was asked about.
+    let candidate = resumed.record.candidate_commit.clone().expect("candidate");
+    assert!(effects.tasks.iter().all(|task| task != "exit 7"));
+    assert_eq!(remote_tags(&waited).get("v0.2.5"), Some(&candidate));
+
+    // Failed evidence fails the gate closed instead of waiting.
+    let failed_fixture = fixture("hosted-failed");
+    single_identity_project(&failed_fixture);
+    append_manifest(
+        &failed_fixture,
+        "[release.gates.hosted]\ncommand = \"exit 7\"\nreuse-hosted-evidence = true\nstage = \"certify\"\n\n[release.hosted-evidence]\nworkflow = \"ci.yml\"\n",
+    );
+    commit_and_push(&failed_fixture);
+    let mut effects = TestEffects::new(&failed_fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    effects.hosted_evidence = vec![HostedEvidence::Failed {
+        detail: "hosted evidence for gate `hosted` failed: run … conclusion is `failure`."
+            .to_owned(),
+    }];
+    let outcome = run(&failed_fixture, &mut effects, ReleaseAction::Run, None);
+    assert_eq!(outcome.record.status, ReleaseRunStatus::Failed);
+    assert!(
+        outcome
+            .record
+            .errors
+            .iter()
+            .any(|error| error.contains("hosted evidence")),
+        "{:?}",
+        outcome.record.errors
+    );
+    assert!(remote_tags(&failed_fixture).is_empty());
+}
+
+#[test]
+fn a_failed_task_target_verify_is_published_but_unverified() {
+    let fixture = fixture("task-unverified");
+    single_identity_project(&fixture);
+    append_manifest(&fixture, NPM_TARGET);
+    commit_and_push(&fixture);
+
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    effects.task_outputs.insert(
+        "release:publish:npm".to_owned(),
+        npm_output("true", &["fixture@0.2.5"]),
+    );
+    effects.fail_task = Some("release:verify:npm".to_owned());
+
+    let paused = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    let outcome = approve_publish(&fixture, &mut effects, &paused);
+
+    assert_eq!(outcome.record.status, ReleaseRunStatus::Complete);
+    let receipt = outcome.receipt();
+    assert!(receipt.published, "the release stays published");
+    assert!(receipt.unverified, "the failure is recorded, not undone");
+    assert!(receipt
+        .errors
+        .iter()
+        .any(|error| error.contains("published but unverified")));
+    assert_eq!(
+        outcome.record.target("npm").expect("npm").state,
+        RecordTargetState::Published
+    );
+    // Never unpublished: the destination is still recorded.
+    assert_eq!(
+        outcome
+            .record
+            .target("npm")
+            .expect("npm")
+            .destinations
+            .len(),
+        1
+    );
 }
