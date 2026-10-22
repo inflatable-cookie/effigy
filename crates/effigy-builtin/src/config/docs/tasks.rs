@@ -12,6 +12,8 @@ const SECTION_TASKS_CANONICAL_PREFIX: &[&str] = &[
     "# Discovery only: public tasks appear in human inventory and completion; internal tasks still run by name.",
     "visibility = \"public\"",
     "group = \"Development\"",
+    "# Optional one-line context shown by `effigy tasks` and `effigy <task> --help` (200 characters, one line).",
+    "description = \"Managed dev stack: API, web and jobs in one terminal\"",
     "# Run without a terminal UI with `effigy dev --headless` or `EFFIGY_MANAGED_HEADLESS=1`.",
     "# Inspect the supervisor from another shell with `effigy dev status|logs|stop`.",
     "# Optional task execution routing: host, container, or either (default).",

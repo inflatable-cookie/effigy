@@ -707,6 +707,7 @@ run = [{ task = "db:migrate" }]
             },
             output_json: false,
             plan: false,
+            help: false,
             output_mode: effigy_execution::ExecutionOutputMode::Capture,
             resolved: ResolvedTarget {
                 resolved_root: PathBuf::from("/workspace-root/acowtancy"),

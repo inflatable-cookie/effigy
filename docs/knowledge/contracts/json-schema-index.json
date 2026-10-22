@@ -138,6 +138,14 @@
     {
       "schema": "effigy.command.v1",
       "schema_version": 1,
+      "command": "effigy --json --repo <fixture_task_success> build --help",
+      "surface": "catalog task help",
+      "status": "active",
+      "payload_schema": "effigy.help.v1"
+    },
+    {
+      "schema": "effigy.command.v1",
+      "schema_version": 1,
       "command": "effigy --json state plan docs/knowledge/contracts/fixtures/state-stack/example-app-uat.toml",
       "surface": "built-in task",
       "status": "active",

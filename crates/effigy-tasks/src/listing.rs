@@ -88,6 +88,8 @@ struct CatalogTaskProjection {
     visibility: Option<ManifestTaskVisibility>,
     visibility_reason: Option<&'static str>,
     group: Option<String>,
+    /// One line of human context declared on the task definition.
+    description: Option<String>,
 }
 
 struct CatalogTaskMatch<'a> {
@@ -100,6 +102,7 @@ struct CatalogTaskJsonRow {
     visibility: Option<ManifestTaskVisibility>,
     visibility_reason: Option<&'static str>,
     group: Option<String>,
+    description: Option<String>,
     task: Option<String>,
     run: Option<String>,
     manifest: String,
@@ -284,6 +287,49 @@ pub fn render_public_task_help(
         false,
     )?;
     render_utf8(renderer.into_inner()).map_err(EffigyTasksError::from)
+}
+
+/// Render a catalog task's own help page: `effigy <task> --help`.
+///
+/// A task's help is its declaration, not its run command's help: the selector,
+/// its group and `description`, the run preview and where it is declared. With
+/// `--json` the text rides in the built-in `effigy.help.v1` payload, exactly as
+/// `effigy <builtin> --help` does.
+pub fn render_task_help(
+    output_json: bool,
+    catalog: &LoadedCatalog,
+    task_name: &str,
+    task: &ManifestTask,
+) -> Result<String, EffigyTasksError> {
+    let label = catalog_task_label(catalog, task_name);
+    let catalog_label = if catalog.alias.is_empty() {
+        catalog.catalog_root.display().to_string()
+    } else {
+        format!("{} ({})", catalog.alias, catalog.catalog_root.display())
+    };
+    let mut text = format!("Task: {label}\n");
+    if let Some(group) = task.group.as_deref() {
+        text.push_str(&format!("Group: {group}\n"));
+    }
+    if let Some(description) = task.description.as_deref() {
+        text.push_str(&format!("Description: {description}\n"));
+    }
+    text.push_str(&format!(
+        "Run: {}\nCatalog: {catalog_label}\nManifest: {}\n",
+        task_run_preview(catalog, task_name, task),
+        catalog.manifest_path.display()
+    ));
+    if output_json {
+        let payload = json!({
+            "schema": "effigy.help.v1",
+            "schema_version": 1,
+            "ok": true,
+            "topic": label,
+            "text": text,
+        });
+        return encode_json(&payload, true).map_err(EffigyTasksError::from);
+    }
+    Ok(text)
 }
 
 pub fn render_task_listing_json(
@@ -537,6 +583,7 @@ fn project_catalog_task_rows(
         visibility: Some(visibility),
         visibility_reason: Some(reason),
         group: task.group.clone(),
+        description: task.description.clone(),
         task_row: Some(TaskSignatureProjection {
             task: catalog_task_label(catalog, task_name),
             run: task_run_preview(catalog, task_name, task),
@@ -558,6 +605,7 @@ fn project_empty_catalog_row(
         visibility: None,
         visibility_reason: None,
         group: None,
+        description: None,
         task_row: None,
         managed_profiles: Vec::new(),
     }
@@ -569,6 +617,7 @@ fn catalog_task_rows_json(rows: &[CatalogTaskProjection]) -> Vec<CatalogTaskJson
             visibility: row.visibility,
             visibility_reason: row.visibility_reason,
             group: row.group.clone(),
+            description: row.description.clone(),
             task: row
                 .task_row
                 .as_ref()
@@ -742,6 +791,7 @@ fn render_catalog_task_rows(
                     &row.manifest,
                     &signature.task,
                     &signature.run,
+                    row.description.as_deref(),
                 )?;
             }
             for profile_row in &row.managed_profiles {
@@ -752,6 +802,7 @@ fn render_catalog_task_rows(
                     &row.manifest,
                     &profile_row.task,
                     &profile_row.run,
+                    None,
                 )?;
             }
         }
@@ -835,11 +886,18 @@ fn render_task_text_row(
     manifest: &str,
     task_label: &str,
     signature: &str,
+    description: Option<&str>,
 ) -> Result<(), EffigyTasksError> {
     render_name_detail_row(renderer, color_enabled, theme, task_label, manifest)?;
     renderer.text(&format!(
         "      {}",
         style_text(color_enabled, theme.task_signature, signature),
     ))?;
+    if let Some(description) = description {
+        renderer.text(&format!(
+            "      {}",
+            style_text(color_enabled, theme.muted, description),
+        ))?;
+    }
     Ok(())
 }

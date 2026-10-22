@@ -294,7 +294,7 @@ During v0.x, MINOR bumps may include breaking changes.
   table, `config/demos.toml` in this repository, the `effigy-demo` crate, the
   `demo.*` Rhai host features and the TUI demo browser. Each demo converts to
   an ordinary task: `[tasks."demo:<name>"]` with the same `run`, `title` and
-  `summary` kept as a TOML comment, and optional `group = "Demos"`. `effigy
+  `summary` merged into `description`, and optional `group = "Demos"`. `effigy
   demo` and a `[demos]` table both refuse with that recipe, and `effigy config
   --target demos` is gone with the section.
 - v0.14 lease locks (`.effigy/locks/`), task status records
@@ -339,6 +339,18 @@ During v0.x, MINOR bumps may include breaking changes.
   executed phases with `sources`, `submodules`, `setup` and `start`.
 
 ### Added
+- Optional task `description` (effigy#271). Every task-definition shape — a
+  full table, the `run`/`task`/`rhai` compact forms, a run-step table and a
+  bundle-provided task — may declare one `description` of at most 200
+  characters on a single line; an empty or multi-line value is refused with the
+  fix. `effigy tasks` prints it under the task inside its group, `effigy tasks
+  --json` adds `description` to every `catalog_tasks` row (`null` when
+  undeclared, an additive change to `effigy.tasks.v1`), and `effigy <task>
+  --help` prints the task's group, description, run preview and manifest
+  (`effigy.help.v1` under `--json`) instead of running it. Arguments after
+  `--` still belong to the task, so `effigy <task> -- --help` reaches the
+  wrapped command. The `[demos]` retirement recipe puts a demo's `title` and
+  `summary` in `description` instead of a comment.
 - `test:focused` runs a focused Rust test selection through Cargo with
   `--locked`, keeping `Cargo.lock` read-only while a source-linked consumer
   checkout is under observation.

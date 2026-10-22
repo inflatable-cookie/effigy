@@ -1067,3 +1067,32 @@ fn validate_manifest_schema_rejects_unknown_contracts_keys() {
         sink.findings
     );
 }
+
+#[test]
+fn validate_manifest_schema_accepts_a_task_description_on_every_shape() {
+    let manifest: Value = toml::from_str(
+        r#"
+[tasks.dev]
+run = "cargo run"
+description = "Run the dev stack"
+
+[tasks.capture]
+rhai = "scripts/capture.rhai"
+description = "Capture fixture output"
+
+[tasks.proof]
+task = "dev"
+description = "Alias for the dev stack"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+
+    assert!(
+        sink.findings.is_empty(),
+        "expected `description` to validate, got: {:?}",
+        sink.findings
+    );
+}

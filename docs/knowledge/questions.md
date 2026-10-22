@@ -256,7 +256,7 @@ from v0.14.1, so that v0.16 doesn't need a second migration. Each retirement add
 `retired.toml` entry and an actionable error.
 
 - **Cut:**
-  - `demo` and `[demos]`. The planner's usage scan only matched a literal `[demos]` header and reported one user, but Jetstream (90), Signal (8), Keepsake (6), Poodle (3) and Monkey (3) declare `[demos.<name>]` tables. Agents ran `effigy demo` 0 times in 60 days. Every demo is a command or step sequence, so Tom, 2026-10-22 ("Agreed"), kept the cut and ruled that demos convert to public tasks: `[tasks."demo:<name>"]` with the same `run`, the title and summary kept as a TOML comment (tasks have no description field), and `group = "Demos"` added once the project runs v0.15 (v0.14.1 rejects `group`). The retirement error and migration guide give that recipe, and each project converts before the v0.15 install;
+  - `demo` and `[demos]`. The planner's usage scan only matched a literal `[demos]` header and reported one user, but Jetstream (90), Signal (8), Keepsake (6), Poodle (3) and Monkey (3) declare `[demos.<name>]` tables. Agents ran `effigy demo` 0 times in 60 days. Every demo is a command or step sequence, so Tom, 2026-10-22 ("Agreed"), kept the cut and ruled that demos convert to public tasks: `[tasks."demo:<name>"]` with the same `run`, the title and summary merged into the task `description` (added by effigy#271, Tom 2026-10-22), and `group = "Demos"` added once the project runs v0.15 (v0.14.1 rejects `group`). The retirement error and migration guide give that recipe, and each project converts before the v0.15 install;
   - the `draft`/`drafts` refusal routes;
   - the v0.14 task-status JSON fallback (migration imports old state once);
   - `[shell]`;

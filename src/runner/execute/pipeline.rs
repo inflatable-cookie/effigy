@@ -29,6 +29,12 @@ pub(super) fn run_execution_pipeline(
         SelectionResolution::Output(output) => return Ok(output),
     };
 
+    // A task's own help is answered from its declaration before anything runs,
+    // exactly like a built-in's `--help`; the flag is never forwarded.
+    if preflight.help {
+        return render_selected_task_help(&preflight, &selection);
+    }
+
     if preflight.plan {
         return render_resolved_selector_plan(&preflight, &selection);
     }
@@ -39,6 +45,21 @@ pub(super) fn run_execution_pipeline(
     }
 
     standard::run_standard_task(&preflight, &selection, &selection_plan, None)
+}
+
+/// Answer a selected catalog task's own `--help`: its declaration, never its
+/// run command's help.
+pub(super) fn render_selected_task_help(
+    preflight: &ExecutionPreflight,
+    selection: &effigy_manifest::TaskSelection<'_>,
+) -> Result<String, RunnerError> {
+    effigy_tasks::render_task_help(
+        preflight.output_json,
+        selection.catalog,
+        &preflight.selector.task_name,
+        selection.task,
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
 fn render_resolved_selector_plan(

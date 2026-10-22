@@ -7,18 +7,18 @@
 ///
 /// Shared by the `[demos]` manifest refusal, `effigy config --target demos` and
 /// `effigy demo`, so every demo retirement gives the same next step.
-pub const DEMO_TO_TASK_RECIPE: &str = "each `[demos.<name>]` becomes a plain `[tasks.\"demo:<name>\"]` with the same `run`: before, `[demos.checkout]` with `title = \"Checkout\"`, `summary = \"...\"` and `run = \"bun run demo\"`; after, `[tasks.\"demo:checkout\"]` with that `run`, `title` and `summary` kept as a TOML comment (tasks have no description field), and `group = \"Demos\"` to keep the demos grouped";
+pub const DEMO_TO_TASK_RECIPE: &str = "each `[demos.<name>]` becomes a plain `[tasks.\"demo:<name>\"]` with the same `run`: before, `[demos.checkout]` with `title = \"Checkout\"`, `summary = \"Add an item and pay\"` and `run = \"bun run demo\"`; after, `[tasks.\"demo:checkout\"]` with that `run`, `description = \"Checkout — Add an item and pay\"` merged from `title` and `summary`, and `group = \"Demos\"` to keep the demos grouped";
 
 #[cfg(test)]
 mod tests {
     use super::DEMO_TO_TASK_RECIPE;
 
     #[test]
-    fn retirement_demo_recipe_names_the_task_shape_and_the_optional_group() {
+    fn retirement_demo_recipe_names_the_task_shape_description_and_group() {
         assert!(DEMO_TO_TASK_RECIPE.contains("`[tasks.\"demo:<name>\"]`"));
         assert!(DEMO_TO_TASK_RECIPE.contains("`[demos.checkout]`"));
         assert!(DEMO_TO_TASK_RECIPE.contains("`[tasks.\"demo:checkout\"]`"));
-        assert!(DEMO_TO_TASK_RECIPE.contains("as a TOML comment"));
+        assert!(DEMO_TO_TASK_RECIPE.contains("`description = \"Checkout — Add an item and pay\"`"));
         assert!(DEMO_TO_TASK_RECIPE.contains("group = \"Demos\""));
     }
 }
