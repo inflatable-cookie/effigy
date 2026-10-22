@@ -31,7 +31,7 @@ use crate::id::{Generation, ResolvedInvocation, ResourceId, RunId};
 use crate::observe::UnknownReason;
 use crate::outcome::{Invocation, Outcome, WorkloadOutcome};
 use crate::root::StateRoot;
-use crate::store::{Store, StoreError};
+use crate::store::{BusyWait, Store, StoreError, SETTLE_BUSY_WAIT};
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -265,6 +265,10 @@ impl<'a> Run<'a> {
         parent: Option<RunId>,
     ) -> Result<Self, RunError> {
         crate::fault_point!(BeginBefore)?;
+        // Retention is a bounded, rate-limited pass at admission, never on the
+        // close path: every engine admits runs, and no close holds the store
+        // (K15, §7.4). It takes no gate, so the run's own acquisition is next.
+        crate::retention::sweep(cx, root);
         if cx.operation().placement() != crate::ctx::Placement::Host
             || inv.spec().placement != crate::ctx::Placement::Host
         {
@@ -283,6 +287,8 @@ impl<'a> Run<'a> {
         // Only an owner gate may span recovery callbacks or later effects (K14).
         guard.retain_owner(&inv.spec().owner);
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
+        // A refused writer wait names this run, not a nameless process.
+        store.set_run(opts.id);
         let predecessors = journal::predecessors(store.conn(), &inv.spec().owner)?;
         for predecessor in predecessors {
             let mut previous = Self {
@@ -314,15 +320,17 @@ impl<'a> Run<'a> {
                         effects: residue,
                     });
                 }
-                previous
-                    .store
-                    .transaction(&settle::cleanup_effects(cleanup)?, |txn| {
+                previous.store.transaction_within(
+                    &settle::cleanup_effects(cleanup)?,
+                    BusyWait::AtLeast(SETTLE_BUSY_WAIT),
+                    |txn| {
                         txn.conn().execute(
                             "UPDATE runs SET residue_ack=?2 WHERE run_id=?1",
                             params![predecessor.id.to_string(), txn.now()],
                         )?;
                         Ok::<_, RunError>(())
-                    })?;
+                    },
+                )?;
             }
             store = previous.store;
             guard = previous.guard;
@@ -698,13 +706,17 @@ impl<'a> Run<'a> {
         )
         .map_err(|_| RunError::Invalid("workload obligations incomplete".into()))?;
         let result = (|| {
-            self.store.transaction(&self.cx.child(std::time::Duration::from_secs(30)), |txn| {
-            journal::check_fence(txn.conn(), &self.owner)?;
-            crate::fault_point!(PhaseBefore)?;
-            txn.conn().execute("UPDATE runs SET phase='stopping',workload_outcome=?2,updated_at=?3 WHERE run_id=?1",
-                params![self.id.to_string(), serde_json::to_string(&workload)?, txn.now()])?;
-            Ok::<_, RunError>(())
-        })?;
+            self.store.transaction_within(
+                &self.cx,
+                BusyWait::AtLeast(SETTLE_BUSY_WAIT),
+                |txn| {
+                    journal::check_fence(txn.conn(), &self.owner)?;
+                    crate::fault_point!(PhaseBefore)?;
+                    txn.conn().execute("UPDATE runs SET phase='stopping',workload_outcome=?2,updated_at=?3 WHERE run_id=?1",
+                        params![self.id.to_string(), serde_json::to_string(&workload)?, txn.now()])?;
+                    Ok::<_, RunError>(())
+                },
+            )?;
             crate::fault_point!(PhaseAfter)?;
             Ok(())
         })();
@@ -731,7 +743,7 @@ impl<'a> Run<'a> {
             return Err(RunError::Invalid("invalid interruption outcome".into()));
         }
         let cx = settle::cleanup_effects(cleanup)?;
-        self.store.transaction(&cx,|txn| {
+        self.store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
             journal::check_fence(txn.conn(),&self.owner)?;
             txn.conn().execute("UPDATE runs SET phase='stopping',workload_outcome=?2,updated_at=?3 WHERE run_id=?1",params![self.id.to_string(),serde_json::to_string(&workload)?,txn.now()])?;
             Ok::<_,RunError>(())

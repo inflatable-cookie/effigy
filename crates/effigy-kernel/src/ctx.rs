@@ -123,6 +123,19 @@ impl OperationContext {
             ..self.clone()
         }
     }
+    /// A fresh finite wait budget that keeps this operation's cancellation,
+    /// limits, class and placement. Unlike `child` it may be *longer* than
+    /// the parent's remaining time: the store's own writer window must not
+    /// shrink to a workload deadline (§5.5, K4).
+    pub(crate) fn patience(&self, window: Duration) -> Self {
+        let now = Instant::now();
+        let deadline = now.checked_add(window).unwrap_or(now);
+        Self {
+            deadline: Deadline::At(deadline),
+            started: now,
+            ..self.clone()
+        }
+    }
     /// Cleanup has a fresh token and a finite budget independent of the parent.
     /// A caller's second signal cancels this token explicitly to escalate.
     pub fn cleanup(&self, budget: Duration) -> Result<CleanupContext, BudgetOverflow> {
@@ -268,6 +281,10 @@ impl EffectContext {
 
     pub fn operation(&self) -> &OperationContext {
         &self.0
+    }
+    /// A finite wait budget of its own that keeps this context's cancellation.
+    pub(crate) fn patience(&self, window: Duration) -> Self {
+        Self(self.0.patience(window))
     }
     /// Enforcement hook called before any later primitive performs an effect.
     pub fn require(&self, capability: Capability) -> Result<(), ClassError> {

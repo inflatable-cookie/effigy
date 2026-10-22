@@ -515,7 +515,10 @@ gates/<scope-name>/<rid-name>.gate LOCK_EX by the holder; never unlinked while t
 impl Store {
     pub fn read(cx: &ObserveContext) -> Result<StoreReader, StoreError>;  // read-only open
     pub fn txn<T>(cx: &EffectContext, f: impl FnOnce(&mut Txn) -> Result<T, StoreError>)
-        -> Result<T, StoreError>;      // BEGIN IMMEDIATE; busy timeout from the context
+        -> Result<T, StoreError>;      // BEGIN IMMEDIATE; the store's own wait window
+    pub fn transaction_within<T>(cx: &EffectContext, wait: BusyWait,
+        f: impl FnOnce(&mut Txn) -> Result<T, StoreError>) -> Result<T, StoreError>;
+    pub fn maintain(cx: &EffectContext, pages: u32) -> Result<MaintainReport, StoreError>;
 }
 
 pub fn atomic_replace(
@@ -529,10 +532,32 @@ pub fn read_record<T: Record>(cx: &ObserveContext, dir: &DirFd, name: &FileName)
     -> Observed<T>;                    // never a default value
 ```
 
-SQLite settings: `journal_mode=DELETE`, `synchronous=FULL`,
-`foreign_keys=ON`, `busy_timeout` from the context. Write-ahead logging is
-not used: a read-only reader must work on a read-only filesystem (R2).
-SQLite opens files by path, so `kernel.db` is the one K13 exception to
+SQLite settings: `journal_mode=WAL` (persistent), `synchronous=FULL`,
+`foreign_keys=ON`, `journal_size_limit` and `wal_autocheckpoint` so the log
+stays small, `auto_vacuum=INCREMENTAL` chosen while the store is empty, and a
+`busy_timeout` from the store's own window. Write-ahead logging is what lets a
+reader and a writer share the store; it replaced the rollback journal in
+effigy#275 after concurrent runs refused each other with `Busy`.
+
+Reads stay pure in the record sense: `Store::read` opens read-only and writes
+no row, schema or journal. SQLite keeps the WAL's shared-memory index
+(`kernel.db-shm`) and its log (`kernel.db-wal`), so a read on a writable root
+may create or map those two store files; they are the store's, not a record.
+On a read-only root the same read is an immutable open (`?immutable=1`) of the
+checkpointed file, which creates nothing, because SQLite cannot create the
+shared-memory index there. A non-empty `-wal` or `-journal` on such a root is
+`Unknown(store needs recovery)`, never an older read.
+
+Every write takes the store's own writer gate (`Store(kernel)`), then one short
+`BEGIN IMMEDIATE` transaction, and commits it. The gate serializes Effigy's
+writers so a refused wait names a holder exactly as a resource gate does: its
+diagnostic body carries the pid and, when it writes for a run, the run id.
+A write waits for its own bounded window, never for the caller's remaining
+deadline: at least 30 s for admission and effects, and up to two minutes for
+settle and outcome writes (K4). Opening a current store reads it and takes no
+write lock, so an ordinary run's admission is one short insert transaction.
+Class-capability and trust refusal rules are unchanged. SQLite opens files by
+path, so `kernel.db` is the one K13 exception to
 descriptor-relative opens: the kernel creates or verifies it
 descriptor-relative inside the verified 0700 root (regular, operator-owned,
 0600, one link, size-bounded) and SQLite then opens it with
@@ -562,6 +587,12 @@ a transaction.
   `kernel.db`. They use `atomic_replace` under their store gate.
 - I-S7: a corrupt derived cache is a miss, never a failure of the operation
   that wanted it.
+- I-S8: a store write's wait is bounded by the store's own window, not by the
+  workload's remaining deadline. A `Busy` refusal is an environmental
+  condition that names its holder (pid and run) and never fails a task;
+  settle retries long enough that a concurrent writer cannot cost a run its
+  outcome, and a run whose settle still cannot land stays unsettled for its
+  sentinel or the next holder of its gate to reconcile (K4).
 
 #### Failure model
 
@@ -570,9 +601,11 @@ a transaction.
 | Crash, Kill mid-transaction | SQLite rolls back. The intent was not committed, so its effect never started (K3). |
 | Crash, Kill mid-replace | The target is the old or new file, never torn. A leftover temporary is removed by the next writer under the gate. |
 | ENOSPC | The commit fails and the operation stops before its effect. A replace leaves the previous file intact. |
+| Busy (another writer) | Wait the store's own window (30 s admission and effects, 120 s settle), then refuse with the holder's pid and run as an environmental condition. Settle never reports a task failure for it. |
+| Killed writer mid-transaction | SQLite rolls back the uncommitted write-ahead frames. A reader keeps the last committed snapshot without repairing anything; the next writer recovers. |
 | Perm | Mutate refuses before any effect. Observe returns `Unknown(PermissionDenied)`. |
 | Clock | Records carry wall time for display and journal sequence for order. Nothing compares wall times for authority. |
-| Corrupt `kernel.db` | Observe reports `Unknown(store unreadable)`. Mutate refuses and names the explicit repair, which moves the file aside. Resources it described become `Unknown`, so R3 protects them. |
+| Corrupt `kernel.db` | Observe reports `Unknown(store unreadable)`. Mutate refuses and names the explicit repair, which moves the store aside with its `-journal`, `-wal` and `-shm` files, so a leftover log never attaches to the next `kernel.db`. Resources it described become `Unknown`, so R3 protects them. |
 | Hot rollback journal seen by a read-only reader | `Unknown(store needs recovery)`; the next Mutate recovers it. |
 
 #### Proof
@@ -1656,7 +1689,7 @@ them; the table governs new kernel-backed surfaces.
 
 ```text
 ~/.effigy/state/
-  kernel.db                         runtime store (+ kernel.db-journal during commits)
+  kernel.db                         runtime store (+ kernel.db-wal and -shm while it is open)
   gates/<scope>.scope               scope gate
   gates/<scope>/<rid>.gate          resource gates
   sock/<run-id>.sock                per-run supervisor control socket
@@ -1708,16 +1741,40 @@ for the rest.
 
 | Item | Kept | Removed |
 | --- | --- | --- |
-| Runs | every unsettled run; the last 20 settled per owner | older settled runs, with their events and requests |
-| Logs | per §7.3 caps | oldest settled runs first |
-| Objects | referenced by a resource's desired or last-applied generation, plus 3 superseded per environment | the rest |
+| Successful settled runs | the last 20 per task (owner), or 24 h, whichever is larger; never more than the newest 4,000 settled runs on the machine | older successful runs, with their events, requests and `runs/<id>/` logs |
+| Failed or interrupted settled runs | 7 days | after 7 days, with their events, requests and logs |
+| Unsettled runs | always | never |
+| Logs | per §7.3 caps | with their run's rows, oldest settled first |
+| Objects | referenced by a resource's desired or last-applied generation, plus 3 superseded per environment | the rest, with their directories |
 | Claims | live and quarantined | released after quarantine |
+| Resources | while a run, claim, attachment or object reference names them | unreferenced for 30 days |
 | Checkouts | live; tombstoned while any resource, claim or unsettled run references them | tombstones 30 days after their last reference ends |
-| Gate files | while their scope lives | a tombstoned scope's directory, removed under the scope gate `LOCK_EX or LOCK_NB` |
+| Gate files | while their scope lives | a tombstoned or empty scope's directory, removed under the scope gate `LOCK_EX or LOCK_NB`; `machine` is never removed |
+
+The machine-wide history bound is what keeps a store with thousands of
+short-lived task identities proportionate: the newest 4,000 settled runs win,
+and the per-owner floor only applies while the store is under that bound.
+
+Retention is **incremental and never on the close path** (effigy#275; the
+close-time scan was holding the machine-wide write lock for minutes). One
+bounded sweep runs at admission, claimed atomically so concurrent admissions
+cannot stack it, and rate-limited per machine: at most once every 10 minutes
+once the backlog is gone, and every few seconds while a capped backlog
+remains, so the first sweep after an upgrade catches up in short passes. A
+pass selects its candidates by index outside any write transaction and deletes
+them in short batches, each its own transaction, with a yield between batches
+so a run's own admission or settle always gets the store. It also runs a
+bounded write-ahead-log checkpoint and incremental vacuum, so the file is
+bounded by the retained history; freed pages are reused rather than held. A
+store created before incremental auto-vacuum (mode 0) is migrated by one
+`VACUUM` only while it is small — at most 16 MiB — so a sweep never rewrites a
+large legacy store inside its write window; a larger one keeps its
+high-water mark and reuses freed pages. A busy store skips a pass; the next
+sweep tries again.
 
 A checkout is tombstoned when a Mutate observes `Verified` absence of its
-path and token. Retention runs only in Mutate, bounded per invocation, and in
-an explicit maintenance command. Never in Static or Observe (K15).
+path and token, or when no resource has named it for 30 days. Retention runs
+only in Mutate, bounded per pass. Never in Static or Observe (K15).
 
 ## 8. Host and guest model
 

@@ -269,11 +269,15 @@ fn assert_gates_free(home: &Path, ids: &[ResourceId]) {
 #[test]
 fn store_fault_every_commit_point_never_starts_an_effect_and_stays_consistent() {
     let points = trace("txn");
+    // Every write takes the store's own writer gate first, so a refused wait
+    // names its holder; the two commit points then follow it.
     assert_eq!(
         points,
         vec![
+            Point::GateAcquire,
             Point::StoreCommitBefore,
             Point::StoreCommitAfter,
+            Point::GateAcquire,
             Point::GateAcquire,
             Point::StoreCommitBefore,
             Point::StoreCommitAfter,
@@ -386,12 +390,22 @@ fn gate_kill_at_acquire_leaves_no_holder() {
     .unwrap();
 }
 
-/// A spilled transaction killed before commit leaves a hot rollback journal.
+/// A transaction killed before commit leaves write-ahead frames that never
+/// committed. Readers keep the last committed snapshot (no recovery needed),
+/// and the next Mutate rolls the uncommitted frames back.
 fn scenario_hot(home: &Path) -> Result<(), StoreError> {
     let cx = mutate();
     let root = root(home);
     let mut store = Store::open(&cx, &root)?;
     store.conn().execute_batch("PRAGMA cache_size=2")?;
+    store.txn(&cx, |txn| {
+        txn.conn().execute(
+            "INSERT INTO checkouts(token, kind, state, first_seen, last_seen) \
+             VALUES (?1, 0, 'live', 0, 0)",
+            [format!("{:032x}", 0xdead)],
+        )?;
+        Ok(())
+    })?;
     store.txn(&cx, |txn| {
         let pad = "p".repeat(2048);
         for index in 0..3000 {
@@ -405,7 +419,7 @@ fn scenario_hot(home: &Path) -> Result<(), StoreError> {
     })
 }
 #[test]
-fn store_hot_journal_reads_unknown_until_the_next_mutate_recovers_it() {
+fn store_killed_writer_leaves_no_partial_commit_and_the_next_mutate_recovers_it() {
     let points = trace("hot");
     let index = points
         .iter()
@@ -414,20 +428,29 @@ fn store_hot_journal_reads_unknown_until_the_next_mutate_recovers_it() {
     let home = home();
     let status = run_child("hot", home.path(), Some((index, "kill")));
     assert_eq!(status.signal(), Some(libc::SIGKILL));
-    let journal = home.path().join(".effigy/state/kernel.db-journal");
+    let wal = home.path().join(".effigy/state/kernel.db-wal");
     assert!(
-        std::fs::metadata(&journal).unwrap().len() > 0,
-        "no hot journal"
+        std::fs::metadata(&wal).is_ok_and(|meta| meta.len() > 0),
+        "no write-ahead log"
     );
-    let before = std::fs::read(&journal).unwrap();
-    assert!(matches!(
-        Store::read(&observe(), &observed_root(home.path())),
-        Observed::Unknown(UnknownReason::StoreNeedsRecovery)
-    ));
+    let before = std::fs::read(&wal).unwrap();
+    // A reader sees what the killed writer committed (its first, empty
+    // checkpoint row) and none of the uncommitted frames; it never rewrites
+    // the log to get there.
+    match Store::read(&observe(), &observed_root(home.path())) {
+        Observed::Verified(reader, _) => {
+            let rows: i64 = reader
+                .conn()
+                .query_row("SELECT count(*) FROM checkouts", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(rows, 1, "uncommitted frames were visible");
+        }
+        other => panic!("a reader refused a killed writer's log: {other:?}"),
+    }
     assert_eq!(
-        std::fs::read(&journal).unwrap(),
+        std::fs::read(&wal).unwrap(),
         before,
-        "a reader touched the journal"
+        "a reader rewrote the log"
     );
     let store = Store::open(&mutate(), &root(home.path())).unwrap();
     store.check_integrity().unwrap();
@@ -435,7 +458,7 @@ fn store_hot_journal_reads_unknown_until_the_next_mutate_recovers_it() {
         .conn()
         .query_row("SELECT count(*) FROM checkouts", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(rows, 0);
+    assert_eq!(rows, 1, "the killed transaction was not rolled back");
     drop(store);
     assert!(Store::read(&observe(), &observed_root(home.path()))
         .verified()
@@ -738,6 +761,20 @@ fn store_unknown_schema_refuses_mutate_while_readers_still_read() {
     assert!(reader.resource(&machine("vault")).verified().is_some());
 }
 
+/// A valid run id for a readable fixture label. Journal rows must parse as
+/// runs: a fixture HOME is inspected by its own teardown, which reads them.
+fn run_name(label: &str) -> String {
+    let mut bytes = [0u8; 10];
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in label.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = hash.rotate_left(index as u32 * 7) as u8;
+    }
+    RunId::new(1, bytes).unwrap().to_string()
+}
 fn insert_run(
     store: &Store,
     run: &str,
@@ -829,9 +866,30 @@ fn store_retention_keeps_unsettled_and_the_newest_twenty_settled_runs() {
     ensure(&mut store, &cx, &owner);
     ensure(&mut store, &cx, &claimed);
     let runs = home.path().join(".effigy/state/runs");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let settled = |index: usize| run_name(&format!("settled-{index:02}"));
+    // Older than the 24 h success window, so the owner's excess history is due
+    // for expiry; the newest twenty survive on the per-owner floor.
     for index in 0..25 {
-        let id = format!("settled-{index:02}");
-        insert_run(&store, &id, &owner, "closed", Some("complete"), index);
+        let id = settled(index);
+        insert_run(
+            &store,
+            &id,
+            &owner,
+            "closed",
+            Some("complete"),
+            now - SUCCESS_KEEP_MS - 1000 + index as i64,
+        );
+        store
+            .conn()
+            .execute(
+                "UPDATE runs SET workload_outcome='\"Succeeded\"' WHERE run_id=?1",
+                [&id],
+            )
+            .unwrap();
         private_dir(&runs.join(&id));
         std::fs::write(runs.join(&id).join("stdout.log"), b"log").unwrap();
         store
@@ -842,21 +900,24 @@ fn store_retention_keeps_unsettled_and_the_newest_twenty_settled_runs() {
             )
             .unwrap();
     }
+    let incomplete = run_name("incomplete");
+    let active = run_name("active");
+    let held = run_name("held-claim");
     insert_run(
         &store,
-        "incomplete",
+        &incomplete,
         &owner,
         "closed",
         Some("incomplete"),
-        -2,
+        now - 2,
     );
-    insert_run(&store, "active", &owner, "active", None, -1);
-    insert_run(&store, "held-claim", &owner, "closed", Some("complete"), -3);
+    insert_run(&store, &active, &owner, "active", None, now - 1);
+    insert_run(&store, &held, &owner, "closed", Some("complete"), now - 3);
     store
         .conn()
         .execute(
-            "INSERT INTO claims(resource, run_id, state, generation, revision) VALUES (?1, 'held-claim', 'live', 1, 1)",
-            [claimed.name().to_string()],
+            "INSERT INTO claims(resource, run_id, state, generation, revision) VALUES (?1, ?2, 'live', 1, 1)",
+            params![claimed.name().to_string(), &held],
         )
         .unwrap();
     assert_eq!(
@@ -878,21 +939,15 @@ fn store_retention_keeps_unsettled_and_the_newest_twenty_settled_runs() {
         run_count(&store, "phase='closed' AND cleanup_outcome='complete'"),
         21
     );
-    for kept in [
-        "incomplete",
-        "active",
-        "held-claim",
-        "settled-05",
-        "settled-24",
-    ] {
+    for kept in [incomplete, active, held, settled(5), settled(24)] {
         assert_eq!(run_count(&store, &format!("run_id='{kept}'")), 1, "{kept}");
     }
     for gone in 0..5 {
-        let id = format!("settled-{gone:02}");
+        let id = settled(gone);
         assert_eq!(run_count(&store, &format!("run_id='{id}'")), 0);
         assert!(!runs.join(&id).exists(), "{id} logs kept");
     }
-    assert!(runs.join("settled-05/stdout.log").exists());
+    assert!(runs.join(settled(5)).join("stdout.log").exists());
     let events: i64 = store
         .conn()
         .query_row("SELECT count(*) FROM events", [], |row| row.get(0))
@@ -910,8 +965,20 @@ fn store_retention_caps_logs_oldest_settled_first() {
     let owner = machine("deps");
     ensure(&mut store, &cx, &owner);
     let runs = home.path().join(".effigy/state/runs");
-    for (index, id) in ["a", "b", "c"].iter().enumerate() {
-        insert_run(&store, id, &owner, "closed", Some("complete"), index as i64);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let logs = [run_name("a"), run_name("b"), run_name("c")];
+    for (index, id) in logs.iter().enumerate() {
+        insert_run(
+            &store,
+            id,
+            &owner,
+            "closed",
+            Some("complete"),
+            now - 20 + index as i64,
+        );
         private_dir(&runs.join(id));
         store
             .conn()
@@ -921,18 +988,19 @@ fn store_retention_caps_logs_oldest_settled_first() {
             )
             .unwrap();
     }
-    insert_run(&store, "live", &owner, "active", None, 9);
+    let live = run_name("live");
+    insert_run(&store, &live, &owner, "active", None, now - 1);
     store
         .conn()
         .execute(
-            "INSERT INTO logs(run_id, stream, path, bytes, truncated, redaction) VALUES ('live', 'stdout', 'x', ?1, 0, 'default')",
-            [1i64 << 30],
+            "INSERT INTO logs(run_id, stream, path, bytes, truncated, redaction) VALUES (?1, 'stdout', 'x', ?2, 0, 'default')",
+            params![&live, 1i64 << 30],
         )
         .unwrap();
     let report = retain(&cx, &root, &mut store, budget(100)).unwrap();
     assert_eq!(report.log_sets, 2);
-    assert!(!runs.join("a").exists() && !runs.join("b").exists());
-    assert!(runs.join("c").exists());
+    assert!(!runs.join(&logs[0]).exists() && !runs.join(&logs[1]).exists());
+    assert!(runs.join(&logs[2]).exists());
     let remaining: i64 = store
         .conn()
         .query_row("SELECT count(*) FROM logs", [], |row| row.get(0))
@@ -1119,4 +1187,215 @@ fn store_retention_removes_tombstones_and_gate_scopes_after_thirty_days() {
         assert_eq!(count, 0, "{table}");
     }
     store.check_integrity().unwrap();
+}
+
+/// Retention never scans the journal: every candidate statement is served by
+/// an index, so a pass costs the same on a small store and a large one
+/// (§7.4). A plan line that reads `SCAN runs` without an index is a finding.
+#[test]
+fn store_retention_queries_are_index_driven_and_pass_bounded() {
+    let home = home();
+    let cx = mutate();
+    let root = root(home.path());
+    let mut store = Store::open(&cx, &root).unwrap();
+    let owner = machine("deps");
+    ensure(&mut store, &cx, &owner);
+    let now = crate::store::wall_ms();
+    for index in 0..120 {
+        let id = run_name(&format!("bulk-{index:03}"));
+        insert_run(
+            &store,
+            &id,
+            &owner,
+            "closed",
+            Some("complete"),
+            now - SUCCESS_KEEP_MS - 10_000 + index as i64,
+        );
+        store
+            .conn()
+            .execute(
+                "UPDATE runs SET workload_outcome='\"Succeeded\"' WHERE run_id=?1",
+                [&id],
+            )
+            .unwrap();
+    }
+    for sql in [
+        crate::retention::owner_history_sql(),
+        crate::retention::owner_excess_sql(),
+        crate::retention::history_bound_sql(),
+        crate::retention::failed_age_sql(),
+    ] {
+        let statement = format!("EXPLAIN QUERY PLAN {sql}");
+        let mut prepared = store.conn().prepare(&statement).unwrap();
+        let plan: Vec<String> = prepared
+            .query_map(
+                rusqlite::params_from_iter(std::iter::repeat_n(
+                    rusqlite::types::Value::Null,
+                    prepared.parameter_count(),
+                )),
+                |row| row.get::<_, String>(3),
+            )
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(
+            plan.iter()
+                .any(|line| line.contains("USING") && line.contains("INDEX")),
+            "no index in plan for {sql}: {plan:?}"
+        );
+        assert!(
+            !plan.iter().any(|line| line.trim() == "SCAN runs"),
+            "table scan of runs in {sql}: {plan:?}"
+        );
+    }
+    // A pass spends only its budget, and the next pass continues where it
+    // stopped instead of rescanning the journal.
+    let first = retain(&cx, &root, &mut store, budget(16)).unwrap();
+    assert_eq!(first.runs, 16);
+    assert!(first.exhausted);
+    let second = retain(&cx, &root, &mut store, budget(16)).unwrap();
+    assert_eq!(second.runs, 16);
+    assert_eq!(
+        run_count(&store, "phase='closed' AND cleanup_outcome='complete'"),
+        120 - 32
+    );
+}
+
+/// Two sweeps from the same machine: the second is not due and does nothing,
+/// and a backlog pass comes due again in seconds rather than minutes, so
+/// concurrent admissions never stack retention work (§7.4).
+#[test]
+fn store_sweep_is_rate_limited_per_machine() {
+    let home = home();
+    let cx = mutate();
+    let root = root(home.path());
+    let mut store = Store::open(&cx, &root).unwrap();
+    assert!(crate::retention::due(&store).unwrap(), "first sweep is due");
+    let pass = crate::retention::retain(&cx, &root, &mut store, budget(8)).unwrap();
+    assert!(!pass.skipped);
+    assert!(!pass.exhausted);
+    assert!(
+        !crate::retention::due(&store).unwrap(),
+        "a second sweep is not due"
+    );
+    let next: i64 = store
+        .conn()
+        .query_row(
+            "SELECT value FROM meta WHERE key='retention_next'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap()
+        .parse()
+        .unwrap();
+    let steady = next - crate::store::wall_ms();
+    assert!(
+        steady > crate::retention::BACKLOG_INTERVAL_MS,
+        "a complete pass waits the steady interval, got {steady} ms"
+    );
+    // A backlog: twenty expired runs, four per pass, so the pass ends
+    // exhausted and the next one is soon.
+    let owner = machine("deps");
+    ensure(&mut store, &cx, &owner);
+    let now = crate::store::wall_ms();
+    for index in 0..20 {
+        let id = run_name(&format!("backlog-{index:02}"));
+        insert_run(
+            &store,
+            &id,
+            &owner,
+            "closed",
+            Some("incomplete"),
+            now - FAILED_KEEP_MS - 10_000 + index as i64,
+        );
+    }
+    let backlog = crate::retention::retain(&cx, &root, &mut store, budget(4)).unwrap();
+    assert_eq!(backlog.runs, 4);
+    assert!(backlog.exhausted);
+    let next: i64 = store
+        .conn()
+        .query_row(
+            "SELECT value FROM meta WHERE key='retention_next'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap()
+        .parse()
+        .unwrap();
+    let backlog_wait = next - crate::store::wall_ms();
+    assert!(
+        backlog_wait <= crate::retention::BACKLOG_INTERVAL_MS,
+        "a backlog pass comes due again in seconds, got {backlog_wait} ms"
+    );
+}
+
+/// The admission path itself prunes (§7.4): `sweep` claims a store that has
+/// never swept (its schedule key is absent), runs one bounded pass, and then
+/// leaves the next pass to the rate limit. Retention never needs a close.
+#[test]
+fn store_sweep_from_admission_prunes_expired_runs_on_a_fresh_store() {
+    let home = home();
+    let cx = mutate();
+    let root = root(home.path());
+    let mut store = Store::open(&cx, &root).unwrap();
+    // A fresh store has no retention schedule at all; the claim still wins.
+    assert!(crate::retention::due(&store).unwrap());
+    crate::retention::sweep(&cx, &root);
+    assert!(
+        !crate::retention::due(&store).unwrap(),
+        "the first sweep claimed its schedule"
+    );
+    let owner = machine("deps");
+    ensure(&mut store, &cx, &owner);
+    let now = crate::store::wall_ms();
+    for index in 0..40 {
+        let id = run_name(&format!("sweep-{index:02}"));
+        insert_run(
+            &store,
+            &id,
+            &owner,
+            "closed",
+            Some("complete"),
+            now - SUCCESS_KEEP_MS - 10_000 + index as i64,
+        );
+        store
+            .conn()
+            .execute(
+                "UPDATE runs SET workload_outcome='\"Succeeded\"' WHERE run_id=?1",
+                [&id],
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        run_count(&store, "phase='closed' AND cleanup_outcome='complete'"),
+        40
+    );
+    // Ten minutes later, the admission sweep is due again.
+    store
+        .conn()
+        .execute("UPDATE meta SET value='0' WHERE key='retention_next'", [])
+        .unwrap();
+    drop(store);
+    crate::retention::sweep(&cx, &root);
+    let store = Store::open(&cx, &root).unwrap();
+    let kept = run_count(&store, "phase='closed' AND cleanup_outcome='complete'");
+    assert_eq!(kept, 20, "the admission sweep pruned the owner's excess");
+    assert!(
+        !crate::retention::due(&store).unwrap(),
+        "the rate limit is honoured after a sweep"
+    );
+}
+
+/// A legacy store is only migrated to incremental auto-vacuum while it is
+/// small: a 119 MB store is never rewritten inside a sweep's write window.
+#[test]
+fn store_legacy_auto_vacuum_migration_is_size_bounded() {
+    assert!(crate::store::legacy_vacuum_allowed(1 << 20));
+    assert!(crate::store::legacy_vacuum_allowed(
+        crate::store::LEGACY_VACUUM_MAX_BYTES
+    ));
+    assert!(!crate::store::legacy_vacuum_allowed(
+        crate::store::LEGACY_VACUUM_MAX_BYTES + 1
+    ));
+    assert!(!crate::store::legacy_vacuum_allowed(119 << 20));
 }

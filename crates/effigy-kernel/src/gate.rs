@@ -336,18 +336,28 @@ impl Gate {
         root: &StateRoot,
         scope: Scope,
     ) -> Result<ScopeRemoval, GateError> {
+        Self::remove_named_scope(cx, root, &scope_name(scope))
+    }
+    /// The same removal by the gate directory's own name, for a scope whose
+    /// checkout row is already gone. `machine` is never removed.
+    pub(crate) fn remove_named_scope(
+        cx: &EffectContext,
+        root: &StateRoot,
+        name: &str,
+    ) -> Result<ScopeRemoval, GateError> {
         if crate::store::in_transaction() {
             return Err(GateError::InTransaction);
         }
         cx.require(Capability::HostAuthority)
             .map_err(|_| GateError::HostAuthorityRequired)?;
-        if cx.operation().class() != EffectClass::Mutate || matches!(scope, Scope::Machine) {
+        let machine = scope_name(Scope::Machine);
+        if cx.operation().class() != EffectClass::Mutate || name == machine {
             return Err(GateError::ClassRefused {
-                id: ResourceId::store(scope, "gates").expect("fixed name"),
+                id: ResourceId::store(Scope::Machine, "gates").expect("fixed name"),
                 class: cx.operation().class(),
             });
         }
-        let name = scope_name(scope);
+        let name = name.to_owned();
         let gates = root.family(Family::Gates)?.expect("created directory");
         let Some(file) = open_gate(&gates, &format!("{name}.scope"), false)? else {
             return Ok(ScopeRemoval::Absent);
