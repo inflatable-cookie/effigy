@@ -1768,8 +1768,9 @@ Effigy must not invent a second alias naming scheme for container-local
 resolution.
 
 A linked worktree or marked ephemeral clone is included in the guarantee. Its
-container targets resolve both the canonical declared alias (`postgres.<apex>`, the value application
-configuration carries) and the scope's effective alias. The canonical name is
+container targets resolve both the canonical declared alias
+(`postgres.<apex>`, the value application configuration carries) and the
+scope's effective alias. The canonical name is
 attached to the backing service on that scope's own Compose project network,
 next to the scoped name, so it can only ever name this checkout's backing
 service. Compose projects, networks and volumes stay per scope; the
@@ -1780,20 +1781,6 @@ over the generated alias.
 Host-native execution in a scoped checkout is outside this guarantee: a host
 process resolving the canonical alias reaches the host-visible route, which
 belongs to the scope that published it (normally the primary checkout).
-
-### Alias source rules
-
-Container-local aliases must derive from the same effective service-alias
-model as the host-visible TCP alias surface.
-
-That means:
-
-- project-owned aliases keep their declared domain
-- shared-service aliases may resolve through one shared backing-service host
-- explicit route/alias precedence must remain stable
-
-Effigy must not invent a second alias naming scheme for container-local
-resolution.
 
 ## Fallback ownership
 
