@@ -52,7 +52,9 @@ path = "../book"
   records. Omit it when the repo has no submodules.
 - `[sources.<name>]` declares an extra checkout pinned to one commit. `path` is
   relative to the manifest, so a sibling path such as `../book` is normal. It is
-  available outside bootstrap too, for example through `[systems.*.mounts]`.
+  available outside bootstrap too, for example through `[systems.*.mounts]`;
+  the first `dev` acquires any missing pinned checkout exactly as bootstrap
+  does, and still never resets an existing one.
 
 ## Start Here
 
@@ -151,13 +153,33 @@ stops or tears down an environment on its own.
 
 ## Prerequisites
 
-Bootstrap fails early with a short list when something is missing. It never sets
-up the user-owned gateway and never impersonates a login:
+Bootstrap collects every missing prerequisite it can see and fails **once**,
+before it clones extra sources or runs anything, with a short list and the fix
+for each item. It only observes: it never installs a toolchain, starts a
+container runtime, sets up the user-owned gateway or impersonates a login.
 
-- a container runtime for an environment that needs one;
-- the toolchains the `setup` selectors invoke (Bun, Rust/Oxide, and so on);
-- Git access to the URL and to every `[sources.<name>]` remote;
-- a user-owned gateway (`effigy gateway up`) for projects that expose routes.
+Checked before the checkout is touched:
+
+- `git` on `PATH` (bootstrap clones the checkout, its pinned sources and its
+  submodules with it);
+- an absolute `HOME` (source preparation and Effigy's state root need one).
+
+Checked once the manifest is readable, before any source is cloned or task run:
+
+- a container runtime on `PATH` (`docker` or `colima`) when the manifest
+  declares `[containers]`;
+- `node`, and the declared `[package_manager].js` binary, when the checkout has
+  a `package.json`;
+- `cargo` and `rustc` when the checkout has `Cargo.toml` or
+  `rust-toolchain.toml`;
+- a running user-owned gateway when a container declares routed domains
+  (`[containers.<name>.dns]`). The fix names `effigy gateway up`, which only you
+  run.
+
+Git authentication is not pre-probed: a URL or source remote you cannot read
+fails at its clone with git's own message, naming the remote. A `setup` selector
+that needs a tool this list cannot infer still fails when it runs, naming the
+selector and the task.
 
 ## Destination safety
 

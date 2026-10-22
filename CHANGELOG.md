@@ -266,10 +266,16 @@ During v0.x, MINOR bumps may include breaking changes.
   non-empty foreign destination is refused instead of prompted for, and
   `effigy bootstrap` with no URL prepares the existing checkout in place.
   `effigy doctor` reports pinned-source drift; bootstrap and doctor never reset,
-  fetch forward or clean a developer's working copy. The `effigy.bootstrap.deps`,
-  `children-status`, `children-sync` and `bootstrap-teardown` payloads are gone;
-  `effigy.bootstrap.v1` keeps plan and executed phases with `sources`,
-  `submodules`, `setup` and `start`.
+  fetch forward or clean a developer's working copy, and the first `dev` also
+  acquires a missing pinned checkout (contract 020). Bootstrap fails once,
+  early, with a collected prerequisite list — `git`, an absolute `HOME`, a
+  container runtime when `[containers]` is declared, the JS manager and Node for
+  a `package.json`, `cargo`/`rustc` for a Rust checkout, and a running
+  user-owned gateway when routed domains are declared — and never installs a
+  toolchain, starts a runtime, sets up the gateway or impersonates a login. The
+  `effigy.bootstrap.deps`, `children-status`, `children-sync` and
+  `bootstrap-teardown` payloads are gone; `effigy.bootstrap.v1` keeps plan and
+  executed phases with `sources`, `submodules`, `setup` and `start`.
 
 ### Added
 - `test:focused` runs a focused Rust test selection through Cargo with

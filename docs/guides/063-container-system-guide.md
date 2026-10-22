@@ -117,7 +117,6 @@ Useful backend controls:
 ```sh
 effigy config set containers.backend containerd
 effigy config set containers.backend docker
-effigy bootstrap <git-url> --backend docker
 effigy doctor --verbose
 ```
 

@@ -440,10 +440,10 @@ The `Root Resolution` section shows:
 - the active Docker context, when Docker is installed
 
 Fix:
-- pin a global preference with `effigy config set containers.backend docker` or
-  `effigy config set containers.backend containerd`
-- for one-shot override, pass `--backend docker` or `--backend containerd` to
-  `bootstrap`
+- pin the machine preference with `effigy config set containers.backend docker`
+  or `effigy config set containers.backend containerd`; bootstrap has no
+  per-invocation backend flag (Q-009), so this preference and the repo's
+  declared environment choose the backend
 - clear a pinned preference with `effigy config unset containers.backend`
 
 When the repo is already bootstrapped and you are trying to understand what it

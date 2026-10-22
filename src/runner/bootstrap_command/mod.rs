@@ -23,6 +23,8 @@ use crate::runner::runtime_session_context::{
 
 use super::error::RunnerError;
 
+mod prerequisites;
+
 pub(in crate::runner) fn run_bootstrap_with_cwd(
     args: BootstrapArgs,
     cwd: PathBuf,
@@ -41,14 +43,33 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
         return Ok(crate_render_bootstrap_plan(&plan, args.output_json));
     }
 
+    // Fail once, early, with the whole list (Q-009 item 6). Never sets up the
+    // gateway, starts a runtime, installs a toolchain or impersonates a login.
+    let missing = prerequisites::collect_machine();
+    if !missing.is_empty() {
+        return Err(RunnerError::task_invocation(prerequisites::render(
+            &missing,
+        )));
+    }
+
     let progress = RefCell::new(BootstrapProgressReporter::new(args.output_json));
     let result = crate_execute_bootstrap(
         &request,
         |manifest_path| {
-            crate::runner::bundle_command::prepare_sources_for_manifest(manifest_path)
+            // Bundle and catalog sources first: the composed manifest needs
+            // them. The engine acquires the extra pinned sources after this
+            // returns, so a missing prerequisite fails before anything is cloned.
+            crate::runner::bundle_command::prepare_bundle_sources_for_manifest(manifest_path)
                 .map_err(|error| BootstrapError::task_invocation(error.to_string()))?;
             let manifest = load_task_manifest(manifest_path)
                 .map_err(|error| BootstrapError::task_invocation(error.to_string()))?;
+            let checkout = manifest_path.parent().unwrap_or(manifest_path);
+            let missing = prerequisites::collect_checkout(checkout, &manifest);
+            if !missing.is_empty() {
+                return Err(BootstrapError::task_invocation(prerequisites::render(
+                    &missing,
+                )));
+            }
             Ok::<_, BootstrapError>(manifest.bootstrap)
         },
         |repo_root, selector, phase| {

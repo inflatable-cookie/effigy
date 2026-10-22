@@ -117,7 +117,8 @@ fn create_project_remote(
     manifest.push_str(
         "\n[tasks.\"record-a\"]\nrun = \"printf 'a\\n' >> order.txt\"\n\
          \n[tasks.\"record-b\"]\nrun = \"printf 'b\\n' >> order.txt\"\n\
-         \n[tasks.\"record-dev\"]\nrun = \"printf 'dev\\n' >> order.txt\"\n",
+         \n[tasks.\"record-dev\"]\nrun = \"printf 'dev\\n' >> order.txt\"\n\
+         \n[tasks.dev]\nrun = \"printf 'dev-ok\\n'\"\n",
     );
     fs::write(worktree.join("effigy.toml"), manifest).expect("write manifest");
     publish(&worktree, name)
@@ -391,4 +392,102 @@ fn retired_bootstrap_surfaces_fail_with_their_replacement() {
         assert!(stderr.contains(expected), "{args:?}: {stderr}");
         assert!(stderr.contains("CHANGELOG.md"), "{args:?}: {stderr}");
     }
+}
+
+fn fake_path(root: &Path, tools: &[&str]) -> String {
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).expect("mkdir bin");
+    for tool in tools {
+        let path = bin.join(tool);
+        fs::write(&path, "#!/bin/sh\nexit 0\n").expect("write tool");
+        let mut perms = fs::metadata(&path).expect("stat tool").permissions();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        fs::set_permissions(&path, perms).expect("chmod tool");
+    }
+    bin.display().to_string()
+}
+
+#[test]
+fn bootstrap_collects_every_missing_prerequisite_before_it_starts() {
+    let root = temp_workspace("effigy-bootstrap-cli", "prerequisites");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[bootstrap]
+setup = ["prepare"]
+
+[tasks.prepare]
+run = "printf prepared > prepared.txt"
+
+[containers]
+default = "dev"
+
+[containers.dev]
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    let bin = fake_path(&root, &["git"]);
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("bootstrap")
+        .env("NO_COLOR", "1")
+        .env("PATH", &bin)
+        .env("HOME", root.join("home"))
+        .current_dir(&root)
+        .output()
+        .expect("run effigy bootstrap");
+
+    assert!(!output.status.success(), "expected a prerequisite failure");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("prerequisite"), "{stderr}");
+    assert!(stderr.contains("is missing"), "{stderr}");
+    assert!(
+        stderr.contains("no container runtime is available"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("effigy config set containers.backend"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("Nothing was started, configured or logged in"),
+        "{stderr}"
+    );
+    assert!(
+        !root.join("prepared.txt").exists(),
+        "no setup selector may run past a missing prerequisite"
+    );
+}
+
+#[test]
+fn the_first_dev_acquires_a_missing_pinned_source() {
+    let content = create_content_remote("first-dev");
+    let pinned = git(&content, &["rev-parse", "HEAD"]);
+    let sources = format!(
+        "\n[sources.book]\ngit = \"{}\"\nrev = \"{pinned}\"\npath = \"../first-dev-book\"\n",
+        content.display()
+    );
+    let remote = create_project_remote("first-dev-project", &["record-a"], None, &sources);
+    let cwd = temp_workspace("effigy-bootstrap-cli", "first-dev");
+    let clone = Command::new("git")
+        .arg("clone")
+        .arg(&remote)
+        .arg(cwd.join("app"))
+        .output()
+        .expect("git clone");
+    assert!(clone.status.success(), "clone: {clone:?}");
+    let app = cwd.join("app");
+    assert!(!cwd.join("first-dev-book").exists());
+
+    let output = effigy(&["dev"], &app);
+    assert!(output.status.success(), "dev failed: {output:?}");
+    let book = cwd.join("first-dev-book");
+    assert_eq!(
+        git(&book, &["rev-parse", "HEAD"]),
+        pinned,
+        "the first dev acquires the pinned source at its pin"
+    );
 }
