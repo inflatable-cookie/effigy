@@ -1647,7 +1647,7 @@ re-entries keep their own routing.
   ],
   "setup": {
     "root": [
-      "bootstrap:local",
+      "install:local",
       "doctor"
     ],
     "children": [
