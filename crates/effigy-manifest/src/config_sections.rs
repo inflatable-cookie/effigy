@@ -14,11 +14,10 @@ pub use bootstrap::{
 };
 pub use bundle::{ManifestBundleBase, ManifestBundleConfig};
 pub use common::{
-    ManifestAttentionMarkersConfig, ManifestCommentRatioConfig, ManifestDuplicateBlocksConfig,
-    ManifestEnvSchemaConfig, ManifestGeneratedAssetsConfig, ManifestGeneratedInSrcConfig,
-    ManifestGodFilesConfig, ManifestIsolationAdoption, ManifestIsolationConfig,
-    ManifestJsPackageManager, ManifestPackageManagerConfig, ManifestScanConfig,
-    ManifestScanOutputFormat, ManifestStaleSuppressionsConfig, ManifestTaskDefaultsConfig,
+    ManifestDuplicateBlocksConfig, ManifestEnvSchemaConfig, ManifestGodFilesConfig,
+    ManifestIsolationAdoption, ManifestIsolationConfig, ManifestJsPackageManager,
+    ManifestPackageManagerConfig, ManifestScanConfig, ManifestScanOutputFormat,
+    ManifestTaskDefaultsConfig,
 };
 pub use container::{
     ManifestContainerConfig, ManifestContainerDataConfig, ManifestContainerDnsConfig,

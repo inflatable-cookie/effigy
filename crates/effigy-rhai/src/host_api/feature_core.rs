@@ -190,43 +190,8 @@ fn build_scan_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> r
     );
     module_feature_options(
         &mut module,
-        "generated_assets",
-        FEATURE_SCAN_GENERATED_ASSETS,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "generated_in_src",
-        FEATURE_SCAN_GENERATED_IN_SRC,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
         "duplicate_blocks",
         FEATURE_SCAN_DUPLICATE_BLOCKS,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "comment_ratio",
-        FEATURE_SCAN_COMMENT_RATIO,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "attention_markers",
-        FEATURE_SCAN_ATTENTION_MARKERS,
-        context.clone(),
-        callbacks.clone(),
-    );
-    module_feature_options(
-        &mut module,
-        "stale_suppressions",
-        FEATURE_SCAN_STALE_SUPPRESSIONS,
         context.clone(),
         callbacks.clone(),
     );

@@ -202,6 +202,18 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- Five scanners (Q-009): `effigy scan attention-markers`, `scan comment-ratio`,
+  `scan generated-assets`, `scan generated-in-src` and `scan
+  stale-suppressions`, with their JSON contracts, help topics, doctor checks,
+  Rhai host features and `.effigy/reports/doctor/scan-*.md` detail reports.
+  Each retired subcommand and `[scan.*]` table refuses with its replacement (or
+  says there is none): use `rg -n 'TODO|FIXME' <path>` for marker searches,
+  keep bulky generated output out of versioned paths with `.gitignore`, and
+  let each tool report its own unused suppressions. `--min-code-lines`,
+  `--source-root`, `--warning-marker`, `--high-marker` and
+  `--critical-marker` refuse the same way. `god-files` and `duplicate-blocks`
+  remain. Papercut 3c249619 (stale-suppression severity) is moot with the
+  scanner.
 - The code graph (Q-009): `effigy graph` (`index`, `status`, `search`, `node`,
   `affected`, `explore` and the earlier retired spellings), `effigy docs
   context` and its `--sources` portfolio routing, the `effigy-codegraph` crate
@@ -627,6 +639,19 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- `scan god-files` and `scan duplicate-blocks` are more precise and faster
+  (Q-009). `god-files` uses per-language code-line defaults when no explicit
+  `warn`/`high`/`critical` is configured (typescript/javascript/vue/svelte and
+  python/ruby/php `800/1400/2400`; rust/c/c++/c#/go/java/kotlin/scala/swift
+  `1000/1800/3000`; sql/css/html `1200/2000/3200`; shell/lua `500/900/1500`;
+  everything else `1000/1800/3000`), reports `thresholds_source` and each
+  finding's `language`, and skips generated, derived, vendored and agent-skill
+  trees as well as `.gitignore`d paths, so Acowtancy drops from 1,410 findings
+  to a short review list. `duplicate-blocks` keeps string-literal contents
+  during normalization so unrelated data maps no longer collapse into one
+  block, filters literal-only blocks (tables, fixtures, string lists) and
+  generated/derived files, and uses a rolling window hash; it stays opt-in for
+  doctor. Doctor's deep inventory runs only these two scanners.
 - The contributor task that builds this checkout and installs it as the machine's `effigy` is renamed `bootstrap:local` → `install:local`, so it no longer reads as the `effigy bootstrap` feature (clone and start a project). `bootstrap:local` now fails with the new name.
 - Effigy's own repository builds through Oxide. Selectors run Cargo through
   `scripts/oxide-selector.sh`, which leases Oxide's shared slot pool so Rust

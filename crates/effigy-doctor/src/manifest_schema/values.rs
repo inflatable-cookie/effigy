@@ -15,19 +15,6 @@ pub(super) fn validate_optional_integer_field(
     }
 }
 
-pub(super) fn validate_optional_float_field(
-    context: &mut SchemaContext<'_, '_>,
-    value: Option<&Value>,
-    path: &str,
-) {
-    let Some(value) = value else {
-        return;
-    };
-    if !matches!(value, Value::Float(_) | Value::Integer(_)) {
-        context.unsupported_value(path, SchemaContext::value_type(value), "expected number");
-    }
-}
-
 pub(super) fn validate_optional_boolean_field(
     context: &mut SchemaContext<'_, '_>,
     value: Option<&Value>,

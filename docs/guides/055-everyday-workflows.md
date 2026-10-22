@@ -106,8 +106,7 @@ Deep dive:
 
 ```sh
 effigy scan god-files
-effigy scan comment-ratio
-effigy scan generated-in-src
+effigy scan duplicate-blocks
 ```
 
 Use scanners when you want concrete findings about codebase drift instead of

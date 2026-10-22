@@ -317,7 +317,7 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     GeneralHelpEntry {
         group: HelpGroup::Repo,
         command: "effigy scan",
-        description: "Run built-in repository scanners such as `god-files` and `attention-markers`",
+        description: "Run the built-in repository scanners `god-files` and `duplicate-blocks`",
         deferred_builtin: None,
         help_argument: Some("scan"),
     },

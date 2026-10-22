@@ -1,4 +1,3 @@
-use super::WorkspaceScan;
 use std::path::{Path, PathBuf};
 
 use super::super::model::{
@@ -7,9 +6,12 @@ use super::super::model::{
 };
 use super::super::support::{
     classify_duplicate_block_severity, duplicate_block_severity_rank, is_generated_artifact,
-    normalized_code_lines, rebase_finding_path, should_skip_path, trim_snippet, NormalizedCodeLine,
+    is_literal_only_block, normalized_code_lines, rebase_finding_path, should_skip_path,
+    trim_snippet, NormalizedCodeLine,
 };
-use super::{run_workspace_scan, walk_text_scan_files, ScanError, ScanWorkspaceCounts};
+use super::{
+    run_workspace_scan, walk_text_scan_files, ScanError, ScanWorkspaceCounts, WorkspaceScan,
+};
 
 pub(super) mod engine;
 

@@ -7,7 +7,7 @@ use effigy_scan::ScanRenderFormat;
 
 use super::commands::{parse_scan_command, retired_scan_subcommand};
 use super::model::{ScanCommand, ScanRequest};
-use super::values::{parse_positive_f64_flag, parse_positive_usize_flag};
+use super::values::parse_positive_usize_flag;
 
 pub(super) fn parse_scan_request(
     task: &TaskInvocation,
@@ -21,16 +21,11 @@ pub(super) fn parse_scan_request(
     let mut warn_raw: Option<String> = None;
     let mut high_raw: Option<String> = None;
     let mut critical_raw: Option<String> = None;
-    let mut min_code_lines: Option<usize> = None;
     let mut fail_on_findings = false;
     let mut no_gitignore = false;
     let mut show_warnings = false;
     let mut include = Vec::<String>::new();
     let mut exclude = Vec::<String>::new();
-    let mut source_roots = Vec::<String>::new();
-    let mut warning_markers = Vec::<String>::new();
-    let mut high_markers = Vec::<String>::new();
-    let mut critical_markers = Vec::<String>::new();
 
     parser.parse_loop_require_no_unknown(&task.name, |parser, arg| match arg {
         "--json" => {
@@ -43,6 +38,17 @@ pub(super) fn parse_scan_request(
         "--stdin" | "--path" => Err(BuiltinError::task_invocation(format!(
             "`{arg}` belonged to `scan validation-gaps`, which was removed in v0.15 with the code graph; use `effigy test --plan` to choose tests for changed files (see CHANGELOG.md)"
         ))),
+        "--min-code-lines" => Err(BuiltinError::task_invocation(
+            "`--min-code-lines` belonged to `scan comment-ratio`, which was removed in v0.15; delete the flag (see CHANGELOG.md)",
+        )),
+        "--source-root" => Err(BuiltinError::task_invocation(
+            "`--source-root` belonged to `scan generated-in-src`, which was removed in v0.15; delete the flag (see CHANGELOG.md)",
+        )),
+        "--warning-marker" | "--high-marker" | "--critical-marker" => {
+            Err(BuiltinError::task_invocation(format!(
+                "`{arg}` belonged to `scan attention-markers` and `scan stale-suppressions`, which were removed in v0.15; search markers with `rg -n '<pattern>' <path>` and delete the flag (see CHANGELOG.md)"
+            )))
+        }
         "--markdown" => {
             format = Some(ScanRenderFormat::Markdown);
             Ok(ParseLoopAction::Handled)
@@ -72,13 +78,6 @@ pub(super) fn parse_scan_request(
             );
             Ok(ParseLoopAction::Handled)
         }
-        "--min-code-lines" => {
-            min_code_lines = Some(parser.positive_usize_flag_value(
-                "--min-code-lines",
-                "`--min-code-lines` requires a value",
-            )?);
-            Ok(ParseLoopAction::Handled)
-        }
         "--fail-on-findings" => {
             fail_on_findings = true;
             Ok(ParseLoopAction::Handled)
@@ -99,26 +98,6 @@ pub(super) fn parse_scan_request(
         "--exclude" => {
             let value = parser.next_value("`--exclude` requires a glob pattern")?;
             exclude.push(value.to_owned());
-            Ok(ParseLoopAction::Handled)
-        }
-        "--source-root" => {
-            let value = parser.next_value("`--source-root` requires a glob pattern")?;
-            source_roots.push(value.to_owned());
-            Ok(ParseLoopAction::Handled)
-        }
-        "--warning-marker" => {
-            let value = parser.next_value("`--warning-marker` requires a value")?;
-            warning_markers.push(value.to_owned());
-            Ok(ParseLoopAction::Handled)
-        }
-        "--high-marker" => {
-            let value = parser.next_value("`--high-marker` requires a value")?;
-            high_markers.push(value.to_owned());
-            Ok(ParseLoopAction::Handled)
-        }
-        "--critical-marker" => {
-            let value = parser.next_value("`--critical-marker` requires a value")?;
-            critical_markers.push(value.to_owned());
             Ok(ParseLoopAction::Handled)
         }
         other if command.is_none() && retired_scan_subcommand(other).is_some() => {
@@ -143,49 +122,22 @@ pub(super) fn parse_scan_request(
     }
     let command = command.ok_or_else(|| {
         BuiltinError::task_invocation(
-            "scan requires a subcommand (currently supported: `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`)",
+            "scan requires a subcommand (supported: `god-files`, `duplicate-blocks`)",
         )
     })?;
-
-    let (warn, high, critical, ratio_warn, ratio_high, ratio_critical) = match command {
-        ScanCommand::CommentRatio => (
-            None,
-            None,
-            None,
-            parse_positive_f64_flag("--warn", warn_raw.as_deref())?,
-            parse_positive_f64_flag("--high", high_raw.as_deref())?,
-            parse_positive_f64_flag("--critical", critical_raw.as_deref())?,
-        ),
-        _ => (
-            parse_positive_usize_flag("--warn", warn_raw.as_deref())?,
-            parse_positive_usize_flag("--high", high_raw.as_deref())?,
-            parse_positive_usize_flag("--critical", critical_raw.as_deref())?,
-            None,
-            None,
-            None,
-        ),
-    };
 
     Ok(ScanRequest {
         command,
         output_json,
         format,
         out,
-        warn,
-        high,
-        critical,
-        ratio_warn,
-        ratio_high,
-        ratio_critical,
-        min_code_lines,
+        warn: parse_positive_usize_flag("--warn", warn_raw.as_deref())?,
+        high: parse_positive_usize_flag("--high", high_raw.as_deref())?,
+        critical: parse_positive_usize_flag("--critical", critical_raw.as_deref())?,
         fail_on_findings,
         no_gitignore,
         show_warnings,
         include,
         exclude,
-        source_roots,
-        warning_markers,
-        high_markers,
-        critical_markers,
     })
 }
