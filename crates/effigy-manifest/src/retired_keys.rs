@@ -54,7 +54,8 @@ fn reject_retired_tables(value: &Value) -> Result<(), String> {
 }
 
 /// Scan sections that only configured the graph-backed scanners. Each is a
-/// manifest error rather than a silently ignored table.fn reject_retired_scan_sections(scan: &toml::value::Table) -> Result<(), String> {
+/// manifest error rather than a silently ignored table.
+fn reject_retired_scan_sections(scan: &toml::value::Table) -> Result<(), String> {
     for (key, message) in [
         (
             "attention_markers",
@@ -214,6 +215,7 @@ mod tests {
         }
     }
 
+    #[test]
     fn draft_step_reference_is_refused_with_the_task_key() {
         let error = toml::from_str::<TaskManifest>(
             "[tasks]\nentry = [{ draft = 'helper' }]\nhelper = 'echo helper'",
