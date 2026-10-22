@@ -18,7 +18,9 @@ mod manifest_section;
 pub mod portfolio;
 mod qa_groups;
 mod retired_bootstrap;
+mod retired_config;
 mod retired_keys;
+mod retired_sections;
 pub mod sources;
 mod task_defs;
 pub mod task_runtime;
@@ -82,7 +84,7 @@ pub use qa_groups::{
     ManifestQaMemberSurface, ManifestQaScopePolicy, ManifestQaSection, QaGroupDefinitionContext,
     QaScopeToken,
 };
-pub use retired_bootstrap::RetiredBootstrapDeclaration;
+pub use retired_config::RetiredConfigDeclaration;
 pub use sources::{
     inspect_pinned_sources, prepare_pinned_sources, resolve_pinned_sources, PinnedSourceReport,
     PinnedSourceSpec, PinnedSourceState,
@@ -148,8 +150,10 @@ impl std::fmt::Display for ManifestError {
 impl std::error::Error for ManifestError {}
 
 /// Top-level tables an `effigy.toml` may declare: the composition-only
-/// `[manifest]` section plus every [`TaskManifest`] field. Schema consumers
-/// such as doctor read this list instead of keeping their own copy.
+/// `[manifest]` section, every [`TaskManifest`] field, and the retired tables
+/// that still load for one release ([`RETIRED_MANIFEST_TOP_LEVEL_KEYS`]).
+/// Schema consumers such as doctor read this list instead of keeping their own
+/// copy.
 pub const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &[
     "manifest",
     "catalog",
@@ -174,10 +178,16 @@ pub const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &[
     "distribution",
     "release",
     "contracts",
+    "shell",
     "demos",
     "tasks",
     "qa",
 ];
+
+/// Top-level tables retired in v0.15 that still load for one release. They are
+/// accepted document keys but not [`TaskManifest`] fields: the manifest drops
+/// them and names each in its one deprecation notice (effigy#274).
+pub const RETIRED_MANIFEST_TOP_LEVEL_KEYS: &[&str] = &["shell", "demos"];
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(remote = "Self", deny_unknown_fields)]
@@ -217,12 +227,11 @@ pub struct TaskManifest {
     pub task_defaults: Option<ManifestTaskDefaultsConfig>,
     #[serde(default)]
     pub bootstrap: Option<ManifestBootstrapConfig>,
-    /// What the one-release `[bootstrap]` retirement translation read for this
-    /// manifest. It is never part of the TOML shape:
-    /// [`load_task_manifest_with_inspection`] emits its notice once per run and
-    /// `effigy bootstrap` refuses with its refusals.
+    /// What this manifest's retired v0.15 config read or ignored. It is never
+    /// part of the TOML shape: [`load_task_manifest_with_inspection`] emits its
+    /// notice once per run and a removed command refuses with its refusals.
     #[serde(skip)]
-    pub retired_bootstrap: RetiredBootstrapDeclaration,
+    pub retired_config: RetiredConfigDeclaration,
     /// Pinned extra sources acquired beside this checkout (contract 020).
     /// Declared as `[sources.<name>]`; replaces the removed
     /// `[bootstrap].children`.
@@ -240,10 +249,6 @@ pub struct TaskManifest {
     pub release: Option<ManifestReleaseConfig>,
     #[serde(default)]
     pub contracts: Option<ManifestContractsConfig>,
-    /// Retired in v0.15; each demo converts to an ordinary task. Refused with
-    /// the conversion recipe.
-    #[serde(default, rename = "demos", deserialize_with = "reject_demos")]
-    _retired_demos: Option<toml::Value>,
     #[serde(default, deserialize_with = "deserialize_tasks")]
     pub tasks: BTreeMap<String, ManifestTask>,
     /// Maintained bounded QA groups keyed under `[qa.groups.<name>]`
@@ -261,18 +266,6 @@ pub struct ManifestCatalog {
     pub members: BTreeMap<String, String>,
     #[serde(default)]
     pub sources: BTreeMap<String, ManifestBundleBase>,
-    #[serde(default, rename = "graph", deserialize_with = "reject_catalog_graph")]
-    _retired_graph: Option<toml::Value>,
-}
-
-fn reject_demos<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<toml::Value>, D::Error> {
-    let _: serde::de::IgnoredAny = serde::Deserialize::deserialize(deserializer)?;
-    Err(serde::de::Error::custom(format!(
-        "`[demos]` was removed in v0.15: the demo registry, receipts and browser are gone, and {}. See the v0.15.0 Removed entry in CHANGELOG.md",
-        effigy_core::retirement_text::DEMO_TO_TASK_RECIPE
-    )))
 }
 
 fn deserialize_sources<'de, D>(
@@ -314,13 +307,6 @@ where
         }
     }
     Ok(sources)
-}
-
-fn reject_catalog_graph<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<toml::Value>, D::Error> {
-    let _: serde::de::IgnoredAny = serde::Deserialize::deserialize(deserializer)?;
-    Err(serde::de::Error::custom("`[catalog.graph]` was removed in v0.15; remove the table. The code graph is gone in v0.15 with no replacement: use `rg` for code navigation (see CHANGELOG.md)"))
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -1508,7 +1494,7 @@ catalog = "postgres"
 
 #[cfg(test)]
 mod top_level_keys_tests {
-    use super::{TaskManifest, MANIFEST_TOP_LEVEL_KEYS};
+    use super::{TaskManifest, MANIFEST_TOP_LEVEL_KEYS, RETIRED_MANIFEST_TOP_LEVEL_KEYS};
     use std::collections::BTreeSet;
 
     #[test]
@@ -1524,7 +1510,7 @@ mod top_level_keys_tests {
         let declared: BTreeSet<&str> = MANIFEST_TOP_LEVEL_KEYS
             .iter()
             .copied()
-            .filter(|key| !matches!(*key, "manifest"))
+            .filter(|key| *key != "manifest" && !RETIRED_MANIFEST_TOP_LEVEL_KEYS.contains(key))
             .collect();
         assert_eq!(declared, fields);
     }

@@ -238,7 +238,7 @@ pub fn plan_bootstrap_request(request: &BootstrapRequest) -> Result<BootstrapPla
     }
     match effigy_manifest::load_task_manifest(&manifest_path) {
         Ok(manifest) => {
-            plan.refusals = manifest.retired_bootstrap.refusals().to_vec();
+            plan.refusals = manifest.retired_config.refusals().to_vec();
             if let Some(bootstrap) = manifest.bootstrap {
                 plan.submodules = bootstrap.submodules;
                 plan.setup = bootstrap.setup;
@@ -391,7 +391,7 @@ pub fn load_manifest_bootstrap(
     manifest_path: &Path,
 ) -> Result<Option<ManifestBootstrapConfig>, BootstrapError> {
     let manifest = effigy_manifest::load_task_manifest(manifest_path)?;
-    if let Some(message) = manifest.retired_bootstrap.refusal_message() {
+    if let Some(message) = manifest.retired_config.refusal_message() {
         return Err(BootstrapError::task_invocation(message));
     }
     Ok(manifest.bootstrap)

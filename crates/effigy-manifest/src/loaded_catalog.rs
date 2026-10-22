@@ -124,7 +124,7 @@ mod tests {
     }
 
     #[test]
-    fn retired_catalog_graph_names_the_replacement() {
+    fn a_retired_catalog_graph_table_is_ignored_with_its_replacement() {
         for fields in [
             "",
             "segmented = true",
@@ -132,10 +132,23 @@ mod tests {
             "independent = true",
             "store = 'custom.db'",
         ] {
-            let body = format!("[catalog]\nalias = 'bovine'\n[catalog.graph]\n{fields}\n");
-            let error = toml::from_str::<TaskManifest>(&body).expect_err("retired table");
-            assert!(error.to_string().contains("[catalog.graph]"));
-            assert!(error.to_string().contains("no replacement"));
+            let body = format!(
+                "[catalog]\nalias = 'bovine'\n[catalog.graph]\n{fields}\n\n[tasks.build]\nrun = 'true'\n"
+            );
+            let manifest = toml::from_str::<TaskManifest>(&body).expect("retired table loads");
+            assert_eq!(
+                manifest
+                    .catalog
+                    .as_ref()
+                    .and_then(|catalog| catalog.alias.clone()),
+                Some("bovine".to_owned())
+            );
+            let notice = manifest
+                .retired_config
+                .notice(&PathBuf::from("effigy.toml"))
+                .expect("one notice");
+            assert!(notice.contains("[catalog.graph]"), "{notice}");
+            assert!(notice.contains("no replacement"), "{notice}");
         }
     }
     #[test]

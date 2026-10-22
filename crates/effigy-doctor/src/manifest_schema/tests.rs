@@ -1017,17 +1017,32 @@ fn validate_manifest_schema_names_the_retired_draft_namespace() {
 }
 
 #[test]
-fn validate_manifest_schema_names_the_retired_shell_table() {
-    let manifest: Value = toml::from_str("[shell]\nrun = \"exec zsh -i\"").expect("parse manifest");
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-    assert!(
-        sink.findings.iter().any(|finding| finding
-            .remediation
-            .contains("managed shell tabs always run")),
-        "expected the retired [shell] table to be named, got: {:?}",
-        sink.findings
-    );
+fn validate_manifest_schema_accepts_the_one_release_retired_sections() {
+    // Retired sections that change nothing else when ignored keep loading for
+    // one release (effigy#274): doctor must not turn them into findings, and
+    // the manifest's own deprecation notice names them on stderr.
+    for manifest in [
+        "[shell]\nrun = \"exec zsh -i\"",
+        "[demos.checkout]\ntitle = \"Checkout\"\nrun = \"bun run demo\"",
+        "[catalog]\nalias = \"bovine\"\n\n[catalog.graph]\nsegmented = true",
+        "[scan.attention_markers]\nwarn = 1",
+        "[scan.comment_ratio]\nwarn = 1",
+        "[scan.generated_assets]\nwarn = 1",
+        "[scan.generated_in_src]\nwarn = 1",
+        "[scan.stale_suppressions]\nwarn = 1",
+        "[scan.boundary_violations]\nwarn = 1",
+        "[scan.dead_code]\nwarn = 1",
+        "[scan.validation_gaps]\nwarn = 1",
+    ] {
+        let manifest: Value = toml::from_str(manifest).expect("parse manifest");
+        let mut sink = TestSink::default();
+        validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+        assert!(
+            sink.findings.is_empty(),
+            "expected the retired section to be accepted, got: {:?}",
+            sink.findings
+        );
+    }
 }
 
 #[test]

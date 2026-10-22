@@ -1,7 +1,7 @@
 [[retired]]
 id = "effigy-demo-surface"
 retired = "2026-10-21"
-replacement = "No replacement (Q-009): the demo registry, receipts, retained history and browser are gone. Each `[demos.<name>]` converts to `[tasks.\"demo:<name>\"]` with the same `run`, the `title` and `summary` merged into the task `description` (effigy#271), and optional `group = \"Demos\"`. `effigy demo` refuses with this explanation, a `[demos]` table and `effigy config --target demos` are errors with the conversion recipe, and historical `.effigy/demo/` state and a consumer's own `demos/` script directory are untouched."
+replacement = "No replacement (Q-009): the demo registry, receipts, retained history and browser are gone. Each `[demos.<name>]` converts to `[tasks.\"demo:<name>\"]` with the same `run`, the `title` and `summary` merged into the task `description` (effigy#271), and optional `group = \"Demos\"`. `effigy demo` refuses with this explanation. For the whole v0.15 line a `[demos]` table still loads and is ignored with one deprecation notice per manifest that carries the conversion recipe (effigy#274), and `effigy config --target demos` refuses with it. Historical `.effigy/demo/` state and a consumer's own `demos/` script directory are untouched."
 owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md"
 terms = [
   "effigy demo",
@@ -49,6 +49,11 @@ paths = [
 ]
 config_keys = ["[demos", "--target demos"]
 allow = [
+  "crates/effigy-doctor/src/manifest_schema/tests.rs",
+  "crates/effigy-manifest/src/retired_config.rs",
+  "crates/effigy-manifest/src/retired_sections.rs",
+  "crates/effigy-manifest/tests/retired_sections.rs",
+  "docs/guides/022-manifest-cookbook.md",
   "CHANGELOG.md",
   "crates/effigy-builtin/src/config/request.rs",
   "crates/effigy-cli/src/command_parsing.rs",
@@ -94,6 +99,8 @@ terms = ["effigy.drafts.v1", "[drafts]", "[drafts.", "effigy drafts", "effigy dr
 paths = ["crates/effigy-manifest/src/draft_defs.rs", "crates/effigy-tasks/src/drafts.rs", "crates/effigy-doctor/src/draft_lifecycle.rs", "crates/effigy-manifest/src/task_migration.rs", "crates/effigy-cli/src/help/topics/draft.rs", "crates/effigy-cli/src/help/topics/drafts.rs", "src/runner/drafts_command.rs"]
 config_keys = ["[drafts.", "tasks.<name>.run[].draft", "qa.groups.<name>.members[].surface"]
 allow = [
+  "crates/effigy-manifest/src/retired_sections.rs",
+  "crates/effigy-manifest/tests/retired_sections.rs",
   "CHANGELOG.md",
   "docs/guides/022-manifest-cookbook.md",
   "docs/guides/085-v0.15.0-consumer-migration.md",
@@ -229,7 +236,18 @@ owner = "docs/knowledge/questions.md"
 terms = ["effigy.graph.fanout.v1", "graph index --all-catalogs", "graph status --all-catalogs", "graph index --catalog"]
 paths = []
 config_keys = ["catalog.graph"]
-allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "docs/knowledge/contracts/json-schema-index.json", "crates/effigy-manifest/src/lib.rs", "crates/effigy-manifest/src/loaded_catalog.rs"]
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-doctor/src/manifest_schema/tests.rs",
+  "crates/effigy-manifest/src/lib.rs",
+  "crates/effigy-manifest/src/loaded_catalog.rs",
+  "crates/effigy-manifest/src/retired_sections.rs",
+  "crates/effigy-manifest/tests/retired_sections.rs",
+  "docs/guides/022-manifest-cookbook.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/contracts/json-schema-index.json",
+  "tests/cli_output_tests/retirement_tests.rs",
+]
 
 [[retired]]
 id = "effigy-host-run-client"
@@ -478,12 +496,16 @@ allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "docs/
 [[retired]]
 id = "effigy-manifest-shell-table"
 retired = "2026-10-22 (v0.15, Q-009)"
-replacement = "No replacement: managed shell tabs always run `exec ${SHELL:-/bin/zsh} -i`. Delete [shell] and its run key; the command that needed it belongs in the task that runs it."
+replacement = "No replacement: managed shell tabs always run `exec ${SHELL:-/bin/zsh} -i`. Delete [shell] and its run key; the command that needed it belongs in the task that runs it. For the whole v0.15 line a manifest that still declares [shell] loads and the table is ignored with one deprecation notice per manifest (effigy#274)."
 owner = "docs/guides/012-dev-process-manager-tui.md"
 terms = ["[shell]", "ManifestShellConfig", "shell.run"]
 paths = []
 config_keys = ["[shell]", "shell.run"]
 allow = [
+  "crates/effigy-manifest/src/retired_config.rs",
+  "crates/effigy-manifest/src/retired_sections.rs",
+  "crates/effigy-manifest/tests/retired_sections.rs",
+  "tests/cli_output_tests/retirement_tests.rs",
   "CHANGELOG.md",
   "crates/effigy-manifest/src/retired_keys.rs",
   "docs/guides/012-dev-process-manager-tui.md",
@@ -893,7 +915,7 @@ allow = [
 [[retired]]
 id = "effigy-code-graph"
 retired = "2026-10-21"
-replacement = "No replacement (Q-009): the code graph, its SQLite index and the three graph-backed scanners are gone. Use `rg` for code navigation, `docs/README.md` for the documentation index, and `effigy test --plan` to choose tests. `effigy graph` and `effigy docs context` refuse with this explanation; `[scan.boundary_violations]`, `[scan.dead_code]`, `[scan.validation_gaps]`, `[catalog.graph]`, `--graph-context`, `--path`/`--stdin` on `scan`, and the retired subcommand spellings are manifest or usage errors. Historical `.effigy/graph/` index state is untouched. `docs check` is unchanged."
+replacement = "No replacement (Q-009): the code graph, its SQLite index and the three graph-backed scanners are gone. Use `rg` for code navigation, `docs/README.md` for the documentation index, and `effigy test --plan` to choose tests. `effigy graph` and `effigy docs context` refuse with this explanation, as do `--graph-context`, `--path`/`--stdin` on `scan` and the retired subcommand spellings. For the whole v0.15 line `[scan.boundary_violations]`, `[scan.dead_code]`, `[scan.validation_gaps]` and `[catalog.graph]` still load and are ignored with one deprecation notice per manifest (effigy#274). Historical `.effigy/graph/` index state is untouched. `docs check` is unchanged."
 owner = "docs/knowledge/questions.md"
 terms = [
   "effigy graph",
@@ -941,6 +963,13 @@ config_keys = [
   "catalog.graph",
 ]
 allow = [
+  "docs/guides/022-manifest-cookbook.md",
+  "crates/effigy-doctor/src/manifest_schema/scan_section/mod.rs",
+  "crates/effigy-doctor/src/manifest_schema/tests.rs",
+  "crates/effigy-manifest/src/retired_config.rs",
+  "crates/effigy-manifest/src/retired_sections.rs",
+  "crates/effigy-manifest/tests/retired_sections.rs",
+  "tests/cli_output_tests/retirement_tests.rs",
   "CHANGELOG.md",
   "docs/knowledge/questions.md",
   "docs/knowledge/retired.toml",
@@ -981,7 +1010,7 @@ allow = [
 [[retired]]
 id = "effigy-scan-cut-scanners"
 retired = "2026-10-22"
-replacement = "No replacement for the five removed scanners (Q-009). `god-files` and `duplicate-blocks` remain. For TODO/FIXME searches use `rg -n 'TODO|FIXME' <path>`; keep bulky generated output out of versioned paths with `.gitignore`; let each tool report its own unused suppressions. `effigy scan <name>` refuses with this explanation and each `[scan.<table>]` is a manifest error."
+replacement = "No replacement for the five removed scanners (Q-009). `god-files` and `duplicate-blocks` remain. For TODO/FIXME searches use `rg -n 'TODO|FIXME' <path>`; keep bulky generated output out of versioned paths with `.gitignore`; let each tool report its own unused suppressions. `effigy scan <name>` refuses with this explanation. For the whole v0.15 line each `[scan.<table>]` still loads and is ignored with one deprecation notice per manifest (effigy#274)."
 owner = "docs/knowledge/questions.md"
 terms = [
   "scan attention-markers",
@@ -1050,6 +1079,12 @@ config_keys = [
   "scan.stale_suppressions",
 ]
 allow = [
+  "crates/effigy-doctor/src/manifest_schema/scan_section/mod.rs",
+  "crates/effigy-doctor/src/manifest_schema/tests.rs",
+  "crates/effigy-manifest/src/retired_config.rs",
+  "crates/effigy-manifest/src/retired_sections.rs",
+  "crates/effigy-manifest/tests/retired_sections.rs",
+  "tests/cli_output_tests/retirement_tests.rs",
   "CHANGELOG.md",
   "docs/knowledge/questions.md",
   "docs/knowledge/retired.toml",

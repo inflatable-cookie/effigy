@@ -24,7 +24,20 @@ pub(super) fn validate_scan_section(context: &mut SchemaContext<'_, '_>, scan: &
         context,
         "scan",
         scan_table,
-        &["god_files", "duplicate_blocks"],
+        &[
+            "god_files",
+            "duplicate_blocks",
+            // Retired scanners keep loading for one release (effigy#274); the
+            // manifest names them in its one deprecation notice.
+            "attention_markers",
+            "comment_ratio",
+            "generated_assets",
+            "generated_in_src",
+            "stale_suppressions",
+            "boundary_violations",
+            "dead_code",
+            "validation_gaps",
+        ],
     );
     validate_threshold_scan_section(context, scan_table.get("god_files"), "scan.god_files");
     validate_duplicate_blocks_section(
