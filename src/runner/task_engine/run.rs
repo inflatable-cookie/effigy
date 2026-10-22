@@ -899,6 +899,14 @@ pub(in crate::runner) fn request_run_stop(id: RunId) -> Result<(), RunnerError> 
 }
 
 fn retain() {
+    // Stopgap (2026-10-22, planner): retention on the close path scans the
+    // whole run table inside a write transaction, which holds the machine-wide
+    // store lock for seconds per close and refuses every other admission with
+    // `store refused: Busy`. Skip it unless explicitly requested; effigy#275
+    // moves retention off the close path with indexed, batched transactions.
+    if std::env::var_os("EFFIGY_RETENTION_ON_CLOSE").as_deref() != Some(std::ffi::OsStr::new("1")) {
+        return;
+    }
     let Ok(root) = kernel::effects_root() else {
         return;
     };
