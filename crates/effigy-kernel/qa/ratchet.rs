@@ -137,10 +137,11 @@ pub fn inventory(root: &Path) -> Result<Inventory, String> {
 ///
 /// `[scratch] root` keeps a run's marker on the volume the operator configured:
 /// it is run metadata, not Effigy state, and the state root's trust policy does
-/// not describe a root-owned volume root. The scanner's `.effigy` heuristic
-/// therefore reads that file as a state writer, so its exact writes are listed
-/// here. A construct that is not listed for a tracked file, or a count above
-/// its ceiling, fails the inventory — regenerating the baseline cannot widen it.
+/// not describe a directory on a volume the operator configured. The scanner's
+/// `.effigy` heuristic therefore reads that file as a state writer, so its exact
+/// writes are listed here. A construct that is not listed for a tracked file, or
+/// a count above its ceiling, fails the inventory — regenerating the baseline
+/// cannot widen it.
 pub fn external_ceilings(relative: &str) -> Option<&'static [(&'static str, usize)]> {
     match relative {
         "src/runner/scratch.rs" => Some(&[("std::fs::File::create", 1)]),

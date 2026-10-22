@@ -272,26 +272,32 @@ During v0.x, MINOR bumps may include breaking changes.
   Effigy skill and the user guide section
   ([069](docs/guides/069-workspace-host-integration.md)) document every
   condition.
-- Per-run scratch on a configured external volume (effigy#244). Setting
-  `[scratch] root` in `~/.effigy/config.toml` to a mounted volume's root gives
-  every host-placed run — the built-in `effigy test` route included — its own
-  `<root>/<8-character run directory>/`, named from the run's whole identity so
-  same-instant and `--run-id` runs still differ, as its `TMPDIR`, `TMP` and
-  `TEMP`, as a kernel run effect settled with the run: released when the run
-  succeeded, kept for 24 hours from the moment it failed (the failure output
-  prints the path), and swept by a bounded later run. Only the run's own marker,
-  matching that run's derived directory name, authorises a verdict or a
+- Per-run scratch on a configured external volume (effigy#244, effigy#253).
+  Setting `[scratch] root` in `~/.effigy/config.toml` to any directory on a
+  drive gives every host-placed run — the built-in `effigy test` route included
+  — its own `<root>/<8-character run directory>/`, named from the run's whole
+  identity so same-instant and `--run-id` runs still differ, as its `TMPDIR`,
+  `TMP` and `TEMP`, as a kernel run effect settled with the run: released when
+  the run succeeded, kept for 24 hours from the moment it failed (the failure
+  output prints the path), and swept by a bounded later run. Only the run's own
+  marker, matching that run's derived directory name, authorises a verdict or a
   removal, so a directory that went away or was replaced is never relabelled or
-  deleted. The built-in `effigy test` route's host suites run as child runs of
-  its run, so their process groups are stopped before the directory is released
-  (the multi-suite TUI is not used while such a run holds them), and with no
-  configured scratch that route opens no run and needs no Effigy state home. A
-  volume gate refuses an absent root, the boot or data volume, a root that is
-  not the volume's mount point, a `volume_uuid` mismatch, a root inside
-  `/Volumes/Builds/oxide-pool`, and a root that is not root-owned, ACL-free and
-  closed to other writes; a refusal falls back to the default temp directory and
-  `effigy doctor` reports the reason. An explicit or non-default `TMPDIR` wins,
-  a nested run reuses its parent's directory, a nested task that declares
+  deleted, and a sweep never touches a directory or file Effigy did not name
+  and mark itself. The built-in `effigy test` route's host suites run as child
+  runs of its run, so their process groups are stopped before the directory is
+  released (the multi-suite TUI is not used while such a run holds them), and
+  with no configured scratch that route opens no run and needs no Effigy state
+  home. The root may be any directory on the drive, not only its mount point; a
+  missing root is created with mode 0700 when its nearest existing ancestor
+  passes the volume proof. The gate refuses a root whose nearest existing
+  ancestor is on the boot or data volume (so a stale `/Volumes/<name>`
+  directory left on the internal disk after the drive goes away is refused), a
+  path no mount point holds, a `volume_uuid` mismatch, a root owned by neither
+  the current user nor root, and a root that is group- or world-writable or
+  carries an ACL; a refusal falls back to the default temp directory and
+  `effigy doctor` reports the reason. Effigy hardcodes no path, no UUID and no
+  other tool's directory. An explicit or non-default `TMPDIR` wins, a nested
+  run reuses its parent's directory, a nested task that declares
   `scratch = false` hides its parent's directory from its own host processes,
   container workloads never receive the host scratch, and a task opts out with
   `scratch = false` (managed sessions included) or `EFFIGY_SCRATCH=0`. Unset,
