@@ -7,8 +7,7 @@ use effigy_cli::{
     ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand,
     DeployArgs, DeploySubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs,
     GatewayArgs, GatewaySubcommand, ReleaseArgs, ReleaseEvidenceSubcommand, ReleaseSubcommand,
-    ServiceArgs, ServiceSubcommand, StateArgs, StateSubcommand, SystemArgs, SystemSubcommand,
-    TaskInvocation, TasksArgs,
+    ServiceArgs, ServiceSubcommand, StateArgs, StateSubcommand, TaskInvocation, TasksArgs,
 };
 use effigy_execution::ExecutionSurface;
 use effigy_rhai::surface::*;
@@ -162,6 +161,7 @@ pub(super) fn run_rhai_feature(
                     repo_root,
                     ContainerSubcommand::Status {
                         name: Some(name),
+                        system: None,
                         global: false,
                     },
                 )
@@ -171,6 +171,7 @@ pub(super) fn run_rhai_feature(
                     effigy_cli::Command::Container(ContainerArgs {
                         subcommand: ContainerSubcommand::Status {
                             name: None,
+                            system: None,
                             global: true,
                         },
                         repo_override: None,
@@ -193,6 +194,7 @@ pub(super) fn run_rhai_feature(
                 repo_root,
                 ContainerSubcommand::Logs {
                     name: Some(required_string(&options, "name")?),
+                    system: None,
                     service: string_option(&options, "service")?,
                     follow: false,
                 },
@@ -787,31 +789,6 @@ pub(super) fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        FEATURE_SYSTEM_STATUS => run_typed_command(
-            repo_root,
-            effigy_cli::Command::System(SystemArgs {
-                subcommand: SystemSubcommand::Status,
-                system: string_option(&options, "system")?,
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: true,
-            }),
-        ),
-        FEATURE_SYSTEM_LOGS => {
-            if bool_option(&options, "follow")?.unwrap_or(false) {
-                return Err(RunnerError::task_invocation(
-                    "`system_logs` does not support `follow = true` from Rhai",
-                ));
-            }
-            run_typed_command(
-                repo_root,
-                effigy_cli::Command::System(SystemArgs {
-                    subcommand: SystemSubcommand::Logs { follow: false },
-                    system: string_option(&options, "system")?,
-                    repo_override: Some(repo_root.to_path_buf()),
-                    output_json: true,
-                }),
-            )
-        }
         FEATURE_CHANGELOG_VALIDATE => run_typed_command(
             repo_root,
             effigy_cli::Command::Changelog(ChangelogArgs {
@@ -971,8 +948,6 @@ pub(super) fn is_runner_dispatch_feature(feature: &str) -> bool {
             | FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS
             | FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT
             | FEATURE_DISTRIBUTION_WRITE_SUMMARY
-            | FEATURE_SYSTEM_STATUS
-            | FEATURE_SYSTEM_LOGS
             | FEATURE_CHANGELOG_VALIDATE
             | FEATURE_CHANGELOG_EXTRACT
             | FEATURE_UNLOCK_SCOPES

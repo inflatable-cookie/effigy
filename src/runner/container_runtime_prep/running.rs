@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use effigy_containers::EffectiveContainerPolicy;
 
+use crate::runner::container_command::is_primary_service_running;
 use crate::runner::error::RunnerError;
-use crate::runner::system_command::is_primary_service_running;
 
 pub(super) fn check_runtime_running_state_stage(
     repo_root: &Path,

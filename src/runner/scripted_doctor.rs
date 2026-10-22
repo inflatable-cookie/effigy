@@ -1,7 +1,7 @@
 //! Deterministic, test-only capture runtime for the doctor behavior oracles.
 //!
 //! The doctor ownership path reaches the runtime through three runner-owned
-//! boundaries: the preliminary liveness sequencing in `system_command`, the
+//! boundaries: the preliminary liveness sequencing in `container_command::liveness`, the
 //! service-name resolve in `exec_command::transport::colima`, and the
 //! `run_command_capture_until` boundary every Compose access batch funnels
 //! through. This module lets a test install a thread-local scripted runtime at

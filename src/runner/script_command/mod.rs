@@ -162,6 +162,7 @@ fn host_callbacks() -> HostCallbacks {
                 repo_root,
                 ContainerSubcommand::Up {
                     name: Some(name.to_owned()),
+                    system: None,
                     attach: !detach,
                     detach,
                 },
@@ -173,6 +174,7 @@ fn host_callbacks() -> HostCallbacks {
                 repo_root,
                 ContainerSubcommand::Down {
                     name: if global { None } else { Some(name.to_owned()) },
+                    system: None,
                     global,
                 },
             )

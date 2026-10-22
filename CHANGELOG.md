@@ -218,6 +218,13 @@ During v0.x, MINOR bumps may include breaking changes.
   `[contracts].selection_contract` from the project manifest, so a project that
   declares neither is refused with "no JSON schema index configured" instead of
   being validated against Effigy's documentation tree.
+- `effigy system` is retired (Q-009). `effigy container [<NAME>] up|down|status|logs`
+  is the environment lifecycle surface, and `effigy container profile repair`
+  and `effigy container profile reset-runtime` replace `system repair` and
+  `system reset-runtime` with the same refusals and `effigy.system.recover.v1`
+  JSON. A retired spelling refuses with its exact replacement and points at
+  this entry. The Rhai `system::status` and `system::logs` functions are gone.
+  `[systems]`, `effigy workspace` and `effigy exec` are unchanged.
 - The code graph (Q-009): `effigy graph` (`index`, `status`, `search`, `node`,
   `affected`, `explore` and the earlier retired spellings), `effigy docs
   context` and its `--sources` portfolio routing, the `effigy-codegraph` crate
@@ -685,6 +692,11 @@ During v0.x, MINOR bumps may include breaking changes.
   `selected.length`, because JSON Schema cannot compare a property with an
   array length. `--json` failures now report the structured
   `effigy.contracts.check-json.v1` payload in `error.message`.
+- `effigy container` without a name resolves `[containers].default` and then the
+  `[systems].default` workspace container, so a repo that declares only
+  `[systems]` targets the environment its tasks use. `--system <NAME>` selects
+  one declared system for `up`, `down`, `status`, `logs` and the `profile`
+  recovery verbs; naming a container and passing `--system` together is refused.
 - The contributor task that builds this checkout and installs it as the machine's `effigy` is renamed `bootstrap:local` → `install:local`, so it no longer reads as the `effigy bootstrap` feature (clone and start a project). `bootstrap:local` now fails with the new name.
 - Effigy's own repository builds through Oxide. Selectors run Cargo through
   `scripts/oxide-selector.sh`, which leases Oxide's shared slot pool so Rust
@@ -792,6 +804,15 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Sequential `Terminal::Foreground` children no longer stop their owner with
+  SIGTTOU, which suspended `effigy gateway setup` after `mkcert -install`
+  ("suspended (tty output)") while it held the `gateway-setup` gate
+  (effigy#272). The owner takes the terminal with `SIGTTOU` blocked on the
+  calling thread, for the workload's own process group (never a group an
+  anchor leads), and hands it back the moment that child's exit is observed
+  instead of at settle, so the next sequential spawn starts from the
+  foreground. A terminal another program holds is left alone, and stdin that
+  is not a terminal takes no lease at all.
 - The `[demos]` retirement error and `effigy config --target demos` now give
   the Q-009 conversion recipe instead of telling operators to delete the table
   and record sessions elsewhere: each `[demos.<name>]` becomes

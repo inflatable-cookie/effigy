@@ -5,10 +5,14 @@ Effigy supposed to think about host-clean local dev?"
 
 This is the mental-model guide for:
 
-- `effigy system ...`
+- `effigy container ...`
 - `effigy workspace`
 - `dev` tasks that bind to a system
-- the relationship between those commands and `effigy container ...`
+- the `[systems]` manifest table those commands resolve through
+
+`effigy system` was retired in v0.15; its lifecycle and recovery verbs are
+`effigy container` and `effigy container profile` (see
+[guide 085](085-v0.15.0-consumer-migration.md)).
 
 Use:
 - this guide for the model and naming rules
@@ -25,15 +29,15 @@ Use this page when you want to answer any of these:
 - how does a repo bring infra up without launching the whole app stack?
 - where do package installs, updates, migrations, and one-off Linux-native
   maintenance happen?
-- what is the relationship between `container` and `system` as public
-  commands?
+- how do a system, a workspace and a container relate?
 
 Short answer:
 
 - `dev` keeps its historic role as the concurrent runner
-- `system` is the infra lifecycle command
+- `container` owns environment lifecycle: VM/profile, compose, data and
+  runtime recovery
 - `workspace` is the Linux-native maintenance command
-- `container` remains the direct compose and data-lifecycle command
+- `[systems]` selects which environment a task, `workspace` or `exec` uses
 
 ## Prereqs and feature-scoped dependencies (macOS)
 
@@ -63,12 +67,16 @@ brew install --cask docker
 
 Effigy local dev has three layers:
 
-- `system`
-  - owns infra lifecycle: VM, compose, gateway, workspace handoff
+- `container` (the environment)
+  - owns infra lifecycle: VM, compose, gateway, workspace handoff, recovery
 - `workspace`
-  - gets you into the Linux-native maintenance environment inside that system
+  - gets you into the Linux-native maintenance environment inside that
+    environment
 - `dev`
-  - runs the app runtime against the resolved system
+  - runs the app runtime against the resolved environment
+
+`[systems.<name>]` is the manifest-level name for that environment: it binds a
+default workspace, and the workspace names the container that runs it.
 
 That split matters because infra lifecycle and app lifecycle are not the
 same thing:
@@ -81,22 +89,27 @@ maintenance work do not have to hide inside normal app startup.
 
 ## Command Roles
 
-### `effigy system ...`
+### `effigy container ...`
 
-This is the public infra lifecycle command:
+This is the public environment lifecycle command:
 
 ```sh
-effigy system up
-effigy system down
-effigy system status
-effigy system logs
+effigy container up
+effigy container down
+effigy container status
+effigy container logs
 ```
 
 Use it when you want to:
 
-- bring the infra up first
-- inspect or repair infra without launching the app
-- keep the system running across several commands
+- bring the environment up first
+- inspect or repair it without launching the app
+- keep it running across several commands
+
+Without a container name, `effigy container` resolves `[containers].default`
+and then the `[systems].default` workspace container, so a repo that declares
+only `[systems]` still targets the environment its tasks use.
+`--system <NAME>` selects one declared system explicitly.
 
 ### `effigy workspace`
 
@@ -151,7 +164,7 @@ The key distinction is simple:
 
 That rule applies to both `dev` and `workspace`.
 
-### `effigy system up`
+### `effigy container up`
 
 - idempotent
 - if already up, report that cleanly
@@ -287,28 +300,34 @@ Rules:
 - the loader should normalize it into the same canonical model
 - runtime and validation should still reason about one underlying shape
 
-## `container` vs `system`
+## `container`, `[systems]`, and `workspace`
 
-Both command families are still public, but they do different jobs.
+One command family now owns environment lifecycle.
 
-- `system`
-  - owns infra lifecycle for `[systems.<name>]`
-  - includes VM/profile, compose, gateway, workspace handoff, and recovery
 - `container`
-  - owns direct compose lifecycle and data lifecycle for
-    `[containers.<name>]`
-  - still makes sense for repos that do not need a surrounding system
+  - owns infra lifecycle for `[containers.<name>]`
+  - includes VM/profile, compose, data, gateway integration, workspace
+    handoff and runtime recovery
+  - `container profile repair` and `container profile reset-runtime` recover
+    the environment's Colima runtime; they replace the retired
+    `system repair` and `system reset-runtime`
+- `[systems.<name>]`
+  - stays as the manifest selector that `workspace`, `exec` and tasks resolve
+    through; it is not a command
+- `workspace`
+  - opens the Linux-native maintenance environment inside the resolved
+    container
 
 Lead new container-backed repos toward:
 
-- `system`
+- `container`
 - `workspace`
 
-Reach for `container` directly when:
+Reach for the data and profile surfaces when:
 
-- the repo only has a simple compose environment
 - you need data export, import or reset surfaces
 - you need cross-project compose views such as `status --global`
+- the Colima runtime needs recovery, sizing or removal
 
 ## Expected User Flows
 
@@ -372,10 +391,10 @@ Behavior:
 ### Manual substrate control
 
 ```sh
-effigy system up
+effigy container up
 effigy workspace
 effigy dev
-effigy system down
+effigy container down
 ```
 
 Behavior:
@@ -391,9 +410,9 @@ This page should stay focused on the model, not implementation archaeology.
 If a future change does not alter one of these public ideas:
 
 - `dev` owns app runtime
-- `system` owns infra lifecycle
+- `container` owns environment lifecycle
 - `workspace` owns Linux-native maintenance access
-- `container` remains the lower-level compose and data path
+- `[systems]` selects the environment a task, `workspace` or `exec` uses
 
 then it probably belongs in architecture docs or command-specific guides, not
 here.
@@ -408,6 +427,6 @@ here.
 
 ## Next Step
 
-Use this page when deciding whether a new local-dev command belongs on
-`system`, `workspace`, `dev`, or `container` before adding another command or
-manifest knob.
+Use this page when deciding whether a new local-dev behavior belongs on
+`container`, `workspace`, `dev`, or the `[systems]` manifest table before
+adding another command or manifest knob.

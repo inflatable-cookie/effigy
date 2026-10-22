@@ -68,7 +68,6 @@ Policy:
 | Contracts | `contracts::check_json` (including `validate_selection`) | Exposed |
 | Deploy | `deploy::model`, `deploy::emit`, `deploy::plan`, `deploy::apply`, `deploy::status`, `deploy::history`, `deploy::redeploy`, `deploy::provider_context`, `deploy::provider_context_path`, `deploy::provider_report_path`, `deploy::provider_report` | Exposed; apply/redeploy refuse in v0.15 |
 | Distribution | `distribution::validate_metadata`, `distribution::check_glibc_floor`, `distribution::preflight`, `distribution::first_publish`, `distribution::validate_artifacts`, `distribution::generate_closeout`, `distribution::write_summary` | Exposed |
-| System | `system::status`, `system::logs` | Exposed |
 | Changelog | `changelog::validate`, `changelog::extract` | Exposed |
 | Test | `test::plan` | Exposed |
 | Unlock | `unlock::scopes` | Exposed |

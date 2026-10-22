@@ -294,8 +294,6 @@ Current v1 helpers:
   - `contracts::check_json(options_map)` (`index`, `contract`, `artifact`, `mode`, `changed_only`, `print_selected`, `validate_selection`)
   - `deploy::model()`
   - `deploy::emit(#{ provider: "render", ... })`
-  - `system::status(options_map)`
-  - `system::logs(options_map)`
   - `changelog::validate(options_map)`
   - `changelog::extract(options_map)`
   - `test::plan(options_map)`

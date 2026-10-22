@@ -8,11 +8,15 @@ use effigy_containers::colima::{
     managed_colima_profile_resources, managed_colima_profile_resources_with_disk,
     prepare_managed_colima_profile_name, prepare_managed_colima_profile_name_with_disk,
 };
+use effigy_containers::exec::{recover_colima_runtime, reset_colima_runtime, ColimaRecoveryReport};
+use effigy_ui::theme::is_ci_environment;
+use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
 use serde::Deserialize;
 use serde_json::json;
 
 use super::data::maybe_confirm_destructive_container_action;
 use super::RunnerError;
+use crate::runner::command_context::resolve_active_repo_root;
 
 const DEFAULT_PROFILE: &str = "effigy";
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
@@ -42,6 +46,27 @@ pub(super) fn run_container_profile_command(
     subcommand: &ContainerProfileSubcommand,
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    // Recovery selects the environment through the manifest, so it keeps the
+    // repository and system selection the retired `effigy system` verbs had.
+    match subcommand {
+        ContainerProfileSubcommand::Repair { system } => {
+            return run_container_profile_runtime_recovery(
+                repo_override,
+                system.as_deref(),
+                output_json,
+                true,
+            );
+        }
+        ContainerProfileSubcommand::ResetRuntime { system } => {
+            return run_container_profile_runtime_recovery(
+                repo_override,
+                system.as_deref(),
+                output_json,
+                false,
+            );
+        }
+        _ => {}
+    }
     if repo_override.is_some() {
         return Err(RunnerError::task_invocation(
             "`effigy container profile` does not accept `--repo`; Colima profiles are machine-level runtime state",
@@ -62,6 +87,97 @@ pub(super) fn run_container_profile_command(
             disk_gib,
             yes,
         } => run_container_profile_recreate(profile.as_deref(), *disk_gib, *yes, output_json),
+        ContainerProfileSubcommand::Repair { .. }
+        | ContainerProfileSubcommand::ResetRuntime { .. } => {
+            unreachable!("recovery verbs return before the machine-level profile check")
+        }
+    }
+}
+
+/// `container profile repair` / `reset-runtime`: the Colima runtime belonging
+/// to the environment's profile, recovered in place or stopped without
+/// deleting it.
+fn run_container_profile_runtime_recovery(
+    repo_override: Option<PathBuf>,
+    system: Option<&str>,
+    output_json: bool,
+    repair: bool,
+) -> Result<String, RunnerError> {
+    let resolved = resolve_active_repo_root(repo_override)?;
+    let repo_root = resolved.resolved_root;
+    let surface = if repair {
+        "container profile repair"
+    } else {
+        "container profile reset-runtime"
+    };
+    let container_name = crate::runner::workspace_command::resolve_public_workspace_container(
+        &repo_root, system, None, surface,
+    )?;
+    let policy =
+        super::policy::load_resolved_container_policy(&repo_root, container_name.as_deref())?;
+    let mut progress = ProfileRecoveryProgressReporter::new(output_json, repair);
+    let result = if repair {
+        render_profile_runtime_recovery(
+            recover_colima_runtime(&policy, &repo_root).map_err(Into::<RunnerError>::into),
+            output_json,
+        )
+    } else {
+        render_profile_runtime_recovery(
+            reset_colima_runtime(&policy, &repo_root).map_err(Into::<RunnerError>::into),
+            output_json,
+        )
+    };
+    progress.finish(result.is_ok());
+    result
+}
+
+fn render_profile_runtime_recovery(
+    result: Result<ColimaRecoveryReport, RunnerError>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let report = result?;
+    if output_json {
+        return serde_json::to_string_pretty(&serde_json::json!({
+            "schema": "effigy.system.recover.v1",
+            "schema_version": 1,
+            "ok": true,
+            "profile": report.profile,
+            "steps": report.steps,
+        }))
+        .map_err(|error| RunnerError::task_invocation(error.to_string()));
+    }
+    Ok(report.steps.join("\n"))
+}
+
+struct ProfileRecoveryProgressReporter {
+    spinner: Option<Box<dyn SpinnerHandle>>,
+}
+
+impl ProfileRecoveryProgressReporter {
+    fn new(output_json: bool, repair: bool) -> Self {
+        if output_json || !io::stderr().is_terminal() || is_ci_environment() {
+            return Self { spinner: None };
+        }
+
+        let label = if repair {
+            "Container profile: recovering Colima runtime"
+        } else {
+            "Container profile: hard-resetting Colima runtime"
+        };
+        let mut renderer = PlainRenderer::stderr(OutputMode::from_env());
+        let spinner = renderer.spinner(label).ok();
+        Self { spinner }
+    }
+
+    fn finish(&mut self, success: bool) {
+        let Some(spinner) = self.spinner.take() else {
+            return;
+        };
+        if success {
+            spinner.finish_clear();
+        } else {
+            spinner.finish_error("Container profile recovery failed");
+        }
     }
 }
 
