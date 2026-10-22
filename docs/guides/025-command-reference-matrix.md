@@ -464,6 +464,20 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   instance for container route registration and managed startup; clients must
   explicitly trust `<DIR>/ca/rootCA.pem` and resolve each route name to the
   actual HTTPS address shown by `gateway status --json`
+- `gateway status --json` keeps unprovable state unknown: when this caller
+  cannot read or verify the recorded generation, the command exits non-zero and
+  prints the `effigy.gateway.status.v1` refusal with `ok: false`,
+  `status: "unknown"`, a recorded `pid` when one was read, and
+  `observations.record`/`observations.process`/`observations.identity` labels
+  (`authenticated`, `running`, `permission-denied`, `unreadable`, …). A
+  headless or noninteractive plan gates on those observations —
+  `record=authenticated` and `process=running` with a recorded PID — and never
+  on `gateway status` exit 0; `identity=permission-denied` or `identity=unknown`
+  stays unknown and the command stays non-zero. `headless.satisfied` in that
+  refusal reports only the observation precondition, not readiness. Resolving a
+  denied identity still needs the bounded read-only check from an
+  interactive admin-capable terminal, or `gateway setup` to migrate a legacy
+  root-owned gateway
 - routes with `tls = true` redirect plain HTTP to HTTPS once the gateway TLS
   listener is available
 - `workspace` and interactive `container shell` do not support `--json`; finite

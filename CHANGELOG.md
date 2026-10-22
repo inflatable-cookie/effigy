@@ -683,6 +683,22 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- `effigy gateway status --json` refuses unprovable state with a structured
+  `effigy.gateway.status.v1` document instead of only prose: `ok: false`,
+  `status: "unknown"`, the recorded `pid`, `observations.record` /
+  `observations.process` / `observations.identity` labels and the
+  `headless` observation precondition. A noninteractive plan can gate on
+  `record=authenticated` plus `process=running` with a recorded PID rather
+  than on exit 0; a denied or unknown identity stays unknown and the command
+  stays non-zero. A record this caller may not open is diagnosed as
+  `record=unreadable`, never as malformed.
+- Gateway record readers take the shared half of the record lock, so a status
+  probe that reads while the daemon publishes its identity/PID pair can no
+  longer observe the identity-only first half and report "gateway identity
+  exists without its PID". The interrupted-pair refusal itself is unchanged.
+- Operator gateway startup bounds supervisor admission and daemon readiness
+  as two phases. A slow admission no longer consumes the readiness budget, and
+  each phase reports its own timeout instead of one shared startup deadline.
 - Cargo local links record the committed blob of every tracked lockfile they
   resolve, and `effigy deps unlink cargo <library-path>` restores those exact
   bytes when the record still matches `HEAD` and only link-owned packages
