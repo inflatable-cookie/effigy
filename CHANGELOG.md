@@ -400,10 +400,13 @@ During v0.x, MINOR bumps may include breaking changes.
   of a target a resume would publish again blind. `effigy release resume`
   reconciles an unknown target by running its `check` task first
   (`committed: true` means the candidate is already there, `false` means it is
-  not), and a target with no `check` stops at `awaiting-decision` in that same
-  invocation until `effigy release decide <run> --published|--not-published`
-  records who decided, when, and what. A target that succeeded stays recorded,
-  so a partial fan-out resumes with the remaining targets.
+  not), and a target with no `check` — including one whose task could not be
+  started — stops at `awaiting-decision` in that same invocation until
+  `effigy release decide <run> --published|--not-published` records who
+  decided, when, and what. That stop also holds the publish fan-out: later
+  targets stay pending and none of them publishes until the outcome is
+  resolved. A target that succeeded stays recorded, so a partial fan-out
+  resumes with the remaining targets.
 - Hosted evidence is a checkpoint, not a held process. A gate with
   `reuse-hosted-evidence = true` stops the Run at
   `awaiting-hosted-evidence` while the exact-commit GitHub Actions evidence is

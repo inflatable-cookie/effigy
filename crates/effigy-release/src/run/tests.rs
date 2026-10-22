@@ -1083,6 +1083,11 @@ task = "release:publish:npm"
 verify = "release:verify:npm"
 "#;
 
+const NPM_PUBLISH_ONLY: &str = r#"[release.targets.npm]
+kind = "task"
+task = "release:publish:npm"
+"#;
+
 const NPM_TARGET_WITH_CHECK: &str = r#"[release.targets.npm]
 kind = "task"
 task = "release:publish:npm"
@@ -1546,6 +1551,146 @@ fn a_task_publish_whose_outcome_is_lost_leaves_unknown_and_resumes_through_check
     assert_eq!(
         resumed.record.target("npm").expect("npm").destinations[0].destination,
         "fixture@0.2.5"
+    );
+}
+
+#[test]
+fn an_unknown_target_stops_the_publish_fan_out_before_later_targets() {
+    let fixture = fixture("task-fanout-stop");
+    single_identity_project(&fixture);
+    // Alphabetical target order, so `npm` publishes before `zeta`.
+    let mut manifest = String::from(NPM_PUBLISH_ONLY);
+    manifest
+        .push_str("\n[release.targets.zeta]\nkind = \"task\"\ntask = \"release:publish:zeta\"\n");
+    append_manifest(&fixture, &manifest);
+    commit_and_push(&fixture);
+
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    effects
+        .task_outputs
+        .insert("release:publish:npm".to_owned(), npm_output("unknown", &[]));
+    effects.task_outputs.insert(
+        "release:publish:zeta".to_owned(),
+        npm_output("true", &["zeta@0.2.5"]),
+    );
+
+    let paused = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    let waiting = approve_publish(&fixture, &mut effects, &paused);
+    assert_eq!(waiting.record.status, ReleaseRunStatus::AwaitingDecision);
+    assert_eq!(waiting.record.waiting_on.as_deref(), Some("npm"));
+    assert!(
+        !effects
+            .tasks
+            .iter()
+            .any(|task| task == "release:publish:zeta"),
+        "a later target must not publish while the outcome is unresolved: {:?}",
+        effects.tasks
+    );
+    assert_eq!(
+        waiting.record.target("zeta").expect("zeta").state,
+        RecordTargetState::Pending
+    );
+
+    // Once the operator records the outcome, the fan-out continues with the
+    // target it had not reached.
+    let decided = run(
+        &fixture,
+        &mut effects,
+        ReleaseAction::Decide {
+            run: waiting.record.release_id.clone(),
+            decision: TargetDecision::Published,
+        },
+        None,
+    );
+    assert!(
+        decided.succeeded(),
+        "decide failed: {:?}",
+        decided.record.errors
+    );
+    assert_eq!(decided.record.status, ReleaseRunStatus::Complete);
+    assert_eq!(
+        decided.record.target("npm").expect("npm").state,
+        RecordTargetState::Published
+    );
+    assert_eq!(
+        decided.record.target("zeta").expect("zeta").destinations[0].destination,
+        "zeta@0.2.5"
+    );
+    assert_eq!(
+        effects
+            .tasks
+            .iter()
+            .filter(|task| *task == "release:publish:npm")
+            .count(),
+        1
+    );
+    assert_eq!(
+        effects
+            .tasks
+            .iter()
+            .filter(|task| *task == "release:publish:zeta")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn an_unstartable_task_publish_without_a_check_waits_for_the_operator() {
+    let fixture = fixture("task-start-failure");
+    single_identity_project(&fixture);
+    append_manifest(&fixture, NPM_PUBLISH_ONLY);
+    commit_and_push(&fixture);
+
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    // The publish cannot be started at all: nothing can be said about the
+    // destination, which is an unknown outcome like any other.
+    effects.fail_task_start = Some("release:publish:npm".to_owned());
+
+    let paused = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    let waiting = approve_publish(&fixture, &mut effects, &paused);
+    assert_eq!(waiting.record.status, ReleaseRunStatus::AwaitingDecision);
+    assert_eq!(waiting.record.waiting_on.as_deref(), Some("npm"));
+    assert_eq!(
+        waiting.record.target("npm").expect("npm").state,
+        RecordTargetState::Unknown
+    );
+
+    // The operator can decide right away; "not published" publishes it.
+    effects.fail_task_start = None;
+    effects.task_outputs.insert(
+        "release:publish:npm".to_owned(),
+        npm_output("true", &["fixture@0.2.5"]),
+    );
+    let decided = run(
+        &fixture,
+        &mut effects,
+        ReleaseAction::Decide {
+            run: waiting.record.release_id.clone(),
+            decision: TargetDecision::NotPublished,
+        },
+        None,
+    );
+    assert!(
+        decided.succeeded(),
+        "decide failed: {:?}",
+        decided.record.errors
+    );
+    assert_eq!(decided.record.status, ReleaseRunStatus::Complete);
+    assert_eq!(
+        decided.record.target("npm").expect("npm").state,
+        RecordTargetState::Published
+    );
+    assert_eq!(decided.record.decisions[0].decision, "not-published");
+    assert_eq!(
+        effects
+            .tasks
+            .iter()
+            .filter(|task| *task == "release:publish:npm")
+            .count(),
+        2,
+        "the unstartable attempt and the publish the operator asked for"
     );
 }
 

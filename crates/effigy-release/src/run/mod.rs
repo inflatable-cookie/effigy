@@ -1059,6 +1059,11 @@ impl<'a, 's> Runner<'a, 's> {
                 TargetKind::Tag => self.publish_tags(&target.name, &candidate)?,
                 TargetKind::Task => self.publish_task(&target, &candidate)?,
             }
+            if self.waiting.is_some() {
+                // The wait stops the fan-out: no later target publishes until
+                // the operator has ruled on this one (054 §7).
+                return Ok(());
+            }
         }
         self.persist()
     }
@@ -1097,20 +1102,8 @@ impl<'a, 's> Runner<'a, 's> {
             Ok(outcome) => outcome,
             Err(error) => {
                 self.record_unknown(&ticket, &error)?;
-                return Err(self.target_unknown(
-                    &target.name,
-                    format!(
-                        "release target `{}` task `{task}` could not run: {error}; its publish outcome is unknown, so `effigy release {}` reconciles it before any retry",
-                        target.name,
-                        match target.check {
-                            Some(_) => format!("resume {}", self.record.release_id),
-                            None => format!(
-                                "decide {} --published|--not-published",
-                                self.record.release_id
-                            ),
-                        }
-                    ),
-                ));
+                return self
+                    .stop_after_unknown(target, &format!("task `{task}` could not run: {error}"));
             }
         };
         match task_verdict(&outcome, task.as_str()) {
@@ -1140,38 +1133,46 @@ impl<'a, 's> Runner<'a, 's> {
             }
             TaskVerdict::Unknown { detail } => {
                 self.record_unknown(&ticket, &ReleaseError::TaskInvocation(detail.clone()))?;
-                if target.check.is_some() {
-                    // A resume runs the target's `check` task first (054 §7).
-                    Err(self.target_unknown(
-                        &target.name,
-                        format!(
-                            "release target `{}` task `{task}` outcome is unknown: {detail}{}; `effigy release resume {}` runs its `check` task before any retry",
-                            target.name,
-                            stderr_suffix(&outcome.response),
-                            self.record.release_id
-                        ),
-                    ))
-                } else {
-                    // No `check` to reconcile it, so the Run stops here for the
-                    // operator's ruling rather than failing first (054 §7).
-                    let release_id = self.record.release_id.clone();
-                    self.messages.push(format!(
-                        "release target `{}` task `{task}` outcome is unknown: {detail}{}",
-                        target.name,
+                self.stop_after_unknown(
+                    target,
+                    &format!(
+                        "task `{task}` outcome is unknown: {detail}{}",
                         stderr_suffix(&outcome.response)
-                    ));
-                    self.wait_for(
-                        ReleaseRunStatus::AwaitingDecision,
-                        Some(target.name.clone()),
-                        format!(
-                            "release Run {release_id} stopped at `awaiting-decision`: target `{}` declares no `check` task, so its unknown publish outcome needs an operator ruling; record it with `effigy release decide {release_id} --published` or `--not-published`",
-                            target.name
-                        ),
-                    );
-                    Ok(())
-                }
+                    ),
+                )
             }
         }
+    }
+
+    /// After an unknown publish outcome: a target that declares a `check`
+    /// fails here so the resume reconciles it first, and a target with no
+    /// `check` stops this invocation for the operator's ruling (054 §7).
+    fn stop_after_unknown(
+        &mut self,
+        target: &crate::pipeline::ResolvedTarget,
+        detail: &str,
+    ) -> Result<(), ReleaseError> {
+        if target.check.is_some() {
+            return Err(self.target_unknown(
+                &target.name,
+                format!(
+                    "release target `{}` {detail}; `effigy release resume {}` runs its `check` task before any retry",
+                    target.name, self.record.release_id
+                ),
+            ));
+        }
+        let release_id = self.record.release_id.clone();
+        self.messages
+            .push(format!("release target `{}` {detail}", target.name));
+        self.wait_for(
+            ReleaseRunStatus::AwaitingDecision,
+            Some(target.name.clone()),
+            format!(
+                "release Run {release_id} stopped at `awaiting-decision`: target `{}` {detail} and declares no `check` task, so the operator records the outcome with `effigy release decide {release_id} --published` or `--not-published`",
+                target.name
+            ),
+        );
+        Ok(())
     }
 
     /// Reconcile a `task` target whose last publish outcome is unknown.

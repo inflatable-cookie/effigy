@@ -408,10 +408,13 @@ or pending, and continues at `publish`.
 
 An unknown `task` result whose target declares no `check` stops that same
 invocation at `awaiting-decision`, so the operator can decide immediately
-instead of resuming a failed Run first. A target that declares a `check` fails
-at `publish` with the outcome recorded unknown, and the resume reconciles it
-through the check before any retry — §7's "on resume, a target whose last
-outcome is unknown is first reconciled".
+instead of resuming a failed Run first. A target that cannot be started at all
+is an unknown outcome too, so it follows the same rule. A target that declares
+a `check` fails at `publish` with the outcome recorded unknown, and the resume
+reconciles it through the check before any retry — §7's "on resume, a target
+whose last outcome is unknown is first reconciled". A wait also stops the
+publish fan-out: every later target stays pending, and none of them publishes
+until the outcome it is waiting behind is resolved.
 
 A hosted gate is checked before its command would run, for the candidate commit
 at `certify` and the source commit at `pre-gates`. Missing or still-running
@@ -430,8 +433,8 @@ therefore leaves `Unknown`, never the `Pending` a resume would publish again
 blind, and the kernel settles the journalled effect as `Irreversible` rather
 than blocking the next invocation. A task publish settles `Applied` once the
 task reported a definite outcome — `committed` true or false, which the record
-keeps — and `Unknown` when the task could not tell, so only a real unknown
-reaches reconciliation.
+keeps — and `Unknown` when the task could not tell or could not run, so only a
+real unknown reaches reconciliation.
 
 **The protocol schemas are file contracts.** `effigy.release.input.v1` and
 `effigy.release.output.v1` are documents a task reads and writes, not command
