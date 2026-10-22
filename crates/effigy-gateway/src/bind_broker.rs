@@ -256,8 +256,20 @@ pub fn entry(uid: u32) -> io::Result<()> {
         .try_into()
         .map_err(|_| error("expected one broker socket"))?;
     let listener = UnixListener::from(fd);
-    if listener.local_addr()?.as_pathname() != Some(socket_path(uid).as_path()) {
-        return Err(error("unexpected broker socket"));
+    // launchd may report the activated socket as /var/run/... (/var is a
+    // symlink to /private/var) or as unnamed; the root-owned plist pins the
+    // path. Compare canonical paths when a name is present.
+    if let Some(path) = listener.local_addr()?.as_pathname() {
+        let expected = socket_path(uid);
+        let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        if canonical(path) != canonical(&expected) {
+            eprintln!(
+                "effigy bind broker: unexpected socket {} (expected {})",
+                path.display(),
+                expected.display()
+            );
+            return Err(error("unexpected broker socket"));
+        }
     }
     for stream in listener.incoming() {
         let mut stream = stream?;

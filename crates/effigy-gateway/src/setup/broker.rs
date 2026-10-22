@@ -54,7 +54,7 @@ pub(super) fn definition(uid: u32, gid: u32, program: &Path) -> Vec<u8> {
         .replace('>', "&gt;");
     let label = crate::bind_broker::label(uid);
     let socket = crate::bind_broker::socket_path(uid);
-    format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- {MARKER} -->\n<plist version=\"1.0\"><dict><key>Label</key><string>{label}</string><key>UserName</key><string>root</string><key>ProgramArguments</key><array><string>{program}</string><string>__gateway-bind-broker</string><string>{uid}</string></array><key>Sockets</key><dict><key>broker</key><dict><key>SockPathName</key><string>{}</string><key>SockPathOwner</key><integer>0</integer><key>SockPathGroup</key><integer>{gid}</integer><key>SockPathMode</key><integer>432</integer><key>SockType</key><string>stream</string></dict></dict></dict></plist>\n", socket.display()).into_bytes()
+    format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- {MARKER} -->\n<plist version=\"1.0\"><dict><key>Label</key><string>{label}</string><key>UserName</key><string>root</string><key>StandardErrorPath</key><string>/private/var/log/{label}.log</string><key>ProgramArguments</key><array><string>{program}</string><string>__gateway-bind-broker</string><string>{uid}</string></array><key>Sockets</key><dict><key>broker</key><dict><key>SockPathName</key><string>{}</string><key>SockPathOwner</key><integer>0</integer><key>SockPathGroup</key><integer>{gid}</integer><key>SockPathMode</key><integer>432</integer><key>SockType</key><string>stream</string></dict></dict></dict></plist>\n", socket.display()).into_bytes()
 }
 pub(super) fn owned_job(cx: &EffectContext, jobs: &DirFd, name: &str) -> io::Result<bool> {
     match read_record::<Bytes>(
