@@ -633,7 +633,7 @@ During v0.x, MINOR bumps may include breaking changes.
   `effigy.command.v1`, `effigy.container.migrate.v1` and
   `effigy.container.render.v1`. `format` is annotation-only, `$ref` never
   leaves the document, and an invalid payload schema stops the run
-  ([contract 054](docs/knowledge/contracts/054-project-json-contract-validation-contract.md)).
+  ([contract 055](docs/knowledge/contracts/055-project-json-contract-validation-contract.md)).
   The selection payload's `count` remains a producer guarantee derived from
   `selected.length`, because JSON Schema cannot compare a property with an
   array length. `--json` failures now report the structured

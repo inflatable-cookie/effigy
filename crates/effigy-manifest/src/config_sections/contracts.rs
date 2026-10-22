@@ -2,7 +2,7 @@
 //!
 //! `effigy contracts check-json` reads these instead of assuming Effigy's
 //! documentation tree, so any project validates its JSON artifacts against its
-//! own schema index and selection contract (contract 054).
+//! own schema index and selection contract (contract 055).
 
 #[derive(Debug, Clone, serde::Deserialize, Default, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

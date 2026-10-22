@@ -758,8 +758,8 @@ allow = [
 [[retired]]
 id = "effigy-contracts-validate-selection"
 retired = "2026-10-22 (v0.15, Q-009)"
-replacement = "`effigy contracts validate-selection` is folded into `check-json`: `effigy contracts check-json --validate-selection` validates this run's selection payload (implied by `--print-selected=json`) and `--validate-selection --artifact <PATH>` validates a stored artifact. The Rhai feature `contracts.validate_selection` is gone; use `contracts::check_json` with `validate_selection`, `contract` and `artifact` options. Validation uses the project's own `[contracts].selection_contract` and reports failures as `effigy.json-contract-selection.v1` rows inside `effigy.contracts.check-json.v1`. See CHANGELOG.md `[Unreleased]` and contract 054."
-owner = "docs/knowledge/contracts/054-project-json-contract-validation-contract.md"
+replacement = "`effigy contracts validate-selection` is folded into `check-json`: `effigy contracts check-json --validate-selection` validates this run's selection payload (implied by `--print-selected=json`) and `--validate-selection --artifact <PATH>` validates a stored artifact. The Rhai feature `contracts.validate_selection` is gone; use `contracts::check_json` with `validate_selection`, `contract` and `artifact` options. Validation uses the project's own `[contracts].selection_contract` and reports failures as `effigy.json-contract-selection.v1` rows inside `effigy.contracts.check-json.v1`. See CHANGELOG.md `[Unreleased]` and contract 055."
+owner = "docs/knowledge/contracts/055-project-json-contract-validation-contract.md"
 terms = [
   "effigy contracts validate-selection",
   "ContractsSubcommand::ValidateSelection",
@@ -783,7 +783,7 @@ allow = [
   "docs/guides/025-command-reference-matrix.md",
   "docs/guides/028-migration-quick-paths.md",
   "docs/guides/085-v0.15.0-consumer-migration.md",
-  "docs/knowledge/contracts/054-project-json-contract-validation-contract.md",
+  "docs/knowledge/contracts/055-project-json-contract-validation-contract.md",
   "docs/knowledge/questions.md",
   "docs/knowledge/retired.toml",
   "src/tests/lib_tests_help_render_tests.rs",
@@ -795,13 +795,13 @@ allow = [
 [[retired]]
 id = "effigy-contracts-implicit-default-paths"
 retired = "2026-10-22 (v0.15, Q-009)"
-replacement = "`effigy contracts check-json` reads the project's own paths from `[contracts]` in effigy.toml: `schema_index` and `selection_contract` (repository relative). `--index` and `--contract` override them. A project that declares neither is refused with `no JSON schema index configured` instead of being validated against Effigy's documentation tree. Payload schemas are declared by the index's `payload_schemas` map. See CHANGELOG.md `[Unreleased]` and contract 054."
-owner = "docs/knowledge/contracts/054-project-json-contract-validation-contract.md"
+replacement = "`effigy contracts check-json` reads the project's own paths from `[contracts]` in effigy.toml: `schema_index` and `selection_contract` (repository relative). `--index` and `--contract` override them. A project that declares neither is refused with `no JSON schema index configured` instead of being validated against Effigy's documentation tree. Payload schemas are declared by the index's `payload_schemas` map. See CHANGELOG.md `[Unreleased]` and contract 055."
+owner = "docs/knowledge/contracts/055-project-json-contract-validation-contract.md"
 terms = ["DEFAULT_SCHEMA_INDEX", "DEFAULT_SELECTION_CONTRACT", "DEFAULT_SELECTION_ARTIFACT"]
 paths = []
 config_keys = []
 allow = [
   "CHANGELOG.md",
-  "docs/knowledge/contracts/054-project-json-contract-validation-contract.md",
+  "docs/knowledge/contracts/055-project-json-contract-validation-contract.md",
   "docs/knowledge/retired.toml",
 ]
