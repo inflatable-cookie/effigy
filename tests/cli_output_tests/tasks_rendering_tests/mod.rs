@@ -8,7 +8,7 @@ use super::support::temp_workspace;
 const BUILTIN_TASKS_SECTION: &str = "\
 Built-in Tasks
 ──────────────
-- bootstrap : Clone or update repos, sync dependencies and children, and run bootstrap flows
+- bootstrap : Download and start a project: clone or use this checkout, prepare pinned sources and submodules, run its setup selectors, then its start selector
 - bundle : Inspect and sync bundle sources
 - changelog : Inspect and extract changelog release notes
 - config : Show supported project effigy.toml configuration keys/examples and machine-level config helpers
