@@ -123,8 +123,11 @@ fn a_plan_reports_an_unreadable_manifest_without_failing() {
     let fixture = tempfile::tempdir().expect("temp dir");
     let checkout = fixture.path().join("app");
     std::fs::create_dir_all(&checkout).expect("mkdir");
-    std::fs::write(checkout.join("effigy.toml"), "[bootstrap]\nsetup = 5\n")
-        .expect("write manifest");
+    std::fs::write(
+        checkout.join("effigy.toml"),
+        "[bootstrap]\nsubmodules = 5\n",
+    )
+    .expect("write manifest");
     let request = resolve_bootstrap_request(fixture.path(), None, Some(&checkout), None, true)
         .expect("request");
     let plan = plan_bootstrap_request(&request).expect("plan");
