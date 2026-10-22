@@ -605,7 +605,7 @@ a transaction.
 | Killed writer mid-transaction | SQLite rolls back the uncommitted write-ahead frames. A reader keeps the last committed snapshot without repairing anything; the next writer recovers. |
 | Perm | Mutate refuses before any effect. Observe returns `Unknown(PermissionDenied)`. |
 | Clock | Records carry wall time for display and journal sequence for order. Nothing compares wall times for authority. |
-| Corrupt `kernel.db` | Observe reports `Unknown(store unreadable)`. Mutate refuses and names the explicit repair, which moves the file aside. Resources it described become `Unknown`, so R3 protects them. |
+| Corrupt `kernel.db` | Observe reports `Unknown(store unreadable)`. Mutate refuses and names the explicit repair, which moves the store aside with its `-journal`, `-wal` and `-shm` files, so a leftover log never attaches to the next `kernel.db`. Resources it described become `Unknown`, so R3 protects them. |
 | Hot rollback journal seen by a read-only reader | `Unknown(store needs recovery)`; the next Mutate recovers it. |
 
 #### Proof
@@ -1765,8 +1765,12 @@ pass selects its candidates by index outside any write transaction and deletes
 them in short batches, each its own transaction, with a yield between batches
 so a run's own admission or settle always gets the store. It also runs a
 bounded write-ahead-log checkpoint and incremental vacuum, so the file is
-bounded by the retained history; freed pages are reused rather than held.
-A busy store skips a pass; the next sweep tries again.
+bounded by the retained history; freed pages are reused rather than held. A
+store created before incremental auto-vacuum (mode 0) is migrated by one
+`VACUUM` only while it is small — at most 16 MiB — so a sweep never rewrites a
+large legacy store inside its write window; a larger one keeps its
+high-water mark and reuses freed pages. A busy store skips a pass; the next
+sweep tries again.
 
 A checkout is tombstoned when a Mutate observes `Verified` absence of its
 path and token, or when no resource has named it for 30 days. Retention runs

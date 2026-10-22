@@ -891,10 +891,17 @@ During v0.x, MINOR bumps may include breaking changes.
   once per ten minutes per machine, prunes settled successful runs after 24
   hours (keeping the newest 20 per task), failed runs after 7 days, and keeps
   the store under a 4,000-run history bound, deleting in short batches with a
-  bounded checkpoint and incremental vacuum. `runs/<id>/` goes with its row
-  and stale `gates/` scopes are removed, so `kernel.db` and its directories
-  stay proportionate. `EFFIGY_RETENTION_ON_CLOSE` is gone: retention never
-  runs on the close path.
+  bounded checkpoint and incremental vacuum. The sweep claims its schedule on
+  a store that has never swept, so an upgrade prunes from the first admission.
+  `runs/<id>/` goes with its row and stale `gates/` scopes are removed, so
+  `kernel.db` and its directories stay proportionate. A store created before
+  incremental auto-vacuum is migrated only while it is small (at most 16 MiB):
+  a sweep never rewrites a large legacy store, which keeps its high-water mark
+  and reuses freed pages instead. `EFFIGY_RETENTION_ON_CLOSE` is gone:
+  retention never runs on the close path.
+- A corrupt-store repair moves the store's `-journal`, `-wal` and `-shm` files
+  aside with `kernel.db`, so a leftover write-ahead log can never attach to the
+  next store (effigy#275).
 
 - A v0.14.1 project keeps loading after an update (effigy#273): the retired
   `[bootstrap]` spellings are read for the whole v0.15 line instead of failing

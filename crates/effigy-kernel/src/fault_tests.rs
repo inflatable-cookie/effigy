@@ -1328,3 +1328,74 @@ fn store_sweep_is_rate_limited_per_machine() {
         "a backlog pass comes due again in seconds, got {backlog_wait} ms"
     );
 }
+
+/// The admission path itself prunes (§7.4): `sweep` claims a store that has
+/// never swept (its schedule key is absent), runs one bounded pass, and then
+/// leaves the next pass to the rate limit. Retention never needs a close.
+#[test]
+fn store_sweep_from_admission_prunes_expired_runs_on_a_fresh_store() {
+    let home = home();
+    let cx = mutate();
+    let root = root(home.path());
+    let mut store = Store::open(&cx, &root).unwrap();
+    // A fresh store has no retention schedule at all; the claim still wins.
+    assert!(crate::retention::due(&store).unwrap());
+    crate::retention::sweep(&cx, &root);
+    assert!(
+        !crate::retention::due(&store).unwrap(),
+        "the first sweep claimed its schedule"
+    );
+    let owner = machine("deps");
+    ensure(&mut store, &cx, &owner);
+    let now = crate::store::wall_ms();
+    for index in 0..40 {
+        let id = run_name(&format!("sweep-{index:02}"));
+        insert_run(
+            &store,
+            &id,
+            &owner,
+            "closed",
+            Some("complete"),
+            now - SUCCESS_KEEP_MS - 10_000 + index as i64,
+        );
+        store
+            .conn()
+            .execute(
+                "UPDATE runs SET workload_outcome='\"Succeeded\"' WHERE run_id=?1",
+                [&id],
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        run_count(&store, "phase='closed' AND cleanup_outcome='complete'"),
+        40
+    );
+    // Ten minutes later, the admission sweep is due again.
+    store
+        .conn()
+        .execute("UPDATE meta SET value='0' WHERE key='retention_next'", [])
+        .unwrap();
+    drop(store);
+    crate::retention::sweep(&cx, &root);
+    let store = Store::open(&cx, &root).unwrap();
+    let kept = run_count(&store, "phase='closed' AND cleanup_outcome='complete'");
+    assert_eq!(kept, 20, "the admission sweep pruned the owner's excess");
+    assert!(
+        !crate::retention::due(&store).unwrap(),
+        "the rate limit is honoured after a sweep"
+    );
+}
+
+/// A legacy store is only migrated to incremental auto-vacuum while it is
+/// small: a 119 MB store is never rewritten inside a sweep's write window.
+#[test]
+fn store_legacy_auto_vacuum_migration_is_size_bounded() {
+    assert!(crate::store::legacy_vacuum_allowed(1 << 20));
+    assert!(crate::store::legacy_vacuum_allowed(
+        crate::store::LEGACY_VACUUM_MAX_BYTES
+    ));
+    assert!(!crate::store::legacy_vacuum_allowed(
+        crate::store::LEGACY_VACUUM_MAX_BYTES + 1
+    ));
+    assert!(!crate::store::legacy_vacuum_allowed(119 << 20));
+}

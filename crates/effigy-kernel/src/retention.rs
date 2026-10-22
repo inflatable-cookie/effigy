@@ -112,7 +112,9 @@ pub fn sweep(cx: &EffectContext, root: &StateRoot) {
         return;
     }
     // Claim the pass atomically: concurrent admissions that all saw it due
-    // must not stack their sweeps, so exactly one runs it (§7.4).
+    // must not stack their sweeps, so exactly one runs it (§7.4). The upsert
+    // claims a store that has never swept too: its schedule key is absent, not
+    // "due", and a plain UPDATE would match no row and never prune.
     let claimed = store
         .transaction_within(
             &budget.child(std::time::Duration::from_secs(2)),
@@ -120,8 +122,9 @@ pub fn sweep(cx: &EffectContext, root: &StateRoot) {
             |txn| -> Result<usize, StoreError> {
                 let now = wall_ms();
                 let changed = txn.conn().execute(
-                    "UPDATE meta SET value=?1 WHERE key='retention_next' \
-                     AND CAST(value AS INTEGER) <= ?2",
+                    "INSERT INTO meta(key, value) VALUES ('retention_next', ?1) \
+                     ON CONFLICT(key) DO UPDATE SET value=excluded.value \
+                     WHERE CAST(meta.value AS INTEGER) <= ?2",
                     params![now + SWEEP_INTERVAL_MS, now],
                 )?;
                 Ok(changed)

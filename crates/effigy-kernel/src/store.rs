@@ -515,8 +515,16 @@ impl Store {
             pause = (pause * 2).min(BUSY_RETRY_MAX);
         }
     }
-    /// Bounded maintenance (§7.4): checkpoint the log, migrate an old store to
-    /// incremental auto-vacuum once, then release at most `pages` free pages.
+    /// The store file's size on disk, from the open connection.
+    fn db_bytes(&self, page_size: i64) -> Result<u64, StoreError> {
+        let pages: i64 = self
+            .conn
+            .query_row("PRAGMA page_count", [], |row| row.get(0))?;
+        Ok(pages.max(0) as u64 * page_size.max(0) as u64)
+    }
+    /// Bounded maintenance (§7.4): checkpoint the log, migrate a *small* old
+    /// store to incremental auto-vacuum once, then release at most `pages`
+    /// free pages. It never rewrites a large store.
     pub fn maintain(
         &mut self,
         cx: &EffectContext,
@@ -545,10 +553,14 @@ impl Store {
             [],
             |row| row.get(0),
         )?;
-        if mode == 0 && !migrated {
-            // One-time migration of a store created before incremental
-            // auto-vacuum: only `VACUUM` applies it, and it runs under the
-            // writer gate, so no other Effigy writer is inside the store.
+        let page_size: i64 = self
+            .conn
+            .query_row("PRAGMA page_size", [], |row| row.get(0))?;
+        if mode == 0 && !migrated && legacy_vacuum_allowed(self.db_bytes(page_size)?) {
+            // One-time migration of a *small* store created before incremental
+            // auto-vacuum: only `VACUUM` applies it, and a sweep must never
+            // rewrite a large legacy store inside its write window. A larger
+            // one keeps its high-water mark and reuses freed pages instead.
             let free: i64 = self
                 .conn
                 .query_row("PRAGMA freelist_count", [], |row| row.get(0))?;
@@ -618,10 +630,14 @@ impl Store {
         }
         let stamp = wall_ms();
         let aside = FileName::new(&format!("{DB_NAME}.corrupt-{stamp}"))?;
-        let journal = FileName::new(&format!("{DB_NAME}-journal"))?;
-        if root.dir().entry(&journal)?.is_some() {
-            root.dir()
-                .rename(&journal, &aside.with_suffix("-journal")?)?;
+        // The journal and the write-ahead log and index are the store's own
+        // files: they move with it, or the next `kernel.db` inherits a foreign
+        // log written by the repaired one (§5.5).
+        for suffix in ["-journal", "-wal", "-shm"] {
+            let side = FileName::new(&format!("{DB_NAME}{suffix}"))?;
+            if root.dir().entry(&side)?.is_some() {
+                root.dir().rename(&side, &aside.with_suffix(suffix)?)?;
+            }
         }
         root.dir().rename(&FileName::new(DB_NAME)?, &aside)?;
         root.dir().sync()?;
@@ -1176,6 +1192,19 @@ fn read_immutable(root: &StateRoot, busy: Duration) -> Result<Option<StoreReader
     )?;
     verify_reader(conn, busy)
 }
+/// The largest store a sweep may migrate to incremental auto-vacuum in one
+/// `VACUUM`. Above it the rewrite would hold the write lock for seconds on a
+/// store the operator is protecting; the store keeps its high-water mark and
+/// reuses freed pages, which keeps it proportionate (§7.4).
+pub(crate) const LEGACY_VACUUM_MAX_BYTES: u64 = 16 << 20;
+
+/// Whether a sweep may apply the one-time auto-vacuum migration to a store of
+/// this size. The rewrite is proportional to the file, so only a small file
+/// qualifies.
+pub(crate) fn legacy_vacuum_allowed(bytes: u64) -> bool {
+    bytes <= LEGACY_VACUUM_MAX_BYTES
+}
+
 /// Whether this failure is SQLite's "this root cannot host a WAL index": the
 /// only case where an immutable open is both possible and safe.
 fn needs_writable_root(error: &StoreError) -> bool {

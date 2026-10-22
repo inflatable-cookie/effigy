@@ -1031,6 +1031,46 @@ fn store_backlog_prune_shrinks_a_large_store_without_busy_refusals() {
             )
         })
         .collect();
+    // The admission path itself must prune: one `sweep` (what `Run::begin`
+    // calls) claims the schedule and runs one bounded pass, even on a store
+    // that has never swept.
+    // Only the backlog owner's rows: the admission helpers are adding runs of
+    // their own at the same time.
+    let backlog = owner.name().to_string();
+    let count = |root: &StateRoot| -> i64 {
+        let connection = rusqlite::Connection::open(root.path().join(DB_NAME)).unwrap();
+        connection
+            .query_row(
+                "SELECT count(*) FROM runs WHERE owner=?1",
+                [&backlog],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    // A concurrent admission helper may have claimed the rate limit a moment
+    // ago; make this sweep due and retry briefly, exactly as ten idle minutes
+    // would.
+    let mut admitted_prune = 0;
+    for _ in 0..5 {
+        if let Ok(connection) = rusqlite::Connection::open(root.path().join(DB_NAME)) {
+            let _ = connection.execute(
+                "INSERT INTO meta(key, value) VALUES ('retention_next', '0') \
+                 ON CONFLICT(key) DO UPDATE SET value='0'",
+                [],
+            );
+        }
+        let before_sweep = count(&root);
+        effigy_kernel::retention::sweep(&cx, &root);
+        admitted_prune = before_sweep - count(&root);
+        if admitted_prune > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        admitted_prune > 0 && admitted_prune <= effigy_kernel::retention::SWEEP_ROWS as i64,
+        "the admission sweep pruned {admitted_prune} runs in one bounded pass"
+    );
     let started = Instant::now();
     let mut passes = 0;
     let mut skipped = 0;
@@ -1161,4 +1201,56 @@ fn store_backlog_prune_shrinks_a_large_store_without_busy_refusals() {
         after_reuse <= size + (4 << 20),
         "freed pages were not reused: {size} -> {after_reuse}"
     );
+}
+
+#[test]
+fn store_repair_moves_the_write_ahead_log_and_index_aside() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    drop(Store::open(&cx, &root).unwrap());
+    let state = root.path().to_path_buf();
+    // A killed writer's log and index beside a corrupt store: they belong to
+    // the repaired store's generation and move with it.
+    for suffix in ["-journal", "-wal", "-shm"] {
+        let path = state.join(format!("{DB_NAME}{suffix}"));
+        std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&path)
+            .unwrap();
+        std::fs::write(&path, b"foreign").unwrap();
+    }
+    std::fs::write(state.join(DB_NAME), vec![0x5a; 8192]).unwrap();
+    std::fs::set_permissions(state.join(DB_NAME), std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(matches!(
+        Store::open(&cx, &root),
+        Err(StoreError::Corrupt(_)) | Err(StoreError::UnknownSchema { .. })
+    ));
+    // Whatever survived the failed open is exactly what repair sees; each
+    // such file must move with the store, never stay for the next kernel.db.
+    let leftovers: Vec<&str> = ["-journal", "-wal", "-shm"]
+        .into_iter()
+        .filter(|suffix| state.join(format!("{DB_NAME}{suffix}")).exists())
+        .collect();
+    let aside = Store::repair(&cx, &root).unwrap();
+    for suffix in &leftovers {
+        assert!(
+            state.join(format!("{aside}{suffix}")).exists(),
+            "{suffix} was not moved aside with the store"
+        );
+    }
+    for suffix in ["-journal", "-wal", "-shm"] {
+        assert!(
+            !state.join(format!("{DB_NAME}{suffix}")).exists(),
+            "{suffix} still sits beside the next kernel.db"
+        );
+    }
+    // The next store starts clean and holds nothing from the old generation.
+    let mut store = Store::open(&cx, &root).unwrap();
+    store.check_integrity().unwrap();
+    store
+        .txn(&cx, |txn| txn.resource(&task("a"), "task").map(|_| ()))
+        .unwrap();
 }
