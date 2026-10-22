@@ -23,7 +23,7 @@ That's it. If the repo uses Effigy, you already know how to work in it.
 
 **Before:** You `cd` into `web/`, run `npm test`, then `cd ../api`, run `cargo test`, then remember the e2e suite needs `./scripts/e2e.sh` and a running database.
 
-**After:** `effigy test` runs everything. `effigy dev` starts your whole local stack. `effigy release prepare` cuts a release without you touching version files. One command from any directory.
+**After:** `effigy test` runs everything. `effigy dev` starts your whole local stack. `effigy release run` cuts a release — one checkpointed Run from version bump to pushed tag and receipt — without you touching version files. One command from any directory.
 
 Effigy is not another task runner. It is a **repo runtime** — the layer between you and the chaos of modern polyglot repos. It is also **agent-native**: the manifest is self-describing, structured command modes support JSON, and an AI agent can discover the repo surface, inspect code, execute work, and validate changes through one structured CLI.
 
@@ -318,9 +318,9 @@ Effigy runs a local DNS server and reverse proxy. `*.test` domains resolve autom
 
 ```bash
 effigy release --plan           # Dry-run: what would happen?
-effigy release prepare --plan   # Preview file mutations
-effigy release prepare --yes    # Bump version, update changelog
-effigy release execute --yes    # Commit, tag, push
+effigy release run --to certify # Prepare, bump version and changelog, gate, certify
+effigy release run              # Continue: push tags and the release commit, write the receipt
+effigy release receipt          # What the Run recorded: digests, destinations, verification
 gh workflow run release-binaries.yml -f tag=vX.Y.Z  # Publish explicitly
 ```
 

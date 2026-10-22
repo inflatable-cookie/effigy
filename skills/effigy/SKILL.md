@@ -54,7 +54,7 @@ run with `effigy --run-id <key> <task>` and inspect, follow or stop it with
 - **Never modify `.github/workflows/`** without explicit human approval.
 - **Never bypass release gates.** Fix the underlying issue.
 - **Never re-tag a failed release.** Fix lands in next PATCH.
-- **Never run release mutations** (`release prepare/execute`) without explicit human ask.
+- **Never run release mutations** (`release run`, or `release run --to certify`, which commits the prepared tree) without explicit human ask.
 - **Never use `release verify-install` for a library or service repo.** It is
   Effigy's fixed self-hosting binary verifier; other repos need a repo-owned
   consumer smoke.
@@ -193,7 +193,7 @@ Details: `references/json-envelope.md`.
 
 - Selector still ambiguous after `effigy doctor <selector> <args...>`
 - `effigy doctor` structural FAIL on a task where repo health or routing matters
-- User did not explicitly request release prepare/execute
+- User did not explicitly request `release run` (or its `--to certify` prepare step)
 - Change needs `.github/workflows/` edits
 - Someone suggests skipping a release gate
 

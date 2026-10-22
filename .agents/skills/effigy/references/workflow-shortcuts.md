@@ -126,8 +126,7 @@ accept a green run from another commit.
 ```bash
 effigy release --plan                  # dry-run the release flow
 effigy release status --check-gates    # show gate states
-effigy release prepare --plan          # preview prepare step
-effigy release execute --plan          # preview execute step
+effigy release run --to certify       # prepare and certify, publish nothing
 effigy release gates                   # list gates and current pass/fail
 ```
 
