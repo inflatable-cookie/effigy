@@ -233,7 +233,7 @@ pub(super) fn parse_config_request(
             target = Some(parser.builtin_choice_flag_value(
                 "config",
                 "--target",
-                "manifest, bundle, demos, package_manager, test, tasks, defer, scan, shell",
+                "manifest, bundle, demos, package_manager, test, tasks, defer, scan",
                 |value| BuiltinArgParser::choice_ignore_ascii_case(value, &CONFIG_TARGET_CHOICES),
             )?);
             return Ok(ParseLoopAction::Handled);

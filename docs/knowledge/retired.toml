@@ -39,6 +39,9 @@ allow = [
   "docs/knowledge/contracts/046-published-and-draft-task-surface-contract.md",
   "docs/knowledge/contracts/051-bounded-qa-groups-contract.md",
   "crates/effigy-cli/src/command_parsing.rs",
+  "crates/effigy-doctor/src/contracts.rs",
+  "crates/effigy-doctor/src/manifest_schema/diagnostics.rs",
+  "crates/effigy-doctor/src/manifest_schema/tests.rs",
   "crates/effigy-manifest/src/retired_keys.rs",
   "crates/effigy-manifest/src/qa_groups.rs",
   "src/tests/runner_tests/tasks_listing_tests/status_query_tests.rs",
@@ -425,6 +428,9 @@ allow = [
   "docs/guides/022-manifest-cookbook.md",
   "docs/guides/085-v0.15.0-consumer-migration.md",
   "docs/knowledge/questions.md",
+  "crates/effigy-doctor/src/contracts.rs",
+  "crates/effigy-doctor/src/manifest_schema/diagnostics.rs",
+  "crates/effigy-doctor/src/manifest_schema/tests.rs",
 ]
 
 [[retired]]

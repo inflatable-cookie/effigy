@@ -91,6 +91,10 @@ pub mod remediation {
         "Remove `[catalog.discovery]`; declare intended catalogs under root `[catalog.members]` or typed catalog mounts.";
     pub const REMOVE_CATALOG_PACK_SUPPORT_POLICY: &str =
         "Remove `release.sync-catalog-pack-support-policy`; the catalog-pack runtime and its support policy are retired in v0.15.";
+    pub const REMOVE_DRAFT_TASK_NAMESPACE: &str =
+        "Move each `[drafts.<name>]` definition to `[tasks.<name>]` with `visibility = \"internal\"`, replace `draft` step keys with `task = \"<name>\"`, and remove `created`/`expires`/`purpose`; the draft namespace was removed in v0.15 (see CHANGELOG.md).";
+    pub const REMOVE_MANIFEST_SHELL_TABLE: &str =
+        "Remove `[shell]`; managed shell tabs always run `exec ${SHELL:-/bin/zsh} -i` and there is no manifest override in v0.15 (see CHANGELOG.md).";
     pub const SCHEMA_TABLE_ROOT_REQUIRED: &str =
         "Use table-based TOML with sections like `[tasks]`.";
     pub const MANIFEST_READ_FAILURE: &str =
