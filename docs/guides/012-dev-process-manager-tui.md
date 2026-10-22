@@ -171,8 +171,9 @@ Managed shell tabs always use:
 
 - `exec ${SHELL:-/bin/zsh} -i`
 
-`[shell]` was removed in v0.15: there is no manifest override, and a manifest
-that still declares it is refused with that replacement.
+`[shell]` was removed in v0.15: there is no manifest override. A manifest that
+still declares it loads, and the table is ignored with one deprecation notice
+per manifest.
 
 ## 5) Profile Example
 

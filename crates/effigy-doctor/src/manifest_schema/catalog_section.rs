@@ -10,7 +10,9 @@ pub(super) fn validate_catalog_section(context: &mut SchemaContext<'_, '_>, valu
         return;
     };
 
-    validate_allowed_keys(context, "catalog", table, &["alias", "members"]);
+    // `graph` was removed with the code graph and keeps loading for one
+    // release (effigy#274); the manifest names it in its deprecation notice.
+    validate_allowed_keys(context, "catalog", table, &["alias", "members", "graph"]);
 
     if let Some(alias) = table.get("alias") {
         if !alias.is_str() {

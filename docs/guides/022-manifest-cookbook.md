@@ -702,13 +702,37 @@ Behavior:
   `bootstrap:db-seed`) with their replacement; see
   [guide 085](085-v0.15.0-consumer-migration.md).
 
+## Removed Sections
+
+A v0.14.1 project keeps loading after updating to v0.15 when the config it
+still carries only configured a feature v0.15 removed. Such a section is
+ignored, because ignoring it changes nothing else, and named in one
+deprecation notice per manifest on stderr (`effigy doctor` shows it too; a
+`--json` run never puts it on stdout):
+
+- every removed scanner's `[scan.<name>]` table: `attention_markers`,
+  `comment_ratio`, `generated_assets`, `generated_in_src`,
+  `stale_suppressions`, and the graph-backed `boundary_violations`,
+  `dead_code` and `validation_gaps`
+- `[catalog.graph]`
+- `[demos]`, whose notice carries the task conversion recipe
+- `[shell]`
+
+The removed feature's own command still refuses with its replacement, and the
+notice repeats the migration so a run is never silently different. `[drafts]`
+and `draft` step references are the exception and stay manifest errors:
+ignoring them would silently drop task definitions. This compatibility path is
+removed after v0.15; see
+[guide 085](085-v0.15.0-consumer-migration.md).
+
 ## Developer Session Patterns
 
 ### Managed Shell Tabs
 
 `[shell]` was removed in v0.15. Managed shell tabs always use
-`exec ${SHELL:-/bin/zsh} -i`; there is no manifest override, and a manifest
-that still declares `[shell]` is refused with that replacement.
+`exec ${SHELL:-/bin/zsh} -i`; there is no manifest override. A manifest that
+still declares `[shell]` loads, and the table is ignored with the deprecation
+notice described in [Removed Sections](#removed-sections).
 
 ### Task Cache (removed)
 
@@ -721,9 +745,10 @@ the table and let the tool's own cache (cargo, turbo, vite) decide.
 v0.15 keeps two scanners whose findings are worth acting on: `god-files` and
 `duplicate-blocks`. The other five (`attention-markers`, `generated-in-src`,
 `comment-ratio`, `generated-assets`, `stale-suppressions`) were removed by
-Q-009; their `[scan.*]` tables are manifest errors with the replacement each
-one names (see `CHANGELOG.md`). Use `rg -n 'TODO|FIXME' <path>` for marker
-searches.
+Q-009; their `[scan.*]` tables keep loading and are ignored with the replacement
+each one names in the deprecation notice (see
+[Removed Sections](#removed-sections) and `CHANGELOG.md`). Use
+`rg -n 'TODO|FIXME' <path>` for marker searches.
 
 Both scanners skip generated, derived, vendored and agent-skill trees, and
 respect `.gitignore`/`.ignore` unless `--no-gitignore` is passed.

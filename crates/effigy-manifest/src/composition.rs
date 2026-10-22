@@ -156,7 +156,7 @@ pub fn load_task_manifest_with_inspection(
                 error,
             })?;
     manifest.validate(manifest_path)?;
-    crate::retired_bootstrap::emit_notice(manifest_path, &manifest.retired_bootstrap);
+    crate::retired_config::emit_notice(manifest_path, &manifest.retired_config);
     let effective_manifest =
         toml::to_string_pretty(&composed.value).map_err(|error| ManifestError::Render {
             path: manifest_path.to_path_buf(),

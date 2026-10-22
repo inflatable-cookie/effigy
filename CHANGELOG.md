@@ -931,6 +931,18 @@ During v0.x, MINOR bumps may include breaking changes.
   for `bootstrap:db-seed`, and a repo-owned dependency task for
   `bootstrap deps sync`. Bundles and `[manifest].extend = ["bootstrap.children"]`
   follow the same rules. The translation is removed after v0.15.
+- A project that still declares config for a feature v0.15 removed also keeps
+  loading (effigy#274). When ignoring the section changes nothing else, Effigy
+  ignores it and names it in the same one-notice-per-manifest deprecation on
+  stderr (and in `effigy doctor`), never in `--json` stdout: every removed
+  scanner's `[scan.<name>]` table (`attention_markers`, `comment_ratio`,
+  `generated_assets`, `generated_in_src`, `stale_suppressions`, and the
+  graph-backed `boundary_violations`, `dead_code`, `validation_gaps`),
+  `[catalog.graph]`, `[demos]` (the notice carries the task conversion recipe)
+  and `[shell]`. The removed feature's command still refuses with its
+  replacement, and `[drafts]`/`draft` steps stay manifest errors because
+  ignoring them would silently drop task definitions. The ignored sections are
+  removed after v0.15.
 - A Colima profile that reports Running while `containerd`/`buildkit` are
   stopped is recovered in place: Effigy starts those units inside its own
   profile, re-probes with a bounded deadline, and otherwise refuses with the
