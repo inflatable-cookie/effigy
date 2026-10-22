@@ -3,6 +3,9 @@ use std::time::Instant;
 
 use super::*;
 
+/// Multiplier for the rolling window hash over normalized line hashes.
+const WINDOW_HASH_BASE: u64 = 0x100000001b3;
+
 pub(crate) fn candidate_block_count(files: &[DuplicateBlockFile], seed_lines: usize) -> usize {
     files
         .iter()
@@ -29,15 +32,13 @@ pub(crate) fn detect_duplicate_blocks_bounded(
     deadline: Option<Instant>,
 ) -> Result<Vec<DuplicateBlockFinding>, ScanError> {
     let seed_lines = options.thresholds.warn;
-    let mut seed_map = BTreeMap::<String, Vec<DuplicateSeed>>::new();
+    let mut seed_map = BTreeMap::<u64, Vec<DuplicateSeed>>::new();
     for (file_index, file) in files.iter().enumerate() {
-        for start in 0..=file.lines.len().saturating_sub(seed_lines) {
-            ensure_deadline(deadline)?;
-            let fingerprint = fingerprint_normalized_lines(
-                file.lines[start..start + seed_lines]
-                    .iter()
-                    .map(|line| line.text.as_str()),
-            );
+        ensure_deadline(deadline)?;
+        if file.lines.len() < seed_lines {
+            continue;
+        }
+        for (start, fingerprint) in seed_fingerprints(&file.lines, seed_lines) {
             seed_map
                 .entry(fingerprint)
                 .or_default()
@@ -63,9 +64,17 @@ pub(crate) fn detect_duplicate_blocks_bounded(
         if occurrences.len() < options.thresholds.min_occurrences {
             continue;
         }
+        if !seed_texts_match(files, &occurrences, seed_lines) {
+            continue;
+        }
         let Some(block) = extend_duplicate_block(files, &occurrences, seed_lines) else {
             continue;
         };
+        let first = &block.occurrences[0];
+        let first_file = &files[first.file_index];
+        if is_literal_only_block(&first_file.lines[first.start..first.end]) {
+            continue;
+        }
         let Some(severity) =
             classify_duplicate_block_severity(block.block_lines, &options.thresholds)
         else {
@@ -78,6 +87,67 @@ pub(crate) fn detect_duplicate_blocks_bounded(
         findings.push(build_duplicate_block_finding(files, block, severity));
     }
     Ok(findings)
+}
+
+/// Rolling fingerprints for every `seed_lines`-long window in a file. Each line
+/// is hashed once, so a window costs one subtraction and one multiply instead of
+/// re-hashing its whole text.
+fn seed_fingerprints(lines: &[NormalizedCodeLine], seed_lines: usize) -> Vec<(usize, u64)> {
+    let line_hashes = lines
+        .iter()
+        .map(|line| hash_line(&line.text))
+        .collect::<Vec<u64>>();
+    let mut fingerprints = Vec::with_capacity(lines.len().saturating_sub(seed_lines) + 1);
+    if lines.len() < seed_lines {
+        return fingerprints;
+    }
+    let mut leading_power = 1u64;
+    for _ in 0..seed_lines.saturating_sub(1) {
+        leading_power = leading_power.wrapping_mul(WINDOW_HASH_BASE);
+    }
+    let mut window = 0u64;
+    for hash in line_hashes.iter().take(seed_lines) {
+        window = window.wrapping_mul(WINDOW_HASH_BASE).wrapping_add(*hash);
+    }
+    fingerprints.push((0usize, window));
+    for start in 1..=lines.len() - seed_lines {
+        let outgoing = line_hashes[start - 1].wrapping_mul(leading_power);
+        window = window.wrapping_sub(outgoing);
+        window = window
+            .wrapping_mul(WINDOW_HASH_BASE)
+            .wrapping_add(line_hashes[start + seed_lines - 1]);
+        fingerprints.push((start, window));
+    }
+    fingerprints
+}
+
+fn hash_line(text: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in text.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+/// Hash windows can collide; only treat a seed group as a duplicate when the
+/// normalized text really matches.
+fn seed_texts_match(
+    files: &[DuplicateBlockFile],
+    occurrences: &[DuplicateSeed],
+    seed_lines: usize,
+) -> bool {
+    let Some(reference_seed) = occurrences.first() else {
+        return false;
+    };
+    let reference = &files[reference_seed.file_index].lines
+        [reference_seed.start..reference_seed.start + seed_lines];
+    occurrences.iter().skip(1).all(|seed| {
+        files[seed.file_index].lines[seed.start..seed.start + seed_lines]
+            .iter()
+            .zip(reference.iter())
+            .all(|(candidate, expected)| candidate.text == expected.text)
+    })
 }
 
 fn ensure_deadline(deadline: Option<Instant>) -> Result<(), ScanError> {

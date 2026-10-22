@@ -3,24 +3,17 @@ use std::time::{Duration, Instant};
 
 use effigy_manifest::LoadedCatalog;
 use effigy_scan::{
-    doctor_attention_marker_options, doctor_comment_ratio_options, doctor_duplicate_block_options,
-    doctor_generated_asset_options, doctor_generated_in_src_options, doctor_god_file_options,
-    doctor_stale_suppression_options, run_doctor_scan_inventory, DoctorScanInventoryOptions,
-    DoctorScanInventoryResult,
+    doctor_duplicate_block_options, doctor_god_file_options, run_doctor_scan_inventory,
+    DoctorScanInventoryOptions, DoctorScanInventoryResult,
 };
 
 use crate::contracts::{check_id, remediation};
 use crate::scan_checks::core::{DoctorIntegratedScanFinding, DoctorIntegratedScanResult};
 use crate::DoctorState;
 
-const SCAN_CHECK_NAMES: [(&str, &str); 7] = [
+const SCAN_CHECK_NAMES: [(&str, &str); 2] = [
     ("god_files", check_id::SCAN_GOD_FILES),
     ("duplicate_blocks", check_id::SCAN_DUPLICATE_BLOCKS),
-    ("comment_ratio", check_id::SCAN_COMMENT_RATIO),
-    ("generated_assets", check_id::SCAN_GENERATED_ASSETS),
-    ("generated_in_src", check_id::SCAN_GENERATED_IN_SRC),
-    ("attention_markers", check_id::SCAN_ATTENTION_MARKERS),
-    ("stale_suppressions", check_id::SCAN_STALE_SUPPRESSIONS),
 ];
 
 pub(super) struct DeepInventoryRequest<'a> {
@@ -120,36 +113,6 @@ fn load_options(
             "duplicate-blocks",
             state,
         )?,
-        comment_ratio: load(
-            doctor_comment_ratio_options(scope_root, catalogs),
-            check_id::SCAN_COMMENT_RATIO,
-            "comment-ratio",
-            state,
-        )?,
-        generated_assets: load(
-            doctor_generated_asset_options(scope_root, catalogs),
-            check_id::SCAN_GENERATED_ASSETS,
-            "generated-assets",
-            state,
-        )?,
-        generated_in_src: load(
-            doctor_generated_in_src_options(scope_root, catalogs),
-            check_id::SCAN_GENERATED_IN_SRC,
-            "generated-in-src",
-            state,
-        )?,
-        attention_markers: load(
-            doctor_attention_marker_options(scope_root, catalogs),
-            check_id::SCAN_ATTENTION_MARKERS,
-            "attention-markers",
-            state,
-        )?,
-        stale_suppressions: load(
-            doctor_stale_suppression_options(scope_root, catalogs),
-            check_id::SCAN_STALE_SUPPRESSIONS,
-            "stale-suppressions",
-            state,
-        )?,
     })
 }
 
@@ -172,15 +135,10 @@ fn load<T>(
     }
 }
 
-fn enabled_checks(options: &DoctorScanInventoryOptions) -> [bool; 7] {
+fn enabled_checks(options: &DoctorScanInventoryOptions) -> [bool; 2] {
     [
         options.god_files.doctor_enabled,
         options.duplicate_blocks.doctor_enabled,
-        options.comment_ratio.doctor_enabled,
-        options.generated_assets.doctor_enabled,
-        options.generated_in_src.doctor_enabled,
-        options.attention_markers.doctor_enabled,
-        options.stale_suppressions.doctor_enabled,
     ]
 }
 
@@ -198,46 +156,6 @@ fn apply_results(result: DoctorScanInventoryResult, state: &mut DoctorState) {
             result,
             check_id::SCAN_DUPLICATE_BLOCKS,
             remediation::REDUCE_DUPLICATE_BLOCKS,
-            state,
-        );
-    }
-    if let Some(result) = result.comment_ratio {
-        apply(
-            result,
-            check_id::SCAN_COMMENT_RATIO,
-            remediation::REDUCE_COMMENT_RATIO,
-            state,
-        );
-    }
-    if let Some(result) = result.generated_assets {
-        apply(
-            result,
-            check_id::SCAN_GENERATED_ASSETS,
-            remediation::REMOVE_OR_IGNORE_GENERATED_ASSETS,
-            state,
-        );
-    }
-    if let Some(result) = result.generated_in_src {
-        apply(
-            result,
-            check_id::SCAN_GENERATED_IN_SRC,
-            remediation::REMOVE_GENERATED_FROM_SOURCE_TREES,
-            state,
-        );
-    }
-    if let Some(result) = result.attention_markers {
-        apply(
-            result,
-            check_id::SCAN_ATTENTION_MARKERS,
-            remediation::RESOLVE_ATTENTION_MARKERS,
-            state,
-        );
-    }
-    if let Some(result) = result.stale_suppressions {
-        apply(
-            result,
-            check_id::SCAN_STALE_SUPPRESSIONS,
-            remediation::REMOVE_STALE_SUPPRESSIONS,
             state,
         );
     }

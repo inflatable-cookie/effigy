@@ -1,49 +1,5 @@
 use super::*;
 
-pub(super) fn render_generated_in_src_help() -> String {
-    render_threshold_scan_help(
-        "scan generated-in-src",
-        &[
-            "effigy scan generated-in-src [--threshold <BYTES>] [--high <BYTES>] [--critical <BYTES>]",
-            "effigy scan generated-in-src [--source-root <GLOB>] [--show-warnings] [--no-gitignore]",
-            "effigy scan generated-in-src [--markdown] [--out reports/generated-in-src.md]",
-            "effigy scan generated-in-src [--json] [--fail-on-findings]",
-        ],
-        &[
-            "--threshold, --warn <BYTES> : warning threshold in bytes (default 1)",
-            "--high <BYTES> : high severity threshold in bytes (default 20000)",
-            "--critical <BYTES> : critical threshold in bytes (default 200000)",
-        ],
-        &["--source-root <GLOB> : source-tree glob to scan for generated files, repeatable"],
-        &[
-            "targets source roots such as src, app, lib, crates, and packages/*/src",
-            "matches generated markers, generated-style filenames, and minified/source-map artifacts inside source trees",
-        ],
-    )
-}
-
-pub(super) fn render_comment_ratio_help() -> String {
-    render_threshold_scan_help(
-        "scan comment-ratio",
-        &[
-            "effigy scan comment-ratio [--threshold <RATIO>] [--high <RATIO>] [--critical <RATIO>]",
-            "effigy scan comment-ratio [--min-code-lines <N>] [--show-warnings] [--no-gitignore]",
-            "effigy scan comment-ratio [--markdown] [--out reports/comment-ratio.md]",
-            "effigy scan comment-ratio [--json] [--fail-on-findings]",
-        ],
-        &[
-            "--threshold, --warn <RATIO> : warning threshold in comment/code ratio (default 1.5)",
-            "--high <RATIO> : high severity threshold (default 2.0)",
-            "--critical <RATIO> : critical threshold (default 3.0)",
-        ],
-        &["--min-code-lines <N> : minimum code-only lines before a file is evaluated (default 20)"],
-        &[
-            "counts comment-only lines against code-only lines in source and test files",
-            "common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts are skipped by default",
-        ],
-    )
-}
-
 pub(super) fn render_duplicate_blocks_help() -> String {
     render_threshold_scan_help(
         "scan duplicate-blocks",
@@ -56,10 +12,14 @@ pub(super) fn render_duplicate_blocks_help() -> String {
         &[
             "--threshold, --warn <N> : warning threshold in normalized code lines (default 20)",
             "--high <N> : high severity threshold (default 40)",
-            "--critical <N> : critical threshold (default 80)",
+            "--critical <N> : critical severity threshold (default 80)",
         ],
         &[],
-        &["detects repeated normalized code blocks across files, excluding common docs/data/generated paths by default"],
+        &[
+            "opt-in: doctor runs it only when `[scan.duplicate_blocks] doctor = true`",
+            "generated/derived files and literal-only blocks (data tables, fixtures, string lists) are skipped",
+            "string-literal contents are preserved during normalization, so unrelated data maps do not collapse into one block",
+        ],
     )
 }
 
@@ -73,30 +33,19 @@ pub(super) fn render_god_files_help() -> String {
             "effigy scan god-files [--json] [--fail-on-findings]",
         ],
         &[
-            "--threshold, --warn <N> : warning threshold (default 250)",
-            "--high <N> : high severity threshold (default 400)",
-            "--critical <N> : critical threshold (default 700)",
+            "--threshold, --warn <N> : warning threshold in code lines (overrides per-language defaults)",
+            "--high <N> : high severity threshold (overrides per-language defaults)",
+            "--critical <N> : critical severity threshold (overrides per-language defaults)",
         ],
         &[],
-        &["common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts are skipped by default"],
-    )
-}
-
-pub(super) fn render_generated_assets_help() -> String {
-    render_threshold_scan_help(
-        "scan generated-assets",
         &[
-            "effigy scan generated-assets [--threshold <BYTES>] [--high <BYTES>] [--critical <BYTES>]",
-            "effigy scan generated-assets [--show-warnings] [--no-gitignore]",
-            "effigy scan generated-assets [--markdown] [--out reports/generated-assets.md]",
-            "effigy scan generated-assets [--json] [--fail-on-findings]",
+            "without an explicit threshold each file uses its language defaults (code lines):",
+            "  typescript/javascript/vue/svelte and python/ruby/php: warn 800, high 1400, critical 2400",
+            "  rust/c/c++/c#/go/java/kotlin/scala/swift: warn 1000, high 1800, critical 3000",
+            "  sql/css/html: warn 1200, high 2000, critical 3200",
+            "  shell/lua: warn 500, high 900, critical 1500",
+            "  every other extension: warn 1000, high 1800, critical 3000",
+            "generated, derived, vendored and agent-skill trees are skipped by default, and `.gitignore` is respected",
         ],
-        &[
-            "--threshold, --warn <BYTES> : warning threshold in bytes (default 1000000)",
-            "--high <BYTES> : high severity threshold in bytes (default 5000000)",
-            "--critical <BYTES> : critical threshold in bytes (default 20000000)",
-        ],
-        &[],
-        &["matches vendored/build paths, bundle/minified/source-map names, and generated markers"],
     )
 }

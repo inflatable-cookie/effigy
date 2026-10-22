@@ -11,14 +11,6 @@ fn write_duplicate_block_file(path: &std::path::Path, block_prefix: &str, body_l
     fs::write(path, format!("{}\n", lines.join("\n"))).expect("write duplicate block file");
 }
 
-fn write_comment_ratio_file(path: &std::path::Path, comment_lines: usize, code_lines: usize) {
-    let mut lines = (0..comment_lines)
-        .map(|idx| format!("// commentary line {idx}"))
-        .collect::<Vec<String>>();
-    lines.extend((0..code_lines).map(|idx| format!("const line_{idx} = {idx};")));
-    fs::write(path, format!("{}\n", lines.join("\n"))).expect("write comment ratio file");
-}
-
 fn run_doctor_rendered(root: PathBuf, output_json: bool) -> String {
     match run_doctor(DoctorArgs {
         repo_override: Some(root),
@@ -135,7 +127,6 @@ fn explain_row_value<'a>(rows: &'a [(String, String)], key: &str) -> &'a str {
 
 mod core;
 mod dependency_health;
-mod duplicate_and_comment;
+mod duplicate_blocks;
 mod explain;
-mod markers;
-mod size_and_generated;
+mod god_files;

@@ -726,7 +726,7 @@ fn cli_help_for_builtin_owned_help_matches_the_direct_command_exactly() {
 
     let cases: [(&str, &[&str]); 2] = [
         ("config", &["effigy.toml Reference", "[tasks]"]),
-        ("scan", &["god-files", "attention-markers"]),
+        ("scan", &["god-files", "duplicate-blocks"]),
     ];
 
     for (command, required) in cases {

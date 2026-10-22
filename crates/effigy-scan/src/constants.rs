@@ -1,86 +1,91 @@
 pub use effigy_manifest::TASK_MANIFEST_FILE;
 
-pub(super) const DEFAULT_GOD_FILES_WARN: usize = 250;
-pub(super) const DEFAULT_GOD_FILES_HIGH: usize = 400;
-pub(super) const DEFAULT_GOD_FILES_CRITICAL: usize = 700;
+pub(super) const DEFAULT_GOD_FILES_WARN: usize = 1000;
+pub(super) const DEFAULT_GOD_FILES_HIGH: usize = 1800;
+pub(super) const DEFAULT_GOD_FILES_CRITICAL: usize = 3000;
 pub(super) const DEFAULT_DUPLICATE_BLOCKS_WARN: usize = 20;
 pub(super) const DEFAULT_DUPLICATE_BLOCKS_HIGH: usize = 40;
 pub(super) const DEFAULT_DUPLICATE_BLOCKS_CRITICAL: usize = 80;
 pub(super) const DEFAULT_DUPLICATE_BLOCKS_MIN_OCCURRENCES: usize = 2;
-pub(super) const DEFAULT_COMMENT_RATIO_WARN: f64 = 1.5;
-pub(super) const DEFAULT_COMMENT_RATIO_HIGH: f64 = 2.0;
-pub(super) const DEFAULT_COMMENT_RATIO_CRITICAL: f64 = 3.0;
-pub(super) const DEFAULT_COMMENT_RATIO_MIN_CODE_LINES: usize = 20;
-pub(super) const DEFAULT_GENERATED_ASSETS_WARN_BYTES: usize = 1_000_000;
-pub(super) const DEFAULT_GENERATED_ASSETS_HIGH_BYTES: usize = 5_000_000;
-pub(super) const DEFAULT_GENERATED_ASSETS_CRITICAL_BYTES: usize = 20_000_000;
-pub(super) const DEFAULT_GENERATED_IN_SRC_WARN_BYTES: usize = 1;
-pub(super) const DEFAULT_GENERATED_IN_SRC_HIGH_BYTES: usize = 20_000;
-pub(super) const DEFAULT_GENERATED_IN_SRC_CRITICAL_BYTES: usize = 200_000;
-pub(super) const DEFAULT_GENERATED_IN_SRC_SOURCE_ROOTS: &[&str] = &[
-    "src/**",
-    "app/**",
-    "lib/**",
-    "crates/**",
-    "packages/*/src/**",
-    "services/*/src/**",
-];
-pub(super) const DEFAULT_ATTENTION_MARKER_WARNING: &[&str] = &[
-    "TODO",
-    "@TODO",
-    "REVIEW",
-    "NOTE",
-    "placeholder",
-    "later",
-    "stub",
-];
-pub(super) const DEFAULT_ATTENTION_MARKER_HIGH: &[&str] = &[
-    "FIXME",
-    "XXX",
-    "HACK",
-    "@deprecated",
-    "deprecated",
-    "workaround",
-    "tech debt",
-];
-pub(super) const DEFAULT_ATTENTION_MARKER_CRITICAL: &[&str] =
-    &["BUG", "SECURITY", "remove before release"];
-pub(super) const DEFAULT_STALE_SUPPRESSION_WARNING: &[&str] = &[
-    "@ts-ignore",
-    "@ts-expect-error",
-    "type: ignore",
-    "eslint-disable-next-line",
-];
-pub(super) const DEFAULT_STALE_SUPPRESSION_HIGH: &[&str] = &[
-    "#[allow(",
-    "#[expect(",
-    "rubocop:disable",
-    "swiftlint:disable",
-    "prettier-ignore",
-    "stylelint-disable",
-];
-pub(super) const DEFAULT_STALE_SUPPRESSION_CRITICAL: &[&str] = &[
-    "nolint",
-    "#[allow(warnings)]",
-    "shellcheck disable=",
-    "eslint-disable",
-    "fmt: off",
+
+/// Per-language god-file defaults, used only when no explicit `warn`/`high`/
+/// `critical` threshold is configured. Each row is a language group and its
+/// `(warn, high, critical)` code-line thresholds. Languages whose idioms keep
+/// more code per file (component files, test-heavy typed modules) get a higher
+/// allowance so a real repository yields a short list of review candidates.
+pub(super) struct GodFileLanguageProfile {
+    pub(super) extensions: &'static [&'static str],
+    pub(super) warn: usize,
+    pub(super) high: usize,
+    pub(super) critical: usize,
+}
+
+pub(super) const GOD_FILE_LANGUAGE_PROFILES: &[GodFileLanguageProfile] = &[
+    GodFileLanguageProfile {
+        extensions: &["ts", "tsx", "js", "jsx", "mjs", "cjs", "vue", "svelte"],
+        warn: 800,
+        high: 1400,
+        critical: 2400,
+    },
+    GodFileLanguageProfile {
+        extensions: &["py", "rb", "php"],
+        warn: 800,
+        high: 1400,
+        critical: 2400,
+    },
+    GodFileLanguageProfile {
+        extensions: &["sql", "css", "html"],
+        warn: 1200,
+        high: 2000,
+        critical: 3200,
+    },
+    GodFileLanguageProfile {
+        extensions: &["sh", "zsh", "lua"],
+        warn: 500,
+        high: 900,
+        critical: 1500,
+    },
+    GodFileLanguageProfile {
+        extensions: &[
+            "c", "cc", "cpp", "cs", "go", "h", "hpp", "java", "kt", "kts", "m", "mm", "rs",
+            "scala", "sc", "swift",
+        ],
+        warn: DEFAULT_GOD_FILES_WARN,
+        high: DEFAULT_GOD_FILES_HIGH,
+        critical: DEFAULT_GOD_FILES_CRITICAL,
+    },
 ];
 
 pub(super) const DEFAULT_EXCLUDED_DIRS: &[&str] = &[
+    ".agents",
+    ".cache",
+    ".claude",
     ".git",
     ".next",
     ".nuxt",
     ".svelte-kit",
+    ".tox",
     ".turbo",
+    ".venv",
     ".yarn",
+    "__pycache__",
+    "bower_components",
     "build",
     "coverage",
     "dist",
     "node_modules",
+    "Pods",
+    "skills",
     "target",
+    "third_party",
     "vendor",
+    "vendors",
+    "venv",
 ];
+
+/// Path components that hold generated output. Both content scanners skip these
+/// trees: their findings are about maintained source, not derived artefacts.
+pub(super) const GENERATED_PATH_COMPONENTS: &[&str] = &["gen", "generated"];
 
 pub(super) const DEFAULT_DOC_DIRS: &[&str] = &["doc", "docs", "documentation"];
 
@@ -108,31 +113,21 @@ pub(super) const DEFAULT_LOCK_FILE_NAMES: &[&str] = &[
     "composer.lock",
 ];
 
+/// Header markers that identify generated or derived files. The match is
+/// limited to comment-like header lines so ordinary prose mentioning
+/// generation does not force a skip.
 pub(super) const GENERATED_MARKERS: &[&str] = &[
     "@generated",
     "auto-generated",
     "autogenerated",
     "code generated",
+    "derived binding",
     "do not edit",
+    "do not hand-edit",
+    "do not modify",
     "generated by",
+    "generated file",
+    "machine generated",
+    "not editable",
+    "this file is generated",
 ];
-
-pub(super) const GENERATED_ASSET_DIRS: &[&str] = &[
-    ".next",
-    ".nuxt",
-    ".parcel-cache",
-    ".svelte-kit",
-    ".turbo",
-    "build",
-    "coverage",
-    "dist",
-    "generated",
-    "gen",
-    "storybook-static",
-    "third_party",
-    "vendor",
-    "vendors",
-];
-
-pub(super) const GENERATED_ASSET_NAME_MARKERS: &[&str] =
-    &[".bundle.", ".chunk.", ".generated.", ".map", ".min."];

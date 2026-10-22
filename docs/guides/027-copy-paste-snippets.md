@@ -308,9 +308,9 @@ Use when you want tab-completion for task selectors in your shell.
 
 ```toml
 [scan.god_files]
-warn = 250
-high = 400
-critical = 700
+warn = 1500
+high = 3000
+critical = 8000
 doctor = true
 respect_gitignore = true
 include = ["src/**", "app/**"]
@@ -328,26 +328,15 @@ effigy scan duplicate-blocks
 effigy scan duplicate-blocks --show-warnings
 effigy scan duplicate-blocks --fail-on-findings
 effigy scan duplicate-blocks --markdown --out reports/duplicate-blocks.md
-effigy scan comment-ratio
-effigy scan comment-ratio --show-warnings
-effigy scan comment-ratio --fail-on-findings
-effigy scan comment-ratio --markdown --out reports/comment-ratio.md
-effigy scan generated-assets
-effigy scan generated-assets --show-warnings
-effigy scan generated-assets --markdown --out reports/generated-assets.md
-effigy scan generated-in-src
-effigy scan generated-in-src --show-warnings
-effigy scan generated-in-src --markdown --out reports/generated-in-src.md
-effigy scan attention-markers
-effigy scan attention-markers --show-warnings
-effigy scan attention-markers --markdown --out reports/attention-markers.md
-effigy scan stale-suppressions
-effigy scan stale-suppressions --show-warnings
-effigy scan stale-suppressions --markdown --out reports/stale-suppressions.md
 ```
 
 Default text mode hides warning rows and prints a warning count summary. Use `--show-warnings` when you need the full terminal list.
-Keep `[scan.stale_suppressions].doctor = false` unless you want suppression findings folded into `effigy doctor`.
+
+`god-files` uses per-language size defaults when no `warn`/`high`/`critical`
+is configured. Both scanners skip generated, derived, vendored and agent-skill
+trees. v0.15 removed `comment-ratio`, `generated-assets`, `generated-in-src`,
+`attention-markers` and `stale-suppressions`; those `[scan.*]` tables are
+manifest errors. For TODO/FIXME searches, use `rg -n 'TODO|FIXME' <path>`.
 
 ## Related Guides
 

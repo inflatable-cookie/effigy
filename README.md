@@ -169,12 +169,15 @@ effigy doctor                        # Bounded structural checks only
 effigy doctor --deep                 # Enabled scans + selected-scope health
 effigy doctor --deep --catalog api   # Deep diagnosis for one catalog
 effigy scan god-files                # Find files that grew too large
-effigy scan comment-ratio            # Spot files with suspicious comment balance
-effigy scan generated-in-src         # Catch generated files polluting source trees
-effigy scan attention-markers        # Surface TODO/FIXME/SECURITY markers
+effigy scan duplicate-blocks         # Find repeated code blocks (opt-in)
 ```
 
-Each scanner respects `.gitignore`, supports `--json` for CI integration, and can be configured in `effigy.toml` with thresholds, include/exclude globs, and automatic deep-doctor inclusion. Deep doctor shares one catalog-scoped inventory and an exact disposable cache under `.effigy/doctor/cache/v1/`; use `--refresh` to bypass cache reads. Findings write to `.effigy/reports/doctor/` as markdown for review.
+Each scanner respects `.gitignore`, skips generated, derived, vendored and
+agent-skill trees, supports `--json` for CI integration, and can be configured
+in `effigy.toml` with thresholds, include/exclude globs, and automatic
+deep-doctor inclusion. Without explicit thresholds `god-files` uses
+per-language size defaults, so a real repository yields a short review list.
+TODO/FIXME searches are not a scan: use `rg -n 'TODO|FIXME' <path>`. Deep doctor shares one catalog-scoped inventory and an exact disposable cache under `.effigy/doctor/cache/v1/`; use `--refresh` to bypass cache reads. Findings write to `.effigy/reports/doctor/` as markdown for review.
 
 For scripts and agents, `effigy --json <command>` emits stable envelopes (see
 `docs/guides/017-json-output-contracts.md`). Manifest tasks also accept a

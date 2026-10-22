@@ -100,23 +100,10 @@ fn scan_report_file_name(check_id: &str) -> Option<&'static str> {
     match check_id {
         check_id::SCAN_GOD_FILES => Some("scan-god-files.md"),
         check_id::SCAN_DUPLICATE_BLOCKS => Some("scan-duplicate-blocks.md"),
-        check_id::SCAN_COMMENT_RATIO => Some("scan-comment-ratio.md"),
-        check_id::SCAN_GENERATED_ASSETS => Some("scan-generated-assets.md"),
-        check_id::SCAN_GENERATED_IN_SRC => Some("scan-generated-in-src.md"),
-        check_id::SCAN_ATTENTION_MARKERS => Some("scan-attention-markers.md"),
-        check_id::SCAN_STALE_SUPPRESSIONS => Some("scan-stale-suppressions.md"),
         _ => None,
     }
 }
 
 fn known_scan_report_file_names() -> &'static [&'static str] {
-    &[
-        "scan-god-files.md",
-        "scan-duplicate-blocks.md",
-        "scan-comment-ratio.md",
-        "scan-generated-assets.md",
-        "scan-generated-in-src.md",
-        "scan-attention-markers.md",
-        "scan-stale-suppressions.md",
-    ]
+    &["scan-god-files.md", "scan-duplicate-blocks.md"]
 }

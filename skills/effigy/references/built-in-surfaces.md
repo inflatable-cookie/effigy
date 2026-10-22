@@ -34,7 +34,7 @@ also supports `--headless` / `EFFIGY_MANAGED_HEADLESS=1` plus task-local
 | `doctor` | Health checks; `doctor <selector>` explain mode; running-workspace ownership diagnosis |
 | `test` | Built-in test orchestration (`--plan`, `--tui`) |
 | `defer` | Run `[defer]` fallback explicitly |
-| `scan` | Repo scanners (`god-files`, `attention-markers`, …) |
+| `scan` | Repo scanners (`god-files`, `duplicate-blocks`) |
 | `config` | Inspect merged manifest; schema snippets; `config get/set` |
 | `config completion` | Shell completion + selector candidates |
 | `deps` | Inspect, link, and unlink full Cargo/Bun local dependency closures |

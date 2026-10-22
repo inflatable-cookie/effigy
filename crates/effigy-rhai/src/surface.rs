@@ -132,12 +132,7 @@ pub const FEATURE_GATEWAY_UP: &str = "gateway.up";
 pub const FEATURE_GATEWAY_DOWN: &str = "gateway.down";
 pub const FEATURE_DOCTOR_RUN: &str = "doctor.run";
 pub const FEATURE_SCAN_GOD_FILES: &str = "scan.god_files";
-pub const FEATURE_SCAN_GENERATED_ASSETS: &str = "scan.generated_assets";
-pub const FEATURE_SCAN_GENERATED_IN_SRC: &str = "scan.generated_in_src";
 pub const FEATURE_SCAN_DUPLICATE_BLOCKS: &str = "scan.duplicate_blocks";
-pub const FEATURE_SCAN_COMMENT_RATIO: &str = "scan.comment_ratio";
-pub const FEATURE_SCAN_ATTENTION_MARKERS: &str = "scan.attention_markers";
-pub const FEATURE_SCAN_STALE_SUPPRESSIONS: &str = "scan.stale_suppressions";
 pub const FEATURE_CACHE_INSPECT: &str = "cache.inspect";
 pub const FEATURE_CACHE_INVALIDATE: &str = "cache.invalidate";
 pub const FEATURE_CONTRACTS_CHECK_JSON: &str = "contracts.check_json";
@@ -213,12 +208,7 @@ pub const FEATURE_NAMES: &[&str] = &[
     FEATURE_GATEWAY_DOWN,
     FEATURE_DOCTOR_RUN,
     FEATURE_SCAN_GOD_FILES,
-    FEATURE_SCAN_GENERATED_ASSETS,
-    FEATURE_SCAN_GENERATED_IN_SRC,
     FEATURE_SCAN_DUPLICATE_BLOCKS,
-    FEATURE_SCAN_COMMENT_RATIO,
-    FEATURE_SCAN_ATTENTION_MARKERS,
-    FEATURE_SCAN_STALE_SUPPRESSIONS,
     FEATURE_CACHE_INSPECT,
     FEATURE_CACHE_INVALIDATE,
     FEATURE_CONTRACTS_CHECK_JSON,
@@ -342,12 +332,7 @@ pub const FEATURE_DESCRIPTORS: &[RhaiFeatureDescriptor] = &[
     runner_feature(FEATURE_GATEWAY_DOWN),
     runner_feature(FEATURE_DOCTOR_RUN),
     runner_feature(FEATURE_SCAN_GOD_FILES),
-    runner_feature(FEATURE_SCAN_GENERATED_ASSETS),
-    runner_feature(FEATURE_SCAN_GENERATED_IN_SRC),
     runner_feature(FEATURE_SCAN_DUPLICATE_BLOCKS),
-    runner_feature(FEATURE_SCAN_COMMENT_RATIO),
-    runner_feature(FEATURE_SCAN_ATTENTION_MARKERS),
-    runner_feature(FEATURE_SCAN_STALE_SUPPRESSIONS),
     runner_feature(FEATURE_CACHE_INSPECT),
     runner_feature(FEATURE_CACHE_INVALIDATE),
     runner_feature(FEATURE_CONTRACTS_CHECK_JSON),

@@ -15,15 +15,6 @@ fn write_duplicate_block_file(path: &std::path::Path, block_prefix: &str, body_l
     fs::write(path, format!("{}\n", lines.join("\n"))).expect("write duplicate block file");
 }
 
-fn write_comment_ratio_file(path: &std::path::Path, comment_lines: usize, code_lines: usize) {
-    let mut lines = (0..comment_lines)
-        .map(|idx| format!("// commentary line {idx}"))
-        .collect::<Vec<String>>();
-    lines.extend((0..code_lines).map(|idx| format!("const line_{idx} = {idx};")));
-    fs::write(path, format!("{}\n", lines.join("\n"))).expect("write comment ratio file");
-}
-
 mod core;
-mod duplicate_and_comment;
-mod markers;
-mod size_and_generated;
+mod duplicate_blocks;
+mod god_files;

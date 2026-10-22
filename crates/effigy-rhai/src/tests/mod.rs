@@ -24,6 +24,7 @@ mod host_surface;
 mod previous_binary_preservation;
 mod prompt;
 mod runtime;
+mod scan_retirement;
 mod script_policy;
 mod secrets;
 mod semver;

@@ -1,10 +1,5 @@
 use super::{ScanCommonOptions, ScanThresholdOverrideOptions, ScanThresholds};
 use crate::scan::request::ScanRequest;
-use crate::BuiltinError;
-use effigy_scan::{
-    AttentionMarkerScanOptions, CommentRatioScanOptions, GeneratedInSrcScanOptions,
-    StaleSuppressionScanOptions,
-};
 
 pub(in crate::scan::execution) fn apply_common_request_overrides<T>(
     options: &mut T,
@@ -36,106 +31,20 @@ pub(in crate::scan::execution) fn apply_threshold_request_overrides<T>(
     T: ScanThresholdOverrideOptions,
 {
     apply_common_request_overrides(options, request);
+    let mut configured = false;
     if let Some(value) = request.warn {
         *options.thresholds_mut().warn_mut() = value;
+        configured = true;
     }
     if let Some(value) = request.high {
         *options.thresholds_mut().high_mut() = value;
+        configured = true;
     }
     if let Some(value) = request.critical {
         *options.thresholds_mut().critical_mut() = value;
+        configured = true;
     }
-}
-
-pub(in crate::scan::execution) fn reject_threshold_overrides(
-    label: &str,
-    request: &ScanRequest,
-) -> Result<(), BuiltinError> {
-    if request.warn.is_some() || request.high.is_some() || request.critical.is_some() {
-        return Err(BuiltinError::task_invocation(format!(
-            "`scan {label}` does not accept threshold options"
-        )));
+    if configured {
+        options.mark_thresholds_configured();
     }
-    Ok(())
-}
-
-pub(in crate::scan::execution) fn apply_comment_ratio_request_overrides(
-    options: &mut CommentRatioScanOptions,
-    request: &ScanRequest,
-) {
-    apply_common_request_overrides(options, request);
-    if let Some(value) = request.ratio_warn {
-        options.thresholds.warn = value;
-    }
-    if let Some(value) = request.ratio_high {
-        options.thresholds.high = value;
-    }
-    if let Some(value) = request.ratio_critical {
-        options.thresholds.critical = value;
-    }
-    if let Some(value) = request.min_code_lines {
-        options.thresholds.min_code_lines = value;
-    }
-}
-
-pub(in crate::scan::execution) fn apply_generated_in_src_request_overrides(
-    options: &mut GeneratedInSrcScanOptions,
-    request: &ScanRequest,
-) {
-    apply_common_request_overrides(options, request);
-    if let Some(value) = request.warn {
-        options.thresholds.warn = value;
-    }
-    if let Some(value) = request.high {
-        options.thresholds.high = value;
-    }
-    if let Some(value) = request.critical {
-        options.thresholds.critical = value;
-    }
-    if !request.source_roots.is_empty() {
-        options.source_roots = request.source_roots.clone();
-    }
-}
-
-pub(in crate::scan::execution) fn apply_marker_pattern_overrides(
-    warning: &mut Vec<String>,
-    high: &mut Vec<String>,
-    critical: &mut Vec<String>,
-    request: &ScanRequest,
-) {
-    if !request.warning_markers.is_empty() {
-        *warning = request.warning_markers.clone();
-    }
-    if !request.high_markers.is_empty() {
-        *high = request.high_markers.clone();
-    }
-    if !request.critical_markers.is_empty() {
-        *critical = request.critical_markers.clone();
-    }
-}
-
-pub(in crate::scan::execution) fn apply_attention_marker_request_overrides(
-    options: &mut AttentionMarkerScanOptions,
-    request: &ScanRequest,
-) {
-    apply_common_request_overrides(options, request);
-    apply_marker_pattern_overrides(
-        &mut options.patterns.warning,
-        &mut options.patterns.high,
-        &mut options.patterns.critical,
-        request,
-    );
-}
-
-pub(in crate::scan::execution) fn apply_stale_suppression_request_overrides(
-    options: &mut StaleSuppressionScanOptions,
-    request: &ScanRequest,
-) {
-    apply_common_request_overrides(options, request);
-    apply_marker_pattern_overrides(
-        &mut options.patterns.warning,
-        &mut options.patterns.high,
-        &mut options.patterns.critical,
-        request,
-    );
 }

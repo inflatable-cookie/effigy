@@ -57,11 +57,10 @@ pub fn ensure_colima_running(
 ) -> Result<bool, ContainerExecError> {
     if colima_is_running(policy, repo_root)? {
         return ensure_running_profile_runtime_ready(
+            policy.profile.as_str(),
             COLIMA_RUNNING_PROFILE_GRACE,
-            COLIMA_RUNTIME_READY_TIMEOUT,
             |timeout| wait_for_colima_runtime_ready(policy, repo_root, timeout),
             || start_colima_runtime_units(policy, repo_root),
-            || repair_colima_runtime(policy, repo_root),
         );
     }
     prepare_managed_colima_profile(policy).map_err(|error| ContainerExecError::Failure {
@@ -85,30 +84,66 @@ pub fn ensure_colima_running(
 }
 
 fn ensure_running_profile_runtime_ready(
+    profile: &str,
     grace: Duration,
-    recovery_timeout: Duration,
     mut wait_for_runtime: impl FnMut(Duration) -> Result<(), String>,
     mut start_units: impl FnMut() -> Result<(), String>,
-    mut repair: impl FnMut() -> Result<(), ContainerExecError>,
 ) -> Result<bool, ContainerExecError> {
     match wait_for_runtime(grace) {
         Ok(()) => Ok(false),
         Err(readiness_error) => {
             // A VM restarted outside Colima's boot provisioning can come back
-            // Running with containerd and BuildKit stopped. Starting the units
-            // recovers it without restarting the VM and every stack on it.
-            if start_units().is_ok() && wait_for_runtime(COLIMA_UNIT_START_TIMEOUT).is_ok() {
-                eprintln!(
-                    "[info] Colima was running with containerd/BuildKit stopped; started them inside the VM without restarting it"
-                );
-                return Ok(true);
+            // Running with containerd and BuildKit stopped. Starting those
+            // units inside Effigy's own profile recovers it without touching
+            // the VM or any other profile. Stopping or restarting the VM is a
+            // host-wide effect no task bring-up may take on its own: when the
+            // units still do not come up, refuse and name the operator path.
+            match start_units() {
+                Ok(()) => match wait_for_runtime(COLIMA_UNIT_START_TIMEOUT) {
+                    Ok(()) => {
+                        eprintln!(
+                            "[info] Colima profile `{profile}` was running with containerd/BuildKit stopped; started them inside the VM without restarting it"
+                        );
+                        Ok(true)
+                    }
+                    Err(probe_error) => Err(runtime_unit_start_refusal(
+                        profile,
+                        &readiness_error,
+                        None,
+                        &probe_error,
+                    )),
+                },
+                Err(start_error) => Err(runtime_unit_start_refusal(
+                    profile,
+                    &readiness_error,
+                    Some(&start_error),
+                    "not retried: the unit start itself failed",
+                )),
             }
-            repair().map_err(|recovery_error| {
-                runtime_readiness_recovery_error(&readiness_error, &recovery_error)
-            })?;
-            wait_for_runtime(recovery_timeout).map_err(|error| runtime_readiness_error(&error))?;
-            Ok(true)
         }
+    }
+}
+
+/// The bounded unit start is the only implicit recovery a task bring-up may
+/// perform. This refusal names the profile, the three bounded observations and
+/// the explicit operator commands; it never restarts the VM.
+fn runtime_unit_start_refusal(
+    profile: &str,
+    readiness_error: &str,
+    start_error: Option<&str>,
+    probe_error: &str,
+) -> ContainerExecError {
+    let start = start_error
+        .map(|error| format!("\nunit start: {error}"))
+        .unwrap_or_default();
+    ContainerExecError::Failure {
+        command: "Colima runtime readiness".to_owned(),
+        code: None,
+        stdout: String::new(),
+        stderr: format!(
+            "Colima profile `{profile}` is running but containerd/BuildKit are not ready, and starting those units inside the VM did not recover them within {}s. Effigy did not stop or restart the profile: that stops every stack on it.\nfirst readiness probe: {readiness_error}{start}\nruntime probe after unit start: {probe_error}\nRetry, then recover this profile in place with `effigy container profile repair`, or stop it deliberately with `effigy container profile reset-runtime`.",
+            COLIMA_UNIT_START_TIMEOUT.as_secs(),
+        ),
     }
 }
 
@@ -327,18 +362,6 @@ fn runtime_readiness_error(detail: &str) -> ContainerExecError {
         code: None,
         stdout: String::new(),
         stderr: detail.to_owned(),
-    }
-}
-
-fn runtime_readiness_recovery_error(
-    readiness_error: &str,
-    recovery_error: &ContainerExecError,
-) -> ContainerExecError {
-    ContainerExecError::Failure {
-        command: "Colima containerd readiness recovery".to_owned(),
-        code: None,
-        stdout: String::new(),
-        stderr: format!("{readiness_error}\nfailed to recover Colima profile: {recovery_error}"),
     }
 }
 
@@ -1091,58 +1114,21 @@ mod tests {
     }
 
     #[test]
-    fn warm_colima_profile_is_reused_without_repair() {
+    fn warm_colima_profile_is_reused_without_starting_units() {
         let mut wait_timeouts = Vec::new();
-        let mut repairs = 0;
         let started = ensure_running_profile_runtime_ready(
+            "effigy",
             Duration::from_secs(30),
-            Duration::from_secs(90),
             |timeout| {
                 wait_timeouts.push(timeout);
                 Ok(())
             },
             || panic!("a ready profile never starts units"),
-            || {
-                repairs += 1;
-                Ok(())
-            },
         )
         .expect("warm profile should be reusable");
 
         assert!(!started);
         assert_eq!(wait_timeouts, vec![Duration::from_secs(30)]);
-        assert_eq!(repairs, 0);
-    }
-
-    #[test]
-    fn incomplete_running_profile_is_repaired_and_reprobed() {
-        let mut attempts = 0;
-        let mut repairs = 0;
-        let started = ensure_running_profile_runtime_ready(
-            Duration::from_secs(30),
-            Duration::from_secs(90),
-            |_| {
-                attempts += 1;
-                if attempts == 1 {
-                    Err("nerdctl info cannot reach containerd".to_owned())
-                } else {
-                    Ok(())
-                }
-            },
-            || Err("units would not start".to_owned()),
-            || {
-                repairs += 1;
-                Ok(())
-            },
-        )
-        .expect("repaired profile should pass runtime readiness");
-
-        assert!(started);
-        assert_eq!(
-            attempts, 2,
-            "a failed unit start goes straight to the VM repair"
-        );
-        assert_eq!(repairs, 1);
     }
 
     #[test]
@@ -1150,8 +1136,8 @@ mod tests {
         let mut attempts = 0;
         let mut unit_starts = 0;
         let started = ensure_running_profile_runtime_ready(
+            "effigy",
             Duration::from_secs(30),
-            Duration::from_secs(90),
             |timeout| {
                 attempts += 1;
                 if attempts == 1 {
@@ -1165,13 +1151,72 @@ mod tests {
                 unit_starts += 1;
                 Ok(())
             },
-            || panic!("starting the units recovered the runtime; the VM must not restart"),
         )
         .expect("unit start recovers the runtime");
 
         assert!(started);
         assert_eq!(unit_starts, 1);
         assert_eq!(attempts, 2);
+    }
+
+    #[test]
+    fn runtime_that_survives_the_bounded_unit_start_is_refused_not_restarted() {
+        let mut attempts = 0;
+        let mut unit_starts = 0;
+        let error = ensure_running_profile_runtime_ready(
+            "effigy",
+            Duration::from_secs(30),
+            |_| {
+                attempts += 1;
+                Err("nerdctl info cannot reach containerd".to_owned())
+            },
+            || {
+                unit_starts += 1;
+                Ok(())
+            },
+        )
+        .expect_err("a runtime that stays unavailable is refused");
+
+        assert_eq!(unit_starts, 1, "the bounded unit start runs exactly once");
+        assert_eq!(attempts, 2, "both runtime probes are bounded observations");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("`effigy`"),
+            "names the profile: {rendered}"
+        );
+        assert!(
+            rendered.contains("did not stop or restart the profile"),
+            "the refusal states what it did not do: {rendered}"
+        );
+        assert!(
+            rendered.contains("effigy container profile repair"),
+            "names the explicit in-place recovery: {rendered}"
+        );
+        assert!(
+            rendered.contains("nerdctl info cannot reach containerd"),
+            "keeps the last runtime diagnostic: {rendered}"
+        );
+    }
+
+    #[test]
+    fn failed_unit_start_is_refused_without_a_vm_restart() {
+        let error = ensure_running_profile_runtime_ready(
+            "effigy",
+            Duration::from_secs(30),
+            |_| Err("buildctl cannot reach BuildKit".to_owned()),
+            || Err("systemctl start containerd buildkit timed out".to_owned()),
+        )
+        .expect_err("a refused unit start does not fall back to a VM restart");
+
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("systemctl start containerd buildkit timed out"),
+            "names the unit-start failure: {rendered}"
+        );
+        assert!(
+            rendered.contains("effigy container profile repair"),
+            "names the explicit in-place recovery: {rendered}"
+        );
     }
 
     #[test]

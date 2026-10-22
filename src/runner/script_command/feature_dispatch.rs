@@ -559,23 +559,6 @@ pub(super) fn run_rhai_feature(
         FEATURE_SCAN_DUPLICATE_BLOCKS => {
             run_builtin_json(repo_root, "scan", scan_args("duplicate-blocks", &options)?)
         }
-        FEATURE_SCAN_COMMENT_RATIO => {
-            run_builtin_json(repo_root, "scan", scan_args("comment-ratio", &options)?)
-        }
-        FEATURE_SCAN_GENERATED_ASSETS => {
-            run_builtin_json(repo_root, "scan", scan_args("generated-assets", &options)?)
-        }
-        FEATURE_SCAN_GENERATED_IN_SRC => {
-            run_builtin_json(repo_root, "scan", scan_args("generated-in-src", &options)?)
-        }
-        FEATURE_SCAN_ATTENTION_MARKERS => {
-            run_builtin_json(repo_root, "scan", scan_args("attention-markers", &options)?)
-        }
-        FEATURE_SCAN_STALE_SUPPRESSIONS => run_builtin_json(
-            repo_root,
-            "scan",
-            scan_args("stale-suppressions", &options)?,
-        ),
         FEATURE_CACHE_INSPECT => {
             run_builtin_json(repo_root, "cache", cache_inspect_args(&options)?)
         }
@@ -926,11 +909,6 @@ pub(super) fn is_runner_dispatch_feature(feature: &str) -> bool {
             | FEATURE_DOCTOR_RUN
             | FEATURE_SCAN_GOD_FILES
             | FEATURE_SCAN_DUPLICATE_BLOCKS
-            | FEATURE_SCAN_COMMENT_RATIO
-            | FEATURE_SCAN_GENERATED_ASSETS
-            | FEATURE_SCAN_GENERATED_IN_SRC
-            | FEATURE_SCAN_ATTENTION_MARKERS
-            | FEATURE_SCAN_STALE_SUPPRESSIONS
             | FEATURE_CACHE_INSPECT
             | FEATURE_CACHE_INVALIDATE
             | FEATURE_CONTRACTS_CHECK_JSON

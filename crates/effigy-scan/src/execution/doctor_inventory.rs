@@ -22,11 +22,6 @@ use crate::support::*;
 pub struct DoctorScanInventoryOptions {
     pub god_files: GodFileScanOptions,
     pub duplicate_blocks: DuplicateBlockScanOptions,
-    pub comment_ratio: CommentRatioScanOptions,
-    pub generated_assets: GeneratedAssetScanOptions,
-    pub generated_in_src: GeneratedInSrcScanOptions,
-    pub attention_markers: AttentionMarkerScanOptions,
-    pub stale_suppressions: StaleSuppressionScanOptions,
 }
 
 #[derive(Debug, Clone)]
@@ -38,11 +33,6 @@ pub struct DoctorScanInventoryResult {
     pub warnings: Vec<String>,
     pub god_files: Option<GodFileScanResult>,
     pub duplicate_blocks: Option<DuplicateBlockScanResult>,
-    pub comment_ratio: Option<CommentRatioScanResult>,
-    pub generated_assets: Option<GeneratedAssetScanResult>,
-    pub generated_in_src: Option<GeneratedInSrcScanResult>,
-    pub attention_markers: Option<AttentionMarkerScanResult>,
-    pub stale_suppressions: Option<StaleSuppressionScanResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,40 +43,15 @@ struct Observation {
     generated: bool,
     code_lines: usize,
     total_lines: usize,
-    comment_lines: usize,
     god_file_eligible: bool,
     duplicate_eligible: bool,
-    comment_ratio_eligible: bool,
-    generated_asset_eligible: bool,
-    generated_in_src_eligible: bool,
-    attention_eligible: bool,
-    stale_eligible: bool,
-    generated_asset_reason: Option<String>,
-    generated_in_src: Option<CachedGeneratedInSrc>,
     normalized_lines: Vec<CachedNormalizedLine>,
-    attention_hits: Vec<CachedMarkerHit>,
-    stale_hits: Vec<CachedMarkerHit>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CachedGeneratedInSrc {
-    category: String,
-    reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CachedNormalizedLine {
     line_number: usize,
     text: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CachedMarkerHit {
-    line: usize,
-    category: String,
-    severity: String,
-    marker: String,
-    snippet: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -99,14 +64,6 @@ struct CacheGeneration {
 struct PreparedOptions {
     god_files: Filter,
     duplicate_blocks: Filter,
-    comment_ratio: Filter,
-    generated_assets: Filter,
-    generated_in_src: Filter,
-    generated_source_roots: Option<GlobSet>,
-    attention_markers: Filter,
-    stale_suppressions: Filter,
-    attention_patterns: Vec<(AttentionMarkerSeverity, String, String)>,
-    stale_patterns: Vec<(StaleSuppressionSeverity, String, String)>,
 }
 
 struct Filter {
@@ -124,15 +81,6 @@ impl Filter {
 
     fn skips_code(&self, observation: &Observation) -> bool {
         should_skip_path(
-            Path::new(&observation.rel_str),
-            &observation.rel_str,
-            self.include.as_ref(),
-            self.exclude.as_ref(),
-        )
-    }
-
-    fn skips_asset(&self, observation: &Observation) -> bool {
-        should_skip_generated_asset_path(
             Path::new(&observation.rel_str),
             &observation.rel_str,
             self.include.as_ref(),
@@ -167,7 +115,7 @@ pub fn run_doctor_scan_inventory(
         respect_gitignore,
         &[],
         &[],
-        should_skip_generated_asset_path,
+        should_skip_inventory_path,
         |path, rel, rel_str| {
             ensure_budget(deadline)?;
             let clean_git_identity = git_identities.get(rel_str).cloned();
@@ -220,61 +168,6 @@ pub fn run_doctor_scan_inventory(
             )
         })
         .transpose()?;
-    let comment_ratio = options
-        .comment_ratio
-        .doctor_enabled
-        .then(|| {
-            evaluate_comment_ratio(scope_root, &observations, &options.comment_ratio, deadline)
-        })
-        .transpose()?;
-    let generated_assets = options
-        .generated_assets
-        .doctor_enabled
-        .then(|| {
-            evaluate_generated_assets(
-                scope_root,
-                &observations,
-                &options.generated_assets,
-                deadline,
-            )
-        })
-        .transpose()?;
-    let generated_in_src = options
-        .generated_in_src
-        .doctor_enabled
-        .then(|| {
-            evaluate_generated_in_src(
-                scope_root,
-                &observations,
-                &options.generated_in_src,
-                deadline,
-            )
-        })
-        .transpose()?;
-    let attention_markers = options
-        .attention_markers
-        .doctor_enabled
-        .then(|| {
-            evaluate_attention_markers(
-                scope_root,
-                &observations,
-                &options.attention_markers,
-                deadline,
-            )
-        })
-        .transpose()?;
-    let stale_suppressions = options
-        .stale_suppressions
-        .doctor_enabled
-        .then(|| {
-            evaluate_stale_suppressions(
-                scope_root,
-                &observations,
-                &options.stale_suppressions,
-                deadline,
-            )
-        })
-        .transpose()?;
     ensure_budget(deadline)?;
 
     let files = observations
@@ -302,11 +195,6 @@ pub fn run_doctor_scan_inventory(
         warnings,
         god_files,
         duplicate_blocks,
-        comment_ratio,
-        generated_assets,
-        generated_in_src,
-        attention_markers,
-        stale_suppressions,
     })
 }
 
@@ -317,32 +205,6 @@ fn prepare_options(options: &DoctorScanInventoryOptions) -> Result<PreparedOptio
             &options.duplicate_blocks.include,
             &options.duplicate_blocks.exclude,
         )?,
-        comment_ratio: Filter::new(
-            &options.comment_ratio.include,
-            &options.comment_ratio.exclude,
-        )?,
-        generated_assets: Filter::new(
-            &options.generated_assets.include,
-            &options.generated_assets.exclude,
-        )?,
-        generated_in_src: Filter::new(
-            &options.generated_in_src.include,
-            &options.generated_in_src.exclude,
-        )?,
-        generated_source_roots: compile_glob_set(
-            &options.generated_in_src.source_roots,
-            "source_root",
-        )?,
-        attention_markers: Filter::new(
-            &options.attention_markers.include,
-            &options.attention_markers.exclude,
-        )?,
-        stale_suppressions: Filter::new(
-            &options.stale_suppressions.include,
-            &options.stale_suppressions.exclude,
-        )?,
-        attention_patterns: compile_attention_marker_patterns(&options.attention_markers.patterns),
-        stale_patterns: compile_stale_suppression_patterns(&options.stale_suppressions.patterns),
     })
 }
 
@@ -356,8 +218,6 @@ fn analyze_file(
     let contents = String::from_utf8_lossy(bytes);
     let generated = is_generated_artifact(rel, &contents);
     let lines = normalized_code_lines(rel, &contents);
-    let ratios = comment_ratio_counts(rel, &contents);
-    let sample = String::from_utf8_lossy(&bytes[..bytes.len().min(16 * 1024)]).to_ascii_lowercase();
     let stub = Observation {
         rel_str: rel_str.to_owned(),
         identity,
@@ -365,21 +225,8 @@ fn analyze_file(
         generated,
         code_lines: lines.len(),
         total_lines: contents.lines().count(),
-        comment_lines: ratios.comment_lines,
         god_file_eligible: false,
         duplicate_eligible: false,
-        comment_ratio_eligible: false,
-        generated_asset_eligible: false,
-        generated_in_src_eligible: false,
-        attention_eligible: false,
-        stale_eligible: false,
-        generated_asset_reason: generated_asset_reason(rel, &sample),
-        generated_in_src: generated_in_src_reason(rel, &sample).map(|(category, reason)| {
-            CachedGeneratedInSrc {
-                category: category.as_str().to_owned(),
-                reason,
-            }
-        }),
         normalized_lines: lines
             .into_iter()
             .map(|line| CachedNormalizedLine {
@@ -387,85 +234,12 @@ fn analyze_file(
                 text: line.text,
             })
             .collect(),
-        attention_hits: marker_hits_attention(&contents, &options.attention_patterns),
-        stale_hits: marker_hits_stale(&contents, &options.stale_patterns),
     };
     Observation {
         god_file_eligible: !options.god_files.skips_code(&stub),
         duplicate_eligible: !options.duplicate_blocks.skips_code(&stub),
-        comment_ratio_eligible: !options.comment_ratio.skips_code(&stub),
-        generated_asset_eligible: !options.generated_assets.skips_asset(&stub),
-        generated_in_src_eligible: !options.generated_in_src.skips_asset(&stub)
-            && options
-                .generated_source_roots
-                .as_ref()
-                .is_some_and(|set| set.is_match(rel_str)),
-        attention_eligible: !options.attention_markers.skips_code(&stub),
-        stale_eligible: !options.stale_suppressions.skips_code(&stub),
         ..stub
     }
-}
-
-fn marker_hits_attention(
-    contents: &str,
-    patterns: &[(AttentionMarkerSeverity, String, String)],
-) -> Vec<CachedMarkerHit> {
-    let mut hits = Vec::new();
-    for (line_number, raw_line) in contents.lines().enumerate() {
-        let line = raw_line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let mut matched_keys = BTreeSet::new();
-        for (severity, marker, marker_lower) in patterns {
-            if !attention_marker_matches_line(raw_line, marker_lower)
-                || !matched_keys.insert(marker_lower.trim_start_matches('@').to_owned())
-            {
-                continue;
-            }
-            hits.push(CachedMarkerHit {
-                line: line_number + 1,
-                category: attention_marker_category(marker_lower).as_str().to_owned(),
-                severity: severity.as_str().to_owned(),
-                marker: marker.clone(),
-                snippet: trim_snippet(line, 120),
-            });
-        }
-    }
-    hits
-}
-
-fn marker_hits_stale(
-    contents: &str,
-    patterns: &[(StaleSuppressionSeverity, String, String)],
-) -> Vec<CachedMarkerHit> {
-    let mut hits = Vec::new();
-    for (line_number, raw_line) in contents.lines().enumerate() {
-        let line = raw_line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let mut matched_keys = BTreeSet::new();
-        for (severity, marker, marker_lower) in patterns {
-            let key = if marker_lower.starts_with("#[allow(") {
-                "#[allow(".to_owned()
-            } else {
-                marker_lower.clone()
-            };
-            if !stale_suppression_matches_line(raw_line, marker_lower) || !matched_keys.insert(key)
-            {
-                continue;
-            }
-            hits.push(CachedMarkerHit {
-                line: line_number + 1,
-                category: stale_suppression_category(marker_lower).as_str().to_owned(),
-                severity: severity.as_str().to_owned(),
-                marker: marker.clone(),
-                snippet: trim_snippet(line, 120),
-            });
-        }
-    }
-    hits
 }
 
 struct CachePaths {
@@ -504,7 +278,7 @@ fn config_identity(
     options: &DoctorScanInventoryOptions,
 ) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(b"effigy.doctor.cache.v1\0scanner-implementation-v1\0");
+    hasher.update(b"effigy.doctor.cache.v1\0scanner-implementation-v2\0");
     hasher.update(scope_root.to_string_lossy().as_bytes());
     for root in pruned_roots {
         hasher.update(b"\0prune\0");
@@ -1183,69 +957,12 @@ impl DoctorGitProcessEvidence {
     }
 }
 
-fn generated_in_src_category(value: &str) -> GeneratedInSrcCategory {
-    match value {
-        "content-marker" => GeneratedInSrcCategory::ContentMarker,
-        "generated-filename" => GeneratedInSrcCategory::GeneratedFilename,
-        "generated-path" => GeneratedInSrcCategory::GeneratedPath,
-        "bundled-artifact" => GeneratedInSrcCategory::BundledArtifact,
-        _ => GeneratedInSrcCategory::ContentMarker,
-    }
-}
-
-fn attention_category(value: &str) -> AttentionMarkerCategory {
-    match value {
-        "deprecation" => AttentionMarkerCategory::Deprecation,
-        "temporary-artifact" => AttentionMarkerCategory::TemporaryArtifact,
-        _ => AttentionMarkerCategory::DeferredWork,
-    }
-}
-
-fn attention_severity(value: &str) -> AttentionMarkerSeverity {
-    match value {
-        "critical" => AttentionMarkerSeverity::Critical,
-        "high" => AttentionMarkerSeverity::High,
-        _ => AttentionMarkerSeverity::Warning,
-    }
-}
-
-fn stale_category(value: &str) -> StaleSuppressionCategory {
-    match value {
-        "lint-disable" => StaleSuppressionCategory::LintDisable,
-        "tool-bypass" => StaleSuppressionCategory::ToolBypass,
-        _ => StaleSuppressionCategory::TypeIgnore,
-    }
-}
-
-fn stale_severity(value: &str) -> StaleSuppressionSeverity {
-    match value {
-        "critical" => StaleSuppressionSeverity::Critical,
-        "high" => StaleSuppressionSeverity::High,
-        _ => StaleSuppressionSeverity::Warning,
-    }
-}
-
 fn validate_options(options: &DoctorScanInventoryOptions) -> Result<(), ScanError> {
     if options.god_files.doctor_enabled {
         options.god_files.validate()?;
     }
     if options.duplicate_blocks.doctor_enabled {
         options.duplicate_blocks.validate()?;
-    }
-    if options.comment_ratio.doctor_enabled {
-        options.comment_ratio.validate()?;
-    }
-    if options.generated_assets.doctor_enabled {
-        options.generated_assets.validate()?;
-    }
-    if options.generated_in_src.doctor_enabled {
-        options.generated_in_src.validate()?;
-    }
-    if options.attention_markers.doctor_enabled {
-        options.attention_markers.validate()?;
-    }
-    if options.stale_suppressions.doctor_enabled {
-        options.stale_suppressions.validate()?;
     }
     Ok(())
 }
@@ -1261,26 +978,6 @@ fn enabled_gitignore_postures(
         (
             options.duplicate_blocks.doctor_enabled,
             options.duplicate_blocks.respect_gitignore,
-        ),
-        (
-            options.comment_ratio.doctor_enabled,
-            options.comment_ratio.respect_gitignore,
-        ),
-        (
-            options.generated_assets.doctor_enabled,
-            options.generated_assets.respect_gitignore,
-        ),
-        (
-            options.generated_in_src.doctor_enabled,
-            options.generated_in_src.respect_gitignore,
-        ),
-        (
-            options.attention_markers.doctor_enabled,
-            options.attention_markers.respect_gitignore,
-        ),
-        (
-            options.stale_suppressions.doctor_enabled,
-            options.stale_suppressions.respect_gitignore,
         ),
     ]
     .into_iter()
@@ -1316,12 +1013,15 @@ fn evaluate_god_files(
         }
         scanned_files += 1;
         let code_lines = observation.code_lines;
-        if let Some(severity) = classify_severity(code_lines, &options.thresholds) {
+        let path = Path::new(&observation.rel_str);
+        let thresholds = options.thresholds_for(path);
+        if let Some(severity) = classify_severity(code_lines, &thresholds) {
             findings.push(GodFileFinding {
                 path: observation.rel_str.clone(),
                 code_lines,
                 total_lines: observation.total_lines,
                 severity,
+                language: god_file_language(path),
             });
         }
     }
@@ -1336,149 +1036,8 @@ fn evaluate_god_files(
         scanned_files,
         skipped_generated,
         findings,
-        thresholds: options.thresholds.clone(),
-    })
-}
-
-fn evaluate_comment_ratio(
-    root: &Path,
-    observations: &[Observation],
-    options: &CommentRatioScanOptions,
-    deadline: Option<Instant>,
-) -> Result<CommentRatioScanResult, ScanError> {
-    let mut findings = Vec::new();
-    let mut scanned_files = 0;
-    let mut candidate_files = 0;
-    for observation in observations {
-        ensure_budget(deadline)?;
-        if !observation.comment_ratio_eligible || observation.generated {
-            continue;
-        }
-        scanned_files += 1;
-        if observation.code_lines < options.thresholds.min_code_lines {
-            continue;
-        }
-        candidate_files += 1;
-        let ratio = observation.comment_lines as f64 / observation.code_lines as f64;
-        if let Some(severity) = classify_comment_ratio_severity(ratio, &options.thresholds) {
-            findings.push(CommentRatioFinding {
-                path: observation.rel_str.clone(),
-                code_lines: observation.code_lines,
-                comment_lines: observation.comment_lines,
-                ratio,
-                severity,
-            });
-        }
-    }
-    findings.sort_by(|left, right| {
-        comment_ratio_severity_rank(right.severity)
-            .cmp(&comment_ratio_severity_rank(left.severity))
-            .then_with(|| right.ratio.total_cmp(&left.ratio))
-            .then_with(|| right.comment_lines.cmp(&left.comment_lines))
-            .then_with(|| left.path.cmp(&right.path))
-    });
-    Ok(CommentRatioScanResult {
-        root: root.display().to_string(),
-        scanned_files,
-        candidate_files,
-        findings,
-        thresholds: options.thresholds.clone(),
-    })
-}
-
-fn evaluate_generated_assets(
-    root: &Path,
-    observations: &[Observation],
-    options: &GeneratedAssetScanOptions,
-    deadline: Option<Instant>,
-) -> Result<GeneratedAssetScanResult, ScanError> {
-    let mut findings = Vec::new();
-    let mut scanned_files = 0;
-    let mut candidate_files = 0;
-    for observation in observations {
-        ensure_budget(deadline)?;
-        if !observation.generated_asset_eligible {
-            continue;
-        }
-        scanned_files += 1;
-        let Some(reason) = observation.generated_asset_reason.clone() else {
-            continue;
-        };
-        candidate_files += 1;
-        if let Some(severity) =
-            classify_generated_asset_severity(observation.bytes, &options.thresholds)
-        {
-            findings.push(GeneratedAssetFinding {
-                path: observation.rel_str.clone(),
-                bytes: observation.bytes,
-                severity,
-                reason,
-            });
-        }
-    }
-    findings.sort_by(|left, right| {
-        generated_asset_severity_rank(right.severity)
-            .cmp(&generated_asset_severity_rank(left.severity))
-            .then_with(|| right.bytes.cmp(&left.bytes))
-            .then_with(|| left.path.cmp(&right.path))
-    });
-    Ok(GeneratedAssetScanResult {
-        root: root.display().to_string(),
-        scanned_files,
-        candidate_files,
-        findings,
-        thresholds: options.thresholds.clone(),
-    })
-}
-
-fn evaluate_generated_in_src(
-    root: &Path,
-    observations: &[Observation],
-    options: &GeneratedInSrcScanOptions,
-    deadline: Option<Instant>,
-) -> Result<GeneratedInSrcScanResult, ScanError> {
-    let mut findings = Vec::new();
-    let mut scanned_files = 0;
-    let mut candidate_files = 0;
-    for observation in observations {
-        ensure_budget(deadline)?;
-        if !observation.generated_in_src_eligible {
-            continue;
-        }
-        scanned_files += 1;
-        let Some(generated) = observation.generated_in_src.as_ref() else {
-            continue;
-        };
-        candidate_files += 1;
-        if let Some(severity) =
-            classify_generated_in_src_severity(observation.bytes, &options.thresholds)
-        {
-            findings.push(GeneratedInSrcFinding {
-                path: observation.rel_str.clone(),
-                category: generated_in_src_category(&generated.category),
-                severity,
-                reason: generated.reason.clone(),
-                size_bytes: observation.bytes,
-            });
-        }
-    }
-    findings.sort_by(|left, right| {
-        generated_in_src_severity_rank(right.severity)
-            .cmp(&generated_in_src_severity_rank(left.severity))
-            .then_with(|| {
-                generated_in_src_category_rank(right.category)
-                    .cmp(&generated_in_src_category_rank(left.category))
-            })
-            .then_with(|| right.size_bytes.cmp(&left.size_bytes))
-            .then_with(|| left.path.cmp(&right.path))
-    });
-    Ok(GeneratedInSrcScanResult {
-        root: root.display().to_string(),
-        scanned_files,
-        candidate_files,
-        findings,
-        thresholds: options.thresholds.clone(),
-        source_roots: options.source_roots.clone(),
+        thresholds: options.thresholds,
+        thresholds_source: options.thresholds_source(),
     })
 }
 
@@ -1529,104 +1088,10 @@ fn evaluate_duplicate_blocks(
     })
 }
 
-fn evaluate_attention_markers(
-    root: &Path,
-    observations: &[Observation],
-    options: &AttentionMarkerScanOptions,
-    deadline: Option<Instant>,
-) -> Result<AttentionMarkerScanResult, ScanError> {
-    let mut findings = Vec::new();
-    let mut scanned_files = 0;
-    let mut matched_lines = 0;
-    for observation in observations {
-        ensure_budget(deadline)?;
-        if !observation.attention_eligible || observation.generated {
-            continue;
-        }
-        scanned_files += 1;
-        let mut lines = BTreeSet::new();
-        for hit in &observation.attention_hits {
-            lines.insert(hit.line);
-            findings.push(AttentionMarkerFinding {
-                path: observation.rel_str.clone(),
-                line: hit.line,
-                category: attention_category(&hit.category),
-                severity: attention_severity(&hit.severity),
-                marker: hit.marker.clone(),
-                snippet: hit.snippet.clone(),
-            });
-        }
-        matched_lines += lines.len();
-    }
-    findings.sort_by(|left, right| {
-        attention_marker_severity_rank(right.severity)
-            .cmp(&attention_marker_severity_rank(left.severity))
-            .then_with(|| left.path.cmp(&right.path))
-            .then_with(|| left.line.cmp(&right.line))
-            .then_with(|| left.marker.cmp(&right.marker))
-    });
-    Ok(AttentionMarkerScanResult {
-        root: root.display().to_string(),
-        scanned_files,
-        matched_lines,
-        findings,
-        patterns: options.patterns.clone(),
-    })
-}
-
-fn evaluate_stale_suppressions(
-    root: &Path,
-    observations: &[Observation],
-    options: &StaleSuppressionScanOptions,
-    deadline: Option<Instant>,
-) -> Result<StaleSuppressionScanResult, ScanError> {
-    let mut findings = Vec::new();
-    let mut scanned_files = 0;
-    let mut matched_lines = 0;
-    for observation in observations {
-        ensure_budget(deadline)?;
-        if !observation.stale_eligible || observation.generated {
-            continue;
-        }
-        scanned_files += 1;
-        let mut lines = BTreeSet::new();
-        for hit in &observation.stale_hits {
-            lines.insert(hit.line);
-            findings.push(StaleSuppressionFinding {
-                path: observation.rel_str.clone(),
-                line: hit.line,
-                category: stale_category(&hit.category),
-                severity: stale_severity(&hit.severity),
-                marker: hit.marker.clone(),
-                snippet: hit.snippet.clone(),
-            });
-        }
-        matched_lines += lines.len();
-    }
-    findings.sort_by(|left, right| {
-        stale_suppression_severity_rank(right.severity)
-            .cmp(&stale_suppression_severity_rank(left.severity))
-            .then_with(|| left.path.cmp(&right.path))
-            .then_with(|| left.line.cmp(&right.line))
-            .then_with(|| left.marker.cmp(&right.marker))
-    });
-    Ok(StaleSuppressionScanResult {
-        root: root.display().to_string(),
-        scanned_files,
-        matched_lines,
-        findings,
-        patterns: options.patterns.clone(),
-    })
-}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        run_attention_marker_scan_workspace, run_comment_ratio_scan_workspace,
-        run_duplicate_block_scan_workspace, run_generated_asset_scan_workspace,
-        run_generated_in_src_scan_workspace, run_god_file_scan_workspace,
-        run_stale_suppression_scan_workspace,
-    };
+    use crate::{run_duplicate_block_scan_workspace, run_god_file_scan_workspace};
 
     fn options() -> DoctorScanInventoryOptions {
         DoctorScanInventoryOptions {
@@ -1634,14 +1099,6 @@ mod tests {
             duplicate_blocks: DuplicateBlockScanOptions {
                 doctor_enabled: true,
                 ..DuplicateBlockScanOptions::default()
-            },
-            comment_ratio: CommentRatioScanOptions::default(),
-            generated_assets: GeneratedAssetScanOptions::default(),
-            generated_in_src: GeneratedInSrcScanOptions::default(),
-            attention_markers: AttentionMarkerScanOptions::default(),
-            stale_suppressions: StaleSuppressionScanOptions {
-                doctor_enabled: true,
-                ..StaleSuppressionScanOptions::default()
             },
         }
     }
@@ -1675,17 +1132,6 @@ mod tests {
             )
         );
         assert_eq!(
-            shared.comment_ratio,
-            Some(
-                run_comment_ratio_scan_workspace(
-                    root,
-                    &[root.to_path_buf()],
-                    &options.comment_ratio,
-                )
-                .expect("comment ratio")
-            )
-        );
-        assert_eq!(
             shared.duplicate_blocks,
             Some(
                 run_duplicate_block_scan_workspace(
@@ -1694,50 +1140,6 @@ mod tests {
                     &options.duplicate_blocks,
                 )
                 .expect("duplicate blocks")
-            )
-        );
-        assert_eq!(
-            shared.generated_assets,
-            Some(
-                run_generated_asset_scan_workspace(
-                    root,
-                    &[root.to_path_buf()],
-                    &options.generated_assets,
-                )
-                .expect("generated assets")
-            )
-        );
-        assert_eq!(
-            shared.generated_in_src,
-            Some(
-                run_generated_in_src_scan_workspace(
-                    root,
-                    &[root.to_path_buf()],
-                    &options.generated_in_src,
-                )
-                .expect("generated in src")
-            )
-        );
-        assert_eq!(
-            shared.attention_markers,
-            Some(
-                run_attention_marker_scan_workspace(
-                    root,
-                    &[root.to_path_buf()],
-                    &options.attention_markers,
-                )
-                .expect("attention markers")
-            )
-        );
-        assert_eq!(
-            shared.stale_suppressions,
-            Some(
-                run_stale_suppression_scan_workspace(
-                    root,
-                    &[root.to_path_buf()],
-                    &options.stale_suppressions,
-                )
-                .expect("stale suppressions")
             )
         );
     }

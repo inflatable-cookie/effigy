@@ -9,10 +9,5 @@ mod support;
 
 use support::*;
 
-mod attention_markers;
-mod comment_ratio;
 mod duplicate_blocks;
-mod generated_assets;
-mod generated_in_src;
 mod god_files;
-mod stale_suppressions;

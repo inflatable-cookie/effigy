@@ -187,9 +187,9 @@ fn run_manifest_task_builtin_config_schema_target_scan_prints_god_files_section(
         &[
             "(scan target)",
             "[scan.god_files]",
-            "warn = 250",
-            "high = 400",
-            "critical = 700",
+            "warn = 1000",
+            "high = 1800",
+            "critical = 3000",
             "doctor = true",
             "respect_gitignore = true",
             "[scan.duplicate_blocks]",
@@ -198,46 +198,19 @@ fn run_manifest_task_builtin_config_schema_target_scan_prints_god_files_section(
             "critical = 80",
             "min_occurrences = 2",
             "doctor = false",
+        ],
+    );
+    assert_output_excludes_all(
+        &out,
+        &[
             "[scan.comment_ratio]",
-            "warn = 1.5",
-            "high = 2.0",
-            "critical = 3.0",
-            "min_code_lines = 20",
-            "doctor = true",
-        ],
-    );
-    assert_output_contains_all(
-        &out,
-        &[
             "[scan.generated_assets]",
-            "warn = 1000000",
-            "high = 5000000",
-            "critical = 20000000",
-            "doctor = true",
             "[scan.generated_in_src]",
-            "warn = 1",
-            "high = 20000",
-            "critical = 200000",
-            "source_roots = [\"src/**\", \"app/**\", \"lib/**\", \"crates/**\", \"packages/*/src/**\"]",
-            "doctor = true",
-        ],
-    );
-    assert_output_contains_all(
-        &out,
-        &[
             "[scan.attention_markers]",
-            "warning = [\"TODO\", \"REVIEW\", \"NOTE\", \"placeholder\"]",
-            "high = [\"FIXME\", \"HACK\", \"@deprecated\", \"workaround\"]",
-            "critical = [\"BUG\", \"SECURITY\", \"remove before release\"]",
-            "doctor = true",
             "[scan.stale_suppressions]",
-            "warning = [\"@ts-ignore\", \"@ts-expect-error\", \"type: ignore\", \"eslint-disable-next-line\"]",
-            "high = [\"#[allow(\", \"#[expect(\", \"rubocop:disable\", \"swiftlint:disable\"]",
-            "critical = [\"nolint\", \"#[allow(warnings)]\", \"shellcheck disable=\", \"eslint-disable\"]",
-            "doctor = false",
+            "[tasks]",
         ],
     );
-    assert_output_excludes_all(&out, &["[tasks]"]);
 }
 
 #[test]

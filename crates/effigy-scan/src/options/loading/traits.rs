@@ -1,11 +1,7 @@
 use crate::error::ScanError;
 use effigy_manifest::config_sections::ManifestScanOutputFormat;
 
-use super::super::super::model::{
-    AttentionMarkerScanOptions, CommentRatioScanOptions, DuplicateBlockScanOptions,
-    GeneratedAssetScanOptions, GeneratedInSrcScanOptions, GodFileScanOptions, ScanRenderFormat,
-    StaleSuppressionScanOptions,
-};
+use super::super::super::model::{DuplicateBlockScanOptions, GodFileScanOptions, ScanRenderFormat};
 
 pub(super) trait CommonScanOptionsMut {
     fn fail_on_findings_mut(&mut self) -> &mut bool;
@@ -71,8 +67,3 @@ macro_rules! impl_common_scan_options_mut {
 
 impl_common_scan_options_mut!(GodFileScanOptions);
 impl_common_scan_options_mut!(DuplicateBlockScanOptions);
-impl_common_scan_options_mut!(CommentRatioScanOptions);
-impl_common_scan_options_mut!(GeneratedAssetScanOptions);
-impl_common_scan_options_mut!(GeneratedInSrcScanOptions);
-impl_common_scan_options_mut!(AttentionMarkerScanOptions);
-impl_common_scan_options_mut!(StaleSuppressionScanOptions);
