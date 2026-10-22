@@ -16,7 +16,6 @@ const CURRENT_HELP_TOPICS: &[HelpTopic] = &[
     HelpTopic::Defer,
     HelpTopic::Exec,
     HelpTopic::State,
-    HelpTopic::System,
     HelpTopic::Workspace,
     HelpTopic::Gateway,
     HelpTopic::Service,
@@ -46,7 +45,6 @@ const CURRENT_TOP_LEVEL_HELP_ROUTES: &[(&str, HelpTopic)] = &[
     ("defer", HelpTopic::Defer),
     ("exec", HelpTopic::Exec),
     ("state", HelpTopic::State),
-    ("system", HelpTopic::System),
     ("workspace", HelpTopic::Workspace),
     ("gateway", HelpTopic::Gateway),
     ("service", HelpTopic::Service),
@@ -90,7 +88,6 @@ const CONTRACT_GROUP_INVENTORIES: &[(HelpGroup, &[&str])] = &[
         HelpGroup::Local,
         &[
             "effigy container",
-            "effigy system",
             "effigy workspace",
             "effigy gateway",
             "effigy service",

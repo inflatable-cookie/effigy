@@ -8,7 +8,7 @@ use crate::runner::runtime_session_context::{
     RuntimeSessionContext,
 };
 
-use super::{workspace, RunnerError};
+use super::RunnerError;
 
 pub(super) fn run_workspace_container_session(
     repo_root: &Path,
@@ -20,11 +20,11 @@ pub(super) fn run_workspace_container_session(
 ) -> Result<String, RunnerError> {
     use effigy_runtime_plan::RuntimeActivationRoute;
 
-    let repo_override = workspace::effective_workspace_repo_override(repo_root, repo_override);
+    let repo_override = super::effective_workspace_repo_override(repo_root, repo_override);
     let container_name = container_name.map(str::to_owned);
-    let policy = workspace::load_workspace_session_policy(repo_root, container_name.as_deref())?;
+    let policy = super::load_workspace_session_policy(repo_root, container_name.as_deref())?;
     let routes_were_ready_before_handoff =
-        workspace::gateway_routes_ready_before_handoff(repo_root, &policy)?;
+        super::gateway_routes_ready_before_handoff(repo_root, &policy)?;
     let activation = crate::runner::container_runtime_prep::activate_container_runtime_for_task(
         repo_root,
         &policy,
@@ -41,7 +41,7 @@ pub(super) fn run_workspace_container_session(
         hold,
         ..
     } = activation;
-    workspace::finish_workspace_handoff_after_activation(
+    super::finish_workspace_handoff_after_activation(
         repo_root,
         &policy,
         container_name.as_deref(),
@@ -55,16 +55,13 @@ pub(super) fn run_workspace_container_session(
         routes_were_ready_before_handoff,
         cleanup_override,
     );
-    let shell_result = workspace::run_workspace_handoff_shell(
-        repo_root,
-        container_name.as_deref(),
-        initial_command,
-    );
+    let shell_result =
+        super::run_workspace_handoff_shell(repo_root, container_name.as_deref(), initial_command);
     // The session's use of the environment ends with its shell. Settle the
     // hold first, so the closeout stop is not refused by this command's own
     // session (contract 053 §4).
     drop(hold);
-    let cleanup_result = workspace::cleanup_workspace_session(
+    let cleanup_result = super::cleanup_workspace_session(
         ownership,
         shell_result.is_ok(),
         &policy.name,

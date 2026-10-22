@@ -618,7 +618,7 @@ fn complete_container_up_runtime_integrations(
     // reuse and handover passes through; managed children and `container
     // shell` enter through exec without their own preparation.
     if let Err(error) = ensure_up_workspace_permissions(policy, || {
-        crate::runner::system_command::ensure_workspace_permissions_ready(
+        crate::runner::workspace_command::ensure_workspace_permissions_ready(
             repo_root,
             policy,
             plan.requested_container.as_deref(),

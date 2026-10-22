@@ -4,8 +4,8 @@ use super::api::ContainerExecutionBinding;
 pub(super) use crate::runner::container_runtime::inside_container_handoff;
 use crate::runner::error::RunnerError;
 use crate::runner::runtime_session_context::PublicWorkspaceCleanupOverride;
-use crate::runner::system_command::run_workspace_seeded_session;
 use crate::runner::util::render_passthrough_args;
+use crate::runner::workspace_command::run_workspace_seeded_session;
 use effigy_core::shell::shell_quote;
 
 pub(super) fn render_workspace_seeded_task_command(task_name: &str, args: &[String]) -> String {

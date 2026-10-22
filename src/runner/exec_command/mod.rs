@@ -23,8 +23,8 @@ use super::container_runtime_prep::{
 use super::environment::emit_held_notice;
 use super::error::RunnerError;
 use super::runtime_session_context::{current_runtime_session_context, RuntimeSessionContext};
-use super::system_command::ensure_workspace_effigy_available_for_policy;
 use super::task_engine::{PlainExit, RemoteTask, TaskRun};
+use super::workspace_command::ensure_workspace_effigy_available_for_policy;
 use surface::{
     build_alias_table, build_raw_exec_args, ensure_container_running, exec_alias_surface_absent,
     resolve_default_exec_surface, resolve_exec_working_dir, resolve_running_named_exec_surface,

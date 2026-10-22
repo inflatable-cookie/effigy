@@ -28,14 +28,14 @@ use effigy_execution::ExecutionSurface;
 use effigy_manifest::{DeferredCommand, LoadedCatalog, ManifestContainerDriver};
 use effigy_tasks::TaskSelector;
 
+use crate::runner::container_command::is_primary_service_running_with_deadline;
 use crate::runner::deferral;
 use crate::runner::error::RunnerError;
 #[cfg(not(test))]
 use crate::runner::exec_command::{capture_command_until, CommandCaptureError};
 use crate::runner::exec_command::{run_command_capture_until, run_compose_exec_plan_with_deadline};
 use crate::runner::execute::api;
-use crate::runner::system_command::is_primary_service_running_with_deadline;
-use crate::runner::system_command::workspace_permissions::{
+use crate::runner::workspace_command::permissions::{
     compose_backend_with_deadline, diagnose_workspace_ownership, WorkspaceOwnershipProbeStatus,
 };
 
@@ -643,11 +643,11 @@ mod tests {
     use crate::runner::scripted_doctor::{
         self, OwnershipFixture, ScriptedPhase, ScriptedStatus, SCRIPTED_OPERATION_COST,
     };
-    use crate::runner::system_command::workspace_permissions::{
+    use crate::runner::test_support::effective_container_policy;
+    use crate::runner::workspace_command::permissions::{
         compose_backend_with_deadline, diagnose_workspace_ownership, rust_nested_probe_paths,
         WorkspaceOwnershipProbeStatus,
     };
-    use crate::runner::test_support::effective_container_policy;
     use effigy_test_support::process::{FixtureCommandExt, OwnedChild};
 
     #[test]

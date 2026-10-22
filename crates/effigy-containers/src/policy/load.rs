@@ -243,7 +243,7 @@ fn load_policy(
     })?;
     let default_project_name_base = default_project_name_base(&loaded, repo_root);
     validate_unique_project_names(containers, &default_project_name_base, repo_root)?;
-    let name = resolve_container_name(containers, requested_name)?;
+    let name = resolve_container_name(&loaded.manifest, containers, requested_name)?;
     let config = containers.environments.get(&name).ok_or_else(|| {
         let available = containers
             .environments
@@ -366,7 +366,7 @@ pub fn load_container_exec_target(
             "manifest does not define a `[containers]` registry".to_owned(),
         )
     })?;
-    let name = resolve_container_name(containers, requested_name)?;
+    let name = resolve_container_name(&loaded.manifest, containers, requested_name)?;
     let config = containers.environments.get(&name).ok_or_else(|| {
         let available = containers
             .environments
@@ -892,16 +892,44 @@ fn infer_default_workspace_for_container(
     }
 }
 
+/// The container the default `[systems]` workspace binds, when that binding
+/// names one. `effigy container` without a name falls back to it, so a repo
+/// that declares only `[systems]` resolves the same environment the retired
+/// `effigy system` lifecycle command used.
+fn default_system_container_name(
+    manifest: &effigy_manifest::TaskManifest,
+) -> Option<ResolvedWorkspaceContainer> {
+    let binding = resolve_task_execution_binding_from_parts(
+        None,
+        manifest.systems.as_ref(),
+        manifest.containers.as_ref(),
+        "container",
+        &ManifestTask::default(),
+    )
+    .ok()?;
+    let ResolvedTaskExecutionBinding::Workspace(binding) = binding? else {
+        return None;
+    };
+    binding.container
+}
+
 pub(crate) fn resolve_container_name(
+    manifest: &effigy_manifest::TaskManifest,
     containers: &ManifestContainersConfig,
     requested_name: Option<&str>,
 ) -> Result<String, ContainerPolicyError> {
     requested_name
         .map(str::to_owned)
         .or_else(|| containers.default.clone())
+        .or_else(|| match default_system_container_name(manifest) {
+            Some(ResolvedWorkspaceContainer::Named(name)) => Some(name),
+            // An inline workspace container has no `[containers]` entry to
+            // select, so it cannot answer an omitted container name.
+            Some(ResolvedWorkspaceContainer::Inline(_)) | None => None,
+        })
         .ok_or_else(|| {
             ContainerPolicyError::TaskInvocation(
-                "container name omitted but `[containers].default` is not defined for implicit targeting"
+                "container name omitted but neither `[containers].default` nor a `[systems].default` workspace container is defined for implicit targeting"
                     .to_owned(),
             )
         })
