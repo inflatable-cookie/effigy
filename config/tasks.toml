@@ -1689,7 +1689,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 ] }
 
 # Named Cargo escapes: one `:cargo` sibling per selector that runs through
-# `scripts/oxide-selector.sh` or `scripts/effigy-selfbuild.sh`, with the plain
+# `scripts/oxide-selector.sh`, with the plain
 # Cargo command it replaced. `EFFIGY_OXIDE_ESCAPE=cargo` does the same for a
 # whole selector run; `effigy cargo <args>` escapes a single command.
 "build:release:cargo" = { visibility = "internal", group = "Development", run = "cargo build --release --bin effigy" }
