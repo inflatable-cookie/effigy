@@ -184,7 +184,7 @@ version = "11.0"
             if command == "effigy container data seed"
     ));
     assert!(
-        !manifest.tasks.contains_key("bootstrap:db-seed"),
+        !manifest.tasks.contains_key("data:seed"),
         "php_app bundle should rely on Effigy's built-in data seed fallback"
     );
 

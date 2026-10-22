@@ -781,9 +781,7 @@ mod tests {
         assert_eq!(gap.install_root, child);
         assert_eq!(gap.lock_name.as_deref(), Some("bun.lock"));
         assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall);
-        assert!(gap
-            .remediation()
-            .contains("effigy bootstrap --path child"));
+        assert!(gap.remediation().contains("effigy bootstrap --path child"));
         assert!(gap.evidence().contains("observed=missing-local-install"));
 
         std::fs::remove_dir_all(root).ok();
@@ -1221,9 +1219,7 @@ mod tests {
         assert!(gap
             .evidence()
             .contains("reason=ancestor-lock-without-workspace-membership"));
-        assert!(gap
-            .remediation()
-            .contains("effigy bootstrap --path child"));
+        assert!(gap.remediation().contains("effigy bootstrap --path child"));
 
         std::fs::remove_dir_all(root).ok();
     }
@@ -1270,9 +1266,7 @@ mod tests {
         assert_eq!(gap.install_root, child);
         assert_eq!(gap.route, "child");
         assert!(gap.evidence().contains("reason=missing-local-lock"));
-        assert!(gap
-            .remediation()
-            .contains("effigy bootstrap --path child"));
+        assert!(gap.remediation().contains("effigy bootstrap --path child"));
 
         std::fs::remove_dir_all(root).ok();
     }
@@ -1521,9 +1515,7 @@ mod tests {
 
         assert_eq!(gap.manager, "pnpm");
         assert_eq!(gap.reason, BootstrapReason::UnverifiedAncestorLock);
-        assert!(gap
-            .remediation()
-            .contains("effigy bootstrap --path child"));
+        assert!(gap.remediation().contains("effigy bootstrap --path child"));
 
         std::fs::remove_dir_all(root).ok();
     }

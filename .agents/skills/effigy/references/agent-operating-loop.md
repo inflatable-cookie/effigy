@@ -106,7 +106,7 @@ Use only when the repo or user needs them:
 | Need | Surface |
 |------|---------|
 | Local stack | `effigy container up`, `effigy dev` (repo task) |
-| Cross-repo clone | `effigy bootstrap <git-url>` |
+| Cross-repo download and start | `effigy bootstrap <git-url>` (`effigy bootstrap` in a checkout runs its `setup`) |
 | Secrets | `effigy secrets doctor`, `effigy secrets list` |
 | State / deploy | `effigy state plan`, `effigy deploy plan` |
 | Release cut | human-gated; see `release-protocol.md` |

@@ -68,7 +68,11 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
 /// Dispatch one `setup` or `start` selector through the same pipeline as
 /// `effigy <selector>`: environment, gateway, readiness, secrets and cleanup
 /// are the runner's, not bootstrap's.
-fn run_bootstrap_selector(repo_root: &Path, selector: &str, phase: &str) -> Result<(), RunnerError> {
+fn run_bootstrap_selector(
+    repo_root: &Path,
+    selector: &str,
+    phase: &str,
+) -> Result<(), RunnerError> {
     with_runtime_session_context(bootstrap_runtime_session_context(phase), || {
         run_manifest_task_with_surface(
             &TaskInvocation {

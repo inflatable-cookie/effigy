@@ -147,9 +147,14 @@ impl ReadinessServer {
                                 .expect("open order file");
                             file.write_all(b"ready\n").expect("record readiness");
                         }
-                        let status = if ready { "200 OK" } else { "503 Service Unavailable" };
-                        let response =
-                            format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        let status = if ready {
+                            "200 OK"
+                        } else {
+                            "503 Service Unavailable"
+                        };
+                        let response = format!(
+                            "HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        );
                         let _ = stream.write_all(response.as_bytes());
                         let _ = stream.flush();
                     }
@@ -177,7 +182,7 @@ impl Drop for ReadinessServer {
     }
 }
 
-fn install_fake_runtime(bin_dir: &std::path::Path, root: &std::path::Path) -> String {
+fn install_fake_runtime(bin_dir: &std::path::Path) -> String {
     fs::create_dir_all(bin_dir).expect("mkdir bin");
     let docker = bin_dir.join("docker");
     fs::write(&docker, FAKE_DOCKER).expect("write fake docker");
@@ -251,7 +256,7 @@ if !result["success"] { throw("seed failed"); }
 
     let server = ReadinessServer::start(order.clone(), db_ready);
     let bin_dir = root.join("bin");
-    let path = install_fake_runtime(&bin_dir, &root);
+    let path = install_fake_runtime(&bin_dir);
     let docker_args = root.join("docker-args.log");
     let _env = EnvGuard::set_many(&[
         ("HOME", Some(root.join("home").display().to_string())),
@@ -265,16 +270,13 @@ if !result["success"] { throw("seed failed"); }
             "EFFIGY_TEST_BUILDER_STATE_DIR",
             Some(state.display().to_string()),
         ),
+        ("EFFIGY_TEST_ORDER_FILE", Some(order.display().to_string())),
         (
-            "EFFIGY_TEST_ORDER_FILE",
-            Some(order.display().to_string()),
+            "EFFIGY_TEST_FAKE_PROJECT",
+            Some("fixture-seed-dev".to_owned()),
         ),
-        ("EFFIGY_TEST_FAKE_PROJECT", Some("fixture-seed-dev".to_owned())),
         ("EFFIGY_TEST_FAKE_SERVICE", Some("app".to_owned())),
-        (
-            "EFFIGY_TEST_HOST_ROOT",
-            Some(root.display().to_string()),
-        ),
+        ("EFFIGY_TEST_HOST_ROOT", Some(root.display().to_string())),
         (
             "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
             Some(root.join("lease-home").display().to_string()),

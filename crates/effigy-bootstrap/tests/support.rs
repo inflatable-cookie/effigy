@@ -173,14 +173,6 @@ pub fn clone_remote(remote: &Path, name: &str) -> PathBuf {
     clone_path
 }
 
-pub fn make_executable(script: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let mut perms = fs::metadata(script).expect("script metadata").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(script, perms).expect("chmod script");
-}
-
 pub fn head_commit(repo_root: &Path) -> String {
     let output = ProcessCommand::new("git")
         .arg("-C")
@@ -189,7 +181,10 @@ pub fn head_commit(repo_root: &Path) -> String {
         .output()
         .expect("git rev-parse");
     assert!(output.status.success(), "git rev-parse failed: {output:?}");
-    String::from_utf8(output.stdout).expect("utf8 head").trim().to_owned()
+    String::from_utf8(output.stdout)
+        .expect("utf8 head")
+        .trim()
+        .to_owned()
 }
 
 /// A project remote whose `[bootstrap]` runs two recorded selectors.
@@ -230,5 +225,8 @@ pub fn git_stdout(repo_root: &Path, args: &[&str]) -> String {
         "git {args:?} failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    String::from_utf8(output.stdout).expect("utf8 git output").trim().to_owned()
+    String::from_utf8(output.stdout)
+        .expect("utf8 git output")
+        .trim()
+        .to_owned()
 }

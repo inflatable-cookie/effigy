@@ -1,7 +1,7 @@
 use super::prelude::{
-    apply_global_json_flag, command_requests_json, parse_command, BootstrapArgs,
-    Command, DeployArgs, DeploySubcommand, DoctorArgs, GatewayArgs,
-    GatewaySubcommand, ReleaseArgs, ReleaseSubcommand, TaskInvocation, TasksArgs,
+    apply_global_json_flag, command_requests_json, parse_command, BootstrapArgs, Command,
+    DeployArgs, DeploySubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand, ReleaseArgs,
+    ReleaseSubcommand, TaskInvocation, TasksArgs,
 };
 
 #[test]

@@ -36,6 +36,12 @@ fn reject_retired_tables(value: &Value) -> Result<(), String> {
     }
     reject_bootstrap_keys(root)?;
     if let Some(tasks) = root.get("tasks").and_then(Value::as_table) {
+        if tasks.contains_key("bootstrap:db-seed") {
+            return Err(
+                "the `bootstrap:db-seed` task was retired in v0.15; rename it to `data:seed` (the callback `effigy container data seed` runs) and select it from `[bootstrap].setup` when a fresh checkout needs a first seed (see CHANGELOG.md)"
+                    .to_owned(),
+            );
+        }
         for task in tasks.values() {
             reject_draft_in_task(task)?;
         }
@@ -76,7 +82,10 @@ fn reject_bootstrap_keys(root: &toml::map::Map<String, Value>) -> Result<(), Str
                     .to_owned(),
             );
         };
-        if entries.iter().any(|entry| !matches!(entry, Value::String(_))) {
+        if entries
+            .iter()
+            .any(|entry| !matches!(entry, Value::String(_)))
+        {
             return Err(
                 "`[bootstrap].setup` entries must be task selector strings in v0.15; `{ task = ... }` and inline run steps were removed, move them into a task (see CHANGELOG.md)"
                     .to_owned(),
@@ -195,7 +204,10 @@ mod tests {
         )
         .expect_err("retired bootstrap children");
         let error = error.to_string();
-        assert!(error.contains("`[bootstrap].children` was removed"), "{error}");
+        assert!(
+            error.contains("`[bootstrap].children` was removed"),
+            "{error}"
+        );
         assert!(error.contains("[sources.<name>]"), "{error}");
         assert!(error.contains("rev_file"), "{error}");
         assert!(error.contains("CHANGELOG.md"), "{error}");
@@ -206,7 +218,10 @@ mod tests {
         let error = toml::from_str::<TaskManifest>("[bootstrap]\nsubmodules = 'recursive'\n")
             .expect_err("retired submodule policy");
         let error = error.to_string();
-        assert!(error.contains("`[bootstrap].submodules` now takes `true`"), "{error}");
+        assert!(
+            error.contains("`[bootstrap].submodules` now takes `true`"),
+            "{error}"
+        );
         assert!(error.contains("CHANGELOG.md"), "{error}");
     }
 

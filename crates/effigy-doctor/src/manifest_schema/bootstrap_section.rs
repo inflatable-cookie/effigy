@@ -17,7 +17,10 @@ pub(super) fn validate_bootstrap_section(context: &mut SchemaContext<'_, '_>, va
     if let Some(setup) = table.get("setup") {
         match setup.as_array() {
             Some(entries) => {
-                if entries.iter().any(|entry| !matches!(entry, Value::String(_))) {
+                if entries
+                    .iter()
+                    .any(|entry| !matches!(entry, Value::String(_)))
+                {
                     context.invalid_value_type(
                         "bootstrap.setup[]",
                         "task selector strings; move inline steps into a task",

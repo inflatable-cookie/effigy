@@ -57,12 +57,10 @@ fn parse_bootstrap_plan_with_path_branch_and_no_start() {
 
 #[test]
 fn parse_bootstrap_accepts_a_global_json_flag() {
-    let args = bootstrap_args(
-        effigy_cli::apply_global_json_flag(
-            parse(&["bootstrap", "--plan"]).expect("parse should succeed"),
-            true,
-        ),
-    );
+    let args = bootstrap_args(effigy_cli::apply_global_json_flag(
+        parse(&["bootstrap", "--plan"]).expect("parse should succeed"),
+        true,
+    ));
     assert!(args.output_json);
     assert!(args.plan);
 }
@@ -100,8 +98,7 @@ fn parse_bootstrap_rejects_retired_flags_with_their_replacement() {
         ("--no-prompt", "prompts were removed"),
         ("--reuse-path", "prompts were removed"),
     ] {
-        let error =
-            parse(&["bootstrap", "./repo", flag, "value"]).expect_err("retired flag");
+        let error = parse(&["bootstrap", "./repo", flag, "value"]).expect_err("retired flag");
         let message = error.to_string();
         assert!(message.contains(expected), "{flag}: {message}");
         assert!(message.contains("CHANGELOG.md"), "{flag}: {message}");

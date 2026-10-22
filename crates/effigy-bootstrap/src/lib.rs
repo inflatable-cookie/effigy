@@ -193,8 +193,9 @@ pub fn resolve_bootstrap_request(
         });
     };
 
-    let repo_name = derive_repo_name(repo_url)
-        .ok_or_else(|| BootstrapError::task_invocation("could not derive repo name from git URL"))?;
+    let repo_name = derive_repo_name(repo_url).ok_or_else(|| {
+        BootstrapError::task_invocation("could not derive repo name from git URL")
+    })?;
     let (destination, destination_source) = match path {
         Some(path) if path.is_absolute() => (path.to_path_buf(), "explicit-path"),
         Some(path) => (cwd.join(path), "explicit-path"),
@@ -212,9 +213,7 @@ pub fn resolve_bootstrap_request(
 
 /// Plan without mutating anything: no clone, no source acquisition, no
 /// submodule init and no task run.
-pub fn plan_bootstrap_request(
-    request: &BootstrapRequest,
-) -> Result<BootstrapPlan, BootstrapError> {
+pub fn plan_bootstrap_request(request: &BootstrapRequest) -> Result<BootstrapPlan, BootstrapError> {
     let manifest_path = request.destination.join(TASK_MANIFEST_FILE);
     let manifest_found = manifest_path.is_file();
     let mut plan = BootstrapPlan {
@@ -250,11 +249,7 @@ pub fn plan_bootstrap_request(
 /// `load_bootstrap` prepares the repo's pinned bundle/catalog sources and
 /// returns its `[bootstrap]` contract. `run_selector` dispatches one ordinary
 /// task selector in the checkout.
-pub fn execute_bootstrap_request_with_progress<
-    LoadBootstrap,
-    RunSelector,
-    ReportProgress,
->(
+pub fn execute_bootstrap_request_with_progress<LoadBootstrap, RunSelector, ReportProgress>(
     request: &BootstrapRequest,
     mut load_bootstrap: LoadBootstrap,
     mut run_selector: RunSelector,
@@ -439,12 +434,18 @@ pub fn render_bootstrap_plan(plan: &BootstrapPlan, output_json: bool) -> String 
         "[planned] bootstrap request resolved".to_owned(),
         format!(
             "repo: {}",
-            plan.request.repo_url.as_deref().unwrap_or("(existing checkout)")
+            plan.request
+                .repo_url
+                .as_deref()
+                .unwrap_or("(existing checkout)")
         ),
         format!("destination: {}", plan.request.destination.display()),
         format!(
             "branch: {}",
-            plan.request.branch.as_deref().unwrap_or("default remote HEAD")
+            plan.request
+                .branch
+                .as_deref()
+                .unwrap_or("default remote HEAD")
         ),
     ];
     if !plan.manifest_found {
@@ -546,7 +547,11 @@ pub fn render_bootstrap_result(result: &BootstrapExecutionResult, output_json: b
         "[ok] bootstrap completed".to_owned(),
         format!(
             "repo: {}",
-            result.request.repo_url.as_deref().unwrap_or("(existing checkout)")
+            result
+                .request
+                .repo_url
+                .as_deref()
+                .unwrap_or("(existing checkout)")
         ),
         format!("destination: {}", result.request.destination.display()),
         format!("root repo: {}", result.root_repo_state),
@@ -730,7 +735,10 @@ fn is_empty_directory(path: &Path) -> Result<bool, BootstrapError> {
 ///
 /// An already-initialised submodule at a different commit, or with local
 /// changes, is drift: it is reported and nothing is touched.
-fn prepare_submodules(repo_root: &Path, requested: bool) -> Result<SubmoduleReport, BootstrapError> {
+fn prepare_submodules(
+    repo_root: &Path,
+    requested: bool,
+) -> Result<SubmoduleReport, BootstrapError> {
     let mut report = SubmoduleReport {
         requested,
         ..SubmoduleReport::default()
@@ -796,10 +804,7 @@ fn prepare_submodules(repo_root: &Path, requested: bool) -> Result<SubmoduleRepo
         return Ok(report);
     }
     run_git(repo_root, &["submodule", "sync", "--recursive"])?;
-    run_git(
-        repo_root,
-        &["submodule", "update", "--init", "--recursive"],
-    )?;
+    run_git(repo_root, &["submodule", "update", "--init", "--recursive"])?;
     report.applied = true;
     Ok(report)
 }

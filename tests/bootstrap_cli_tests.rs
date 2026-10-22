@@ -94,7 +94,12 @@ fn create_content_remote(name: &str) -> PathBuf {
 }
 
 /// A project remote whose setup and start selectors append to `order.txt`.
-fn create_project_remote(name: &str, setup: &[&str], start: Option<&str>, sources: &str) -> PathBuf {
+fn create_project_remote(
+    name: &str,
+    setup: &[&str],
+    start: Option<&str>,
+    sources: &str,
+) -> PathBuf {
     let worktree = temp_workspace("effigy-bootstrap-cli", &format!("{name}-worktree"));
     let setup = setup
         .iter()
@@ -178,14 +183,12 @@ fn bootstrap_plan_json_reports_the_plan_and_mutates_nothing() {
 
 #[test]
 fn bootstrap_executes_setup_then_start_via_binary() {
-    let remote = create_project_remote(
-        "clean",
-        &["record-a", "record-b"],
-        Some("record-dev"),
-        "",
-    );
+    let remote = create_project_remote("clean", &["record-a", "record-b"], Some("record-dev"), "");
     let cwd = temp_workspace("effigy-bootstrap-cli", "execution");
-    let output = effigy(&["--json", "bootstrap", &remote.display().to_string()], &cwd);
+    let output = effigy(
+        &["--json", "bootstrap", &remote.display().to_string()],
+        &cwd,
+    );
     assert!(output.status.success(), "bootstrap failed: {output:?}");
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["phase"], "executed");
@@ -212,7 +215,10 @@ fn bootstrap_clones_a_pinned_source_at_its_recorded_commit() {
     );
     let remote = create_project_remote("pinned-project", &["record-a"], None, &sources);
     let cwd = temp_workspace("effigy-bootstrap-cli", "pinned-source");
-    let output = effigy(&["--json", "bootstrap", &remote.display().to_string()], &cwd);
+    let output = effigy(
+        &["--json", "bootstrap", &remote.display().to_string()],
+        &cwd,
+    );
     assert!(output.status.success(), "bootstrap failed: {output:?}");
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["sources"][0]["state"], "cloned");
@@ -245,7 +251,10 @@ fn bootstrap_reports_pinned_source_drift_and_leaves_the_working_copy_alone() {
     assert!(clone.status.success(), "clone: {clone:?}");
     fs::write(book.join("local.txt"), "my work\n").expect("write local change");
 
-    let output = effigy(&["--json", "bootstrap", &remote.display().to_string()], &cwd);
+    let output = effigy(
+        &["--json", "bootstrap", &remote.display().to_string()],
+        &cwd,
+    );
     assert!(output.status.success(), "bootstrap failed: {output:?}");
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["sources"][0]["state"], "drift");
@@ -274,8 +283,32 @@ fn bootstrap_reports_missing_bootstrap_contract_via_binary() {
     );
     assert!(output.status.success(), "bootstrap failed: {output:?}");
     let parsed = parse_stdout_json(&output);
+    assert_eq!(parsed["result"]["manifest_found"], false);
+    assert_eq!(parsed["result"]["root_repo_state"], "cloned");
+    assert_eq!(parsed["result"]["start"]["ran"], false);
+}
+
+#[test]
+fn bootstrap_reports_a_manifest_without_a_bootstrap_contract() {
+    let worktree = temp_workspace("effigy-bootstrap-cli", "no-bootstrap-table");
+    fs::write(
+        worktree.join("effigy.toml"),
+        "[tasks.dev]\nrun = \"printf dev\"\n",
+    )
+    .expect("write manifest");
+    let remote = publish(&worktree, "no-bootstrap-table");
+    let cwd = temp_workspace("effigy-bootstrap-cli", "no-bootstrap-table-run");
+    let output = effigy(
+        &["--json", "bootstrap", &remote.display().to_string()],
+        &cwd,
+    );
+    assert!(output.status.success(), "bootstrap failed: {output:?}");
+    let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["result"]["manifest_found"], true);
-    assert_eq!(parsed["result"]["manifest"]["bootstrap_contract_found"], false);
+    assert_eq!(
+        parsed["result"]["manifest"]["bootstrap_contract_found"],
+        false
+    );
     assert_eq!(parsed["result"]["start"]["ran"], false);
 }
 
@@ -339,9 +372,18 @@ fn retired_bootstrap_surfaces_fail_with_their_replacement() {
         (vec!["bootstrap", "deps"], "[bootstrap].setup"),
         (vec!["bootstrap", "teardown"], "container <name> down"),
         (vec!["bootstrap", "./repo", "--db-seed", "x.sql"], "setup"),
-        (vec!["bootstrap", "./repo", "--fresh"], "container <name> down"),
-        (vec!["bootstrap", "./repo", "--backend", "docker"], "environment"),
-        (vec!["bootstrap", "./repo", "--start"], "start is the default"),
+        (
+            vec!["bootstrap", "./repo", "--fresh"],
+            "container <name> down",
+        ),
+        (
+            vec!["bootstrap", "./repo", "--backend", "docker"],
+            "environment",
+        ),
+        (
+            vec!["bootstrap", "./repo", "--start"],
+            "start is the default",
+        ),
     ] {
         let output = effigy(&args, &root);
         assert!(!output.status.success(), "expected failure for {args:?}");

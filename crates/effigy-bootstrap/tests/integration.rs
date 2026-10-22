@@ -19,9 +19,7 @@ use support::{
     create_project_remote, git_stdout, head_commit, init_bare_remote, init_git_repo, temp_dir,
 };
 
-fn load_bootstrap(
-    manifest_path: &Path,
-) -> Result<Option<ManifestBootstrapConfig>, BootstrapError> {
+fn load_bootstrap(manifest_path: &Path) -> Result<Option<ManifestBootstrapConfig>, BootstrapError> {
     let manifest = effigy_manifest::load_task_manifest(manifest_path)
         .map_err(|error| BootstrapError::task_invocation(error.to_string()))?;
     Ok(manifest.bootstrap)
@@ -79,7 +77,11 @@ fn write_root_manifest(
     fs::write(worktree.join("effigy.toml"), manifest).expect("write manifest");
 }
 
-fn create_project_with_source(name: &str, setup: &[&str], start: Option<&str>) -> (PathBuf, PathBuf) {
+fn create_project_with_source(
+    name: &str,
+    setup: &[&str],
+    start: Option<&str>,
+) -> (PathBuf, PathBuf) {
     let source = create_content_remote(&format!("{name}-content"), "content.txt", "pinned\n");
     let source_head = head_commit(&clone_remote(&source, &format!("{name}-content-probe")));
     let worktree = temp_dir(&format!("{name}-worktree"));
@@ -167,7 +169,10 @@ fn a_re_run_is_idempotent() {
     )
     .expect("resolve request");
     run_bootstrap(&request).expect("first bootstrap");
-    let source_head = git_stdout(&clone_remote(&source, "rerun-source-probe"), &["rev-parse", "HEAD"]);
+    let source_head = git_stdout(
+        &clone_remote(&source, "rerun-source-probe"),
+        &["rev-parse", "HEAD"],
+    );
 
     let result = run_bootstrap(&request).expect("second bootstrap");
     assert_eq!(result.root_repo_state, "updated");
@@ -180,7 +185,12 @@ fn a_re_run_is_idempotent() {
     );
     assert_eq!(
         read_selectors(&checkout),
-        vec!["prepare".to_owned(), "dev".to_owned(), "prepare".to_owned(), "dev".to_owned()]
+        vec![
+            "prepare".to_owned(),
+            "dev".to_owned(),
+            "prepare".to_owned(),
+            "dev".to_owned()
+        ]
     );
 }
 
@@ -211,13 +221,25 @@ fn an_existing_sibling_working_copy_with_local_changes_is_untouched_and_reported
 
     assert_eq!(result.sources[0].state, PinnedSourceState::Drift);
     assert!(result.sources[0].dirty);
+    assert!(fs::read_to_string(sibling.join("draft.txt"))
+        .expect("local change kept")
+        .contains("local work"));
     assert!(
-        fs::read_to_string(sibling.join("draft.txt"))
-            .expect("local change kept")
-            .contains("local work")
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("drift")),
+        "{:?}",
+        result.warnings
     );
-    assert!(result.warnings.iter().any(|warning| warning.contains("drift")), "{:?}", result.warnings);
-    assert!(result.warnings.iter().any(|warning| warning.contains("nothing was reset")), "{:?}", result.warnings);
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("nothing was reset")),
+        "{:?}",
+        result.warnings
+    );
 }
 
 #[test]
@@ -299,7 +321,11 @@ fn submodules_are_initialised_at_the_recorded_commits() {
     let result = run_bootstrap(&request).expect("bootstrap");
     assert!(result.submodules.requested);
     assert!(result.submodules.applied);
-    assert!(result.submodules.drift.is_empty(), "{:?}", result.submodules.drift);
+    assert!(
+        result.submodules.drift.is_empty(),
+        "{:?}",
+        result.submodules.drift
+    );
     assert_eq!(
         fs::read_to_string(checkout.join("vendor/lib/lib.txt")).expect("submodule content"),
         "lib\n"
@@ -362,7 +388,11 @@ fn an_initialised_submodule_at_a_different_commit_is_drift_and_is_left_untouched
     let request = resolve_bootstrap_request(&workspace, None, Some(&destination), None, false)
         .expect("resolve request");
     let result = run_bootstrap(&request).expect("bootstrap");
-    assert!(!result.submodules.drift.is_empty(), "{:?}", result.submodules);
+    assert!(
+        !result.submodules.drift.is_empty(),
+        "{:?}",
+        result.submodules
+    );
     assert!(!result.submodules.applied);
     assert_eq!(
         fs::read_to_string(destination.join("vendor/lib/lib.txt")).expect("submodule content"),
@@ -435,7 +465,9 @@ fn a_non_empty_foreign_directory_is_refused() {
     .expect("resolve request");
     let error = run_bootstrap(&request).expect_err("refuse foreign directory");
     assert!(
-        error.to_string().contains("not empty and is not a checkout"),
+        error
+            .to_string()
+            .contains("not empty and is not a checkout"),
         "{error}"
     );
     assert!(destination.join("notes.txt").exists());
@@ -444,10 +476,7 @@ fn a_non_empty_foreign_directory_is_refused() {
 #[test]
 fn an_existing_checkout_of_another_remote_is_refused() {
     let workspace = temp_dir("foreign-checkout");
-    let project = create_project_remote(
-        "foreign-checkout",
-        "[bootstrap]\nstart = \"dev\"\n",
-    );
+    let project = create_project_remote("foreign-checkout", "[bootstrap]\nstart = \"dev\"\n");
     let destination = workspace.join("app");
     let clone = ProcessCommand::new("git")
         .arg("clone")

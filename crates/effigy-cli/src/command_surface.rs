@@ -385,7 +385,7 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     GeneralHelpEntry {
         group: HelpGroup::Deliver,
         command: "effigy bootstrap",
-        description: "Clone/update a repo from a git URL and apply its repo-owned `[bootstrap]` contract",
+        description: "Download and start a project: clone or use this checkout, prepare pinned sources and submodules, run its `setup` selectors, then its `start` selector",
         deferred_builtin: Some("bootstrap"),
         help_argument: Some("bootstrap"),
     },

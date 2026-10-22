@@ -30,19 +30,9 @@ where
         return Ok(Command::Help(HelpTopic::Bootstrap));
     }
     let mut repo_url = None;
-    if !first.starts_with('-') {
-        reject_retired_subcommand(&first)?;
-        if !looks_like_git_url(&first) {
-            return Err(CliParseError::InvalidArguments(format!(
-                "`effigy bootstrap {first}` is not a git URL; pass a clone URL, or run `effigy bootstrap` with no argument to use this checkout (see CHANGELOG.md)"
-            )));
-        }
-        repo_url = Some(first);
-    } else {
-        let mut pending = vec![first];
-        pending.extend(args);
-        args = pending.into_iter();
-    }
+    let mut pending = vec![first];
+    pending.extend(args);
+    let mut args = pending.into_iter();
 
     let mut path: Option<PathBuf> = None;
     let mut branch: Option<String> = None;
@@ -96,7 +86,18 @@ where
                 ))
             }
             other if other.starts_with('-') => return Err(unknown_argument(other)),
-            _ => return Err(unknown_argument(arg)),
+            other => {
+                if repo_url.is_some() {
+                    return Err(unknown_argument(other));
+                }
+                reject_retired_subcommand(other)?;
+                if !looks_like_git_url(other) {
+                    return Err(CliParseError::InvalidArguments(format!(
+                        "`effigy bootstrap {other}` is not a git URL; pass a clone URL, or run `effigy bootstrap` with no argument to use this checkout (see CHANGELOG.md)"
+                    )));
+                }
+                repo_url = Some(other.to_owned());
+            }
         }
     }
 
@@ -130,7 +131,9 @@ fn reject_retired_subcommand(value: &str) -> Result<(), CliParseError> {
 }
 
 fn retired_flag(flag: &str, replacement: &str) -> CliParseError {
-    CliParseError::InvalidArguments(format!("`{flag}` was removed: {replacement} (see CHANGELOG.md)"))
+    CliParseError::InvalidArguments(format!(
+        "`{flag}` was removed: {replacement} (see CHANGELOG.md)"
+    ))
 }
 
 /// A clone URL, or a path to a local repository. A bare word is not one.
@@ -182,7 +185,10 @@ mod tests {
             ])
             .expect("parse bootstrap"),
         );
-        assert_eq!(args.repo_url.as_deref(), Some("git@github.com:acme/app.git"));
+        assert_eq!(
+            args.repo_url.as_deref(),
+            Some("git@github.com:acme/app.git")
+        );
         assert_eq!(args.path, Some(PathBuf::from("./app")));
         assert_eq!(args.branch.as_deref(), Some("main"));
         assert!(args.no_start);

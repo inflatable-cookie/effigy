@@ -36,7 +36,7 @@ use crate::runner::runtime_session_context::{with_runtime_session_context, Runti
 use super::error::RunnerError;
 use effigy_cli::TaskInvocation;
 
-pub(in crate::runner) const DB_SEED_TASK: &str = "bootstrap:db-seed";
+pub(in crate::runner) const DB_SEED_TASK: &str = "data:seed";
 pub(in crate::runner) const DB_SEEDS_DIR: &str = ".effigy/local/db-seeds";
 pub(in crate::runner) const DB_SEEDS_METADATA_FILE: &str = "_effigy-db-seeds.json";
 pub(in crate::runner) const LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE: &str =
@@ -499,9 +499,7 @@ fn stage_seed_artifact(
     }
 }
 
-pub(in crate::runner) fn db_seed_env(
-    staged_db_seeds: &[StagedDbSeed],
-) -> BTreeMap<String, String> {
+pub(in crate::runner) fn db_seed_env(staged_db_seeds: &[StagedDbSeed]) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     if staged_db_seeds.is_empty() {
         return env;
@@ -1043,7 +1041,6 @@ fn db_seed_service_selection_error(
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

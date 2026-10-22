@@ -40,11 +40,11 @@ pub use composition::{
 pub use config_sections::{
     load_committed_docs_policy_sources, ManifestBootstrapConfig, ManifestBundleBase,
     ManifestBundleConfig, ManifestContainerConfig, ManifestContainerDataConfig,
-    ManifestContainerDnsConfig,
-    ManifestContainerDnsDomainDefaults, ManifestContainerDnsRouteConfig, ManifestContainerDriver,
-    ManifestContainerExecAliasConfig, ManifestContainerExecAliasTableConfig,
-    ManifestContainerHostConfig, ManifestContainerHostMount, ManifestContainerHostMountTable,
-    ManifestContainerHostProcess, ManifestContainerHostProcessRestart, ManifestContainerOnTaskExit,
+    ManifestContainerDnsConfig, ManifestContainerDnsDomainDefaults,
+    ManifestContainerDnsRouteConfig, ManifestContainerDriver, ManifestContainerExecAliasConfig,
+    ManifestContainerExecAliasTableConfig, ManifestContainerHostConfig, ManifestContainerHostMount,
+    ManifestContainerHostMountTable, ManifestContainerHostProcess,
+    ManifestContainerHostProcessRestart, ManifestContainerOnTaskExit,
     ManifestContainerSecretDelivery, ManifestContainerSecretsConfig,
     ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
     ManifestContainersConfig, ManifestDataConfig, ManifestDataTargetConfig,
@@ -56,11 +56,11 @@ pub use config_sections::{
     ManifestDocsPolicyGraphRelationConfig, ManifestDocsPolicySourcesConfig,
     ManifestEnvSchemaConfig, ManifestInlineWorkspaceContainerConfig, ManifestIsolationAdoption,
     ManifestIsolationConfig, ManifestJsPackageManager, ManifestPackageManagerConfig,
-    ManifestReleaseConfig, ManifestScanConfig, ManifestSecretKeyConfig, ManifestSecretTarget,
-    ManifestSecretsBackend, ManifestSecretsConfig, ManifestSecretsExternalConfig,
-    ManifestSecretsVaultConfig, ManifestSystemConfig, ManifestSystemMount,
-    ManifestSystemMountTable, ManifestSystemsConfig, ManifestTaskDefaultsConfig,
-    ManifestWorkspaceConfig, ManifestWorkspaceContainerRef, ManifestPinnedSourceConfig,
+    ManifestPinnedSourceConfig, ManifestReleaseConfig, ManifestScanConfig, ManifestSecretKeyConfig,
+    ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig,
+    ManifestSecretsExternalConfig, ManifestSecretsVaultConfig, ManifestSystemConfig,
+    ManifestSystemMount, ManifestSystemMountTable, ManifestSystemsConfig,
+    ManifestTaskDefaultsConfig, ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
 };
 pub use execution_binding::{
     resolve_task_execution_binding, resolve_task_execution_binding_from_parts,
@@ -71,15 +71,15 @@ pub use execution_binding::{
 pub use loaded_catalog::{
     env_schema_declaring_catalog, DeferredCommand, LoadedCatalog, TaskResolverFn, TaskSelection,
 };
-pub use sources::{
-    inspect_pinned_sources, prepare_pinned_sources, resolve_pinned_sources, PinnedSourceReport,
-    PinnedSourceSpec, PinnedSourceState,
-};
 pub use qa_groups::{
     path_pattern_matches, validate_qa_name_grammar, ManifestQaCoverageGap, ManifestQaGroup,
     ManifestQaGroupMember, ManifestQaGroupTable, ManifestQaLifecycle, ManifestQaMemberKind,
     ManifestQaMemberSurface, ManifestQaScopePolicy, ManifestQaSection, QaGroupDefinitionContext,
     QaScopeToken,
+};
+pub use sources::{
+    inspect_pinned_sources, prepare_pinned_sources, resolve_pinned_sources, PinnedSourceReport,
+    PinnedSourceSpec, PinnedSourceState,
 };
 use task_defs::deserialize_tasks;
 pub use task_runtime::{
@@ -263,10 +263,9 @@ where
     D: serde::Deserializer<'de>,
 {
     let value = <toml::Value as serde::Deserialize>::deserialize(deserializer)?;
-    let sources = <BTreeMap<String, ManifestPinnedSourceConfig> as serde::Deserialize>::deserialize(
-        value,
-    )
-    .map_err(serde::de::Error::custom)?;
+    let sources =
+        <BTreeMap<String, ManifestPinnedSourceConfig> as serde::Deserialize>::deserialize(value)
+            .map_err(serde::de::Error::custom)?;
     for (name, source) in &sources {
         if name.trim().is_empty() || name.contains('/') || name.contains(':') {
             return Err(serde::de::Error::custom(format!(

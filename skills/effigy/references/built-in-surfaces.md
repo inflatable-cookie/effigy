@@ -80,7 +80,7 @@ Guide: `docs/guides/079-documentation-graph-profiles-and-context.md`
 | `gateway` | Host DNS/TLS for container routes |
 | `service` | Catalog inspect/extract |
 | `exec` | One-shot command in dev workspace container; primary-service workspace identity; no TTY for non-console callers |
-| `bootstrap` | Clone/bring-up repo from git URL |
+| `bootstrap` | Download and start a project: clone (or use this checkout), pinned sources, submodules, `setup` selectors, then `start` |
 
 ## Data, deploy, and proof
 

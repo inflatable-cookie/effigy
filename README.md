@@ -337,47 +337,35 @@ Finite `system logs --json` and `container <NAME> logs --json` snapshots support
 
 ### One-Command Repo Bring-Up
 
-Give a git URL. Effigy clones, runs the repo's declared setup, and starts the dev stack:
+Give a git URL. Effigy clones, prepares its pinned sources, runs the repo's
+declared `setup` selectors, then starts its `start` selector:
 
 ```bash
 effigy bootstrap git@github.com:acme/app.git --plan    # Preview first
 effigy bootstrap git@github.com:acme/app.git           # Clone, setup, start
+effigy bootstrap                                        # Prepare this checkout
 ```
 
 The repo declares its own bring-up in `effigy.toml`:
 
 ```toml
 [bootstrap]
-run = { task = "bootstrap deps sync" }
-start = "dev"
+setup = ["workspace:js:prepare", "db:seed:schema"]  # ordered task selectors
+start = "dev"                                       # one selector; --no-start skips it
+submodules = true                                   # recursive init at recorded commits
+
+[sources.book]                     # pinned extra source, usually a sibling
+git = "git@github.com:acme/book.git"
+rev = "<commit>"                   # or rev_file = "book.rev"
+path = "../book"
 ```
 
-If the repo has a `.gitmodules` file, bootstrap initializes and updates those
-submodules recursively before running setup. Set `submodules = "none"` only when
-bootstrap should skip them.
-
-Need companion repos alongside it? Declare child repos in the same manifest:
-
-```toml
-[[bootstrap.children]]
-path = "shared-lib"
-repo = "git@github.com:acme/shared-lib.git"
-run = { task = "bootstrap deps sync" }
-required = true
-
-[[bootstrap.children]]
-path = "ops-tools"
-repo = "git@github.com:acme/ops-tools.git"
-run = { task = "bootstrap deps sync" }
-required = false
-```
-
-One command clones the root repo, clones every child into the right relative paths, runs each repo's setup, and starts the dev stack. After the initial bring-up, keep children in sync:
-
-```bash
-effigy bootstrap children status   # See what's ahead/behind or missing
-effigy bootstrap children sync     # Pull and fast-forward all children
-```
+`setup` and `start` are ordinary task selectors, so environment, gateway,
+readiness, secrets and cleanup behave exactly as for `effigy <selector>`. A
+pinned source is cloned at its committed `rev`; an existing working copy with
+local changes or another HEAD is reported as drift and left untouched, and
+`effigy doctor` reports it. Bootstrap never resets a working copy, runs no
+package manager and needs no seed flag — a first seed is a task in `setup`.
 
 Effigy itself keeps adjacent provider, bundle, and action repos under
 `external/` as Git submodules. In a normal checkout, hydrate them with:
@@ -385,8 +373,6 @@ Effigy itself keeps adjacent provider, bundle, and action repos under
 ```bash
 git submodule update --init --recursive
 ```
-
-Pass `--db-seed ./latest.sql` to stage a database dump before setup runs. Pass `--fresh` to isolate runtime state from earlier local runs. One command, one consistent path, no local folklore.
 
 ### Manifest Composition
 

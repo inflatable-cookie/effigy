@@ -62,7 +62,10 @@ submodules = true
         .expect("parse bootstrap");
         assert_eq!(
             bootstrap.setup,
-            vec!["workspace:js:prepare".to_owned(), "db:seed:schema".to_owned()]
+            vec![
+                "workspace:js:prepare".to_owned(),
+                "db:seed:schema".to_owned()
+            ]
         );
         assert_eq!(bootstrap.start.as_deref(), Some("dev"));
         assert!(bootstrap.submodules);

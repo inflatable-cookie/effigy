@@ -1,7 +1,7 @@
 use super::{
-    derive_repo_name, normalize_bootstrap_repo_url, plan_bootstrap_request,
-    render_bootstrap_plan, render_bootstrap_result, resolve_bootstrap_request, BootstrapPlan,
-    BootstrapProgressEvent, BootstrapRequest, PinnedSourceReport, SubmoduleReport,
+    derive_repo_name, normalize_bootstrap_repo_url, plan_bootstrap_request, render_bootstrap_plan,
+    render_bootstrap_result, resolve_bootstrap_request, BootstrapPlan, BootstrapProgressEvent,
+    BootstrapRequest, PinnedSourceReport, SubmoduleReport,
 };
 use effigy_manifest::PinnedSourceState;
 use std::path::{Path, PathBuf};
@@ -37,25 +37,23 @@ fn normalize_bootstrap_repo_url_rewrites_scp_style_ssh_remotes() {
 #[test]
 fn resolve_bootstrap_request_defaults_destination_under_cwd() {
     let cwd = Path::new("/tmp/dev");
-    let resolved = resolve_bootstrap_request(
-        cwd,
-        Some("git@github.com:acme/app.git"),
-        None,
-        None,
-        true,
-    )
-    .expect("resolve request");
+    let resolved =
+        resolve_bootstrap_request(cwd, Some("git@github.com:acme/app.git"), None, None, true)
+            .expect("resolve request");
     assert_eq!(resolved.destination, cwd.join("app"));
     assert_eq!(resolved.destination_source, "cwd-default");
-    assert_eq!(resolved.repo_url.as_deref(), Some("git@github.com:acme/app.git"));
+    assert_eq!(
+        resolved.repo_url.as_deref(),
+        Some("git@github.com:acme/app.git")
+    );
     assert!(resolved.start_requested);
 }
 
 #[test]
 fn resolve_bootstrap_request_uses_an_existing_checkout_without_a_url() {
     let fixture = tempfile::tempdir().expect("temp dir");
-    let resolved =
-        resolve_bootstrap_request(fixture.path(), None, None, None, false).expect("resolve request");
+    let resolved = resolve_bootstrap_request(fixture.path(), None, None, None, false)
+        .expect("resolve request");
     assert_eq!(resolved.repo_url, None);
     assert_eq!(resolved.destination, fixture.path());
     assert_eq!(resolved.destination_source, "existing-checkout");
@@ -73,14 +71,9 @@ fn resolve_bootstrap_request_refuses_a_branch_without_a_url() {
 #[test]
 fn resolve_bootstrap_request_requires_an_existing_directory_without_a_url() {
     let fixture = tempfile::tempdir().expect("temp dir");
-    let error = resolve_bootstrap_request(
-        fixture.path(),
-        None,
-        Some(Path::new("missing")),
-        None,
-        true,
-    )
-    .expect_err("missing checkout");
+    let error =
+        resolve_bootstrap_request(fixture.path(), None, Some(Path::new("missing")), None, true)
+            .expect_err("missing checkout");
     assert!(error.to_string().contains("not a directory"), "{error}");
 }
 
@@ -99,8 +92,8 @@ submodules = true
 "#,
     )
     .expect("write manifest");
-    let request =
-        resolve_bootstrap_request(fixture.path(), None, Some(&checkout), None, true).expect("request");
+    let request = resolve_bootstrap_request(fixture.path(), None, Some(&checkout), None, true)
+        .expect("request");
     let plan = plan_bootstrap_request(&request).expect("plan");
     assert!(plan.manifest_found);
     assert_eq!(plan.setup, vec!["workspace:js:prepare", "db:seed"]);
@@ -111,7 +104,10 @@ submodules = true
     assert!(text.contains("clone: no"), "{text}");
     assert!(text.contains("sources: none"), "{text}");
     assert!(text.contains("submodules: recursive init"), "{text}");
-    assert!(text.contains("setup: workspace:js:prepare, db:seed"), "{text}");
+    assert!(
+        text.contains("setup: workspace:js:prepare, db:seed"),
+        "{text}"
+    );
     assert!(text.contains("start: dev"), "{text}");
 
     let json: serde_json::Value =
@@ -127,13 +123,10 @@ fn a_plan_reports_an_unreadable_manifest_without_failing() {
     let fixture = tempfile::tempdir().expect("temp dir");
     let checkout = fixture.path().join("app");
     std::fs::create_dir_all(&checkout).expect("mkdir");
-    std::fs::write(
-        checkout.join("effigy.toml"),
-        "[bootstrap]\nchildren = []\n",
-    )
-    .expect("write manifest");
-    let request =
-        resolve_bootstrap_request(fixture.path(), None, Some(&checkout), None, true).expect("request");
+    std::fs::write(checkout.join("effigy.toml"), "[bootstrap]\nchildren = []\n")
+        .expect("write manifest");
+    let request = resolve_bootstrap_request(fixture.path(), None, Some(&checkout), None, true)
+        .expect("request");
     let plan = plan_bootstrap_request(&request).expect("plan");
     assert!(plan.manifest_found);
     let reason = plan.manifest_unreadable.as_deref().unwrap_or_default();

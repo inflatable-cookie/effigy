@@ -6,12 +6,12 @@ use super::catalog_checks::{
     run_task_references_check,
 };
 use super::graph_checks::run_graph_index_check;
-use super::source_checks::run_pinned_source_drift_check;
 use super::scan_checks::{
     run_attention_markers_check, run_comment_ratio_check, run_duplicate_blocks_check,
     run_generated_assets_check, run_generated_in_src_check, run_god_files_check,
     run_stale_suppressions_check,
 };
+use super::source_checks::run_pinned_source_drift_check;
 use crate::{manifest_snapshot::ManifestSnapshot, DoctorRuntimePorts, DoctorState};
 
 pub(super) struct DoctorCheckContext<'a> {

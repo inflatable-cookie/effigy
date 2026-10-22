@@ -1,10 +1,10 @@
 use super::{command_kind_and_name, help_topic_label};
 use effigy_cli::{
-    BootstrapArgs, BundleArgs, BundleSubcommand, Command, ContainerArgs,
-    ContainerSubcommand, ContractsArgs, ContractsSubcommand, DeployArgs, DeploySubcommand,
-    DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, GraphArgs, GraphSubcommand, HelpTopic,
-    ReleaseArgs, ReleaseSubcommand, SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand,
-    SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs, WorkspaceArgs,
+    BootstrapArgs, BundleArgs, BundleSubcommand, Command, ContainerArgs, ContainerSubcommand,
+    ContractsArgs, ContractsSubcommand, DeployArgs, DeploySubcommand, DoctorArgs, ExecArgs,
+    GatewayArgs, GatewaySubcommand, GraphArgs, GraphSubcommand, HelpTopic, ReleaseArgs,
+    ReleaseSubcommand, SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs,
+    SystemSubcommand, TaskInvocation, TasksArgs, WorkspaceArgs,
 };
 
 #[test]

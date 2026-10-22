@@ -46,10 +46,7 @@ impl PinnedSourceState {
 
     /// States an operator must look at. Nothing is repaired automatically.
     pub fn needs_attention(self) -> bool {
-        matches!(
-            self,
-            Self::Drift | Self::NotCheckout | Self::RemoteMismatch
-        )
+        matches!(self, Self::Drift | Self::NotCheckout | Self::RemoteMismatch)
     }
 }
 
@@ -332,7 +329,10 @@ fn inspect_one(spec: &PinnedSourceSpec) -> Result<PinnedSourceReport, ManifestEr
         report.state = PinnedSourceState::Drift;
         let head = report.head.as_deref().unwrap_or("<unknown>");
         report.detail = Some(if dirty {
-            format!("HEAD {head} is pinned to {} but the checkout has local changes", spec.revision)
+            format!(
+                "HEAD {head} is pinned to {} but the checkout has local changes",
+                spec.revision
+            )
         } else {
             format!("HEAD {head} does not match the pin {}", spec.revision)
         });
@@ -358,10 +358,13 @@ fn git(cwd: Option<&Path>, args: &[&str]) -> Result<String, ManifestError> {
     if let Some(cwd) = cwd {
         command.arg("-C").arg(cwd);
     }
-    let output = command.args(args).output().map_err(|error| ManifestError::Read {
-        path: cwd.map(Path::to_path_buf).unwrap_or_default(),
-        error,
-    })?;
+    let output = command
+        .args(args)
+        .output()
+        .map_err(|error| ManifestError::Read {
+            path: cwd.map(Path::to_path_buf).unwrap_or_default(),
+            error,
+        })?;
     if !output.status.success() {
         return Err(ManifestError::Compose {
             path: cwd.map(Path::to_path_buf).unwrap_or_default(),
@@ -438,10 +441,7 @@ path = "../book"
             specs[0].revision_file.as_deref(),
             Some(dir.path().join("infra/book.rev").as_path())
         );
-        assert_eq!(
-            specs[0].path,
-            normalize(&dir.path().join("../book"))
-        );
+        assert_eq!(specs[0].path, normalize(&dir.path().join("../book")));
 
         std::fs::write(dir.path().join("infra/book.rev"), "one\ntwo\n").expect("write bad rev");
         let error = resolve_pinned_sources(&manifest)

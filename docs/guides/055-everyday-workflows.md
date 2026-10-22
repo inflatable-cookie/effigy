@@ -226,8 +226,8 @@ effigy container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat
 # Dump and push to OCI in one command
 effigy container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --push --json
 
-# Bootstrap a new checkout with an OCI seed
-effigy bootstrap git@github.com:acme/app.git --db-seed app=oci://ghcr.io/acme/seed:v1.0.0
+# Seed a checkout during bootstrap through the repo's own setup task
+effigy bootstrap git@github.com:acme/app.git
 ```
 
 Workflow rules:

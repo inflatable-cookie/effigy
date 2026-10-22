@@ -209,7 +209,11 @@ targets = ["tasks", "containers", "rhai"]
     );
     assert_eq!(bootstrap.start.as_deref(), Some("dev"));
     assert_eq!(
-        manifest.sources.get("platform").expect("platform source").path,
+        manifest
+            .sources
+            .get("platform")
+            .expect("platform source")
+            .path,
         "../platform"
     );
 

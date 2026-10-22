@@ -140,7 +140,10 @@ run = "printf 'start\n' >> order.txt"
         root.clone(),
     )
     .expect("bootstrap --plan");
-    assert!(output.contains("[planned] bootstrap request resolved"), "{output}");
+    assert!(
+        output.contains("[planned] bootstrap request resolved"),
+        "{output}"
+    );
     assert!(output.contains("setup: record-setup"), "{output}");
     assert!(output.contains("start: record-start"), "{output}");
     assert!(!project.join("order.txt").exists());
@@ -184,7 +187,10 @@ run = "exit 7"
     )
     .expect_err("failing setup");
     let message = error.to_string();
-    assert!(message.contains("bootstrap setup task `fails` failed"), "{message}");
+    assert!(
+        message.contains("bootstrap setup task `fails` failed"),
+        "{message}"
+    );
 }
 
 #[test]

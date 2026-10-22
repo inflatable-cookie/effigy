@@ -12,18 +12,17 @@ pub(super) fn validate_sources_section(context: &mut SchemaContext<'_, '_>, valu
     for (name, entry) in sources {
         let path = format!("sources.{name}");
         if name.trim().is_empty() || name.contains('/') || name.contains(':') {
-            context.unsupported_value(
-                &path,
-                "a handle with a '/' or ':'",
-                "a plain source name",
-            );
+            context.unsupported_value(&path, "a handle with a '/' or ':'", "a plain source name");
             continue;
         }
         let Some(table) = require_table(context, &path, entry, "table") else {
             continue;
         };
         for key in table.keys() {
-            if !matches!(key.as_str(), "git" | "rev" | "rev_file" | "rev-file" | "path") {
+            if !matches!(
+                key.as_str(),
+                "git" | "rev" | "rev_file" | "rev-file" | "path"
+            ) {
                 context.unsupported_nested_key(&path, key);
             }
         }

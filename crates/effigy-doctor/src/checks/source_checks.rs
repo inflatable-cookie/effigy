@@ -41,7 +41,10 @@ pub(super) fn run_pinned_source_drift_check(
     if !clean.is_empty() {
         state.add_check_info(
             check_id::PINNED_SOURCES_DRIFT,
-            format!("pinned sources agree with their manifests: {}", clean.join(", ")),
+            format!(
+                "pinned sources agree with their manifests: {}",
+                clean.join(", ")
+            ),
             remediation::NO_ACTION_REQUIRED,
         );
     }
