@@ -836,6 +836,31 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- A Colima profile that reports Running while `containerd`/`buildkit` are
+  stopped is recovered in place: Effigy starts those units inside its own
+  profile, re-probes with a bounded deadline, and otherwise refuses with the
+  profile, both observations and the explicit
+  `effigy container profile repair` / `profile reset-runtime` commands
+  (effigy#264, papercuts `27e54f95` and `5f9db1a0`). It no longer stops or
+  restarts the VM from a task bring-up, which took every stack on the profile
+  down; other profiles are never touched.
+- A linked worktree's container targets resolve the canonical declared TCP
+  backing-service alias (for example `postgres.<site>.test`) to that
+  worktree's own service (effigy#264, lead `5100c68d`). The alias is added to
+  the backing service on the scope's own Compose network next to the scoped
+  name, so it can only ever name this checkout's backing service; the
+  application configuration, the canonical manifest values and the
+  host-visible scoped route are unchanged. Explicit routes keep their
+  precedence, and an alias that would name the host gateway is never added.
+  Host-native execution in a scoped checkout is not covered by this
+  guarantee (contract 005).
+- `proof:containers:isolated-dirs` runs again (effigy#264, papercut
+  `5d15981a`). Its strict fake backend now answers the explicit backend
+  target (`--context`/`--host`), the exact-identity container inventory, the
+  custody helper and the remote registration frame, reports the required
+  `Created` field, and expects the current read-only drift report for missing
+  isolated host mount points. The live holder finishes its own workload
+  instead of being signalled, so its run settles through the production path.
 - Sequential `Terminal::Foreground` children no longer stop their owner with
   SIGTTOU, which suspended `effigy gateway setup` after `mkcert -install`
   ("suspended (tty output)") while it held the `gateway-setup` gate

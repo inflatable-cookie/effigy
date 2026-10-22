@@ -1,7 +1,7 @@
 # 005 - Container Runtime Contract
 
 Owner: Platform
-Last Updated: 2026-10-16
+Last Updated: 2026-10-22
 
 This contract defines the required runtime guarantees for container-backed
 task execution in Effigy.
@@ -1232,10 +1232,17 @@ must not rediscover invocation cwd or handoff state after request construction.
 For Colima-backed `effigy container up`, Compose must not start until the
 runtime is usable. A running VM is not enough: both a profile-scoped
 `nerdctl info` and `buildctl debug workers` inside that profile must succeed.
-A warm profile returns after those probes. If a running profile stays
-unavailable through the bounded grace period, Effigy repairs that profile once
-and probes again; a newly started profile also waits for both probes. Failures
-identify the runtime stage and include the last probe result.
+A warm profile returns after those probes. A running profile that stays
+unavailable through the bounded grace period gets one bounded start of the
+`containerd` and `buildkit` units inside Effigy's own profile, then the same
+probes again. Unit start and the re-probe are both bounded. If the runtime is
+still not ready, Effigy refuses before Compose: the failure names the profile,
+both readiness observations and the explicit
+`effigy container profile repair` and `effigy container profile reset-runtime`
+commands. A task bring-up never stops or restarts the VM, because that would
+take down every stack on the profile; other Colima profiles are never touched.
+A newly started profile also waits for both probes. Failures identify the
+runtime stage and include the last probe result.
 
 After Compose up, Effigy waits before registering gateway routes until the
 runtime reports the matching project and declared service publishing each
@@ -1759,6 +1766,21 @@ That means:
 
 Effigy must not invent a second alias naming scheme for container-local
 resolution.
+
+A linked worktree or marked ephemeral clone is included in the guarantee. Its
+container targets resolve both the canonical declared alias
+(`postgres.<apex>`, the value application configuration carries) and the
+scope's effective alias. The canonical name is
+attached to the backing service on that scope's own Compose project network,
+next to the scoped name, so it can only ever name this checkout's backing
+service. Compose projects, networks and volumes stay per scope; the
+host-visible HTTP route keeps the scoped apex and application configuration is
+never rewritten. An explicit route for the canonical name keeps its precedence
+over the generated alias.
+
+Host-native execution in a scoped checkout is outside this guarantee: a host
+process resolving the canonical alias reaches the host-visible route, which
+belongs to the scope that published it (normally the primary checkout).
 
 ## Fallback ownership
 
