@@ -25,7 +25,6 @@ use super::lifecycle::run_container_exec_capture;
 use super::support::{ensure_shared_services_running, wait_for_container_ready};
 use super::RunnerError;
 use super::{runtime_error_from_runner, runtime_volume_capture};
-use crate::runner::artifact_command::capture_artifact_report;
 use crate::runner::command_context::resolve_active_command_context;
 use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, ActivationRequest,
@@ -37,6 +36,7 @@ use crate::runner::db_seed::{
 };
 use crate::runner::db_services::collect_manifest_database_services;
 use crate::runner::manifest::load_task_manifest;
+use crate::runner::state_command_artifact::capture_artifact_report;
 
 #[path = "data/hooks.rs"]
 mod hooks;
@@ -347,16 +347,18 @@ pub(super) fn run_container_data_dump(
             run_container_exec_capture(repo_root, container_name, service, argv)
         },
         |source, destination, repo_root, push| {
-            capture_artifact_report(crate::runner::artifact_command::ArtifactCaptureRequest {
-                source,
-                destination,
-                kind: Some("sql-dump"),
-                environment_label: None,
-                repo_root,
-                invocation_cwd: repo_root,
-                farmyard_handoff: false,
-                push,
-            })
+            capture_artifact_report(
+                crate::runner::state_command_artifact::ArtifactCaptureRequest {
+                    source,
+                    destination,
+                    kind: Some("sql-dump"),
+                    environment_label: None,
+                    repo_root,
+                    invocation_cwd: repo_root,
+                    farmyard_handoff: false,
+                    push,
+                },
+            )
         },
     )
 }

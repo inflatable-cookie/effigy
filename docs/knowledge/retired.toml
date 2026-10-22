@@ -671,3 +671,24 @@ terms = ["effigy.managed.headless.v1", "ManagedRunSettle", "redacted_secret_valu
 paths = ["crates/effigy-managed/src/runtime/headless.rs", "crates/effigy-managed/src/runtime/redaction.rs"]
 config_keys = []
 allow = ["CHANGELOG.md", "src/runner/managed_run/legacy.rs", "docs/knowledge/contracts/052-runtime-kernel-contract.md"]
+
+[[retired]]
+id = "effigy-artifact-command"
+retired = "2026-10-23 (v0.15, Q-009)"
+replacement = "`effigy state artifact inspect|stage|capture` keeps the moved verbs, their flags and their effigy.artifact.*.v1 payloads; layered captures stay on `effigy state capture`. Rhai scripts call `state::artifact_inspect`, `state::artifact_stage` and `state::artifact_capture`. The effigy-artifacts crate is now the effigy_state::artifact module."
+owner = "docs/knowledge/contracts/014-artifact-substrate-contract.md"
+terms = ["effigy artifact inspect", "effigy artifact stage", "effigy artifact capture", "effigy artefact", "artifact.inspect", "artifact.stage", "artifact.capture"]
+paths = ["crates/effigy-artifacts/", "src/runner/artifact_command.rs", "src/runner/artifact_transport.rs", "crates/effigy-cli/src/command_parsing_artifact.rs", "crates/effigy-cli/src/help/topics/artifact.rs", "src/tests/lib_tests_parse_tests/artifact_option_tests.rs"]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-cli/src/command_parsing.rs",
+  "docs/guides/025-command-reference-matrix.md",
+  "docs/guides/072-artifact-commands-guide.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/architecture/010-package-map.md",
+  "docs/knowledge/contracts/031-artifact-and-crate-boundary-contract.md",
+  "docs/knowledge/questions.md",
+  "skills/effigy/references/built-in-surfaces.md",
+  ".agents/skills/effigy/references/built-in-surfaces.md",
+]

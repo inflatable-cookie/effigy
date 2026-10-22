@@ -1,7 +1,5 @@
 use std::path::PathBuf;
 
-#[path = "command_parsing_artifact.rs"]
-mod artifact;
 #[path = "command_parsing_bootstrap.rs"]
 mod bootstrap;
 #[path = "command_parsing_changelog.rs"]
@@ -37,7 +35,6 @@ use crate::{
     RhaiSubcommand, RunsAction, RunsArgs, SkillArgs, SkillStdioMode, SkillSubcommand,
     TaskInvocation, TasksArgs, TasksQaCommand, UninstallArgs,
 };
-use artifact::parse_artifact_command;
 use bootstrap::parse_bootstrap_command;
 use changelog::parse_changelog_command;
 use container::parse_container_command;
@@ -93,7 +90,6 @@ where
         "skill" => parse_skill_command(args),
         "docs" => parse_docs_command(args),
         "contracts" => parse_contracts_command(args),
-        "artifact" | "artefact" => parse_artifact_command(args),
         "container" => parse_container_command(args),
         "bootstrap" => parse_bootstrap_command(args),
         "uninstall" => parse_uninstall_command(args),
@@ -110,6 +106,9 @@ where
                 None => Ok(Command::Help(HelpTopic::Runs)),
             }
         }
+        "artifact" | "artefact" => Err(CliParseError::InvalidArguments(
+            "`effigy artifact` was removed in v0.15: the standalone data-artifact verbs live under `effigy state artifact inspect|stage|capture`, and layered captures stay on `effigy state capture` (see CHANGELOG.md)".to_owned(),
+        )),
         "drafts" => Err(CliParseError::InvalidArguments(
             "`effigy drafts` was removed in v0.15; use `effigy tasks --all` or `effigy tasks --json`, and move each `[drafts]` definition to `[tasks.<name>]` with `visibility = \"internal\"` (see CHANGELOG.md)".to_owned(),
         )),

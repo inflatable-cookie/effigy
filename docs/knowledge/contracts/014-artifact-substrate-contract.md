@@ -2,7 +2,7 @@
 
 Owner: Platform
 Created: 2026-05-06
-Last Updated: 2026-05-07
+Last Updated: 2026-10-23
 
 ## Purpose
 
@@ -33,10 +33,12 @@ The artifact substrate owns:
 - integration with seed/dump command inputs
 - deterministic handoff into task execution
 
-Current crate ownership:
+Current module ownership:
 
-- `effigy-artifacts` owns artifact refs, OCI refs, staging, apply, capture,
-  metadata, and transport adapter plans.
+- the `effigy_state::artifact` module owns artifact refs, OCI refs, staging,
+  apply, capture, metadata, and transport adapter plans. It was the separate
+  `effigy-artifacts` crate until v0.15 folded it into `effigy-state`, so the
+  `effigy state artifact` command surface and its substrate share one crate.
 - `effigy-data` owns data target resolution, seed/dump source normalization,
   database command plans, and artifact handoff planning for seed/dump flows.
 - runner command modules adapt CLI/bootstrap/container-data surfaces onto
@@ -191,7 +193,8 @@ destinations use the shipped capture/push surface: stage the dump, package
 metadata, optionally push the artifact, and report the immutable digest.
 
 Seed/dump target selection and database command rendering belong to
-`effigy-data`. Artifact transport and staging belong to `effigy-artifacts`.
+`effigy-data`. Artifact transport and staging belong to
+`effigy_state::artifact`.
 Runner code must not bypass those plans for `oci://` inputs or outputs.
 
 ## UAT and Deployment Rules
@@ -240,9 +243,14 @@ Write-side OCI behavior must be explicit and two-phase by default.
 Command shape:
 
 ```sh
-effigy artifact capture <SOURCE_PATH|DIR> --ref oci://<REF> [--kind <KIND>] [--environment <LABEL>] [--push]
+effigy state artifact capture <SOURCE_PATH|DIR> --ref oci://<REF> [--kind <KIND>] [--environment <LABEL>] [--push]
 effigy container data dump <TARGET>=oci://<REF> [--push]
 ```
+
+The standalone artifact verbs moved from the retired top-level `effigy artifact`
+command to `effigy state artifact inspect|stage|capture` in v0.15. Behaviour,
+flags, and payload schemas are unchanged; `effigy artifact` fails with the
+replacement. Layered captures remain `effigy state capture`.
 
 Implementation rule:
 
@@ -259,7 +267,7 @@ Implementation rule:
   surface, after inspecting the staged report:
 
 ```sh
-effigy artifact capture <LOCAL_DUMP_PATH> --ref oci://<REF> --push
+effigy state artifact capture <LOCAL_DUMP_PATH> --ref oci://<REF> --push
 ```
 
 One-command dump-and-push must remain opt-in. It must not become the automation
@@ -347,7 +355,7 @@ Update this contract when:
 - seed/dump integration changes
 - UAT apply/capture semantics change
 - artifact operation ledger fields change
-- the boundary between `effigy-data` and `effigy-artifacts` changes
+- the boundary between `effigy-data` and `effigy_state::artifact` changes
 - runtime operation pipeline rules change in
   `015-runtime-operation-pipeline-contract.md`
 

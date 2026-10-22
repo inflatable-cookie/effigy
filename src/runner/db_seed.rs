@@ -4,11 +4,6 @@ use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use effigy_artifacts::{
-    stage_local_artifact, stage_oci_artifact, ArtifactSourceRef, LocalArtifactRef,
-    LocalArtifactStagingRequest, OciArtifactAdapter, OciArtifactPullRequest,
-    OciArtifactStagingRequest,
-};
 use effigy_bootstrap::BootstrapStagedDbSeed;
 use effigy_cli::BootstrapDbSeedInput;
 use effigy_data::{
@@ -22,9 +17,13 @@ use effigy_data::{
 use effigy_execution::ExecutionSurface;
 use effigy_manifest::{ManifestContainerServiceConfig, TASK_MANIFEST_FILE};
 use effigy_runtime_plan::{RuntimeActivationPlan, RuntimeActivationRoute};
+use effigy_state::artifact::{
+    stage_local_artifact, stage_oci_artifact, ArtifactSourceRef, LocalArtifactRef,
+    LocalArtifactStagingRequest, OciArtifactAdapter, OciArtifactPullRequest,
+    OciArtifactStagingRequest,
+};
 use serde_json::json;
 
-use crate::runner::artifact_transport::{infer_kind_from_primary_files, OrasCliArtifactAdapter};
 use crate::runner::container_command::run_container_exec_capture_with_options;
 use crate::runner::container_runtime_prep::{
     activate_container_runtime_for_task, build_runtime_activation_plan, ActivationRequest,
@@ -35,6 +34,7 @@ use crate::runner::execute::api::{
 };
 use crate::runner::manifest::load_task_manifest;
 use crate::runner::runtime_session_context::{with_runtime_session_context, RuntimeSessionContext};
+use effigy_state::artifact::{infer_kind_from_primary_files, OrasCliArtifactAdapter};
 
 use super::error::RunnerError;
 use effigy_cli::TaskInvocation;
@@ -419,7 +419,7 @@ fn stage_seed_artifact(
     repo_root: &Path,
     plan: &DataSeedPlan,
     adapter: &dyn OciArtifactAdapter,
-) -> Result<effigy_artifacts::StagedArtifactReport, RunnerError> {
+) -> Result<effigy_state::artifact::StagedArtifactReport, RunnerError> {
     let handoff = plan.artifact_handoff.as_ref().ok_or_else(|| {
         RunnerError::task_invocation("db seed plan is missing an artifact handoff")
     })?;
@@ -1111,14 +1111,14 @@ mod tests {
         stage_db_seed_files_with_adapter, SeedMetadataEntry, DB_SEEDS_DIR, DB_SEEDS_METADATA_FILE,
         LEGACY_BOOTSTRAP_DB_SEEDS_METADATA_FILE,
     };
-    use effigy_artifacts::{
+    use effigy_cli::BootstrapDbSeedInput;
+    use effigy_manifest::TaskManifest;
+    use effigy_runtime_plan::{RuntimeActivationRoute, RuntimeLeasePolicy};
+    use effigy_state::artifact::{
         OciArtifactAdapter, OciArtifactDescriptor, OciArtifactError, OciArtifactInspectRequest,
         OciArtifactPullReport, OciArtifactPullRequest, OciArtifactPushReport,
         OciArtifactPushRequest,
     };
-    use effigy_cli::BootstrapDbSeedInput;
-    use effigy_manifest::TaskManifest;
-    use effigy_runtime_plan::{RuntimeActivationRoute, RuntimeLeasePolicy};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};

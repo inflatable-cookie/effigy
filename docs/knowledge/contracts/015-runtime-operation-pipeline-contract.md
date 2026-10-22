@@ -23,7 +23,7 @@ Effigy has four runtime operation pipeline families.
 | Execution pipeline | `effigy-execution` plus runner dispatch adapters | Task and command request construction, surface identity, runtime policy, output mode, environment plan, and resolved route. |
 | Runtime activation pipeline | `effigy-runtime-plan` plus `src/runner/container_runtime_prep/*` side-effect stages | Runtime prep identity, readiness, gateway/alias reconciliation, lease policy, and activation report shape. |
 | Container operation pipeline | `effigy-containers` plus `effigy-runtime` adapters | Lifecycle, read, exec/shell, data/cache operation intent, safety policy, backend invocation boundary, and operation reports. |
-| Artifact/data pipeline | `effigy-data` and `effigy-artifacts` plus runner command adapters | DB target resolution, seed/dump source and destination normalization, database command plans, OCI/local artifact staging, capture, and apply handoff. |
+| Artifact/data pipeline | `effigy-data` and `effigy_state::artifact` plus runner command adapters | DB target resolution, seed/dump source and destination normalization, database command plans, OCI/local artifact staging, capture, and apply handoff. |
 
 These pipelines are composition seams, not dynamic plugins. Adding a feature
 should usually add a request/plan/adapter path, not another caller-local branch.
@@ -113,7 +113,8 @@ command code should not branch on Docker Compose versus Colima/nerdctl.
 
 Data planning belongs to `effigy-data`.
 
-Artifact transport, staging, apply, and capture belong to `effigy-artifacts`.
+Artifact transport, staging, apply, and capture belong to
+`effigy_state::artifact`.
 
 Seed and dump surfaces must treat local files and `oci://` refs as typed
 sources or destinations. Env vars may exist as compatibility shims, but source

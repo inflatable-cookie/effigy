@@ -86,7 +86,7 @@ Current shared ownership should converge around:
 | Runtime activation side effects | `src/runner/container_runtime_prep/*` stage adapters |
 | Container operation planning | `effigy-containers`; contract `015-runtime-operation-pipeline-contract.md` |
 | Container backend operations | `effigy-containers` and `effigy-runtime` adapters |
-| Data seed/dump planning | `effigy-data`; artifact transport through `effigy-artifacts` |
+| Data seed/dump planning | `effigy-data`; artifact transport through `effigy_state::artifact` |
 | Handoff marker and recursion guard | `src/runner/container_runtime.rs` |
 | Interactive workspace/session ownership | shared session-ownership helper under `src/runner/system_command/workspace.rs` or adjacent shared runner module |
 | Gateway route reconciliation | `src/runner/container_command/gateway_registration.rs` |
@@ -297,5 +297,5 @@ Minimum proof areas:
   `stay_in_shell`
 - unsupported inline-container failure-family parity
 - container data seed/dump local and `oci://` parity through `effigy-data` and
-  `effigy-artifacts`
+  `effigy_state::artifact`
 - drift guard coverage from `effigy qa:architecture:runtime-container-drift`

@@ -4,7 +4,6 @@ use effigy_execution::{ExecutionSurface, TaskExecutionRequestBuilder};
 use std::path::Path;
 
 use super::super::doctor_ports::RunnerDoctorPorts;
-use super::super::run_artifact;
 use super::super::run_bundle;
 use super::super::run_changelog;
 use super::super::run_container_command;
@@ -84,7 +83,6 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
     match cmd {
         Command::Version => Ok(String::new()),
         Command::Bundle(args) => run_bundle(args),
-        Command::Artifact(args) => run_artifact(args),
         Command::Help(_) | Command::HelpGroup(_) => Ok(String::new()),
         Command::Changelog(args) => run_changelog(args),
         Command::Deploy(args) => run_deploy(args),

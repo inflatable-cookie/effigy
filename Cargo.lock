@@ -753,7 +753,6 @@ dependencies = [
  "bytes",
  "chrono",
  "crossterm",
- "effigy-artifacts",
  "effigy-bootstrap",
  "effigy-builtin",
  "effigy-catalog",
@@ -813,14 +812,6 @@ dependencies = [
  "vt100",
  "walkdir",
  "yaml_serde",
-]
-
-[[package]]
-name = "effigy-artifacts"
-version = "0.14.1"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -1283,7 +1274,6 @@ dependencies = [
 name = "effigy-state"
 version = "0.14.1"
 dependencies = [
- "effigy-artifacts",
  "effigy-manifest",
  "serde",
  "serde_json",

@@ -16,7 +16,7 @@ places where direct lower-level calls need care.
 | `effigy-containers` | effective policy, Compose assembly, manager and operation plans |
 | `effigy-runtime` | runtime read, write, data, and shell adapters |
 | `effigy-data` | database service selection and SQL seed/dump plans |
-| `effigy-artifacts` | local and OCI artifact references, staging, capture, apply |
+| `effigy-state` (`artifact` module) | local and OCI artifact references, staging, capture, apply |
 | `effigy-rhai` | script host API modules and typed callbacks |
 | runner | CLI dispatch, prompts, side effects, rendering, cleanup |
 
@@ -65,7 +65,7 @@ Docker/Colima selection logic.
 ### Data seed and dump
 
 `effigy-data` classifies database services, selects logical targets, and builds
-seed/dump commands. `effigy-artifacts` handles local versus OCI sources and
+seed/dump commands. `effigy_state::artifact` handles local versus OCI sources and
 destinations. Runner adapters prompt, stage or capture artifacts, perform
 container exec or task dispatch, and render reports. `--push` is the explicit
 publication boundary for OCI dumps. Secret values never enter report payloads.
@@ -137,7 +137,7 @@ existing adapter rather than shelling out directly from a command handler.
 ### Artifact and data
 
 `effigy-data` owns service and target resolution, command plans, and source or
-destination intent. `effigy-artifacts` owns artifact identity and transport.
+destination intent. `effigy_state::artifact` owns artifact identity and transport.
 The runner invokes those plans and handles credentials through the approved
 secret boundary, never by copying them into JSON or diagnostics.
 

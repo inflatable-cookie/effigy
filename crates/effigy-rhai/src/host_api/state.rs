@@ -6,8 +6,9 @@ use serde_json::Value;
 use crate::surface::MODULE_STATE;
 
 use super::{
-    module_feature_no_args, module_feature_options, module_feature_string, rhai_runtime_error,
-    run_feature_dynamic, HostCallbacks, ScriptContext,
+    map_to_json, module_feature_no_args, module_feature_options, module_feature_string,
+    module_feature_string_options, rhai_runtime_error, run_feature_dynamic, HostCallbacks,
+    ScriptContext,
 };
 
 pub(super) fn register_state_module(
@@ -175,6 +176,63 @@ fn build_state_module(context: Arc<ScriptContext>, callbacks: HostCallbacks) -> 
         move || -> Result<String, Box<EvalAltResult>> {
             required_state_path_env(&apply_context_path_reader.cwd, "EFFIGY_STATE_APPLY_CONTEXT")
                 .map(|path| path.display().to_string())
+        },
+    );
+    module_feature_string_options(
+        &mut module,
+        "artifact_inspect",
+        crate::surface::FEATURE_STATE_ARTIFACT_INSPECT,
+        "source",
+        context.clone(),
+        callbacks.clone(),
+    );
+    module_feature_string_options(
+        &mut module,
+        "artifact_stage",
+        crate::surface::FEATURE_STATE_ARTIFACT_STAGE,
+        "source",
+        context.clone(),
+        callbacks.clone(),
+    );
+    let artifact_capture_context = context.clone();
+    let artifact_capture_callbacks = callbacks.clone();
+    module.set_native_fn(
+        "artifact_capture",
+        move |source: ImmutableString,
+              destination: ImmutableString|
+              -> Result<Dynamic, Box<EvalAltResult>> {
+            super::run_feature_dynamic(
+                &artifact_capture_context,
+                &artifact_capture_callbacks,
+                crate::surface::FEATURE_STATE_ARTIFACT_CAPTURE,
+                serde_json::json!({
+                    "source": source.as_str(),
+                    "destination": destination.as_str(),
+                }),
+            )
+        },
+    );
+    module.set_native_fn(
+        "artifact_capture",
+        move |source: ImmutableString,
+              destination: ImmutableString,
+              options: Map|
+              -> Result<Dynamic, Box<EvalAltResult>> {
+            let mut options = match map_to_json(options)? {
+                serde_json::Value::Object(options) => options,
+                _ => unreachable!("Rhai map_to_json must produce a JSON object"),
+            };
+            options.insert("source".to_owned(), serde_json::json!(source.as_str()));
+            options.insert(
+                "destination".to_owned(),
+                serde_json::json!(destination.as_str()),
+            );
+            super::run_feature_dynamic(
+                &context,
+                &callbacks,
+                crate::surface::FEATURE_STATE_ARTIFACT_CAPTURE,
+                serde_json::Value::Object(options),
+            )
         },
     );
     module.set_native_fn(

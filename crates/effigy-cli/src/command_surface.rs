@@ -172,10 +172,6 @@ pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
         command_name: Some("contracts"),
     },
     CommandDescriptor {
-        topic: HelpTopic::Artifact,
-        command_name: None,
-    },
-    CommandDescriptor {
         topic: HelpTopic::Container,
         command_name: Some("container"),
     },
@@ -353,15 +349,8 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
     // ---- deliver ------------------------------------------------------------
     GeneralHelpEntry {
         group: HelpGroup::Deliver,
-        command: "effigy artifact",
-        description: "Inspect and stage standalone seed/apply/capture data artifacts",
-        deferred_builtin: Some("artifact"),
-        help_argument: Some("artifact"),
-    },
-    GeneralHelpEntry {
-        group: HelpGroup::Deliver,
         command: "effigy state",
-        description: "Plan layered state-stack manifests and lineage without executing app hooks",
+        description: "Plan layered state stacks, and inspect, stage, or capture data artifacts",
         deferred_builtin: None,
         help_argument: Some("state"),
     },
@@ -479,7 +468,6 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
 /// Every pair must render the same facts as `effigy <command> --help`; the
 /// parity test in this module parses both forms and compares them.
 pub const HELP_COMMAND_TOPICS: &[(&str, HelpTopic)] = &[
-    ("artifact", HelpTopic::Artifact),
     ("bootstrap", HelpTopic::Bootstrap),
     ("bundle", HelpTopic::Bundle),
     ("changelog", HelpTopic::Changelog),

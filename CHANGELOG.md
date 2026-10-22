@@ -229,6 +229,13 @@ During v0.x, MINOR bumps may include breaking changes.
   status staleness. They are never read for exclusion or deleted; a live
   v0.14 holder still refuses its task until it exits, and `effigy doctor`
   lists the families still present.
+- The top-level `effigy artifact` command and the Rhai `artifact` module
+  (Q-009). `inspect`, `stage` and `capture` moved unchanged, same flags and
+  same `effigy.artifact.inspect|stage|capture.v1` payloads, to
+  `effigy state artifact` beside layered `effigy state capture`. Rhai scripts
+  call `state::artifact_inspect|artifact_stage|artifact_capture`. The old
+  command fails with that replacement. `crates/effigy-artifacts` folded into
+  `effigy-state` as the `artifact` module, one crate fewer.
 
 ### Added
 - `test:focused` runs a focused Rust test selection through Cargo with

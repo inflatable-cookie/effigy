@@ -1,4 +1,4 @@
-use effigy_artifacts::ArtifactKind;
+use crate::artifact::ArtifactKind;
 use serde::{Deserialize, Serialize};
 
 use crate::{

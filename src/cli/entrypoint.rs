@@ -172,7 +172,6 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::Skill(_)
         | Command::Docs(_)
         | Command::Contracts(_)
-        | Command::Artifact(_)
         | Command::Container(_)
         | Command::Bootstrap(_)
         | Command::Uninstall(_)

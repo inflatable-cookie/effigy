@@ -123,8 +123,8 @@ effigy doctor --verbose
 
 ### OCI artifacts (optional)
 
-If you use `data dump --push`, `data seed` with OCI refs, or `effigy artifact`
-commands, install `oras`:
+If you use `data dump --push`, `data seed` with OCI refs, or
+`effigy state artifact` commands, install `oras`:
 
 ```bash
 brew install oras

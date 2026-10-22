@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
-use effigy_artifacts::ArtifactRefError;
+use crate::artifact::ArtifactRefError;
 
 use crate::{
     model::STATE_STACK_SCHEMA, StateEnvironment, StateLayerApplyMode, StateLayerEnvironmentPolicy,

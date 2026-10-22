@@ -1,6 +1,6 @@
-use crate::errors::OciArtifactError;
-use crate::refs::OciArtifactRef;
-use crate::util::{digest_from_ref, path_relative_to_root, safe_oci_pull_dir_name};
+use super::errors::OciArtifactError;
+use super::refs::OciArtifactRef;
+use super::util::{digest_from_ref, path_relative_to_root, safe_oci_pull_dir_name};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
