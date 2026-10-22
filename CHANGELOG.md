@@ -190,6 +190,13 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- `effigy system` is retired (Q-009). `effigy container [<NAME>] up|down|status|logs`
+  is the environment lifecycle surface, and `effigy container profile repair`
+  and `effigy container profile reset-runtime` replace `system repair` and
+  `system reset-runtime` with the same refusals and `effigy.system.recover.v1`
+  JSON. A retired spelling refuses with its exact replacement and points at
+  this entry. The Rhai `system::status` and `system::logs` functions are gone.
+  `[systems]`, `effigy workspace` and `effigy exec` are unchanged.
 - Retire the host-run client: `src/runner/host_scheduler`, the
   `effigy-host-run` crate, `HOST_RUN_TOKEN`/`HOST_RUN_ID` parent tokens,
   `EFFIGY_SCHEDULER_OVERRIDE`, `EFFIGY_HOST_RUN_ROOT`, the private-parent
@@ -576,6 +583,11 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- `effigy container` without a name resolves `[containers].default` and then the
+  `[systems].default` workspace container, so a repo that declares only
+  `[systems]` targets the environment its tasks use. `--system <NAME>` selects
+  one declared system for `up`, `down`, `status`, `logs` and the `profile`
+  recovery verbs; naming a container and passing `--system` together is refused.
 - Effigy's own repository builds through Oxide. Selectors run Cargo through
   `scripts/oxide-selector.sh`, which leases Oxide's shared slot pool so Rust
   intermediates stay off the internal SSD, and `scripts/effigy-selfbuild.sh`

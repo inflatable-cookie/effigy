@@ -132,10 +132,6 @@ pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
         command_name: None,
     },
     CommandDescriptor {
-        topic: HelpTopic::System,
-        command_name: Some("system"),
-    },
-    CommandDescriptor {
         topic: HelpTopic::Workspace,
         command_name: Some("workspace"),
     },
@@ -293,13 +289,6 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
         description: "Operate manifest-defined local container environments",
         deferred_builtin: Some("container"),
         help_argument: Some("container"),
-    },
-    GeneralHelpEntry {
-        group: HelpGroup::Local,
-        command: "effigy system",
-        description: "Operate the manifest default system substrate through its default workspace container",
-        deferred_builtin: Some("system"),
-        help_argument: Some("system"),
     },
     GeneralHelpEntry {
         group: HelpGroup::Local,
@@ -512,7 +501,6 @@ pub const HELP_COMMAND_TOPICS: &[(&str, HelpTopic)] = &[
     ("service", HelpTopic::Service),
     ("skill", HelpTopic::Skill),
     ("state", HelpTopic::State),
-    ("system", HelpTopic::System),
     ("runs", HelpTopic::Runs),
     ("tasks", HelpTopic::Tasks),
     ("test", HelpTopic::Test),

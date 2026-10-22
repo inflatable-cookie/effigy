@@ -168,11 +168,11 @@ these callers. `deny.toml` remains the dependency policy authority.
 
 | Module | Responsibility |
 | --- | --- |
-| [`src/runner/system_command/workspace_session.rs`](../../../src/runner/system_command/workspace_session.rs) | public workspace session lifecycle, ownership classification, shell-plus-cleanup combination |
-| [`src/runner/system_command/workspace_provisioning.rs`](../../../src/runner/system_command/workspace_provisioning.rs) | workspace artifact install, permission-prep progress, linux workspace binary provisioning |
-| [`src/runner/system_command/workspace_permissions.rs`](../../../src/runner/system_command/workspace_permissions.rs) | resolved-user rust/cache permission prep, non-root write/lock verification, read-only doctor diagnosis; compose exec goes through the manager invocation plan |
-| [`src/runner/system_command/workspace_permissions_gnu_accept.rs`](../../../src/runner/system_command/workspace_permissions_gnu_accept.rs) | private ignored GNU-findutils Colima acceptance fixture; not a production compose or raw-runtime adapter |
-| [`src/runner/system_command/workspace.rs`](../../../src/runner/system_command/workspace/mod.rs) | command-surface glue, workspace handoff shell, residual session helpers, shutdown/render helpers |
+| [`src/runner/workspace_command/session.rs`](../../../src/runner/workspace_command/session.rs) | public workspace session lifecycle, ownership classification, shell-plus-cleanup combination |
+| [`src/runner/workspace_command/provisioning.rs`](../../../src/runner/workspace_command/provisioning.rs) | workspace artifact install, permission-prep progress, linux workspace binary provisioning |
+| [`src/runner/workspace_command/permissions.rs`](../../../src/runner/workspace_command/permissions.rs) | resolved-user rust/cache permission prep, non-root write/lock verification, read-only doctor diagnosis; compose exec goes through the manager invocation plan |
+| [`src/runner/workspace_command/permissions_gnu_accept.rs`](../../../src/runner/workspace_command/permissions_gnu_accept.rs) | private ignored GNU-findutils Colima acceptance fixture; not a production compose or raw-runtime adapter |
+| [`src/runner/workspace_command/mod.rs`](../../../src/runner/workspace_command/mod.rs) | command-surface glue, workspace handoff shell, residual session helpers, shutdown/render helpers |
 | [`src/runner/interactive_session.rs`](../../../src/runner/interactive_session.rs) | shared interactive ownership classification model |
 
 ### Gateway/runtime exposure

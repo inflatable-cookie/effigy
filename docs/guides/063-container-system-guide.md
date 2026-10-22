@@ -13,7 +13,7 @@ Use:
 - this guide for the direct `effigy container ...` commands and container
   manifest shape
 - [`064-system-workspace-and-dev-contract.md`](064-system-workspace-and-dev-contract.md)
-  for the model behind `system`, `workspace`, and `dev`
+  for the model behind `container`, `[systems]`, `workspace`, and `dev`
 - [`067-catalog-services-reference.md`](067-catalog-services-reference.md)
   for the shipped service catalog inputs
 
@@ -365,11 +365,12 @@ Use `container` when you want to:
 - bring a declared local environment up or down directly
 - inspect logs or open a shell in one container service
 - export, import or reset environment data
-- operate a simple compose-backed repo without the fuller `system` setup
+- operate a simple compose-backed repo without the fuller systems and
+  workspaces wiring
 
 If the question is instead:
 
-- how should `dev`, `system`, and `workspace` fit together?
+- how should `dev`, `[systems]`, and `workspace` fit together?
   - use [`064`](064-system-workspace-and-dev-contract.md)
 - which service inputs does a catalog support?
   - use [`067`](067-catalog-services-reference.md)
@@ -1798,5 +1799,5 @@ Still intentionally narrow:
 ## Next Step
 
 Use this page when deciding whether a repo should stay on direct
-`effigy container ...` commands or move to the broader `system` and
+`effigy container ...` commands or move to the broader systems and
 `workspace` model.

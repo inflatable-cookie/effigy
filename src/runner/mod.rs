@@ -54,13 +54,13 @@ mod service_command;
 mod skill_command;
 mod state_command;
 mod state_command_render;
-mod system_command;
 mod task_engine;
 mod tasks_command;
 #[cfg(test)]
 mod test_support;
 mod uninstall_command;
 mod util;
+mod workspace_command;
 
 pub(in crate::runner) use artifact_command::run_artifact;
 pub(in crate::runner) use bundle_command::run_bundle;
@@ -95,10 +95,10 @@ pub(in crate::runner) use secrets_command::run_secrets;
 pub(in crate::runner) use service_command::run_service;
 pub(in crate::runner) use skill_command::{run_skill, run_skill_passthrough};
 pub(in crate::runner) use state_command::run_state;
-pub(in crate::runner) use system_command::{run_system, run_workspace};
 pub use task_engine::{adopt_signal_router, capture_startup_executable, run_internal_kernel_entry};
 pub(in crate::runner) use tasks_command::run_tasks;
 pub(in crate::runner) use uninstall_command::run_uninstall;
+pub(in crate::runner) use workspace_command::run_workspace;
 
 #[cfg(test)]
 #[path = "../tests/runner_tests.rs"]

@@ -13,7 +13,6 @@ pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf>
         Command::Defer(args) => args.repo_override.clone(),
         Command::Exec(args) => args.repo_override.clone(),
         Command::State(args) => args.repo_override.clone(),
-        Command::System(args) => args.repo_override.clone(),
         Command::Workspace(args) => args.repo_override.clone(),
         Command::Gateway(_) => None,
         Command::Service(args) => args.repo_override.clone(),
@@ -65,7 +64,6 @@ pub(in crate::runner) fn apply_repo_target_to_embedded_command(
         Command::Defer(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Exec(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::State(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
-        Command::System(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Workspace(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Service(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Demo(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
@@ -216,6 +214,7 @@ mod tests {
         let command = Command::Container(ContainerArgs {
             subcommand: ContainerSubcommand::Status {
                 name: None,
+                system: None,
                 global: true,
             },
             repo_override: None,

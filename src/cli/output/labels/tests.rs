@@ -4,8 +4,8 @@ use effigy_cli::{
     ContainerSubcommand, ContractsArgs, ContractsSubcommand, DemoArgs, DemoListQuery,
     DemoSubcommand, DeployArgs, DeploySubcommand, DoctorArgs, ExecArgs, GatewayArgs,
     GatewaySubcommand, GraphArgs, GraphSubcommand, HelpTopic, ReleaseArgs, ReleaseSubcommand,
-    SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand,
-    TaskInvocation, TasksArgs, WorkspaceArgs,
+    SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand, TaskInvocation, TasksArgs,
+    WorkspaceArgs,
 };
 
 #[test]
@@ -18,7 +18,6 @@ fn help_topic_label_maps_all_topics() {
     assert_eq!(help_topic_label(HelpTopic::Exec), "exec");
     assert_eq!(help_topic_label(HelpTopic::Secrets), "secrets");
     assert_eq!(help_topic_label(HelpTopic::State), "state");
-    assert_eq!(help_topic_label(HelpTopic::System), "system");
     assert_eq!(help_topic_label(HelpTopic::Workspace), "workspace");
     assert_eq!(help_topic_label(HelpTopic::Gateway), "gateway");
     assert_eq!(help_topic_label(HelpTopic::Service), "service");
@@ -62,12 +61,6 @@ fn command_kind_and_name_maps_command_variants() {
     });
     let service = Command::Service(ServiceArgs {
         subcommand: ServiceSubcommand::List,
-        repo_override: None,
-        output_json: false,
-    });
-    let system = Command::System(SystemArgs {
-        subcommand: SystemSubcommand::Status,
-        system: None,
         repo_override: None,
         output_json: false,
     });
@@ -132,6 +125,7 @@ fn command_kind_and_name_maps_command_variants() {
     let container = Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Status {
             name: None,
+            system: None,
             global: false,
         },
         repo_override: None,
@@ -175,10 +169,6 @@ fn command_kind_and_name_maps_command_variants() {
     assert_eq!(
         command_kind_and_name(&secrets),
         ("secrets", "secrets".to_owned())
-    );
-    assert_eq!(
-        command_kind_and_name(&system),
-        ("system", "system".to_owned())
     );
     assert_eq!(
         command_kind_and_name(&workspace),

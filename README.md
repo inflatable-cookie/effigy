@@ -350,7 +350,7 @@ effigy --json test --plan | jq -r '.result.targets[].name'
 effigy --json doctor          # Machine-readable health check
 ```
 
-Finite `system logs --json` and `container <NAME> logs --json` snapshots support JSON; their `--follow` modes reject it. Graph commands emit one JSON document. `workspace` and interactive `container shell` have no JSON form; finite shell capture requires bounded mode and its deadline and byte limits.
+Finite `container logs --json` and `container <NAME> logs --json` snapshots support JSON; their `--follow` modes reject it. Graph commands emit one JSON document. `workspace` and interactive `container shell` have no JSON form; finite shell capture requires bounded mode and its deadline and byte limits.
 
 ### One-Command Repo Bring-Up
 

@@ -1,7 +1,6 @@
 use crate::tests::prelude::{
     parse_command, Command, ContainerArgs, ContainerSubcommand, DeferArgs, ExecArgs, HelpTopic,
-    PathBuf, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand, TaskInvocation,
-    UninstallArgs, WorkspaceArgs,
+    PathBuf, ServiceArgs, ServiceSubcommand, TaskInvocation, UninstallArgs, WorkspaceArgs,
 };
 use effigy_cli::{
     BootstrapDbSeedInput, BundleArgs, BundleSubcommand, ContainerCacheSubcommand,
@@ -421,6 +420,7 @@ fn parse_container_status_global_is_supported() {
         Command::Container(ContainerArgs {
             subcommand: ContainerSubcommand::Status {
                 name: None,
+                system: None,
                 global: true,
             },
             repo_override: None,
@@ -443,6 +443,7 @@ fn parse_container_down_global_is_supported() {
         Command::Container(ContainerArgs {
             subcommand: ContainerSubcommand::Down {
                 name: None,
+                system: None,
                 global: true,
             },
             repo_override: None,
@@ -1291,9 +1292,9 @@ fn parse_container_data_dump_accepts_push_for_oci_destinations() {
 }
 
 #[test]
-fn parse_system_up_supports_repo_and_system_override() {
+fn parse_container_up_accepts_system_override() {
     let cmd = parse_command(vec![
-        "system".to_owned(),
+        "container".to_owned(),
         "up".to_owned(),
         "--system".to_owned(),
         "dev".to_owned(),
@@ -1304,9 +1305,13 @@ fn parse_system_up_supports_repo_and_system_override() {
     .expect("parse should succeed");
     assert_eq!(
         cmd,
-        Command::System(SystemArgs {
-            subcommand: SystemSubcommand::Up,
-            system: Some("dev".to_owned()),
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Up {
+                name: None,
+                system: Some("dev".to_owned()),
+                attach: false,
+                detach: false,
+            },
             repo_override: Some(PathBuf::from("demo")),
             output_json: true,
         })
@@ -1314,18 +1319,24 @@ fn parse_system_up_supports_repo_and_system_override() {
 }
 
 #[test]
-fn parse_system_logs_supports_follow() {
+fn parse_container_logs_supports_follow_and_system_override() {
     let cmd = parse_command(vec![
-        "system".to_owned(),
+        "container".to_owned(),
         "logs".to_owned(),
+        "--system".to_owned(),
+        "dev".to_owned(),
         "--follow".to_owned(),
     ])
     .expect("parse should succeed");
     assert_eq!(
         cmd,
-        Command::System(SystemArgs {
-            subcommand: SystemSubcommand::Logs { follow: true },
-            system: None,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Logs {
+                name: None,
+                system: Some("dev".to_owned()),
+                service: None,
+                follow: true,
+            },
             repo_override: None,
             output_json: false,
         })
@@ -1333,9 +1344,10 @@ fn parse_system_logs_supports_follow() {
 }
 
 #[test]
-fn parse_system_repair_supports_repo_and_system_override() {
+fn parse_container_profile_repair_keeps_system_and_repo_selection() {
     let cmd = parse_command(vec![
-        "system".to_owned(),
+        "container".to_owned(),
+        "profile".to_owned(),
         "repair".to_owned(),
         "--system".to_owned(),
         "dev".to_owned(),
@@ -1345,9 +1357,12 @@ fn parse_system_repair_supports_repo_and_system_override() {
     .expect("parse should succeed");
     assert_eq!(
         cmd,
-        Command::System(SystemArgs {
-            subcommand: SystemSubcommand::Repair,
-            system: Some("dev".to_owned()),
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Profile {
+                subcommand: ContainerProfileSubcommand::Repair {
+                    system: Some("dev".to_owned()),
+                },
+            },
             repo_override: Some(PathBuf::from("demo")),
             output_json: false,
         })
@@ -1355,9 +1370,10 @@ fn parse_system_repair_supports_repo_and_system_override() {
 }
 
 #[test]
-fn parse_system_reset_runtime_supports_repo_and_system_override() {
+fn parse_container_profile_reset_runtime_keeps_system_and_repo_selection() {
     let cmd = parse_command(vec![
-        "system".to_owned(),
+        "container".to_owned(),
+        "profile".to_owned(),
         "reset-runtime".to_owned(),
         "--system".to_owned(),
         "dev".to_owned(),
@@ -1367,13 +1383,51 @@ fn parse_system_reset_runtime_supports_repo_and_system_override() {
     .expect("parse should succeed");
     assert_eq!(
         cmd,
-        Command::System(SystemArgs {
-            subcommand: SystemSubcommand::ResetRuntime,
-            system: Some("dev".to_owned()),
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Profile {
+                subcommand: ContainerProfileSubcommand::ResetRuntime {
+                    system: Some("dev".to_owned()),
+                },
+            },
             repo_override: Some(PathBuf::from("demo")),
             output_json: false,
         })
     );
+}
+
+#[test]
+fn parse_system_names_the_container_replacement_for_each_subcommand() {
+    for (subcommand, replacement) in [
+        ("up", "effigy container up"),
+        ("down", "effigy container down"),
+        ("status", "effigy container status"),
+        ("logs", "effigy container logs"),
+        ("repair", "effigy container profile repair"),
+        ("reset-runtime", "effigy container profile reset-runtime"),
+    ] {
+        let error = parse_command(vec!["system".to_owned(), subcommand.to_owned()])
+            .expect_err("retired command should refuse");
+        let message = error.to_string();
+        assert!(
+            message.contains("`effigy system` is retired in v0.15"),
+            "{subcommand}: {message}"
+        );
+        assert!(message.contains(replacement), "{subcommand}: {message}");
+    }
+}
+
+#[test]
+fn parse_container_rejects_a_named_container_with_system_selection() {
+    let error = parse_command(vec![
+        "web".to_owned(),
+        "up".to_owned(),
+        "--system".to_owned(),
+        "dev".to_owned(),
+    ])
+    .expect_err("named container cannot also select a system");
+    assert!(error
+        .to_string()
+        .contains("does not accept `--system`; the container is already named"));
 }
 
 #[test]

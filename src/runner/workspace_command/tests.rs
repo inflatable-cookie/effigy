@@ -9,8 +9,9 @@ use crate::runner::interactive_session::{
 use crate::runner::runtime_session_context::{
     with_runtime_session_context, PublicWorkspaceCleanupOverride, RuntimeSessionContext,
 };
-use crate::runner::system_command::workspace_provisioning::persist_effigy_source_repo_root;
-use crate::runner::system_command::workspace_provisioning::{
+use crate::runner::test_support::effective_container_policy;
+use crate::runner::workspace_command::provisioning::persist_effigy_source_repo_root;
+use crate::runner::workspace_command::provisioning::{
     configured_effigy_repo_root, configured_linux_workspace_artifact_source,
     describe_linux_workspace_artifact_refusal, discover_effigy_repo_root,
     ensure_linux_workspace_effigy_artifact, ensure_local_linux_workspace_effigy_artifact,
@@ -29,8 +30,7 @@ use crate::runner::system_command::workspace_provisioning::{
     LinuxWorkspaceArtifactSource, LinuxWorkspaceTarget, WorkspacePermissionMode,
     EFFIGY_WORKSPACE_ARTIFACT_SOURCE_ENV,
 };
-use crate::runner::system_command::workspace_session::classify_workspace_session_ownership;
-use crate::runner::test_support::effective_container_policy;
+use crate::runner::workspace_command::session::classify_workspace_session_ownership;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 fn temp_repo(manifest: &str) -> std::path::PathBuf {

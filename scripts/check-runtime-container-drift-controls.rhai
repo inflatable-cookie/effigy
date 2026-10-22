@@ -83,7 +83,7 @@ let guard_source = fs::read_file(path::join(repo_root, "scripts/check-runtime-co
 require_contains(guard_source, `^src/runner/exec_command/tests\.rs$`, "cwd allowlist");
 require_contains(
     guard_source,
-    `src/runner/system_command/workspace_permissions_gnu_accept\.rs`,
+    `src/runner/workspace_command/permissions_gnu_accept\.rs`,
     "gnu-accept raw-CLI allowlist",
 );
 require_contains(guard_source, "022-runtime-architecture-sanity-audit.md", "guard diagnostic owner");
@@ -91,7 +91,7 @@ require_absent(guard_source, "052-drift-guards-and-architecture-proof-matrix-str
 require_absent(guard_source, "qa_group_command/execute", "qa-group cwd whole-file waiver");
 require_absent(
     guard_source,
-    "src/runner/system_command/workspace_permissions.rs$",
+    "src/runner/workspace_command/permissions.rs$",
     "permission-prep whole-file waiver",
 );
 
@@ -103,8 +103,8 @@ let glob = #{ glob: "*.rs" };
 
 let cwd_allow = `^src/runner/exec_command/tests\.rs$`;
 let backend_allow = `^(src/runner/doctor_ports\.rs|src/runner/exec_command/transport\.rs|src/runner/container_runtime_prep/prep\.rs|src/runner/container_command/lifecycle\.rs)$`;
-let raw_allow = `^(src/runner/doctor_ports\.rs|src/runner/bootstrap_command/mod\.rs|src/runner/system_command/workspace_permissions_gnu_accept\.rs)$`;
-let compose_allow = `^(crates/effigy-runtime/src/container_manager\.rs|src/runner/managed_shell\.rs|src/runner/demo_command/execute/task/selection\.rs|src/runner/exec_command/transport\.rs|src/runner/exec_command/transport/colima\.rs|src/runner/container_runtime_prep/prep\.rs|src/runner/container_runtime_prep/mod\.rs|src/runner/container_command/support\.rs|src/runner/deferral/run\.rs|src/runner/execute/pipeline/managed\.rs|src/runner/system_command/workspace_provisioning\.rs)$`;
+let raw_allow = `^(src/runner/doctor_ports\.rs|src/runner/bootstrap_command/mod\.rs|src/runner/workspace_command/permissions_gnu_accept\.rs)$`;
+let compose_allow = `^(crates/effigy-runtime/src/container_manager\.rs|src/runner/managed_shell\.rs|src/runner/demo_command/execute/task/selection\.rs|src/runner/exec_command/transport\.rs|src/runner/exec_command/transport/colima\.rs|src/runner/container_runtime_prep/prep\.rs|src/runner/container_runtime_prep/mod\.rs|src/runner/container_command/support\.rs|src/runner/deferral/run\.rs|src/runner/execute/pipeline/managed\.rs|src/runner/workspace_command/provisioning\.rs)$`;
 
 require_contains(guard_source, cwd_allow, "cwd allowlist regex");
 require_contains(guard_source, backend_allow, "backend allowlist regex");
@@ -144,11 +144,11 @@ fs::write_file(
     "fn adapter() { let _ = std::process::Command::new(\"docker\"); }\n",
 );
 fs::write_file(
-    path::join(runner, "system_command/workspace_permissions_gnu_accept.rs"),
+    path::join(runner, "workspace_command/permissions_gnu_accept.rs"),
     "fn fixture() { let _ = std::process::Command::new(\"colima\"); }\n",
 );
 fs::write_file(
-    path::join(runner, "system_command/workspace_permissions.rs"),
+    path::join(runner, "workspace_command/permissions.rs"),
     "fn production_exec() { let _ = compose_args(policy, [\"exec\", \"-T\"]);\n    let _ = std::process::Command::new(\"colima\");\n}\n#[cfg(test)]\nfn fixture() { let _ = std::process::Command::new(\"colima\"); }\n",
 );
 fs::write_file(
@@ -188,7 +188,7 @@ fs::write_file(
     "fn adapter() { let _ = compose_args(policy, [\"down\"]); }\n",
 );
 fs::write_file(
-    path::join(runner, "system_command/workspace_provisioning.rs"),
+    path::join(runner, "workspace_command/provisioning.rs"),
     "fn adapter() { let _ = compose_args(policy, [\"exec\"]); }\n",
 );
 
@@ -222,15 +222,15 @@ expect_rejected("backend", backend_hits, "src/runner/environment.rs");
 let raw_hits = unexpected_matches(fixture, shared_roots, raw_pattern, glob, raw_allow);
 expect_allowed("raw runtime", raw_hits, "src/runner/doctor_ports.rs");
 expect_allowed("raw runtime", raw_hits, "src/runner/bootstrap_command/mod.rs");
-expect_allowed("raw runtime", raw_hits, "src/runner/system_command/workspace_permissions_gnu_accept.rs");
-expect_rejected("raw runtime", raw_hits, "src/runner/system_command/workspace_permissions.rs");
+expect_allowed("raw runtime", raw_hits, "src/runner/workspace_command/permissions_gnu_accept.rs");
+expect_rejected("raw runtime", raw_hits, "src/runner/workspace_command/permissions.rs");
 
 let compose_hits = unexpected_matches(fixture, shared_roots, compose_pattern, glob, compose_allow);
 expect_allowed("compose_args", compose_hits, "crates/effigy-runtime/src/container_manager.rs");
-expect_allowed("compose_args", compose_hits, "src/runner/system_command/workspace_provisioning.rs");
+expect_allowed("compose_args", compose_hits, "src/runner/workspace_command/provisioning.rs");
 expect_rejected("compose_args", compose_hits, "src/runner/execute/pipeline/standard.rs");
 expect_rejected("compose_args", compose_hits, "src/runner/doctor_ports.rs");
-expect_rejected("compose_args", compose_hits, "src/runner/system_command/workspace_permissions.rs");
+expect_rejected("compose_args", compose_hits, "src/runner/workspace_command/permissions.rs");
 
 fs::remove(fixture);
 log("[ok] runtime/container drift-guard positive and negative controls");

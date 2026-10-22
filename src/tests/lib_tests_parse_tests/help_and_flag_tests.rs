@@ -451,10 +451,13 @@ fn parse_container_help_is_scoped() {
 }
 
 #[test]
-fn parse_system_help_is_scoped() {
-    let cmd = parse_command(vec!["system".to_owned(), "--help".to_owned()])
-        .expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::System));
+fn parse_retired_system_help_names_the_container_replacement() {
+    let error = parse_command(vec!["system".to_owned(), "--help".to_owned()])
+        .expect_err("retired command should refuse");
+    let message = error.to_string();
+    assert!(message.contains("`effigy system` is retired in v0.15"));
+    assert!(message.contains("effigy help container"));
+    assert!(message.contains("CHANGELOG.md"));
 }
 
 #[test]

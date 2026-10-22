@@ -464,25 +464,25 @@ Diagnosis:
 
 ```sh
 effigy container status
-effigy system status
 ```
 
 Fix:
 
 ```sh
-# Gentle repair: restart services without data loss
-effigy system repair
+# Gentle repair: restart the Colima runtime without data loss
+effigy container profile repair
 
-# Nuclear option: reset runtime state and rebuild from manifest
-effigy system reset-runtime
+# Stop the runtime without deleting it, then bring the environment up again
+effigy container profile reset-runtime
+effigy container up
 ```
 
-Use `system repair` when:
+Use `container profile repair` when:
 - one service crashed but others are healthy
 - you want to preserve container data and volumes
 - the issue looks like a transient process failure
 
-Use `system reset-runtime` when:
+Use `container profile reset-runtime` when:
 - compose state is corrupted or inconsistent
 - multiple services are stuck in a bad state
 - `repair` did not resolve the issue

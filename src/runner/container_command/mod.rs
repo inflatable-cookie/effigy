@@ -30,6 +30,9 @@ pub(in crate::runner) use lifecycle::{
     release_managed_environment, run_container_exec_capture_with_options,
     run_container_exec_operation_capture, run_container_exec_stream, run_container_reset_adapter,
 };
+pub(in crate::runner) use liveness::{
+    is_primary_service_running, is_primary_service_running_with_deadline,
+};
 pub(in crate::runner) use secret_env::container_secret_runtime_env_path;
 
 mod admission;
@@ -41,7 +44,9 @@ mod gateway_registration;
 mod handover;
 mod hosts;
 mod lifecycle;
+mod liveness;
 mod migrate;
+pub(in crate::runner) mod policy;
 mod ports;
 mod profile;
 mod render;
@@ -110,9 +115,12 @@ fn run_container_with(
     match args.subcommand {
         ContainerSubcommand::Up {
             name,
+            system,
             attach,
             detach,
         } => {
+            let name =
+                resolve_selected_container_name(&args.repo_override, name, system, "container up")?;
             let context = resolve_active_command_context(args.repo_override.clone())?;
             run_container_up(
                 &context.resolved.resolved_root,
@@ -126,14 +134,27 @@ fn run_container_with(
         }
         ContainerSubcommand::Down {
             name,
+            system,
             global: false,
+        } => {
+            let name = resolve_selected_container_name(
+                &args.repo_override,
+                name,
+                system,
+                "container down",
+            )?;
+            run_container_down_command(
+                args.repo_override.clone(),
+                name.as_deref(),
+                false,
+                args.output_json,
+            )
+        }
+        ContainerSubcommand::Down {
+            name,
+            system: _,
+            global: true,
         } => run_container_down_command(
-            args.repo_override.clone(),
-            name.as_deref(),
-            false,
-            args.output_json,
-        ),
-        ContainerSubcommand::Down { name, global: true } => run_container_down_command(
             args.repo_override.clone(),
             name.as_deref(),
             true,
@@ -141,14 +162,27 @@ fn run_container_with(
         ),
         ContainerSubcommand::Status {
             name,
+            system,
             global: false,
+        } => {
+            let name = resolve_selected_container_name(
+                &args.repo_override,
+                name,
+                system,
+                "container status",
+            )?;
+            run_container_status_command(
+                args.repo_override.clone(),
+                name.as_deref(),
+                false,
+                args.output_json,
+            )
+        }
+        ContainerSubcommand::Status {
+            name,
+            system: _,
+            global: true,
         } => run_container_status_command(
-            args.repo_override.clone(),
-            name.as_deref(),
-            false,
-            args.output_json,
-        ),
-        ContainerSubcommand::Status { name, global: true } => run_container_status_command(
             args.repo_override.clone(),
             name.as_deref(),
             true,
@@ -160,15 +194,24 @@ fn run_container_with(
         }
         ContainerSubcommand::Logs {
             name,
+            system,
             service,
             follow,
-        } => run_container_logs_command(
-            args.repo_override.clone(),
-            name.as_deref(),
-            service.as_deref(),
-            follow,
-            args.output_json,
-        ),
+        } => {
+            let name = resolve_selected_container_name(
+                &args.repo_override,
+                name,
+                system,
+                "container logs",
+            )?;
+            run_container_logs_command(
+                args.repo_override.clone(),
+                name.as_deref(),
+                service.as_deref(),
+                follow,
+                args.output_json,
+            )
+        }
         ContainerSubcommand::Shell {
             name,
             service,
@@ -279,6 +322,26 @@ fn run_container_with(
     }
 }
 
+/// Resolve `--system <NAME>` to the container its default workspace binds.
+/// A named container and a system selection cannot be combined.
+fn resolve_selected_container_name(
+    repo_override: &Option<std::path::PathBuf>,
+    name: Option<String>,
+    system: Option<String>,
+    surface: &str,
+) -> Result<Option<String>, RunnerError> {
+    let Some(system) = system else {
+        return Ok(name);
+    };
+    let context = resolve_active_command_context(repo_override.clone())?;
+    crate::runner::workspace_command::resolve_public_workspace_container(
+        &context.resolved.resolved_root,
+        Some(&system),
+        None,
+        surface,
+    )
+}
+
 fn deregister_runtime_gateway_routes(
     policy: &effigy_containers::EffectiveContainerPolicy,
 ) -> Result<Vec<String>, effigy_runtime::EffigyRuntimeError> {
@@ -324,6 +387,7 @@ mod tests {
         let error = run_container(ContainerArgs {
             subcommand: ContainerSubcommand::Status {
                 name: None,
+                system: None,
                 global: true,
             },
             repo_override: Some(std::path::PathBuf::from("/tmp/demo")),
@@ -341,6 +405,7 @@ mod tests {
         let error = run_container(ContainerArgs {
             subcommand: ContainerSubcommand::Down {
                 name: None,
+                system: None,
                 global: true,
             },
             repo_override: Some(std::path::PathBuf::from("/tmp/demo")),

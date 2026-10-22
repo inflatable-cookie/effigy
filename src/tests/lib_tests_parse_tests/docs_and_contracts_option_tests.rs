@@ -841,6 +841,7 @@ fn parse_container_up_without_name_uses_default_resolution_path() {
         Command::Container(ContainerArgs {
             subcommand: ContainerSubcommand::Up {
                 name: None,
+                system: None,
                 attach: false,
                 detach: true,
             },
@@ -868,6 +869,7 @@ fn parse_container_logs_with_explicit_name_and_service() {
         Command::Container(ContainerArgs {
             subcommand: ContainerSubcommand::Logs {
                 name: Some("web".to_owned()),
+                system: None,
                 service: Some("db".to_owned()),
                 follow: true,
             },

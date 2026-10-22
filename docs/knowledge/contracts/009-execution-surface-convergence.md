@@ -88,7 +88,7 @@ Current shared ownership should converge around:
 | Container backend operations | `effigy-containers` and `effigy-runtime` adapters |
 | Data seed/dump planning | `effigy-data`; artifact transport through `effigy-artifacts` |
 | Handoff marker and recursion guard | `src/runner/container_runtime.rs` |
-| Interactive workspace/session ownership | shared session-ownership helper under `src/runner/system_command/workspace.rs` or adjacent shared runner module |
+| Interactive workspace/session ownership | shared session-ownership helper under `src/runner/workspace_command/` or adjacent shared runner module |
 | Gateway route reconciliation | `src/runner/container_command/gateway_registration.rs` |
 | Container-local alias reconciliation | `src/runner/container_command/support.rs` through shared runtime prep |
 | Environment holds, idle stop and notices | `src/runner/environment.rs` (contract 053) |
