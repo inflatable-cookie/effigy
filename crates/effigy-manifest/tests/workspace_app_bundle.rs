@@ -198,33 +198,19 @@ targets = ["tasks", "containers", "rhai"]
     }
 
     let bootstrap = manifest.bootstrap.as_ref().expect("bootstrap");
-    let bootstrap_task = bootstrap
-        .run
-        .as_ref()
-        .expect("bootstrap run")
-        .as_manifest_task();
-    let run = bootstrap_task.run.as_ref().expect("bootstrap task run");
-    let ManifestManagedRun::Sequence(steps) = run else {
-        panic!("workspace app bootstrap should use a managed sequence");
-    };
     assert_eq!(
-        steps.len(),
-        4,
-        "expected env helper + container up + minio bootstrap + deps sync"
+        bootstrap.setup,
+        vec![
+            "secrets init".to_owned(),
+            "container up --detach".to_owned(),
+            "bootstrap:content".to_owned(),
+            "workspace:js:prepare".to_owned(),
+        ]
     );
-    let Some(ManifestManagedRunStep::Step(sync_step)) = steps.get(3) else {
-        panic!("expected bootstrap deps sync step");
-    };
+    assert_eq!(bootstrap.start.as_deref(), Some("dev"));
     assert_eq!(
-        sync_step.task.as_deref(),
-        Some("bootstrap deps sync ../platform app-api app-client app-ui app-front app-admin")
-    );
-    assert_eq!(
-        bootstrap
-            .start
-            .as_ref()
-            .map(|start| start.to_owned_selectors()),
-        Some(vec!["dev".to_owned()])
+        manifest.sources.get("platform").expect("platform source").path,
+        "../platform"
     );
 
     let seed = manifest.tasks.get("seed").expect("seed task");
@@ -449,28 +435,26 @@ poodle = "../../poodle"
 
     let manifest = load_task_manifest(&manifest_path).expect("load manifest");
     let bootstrap = manifest.bootstrap.as_ref().expect("bootstrap");
-    let bootstrap_task = bootstrap
-        .run
-        .as_ref()
-        .expect("bootstrap run")
-        .as_manifest_task();
-    let run = bootstrap_task.run.as_ref().expect("bootstrap task run");
-    let effigy_manifest::ManifestManagedRun::Sequence(steps) = run else {
-        panic!("workspace app bootstrap should use a managed sequence");
-    };
-    let Some(effigy_manifest::ManifestManagedRunStep::Step(sync_step)) = steps.get(3) else {
-        panic!("expected bootstrap deps sync step");
-    };
     assert_eq!(
-        sync_step.task.as_deref(),
-        Some(
-            "bootstrap deps sync ../../platform acme-api acme-client acme-ui acme-front acme-admin"
-        )
+        bootstrap.setup,
+        vec![
+            "secrets init".to_owned(),
+            "container up --detach".to_owned(),
+            "bootstrap:content".to_owned(),
+            "workspace:js:prepare".to_owned(),
+        ]
     );
-
-    let children = &manifest.bootstrap.as_ref().expect("bootstrap").children;
-    let child_paths: Vec<&str> = children.iter().map(|child| child.path.as_str()).collect();
-    assert_eq!(child_paths, vec!["../../platform", "../../poodle"]);
+    assert_eq!(bootstrap.start.as_deref(), Some("dev"));
+    let platform = manifest.sources.get("platform").expect("platform source");
+    assert_eq!(platform.path, "../../platform");
+    assert_eq!(
+        platform.rev.as_deref(),
+        Some("0000000000000000000000000000000000000001")
+    );
+    assert_eq!(
+        manifest.sources.get("poodle").expect("poodle source").path,
+        "../../poodle"
+    );
 }
 
 #[test]
@@ -502,31 +486,20 @@ mounts = ["../../platform", "../../poodle"]
     .expect("write manifest");
 
     let manifest = load_task_manifest(&manifest_path).expect("load manifest");
-    let bootstrap = manifest.bootstrap.as_ref().expect("bootstrap");
-    let bootstrap_task = bootstrap
-        .run
-        .as_ref()
-        .expect("bootstrap run")
-        .as_manifest_task();
-    let run = bootstrap_task.run.as_ref().expect("bootstrap task run");
-    let effigy_manifest::ManifestManagedRun::Sequence(steps) = run else {
-        panic!("workspace app bootstrap should use a managed sequence");
-    };
-    let Some(effigy_manifest::ManifestManagedRunStep::Step(sync_step)) = steps.get(3) else {
-        panic!("expected bootstrap deps sync step");
-    };
+    let platform = manifest.sources.get("platform").expect("platform source");
+    assert_eq!(platform.path, "../platform");
     assert_eq!(
-        sync_step.task.as_deref(),
-        Some("bootstrap deps sync ../platform acme-api acme-client acme-ui acme-front acme-admin")
+        platform.rev.as_deref(),
+        Some("0000000000000000000000000000000000000001")
     );
-
-    let children = &manifest.bootstrap.as_ref().expect("bootstrap").children;
-    let child_paths: Vec<&str> = children.iter().map(|child| child.path.as_str()).collect();
-    assert_eq!(child_paths, vec!["../platform", "../poodle"]);
+    assert_eq!(
+        manifest.sources.get("poodle").expect("poodle source").path,
+        "../poodle"
+    );
 }
 
 #[test]
-fn workspace_app_bundle_merges_repo_bootstrap_children_with_bundle_children() {
+fn workspace_app_bundle_merges_repo_pinned_sources_with_bundle_sources() {
     let tmp = tempfile::tempdir().expect("tempdir");
     setup_workspace_app_path_bundle(tmp.path());
     let manifest_path = tmp.path().join("effigy.toml");
@@ -540,17 +513,22 @@ project_name = "workspace-app-reference-dev"
 workspace_subdir = "workspace-app-reference"
 databases = ["acme"]
 
-[[bootstrap.children]]
+[sources.ledger]
+git = "git@github.com:acme/ledger.git"
+rev = "0000000000000000000000000000000000000003"
 path = "../ledger"
-repo = "git@github.com:acme/ledger.git"
 "#,
     )
     .expect("write manifest");
 
     let manifest = load_task_manifest(&manifest_path).expect("load manifest");
-    let children = &manifest.bootstrap.as_ref().expect("bootstrap").children;
-    let child_paths: Vec<&str> = children.iter().map(|child| child.path.as_str()).collect();
-    assert_eq!(child_paths, vec!["../platform", "../poodle", "../ledger"]);
+    let mut names: Vec<&str> = manifest.sources.keys().map(String::as_str).collect();
+    names.sort_unstable();
+    assert_eq!(names, vec!["ledger", "platform", "poodle"]);
+    assert_eq!(
+        manifest.sources.get("ledger").expect("ledger source").path,
+        "../ledger"
+    );
 }
 
 #[test]

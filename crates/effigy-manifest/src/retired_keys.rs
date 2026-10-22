@@ -34,9 +34,61 @@ fn reject_retired_tables(value: &Value) -> Result<(), String> {
                 .to_owned(),
         );
     }
+    reject_bootstrap_keys(root)?;
     if let Some(tasks) = root.get("tasks").and_then(Value::as_table) {
         for task in tasks.values() {
             reject_draft_in_task(task)?;
+        }
+    }
+    Ok(())
+}
+
+/// `[bootstrap]` was rebuilt in v0.15 around two ordinary task selectors and
+/// pinned sources. Each removed key names its replacement.
+fn reject_bootstrap_keys(root: &toml::map::Map<String, Value>) -> Result<(), String> {
+    let Some(bootstrap) = root.get("bootstrap").and_then(Value::as_table) else {
+        return Ok(());
+    };
+    if bootstrap.contains_key("run") {
+        return Err(
+            "`[bootstrap].run` was renamed to `[bootstrap].setup` in v0.15 and now takes an ordered list of ordinary task selectors, for example `setup = [\"workspace:js:prepare\", \"db:seed:schema\"]`; move any inline run steps into a task and select it (see CHANGELOG.md)"
+                .to_owned(),
+        );
+    }
+    if bootstrap.contains_key("children") {
+        return Err(
+            "`[bootstrap].children` was removed in v0.15; declare each sibling as a pinned `[sources.<name>]` table with `git`, `rev` (or `rev_file`) and `path`, and let the repo's `setup` selectors prepare it (see CHANGELOG.md)"
+                .to_owned(),
+        );
+    }
+    if let Some(submodules) = bootstrap.get("submodules") {
+        if !matches!(submodules, Value::Boolean(_)) {
+            return Err(
+                "`[bootstrap].submodules` now takes `true` (recursive init at the recorded commits) or is omitted; the `none`/`init`/`recursive` policy strings were removed in v0.15 (see CHANGELOG.md)"
+                    .to_owned(),
+            );
+        }
+    }
+    if let Some(setup) = bootstrap.get("setup") {
+        let Some(entries) = setup.as_array() else {
+            return Err(
+                "`[bootstrap].setup` is an ordered list of ordinary task selectors, for example `setup = [\"workspace:js:prepare\"]`; inline run steps were removed in v0.15, move them into a task (see CHANGELOG.md)"
+                    .to_owned(),
+            );
+        };
+        if entries.iter().any(|entry| !matches!(entry, Value::String(_))) {
+            return Err(
+                "`[bootstrap].setup` entries must be task selector strings in v0.15; `{ task = ... }` and inline run steps were removed, move them into a task (see CHANGELOG.md)"
+                    .to_owned(),
+            );
+        }
+    }
+    if let Some(start) = bootstrap.get("start") {
+        if !matches!(start, Value::String(_)) {
+            return Err(
+                "`[bootstrap].start` now takes one task selector string in v0.15; arrays and `{ task = ... }` tables were removed, use a task that sequences the steps (see CHANGELOG.md)"
+                    .to_owned(),
+            );
         }
     }
     Ok(())
@@ -123,6 +175,47 @@ mod tests {
             error.contains("DEFAULT") || error.contains("/bin/zsh"),
             "{error}"
         );
+        assert!(error.contains("CHANGELOG.md"), "{error}");
+    }
+
+    #[test]
+    fn bootstrap_run_is_refused_with_the_setup_key() {
+        let error = toml::from_str::<TaskManifest>("[bootstrap]\nrun = [{ task = 'x' }]\n")
+            .expect_err("retired bootstrap run");
+        let error = error.to_string();
+        assert!(error.contains("`[bootstrap].run` was renamed"), "{error}");
+        assert!(error.contains("`[bootstrap].setup`"), "{error}");
+        assert!(error.contains("CHANGELOG.md"), "{error}");
+    }
+
+    #[test]
+    fn bootstrap_children_are_refused_with_the_sources_key() {
+        let error = toml::from_str::<TaskManifest>(
+            "[bootstrap]\nstart = 'dev'\n\n[[bootstrap.children]]\npath = '../book'\nrepo = 'git@example.test:book.git'\n",
+        )
+        .expect_err("retired bootstrap children");
+        let error = error.to_string();
+        assert!(error.contains("`[bootstrap].children` was removed"), "{error}");
+        assert!(error.contains("[sources.<name>]"), "{error}");
+        assert!(error.contains("rev_file"), "{error}");
+        assert!(error.contains("CHANGELOG.md"), "{error}");
+    }
+
+    #[test]
+    fn bootstrap_submodule_policy_strings_are_refused() {
+        let error = toml::from_str::<TaskManifest>("[bootstrap]\nsubmodules = 'recursive'\n")
+            .expect_err("retired submodule policy");
+        let error = error.to_string();
+        assert!(error.contains("`[bootstrap].submodules` now takes `true`"), "{error}");
+        assert!(error.contains("CHANGELOG.md"), "{error}");
+    }
+
+    #[test]
+    fn bootstrap_inline_setup_steps_are_refused() {
+        let error = toml::from_str::<TaskManifest>("[bootstrap]\nsetup = [{ task = 'x' }]\n")
+            .expect_err("retired inline setup");
+        let error = error.to_string();
+        assert!(error.contains("selector strings"), "{error}");
         assert!(error.contains("CHANGELOG.md"), "{error}");
     }
 

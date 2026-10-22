@@ -1,1464 +1,219 @@
-//! Runner-path integration tests.
-//!
-//! These exercise the full shell (`run_bootstrap_with_cwd`) end-to-end,
-//! driving through the real runner callbacks (`load_task_manifest` +
-//! `run_manifest_task_with_cwd`). Crate-domain behavior is covered by
-//! integration tests in `crates/effigy-bootstrap/tests/integration.rs`.
-
 use super::{
-    bootstrap_runtime_session_context, parse_colima_backend_available_rows,
-    prompt_bootstrap_backend_choice_from_io, render_bootstrap_progress_message,
-    run_bootstrap_with_cwd,
+    bootstrap_runtime_session_context, render_bootstrap_progress_message, run_bootstrap_with_cwd,
 };
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, PublicWorkspaceCleanupOverride};
-use effigy_cli::{
-    BootstrapArgs, BootstrapBackendOverride, BootstrapDbSeedInput, BootstrapDepsSyncMode,
-    BootstrapSubcommand,
-};
-#[allow(dead_code)]
-#[path = "../../../crates/effigy-bootstrap/tests/support.rs"]
-mod support;
-use std::fs;
-use std::io::Cursor;
-use std::os::unix::fs::PermissionsExt;
+use effigy_cli::BootstrapArgs;
+use effigy_test_support::Fixture;
 use std::path::{Path, PathBuf};
-use support::{
-    attach_remote_and_push, bare_remote_path, commit_all, create_root_remote_with_bootstrap,
-    create_root_remote_with_optional_missing_child, init_bare_remote, init_git_repo, temp_dir,
-};
+use std::process::Command;
 
-/// Keep capture, prepend and restoration under the shared environment lock.
-struct PathPrepend {
-    _env: crate::contract_test_support::EnvGuard,
-}
-
-impl PathPrepend {
-    fn new(bin_dir: &Path) -> Self {
-        let _lock = crate::contract_test_support::lock_test();
-        let original = std::env::var("PATH").unwrap_or_default();
-        Self {
-            _env: crate::contract_test_support::EnvGuard::set_many(&[(
-                "PATH",
-                Some(format!("{}:{original}", bin_dir.display())),
-            )]),
-        }
+fn bootstrap_args(
+    repo_url: Option<&str>,
+    path: Option<&Path>,
+    branch: Option<&str>,
+    no_start: bool,
+    plan: bool,
+    output_json: bool,
+) -> BootstrapArgs {
+    BootstrapArgs {
+        repo_url: repo_url.map(str::to_owned),
+        path: path.map(Path::to_path_buf),
+        branch: branch.map(str::to_owned),
+        no_start,
+        plan,
+        output_json,
     }
 }
 
-#[test]
-fn bootstrap_run_context_skips_lease_refresh_without_forcing_workspace_cleanup() {
-    let context = bootstrap_runtime_session_context("bootstrap run");
-    assert_eq!(
-        context.lease_refresh_policy,
-        LeaseRefreshPolicy::SkipRefresh
-    );
-    assert_eq!(
-        context.public_workspace_cleanup,
-        PublicWorkspaceCleanupOverride::Default
+fn git(root: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .expect("git command");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 
+fn write_project(root: &Path, manifest: &str) {
+    std::fs::create_dir_all(root).expect("mkdir project");
+    std::fs::write(root.join("effigy.toml"), manifest).expect("write manifest");
+    git(root, &["init", "--quiet"]);
+    git(root, &["config", "user.email", "fixture@example.test"]);
+    git(root, &["config", "user.name", "Effigy Fixture"]);
+    git(root, &["add", "."]);
+    git(root, &["commit", "--quiet", "-m", "fixture"]);
+}
+
+fn owned_root(name: &str) -> (Fixture, PathBuf) {
+    let fixture = Fixture::workspace(name).expect("owned fixture root");
+    let path = fixture.path().to_path_buf();
+    (fixture, path)
+}
+
 #[test]
-fn bootstrap_start_context_skips_lease_refresh_and_forces_stop_on_exit() {
-    let context = bootstrap_runtime_session_context("bootstrap start");
-    assert_eq!(
-        context.lease_refresh_policy,
-        LeaseRefreshPolicy::SkipRefresh
+fn bootstrap_setup_and_start_are_dispatched_as_ordinary_selectors() {
+    let (_fixture, root) = owned_root("bootstrap-selectors-");
+    let project = root.join("app");
+    write_project(
+        &project,
+        r#"
+[bootstrap]
+setup = ["record-one", "record-two"]
+start = "record-start"
+
+[tasks."record-one"]
+run = "printf 'one\n' >> order.txt"
+
+[tasks."record-two"]
+run = "printf 'two\n' >> order.txt"
+
+[tasks."record-start"]
+run = "printf 'start\n' >> order.txt"
+"#,
     );
+
+    let output = run_bootstrap_with_cwd(
+        bootstrap_args(None, Some(&project), None, false, false, false),
+        root.clone(),
+    )
+    .expect("bootstrap existing checkout");
+    assert!(output.contains("[ok] bootstrap completed"), "{output}");
+    assert!(output.contains("root repo: existing"), "{output}");
+    let order = std::fs::read_to_string(project.join("order.txt")).expect("order file");
+    assert_eq!(order, "one\ntwo\nstart\n");
+}
+
+#[test]
+fn no_start_skips_the_start_selector() {
+    let (_fixture, root) = owned_root("bootstrap-no-start-");
+    let project = root.join("app");
+    write_project(
+        &project,
+        r#"
+[bootstrap]
+setup = ["record-setup"]
+start = "record-start"
+
+[tasks."record-setup"]
+run = "printf 'setup\n' >> order.txt"
+
+[tasks."record-start"]
+run = "printf 'start\n' >> order.txt"
+"#,
+    );
+
+    run_bootstrap_with_cwd(
+        bootstrap_args(None, Some(&project), None, true, false, false),
+        root.clone(),
+    )
+    .expect("bootstrap --no-start");
+    let order = std::fs::read_to_string(project.join("order.txt")).expect("order file");
+    assert_eq!(order, "setup\n");
+}
+
+#[test]
+fn a_plan_renders_without_running_anything() {
+    let (_fixture, root) = owned_root("bootstrap-plan-");
+    let project = root.join("app");
+    write_project(
+        &project,
+        r#"
+[bootstrap]
+setup = ["record-setup"]
+start = "record-start"
+
+[tasks."record-setup"]
+run = "printf 'setup\n' >> order.txt"
+
+[tasks."record-start"]
+run = "printf 'start\n' >> order.txt"
+"#,
+    );
+
+    let output = run_bootstrap_with_cwd(
+        bootstrap_args(None, Some(&project), None, false, true, false),
+        root.clone(),
+    )
+    .expect("bootstrap --plan");
+    assert!(output.contains("[planned] bootstrap request resolved"), "{output}");
+    assert!(output.contains("setup: record-setup"), "{output}");
+    assert!(output.contains("start: record-start"), "{output}");
+    assert!(!project.join("order.txt").exists());
+}
+
+#[test]
+fn a_plan_renders_json_with_the_stable_schema() {
+    let (_fixture, root) = owned_root("bootstrap-plan-json-");
+    let project = root.join("app");
+    write_project(&project, "[bootstrap]\nstart = \"dev\"\n");
+
+    let output = run_bootstrap_with_cwd(
+        bootstrap_args(None, Some(&project), None, false, true, true),
+        root.clone(),
+    )
+    .expect("bootstrap --plan --json");
+    let json: serde_json::Value = serde_json::from_str(&output).expect("plan json");
+    assert_eq!(json["schema"], "effigy.bootstrap.v1");
+    assert_eq!(json["phase"], "plan");
+    assert_eq!(json["plan"]["start"], "dev");
+}
+
+#[test]
+fn a_failing_setup_selector_fails_bootstrap() {
+    let (_fixture, root) = owned_root("bootstrap-failing-setup-");
+    let project = root.join("app");
+    write_project(
+        &project,
+        r#"
+[bootstrap]
+setup = ["fails"]
+
+[tasks.fails]
+run = "exit 7"
+"#,
+    );
+
+    let error = run_bootstrap_with_cwd(
+        bootstrap_args(None, Some(&project), None, false, false, false),
+        root.clone(),
+    )
+    .expect_err("failing setup");
+    let message = error.to_string();
+    assert!(message.contains("bootstrap setup task `fails` failed"), "{message}");
+}
+
+#[test]
+fn bootstrap_start_context_forces_workspace_cleanup_and_skips_lease_refresh() {
+    let setup = bootstrap_runtime_session_context("bootstrap setup");
+    assert_eq!(setup.lease_refresh_policy, LeaseRefreshPolicy::SkipRefresh);
     assert_eq!(
-        context.public_workspace_cleanup,
+        setup.public_workspace_cleanup,
+        PublicWorkspaceCleanupOverride::Default
+    );
+
+    let start = bootstrap_runtime_session_context("bootstrap start");
+    assert_eq!(start.lease_refresh_policy, LeaseRefreshPolicy::SkipRefresh);
+    assert_eq!(
+        start.public_workspace_cleanup,
         PublicWorkspaceCleanupOverride::ForceStopOnExit
     );
 }
 
 #[test]
 fn bootstrap_progress_message_preserves_plain_text_without_color() {
-    let rendered = render_bootstrap_progress_message(
-        "[ok] cloned\n[gateway] installed route\n[bootstrap] running root setup\n",
-        false,
-    );
-    assert_eq!(
-        rendered,
-        "[ok] cloned\n[gateway] installed route\n[bootstrap] running root setup\n"
-    );
+    let rendered = render_bootstrap_progress_message("[ok] done", false);
+    assert_eq!(rendered, "[ok] done");
 }
 
 #[test]
 fn bootstrap_progress_message_colors_known_prefixes() {
-    let rendered = render_bootstrap_progress_message(
-        "[ok] cloned\n[gateway] installed route\n[bootstrap] running root setup\n",
-        true,
-    );
-    assert!(rendered.contains("\u{1b}["));
-    assert!(rendered.contains("[ok]"));
-    assert!(rendered.contains("[gateway]"));
-    assert!(rendered.contains("[bootstrap]"));
-}
-
-#[test]
-fn bootstrap_backend_prompt_accepts_containerd_choice() {
-    let mut input = Cursor::new(b"1\n".to_vec());
-    let mut output = Vec::new();
-    let backend = prompt_bootstrap_backend_choice_from_io(None, &mut input, &mut output)
-        .expect("backend choice");
-    assert_eq!(backend, BootstrapBackendOverride::Containerd);
-}
-
-#[test]
-fn bootstrap_backend_prompt_accepts_docker_choice() {
-    let mut input = Cursor::new(b"docker\n".to_vec());
-    let mut output = Vec::new();
-    let backend = prompt_bootstrap_backend_choice_from_io(None, &mut input, &mut output)
-        .expect("backend choice");
-    assert_eq!(backend, BootstrapBackendOverride::Docker);
-}
-
-#[test]
-fn bootstrap_backend_prompt_accepts_empty_input_for_saved_containerd_default() {
-    let mut input = Cursor::new(b"\n".to_vec());
-    let mut output = Vec::new();
-    let backend = prompt_bootstrap_backend_choice_from_io(
-        Some(BootstrapBackendOverride::Containerd),
-        &mut input,
-        &mut output,
-    )
-    .expect("backend choice");
-    assert_eq!(backend, BootstrapBackendOverride::Containerd);
-    let rendered = String::from_utf8(output).expect("utf8");
-    assert!(rendered.contains("Default: containerd (Colima)"));
-    assert!(rendered.contains("Bootstrap backend [1/2] [default 1]: "));
-}
-
-#[test]
-fn bootstrap_backend_prompt_allows_overriding_saved_docker_default() {
-    let mut input = Cursor::new(b"1\n".to_vec());
-    let mut output = Vec::new();
-    let backend = prompt_bootstrap_backend_choice_from_io(
-        Some(BootstrapBackendOverride::Docker),
-        &mut input,
-        &mut output,
-    )
-    .expect("backend choice");
-    assert_eq!(backend, BootstrapBackendOverride::Containerd);
-    let rendered = String::from_utf8(output).expect("utf8");
-    assert!(rendered.contains("Default: docker (Docker Desktop)"));
-    assert!(rendered.contains("Bootstrap backend [1/2] [default 2]: "));
-}
-
-#[test]
-fn bootstrap_colima_backend_probe_accepts_ndjson_profile_rows() {
-    let stdout = r#"{"name":"effigy","status":"Running","arch":"aarch64","cpus":2,"memory":34359738368,"disk":322122547200,"runtime":"containerd"}
-{"name":"effigy-release","status":"Stopped","arch":"aarch64","cpus":2,"memory":2147483648,"disk":107374182400,"runtime":"containerd"}
-"#;
-    assert!(parse_colima_backend_available_rows(stdout).expect("probe parse"));
-}
-
-fn create_child_remote(name: &str) -> PathBuf {
-    let worktree = temp_dir(&format!("{name}-worktree"));
-    fs::create_dir_all(worktree.join("scripts")).expect("mkdir child scripts");
-    fs::write(worktree.join("README.md"), format!("# {name}\n")).expect("write child readme");
-    fs::write(
-        worktree.join("effigy.toml"),
-        r#"[tasks."bootstrap:child"]
-run = "sh ./scripts/child-setup.sh"
-"#,
-    )
-    .expect("write child manifest");
-    fs::write(
-        worktree.join("scripts/child-setup.sh"),
-        "#!/bin/sh\nset -eu\nprintf child-setup > child-setup.txt\n",
-    )
-    .expect("write child setup");
-    let mut perms = fs::metadata(worktree.join("scripts/child-setup.sh"))
-        .expect("child setup metadata")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(worktree.join("scripts/child-setup.sh"), perms).expect("chmod child setup");
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init child");
-    let remote = bare_remote_path(&format!("{name}-bare"));
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
-fn create_js_child_remote(name: &str) -> PathBuf {
-    let worktree = temp_dir(&format!("{name}-worktree"));
-    fs::write(
-        worktree.join("effigy.toml"),
-        "[package_manager]\njs = \"bun\"\n",
-    )
-    .expect("write manifest");
-    fs::write(worktree.join("package.json"), "{}\n").expect("write package");
-    fs::write(worktree.join("bun.lock"), "lockfile-version = 1\n").expect("write Bun lock");
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init js child");
-    let remote = bare_remote_path(&format!("{name}-bare"));
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
-fn create_plain_remote(name: &str) -> PathBuf {
-    let worktree = temp_dir(&format!("{name}-worktree"));
-    fs::write(worktree.join("README.md"), format!("# {name}\n")).expect("write readme");
-    fs::write(worktree.join("effigy.toml"), "").expect("write manifest");
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init plain");
-    let remote = bare_remote_path(&format!("{name}-bare"));
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
-fn create_root_remote_with_sibling_bootstrap_deps(child_remote: &Path) -> PathBuf {
-    let worktree = temp_dir("root-sibling-deps-worktree");
-    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
-    fs::write(
-        worktree.join("effigy.toml"),
-        format!(
-            r#"[package_manager]
-js = "bun"
-
-[bootstrap]
-run = [
-  {{ task = "bootstrap deps sync ../platform" }}
-]
-
-[[bootstrap.children]]
-path = "../platform"
-repo = "{}"
-required = true
-"#,
-            child_remote.display()
-        ),
-    )
-    .expect("write manifest");
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init root sibling deps");
-    let remote = bare_remote_path("root-sibling-deps-bare");
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
-fn create_root_remote_with_bootstrap_db_seed_task() -> PathBuf {
-    let worktree = temp_dir("root-db-seed-worktree");
-    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
-    fs::write(
-        worktree.join("effigy.toml"),
-        r#"[bootstrap]
-start = "bootstrap:start"
-
-[tasks."bootstrap:db-seed"]
-run = "sh ./scripts/db-seed.sh"
-
-[tasks."bootstrap:start"]
-run = "sh ./scripts/start.sh"
-"#,
-    )
-    .expect("write manifest");
-    fs::write(
-        worktree.join("scripts/db-seed.sh"),
-        r#"#!/bin/sh
-set -eu
-test -n "${EFFIGY_BOOTSTRAP_DB_SEEDS_DIR:-}"
-test -n "${EFFIGY_BOOTSTRAP_DB_SEED_FILE:-}"
-test "${EFFIGY_BOOTSTRAP_DB_SEED_COUNT:-}" = "1"
-test -f "$EFFIGY_BOOTSTRAP_DB_SEED_FILE"
-test -f ".effigy/local/db-seeds/latest.sql"
-cmp "$EFFIGY_BOOTSTRAP_DB_SEED_FILE" ".effigy/local/db-seeds/latest.sql"
-printf seeded > db-seed.txt
-"#,
-    )
-    .expect("write db seed task");
-    fs::write(
-        worktree.join("scripts/start.sh"),
-        r#"#!/bin/sh
-set -eu
-test -f db-seed.txt
-printf started > start.txt
-"#,
-    )
-    .expect("write start");
-    for name in ["db-seed.sh", "start.sh"] {
-        let script = worktree.join("scripts").join(name);
-        let mut perms = fs::metadata(&script)
-            .expect("script metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script, perms).expect("chmod script");
-    }
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init root db seed");
-    let remote = bare_remote_path("root-db-seed-bare");
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
-fn create_root_remote_with_single_database_bundle_bootstrap_db_seed_task() -> PathBuf {
-    let worktree = temp_dir("root-single-db-seed-worktree");
-    let bundle_dir = worktree.join("bundles/plain");
-    fs::create_dir_all(&bundle_dir).expect("mkdir bundle dir");
-    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
-    fs::write(
-        bundle_dir.join("bundle.toml"),
-        r#"[bundle]
-name = "plain"
-description = "Minimal local bundle for bootstrap db seed tests."
-
-[[inputs]]
-name = "databases"
-type = "list"
-required = true
-description = "Database names used for bootstrap db seed target validation."
-"#,
-    )
-    .expect("write bundle descriptor");
-    fs::write(bundle_dir.join("effigy.toml"), "").expect("write bundle manifest");
-    fs::write(
-        worktree.join("effigy.toml"),
-        r#"[bundle]
-base = { type = "path", dir = "bundles/plain" }
-databases = ["contactpatch"]
-
-[tasks."bootstrap:db-seed"]
-run = "sh ./scripts/db-seed.sh"
-"#,
-    )
-    .expect("write manifest");
-    fs::write(
-        worktree.join("scripts/db-seed.sh"),
-        r#"#!/bin/sh
-set -eu
-test "${EFFIGY_BOOTSTRAP_DB_SEED_COUNT:-}" = "1"
-test -n "${EFFIGY_BOOTSTRAP_DB_SEED_FILE:-}"
-test "${EFFIGY_BOOTSTRAP_DB_SEED_TARGET:-}" = "contactpatch"
-test -n "${EFFIGY_BOOTSTRAP_DB_SEEDS_JSON:-}"
-test -f ".effigy/local/db-seeds/contactpatch--latest.sql"
-cmp "$EFFIGY_BOOTSTRAP_DB_SEED_FILE" ".effigy/local/db-seeds/contactpatch--latest.sql"
-printf '%s' "$EFFIGY_BOOTSTRAP_DB_SEEDS_JSON" | grep -F '"target":"contactpatch"'
-printf '%s' "$EFFIGY_BOOTSTRAP_DB_SEEDS_JSON" | grep -F '"staged_path":".effigy/local/db-seeds/contactpatch--latest.sql"'
-cmp ".effigy/local/db-seeds/contactpatch--latest.sql" expected-contactpatch.sql
-printf seeded > db-seed.txt
-"#,
-    )
-    .expect("write db seed task");
-    fs::write(
-        worktree.join("expected-contactpatch.sql"),
-        "seed contactpatch;\n",
-    )
-    .expect("write expected dump");
-    let script = worktree.join("scripts/db-seed.sh");
-    let mut perms = fs::metadata(&script)
-        .expect("script metadata")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&script, perms).expect("chmod script");
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init root single db seed");
-    let remote = bare_remote_path("root-single-db-seed-bare");
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
-fn create_root_remote_with_multi_database_bootstrap_db_seed_task() -> PathBuf {
-    let worktree = temp_dir("root-multi-db-seed-worktree");
-    let bundle_dir = worktree.join("bundles/plain");
-    fs::create_dir_all(&bundle_dir).expect("mkdir bundle dir");
-    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
-    fs::write(
-        bundle_dir.join("bundle.toml"),
-        r#"[bundle]
-name = "plain"
-description = "Minimal local bundle for bootstrap db seed tests."
-
-[[inputs]]
-name = "databases"
-type = "list"
-required = true
-description = "Database names used for bootstrap db seed target validation."
-"#,
-    )
-    .expect("write bundle descriptor");
-    fs::write(bundle_dir.join("effigy.toml"), "").expect("write bundle manifest");
-    fs::write(
-        worktree.join("effigy.toml"),
-        r#"[bundle]
-base = { type = "path", dir = "bundles/plain" }
-databases = ["cbs", "cbs-mortcalc"]
-
-[bootstrap]
-start = "bootstrap:start"
-
-[tasks."bootstrap:db-seed"]
-run = "sh ./scripts/db-seed.sh"
-
-[tasks."bootstrap:start"]
-run = "sh ./scripts/start.sh"
-"#,
-    )
-    .expect("write manifest");
-    fs::write(
-        worktree.join("scripts/db-seed.sh"),
-        r#"#!/bin/sh
-set -eu
-test "${EFFIGY_BOOTSTRAP_DB_SEED_COUNT:-}" = "2"
-test -z "${EFFIGY_BOOTSTRAP_DB_SEED_FILE:-}"
-test -z "${EFFIGY_BOOTSTRAP_DB_SEED_TARGET:-}"
-test -n "${EFFIGY_BOOTSTRAP_DB_SEEDS_DIR:-}"
-test -n "${EFFIGY_BOOTSTRAP_DB_SEED_FILES:-}"
-test -n "${EFFIGY_BOOTSTRAP_DB_SEEDS_JSON:-}"
-test -f ".effigy/local/db-seeds/cbs--latest.sql"
-test -f ".effigy/local/db-seeds/cbs-mortcalc--latest.sql"
-printf '%s' "$EFFIGY_BOOTSTRAP_DB_SEED_FILES" | grep -F ".effigy/local/db-seeds/cbs--latest.sql"
-printf '%s' "$EFFIGY_BOOTSTRAP_DB_SEED_FILES" | grep -F ".effigy/local/db-seeds/cbs-mortcalc--latest.sql"
-printf '%s' "$EFFIGY_BOOTSTRAP_DB_SEEDS_JSON" | grep -F '"target":"cbs"'
-printf '%s' "$EFFIGY_BOOTSTRAP_DB_SEEDS_JSON" | grep -F '"target":"cbs-mortcalc"'
-printf '%s' "$EFFIGY_BOOTSTRAP_DB_SEEDS_JSON" | grep -F '"staged_path":".effigy/local/db-seeds/cbs--latest.sql"'
-printf '%s' "$EFFIGY_BOOTSTRAP_DB_SEEDS_JSON" | grep -F '"staged_path":".effigy/local/db-seeds/cbs-mortcalc--latest.sql"'
-cmp ".effigy/local/db-seeds/cbs--latest.sql" expected-cbs.sql
-cmp ".effigy/local/db-seeds/cbs-mortcalc--latest.sql" expected-cbs-mortcalc.sql
-printf seeded > db-seed.txt
-"#,
-    )
-    .expect("write db seed task");
-    fs::write(
-        worktree.join("scripts/start.sh"),
-        r#"#!/bin/sh
-set -eu
-test -f db-seed.txt
-printf started > start.txt
-"#,
-    )
-    .expect("write start");
-    fs::write(worktree.join("expected-cbs.sql"), "seed cbs;\n").expect("write cbs expected");
-    fs::write(
-        worktree.join("expected-cbs-mortcalc.sql"),
-        "seed mortcalc;\n",
-    )
-    .expect("write mortcalc expected");
-    for name in ["db-seed.sh", "start.sh"] {
-        let script = worktree.join("scripts").join(name);
-        let mut perms = fs::metadata(&script)
-            .expect("script metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script, perms).expect("chmod script");
-    }
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init root multi db seed");
-    let remote = bare_remote_path("root-multi-db-seed-bare");
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
-fn create_root_remote_with_bootstrap_run_db_seed_visibility() -> PathBuf {
-    let worktree = temp_dir("root-db-seed-run-worktree");
-    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
-    fs::write(
-        worktree.join("effigy.toml"),
-        r#"[bootstrap]
-run = "sh ./scripts/root-setup.sh"
-
-[tasks."bootstrap:db-seed"]
-run = "sh ./scripts/db-seed.sh"
-"#,
-    )
-    .expect("write manifest");
-    fs::write(
-        worktree.join("scripts/root-setup.sh"),
-        r#"#!/bin/sh
-set -eu
-test -n "${EFFIGY_BOOTSTRAP_DB_SEEDS_DIR:-}"
-test -f ".effigy/local/db-seeds/latest.sql"
-cmp "${EFFIGY_BOOTSTRAP_DB_SEED_FILE}" ".effigy/local/db-seeds/latest.sql"
-printf visible > root-seed-check.txt
-"#,
-    )
-    .expect("write root setup");
-    fs::write(
-        worktree.join("scripts/db-seed.sh"),
-        "#!/bin/sh\nset -eu\nprintf seeded > db-seed.txt\n",
-    )
-    .expect("write db seed task");
-    for name in ["root-setup.sh", "db-seed.sh"] {
-        let script = worktree.join("scripts").join(name);
-        let mut perms = fs::metadata(&script)
-            .expect("script metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script, perms).expect("chmod script");
-    }
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init root db seed visibility");
-    let remote = bare_remote_path("root-db-seed-run-bare");
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
-#[test]
-fn run_bootstrap_with_cwd_starts_when_requested() {
-    run_bootstrap_with_cwd_starts_when_requested_using(|| {});
-}
-
-fn run_bootstrap_with_cwd_starts_when_requested_using(after_serial: impl FnOnce()) {
-    let _locks =
-        crate::runner::owned_children::hold_signal_proof_test_locks_after_serial(after_serial);
-    let child_remote = create_child_remote("child-app-start");
-    let root_remote = create_root_remote_with_bootstrap(&child_remote);
-    let cwd = temp_dir("bootstrap-start");
-    let out = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: root_remote.display().to_string(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: Vec::new(),
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: true,
-                plan: false,
-            },
-            output_json: false,
-        },
-        cwd.clone(),
-    )
-    .expect("run bootstrap");
-    assert!(out.contains("[ok] bootstrap completed"));
-    let destination = cwd.join("remote");
-    assert_eq!(
-        fs::read_to_string(destination.join("start.txt")).expect("start marker"),
-        "started"
-    );
-}
-
-#[test]
-fn run_bootstrap_with_cwd_stages_db_seed_before_root_run() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let root_remote = create_root_remote_with_bootstrap_run_db_seed_visibility();
-    let cwd = temp_dir("bootstrap-db-seed-root-run");
-    let dump = cwd.join("latest.sql");
-    fs::write(&dump, "create table ok;\n").expect("write dump");
-
-    let out = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: root_remote.display().to_string(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: vec![BootstrapDbSeedInput {
-                    target: None,
-                    path: dump.clone(),
-                }],
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: false,
-                plan: false,
-            },
-            output_json: false,
-        },
-        cwd.clone(),
-    )
-    .expect("run bootstrap");
-
-    assert!(out.contains("[ok] bootstrap completed"));
-    let destination = cwd.join("remote");
-    assert_eq!(
-        fs::read_to_string(destination.join("root-seed-check.txt")).expect("seed marker"),
-        "visible"
-    );
-    assert_eq!(
-        fs::read_to_string(destination.join(".effigy/local/db-seeds/latest.sql"))
-            .expect("staged dump"),
-        "create table ok;\n"
-    );
-}
-
-#[test]
-fn run_bootstrap_with_cwd_runs_standard_db_seed_task_before_start() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let root_remote = create_root_remote_with_bootstrap_db_seed_task();
-    let cwd = temp_dir("bootstrap-db-seed-task");
-    let dump = cwd.join("latest.sql");
-    fs::write(&dump, "seed payload;\n").expect("write dump");
-
-    let out = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: root_remote.display().to_string(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: vec![BootstrapDbSeedInput {
-                    target: None,
-                    path: dump,
-                }],
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: true,
-                plan: false,
-            },
-            output_json: false,
-        },
-        cwd.clone(),
-    )
-    .expect("run bootstrap");
-
-    assert!(out.contains("[ok] bootstrap completed"));
-    let destination = cwd.join("remote");
-    assert_eq!(
-        fs::read_to_string(destination.join("db-seed.txt")).expect("seed marker"),
-        "seeded"
-    );
-    assert_eq!(
-        fs::read_to_string(destination.join("start.txt")).expect("start marker"),
-        "started"
-    );
-}
-
-#[test]
-fn run_bootstrap_with_cwd_auto_targets_single_database_bundle_seed_input() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let root_remote = create_root_remote_with_single_database_bundle_bootstrap_db_seed_task();
-    let cwd = temp_dir("bootstrap-single-db-seed-task");
-    let dump = cwd.join("latest.sql");
-    fs::write(&dump, "seed contactpatch;\n").expect("write dump");
-
-    let out = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: root_remote.display().to_string(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: vec![BootstrapDbSeedInput {
-                    target: None,
-                    path: dump,
-                }],
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: false,
-                plan: false,
-            },
-            output_json: false,
-        },
-        cwd.clone(),
-    )
-    .expect("run bootstrap");
-
-    assert!(out.contains("[ok] bootstrap completed"));
-    let destination = cwd.join("remote");
-    assert_eq!(
-        fs::read_to_string(destination.join("db-seed.txt")).expect("seed marker"),
-        "seeded"
-    );
-    assert_eq!(
-        fs::read_to_string(destination.join(".effigy/local/db-seeds/contactpatch--latest.sql"))
-            .expect("staged dump"),
-        "seed contactpatch;\n"
-    );
-}
-
-#[test]
-fn run_bootstrap_with_cwd_runs_multi_target_db_seed_task_for_bundle_databases() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let root_remote = create_root_remote_with_multi_database_bootstrap_db_seed_task();
-    let cwd = temp_dir("bootstrap-multi-db-seed-task");
-    let cbs_dir = cwd.join("cbs-dumps");
-    let mortcalc_dir = cwd.join("mortcalc-dumps");
-    fs::create_dir_all(&cbs_dir).expect("mkdir cbs dumps");
-    fs::create_dir_all(&mortcalc_dir).expect("mkdir mortcalc dumps");
-    let cbs_dump = cbs_dir.join("latest.sql");
-    let mortcalc_dump = mortcalc_dir.join("latest.sql");
-    fs::write(&cbs_dump, "seed cbs;\n").expect("write cbs dump");
-    fs::write(&mortcalc_dump, "seed mortcalc;\n").expect("write mortcalc dump");
-
-    let out = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: root_remote.display().to_string(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: vec![
-                    BootstrapDbSeedInput {
-                        target: Some("cbs".into()),
-                        path: cbs_dump,
-                    },
-                    BootstrapDbSeedInput {
-                        target: Some("cbs-mortcalc".into()),
-                        path: mortcalc_dump,
-                    },
-                ],
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: false,
-                plan: false,
-            },
-            output_json: false,
-        },
-        cwd.clone(),
-    )
-    .expect("run bootstrap");
-
-    assert!(out.contains("[ok] bootstrap completed"));
-    let destination = cwd.join("remote");
-    assert_eq!(
-        fs::read_to_string(destination.join("db-seed.txt")).expect("seed marker"),
-        "seeded"
-    );
-    assert_eq!(
-        fs::read_to_string(destination.join(".effigy/local/db-seeds/cbs--latest.sql"))
-            .expect("staged cbs dump"),
-        "seed cbs;\n"
-    );
-    assert_eq!(
-        fs::read_to_string(destination.join(".effigy/local/db-seeds/cbs-mortcalc--latest.sql"))
-            .expect("staged mortcalc dump"),
-        "seed mortcalc;\n"
-    );
-}
-
-#[test]
-fn run_bootstrap_with_cwd_rejects_unnamed_db_seed_for_multi_database_bundle() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let root_remote = create_root_remote_with_multi_database_bootstrap_db_seed_task();
-    let cwd = temp_dir("bootstrap-multi-db-seed-unnamed");
-    let dump = cwd.join("latest.sql");
-    fs::write(&dump, "seed payload;\n").expect("write dump");
-
-    let err = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: root_remote.display().to_string(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: vec![BootstrapDbSeedInput {
-                    target: None,
-                    path: dump,
-                }],
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: false,
-                plan: false,
-            },
-            output_json: false,
-        },
-        cwd,
-    )
-    .expect_err("bootstrap should reject unnamed db seed for multi-db bundle");
-
-    assert!(
-        err.to_string().contains("must name a target because multiple database targets are declared in `[bundle].databases` and `[data.targets]`: cbs, cbs-mortcalc"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
-fn run_bootstrap_with_cwd_requires_container_registry_for_builtin_db_seed_fallback() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let child_remote = create_child_remote("child-app-db-seed-missing");
-    let root_remote = create_root_remote_with_bootstrap(&child_remote);
-    let cwd = temp_dir("bootstrap-db-seed-missing-task");
-    let dump = cwd.join("latest.sql");
-    fs::write(&dump, "seed payload;\n").expect("write dump");
-
-    let err = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: root_remote.display().to_string(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: vec![BootstrapDbSeedInput {
-                    target: None,
-                    path: dump,
-                }],
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: false,
-                plan: false,
-            },
-            output_json: false,
-        },
-        cwd,
-    )
-    .expect_err("bootstrap should reject missing container registry for builtin db seed fallback");
-
-    assert!(
-        err.to_string()
-            .contains("manifest does not define a `[containers]` registry"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
-fn run_bootstrap_with_cwd_reports_optional_child_warning_in_text_output() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let root_remote = create_root_remote_with_optional_missing_child();
-    let cwd = temp_dir("bootstrap-optional-child-text");
-    let out = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: root_remote.display().to_string(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: Vec::new(),
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: false,
-                plan: false,
-            },
-            output_json: false,
-        },
-        cwd,
-    )
-    .expect("run bootstrap");
-    assert!(out.contains("[ok] bootstrap completed"));
-    assert!(out.contains("child missing-child: failed"));
-    assert!(out.contains("[warn] optional child `missing-child` failed"));
-}
-
-#[test]
-fn run_bootstrap_with_cwd_syncs_js_and_rust_dependencies() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let root = temp_dir("bootstrap-deps-sync");
-    fs::write(
-        root.join("effigy.toml"),
-        "[package_manager]\njs = \"bun\"\n",
-    )
-    .expect("write manifest");
-
-    let ui = root.join("ui");
-    fs::create_dir_all(&ui).expect("mkdir ui");
-    fs::write(ui.join("package.json"), "{}\n").expect("write ui package");
-    fs::write(ui.join("bun.lock"), "lockfile-version = 1\n").expect("write Bun lock");
-
-    let api = root.join("api");
-    fs::create_dir_all(&api).expect("mkdir api");
-    fs::write(
-        api.join("Cargo.toml"),
-        "[package]\nname = \"api\"\nversion = \"0.1.0\"\n",
-    )
-    .expect("write api cargo");
-
-    let bin_dir = root.join("bin");
-    fs::create_dir_all(&bin_dir).expect("mkdir bin");
-    fs::write(bin_dir.join("bun"), "#!/bin/sh\nprintf bun > bun.marker\n").expect("write bun");
-    fs::write(
-        bin_dir.join("cargo"),
-        "#!/bin/sh\nprintf '%s ' \"$@\" > cargo.args\nprintf cargo > cargo.marker\n",
-    )
-    .expect("write cargo");
-    for name in ["bun", "cargo"] {
-        let script = bin_dir.join(name);
-        let mut perms = fs::metadata(&script).expect("stat script").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script, perms).expect("chmod script");
-    }
-
-    let _path = PathPrepend::new(&bin_dir);
-    let out = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::DepsSync {
-                mode: BootstrapDepsSyncMode::Both,
-                refresh_lock: false,
-                paths: vec!["ui".to_owned(), "api".to_owned()],
-            },
-            output_json: false,
-        },
-        root.clone(),
-    )
-    .expect("run bootstrap deps sync");
-
-    assert!(out.contains("bootstrap deps sync completed (2)"));
-    assert!(out.contains("ui [js]: bun install --frozen-lockfile"));
-    assert!(out.contains("api [rust]: cargo fetch --manifest-path Cargo.toml"));
-    assert!(ui.join("bun.marker").is_file(), "bun marker should exist");
-    assert!(
-        api.join("cargo.marker").is_file(),
-        "cargo marker should exist"
-    );
-    assert_eq!(
-        fs::read_to_string(api.join("cargo.args")).expect("read cargo args"),
-        "fetch --manifest-path Cargo.toml "
-    );
-}
-
-#[test]
-fn bootstrap_bun_refresh_generates_lock_and_scrubs_metadata_from_managed_dependencies() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let root = temp_dir("bootstrap-bun-refresh-metadata");
-    fs::write(
-        root.join("effigy.toml"),
-        "[package_manager]\njs = \"bun\"\n",
-    )
-    .expect("write manifest");
-    fs::write(
-        root.join("package.json"),
-        r#"{"name":"consumer","private":true,"workspaces":["ui"]}"#,
-    )
-    .expect("write workspace manifest");
-
-    let ui = root.join("ui");
-    fs::create_dir_all(&ui).expect("mkdir ui");
-    fs::write(
-        ui.join("package.json"),
-        r#"{"name":"ui","dependencies":{"shared":"file:../shared"}}"#,
-    )
-    .expect("write ui package");
-
-    let shared = root.join("shared");
-    fs::create_dir_all(shared.join("__MACOSX")).expect("mkdir metadata directory");
-    fs::write(
-        shared.join("package.json"),
-        r#"{"name":"shared","version":"1.0.0","main":"index.js"}"#,
-    )
-    .expect("write shared package");
-    fs::write(shared.join("index.js"), "module.exports = 1;\n").expect("write real file");
-    fs::write(shared.join(".DS_Store"), "metadata").expect("write Finder metadata");
-    fs::write(shared.join("._index.js"), "metadata").expect("write AppleDouble metadata");
-    fs::write(shared.join("__MACOSX/._index.js"), "metadata").expect("write archive metadata");
-
-    let bin_dir = root.join("bin");
-    fs::create_dir_all(&bin_dir).expect("mkdir bin");
-    fs::write(
-        bin_dir.join("bun"),
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" > bun.args\nmkdir -p ../node_modules/shared\ncp -R ../shared/. ../node_modules/shared/\ncase \" $* \" in\n  *\" --save-text-lockfile \"*) printf 'lockfile-version = 1\\n' > ../bun.lock ;;\nesac\n",
-    )
-    .expect("write fake bun");
-    let script = bin_dir.join("bun");
-    let mut perms = fs::metadata(&script).expect("stat fake bun").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&script, perms).expect("chmod fake bun");
-
-    let _path = PathPrepend::new(&bin_dir);
-    let refreshed = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::DepsSync {
-                mode: BootstrapDepsSyncMode::JsOnly,
-                refresh_lock: true,
-                paths: vec!["ui".to_owned()],
-            },
-            output_json: false,
-        },
-        root.clone(),
-    )
-    .expect("refresh Bun lock");
-    assert!(refreshed.contains("ui [js]: bun install --save-text-lockfile"));
-    assert!(
-        root.join("bun.lock").is_file(),
-        "refresh should create bun.lock"
-    );
-
-    let installed = root.join("node_modules/shared");
-    assert!(
-        installed.join("index.js").is_file(),
-        "real package file remains"
-    );
-    assert!(
-        installed.join("package.json").is_file(),
-        "package manifest remains"
-    );
-    assert!(!installed.join(".DS_Store").exists());
-    assert!(!installed.join("._index.js").exists());
-    assert!(!installed.join("__MACOSX").exists());
-    assert!(
-        shared.join(".DS_Store").is_file(),
-        "source metadata is untouched"
-    );
-    assert!(
-        shared.join("._index.js").is_file(),
-        "source metadata is untouched"
-    );
-    assert!(shared.join("__MACOSX/._index.js").is_file());
-
-    let frozen = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::DepsSync {
-                mode: BootstrapDepsSyncMode::JsOnly,
-                refresh_lock: false,
-                paths: vec!["ui".to_owned()],
-            },
-            output_json: false,
-        },
-        root.clone(),
-    )
-    .expect("frozen Bun prepare after refreshing lock");
-    assert!(frozen.contains("ui [js]: bun install --frozen-lockfile"));
-    assert_eq!(
-        fs::read_to_string(ui.join("bun.args")).expect("read Bun args"),
-        "install\n--frozen-lockfile\n"
-    );
-}
-
-#[test]
-fn bootstrap_bun_frozen_install_fails_early_without_lock() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let root = temp_dir("bootstrap-bun-missing-lock");
-    fs::write(
-        root.join("effigy.toml"),
-        "[package_manager]\njs = \"bun\"\n",
-    )
-    .expect("write manifest");
-    let ui = root.join("ui");
-    fs::create_dir_all(&ui).expect("mkdir ui");
-    fs::write(ui.join("package.json"), "{}\n").expect("write ui package");
-
-    let bin_dir = root.join("bin");
-    fs::create_dir_all(&bin_dir).expect("mkdir bin");
-    fs::write(
-        bin_dir.join("bun"),
-        "#!/bin/sh\nprintf called > bun.marker\n",
-    )
-    .expect("write fake bun");
-    let script = bin_dir.join("bun");
-    let mut perms = fs::metadata(&script).expect("stat fake bun").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&script, perms).expect("chmod fake bun");
-
-    let _path = PathPrepend::new(&bin_dir);
-    let error = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::DepsSync {
-                mode: BootstrapDepsSyncMode::JsOnly,
-                refresh_lock: false,
-                paths: vec!["ui".to_owned()],
-            },
-            output_json: false,
-        },
-        root.clone(),
-    )
-    .expect_err("missing Bun lock should fail before running Bun");
-
-    let message = error.to_string();
-    assert!(message.contains("bun.lock"), "{message}");
-    assert!(message.contains("bun.lockb"), "{message}");
-    assert!(message.contains("--refresh-lock"), "{message}");
-    assert!(!ui.join("bun.marker").exists(), "Bun must not be invoked");
-}
-
-#[test]
-fn run_bootstrap_with_cwd_resolves_bootstrap_deps_sync_relative_to_cloned_repo_root() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let child_remote = create_js_child_remote("workspace-app-sibling");
-    let root_remote = create_root_remote_with_sibling_bootstrap_deps(&child_remote);
-    let cwd = temp_dir("bootstrap-sibling-deps");
-    let bin_dir = cwd.join("bin");
-    fs::create_dir_all(&bin_dir).expect("mkdir bin");
-    fs::write(bin_dir.join("bun"), "#!/bin/sh\nprintf bun > bun.marker\n").expect("write bun");
-    let mut perms = fs::metadata(bin_dir.join("bun"))
-        .expect("stat bun")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(bin_dir.join("bun"), perms).expect("chmod bun");
-
-    let _path = PathPrepend::new(&bin_dir);
-    let out = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: root_remote.display().to_string(),
-                path: Some(PathBuf::from("workspace-app-reference")),
-                branch: None,
-                backend: None,
-                db_seeds: Vec::new(),
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: false,
-                plan: false,
-            },
-            output_json: false,
-        },
-        cwd.clone(),
-    )
-    .expect("run bootstrap");
-
-    assert!(out.contains("[ok] bootstrap completed"));
-    assert!(
-        cwd.join("platform/bun.marker").is_file(),
-        "bun marker should be written under the cloned repo sibling, not the bootstrap parent"
-    );
-}
-
-#[test]
-fn prompt_bootstrap_db_seeds_collects_named_paths() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let root = temp_dir("bootstrap-db-seed-prompt");
-    let cbs = root.join("cbs.sql");
-    let mortcalc = root.join("mortcalc.sql");
-    fs::write(&cbs, "cbs").expect("write cbs");
-    fs::write(&mortcalc, "mortcalc").expect("write mortcalc");
-
-    let input = format!("{}\n{}\n\n", cbs.display(), mortcalc.display());
-    let mut output = Vec::new();
-    let seeds = super::collect_bootstrap_db_seed_prompts_from_io(
-        &root,
-        &["cbs".to_owned(), "cbs-mortcalc".to_owned()],
-        &mut Cursor::new(input.into_bytes()),
-        &mut output,
-    )
-    .expect("prompt should succeed");
-
-    assert_eq!(
-        seeds,
-        vec![
-            super::BootstrapDbSeedInput {
-                target: Some("cbs".to_owned()),
-                path: cbs,
-            },
-            super::BootstrapDbSeedInput {
-                target: Some("cbs-mortcalc".to_owned()),
-                path: mortcalc,
-            },
-        ]
-    );
-    let rendered = String::from_utf8(output).expect("utf8");
-    assert!(rendered.contains("No --db-seed inputs were supplied."));
-    assert!(rendered.contains("Continue with 2 database seed file(s)? [Y/n]: "));
-}
-
-#[test]
-fn prompt_bootstrap_db_seeds_reprompts_invalid_paths_and_allows_skip() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let root = temp_dir("bootstrap-db-seed-prompt-invalid");
-    let valid = root.join("cbs.sql");
-    fs::write(&valid, "cbs").expect("write cbs");
-
-    let input = format!("/definitely/not/real.sql\n{}\n\n\n", valid.display());
-    let mut output = Vec::new();
-    let seeds = super::collect_bootstrap_db_seed_prompts_from_io(
-        &root,
-        &["cbs".to_owned(), "cbs-mortcalc".to_owned()],
-        &mut Cursor::new(input.into_bytes()),
-        &mut output,
-    )
-    .expect("prompt should succeed");
-
-    assert_eq!(
-        seeds,
-        vec![super::BootstrapDbSeedInput {
-            target: Some("cbs".to_owned()),
-            path: valid,
-        }]
-    );
-    let rendered = String::from_utf8(output).expect("utf8");
-    assert!(rendered.contains("Path does not exist or is not a readable file"));
-}
-
-#[test]
-fn prompt_bootstrap_path_reuse_confirms_existing_destination() {
-    let root = temp_dir("bootstrap-path-reuse-prompt");
-    let destination = root.join("existing");
-    fs::create_dir_all(&destination).expect("mkdir destination");
-    fs::write(destination.join("README.md"), "existing\n").expect("write marker");
-
-    let mut output = Vec::new();
-    super::confirm_bootstrap_path_reuse_from_io(
-        &destination,
-        &mut Cursor::new(b"y\n".to_vec()),
-        &mut output,
-    )
-    .expect("reuse confirmation should pass");
-
-    let rendered = String::from_utf8(output).expect("utf8");
-    assert!(rendered.contains("Bootstrap destination already exists and is non-empty"));
-    assert!(rendered.contains(&destination.display().to_string()));
-    assert!(rendered.contains("Reuse this destination and continue? [y/N]: "));
-}
-
-#[test]
-fn prompt_bootstrap_path_reuse_empty_response_cancels_by_default() {
-    let root = temp_dir("bootstrap-path-reuse-prompt-default");
-    let destination = root.join("existing");
-    fs::create_dir_all(&destination).expect("mkdir destination");
-
-    let err = super::confirm_bootstrap_path_reuse_from_io(
-        &destination,
-        &mut Cursor::new(b"\n".to_vec()),
-        &mut Vec::new(),
-    )
-    .expect_err("empty confirmation should cancel");
-
-    assert!(
-        err.to_string()
-            .contains("bootstrap cancelled during destination reuse confirmation"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
-fn run_bootstrap_with_cwd_rejects_existing_non_empty_destination_without_tty_prompt() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let child_remote = create_child_remote("child-app-path-reuse-non-tty");
-    let root_remote = create_root_remote_with_bootstrap(&child_remote);
-    let cwd = temp_dir("bootstrap-path-reuse-non-tty");
-    let destination = cwd.join("reuse-target");
-    fs::create_dir_all(&destination).expect("mkdir destination");
-    fs::write(destination.join("README.md"), "existing\n").expect("write marker");
-
-    let err = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: root_remote.display().to_string(),
-                path: Some(destination.clone()),
-                branch: None,
-                backend: None,
-                db_seeds: Vec::new(),
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: false,
-                plan: false,
-            },
-            output_json: false,
-        },
-        cwd,
-    )
-    .expect_err("non-tty path reuse should fail");
-
-    assert!(
-        err.to_string()
-            .contains("bootstrap destination already exists and is non-empty"),
-        "unexpected error: {err}"
-    );
-    assert!(err.to_string().contains("--reuse-path"));
-}
-
-#[test]
-fn run_bootstrap_with_cwd_rejects_existing_non_empty_destination_in_json_mode() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let child_remote = create_child_remote("child-app-path-reuse-json");
-    let root_remote = create_root_remote_with_bootstrap(&child_remote);
-    let cwd = temp_dir("bootstrap-path-reuse-json");
-    let destination = cwd.join("reuse-target");
-    fs::create_dir_all(&destination).expect("mkdir destination");
-    fs::write(destination.join("README.md"), "existing\n").expect("write marker");
-
-    let err = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: root_remote.display().to_string(),
-                path: Some(destination),
-                branch: None,
-                backend: None,
-                db_seeds: Vec::new(),
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: false,
-                plan: false,
-            },
-            output_json: true,
-        },
-        cwd,
-    )
-    .expect_err("json path reuse should fail instead of prompting");
-
-    assert!(
-        err.to_string()
-            .contains("bootstrap destination already exists and is non-empty"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
-fn run_bootstrap_with_cwd_plan_skips_existing_destination_prompt() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let child_remote = create_child_remote("child-app-path-reuse-plan");
-    let root_remote = create_root_remote_with_bootstrap(&child_remote);
-    let cwd = temp_dir("bootstrap-path-reuse-plan");
-    let destination = cwd.join("reuse-target");
-    fs::create_dir_all(&destination).expect("mkdir destination");
-    fs::write(destination.join("README.md"), "existing\n").expect("write marker");
-
-    let out = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: root_remote.display().to_string(),
-                path: Some(destination.clone()),
-                branch: None,
-                backend: None,
-                db_seeds: Vec::new(),
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: false,
-                plan: true,
-            },
-            output_json: false,
-        },
-        cwd,
-    )
-    .expect("plan should not prompt or fail");
-
-    assert!(out.contains("[planned] bootstrap request resolved"));
-    assert!(out.contains(&destination.display().to_string()));
-}
-
-#[test]
-fn run_bootstrap_with_cwd_no_prompt_rejects_existing_checkout_without_reuse_path() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let root_remote = create_plain_remote("root-path-reuse-bypass");
-    let cwd = temp_dir("bootstrap-path-reuse-bypass");
-    let destination = cwd.join("reuse-target");
-
-    run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: root_remote.display().to_string(),
-                path: Some(destination.clone()),
-                branch: None,
-                backend: None,
-                db_seeds: Vec::new(),
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: false,
-                plan: false,
-            },
-            output_json: false,
-        },
-        cwd.clone(),
-    )
-    .expect("initial clone");
-
-    let out = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: root_remote.display().to_string(),
-                path: Some(destination),
-                branch: None,
-                backend: None,
-                db_seeds: Vec::new(),
-                fresh: false,
-                no_prompt: true,
-                reuse_path: false,
-                start: false,
-                plan: false,
-            },
-            output_json: false,
-        },
-        cwd,
-    )
-    .expect_err("--no-prompt alone should not bypass path reuse confirmation");
-
-    assert!(out.to_string().contains("--reuse-path"));
-}
-
-#[test]
-fn run_bootstrap_with_cwd_reuse_path_bypasses_existing_checkout_confirmation() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let root_remote = create_plain_remote("root-path-reuse-flag");
-    let cwd = temp_dir("bootstrap-path-reuse-flag");
-    let destination = cwd.join("reuse-target");
-
-    run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: root_remote.display().to_string(),
-                path: Some(destination.clone()),
-                branch: None,
-                backend: None,
-                db_seeds: Vec::new(),
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: false,
-                plan: false,
-            },
-            output_json: false,
-        },
-        cwd.clone(),
-    )
-    .expect("initial clone");
-
-    let out = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: root_remote.display().to_string(),
-                path: Some(destination),
-                branch: None,
-                backend: None,
-                db_seeds: Vec::new(),
-                fresh: false,
-                no_prompt: true,
-                reuse_path: true,
-                start: false,
-                plan: false,
-            },
-            output_json: false,
-        },
-        cwd,
-    )
-    .expect("--reuse-path should bypass path reuse confirmation");
-
-    assert!(out.contains("[ok] bootstrap completed"));
-}
-
-#[test]
-fn run_bootstrap_with_cwd_skips_missing_bootstrap_deps_sync_paths() {
-    let _locks = crate::runner::owned_children::hold_signal_proof_test_locks();
-    let root = temp_dir("bootstrap-deps-sync-missing");
-    fs::write(
-        root.join("effigy.toml"),
-        "[package_manager]\njs = \"bun\"\n",
-    )
-    .expect("write manifest");
-
-    let ui = root.join("ui");
-    fs::create_dir_all(&ui).expect("mkdir ui");
-    fs::write(ui.join("package.json"), "{}\n").expect("write ui package");
-    fs::write(ui.join("bun.lock"), "lockfile-version = 1\n").expect("write Bun lock");
-
-    let bin_dir = root.join("bin");
-    fs::create_dir_all(&bin_dir).expect("mkdir bin");
-    fs::write(bin_dir.join("bun"), "#!/bin/sh\nprintf bun > bun.marker\n").expect("write bun");
-    let script = bin_dir.join("bun");
-    let mut perms = fs::metadata(&script).expect("stat script").permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&script, perms).expect("chmod script");
-
-    let _path = PathPrepend::new(&bin_dir);
-    let out = run_bootstrap_with_cwd(
-        BootstrapArgs {
-            subcommand: BootstrapSubcommand::DepsSync {
-                mode: BootstrapDepsSyncMode::Both,
-                refresh_lock: false,
-                paths: vec!["ui".to_owned(), "missing-ui".to_owned()],
-            },
-            output_json: false,
-        },
-        root.clone(),
-    )
-    .expect("run bootstrap deps sync");
-
-    assert!(out.contains("bootstrap deps sync completed (1)"));
-    assert!(out.contains("ui [js]: bun install --frozen-lockfile"));
-    assert!(out.contains("missing-ui [skip]: missing directory"));
-    assert!(ui.join("bun.marker").is_file(), "bun marker should exist");
-}
-
-#[test]
-fn shared_process_bootstrap_waits_for_path_mutator() {
-    crate::contract_test_support::assert_waits_for_path_mutator(|after_serial| {
-        run_bootstrap_with_cwd_starts_when_requested_using(after_serial)
-    });
+    let rendered = render_bootstrap_progress_message("[warn] drift", true);
+    assert!(rendered.contains("[warn]"), "{rendered}");
+    assert!(rendered.contains("drift"), "{rendered}");
+    assert!(rendered.starts_with('\u{1b}'), "{rendered}");
 }

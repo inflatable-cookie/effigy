@@ -1,496 +1,135 @@
-use crate::tests::prelude::{
-    parse_command, BootstrapArgs, BootstrapBackendOverride, BootstrapDepsSyncMode,
-    BootstrapSubcommand, Command, HelpTopic, PathBuf,
-};
-use effigy_cli::BootstrapDbSeedInput;
+use crate::tests::prelude::{parse_command, BootstrapArgs, Command, HelpTopic, PathBuf};
+
+fn parse(args: &[&str]) -> Result<Command, effigy_cli::CliParseError> {
+    parse_command(args.iter().map(|arg| (*arg).to_owned()))
+}
+
+fn bootstrap_args(command: Command) -> BootstrapArgs {
+    match command {
+        Command::Bootstrap(args) => args,
+        other => panic!("expected bootstrap command, got {other:?}"),
+    }
+}
 
 #[test]
 fn parse_bootstrap_help_is_scoped() {
-    let cmd = parse_command(vec!["bootstrap".to_owned(), "--help".to_owned()])
-        .expect("parse should succeed");
+    let cmd = parse(&["bootstrap", "--help"]).expect("parse should succeed");
     assert_eq!(cmd, Command::Help(HelpTopic::Bootstrap));
 }
 
 #[test]
-fn parse_bootstrap_plan_with_path_branch_and_start() {
-    let cmd = parse_command(vec![
-        "bootstrap".to_owned(),
-        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-        "--path".to_owned(),
-        "./loophole".to_owned(),
-        "--branch".to_owned(),
-        "main".to_owned(),
-        "--db-seed".to_owned(),
-        "./infra/bootstrap/latest.sql".to_owned(),
-        "--start".to_owned(),
-        "--plan".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-                path: Some(PathBuf::from("./loophole")),
-                branch: Some("main".to_owned()),
-                backend: None,
-                db_seeds: vec![BootstrapDbSeedInput {
-                    target: None,
-                    path: PathBuf::from("./infra/bootstrap/latest.sql"),
-                }],
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: true,
-                plan: true,
-            },
-            output_json: true,
-        })
-    );
+fn parse_bootstrap_with_no_argument_uses_the_existing_checkout() {
+    let args = bootstrap_args(parse(&["bootstrap"]).expect("parse should succeed"));
+    assert_eq!(args.repo_url, None);
+    assert_eq!(args.path, None);
+    assert_eq!(args.branch, None);
+    assert!(!args.no_start);
+    assert!(!args.plan);
+    assert!(!args.output_json);
 }
 
 #[test]
-fn parse_bootstrap_defaults_to_start_when_unspecified() {
-    let cmd = parse_command(vec![
-        "bootstrap".to_owned(),
-        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: Vec::new(),
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: true,
-                plan: false,
-            },
-            output_json: false,
-        })
+fn parse_bootstrap_plan_with_path_branch_and_no_start() {
+    let args = bootstrap_args(
+        parse(&[
+            "bootstrap",
+            "git@github.com:inflatable-cookie/loophole.git",
+            "--path",
+            "./loophole",
+            "--branch",
+            "main",
+            "--no-start",
+            "--plan",
+            "--json",
+        ])
+        .expect("parse should succeed"),
     );
+    assert_eq!(
+        args.repo_url.as_deref(),
+        Some("git@github.com:inflatable-cookie/loophole.git")
+    );
+    assert_eq!(args.path, Some(PathBuf::from("./loophole")));
+    assert_eq!(args.branch.as_deref(), Some("main"));
+    assert!(args.no_start);
+    assert!(args.plan);
+    assert!(args.output_json);
 }
 
 #[test]
-fn parse_bootstrap_no_start_disables_default_start() {
-    let cmd = parse_command(vec![
-        "bootstrap".to_owned(),
-        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-        "--no-start".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: Vec::new(),
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: false,
-                plan: false,
-            },
-            output_json: false,
-        })
+fn parse_bootstrap_accepts_a_global_json_flag() {
+    let args = bootstrap_args(
+        effigy_cli::apply_global_json_flag(
+            parse(&["bootstrap", "--plan"]).expect("parse should succeed"),
+            true,
+        ),
     );
+    assert!(args.output_json);
+    assert!(args.plan);
 }
 
 #[test]
-fn parse_bootstrap_accepts_repeated_db_seed_flags() {
-    let cmd = parse_command(vec![
-        "bootstrap".to_owned(),
-        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-        "--db-seed".to_owned(),
-        "./db/latest.sql".to_owned(),
-        "--db-seed".to_owned(),
-        "./db/legacy.sql".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: vec![
-                    BootstrapDbSeedInput {
-                        target: None,
-                        path: PathBuf::from("./db/latest.sql"),
-                    },
-                    BootstrapDbSeedInput {
-                        target: None,
-                        path: PathBuf::from("./db/legacy.sql"),
-                    },
-                ],
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: true,
-                plan: false,
-            },
-            output_json: false,
-        })
+fn parse_bootstrap_url_before_flags_is_the_default_shape() {
+    let args = bootstrap_args(
+        parse(&["bootstrap", "https://github.com/acme/app.git"]).expect("parse should succeed"),
     );
+    assert_eq!(
+        args.repo_url.as_deref(),
+        Some("https://github.com/acme/app.git")
+    );
+    assert!(!args.no_start);
 }
 
 #[test]
-fn parse_bootstrap_accepts_bare_target_db_seed_flag() {
-    let cmd = parse_command(vec![
-        "bootstrap".to_owned(),
-        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-        "--db-seed".to_owned(),
-        "legacy_mysql".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: vec![BootstrapDbSeedInput {
-                    target: Some("legacy_mysql".to_owned()),
-                    path: PathBuf::from("legacy_mysql.sql"),
-                }],
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: true,
-                plan: false,
-            },
-            output_json: false,
-        })
-    );
+fn parse_bootstrap_missing_flag_values_fail() {
+    for flag in ["--path", "--branch"] {
+        let error = parse(&["bootstrap", "./repo", flag]).expect_err("missing value");
+        assert!(
+            error.to_string().contains("requires a value"),
+            "{flag}: {error}"
+        );
+    }
 }
 
 #[test]
-fn parse_bootstrap_accepts_named_db_seed_flags() {
-    let cmd = parse_command(vec![
-        "bootstrap".to_owned(),
-        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-        "--db-seed".to_owned(),
-        "cbs=./db/cbs.sql".to_owned(),
-        "--db-seed".to_owned(),
-        "cbs-mortcalc=./db/mortcalc.sql".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: vec![
-                    BootstrapDbSeedInput {
-                        target: Some("cbs".to_owned()),
-                        path: PathBuf::from("./db/cbs.sql"),
-                    },
-                    BootstrapDbSeedInput {
-                        target: Some("cbs-mortcalc".to_owned()),
-                        path: PathBuf::from("./db/mortcalc.sql"),
-                    },
-                ],
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: true,
-                plan: false,
-            },
-            output_json: false,
-        })
-    );
+fn parse_bootstrap_rejects_retired_flags_with_their_replacement() {
+    for (flag, expected) in [
+        ("--start", "start is the default"),
+        ("--db-seed", "setup"),
+        ("--fresh", "container <name> down"),
+        ("--backend", "environment"),
+        ("--no-prompt", "prompts were removed"),
+        ("--reuse-path", "prompts were removed"),
+    ] {
+        let error =
+            parse(&["bootstrap", "./repo", flag, "value"]).expect_err("retired flag");
+        let message = error.to_string();
+        assert!(message.contains(expected), "{flag}: {message}");
+        assert!(message.contains("CHANGELOG.md"), "{flag}: {message}");
+    }
 }
 
 #[test]
-fn parse_bootstrap_accepts_named_oci_db_seed_flags() {
-    let cmd = parse_command(vec![
-        "bootstrap".to_owned(),
-        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-        "--db-seed".to_owned(),
-        "app=oci://ghcr.io/acme/private-data:uat".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: vec![BootstrapDbSeedInput {
-                    target: Some("app".to_owned()),
-                    path: PathBuf::from("oci://ghcr.io/acme/private-data:uat"),
-                }],
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: true,
-                plan: false,
-            },
-            output_json: false,
-        })
-    );
+fn parse_bootstrap_rejects_retired_subcommands_with_their_replacement() {
+    for (subcommand, expected) in [
+        ("children", "[sources.<name>]"),
+        ("deps", "[bootstrap].setup"),
+        ("teardown", "container <name> down"),
+    ] {
+        let error = parse(&["bootstrap", subcommand]).expect_err("retired subcommand");
+        let message = error.to_string();
+        assert!(message.contains(expected), "{subcommand}: {message}");
+        assert!(message.contains("CHANGELOG.md"), "{subcommand}: {message}");
+    }
 }
 
 #[test]
-fn parse_bootstrap_accepts_no_prompt_flag() {
-    let cmd = parse_command(vec![
-        "bootstrap".to_owned(),
-        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-        "--no-prompt".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: Vec::new(),
-                fresh: false,
-                no_prompt: true,
-                reuse_path: false,
-                start: true,
-                plan: false,
-            },
-            output_json: false,
-        })
-    );
+fn parse_bootstrap_rejects_a_bare_word_as_a_url() {
+    let error = parse(&["bootstrap", "loophole"]).expect_err("bare word");
+    assert!(error.to_string().contains("is not a git URL"), "{error}");
 }
 
 #[test]
-fn parse_bootstrap_accepts_reuse_path_flag() {
-    let cmd = parse_command(vec![
-        "bootstrap".to_owned(),
-        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-        "--reuse-path".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: Vec::new(),
-                fresh: false,
-                no_prompt: false,
-                reuse_path: true,
-                start: true,
-                plan: false,
-            },
-            output_json: false,
-        })
-    );
-}
-
-#[test]
-fn parse_bootstrap_accepts_fresh_flag() {
-    let cmd = parse_command(vec![
-        "bootstrap".to_owned(),
-        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-        "--fresh".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-                path: None,
-                branch: None,
-                backend: None,
-                db_seeds: Vec::new(),
-                fresh: true,
-                no_prompt: false,
-                reuse_path: false,
-                start: true,
-                plan: false,
-            },
-            output_json: false,
-        })
-    );
-}
-
-#[test]
-fn parse_bootstrap_accepts_backend_flag() {
-    let cmd = parse_command(vec![
-        "bootstrap".to_owned(),
-        "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-        "--backend".to_owned(),
-        "docker".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::Clone {
-                repo_url: "git@github.com:inflatable-cookie/loophole.git".to_owned(),
-                path: None,
-                branch: None,
-                backend: Some(BootstrapBackendOverride::Docker),
-                db_seeds: Vec::new(),
-                fresh: false,
-                no_prompt: false,
-                reuse_path: false,
-                start: true,
-                plan: false,
-            },
-            output_json: false,
-        })
-    );
-}
-
-#[test]
-fn parse_bootstrap_teardown_subcommand() {
-    let cmd = parse_command(vec![
-        "bootstrap".to_owned(),
-        "teardown".to_owned(),
-        "--yes".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::Teardown { yes: true },
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_bootstrap_deps_sync_subcommand() {
-    let cmd = parse_command(vec![
-        "bootstrap".to_owned(),
-        "deps".to_owned(),
-        "sync".to_owned(),
-        "../platform".to_owned(),
-        "api".to_owned(),
-        "--rust-only".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::DepsSync {
-                mode: BootstrapDepsSyncMode::RustOnly,
-                refresh_lock: false,
-                paths: vec!["../platform".to_owned(), "api".to_owned()],
-            },
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_bootstrap_deps_sync_refresh_lock_option() {
-    let cmd = parse_command(vec![
-        "bootstrap".to_owned(),
-        "deps".to_owned(),
-        "sync".to_owned(),
-        "--refresh-lock".to_owned(),
-        "packages/ui".to_owned(),
-    ])
-    .expect("parse refresh-lock command");
-
-    assert_eq!(
-        cmd,
-        Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::DepsSync {
-                mode: BootstrapDepsSyncMode::Both,
-                refresh_lock: true,
-                paths: vec!["packages/ui".to_owned()],
-            },
-            output_json: false,
-        })
-    );
-
-    let error = parse_command(vec![
-        "bootstrap".to_owned(),
-        "deps".to_owned(),
-        "sync".to_owned(),
-        "--refresh-lock".to_owned(),
-        "--rust-only".to_owned(),
-    ])
-    .expect_err("refresh-lock does not apply to Rust-only sync");
-    assert!(error.to_string().contains("--refresh-lock"));
-}
-
-#[test]
-fn parse_bootstrap_children_sync_subcommand() {
-    let cmd = parse_command(vec![
-        "bootstrap".to_owned(),
-        "children".to_owned(),
-        "sync".to_owned(),
-        "--fetch-only".to_owned(),
-        "--checkout".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::ChildrenSync {
-                fetch_only: true,
-                checkout: true,
-            },
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_bootstrap_children_status_subcommand() {
-    let cmd = parse_command(vec![
-        "bootstrap".to_owned(),
-        "children".to_owned(),
-        "status".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::ChildrenStatus,
-            output_json: true,
-        })
-    );
+fn parse_bootstrap_rejects_unknown_flags() {
+    let error = parse(&["bootstrap", "--bogus"]).expect_err("unknown flag");
+    assert!(error.to_string().contains("--bogus"), "{error}");
 }

@@ -1,180 +1,101 @@
-use crate::{ManifestTask, ManifestTaskLikeDefinition};
+//! `[bootstrap]` — the one-command declaration for someone else's project
+//! (Q-009, contract 020).
+//!
+//! `setup` is an ordered list of ordinary task selectors and `start` is one
+//! ordinary task selector, so both dispatch through the same pipeline as
+//! `effigy <selector>`. `submodules = true` initialises submodules recursively
+//! at their recorded commits. Pinned extra sources live in `[sources.<name>]`
+//! and replace the removed `[bootstrap].children` table.
 
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]
 pub struct ManifestBootstrapConfig {
-    #[serde(default, alias = "setup")]
-    pub run: Option<ManifestBootstrapRun>,
+    /// Ordered task selectors run after the checkout, its sources and its
+    /// submodules are ready.
     #[serde(default)]
-    pub start: Option<ManifestBootstrapStart>,
+    pub setup: Vec<String>,
+    /// The one task selector started last unless `--no-start` is passed.
     #[serde(default)]
-    pub submodules: Option<ManifestBootstrapSubmodulesPolicy>,
+    pub start: Option<String>,
+    /// Recursively initialise submodules at their recorded commits.
     #[serde(default)]
-    pub children: Vec<ManifestBootstrapChildConfig>,
+    pub submodules: bool,
 }
 
-/// Selector(s) to run as the bootstrap start task.
+/// One pinned extra source acquired beside the project checkout.
 ///
-/// Accepts a single selector string, or an array of entries where each
-/// entry is either a selector string (`"dev"`) or a table form
-/// (`{ task = "dev" }`). Mixed arrays are allowed, mirroring the
-/// flexibility of `[bootstrap].run`. Arrays run sequentially in
-/// declaration order; the first failure aborts the chain.
-/// Backward-compatible with the original scalar shape.
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(untagged)]
-pub enum ManifestBootstrapStart {
-    Single(String),
-    Multiple(Vec<ManifestBootstrapStartEntry>),
-}
-
-/// One entry in a multi-selector `[bootstrap].start` array.
-///
-/// Either a bare selector string (`"dev"`) or a table form carrying a
-/// `task` selector (`{ task = "dev" }`). Args still travel inside the
-/// selector string itself (e.g. `"dev --foo bar"`).
+/// Exactly one of `rev` and `rev_file` selects the commit. An existing working
+/// copy is never reset, fetched forward or cleaned: a different HEAD or local
+/// changes are reported as drift and left untouched.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-#[serde(untagged)]
-pub enum ManifestBootstrapStartEntry {
-    Selector(String),
-    Table(ManifestBootstrapStartTable),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ManifestBootstrapStartTable {
-    pub task: String,
-}
-
-impl ManifestBootstrapStartEntry {
-    pub fn selector(&self) -> &str {
-        match self {
-            Self::Selector(selector) => selector.as_str(),
-            Self::Table(table) => table.task.as_str(),
-        }
-    }
-}
-
-impl ManifestBootstrapStart {
-    /// Selectors in declaration order.
-    pub fn selectors(&self) -> Vec<&str> {
-        match self {
-            Self::Single(selector) => vec![selector.as_str()],
-            Self::Multiple(entries) => entries.iter().map(|entry| entry.selector()).collect(),
-        }
-    }
-
-    /// Owned copy of all selectors in declaration order.
-    pub fn to_owned_selectors(&self) -> Vec<String> {
-        self.selectors().into_iter().map(String::from).collect()
-    }
-}
-
-#[derive(Debug, serde::Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum ManifestBootstrapSubmodulesPolicy {
-    None,
-    Init,
-    Recursive,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 #[serde(deny_unknown_fields)]
-pub struct ManifestBootstrapChildConfig {
+pub struct ManifestPinnedSourceConfig {
+    pub git: String,
+    #[serde(default)]
+    pub rev: Option<String>,
+    /// A file holding the pinned commit, relative to the manifest. The brief
+    /// spells it `rev_file`; kebab-case is accepted as an alias.
+    #[serde(default, rename = "rev_file", alias = "rev-file")]
+    pub rev_file: Option<String>,
     pub path: String,
-    pub repo: String,
-    #[serde(default)]
-    pub branch: Option<String>,
-    #[serde(default, alias = "setup")]
-    pub run: Option<ManifestBootstrapRun>,
-    #[serde(default = "default_bootstrap_child_required")]
-    pub required: bool,
-}
-
-fn default_bootstrap_child_required() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(transparent)]
-pub struct ManifestBootstrapRun(ManifestTaskLikeDefinition);
-
-impl ManifestBootstrapRun {
-    pub fn into_manifest_task(self) -> ManifestTask {
-        self.0.into_manifest_task()
-    }
-
-    pub fn as_manifest_task(&self) -> ManifestTask {
-        self.0.as_manifest_task()
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::ManifestBootstrapConfig;
-    use crate::{ManifestManagedRun, ManifestManagedRunStep, ManifestTaskRunIn};
-
-    #[test]
-    fn bootstrap_run_accepts_compact_inline_task_run_in() {
-        let bootstrap: ManifestBootstrapConfig = toml::from_str(
-            r#"
-run = { rhai = "scripts/bootstrap.rhai", run_in = "host" }
-"#,
-        )
-        .expect("parse bootstrap run");
-
-        let task = bootstrap.run.expect("bootstrap run").into_manifest_task();
-        assert_eq!(task.run_in, Some(ManifestTaskRunIn::Host));
-        let Some(ManifestManagedRun::Sequence(steps)) = task.run else {
-            panic!("expected compact inline task to become one-step sequence");
-        };
-        assert!(matches!(
-            steps.as_slice(),
-            [ManifestManagedRunStep::Step(step)]
-                if step.rhai.as_deref() == Some("scripts/bootstrap.rhai")
-        ));
+    use super::{ManifestBootstrapConfig, ManifestPinnedSourceConfig};
+    fn parse_sources(text: &str) -> Vec<(String, ManifestPinnedSourceConfig)> {
+        let manifest: crate::TaskManifest = toml::from_str(text).expect("parse manifest");
+        manifest.sources.into_iter().collect()
     }
 
     #[test]
-    fn bootstrap_child_run_accepts_compact_inline_task_run_in() {
+    fn bootstrap_accepts_selector_lists_and_one_start() {
         let bootstrap: ManifestBootstrapConfig = toml::from_str(
             r#"
-[[children]]
-path = "app"
-repo = "git@example.test/app.git"
-run = { task = "bootstrap:child", run_in = "container" }
+setup = ["workspace:js:prepare", "db:seed:schema"]
+start = "dev"
+submodules = true
 "#,
         )
-        .expect("parse bootstrap child run");
-
-        let task = bootstrap.children[0]
-            .run
-            .as_ref()
-            .expect("child run")
-            .as_manifest_task();
-        assert_eq!(task.run_in, Some(ManifestTaskRunIn::Container));
-        let Some(ManifestManagedRun::Sequence(steps)) = task.run else {
-            panic!("expected compact inline task to become one-step sequence");
-        };
-        assert!(matches!(
-            steps.as_slice(),
-            [ManifestManagedRunStep::Step(step)]
-                if step.task.as_deref() == Some("bootstrap:child")
-        ));
+        .expect("parse bootstrap");
+        assert_eq!(
+            bootstrap.setup,
+            vec!["workspace:js:prepare".to_owned(), "db:seed:schema".to_owned()]
+        );
+        assert_eq!(bootstrap.start.as_deref(), Some("dev"));
+        assert!(bootstrap.submodules);
     }
 
     #[test]
-    fn bootstrap_run_preserves_existing_sequence_shape() {
-        let bootstrap: ManifestBootstrapConfig = toml::from_str(
-            r#"
-run = [{ task = "bootstrap:root" }]
-"#,
-        )
-        .expect("parse bootstrap run sequence");
+    fn bootstrap_defaults_to_nothing_configured() {
+        let bootstrap: ManifestBootstrapConfig = toml::from_str("").expect("parse bootstrap");
+        assert!(bootstrap.setup.is_empty());
+        assert_eq!(bootstrap.start, None);
+        assert!(!bootstrap.submodules);
+    }
 
-        let task = bootstrap.run.expect("bootstrap run").into_manifest_task();
-        assert!(matches!(task.run, Some(ManifestManagedRun::Sequence(_))));
+    #[test]
+    fn pinned_source_reads_rev_or_rev_file() {
+        let sources = parse_sources(
+            r#"
+[sources.book]
+git = "git@github.com:contact-patch/book.git"
+rev = "0123456789abcdef0123456789abcdef01234567"
+path = "../book"
+
+[sources.content]
+git = "git@github.com:acme/content.git"
+rev_file = "content.rev"
+path = "../content"
+"#,
+        );
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].0, "book");
+        assert_eq!(sources[0].1.rev.as_deref().map(str::len), Some(40));
+        assert_eq!(sources[0].1.path, "../book");
+        assert_eq!(sources[1].0, "content");
+        assert_eq!(sources[1].1.rev_file.as_deref(), Some("content.rev"));
     }
 }

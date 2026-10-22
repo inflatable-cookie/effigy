@@ -120,7 +120,7 @@ fn missing_child_bootstrap_emits_finding_and_skips_health() {
     assert_eq!(bootstrap.severity, DoctorSeverity::Error);
     assert!(bootstrap
         .remediation
-        .contains("effigy bootstrap deps sync child"));
+        .contains("effigy bootstrap --path child"));
     assert!(!state
         .findings
         .iter()
@@ -356,7 +356,7 @@ fn installed_package_evidence_guards_health_against_parent_resolution() {
         if let Some(finding) = finding {
             assert!(finding.evidence.contains(name), "{finding:?}");
             assert!(
-                finding.remediation.contains("effigy bootstrap deps sync"),
+                finding.remediation.contains("effigy bootstrap"),
                 "{finding:?}"
             );
         }

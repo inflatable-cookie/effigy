@@ -1,7 +1,7 @@
 use effigy_manifest::config_sections::ManifestReleaseGateConfig;
 use effigy_manifest::{
-    ManifestBootstrapRun, ManifestBundleBase, ManifestContainerServiceConfig,
-    ManifestDistributionConfig, ManifestReleaseConfig, ManifestWorkspaceContainerRef,
+    ManifestBundleBase, ManifestContainerServiceConfig, ManifestDistributionConfig,
+    ManifestReleaseConfig, ManifestWorkspaceContainerRef,
 };
 
 use crate::error::CodeGraphError;
@@ -621,125 +621,89 @@ pub(super) fn index_bootstrap(
         "bootstrap-root",
         SemanticSource::new(file, file_record, extractor_id, extractor_version),
     )?;
-    if let Some(run) = bootstrap.run.as_ref() {
-        index_bootstrap_run(
+    for (index, selector) in bootstrap.setup.iter().enumerate() {
+        index_bootstrap_selector(
             file,
+            file_record,
             &bootstrap_id,
             sink,
+            tasks,
             extractor_id,
             extractor_version,
-            "bootstrap-run",
-            run,
+            "setup",
+            index,
+            selector,
         )?;
     }
-    if let Some(start) = bootstrap.start.as_ref() {
-        for (index, selector) in start.selectors().into_iter().enumerate() {
-            let selector_id = manifest_nested_symbol_id(file, &["bootstrap", "start", selector])?;
-            push_symbol(
-                sink,
-                selector_id.clone(),
-                "task-selector",
-                selector,
-                &format!("selector::{selector}"),
-                SemanticSource::new(file, file_record, extractor_id, extractor_version),
-                "task-selector",
-            );
-            push_contains_edge(
-                sink,
-                &bootstrap_id,
-                &selector_id,
-                &format!("bootstrap-start-selector:{index}"),
-                SemanticSource::new(file, file_record, extractor_id, extractor_version),
-            )?;
-            if tasks.contains_key(selector) {
-                let task_id = manifest_named_symbol_id(file, "task", selector)?;
-                push_resolved_edge(
-                    sink,
-                    &selector_id,
-                    "entrypoint-task",
-                    &task_id,
-                    &format!("bootstrap-start:{index}"),
-                    SemanticOrigin::new(file, extractor_id, extractor_version),
-                    Confidence::Exact,
-                )?;
-            } else {
-                push_unresolved_edge(
-                    sink,
-                    &selector_id,
-                    "entrypoint-task",
-                    selector,
-                    &format!("bootstrap-start:{index}"),
-                    SemanticSource::new(file, file_record, extractor_id, extractor_version),
-                    Confidence::Exact,
-                )?;
-            }
-        }
-    }
-    for (index, child) in bootstrap.children.iter().enumerate() {
-        let child_name = format!("child-{}", index + 1);
-        let child_id = manifest_nested_symbol_id(file, &["bootstrap", "child", &child_name])?;
-        push_symbol(
-            sink,
-            child_id.clone(),
-            "bootstrap-child",
-            &child.path,
-            &format!("bootstrap::child::{}", child.path),
-            SemanticSource::new(file, file_record, extractor_id, extractor_version),
-            "bootstrap-child",
-        );
-        push_contains_edge(
-            sink,
+    if let Some(selector) = bootstrap.start.as_deref() {
+        index_bootstrap_selector(
+            file,
+            file_record,
             &bootstrap_id,
-            &child_id,
-            &format!("bootstrap-child:{index}"),
-            SemanticSource::new(file, file_record, extractor_id, extractor_version),
-        )?;
-        push_unresolved_edge(
             sink,
-            &child_id,
-            "bootstrap-child-repo",
-            &child.repo,
-            &format!("bootstrap-child-repo:{index}"),
-            SemanticSource::new(file, file_record, extractor_id, extractor_version),
-            Confidence::Exact,
+            tasks,
+            extractor_id,
+            extractor_version,
+            "start",
+            0,
+            selector,
         )?;
-        if let Some(run) = child.run.as_ref() {
-            index_bootstrap_run(
-                file,
-                &child_id,
-                sink,
-                extractor_id,
-                extractor_version,
-                &format!("bootstrap-child-run:{index}"),
-                run,
-            )?;
-        }
     }
     Ok(())
 }
 
-fn index_bootstrap_run(
+#[allow(clippy::too_many_arguments)]
+fn index_bootstrap_selector(
     file: &SourceFile,
-    owner_id: &GraphId,
+    file_record: &FileRecord,
+    bootstrap_id: &GraphId,
     sink: &mut GraphSink,
+    tasks: &ManifestTasks,
     extractor_id: &ExtractorId,
     extractor_version: &str,
-    label: &str,
-    run: &ManifestBootstrapRun,
+    phase: &str,
+    index: usize,
+    selector: &str,
 ) -> Result<(), CodeGraphError> {
-    let task = run.as_manifest_task();
-    if let Some(run) = task.run.as_ref() {
-        index_run_binding(
-            file,
-            owner_id,
+    let selector_id = manifest_nested_symbol_id(file, &["bootstrap", phase, selector])?;
+    push_symbol(
+        sink,
+        selector_id.clone(),
+        "task-selector",
+        selector,
+        &format!("selector::{selector}"),
+        SemanticSource::new(file, file_record, extractor_id, extractor_version),
+        "task-selector",
+    );
+    push_contains_edge(
+        sink,
+        bootstrap_id,
+        &selector_id,
+        &format!("bootstrap-{phase}-selector:{index}"),
+        SemanticSource::new(file, file_record, extractor_id, extractor_version),
+    )?;
+    if tasks.contains_key(selector) {
+        let task_id = manifest_named_symbol_id(file, "task", selector)?;
+        push_resolved_edge(
             sink,
-            extractor_id,
-            extractor_version,
-            label,
-            run,
-        )?;
+            &selector_id,
+            "entrypoint-task",
+            &task_id,
+            &format!("bootstrap-{phase}:{index}"),
+            SemanticOrigin::new(file, extractor_id, extractor_version),
+            Confidence::Exact,
+        )
+    } else {
+        push_unresolved_edge(
+            sink,
+            &selector_id,
+            "entrypoint-task",
+            selector,
+            &format!("bootstrap-{phase}:{index}"),
+            SemanticSource::new(file, file_record, extractor_id, extractor_version),
+            Confidence::Exact,
+        )
     }
-    Ok(())
 }
 
 fn index_workspace_container_ref(

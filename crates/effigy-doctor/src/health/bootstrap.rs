@@ -25,16 +25,11 @@ impl BootstrapReason {
         }
     }
 
-    /// Bun needs an explicit lock seed through `--refresh-lock`; pnpm and npm
-    /// installs can create their own lock. Every other reason is a plain
-    /// frozen install into the named route.
-    fn bootstrap_command(self, manager: &str, route: &str) -> String {
-        match self {
-            Self::MissingLocalLock | Self::UnverifiedAncestorLock if manager == "bun" => {
-                format!("effigy bootstrap deps sync --refresh-lock {route}")
-            }
-            _ => format!("effigy bootstrap deps sync {route}"),
-        }
+    /// Dependency preparation is a repo-owned task selector, so the
+    /// remediation names the one-command bootstrap that runs `[bootstrap].setup`
+    /// rather than a bootstrap-owned installer.
+    fn bootstrap_command(self, route: &str) -> String {
+        format!("effigy bootstrap --path {route}")
     }
 }
 
@@ -87,7 +82,7 @@ impl JsBootstrapGap {
     }
 
     pub(super) fn remediation(&self) -> String {
-        let bootstrap_command = self.reason.bootstrap_command(self.manager, &self.route);
+        let bootstrap_command = self.reason.bootstrap_command(&self.route);
         match self.reason {
             BootstrapReason::UnverifiedAncestorLock => {
                 let lock_root = self
@@ -96,18 +91,18 @@ impl JsBootstrapGap {
                     .map(|root| root.display().to_string())
                     .unwrap_or_else(|| "<none>".to_owned());
                 format!(
-                    "The nearest {} lock at `{lock_root}` does not declare `{}` as a workspace member. Give this checkout its own lock and local install with `{bootstrap_command}` (or add it to the owning workspace), then rerun `effigy doctor --deep`.",
+                    "The nearest {} lock at `{lock_root}` does not declare `{}` as a workspace member. Give this checkout its own lock and local install (a repo task selected by `[bootstrap].setup`, then `{bootstrap_command}`), or add it to the owning workspace, then rerun `effigy doctor --deep`.",
                     self.manager,
                     self.scope_root.display(),
                 )
             }
             BootstrapReason::MissingLocalLock => format!(
-                "No committed {} lock or local `node_modules` was found within this checkout. Create them with `{bootstrap_command}` for `{}`, then rerun `effigy doctor --deep`.",
+                "No committed {} lock or local `node_modules` was found within this checkout. Create them with the repo's dependency task (selected by `[bootstrap].setup`, or `{bootstrap_command}`) for `{}`, then rerun `effigy doctor --deep`.",
                 self.manager,
                 self.route,
             ),
             BootstrapReason::MissingLocalInstall => format!(
-                "JavaScript dependencies are missing for `{}`; prepare this checkout with `{bootstrap_command}` ({} install), then rerun `effigy doctor --deep`.",
+                "JavaScript dependencies are missing for `{}`; prepare this checkout with the repo's dependency task (selected by `[bootstrap].setup`, or `{bootstrap_command}`) using the {} install, then rerun `effigy doctor --deep`.",
                 self.route, self.manager,
             ),
         }
@@ -788,7 +783,7 @@ mod tests {
         assert_eq!(gap.reason, BootstrapReason::MissingLocalInstall);
         assert!(gap
             .remediation()
-            .contains("effigy bootstrap deps sync child"));
+            .contains("effigy bootstrap --path child"));
         assert!(gap.evidence().contains("observed=missing-local-install"));
 
         std::fs::remove_dir_all(root).ok();
@@ -1228,7 +1223,7 @@ mod tests {
             .contains("reason=ancestor-lock-without-workspace-membership"));
         assert!(gap
             .remediation()
-            .contains("effigy bootstrap deps sync --refresh-lock child"));
+            .contains("effigy bootstrap --path child"));
 
         std::fs::remove_dir_all(root).ok();
     }
@@ -1277,7 +1272,7 @@ mod tests {
         assert!(gap.evidence().contains("reason=missing-local-lock"));
         assert!(gap
             .remediation()
-            .contains("effigy bootstrap deps sync --refresh-lock child"));
+            .contains("effigy bootstrap --path child"));
 
         std::fs::remove_dir_all(root).ok();
     }
@@ -1528,7 +1523,7 @@ mod tests {
         assert_eq!(gap.reason, BootstrapReason::UnverifiedAncestorLock);
         assert!(gap
             .remediation()
-            .contains("effigy bootstrap deps sync child"));
+            .contains("effigy bootstrap --path child"));
 
         std::fs::remove_dir_all(root).ok();
     }

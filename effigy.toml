@@ -29,5 +29,4 @@ front_doors = ["docs/README.md", "AGENTS.md", "README.md"]
 skill_roots = [".agents/skills"]
 
 [bootstrap]
-submodules = "recursive"
 setup = ["bootstrap:local"]

@@ -6,6 +6,7 @@ use super::catalog_checks::{
     run_task_references_check,
 };
 use super::graph_checks::run_graph_index_check;
+use super::source_checks::run_pinned_source_drift_check;
 use super::scan_checks::{
     run_attention_markers_check, run_comment_ratio_check, run_duplicate_blocks_check,
     run_generated_assets_check, run_generated_in_src_check, run_god_files_check,
@@ -50,7 +51,7 @@ pub(super) struct DoctorCheckDefinition {
     pub(super) run: DoctorCheckFn,
 }
 
-const STRUCTURAL_CHECKS: [DoctorCheckDefinition; 4] = [
+const STRUCTURAL_CHECKS: [DoctorCheckDefinition; 5] = [
     DoctorCheckDefinition {
         name: "manifest_conflicts",
         progress_label: None,
@@ -65,6 +66,11 @@ const STRUCTURAL_CHECKS: [DoctorCheckDefinition; 4] = [
         name: "task_references",
         progress_label: None,
         run: run_task_references_check,
+    },
+    DoctorCheckDefinition {
+        name: "pinned_sources",
+        progress_label: None,
+        run: run_pinned_source_drift_check,
     },
     DoctorCheckDefinition {
         name: "graph_index",

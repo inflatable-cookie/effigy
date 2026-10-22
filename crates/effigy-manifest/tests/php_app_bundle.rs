@@ -155,13 +155,14 @@ version = "11.0"
     assert_eq!(dev.default_workspace.as_deref(), Some("app"));
 
     let bootstrap = manifest.bootstrap.expect("bootstrap");
-    let bootstrap_task = bootstrap
-        .run
-        .as_ref()
-        .expect("bootstrap run")
-        .as_manifest_task();
+    assert_eq!(bootstrap.setup, vec!["bootstrap:env".to_owned()]);
+    assert_eq!(bootstrap.start.as_deref(), Some("dev"));
+    let env_task = manifest
+        .tasks
+        .get("bootstrap:env")
+        .expect("bootstrap env task");
     assert!(matches!(
-        bootstrap_task.run.as_ref().expect("bootstrap task run"),
+        env_task.run.as_ref().expect("bootstrap env run"),
         ManifestManagedRun::Sequence(steps)
             if matches!(
                 steps.as_slice(),
@@ -172,8 +173,6 @@ version = "11.0"
                         .is_some_and(|path| path.ends_with("/scripts/write-env-if-present.rhai"))
             )
     ));
-    let start = bootstrap.start.expect("bootstrap start");
-    assert_eq!(start.to_owned_selectors(), vec!["dev".to_owned()]);
 
     let task = manifest.tasks.get("seed").expect("seed task");
     assert_eq!(task.workspace.as_deref(), None);
