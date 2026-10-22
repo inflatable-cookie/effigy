@@ -105,7 +105,7 @@ Baseline mental model:
   named `[test.suites]` entries
 
 For fuller patterns such as multi-process dev stacks, systems, workspaces,
-containers, demos, and manifest composition, continue to:
+containers and manifest composition, continue to:
 
 - [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
 - [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
@@ -382,8 +382,7 @@ without writing plaintext to repo files. See
   [`016-task-routing-precedence.md`](016-task-routing-precedence.md),
   [`019-init-foundation.md`](019-init-foundation.md),
   [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
-- Demos, JSON, or bootstrap:
-  [`058-demo-system-guide.md`](058-demo-system-guide.md),
+- JSON or bootstrap:
   [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md),
   [`057-bootstrap-repo-bringup.md`](057-bootstrap-repo-bringup.md)
 
@@ -406,9 +405,7 @@ After this guide, you should be able to:
 - [`055-everyday-workflows.md`](055-everyday-workflows.md)
 - [`057-bootstrap-repo-bringup.md`](057-bootstrap-repo-bringup.md)
 - [`063-container-system-guide.md`](063-container-system-guide.md)
-- [`058-demo-system-guide.md`](058-demo-system-guide.md)
 - [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
-- [`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
 - [`075-secrets-and-vault-guide.md`](075-secrets-and-vault-guide.md)
 - [`073-state-stack-guide.md`](073-state-stack-guide.md)
 - [`074-deployment-guide.md`](074-deployment-guide.md)

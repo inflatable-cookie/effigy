@@ -3,7 +3,6 @@ mod bundle;
 mod common;
 mod container;
 mod contracts;
-mod demo;
 mod distribution;
 mod docs_policy;
 mod release;
@@ -40,7 +39,6 @@ pub use container::{
     ManifestWorkspaceContainerRef,
 };
 pub use contracts::ManifestContractsConfig;
-pub use demo::{ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus};
 pub use distribution::{
     ManifestDistributionCloseoutConfig, ManifestDistributionConfig,
     ManifestDistributionMetadataConfig, ManifestDistributionPackageConfig,

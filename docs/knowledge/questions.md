@@ -256,10 +256,9 @@ from v0.14.1, so that v0.16 doesn't need a second migration. Each retirement add
 `retired.toml` entry and an actionable error.
 
 - **Cut:**
-  - `demo` and `[demos]`;
+  - `demo` and `[demos]`. The planner's usage scan only matched a literal `[demos]` header and reported one user, but Jetstream (90), Signal (8), Keepsake (6), Poodle (3) and Monkey (3) declare `[demos.<name>]` tables. Agents ran `effigy demo` 0 times in 60 days. Every demo is a command or step sequence, so Tom, 2026-10-22 ("Agreed"), kept the cut and ruled that demos convert to public tasks: `[tasks."demo:<name>"]` with the same `run`, the title and summary kept as a TOML comment (tasks have no description field), and `group = "Demos"` added once the project runs v0.15 (v0.14.1 rejects `group`). The retirement error and migration guide give that recipe, and each project converts before the v0.15 install;
   - the `draft`/`drafts` refusal routes;
   - the v0.14 task-status JSON fallback (migration imports old state once);
-  - `tasks qa-group`, replaced by `runs` and `run status|logs|stop`;
   - `[shell]`;
   - the experimental gateway listener-handoff commands (`setup-listener-handoff`, `listener-handoff-status`, `remove-listener-handoff`);
   - the `system` command;
@@ -270,7 +269,7 @@ from v0.14.1, so that v0.16 doesn't need a second migration. Each retirement add
   - the `[systems]` table stays, because `workspace` and `exec` resolve through it;
   - `artifact` folds into `state`. Tom: "both surfaces were built as solutions for parts of deployment on the acowtancy project, but we've not actually made use of it yet"; the surface is revisited in v0.16;
   - `contracts check-json` takes its schema index from project config and shares one JSON Schema engine with Rhai validation, and `validate-selection` folds into it.
-- **Release platform.** Tom: "I want a consolidated release platform in effigy that all projects can adhere to." One generic pipeline any project declares, run as one Run with checkpoints. Effigy-specific release machinery moves to Effigy repo tasks. `[distribution]` retires into the release platform's publish settings. v0.15 settles the shape; v0.16 adds publish providers. A release-platform contract is reviewed before implementation. Tom accepted the
+- **Release platform.** Tom: "I want a consolidated release platform in effigy that all projects can adhere to." One generic pipeline any project declares, run as one Run with checkpoints. Effigy-specific release machinery moves to Effigy repo tasks. `[distribution]` retires into the release platform's publish settings. v0.15 settles the shape; v0.16 adds publish providers. The release-platform contract is [054](contracts/054-release-platform-contract.md), accepted 2026-10-22 with its §10 rulings. Tom accepted the
   stage model (validate, prepare, gates/certify, publish, verify, closeout; one
   checkpointed Run; several versioned packages; build once and publish exactly
   that; tag and repo-task publish targets in v0.15) "so long as we can fit
@@ -278,6 +277,7 @@ from v0.14.1, so that v0.16 doesn't need a second migration. Each retirement add
   onto it, including libraries that don't use `[release]` yet, such as Poodle,
   Longhorn and Underlay.
 - **Keep:**
+  - `tasks qa-group`. The planner first proposed cutting it as "replaced by `runs`", but that premise was wrong. Group execution exists only through `tasks qa-group run` (contract 051: a group name isn't a task selector), Longhorn declares 18 groups, and agents ran it 383 times in 60 days. Tom, 2026-10-22, took the planner's recommendation to keep it as it is. Whether groups should become ordinary selectors is a v0.16 question;
   - `deps`: Tom: "the only way to test them in anger before release in consuming projects";
   - `workspace` and `exec`, the daily entry verbs;
   - trailing `<task> --plan` and `--json` through v0.15, with their note, and removed in v0.16. No released version has shown the note yet.

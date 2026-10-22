@@ -253,14 +253,14 @@ discharges its actual libc/FFI contract: descriptor ownership and lifetime,
 `MaybeUninit` initialization, `getpeereid`/`getsockopt` length handling, and
 the `fork`-to-`exec` `pre_exec` contract. Every `pre_exec` callback under
 `src/` and `crates/` now has an allocation-free error path and an adjacent
-`SAFETY` comment. The twelve audited callbacks are: nine production `setpgid`
+`SAFETY` comment. The eleven audited callbacks are: eight production `setpgid`
 sites (`doctor_ports.rs`, `exec_command/transport.rs`, containers
 `spawn_capture_child`, both `effigy-process` spawn helpers,
-`effigy-scan` doctor inventory, `effigy-deps` bounded process, demo run,
+`effigy-scan` doctor inventory, `effigy-deps` bounded process,
 and `effigy-runtime` inherit spawn), two production `setsid` sites
 (`host_process.rs` best-effort ignore, gateway daemon `last_os_error`),
 and the test-only containers `spawn_stream_child` `setpgid` callback. The
-current tree has thirteen callbacks: those twelve plus the new test-only
+current tree has twelve callbacks: those eleven plus the new test-only
 missing-binary proof
 (`effigy-process` `setpgid_pre_exec_preserves_missing_binary_launch_error`),
 which uses the same allocation-free `setpgid` conversion. `setpgid`

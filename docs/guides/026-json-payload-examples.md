@@ -2316,7 +2316,6 @@ is the holder's liveness, so there is nothing to unlock.
     "container",
     "contracts",
     "defer",
-    "demo",
     "deploy",
     "deps",
     "help",

@@ -7,6 +7,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Local custody receipts add a process-group anchor. Recovery can stop
+  descendants that cleared their environment after their leader was reaped.
+  Each group retains one extra process until settle; a killed anchor or an
+  older receipt still leaves unverifiable nonce-free survivors as residue.
 - Managed tasks (`mode = "tui"` with `concurrent`) run under one detached
   supervisor per run (effigy#235). The supervisor admits the run in the kernel
   journal, then owns setup, gateway, environment and workloads, and one settle
@@ -248,6 +252,13 @@ During v0.x, MINOR bumps may include breaking changes.
 - The task cache: `tasks.<name>.cache` and `effigy tasks cache`. A task that
   still declares `cache` is refused with the fix; `.effigy/cache` can be
   deleted.
+- The demo feature: `effigy demo` (`list`, `inspect`, `history`, `run`,
+  `stop`, `input`, `resize`, `rerun`, `browser`), the `[demos]` manifest
+  table, `config/demos.toml` in this repository, the `effigy-demo` crate, the
+  `demo.*` Rhai host features and the TUI demo browser. It has no replacement:
+  record terminal sessions with an external tool. `effigy demo` and a
+  `[demos]` table both refuse with that explanation, and
+  `effigy config --target demos` is gone with the section.
 - v0.14 lease locks (`.effigy/locks/`), task status records
   (`.effigy/runtime/tasks/`, `.effigy/reports/tasks/`) and the 20-second
   status staleness. They are never read for exclusion or deleted; a live
@@ -284,26 +295,32 @@ During v0.x, MINOR bumps may include breaking changes.
   Effigy skill and the user guide section
   ([069](docs/guides/069-workspace-host-integration.md)) document every
   condition.
-- Per-run scratch on a configured external volume (effigy#244). Setting
-  `[scratch] root` in `~/.effigy/config.toml` to a mounted volume's root gives
-  every host-placed run — the built-in `effigy test` route included — its own
-  `<root>/<8-character run directory>/`, named from the run's whole identity so
-  same-instant and `--run-id` runs still differ, as its `TMPDIR`, `TMP` and
-  `TEMP`, as a kernel run effect settled with the run: released when the run
-  succeeded, kept for 24 hours from the moment it failed (the failure output
-  prints the path), and swept by a bounded later run. Only the run's own marker,
-  matching that run's derived directory name, authorises a verdict or a
+- Per-run scratch on a configured external volume (effigy#244, effigy#253).
+  Setting `[scratch] root` in `~/.effigy/config.toml` to any directory on a
+  drive gives every host-placed run — the built-in `effigy test` route included
+  — its own `<root>/<8-character run directory>/`, named from the run's whole
+  identity so same-instant and `--run-id` runs still differ, as its `TMPDIR`,
+  `TMP` and `TEMP`, as a kernel run effect settled with the run: released when
+  the run succeeded, kept for 24 hours from the moment it failed (the failure
+  output prints the path), and swept by a bounded later run. Only the run's own
+  marker, matching that run's derived directory name, authorises a verdict or a
   removal, so a directory that went away or was replaced is never relabelled or
-  deleted. The built-in `effigy test` route's host suites run as child runs of
-  its run, so their process groups are stopped before the directory is released
-  (the multi-suite TUI is not used while such a run holds them), and with no
-  configured scratch that route opens no run and needs no Effigy state home. A
-  volume gate refuses an absent root, the boot or data volume, a root that is
-  not the volume's mount point, a `volume_uuid` mismatch, a root inside
-  `/Volumes/Builds/oxide-pool`, and a root that is not root-owned, ACL-free and
-  closed to other writes; a refusal falls back to the default temp directory and
-  `effigy doctor` reports the reason. An explicit or non-default `TMPDIR` wins,
-  a nested run reuses its parent's directory, a nested task that declares
+  deleted, and a sweep never touches a directory or file Effigy did not name
+  and mark itself. The built-in `effigy test` route's host suites run as child
+  runs of its run, so their process groups are stopped before the directory is
+  released (the multi-suite TUI is not used while such a run holds them), and
+  with no configured scratch that route opens no run and needs no Effigy state
+  home. The root may be any directory on the drive, not only its mount point; a
+  missing root is created with mode 0700 when its nearest existing ancestor
+  passes the volume proof. The gate refuses a root whose nearest existing
+  ancestor is on the boot or data volume (so a stale `/Volumes/<name>`
+  directory left on the internal disk after the drive goes away is refused), a
+  path no mount point holds, a `volume_uuid` mismatch, a root owned by neither
+  the current user nor root, and a root that is group- or world-writable or
+  carries an ACL; a refusal falls back to the default temp directory and
+  `effigy doctor` reports the reason. Effigy hardcodes no path, no UUID and no
+  other tool's directory. An explicit or non-default `TMPDIR` wins, a nested
+  run reuses its parent's directory, a nested task that declares
   `scratch = false` hides its parent's directory from its own host processes,
   container workloads never receive the host scratch, and a task opts out with
   `scratch = false` (managed sessions included) or `EFFIGY_SCRATCH=0`. Unset,
@@ -623,8 +640,7 @@ During v0.x, MINOR bumps may include breaking changes.
   `effigy.contracts.check-json.v1` payload in `error.message`.
 - Effigy's own repository builds through Oxide. Selectors run Cargo through
   `scripts/oxide-selector.sh`, which leases Oxide's shared slot pool so Rust
-  intermediates stay off the internal SSD, and `scripts/effigy-selfbuild.sh`
-  builds the checkout's binary before running it. Every routed selector keeps a
+  intermediates stay off the internal SSD. Every routed selector keeps a
   named `<selector>:cargo` escape with the plain-Cargo command it replaced;
   `EFFIGY_OXIDE_ESCAPE=cargo`, `effigy cargo <args>` and `cargo run --bin
   effigy --` keep the rest. The `cargo qa*` and `prepush-ci` aliases are

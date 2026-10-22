@@ -68,7 +68,6 @@ Future migration must move these callers behind the context:
 - task preflight discovery
 - bootstrap target handoff
 - Rhai and run-array embedded dispatch
-- demo task re-entry
 - container/runtime prep callers that re-probe cwd or handoff state
 
 ## Rhai Exposure Rules

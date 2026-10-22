@@ -15,6 +15,8 @@ fn retirement_commands_emit_json_errors_without_effects() {
         vec!["tasks", "migrate", "--apply"],
         vec!["gateway", "recover", "--yes"],
         vec!["docs", "qualified", "resolve"],
+        vec!["demo", "list"],
+        vec!["demo", "run", "build"],
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
             .current_dir(fixture.path())
@@ -67,5 +69,60 @@ fn retirement_user_catalog_warns_and_preserves_ignored_fragments() {
     assert_eq!(
         fs::read_to_string(sentinel).unwrap(),
         "malformed retired content"
+    );
+}
+
+#[test]
+fn retired_demos_table_fails_with_its_explanation() {
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("private fixture");
+    fs::write(
+        fixture.path().join("effigy.toml"),
+        "[demos.login-smoke]\ntitle = \"Login Smoke\"\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .current_dir(fixture.path())
+        .arg("tasks")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("tasks inventory");
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("[demos]"), "{stderr}");
+    assert!(stderr.contains("was removed in v0.15"), "{stderr}");
+    assert!(
+        stderr.contains("record terminal sessions with an external tool"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("CHANGELOG.md"), "{stderr}");
+}
+
+#[test]
+fn retired_config_target_demos_fails_with_its_explanation() {
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("private fixture");
+    fs::write(
+        fixture.path().join("effigy.toml"),
+        "[tasks.build]\nrun = \"true\"\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .current_dir(fixture.path())
+        .args(["config", "--target", "demos"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("config target demos");
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("`effigy config --target demos` was removed in v0.15"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("no replacement"), "{stderr}");
+    assert!(stderr.contains("CHANGELOG.md"), "{stderr}");
+    assert!(
+        !stderr.contains("supported: manifest"),
+        "the generic choice list must not stand in for the retirement reason: {stderr}"
     );
 }

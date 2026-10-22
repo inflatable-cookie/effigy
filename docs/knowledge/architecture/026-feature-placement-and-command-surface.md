@@ -61,14 +61,14 @@ The exact primary help taxonomy is:
 | work | `<task>`, `<catalog>/<task>`, `tasks`, `test`, `doctor`, `init` |
 | `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
 | `repo` | `graph`, `scan`, `docs`, `contracts` |
-| `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
+| `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap` |
 | `extend` | `skill`, `rhai` |
 | `admin` | `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`; `config completion` moves with `config` |
 
 The topic names organize help only. Each listed built-in executes as
 `effigy <command> ...` and retains one implementation and one output owner.
-Detailed help may cross-link borderline capabilities such as `bootstrap`,
-`demo`, or `secrets` without creating another primary route.
+Detailed help may cross-link borderline capabilities such as `bootstrap`
+or `secrets` without creating another primary route.
 
 ## Repository Intelligence
 

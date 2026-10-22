@@ -40,10 +40,6 @@ pub(super) fn containers_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
     tasks::containers_lines(profile)
 }
 
-pub(super) fn demos_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
-    tasks::demos_lines(profile)
-}
-
 pub(super) fn tasks_canonical_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
     tasks::tasks_canonical_lines(profile)
 }

@@ -309,38 +309,6 @@ pub(super) fn containers_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
     ]
 }
 
-fn demos_section_comment(profile: ConfigDocProfile) -> &'static str {
-    match profile {
-        ConfigDocProfile::Reference => {
-            "# Repo-owned verification surfaces for discovery, inspection, and later execution."
-        }
-        ConfigDocProfile::Schema => {
-            "# Repo-owned verification surfaces for discovery, inspection, and later execution."
-        }
-    }
-}
-
-pub(super) fn demos_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
-    vec![
-        "[demos.login-smoke]",
-        demos_section_comment(profile),
-        "title = \"Login Smoke\"",
-        "summary = \"Proves the local login flow reaches an authenticated state.\"",
-        "proof = \"Verify the default local login journey succeeds end to end.\"",
-        "owner = \"auth\"",
-        "mode = \"interactive\"",
-        "status = \"ready\"",
-        "covers = [\"auth.login\"]",
-        "tags = [\"auth\", \"smoke\"]",
-        "receipt = \"demos/receipts/login-smoke.receipt.json\"",
-        "artifacts = [\"demos/receipts/login-smoke.view.html\"]",
-        "task = \"demo:login-smoke\"",
-        "prerequisites = [\"api\", \"db\"]",
-        "dependencies = [\"auth/session-baseline\"]",
-        "",
-    ]
-}
-
 fn secrets_section_comment(profile: ConfigDocProfile) -> &'static str {
     match profile {
         ConfigDocProfile::Reference => {

@@ -232,9 +232,6 @@ fn write_test_vault(root: &Path, passphrase: &str, records: &[(&str, &str)]) {
 
 fn allowed_first_party_process_script(relative: &str, contents: &str) -> bool {
     match relative {
-        "scripts/write-browser-proof-report.rhai" => {
-            contents.contains("process::tee(\"cargo\", process_args)")
-        }
         "scripts/check-release-smoke.rhai" => {
             contents.contains("process::run(program, process_args)")
         }

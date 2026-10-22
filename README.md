@@ -23,7 +23,7 @@ That's it. If the repo uses Effigy, you already know how to work in it.
 
 **Before:** You `cd` into `web/`, run `npm test`, then `cd ../api`, run `cargo test`, then remember the e2e suite needs `./scripts/e2e.sh` and a running database.
 
-**After:** `effigy test` runs everything. `effigy dev` starts your whole local stack. `effigy demo run login-smoke` proves the login flow still works. `effigy release prepare` cuts a release without you touching version files. One command from any directory.
+**After:** `effigy test` runs everything. `effigy dev` starts your whole local stack. `effigy release prepare` cuts a release without you touching version files. One command from any directory.
 
 Effigy is not another task runner. It is a **repo runtime** — the layer between you and the chaos of modern polyglot repos. It is also **agent-native**: the manifest is self-describing, structured command modes support JSON, and an AI agent can discover the repo surface, inspect code, execute work, and validate changes through one structured CLI.
 
@@ -311,23 +311,6 @@ effigy dev              # Your app is now at https://my-app.test
 
 Effigy runs a local DNS server and reverse proxy. `*.test` domains resolve automatically. TLS certificates are generated on-demand via `mkcert` — one-time `mkcert -install` and your browser trusts them forever. No certificate warnings, no `:3000` port suffixes, no host file hacks.
 
-### First-Class Demos and Proofs
-
-Turn scattered QA scripts into discoverable, runnable proof entries:
-
-```toml
-[demos.login-smoke]
-title = "Login smoke"
-run = "python3 demos/run_login_smoke.py"
-status = "ready"
-```
-
-```bash
-effigy demo list
-effigy demo run login-smoke
-effigy demo browser      # Interactive TUI
-```
-
 ### Release Without the Ritual
 
 ```bash
@@ -451,7 +434,6 @@ for standalone proof tasks and the built-in legacy syntax migration.
 | See common workflows | [`docs/guides/055-everyday-workflows.md`](docs/guides/055-everyday-workflows.md) |
 | Copy-paste manifest patterns | [`docs/guides/022-manifest-cookbook.md`](docs/guides/022-manifest-cookbook.md) |
 | Run containers, workspaces, local domains | [`docs/guides/063-container-system-guide.md`](docs/guides/063-container-system-guide.md) |
-| Build demos and proofs | [`docs/guides/058-demo-system-guide.md`](docs/guides/058-demo-system-guide.md) |
 | Cut releases | [`docs/guides/051-release-orchestration.md`](docs/guides/051-release-orchestration.md) |
 | Wire up CI | [`docs/guides/024-ci-and-automation-recipes.md`](docs/guides/024-ci-and-automation-recipes.md) |
 | Test against local library edits | [`docs/guides/077-local-dependency-linking.md`](docs/guides/077-local-dependency-linking.md) |
