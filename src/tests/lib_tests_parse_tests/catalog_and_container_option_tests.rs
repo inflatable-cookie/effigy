@@ -1409,7 +1409,7 @@ fn parse_system_names_the_container_replacement_for_each_subcommand() {
             .expect_err("retired command should refuse");
         let message = error.to_string();
         assert!(
-            message.contains("`effigy system` is retired in v0.15"),
+            message.contains(&format!("`effigy system {subcommand}` is retired in v0.15")),
             "{subcommand}: {message}"
         );
         assert!(message.contains(replacement), "{subcommand}: {message}");
