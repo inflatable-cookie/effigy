@@ -213,9 +213,14 @@ pub fn request(addresses: [SocketAddr; 2]) -> io::Result<HandedListeners> {
     let path = socket_path(uid);
     let parent = std::fs::symlink_metadata(Path::new("/private/var/run"))?;
     let metadata = std::fs::symlink_metadata(&path)?;
+    // macOS ships /private/var/run as root:daemon 0775. Group write is safe
+    // only for a root system group (wheel or daemon); never world write. The
+    // peer-UID check below remains the authentication.
+    let parent_group_safe = parent.mode() & 0o020 == 0 || matches!(parent.gid(), 0 | 1);
     if !parent.is_dir()
         || parent.uid() != 0
-        || parent.mode() & 0o022 != 0
+        || parent.mode() & 0o002 != 0
+        || !parent_group_safe
         || !metadata.file_type().is_socket()
         || metadata.uid() != 0
         || metadata.mode() & 0o007 != 0
