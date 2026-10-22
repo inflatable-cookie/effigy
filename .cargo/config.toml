@@ -1,8 +1,7 @@
 # No Cargo aliases here.
 #
-# This checkout's Rust builds go through `scripts/oxide-selector.sh` (selectors)
-# and `scripts/effigy-selfbuild.sh` (the checkout's own binary), so Rust
-# intermediates land in Oxide's shared slot pool instead of `target/`.
+# This checkout's selectors run Cargo through `scripts/oxide-selector.sh`, so
+# Rust intermediates land in Oxide's shared slot pool instead of `target/`.
 #
 # A Cargo alias cannot run a wrapper: `[alias] name = "!sh ..."` is rejected by
 # Cargo ("no such command: `!sh`"), and `name = "run --bin ..."` makes plain
@@ -17,5 +16,5 @@
 #   cargo qa-release  -> effigy release gates
 #   cargo prepush-ci  -> effigy prepush:ci
 #
-# Without an installed binary, run `sh scripts/effigy-selfbuild.sh <task>`.
-# `cargo run --bin effigy -- <task>` remains the plain-Cargo escape.
+# Run selectors with the installed `effigy` (`effigy bootstrap:local` installs
+# this checkout). Without one, `cargo run --bin effigy -- <task>` works.
