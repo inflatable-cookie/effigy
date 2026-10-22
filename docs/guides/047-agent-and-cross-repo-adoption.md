@@ -427,7 +427,7 @@ Expected behavior:
 - this is the simplest fit for monorepos with multiple language toolchains
 
 Release adoption policy:
-- prefer `effigy release simulate/status/prepare/execute` for operator-driven
+- prefer `effigy release --plan/status/prepare/execute` for operator-driven
   release flow once the repo has a stable `[release]` section
 - keep wrapper scripts only when an external automation contract still requires
   them, and describe them as backup channels rather than the default operator

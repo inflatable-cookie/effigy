@@ -94,10 +94,10 @@ fn parse_release_verify_install_with_repo_tag_and_repo_url() {
 }
 
 #[test]
-fn parse_release_simulate_with_repo() {
+fn parse_release_plan_with_repo() {
     let cmd = parse_command(vec![
         "release".to_owned(),
-        "simulate".to_owned(),
+        "--plan".to_owned(),
         "--repo".to_owned(),
         "/tmp/repo".to_owned(),
         "--json".to_owned(),
@@ -107,7 +107,7 @@ fn parse_release_simulate_with_repo() {
     assert_eq!(
         cmd,
         Command::Release(ReleaseArgs {
-            subcommand: ReleaseSubcommand::Simulate {
+            subcommand: ReleaseSubcommand::Plan {
                 version_override: None,
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
@@ -117,10 +117,10 @@ fn parse_release_simulate_with_repo() {
 }
 
 #[test]
-fn parse_release_simulate_with_version_override() {
+fn parse_release_plan_with_version_override_and_dry_run_alias() {
     let cmd = parse_command(vec![
         "release".to_owned(),
-        "simulate".to_owned(),
+        "--plan".to_owned(),
         "--version".to_owned(),
         "0.2.8".to_owned(),
         "--json".to_owned(),
@@ -130,13 +130,39 @@ fn parse_release_simulate_with_version_override() {
     assert_eq!(
         cmd,
         Command::Release(ReleaseArgs {
-            subcommand: ReleaseSubcommand::Simulate {
+            subcommand: ReleaseSubcommand::Plan {
                 version_override: Some("0.2.8".to_owned()),
             },
             repo_override: None,
             output_json: true,
         })
     );
+
+    let alias = parse_command(vec![
+        "release".to_owned(),
+        "--dry-run".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        alias,
+        Command::Release(ReleaseArgs {
+            subcommand: ReleaseSubcommand::Plan {
+                version_override: None,
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_release_plan_replaces_the_retired_simulate_command() {
+    let error = parse_command(vec!["release".to_owned(), "simulate".to_owned()])
+        .expect_err("release simulate must be refused");
+    let message = format!("{error:?}");
+    assert!(message.contains("retired"), "{message}");
+    assert!(message.contains("effigy release --plan"), "{message}");
 }
 
 #[test]

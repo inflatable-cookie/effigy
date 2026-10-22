@@ -11,7 +11,7 @@ Current product truth is owned by topic. User documentation remains in [guides](
 | Change-scoped QA (proposed) | [Bounded QA groups contract](contracts/051-bounded-qa-groups-contract.md) |
 | Runtime kernel (specified, not implemented) | [Runtime kernel contract](contracts/052-runtime-kernel-contract.md) |
 | Container environments | [Environment reconciler contract](contracts/053-environment-reconciler-contract.md) |
-| Releases (accepted, not implemented) | [Release platform contract](contracts/054-release-platform-contract.md) |
+| Releases (config, `status` and `--plan` implemented; the Run is not) | [Release platform contract](contracts/054-release-platform-contract.md) |
 | Release procedure | [Release](contracts/release.md) |
 | Test fixture ownership | [Fixture hygiene](test-fixture-hygiene.md) |
 | Domain vocabulary | [Domain](domain/README.md) |

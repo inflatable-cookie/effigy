@@ -160,7 +160,7 @@ Semver behavior:
 
 `Removed` counts as breaking because deleting a public API breaks callers;
 PATCH stays reserved for compatible fixes. The release surface (`release
-status`, `release simulate`) applies the same `Removed`-is-breaking rule under
+status`, `release --plan`) applies the same `Removed`-is-breaking rule under
 its `pre-1-0` policy.
 
 ### Extract
@@ -187,7 +187,7 @@ Key integration points:
 
 - `effigy release status`
   - validates changelog structure and checks whether `Unreleased` is empty
-- `effigy release simulate`
+- `effigy release --plan`
   - previews the bump implied by `Unreleased`
 - `effigy release prepare`
   - promotes `Unreleased` into the selected release version and keeps

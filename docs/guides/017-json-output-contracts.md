@@ -137,6 +137,7 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.doctor.explain.v1`
 - `effigy.version.v1`
 - `effigy.release.status.v1`
+- `effigy.release.plan.v1`
 - `effigy.scan.god-files.v1`
 - `effigy.scan.duplicate-blocks.v1`
 - `effigy.config.v1`
@@ -384,13 +385,22 @@ Rule of thumb:
   a changed stamp; identity is not cached across commands.
 - New optional fields may be added in `v1` without removing existing keys.
 - Release gate JSON (`effigy.release.gates.v1`, `effigy.release.status.v1`,
-  `effigy.release.prepare.v1`, and the matching plan/simulate payloads) may
+  `effigy.release.plan.v1`, `effigy.release.prepare.v1` and the matching plan
+  payloads) may
   include additive optional `log_path` on each gate result and
   `environment_path` for the run. Named hosted reuse may add optional
   `reused`, `hosted_run_url`, `hosted_head_sha`, and `hosted_repository` on a
   gate result, and `gates.reused_gates` on execute/resume payloads. Progress
   and configured-gate inventory stay on stderr and never on JSON stdout.
   Schema ids are unchanged.
+- `effigy.release.plan.v1` is the `effigy release --plan` payload (contract 054
+  §5), replacing the retired simulate payload. It reports
+  `identities[]` (name, kind, current and next version, tag, `follows`,
+  version file), `files[]`, `gates[]` with their `stage`, `artifacts[]`,
+  `targets[]`, `approvals.checkpoints`, `working_tree_clean` (`null` outside a
+  git work tree), and `blockers[]`. `effigy.release.status.v1` gains the same
+  identity, plan-summary and `run` fields additively; `current_version` and
+  `version_source` are omitted when the release has no `semver` identity.
 - Breaking envelope changes require a new top-level schema/version.
 
 ## Expected Outcome

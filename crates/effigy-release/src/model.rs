@@ -6,7 +6,9 @@ use effigy_changelog::BumpKind;
 use effigy_manifest::ManifestError;
 
 use crate::hosted_evidence::HostedEvidenceSpec;
-use crate::{ResolvedGate, ResolvedSyncFile, ResolvedVersionSource};
+use crate::{
+    ReleasePipelinePlan, ReleaseRunSummary, ResolvedGate, ResolvedSyncFile, ResolvedVersionSource,
+};
 
 #[derive(Debug, Clone)]
 pub struct ReleaseConfig {
@@ -68,8 +70,13 @@ impl GateExecutionReport {
 #[derive(Debug, Clone)]
 pub struct ReleaseStatus {
     pub repo_root: PathBuf,
-    pub current_version: semver::Version,
-    pub version_source: ResolvedVersionSource,
+    /// The resolved pipeline, for the identity, gate, artifact, target and
+    /// approval sections.
+    pub plan: ReleasePipelinePlan,
+    /// The active or last release Run; no Run exists before the Run pipeline.
+    pub run: ReleaseRunSummary,
+    pub current_version: Option<semver::Version>,
+    pub version_source: Option<ResolvedVersionSource>,
     pub changelog_path: PathBuf,
     pub changelog_valid: bool,
     pub changelog_diagnostics: Vec<String>,
@@ -191,32 +198,6 @@ pub struct ReleasePrepared {
     pub blockers: Vec<String>,
     pub prepared: bool,
     pub state_file_written: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct ReleaseSimulation {
-    pub repo_root: PathBuf,
-    pub current_version: semver::Version,
-    pub version_source: ResolvedVersionSource,
-    pub suggested_version: Option<semver::Version>,
-    pub planned_version: Option<semver::Version>,
-    pub suggested_tag: Option<String>,
-    pub tag: Option<String>,
-    pub version_override_used: bool,
-    pub release_date: String,
-    pub state_file: PathBuf,
-    pub state_file_exists: bool,
-    pub state_file_written: bool,
-    pub commit_message: Option<String>,
-    pub configured_gate_count: usize,
-    pub executed_gate_count: usize,
-    pub stopped_early: bool,
-    pub total_duration_ms: u128,
-    pub gate_results: Vec<GateResult>,
-    pub environment_path: Option<PathBuf>,
-    pub mutations: Vec<FileMutationPlan>,
-    pub blockers: Vec<String>,
-    pub ready: bool,
 }
 
 #[derive(Debug, Clone)]

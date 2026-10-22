@@ -53,7 +53,7 @@ Commands that require explicit human instruction:
 
 Read-only release commands (safe to run unprompted for inspection):
 
-- `effigy release simulate`
+- `effigy release --plan`
 - `effigy release status --check-gates`
 - `effigy release prepare --plan`
 - `effigy release execute --plan`

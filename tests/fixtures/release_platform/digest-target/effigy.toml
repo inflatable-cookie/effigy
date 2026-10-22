@@ -1,0 +1,14 @@
+[release]
+changelog = "CHANGELOG.md"
+
+[release.identities.site]
+kind = "digest"
+
+[release.artifacts.site]
+task = "build"
+path = "dist/"
+
+[release.targets.production]
+kind = "task"
+task = "deploy:production"
+verify = "deploy:health"

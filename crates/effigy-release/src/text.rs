@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::gate_reports::failed_gate_tail_lines;
 use crate::{
-    FileMutationPlan, GateResult, ReleaseExecutePlan, ReleaseExecuted, ReleaseGateRun,
-    ReleasePreparePlan, ReleasePrepared, ReleaseSimulation, ReleaseStatus, ReleaseVerifyInstall,
+    FileMutationPlan, GateResult, IdentityKind, ReleaseExecutePlan, ReleaseExecuted,
+    ReleaseGateRun, ReleaseIdentityPlan, ReleasePipelinePlan, ReleasePreparePlan, ReleasePrepared,
+    ReleaseStatus, ReleaseVerifyInstall,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -262,16 +263,18 @@ pub fn render_release_status_text(status: &ReleaseStatus) -> String {
             "Release Status Blocked".to_owned()
         },
         format!("  Repository: {}", status.repo_root.display()),
-        format!("  Current version: {}", status.current_version),
-        format!(
-            "  Version source: {} ({})",
-            status.version_source.path.display(),
-            status
-                .version_source
-                .field_path
-                .as_deref()
-                .unwrap_or("direct")
-        ),
+        match &status.current_version {
+            Some(version) => format!("  Current version: {version}"),
+            None => "  Current version: unavailable (no `semver` identity)".to_owned(),
+        },
+        match &status.version_source {
+            Some(source) => format!(
+                "  Version source: {} ({})",
+                source.path.display(),
+                source.field_path.as_deref().unwrap_or("direct")
+            ),
+            None => "  Version source: none".to_owned(),
+        },
         format!("  Changelog: {}", status.changelog_path.display()),
         format!(
             "  Changelog valid: {}",
@@ -292,6 +295,9 @@ pub fn render_release_status_text(status: &ReleaseStatus) -> String {
             "  Suggested bump: {} -> {}",
             status.suggested_bump, next_version
         )),
+        None if status.plan.primary_identity().is_none() => {
+            lines.push("  Suggested bump: none (no `semver` identity to version)".to_owned());
+        }
         None => {
             lines.push(format!("  Suggested bump: {}", status.suggested_bump));
             lines.push(
@@ -330,7 +336,195 @@ pub fn render_release_status_text(status: &ReleaseStatus) -> String {
         "  Ready to prepare and execute: no".to_owned()
     });
 
+    lines.push(String::new());
+    lines.push(format!(
+        "  Run: {}",
+        match (&status.run.id, &status.run.stage, &status.run.waiting_on) {
+            (Some(id), Some(stage), Some(waiting_on)) =>
+                format!("{id} at {stage}, waiting on {waiting_on}"),
+            (Some(id), Some(stage), None) => format!("{id} at {stage}"),
+            (Some(id), None, _) => id.clone(),
+            _ => "none (release runs arrive with the Run pipeline)".to_owned(),
+        }
+    ));
+    append_pipeline_lines(&mut lines, &status.plan);
+
     append_blockers_and_diagnostics(&mut lines, &status.blockers, &status.changelog_diagnostics);
+    lines.join("\n")
+}
+
+fn append_pipeline_lines(lines: &mut Vec<String>, plan: &ReleasePipelinePlan) {
+    lines.push(format!(
+        "  Config shape: {}",
+        if plan.single_identity_shorthand {
+            "single-identity shorthand"
+        } else {
+            "named identities"
+        }
+    ));
+    lines.push(format!(
+        "  Approval checkpoints: {}",
+        match plan.approvals.as_slice() {
+            [] => "none".to_owned(),
+            checkpoints => format!(
+                "{}{}",
+                checkpoints.join(", "),
+                if plan.approval_defaulted {
+                    " (default)"
+                } else {
+                    ""
+                }
+            ),
+        }
+    ));
+    lines.push(format!(
+        "  Working tree: {}",
+        match plan.working_tree_clean {
+            Some(true) => "clean",
+            Some(false) => "dirty (validate refuses a release from a dirty tree)",
+            None => "not a git work tree (validate refuses a release from one)",
+        }
+    ));
+
+    lines.push(String::new());
+    lines.push(format!("Identities ({})", plan.identities.len()));
+    for identity in &plan.identities {
+        lines.extend(identity_lines(identity));
+    }
+
+    lines.push(String::new());
+    lines.push(format!("Files to change ({})", plan.files.len()));
+    for file in &plan.files {
+        lines.push(format!("  {}", file.display()));
+    }
+
+    lines.push(String::new());
+    lines.push(format!("Gates ({})", plan.gates.len()));
+    for gate in &plan.gates {
+        lines.push(format!(
+            "  {:<10} {:<16} {}",
+            gate.stage.stage_name(),
+            gate.name,
+            gate.command
+        ));
+    }
+
+    lines.push(String::new());
+    lines.push(format!("Artifacts ({})", plan.artifacts.len()));
+    for artifact in &plan.artifacts {
+        lines.push(format!(
+            "  {:<12} {} -> {}",
+            artifact.name, artifact.task, artifact.path
+        ));
+    }
+
+    lines.push(String::new());
+    lines.push(format!("Targets ({})", plan.targets.len()));
+    for target in &plan.targets {
+        lines.push(target_lines(target));
+    }
+}
+
+fn identity_lines(identity: &ReleaseIdentityPlan) -> Vec<String> {
+    let mut lines = Vec::new();
+    let headline = match identity.kind {
+        IdentityKind::Semver => {
+            let current = identity
+                .current_version
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "?".to_owned());
+            match &identity.next_version {
+                Some(next) => format!("{current} -> {next}"),
+                None => format!("{current} -> unavailable (nothing to release)"),
+            }
+        }
+        IdentityKind::Digest => "digest of its artifact (recorded at certify)".to_owned(),
+        IdentityKind::Source => identity
+            .identity_value
+            .clone()
+            .unwrap_or_else(|| "source commit unavailable".to_owned()),
+        IdentityKind::Task => format!(
+            "printed by task `{}`",
+            identity.task.as_deref().unwrap_or("?")
+        ),
+    };
+    lines.push(format!(
+        "  {:<12} {:<7} {}",
+        identity.name,
+        identity.kind.label(),
+        headline
+    ));
+    if let Some(tag) = &identity.tag {
+        lines.push(format!("    tag: {tag}"));
+    }
+    if let Some(follows) = &identity.follows {
+        lines.push(format!("    follows: {follows}"));
+    }
+    if let Some(source) = &identity.version_source {
+        lines.push(format!("    version file: {}", source.path.display()));
+    }
+    if identity.kind == IdentityKind::Semver && identity.files.len() > 1 {
+        for file in &identity.files[1..] {
+            lines.push(format!("    writes: {}", file.display()));
+        }
+    }
+    lines
+}
+
+fn target_lines(target: &crate::ResolvedTarget) -> String {
+    let mut line = format!("  {:<12} {}", target.name, target.kind.label());
+    if let Some(task) = &target.task {
+        line.push_str(&format!("  {task}"));
+    }
+    if let Some(check) = &target.check {
+        line.push_str(&format!("  check {check}"));
+    }
+    if let Some(verify) = &target.verify {
+        line.push_str(&format!("  verify {verify}"));
+    }
+    line
+}
+
+pub fn render_release_pipeline_plan_text(plan: &ReleasePipelinePlan) -> String {
+    let mut lines = vec![
+        if plan.ready {
+            "Release Plan".to_owned()
+        } else {
+            "Release Plan Blocked".to_owned()
+        },
+        format!("  Repository: {}", plan.repo_root.display()),
+        "  Mode: plan-only (non-destructive; no Run starts, no file is written)".to_owned(),
+        format!(
+            "  Stages: validate -> pre-gates -> prepare -> certify -> publish -> verify -> closeout"
+        ),
+        format!("  Changelog: {}", plan.changelog_path.display()),
+        format!(
+            "  Changelog valid: {}",
+            if plan.changelog_valid { "yes" } else { "no" }
+        ),
+        format!(
+            "  Unreleased entries: {}",
+            format_counts(&plan.unreleased_counts)
+        ),
+    ];
+
+    append_pipeline_lines(&mut lines, plan);
+
+    lines.push(String::new());
+    lines.push(format!(
+        "  Ready to run: {}",
+        if plan.ready { "yes" } else { "no" }
+    ));
+
+    if !plan.blockers.is_empty() {
+        lines.push(String::new());
+        lines.push("Blockers".to_owned());
+        for blocker in &plan.blockers {
+            lines.push(format!("  - {blocker}"));
+        }
+    }
+
     lines.join("\n")
 }
 
@@ -405,118 +599,6 @@ pub fn render_release_prepare_plan_text(plan: &ReleasePreparePlan) -> String {
         lines.push("Suggested Actions".to_owned());
         for hint in remediation_hints_for_blockers(&plan.blockers, ReleaseBlockedStage::Prepare) {
             lines.push(format!("  - {hint}"));
-        }
-    }
-
-    lines.join("\n")
-}
-
-pub fn render_release_simulation_text(simulation: &ReleaseSimulation) -> String {
-    let mut lines = vec![
-        if simulation.ready {
-            "Release Simulation".to_owned()
-        } else {
-            "Release Simulation Blocked".to_owned()
-        },
-        format!("  Repository: {}", simulation.repo_root.display()),
-        "  Mode: full dry-run (no files written, no git mutations)".to_owned(),
-        format!("  Current version: {}", simulation.current_version),
-        format!(
-            "  Version source: {} ({})",
-            simulation.version_source.path.display(),
-            simulation
-                .version_source
-                .field_path
-                .as_deref()
-                .unwrap_or("direct")
-        ),
-    ];
-
-    match &simulation.suggested_version {
-        Some(version) => lines.push(format!("  Suggested version: {version}")),
-        None => lines.push("  Suggested version: unavailable".to_owned()),
-    }
-    match &simulation.planned_version {
-        Some(version) if simulation.version_override_used => {
-            lines.push(format!("  Planned version: {version} (custom override)"))
-        }
-        Some(version) => lines.push(format!("  Planned version: {version}")),
-        None => lines.push("  Planned version: unavailable".to_owned()),
-    }
-    if let Some(tag) = &simulation.suggested_tag {
-        lines.push(format!("  Suggested tag: {tag}"));
-    }
-    if let Some(tag) = &simulation.tag {
-        lines.push(format!("  Planned tag: {tag}"));
-    }
-    lines.push(format!(
-        "  Version override used: {}",
-        if simulation.version_override_used {
-            "yes"
-        } else {
-            "no"
-        }
-    ));
-    if let Some(commit_message) = &simulation.commit_message {
-        lines.push(format!("  Planned commit: {commit_message}"));
-    }
-    lines.push(format!("  Release date: {}", simulation.release_date));
-    lines.push(format!(
-        "  State file: {} ({})",
-        simulation.state_file.display(),
-        if simulation.state_file_exists {
-            "already exists"
-        } else {
-            "not present"
-        }
-    ));
-    lines.push(format!(
-        "  State file written: {}",
-        if simulation.state_file_written {
-            "yes"
-        } else {
-            "no"
-        }
-    ));
-    lines.push(format!(
-        "  Gates executed: {}/{}",
-        simulation.executed_gate_count, simulation.configured_gate_count
-    ));
-    lines.push(format!(
-        "  Gate fail-fast stopped early: {}",
-        if simulation.stopped_early {
-            "yes"
-        } else {
-            "no"
-        }
-    ));
-    lines.push(format!(
-        "  Gate duration: {}ms",
-        simulation.total_duration_ms
-    ));
-    lines.push(format!(
-        "  Ready to prepare and execute: {}",
-        if simulation.ready { "yes" } else { "no" }
-    ));
-
-    append_gate_status_lines(
-        &mut lines,
-        true,
-        simulation.configured_gate_count,
-        &simulation.gate_results,
-    );
-
-    if !simulation.mutations.is_empty() {
-        lines.push(String::new());
-        lines.push("Planned Mutations".to_owned());
-        append_mutation_preview_lines(&mut lines, &simulation.mutations);
-    }
-
-    if !simulation.blockers.is_empty() {
-        lines.push(String::new());
-        lines.push("Blockers".to_owned());
-        for blocker in &simulation.blockers {
-            lines.push(format!("  - {blocker}"));
         }
     }
 

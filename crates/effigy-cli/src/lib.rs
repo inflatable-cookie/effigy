@@ -866,7 +866,9 @@ pub enum ReleaseSubcommand {
     Evidence {
         subcommand: ReleaseEvidenceSubcommand,
     },
-    Simulate {
+    /// `effigy release --plan`: the whole pipeline, no mutation (contract 054
+    /// §5). Replaces the retired `simulate`.
+    Plan {
         version_override: Option<String>,
     },
     Prepare {

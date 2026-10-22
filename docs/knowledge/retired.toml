@@ -1060,3 +1060,25 @@ allow = [
   "tests/cli_output_tests/json_envelope_tests/scan.rs",
   "crates/effigy-rhai/src/tests/scan_retirement.rs",
 ]
+
+[[retired]]
+id = "effigy-release-simulate"
+retired = "2026-10-22"
+replacement = "Contract 054 §5: `effigy release --plan` resolves and shows the whole pipeline with no mutation (each identity's current and next version, files to change, gates by stage, artifacts, targets and approval checkpoints) as `effigy.release.plan.v1`, and `--plan --version <SEMVER>` covers the old `simulate --version`. `effigy release simulate` refuses with this replacement; `effigy release status` reports the same pipeline alongside its readiness."
+owner = "docs/knowledge/contracts/054-release-platform-contract.md"
+terms = [
+  "effigy release simulate",
+  "effigy.release.simulate.v1",
+  "release_simulate",
+  "ReleaseSimulation",
+  "collect_release_simulation",
+]
+paths = []
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-cli/src/command_parsing_release.rs",
+  "tests/cli_output_tests/command_behavior_tests.rs",
+  "src/tests/lib_tests_parse_tests/release_option_tests.rs",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+]

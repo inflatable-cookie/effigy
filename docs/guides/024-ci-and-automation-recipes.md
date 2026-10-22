@@ -92,7 +92,7 @@ Before debugging CI, run locally:
 effigy qa
 effigy qa:json:ci
 effigy release gates
-effigy release simulate
+effigy release --plan
 effigy release status --check-gates
 effigy release preflight --tag v0.__.__ --output ./artifacts/distribution-preflight-v0.__.__.env
 effigy release verify-install --tag v0.__.__

@@ -293,7 +293,7 @@ and resolve the failure before continuing.
 
 2. **Determine the release version.**
    - Run `effigy release status --check-gates` first.
-   - Run `effigy release simulate` for the full safe preview.
+   - Run `effigy release --plan` for the whole pipeline with no mutation.
    - Run `effigy release prepare --plan` for the exact file mutation preview.
    - Use `effigy release prepare` for text-mode review.
    - Use `effigy release prepare --yes --check-gates` to write prepared state.
@@ -307,7 +307,7 @@ and resolve the failure before continuing.
    - Treat the built-in release previews as the source of truth for version
      selection:
      - `effigy release status --check-gates`
-     - `effigy release simulate`
+     - `effigy release --plan`
      - `effigy release prepare --plan`
    - If the human specifies a version, use it.
    - If the human says "patch" or "minor", compute the next version from the

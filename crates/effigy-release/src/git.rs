@@ -52,6 +52,29 @@ pub fn git_modified_files(repo_root: &Path) -> Result<Vec<String>, ReleaseError>
     Ok(paths)
 }
 
+/// Whether `repo_root` is a git work tree, and whether its tree is clean.
+///
+/// `None` means "not a git work tree": resolution reports that rather than
+/// failing, because `release status` and `release --plan` read any directory a
+/// consumer points them at, and the Run's validate stage is what refuses a
+/// release from outside a work tree.
+pub fn git_work_tree_clean(repo_root: &Path) -> Result<Option<bool>, ReleaseError> {
+    let repo_check = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(repo_root)
+        .arg("rev-parse")
+        .arg("--is-inside-work-tree")
+        .output()
+        .map_err(|error| {
+            ReleaseError::TaskInvocation(format!("failed to inspect git repository: {error}"))
+        })?;
+    if !repo_check.status.success() || String::from_utf8_lossy(&repo_check.stdout).trim() != "true"
+    {
+        return Ok(None);
+    }
+    git_modified_files(repo_root).map(|paths| Some(paths.is_empty()))
+}
+
 pub fn git_current_branch(repo_root: &Path) -> Result<String, ReleaseError> {
     let output = ProcessCommand::new("git")
         .arg("-C")

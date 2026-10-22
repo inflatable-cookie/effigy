@@ -27,7 +27,10 @@ where
         "preflight" => parse_release_preflight(args),
         "proof" => parse_release_proof(args),
         "evidence" => parse_release_evidence(args),
-        "simulate" => parse_release_simulate(args),
+        "--plan" | "--dry-run" => parse_release_plan(args),
+        "simulate" => Err(CliParseError::InvalidArguments(
+            "`effigy release simulate` is retired in v0.15: use `effigy release --plan`, which shows the whole pipeline (next versions, files, gates by stage, artifacts, targets and approval checkpoints) and still mutates nothing. See the v0.15.0 Removed entry in CHANGELOG.md".to_owned(),
+        )),
         "prepare" => parse_release_prepare(args),
         "execute" => parse_release_execute(args),
         other => Err(unknown_argument(other)),
@@ -543,7 +546,7 @@ where
     }))
 }
 
-fn parse_release_simulate<I>(args: I) -> Result<Command, CliParseError>
+fn parse_release_plan<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
@@ -570,7 +573,7 @@ where
     }
 
     Ok(Command::Release(ReleaseArgs {
-        subcommand: ReleaseSubcommand::Simulate { version_override },
+        subcommand: ReleaseSubcommand::Plan { version_override },
         repo_override,
         output_json,
     }))

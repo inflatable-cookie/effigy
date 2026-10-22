@@ -157,8 +157,8 @@
       "std::fs::write": 2
     },
     "crates/effigy-release/src/git.rs": {
-      "std.process.Command.new": 12,
-      "std.process.Command.output": 12
+      "std.process.Command.new": 13,
+      "std.process.Command.output": 13
     },
     "crates/effigy-release/src/hosted_evidence.rs": {
       "std.process.Command.new": 1,

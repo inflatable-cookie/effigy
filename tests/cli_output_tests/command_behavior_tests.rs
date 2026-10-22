@@ -2689,7 +2689,7 @@ fn write_release_bump_fixture(root: &std::path::Path, version: &str, unreleased_
 }
 
 #[test]
-fn cli_release_status_and_simulate_cover_the_removed_bump_matrix() {
+fn cli_release_status_and_plan_cover_the_removed_bump_matrix() {
     let cases = [
         (
             "removed",
@@ -2740,19 +2740,16 @@ fn cli_release_status_and_simulate_cover_the_removed_bump_matrix() {
             "status next version for {name}"
         );
 
-        let simulate = run_json_cli_command(&root, &["release", "simulate"]);
-        assert!(
-            simulate.status.success(),
-            "simulate failed for {name}: {simulate:?}"
-        );
-        let simulate_json = parse_stdout_json(&simulate);
+        let plan = run_json_cli_command(&root, &["release", "--plan"]);
+        assert!(plan.status.success(), "plan failed for {name}: {plan:?}");
+        let plan_json = parse_stdout_json(&plan);
         assert_eq!(
-            simulate_json["result"]["suggested_version"], next,
-            "simulated version for {name}"
-        );
-        assert_eq!(
-            simulate_json["result"]["planned_version"], next,
+            plan_json["result"]["identities"][0]["next_version"], next,
             "planned version for {name}"
+        );
+        assert_eq!(
+            plan_json["result"]["identities"][0]["bump"], bump,
+            "planned bump for {name}"
         );
     }
 }
@@ -3233,8 +3230,8 @@ fn cli_release_verify_install_rejects_non_effigy_roots_before_network_work() {
 }
 
 #[test]
-fn cli_release_simulate_json_mode_reports_full_dry_run_without_side_effects() {
-    let root = temp_workspace("cli-release-simulate-json-success");
+fn cli_release_plan_json_mode_reports_the_whole_pipeline_without_side_effects() {
+    let root = temp_workspace("cli-release-plan-json-success");
     fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"fixture\"\nversion = \"0.2.4\"\nedition = \"2021\"\n",
@@ -3242,7 +3239,7 @@ fn cli_release_simulate_json_mode_reports_full_dry_run_without_side_effects() {
     .expect("write cargo manifest");
     fs::write(
         root.join("CHANGELOG.md"),
-        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### Fixed\n- Preview release simulate output\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n",
+        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### Fixed\n- Preview the release plan output\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n",
     )
     .expect("write changelog");
     fs::write(
@@ -3255,58 +3252,82 @@ fn cli_release_simulate_json_mode_reports_full_dry_run_without_side_effects() {
     let changelog_before =
         fs::read_to_string(root.join("CHANGELOG.md")).expect("read changelog before");
 
-    let output = run_json_cli_command(&root, &["release", "simulate"]);
+    let output = run_json_cli_command(&root, &["release", "--plan"]);
     let parsed = parse_stdout_json(&output);
 
-    assert!(output.status.success());
+    assert!(output.status.success(), "{parsed}");
     assert_eq!(parsed["schema"], "effigy.command.v1");
     assert_eq!(parsed["ok"], true);
-    assert_eq!(parsed["result"]["schema"], "effigy.release.simulate.v1");
-    assert_eq!(parsed["result"]["mode"], "simulate");
+    assert_eq!(parsed["command"]["kind"], "release");
+    assert_eq!(parsed["result"]["schema"], "effigy.release.plan.v1");
+    assert_eq!(parsed["result"]["mode"], "plan");
     assert_eq!(parsed["result"]["ready"], true);
-    assert_eq!(parsed["result"]["suggested_version"], "0.2.5");
-    assert_eq!(parsed["result"]["planned_version"], "0.2.5");
-    assert_eq!(parsed["result"]["suggested_tag"], "release-0.2.5");
-    assert_eq!(parsed["result"]["tag"], "release-0.2.5");
-    assert_eq!(parsed["result"]["version_override_used"], false);
-    assert_eq!(parsed["result"]["commit_message"], "release: v0.2.5");
-    assert_eq!(parsed["result"]["state_file_written"], false);
-    assert_eq!(parsed["result"]["state_file_exists"], false);
-    assert_eq!(parsed["result"]["gates"]["configured_count"], 1);
-    assert_eq!(parsed["result"]["gates"]["executed_count"], 1);
-    assert_eq!(parsed["result"]["gates"]["stopped_early"], false);
-    let mutations = parsed["result"]["mutations"]
+    assert_eq!(
+        parsed["result"]["config_shape"],
+        "single-identity-shorthand"
+    );
+
+    // The shorthand resolves to one `semver` identity and one `tag` target
+    // (contract 054 §4.1).
+    let identities = parsed["result"]["identities"]
         .as_array()
-        .expect("mutations array");
-    assert_eq!(mutations.len(), 2);
-    assert_eq!(mutations[0]["kind"], "version-file");
-    assert_eq!(mutations[1]["kind"], "changelog");
-    assert_eq!(mutations[0]["detail_lines"][2], "selected version: 0.2.5");
-    assert!(mutations[0]["diff_preview"]
+        .expect("identities");
+    assert_eq!(identities.len(), 1);
+    assert_eq!(identities[0]["kind"], "semver");
+    assert_eq!(identities[0]["current_version"], "0.2.4");
+    assert_eq!(identities[0]["next_version"], "0.2.5");
+    assert_eq!(identities[0]["tag"], "release-0.2.5");
+    assert!(identities[0]["version_file"]
+        .as_str()
+        .expect("version file")
+        .ends_with("Cargo.toml"));
+    assert!(identities[0]["files"]
         .as_array()
-        .expect("version diff preview")
+        .expect("identity files")
         .iter()
-        .any(|line| line.as_str() == Some("- version = \"0.2.4\"")));
-    assert!(mutations[0]["diff_preview"]
-        .as_array()
-        .expect("version diff preview")
-        .iter()
-        .any(|line| line.as_str() == Some("+ version = \"0.2.5\"")));
+        .any(|file| file
+            .as_str()
+            .is_some_and(|path| path.ends_with("Cargo.toml"))));
+
+    let files = parsed["result"]["files"].as_array().expect("files");
+    assert!(files.iter().any(|file| file
+        .as_str()
+        .is_some_and(|path| path.ends_with("Cargo.toml"))));
+    assert!(files.iter().any(|file| file
+        .as_str()
+        .is_some_and(|path| path.ends_with("CHANGELOG.md"))));
+
+    // Gates keep their configured command and default to the certify stage.
+    assert_eq!(parsed["result"]["gates"][0]["name"], "smoke");
+    assert_eq!(parsed["result"]["gates"][0]["stage"], "certify");
+    assert_eq!(parsed["result"]["gates"][0]["command"], "printf smoke-ok");
+
+    assert_eq!(
+        parsed["result"]["targets"][0]["kind"], "tag",
+        "the shorthand has one tag target"
+    );
+    // A tag-only release has no approval checkpoint by default (§10 ruling 3).
+    assert_eq!(
+        parsed["result"]["approvals"]["checkpoints"],
+        serde_json::json!([])
+    );
+    assert_eq!(parsed["result"]["approvals"]["defaulted"], true);
+    assert_eq!(parsed["result"]["run"]["active"], false);
     assert!(!root.join(".release-prepared.json").exists());
 
+    // The plan reports; it never runs a gate or writes a file.
     let cargo_after = fs::read_to_string(root.join("Cargo.toml")).expect("read cargo after");
     let changelog_after =
         fs::read_to_string(root.join("CHANGELOG.md")).expect("read changelog after");
     assert_eq!(cargo_after, cargo_before);
     assert_eq!(changelog_after, changelog_before);
     assert!(cargo_after.contains("version = \"0.2.4\""));
-    assert!(changelog_after.contains("## [Unreleased]"));
     assert!(!changelog_after.contains("## [0.2.5] - "));
 }
 
 #[test]
-fn cli_release_simulate_json_mode_accepts_version_override() {
-    let root = temp_workspace("cli-release-simulate-json-version-override");
+fn cli_release_plan_json_mode_accepts_version_override() {
+    let root = temp_workspace("cli-release-plan-json-version-override");
     fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"fixture\"\nversion = \"0.2.4\"\nedition = \"2021\"\n",
@@ -3314,59 +3335,34 @@ fn cli_release_simulate_json_mode_accepts_version_override() {
     .expect("write cargo manifest");
     fs::write(
         root.join("CHANGELOG.md"),
-        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### Fixed\n- Preview release simulate override output\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n",
+        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### Fixed\n- Preview the release plan override\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n",
     )
     .expect("write changelog");
     fs::write(
         root.join("effigy.toml"),
-        "[release]\nchangelog = \"CHANGELOG.md\"\ntag-format = \"release-{version}\"\n[release.gates]\nsmoke = \"printf smoke-ok\"\n",
+        "[release]\nchangelog = \"CHANGELOG.md\"\ntag-format = \"release-{version}\"\n",
     )
     .expect("write manifest");
 
-    let cargo_before = fs::read_to_string(root.join("Cargo.toml")).expect("read cargo before");
-    let changelog_before =
-        fs::read_to_string(root.join("CHANGELOG.md")).expect("read changelog before");
-
-    let output = run_json_cli_command(&root, &["release", "simulate", "--version", "0.2.8"]);
+    let output = run_json_cli_command(&root, &["release", "--plan", "--version", "0.2.8"]);
     let parsed = parse_stdout_json(&output);
 
-    assert!(output.status.success());
-    assert_eq!(parsed["schema"], "effigy.command.v1");
-    assert_eq!(parsed["ok"], true);
-    assert_eq!(parsed["result"]["schema"], "effigy.release.simulate.v1");
-    assert_eq!(parsed["result"]["ready"], true);
-    assert_eq!(parsed["result"]["suggested_version"], "0.2.5");
-    assert_eq!(parsed["result"]["planned_version"], "0.2.8");
-    assert_eq!(parsed["result"]["suggested_tag"], "release-0.2.5");
-    assert_eq!(parsed["result"]["tag"], "release-0.2.8");
-    assert_eq!(parsed["result"]["version_override_used"], true);
-    assert_eq!(parsed["result"]["commit_message"], "release: v0.2.8");
-    assert_eq!(parsed["result"]["state_file_written"], false);
-    assert_eq!(parsed["result"]["state_file_exists"], false);
-    let mutations = parsed["result"]["mutations"]
+    assert!(output.status.success(), "{parsed}");
+    assert_eq!(parsed["result"]["schema"], "effigy.release.plan.v1");
+    assert_eq!(parsed["result"]["identities"][0]["next_version"], "0.2.8");
+    assert_eq!(parsed["result"]["identities"][0]["tag"], "release-0.2.8");
+    assert!(parsed["result"]["files"]
         .as_array()
-        .expect("mutations array");
-    assert_eq!(mutations[0]["detail_lines"][2], "selected version: 0.2.8");
-    assert!(mutations[0]["diff_preview"]
-        .as_array()
-        .expect("version diff preview")
+        .expect("files")
         .iter()
-        .any(|line| line.as_str() == Some("+ version = \"0.2.8\"")));
-    assert!(!root.join(".release-prepared.json").exists());
-
-    let cargo_after = fs::read_to_string(root.join("Cargo.toml")).expect("read cargo after");
-    let changelog_after =
-        fs::read_to_string(root.join("CHANGELOG.md")).expect("read changelog after");
-    assert_eq!(cargo_after, cargo_before);
-    assert_eq!(changelog_after, changelog_before);
-    assert!(cargo_after.contains("version = \"0.2.4\""));
-    assert!(changelog_after.contains("## [Unreleased]"));
-    assert!(!changelog_after.contains("## [0.2.8] - "));
+        .any(|file| file
+            .as_str()
+            .is_some_and(|path| path.ends_with("Cargo.toml"))));
 }
 
 #[test]
-fn cli_release_simulate_text_mode_shows_mutation_diff_preview() {
-    let root = temp_workspace("cli-release-simulate-text-diff-preview");
+fn cli_release_plan_text_mode_shows_identities_files_and_targets() {
+    let root = temp_workspace("cli-release-plan-text");
     fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"fixture\"\nversion = \"0.2.4\"\nedition = \"2021\"\n",
@@ -3374,7 +3370,7 @@ fn cli_release_simulate_text_mode_shows_mutation_diff_preview() {
     .expect("write cargo manifest");
     fs::write(
         root.join("CHANGELOG.md"),
-        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### Fixed\n- Preview release simulate text diff output\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n",
+        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### Fixed\n- Preview the release plan text output\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n",
     )
     .expect("write changelog");
     fs::write(
@@ -3384,7 +3380,7 @@ fn cli_release_simulate_text_mode_shows_mutation_diff_preview() {
     .expect("write manifest");
 
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
-        .args(["release", "simulate", "--repo"])
+        .args(["release", "--plan", "--repo"])
         .arg(&root)
         .env("NO_COLOR", "1")
         .output()
@@ -3392,19 +3388,18 @@ fn cli_release_simulate_text_mode_shows_mutation_diff_preview() {
 
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(output.status.success(), "got: {stdout}");
-    assert!(stdout.contains("Planned Mutations"), "got: {stdout}");
-    assert!(
-        stdout.contains("detail: selected version: 0.2.5"),
-        "got: {stdout}"
-    );
-    assert!(stdout.contains("diff:"), "got: {stdout}");
-    assert!(stdout.contains("- version = \"0.2.4\""), "got: {stdout}");
-    assert!(stdout.contains("+ version = \"0.2.5\""), "got: {stdout}");
+    assert!(stdout.contains("Release Plan"), "got: {stdout}");
+    assert!(stdout.contains("Identities (1)"), "got: {stdout}");
+    assert!(stdout.contains("0.2.4 -> 0.2.5"), "got: {stdout}");
+    assert!(stdout.contains("tag: release-0.2.5"), "got: {stdout}");
+    assert!(stdout.contains("Files to change (2)"), "got: {stdout}");
+    assert!(stdout.contains("CHANGELOG.md"), "got: {stdout}");
+    assert!(stdout.contains("Ready to run: yes"), "got: {stdout}");
 }
 
 #[test]
-fn cli_release_simulate_json_mode_rejects_invalid_version_override() {
-    let root = temp_workspace("cli-release-simulate-json-invalid-version");
+fn cli_release_plan_json_mode_rejects_invalid_version_override() {
+    let root = temp_workspace("cli-release-plan-json-invalid-version");
     fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"fixture\"\nversion = \"0.2.4\"\nedition = \"2021\"\n",
@@ -3412,7 +3407,7 @@ fn cli_release_simulate_json_mode_rejects_invalid_version_override() {
     .expect("write cargo manifest");
     fs::write(
         root.join("CHANGELOG.md"),
-        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### Fixed\n- Preview release simulate invalid version output\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n",
+        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### Fixed\n- Preview the release plan invalid version\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n",
     )
     .expect("write changelog");
     fs::write(
@@ -3421,10 +3416,7 @@ fn cli_release_simulate_json_mode_rejects_invalid_version_override() {
     )
     .expect("write manifest");
 
-    let output = run_json_cli_command(
-        &root,
-        &["release", "simulate", "--version", "not-a-version"],
-    );
+    let output = run_json_cli_command(&root, &["release", "--plan", "--version", "not-a-version"]);
     let parsed = parse_stdout_json(&output);
 
     assert!(!output.status.success());
@@ -3433,12 +3425,12 @@ fn cli_release_simulate_json_mode_rejects_invalid_version_override() {
     assert!(parsed["error"]["message"]
         .as_str()
         .expect("error message")
-        .contains("invalid `release simulate --version`"));
+        .contains("invalid `release --plan --version`"));
 }
 
 #[test]
-fn cli_release_simulate_json_mode_stops_after_first_gate_failure_without_writing_state() {
-    let root = temp_workspace("cli-release-simulate-json-gate-failure");
+fn cli_release_plan_does_not_run_gates_or_write_state() {
+    let root = temp_workspace("cli-release-plan-no-gates");
     fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"fixture\"\nversion = \"0.2.4\"\nedition = \"2021\"\n",
@@ -3446,12 +3438,12 @@ fn cli_release_simulate_json_mode_stops_after_first_gate_failure_without_writing
     .expect("write cargo manifest");
     fs::write(
         root.join("CHANGELOG.md"),
-        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### Fixed\n- Preview release simulate failure output\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n",
+        "# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n## [Unreleased]\n\n### Fixed\n- Plan without running gates\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior release\n",
     )
     .expect("write changelog");
     fs::write(
         root.join("effigy.toml"),
-        "[release]\nchangelog = \"CHANGELOG.md\"\ntag-format = \"release-{version}\"\n[release.gates]\nformat = \"printf format-fail >&2; exit 9\"\nsmoke = \"printf ran > simulate-second.txt\"\n",
+        "[release]\nchangelog = \"CHANGELOG.md\"\ntag-format = \"release-{version}\"\n[release.gates]\nformat = \"printf format-fail >&2; exit 9\"\nsmoke = \"printf ran > plan-second.txt\"\n",
     )
     .expect("write manifest");
 
@@ -3459,39 +3451,21 @@ fn cli_release_simulate_json_mode_stops_after_first_gate_failure_without_writing
     let changelog_before =
         fs::read_to_string(root.join("CHANGELOG.md")).expect("read changelog before");
 
-    let output = run_json_cli_command(&root, &["release", "simulate"]);
+    let output = run_json_cli_command(&root, &["release", "--plan"]);
     let parsed = parse_stdout_json(&output);
 
-    assert!(!output.status.success());
-    assert_eq!(parsed["schema"], "effigy.command.v1");
-    assert_eq!(parsed["ok"], false);
-    assert_eq!(
-        parsed["error"]["details"]["schema"],
-        "effigy.release.simulate.v1"
+    assert!(output.status.success(), "{parsed}");
+    assert_eq!(parsed["result"]["schema"], "effigy.release.plan.v1");
+    let gates = parsed["result"]["gates"].as_array().expect("gates");
+    assert_eq!(gates.len(), 2);
+    assert!(
+        gates.iter().all(|gate| gate.get("results").is_none()),
+        "the plan reports gates without running them: {gates:?}"
     );
-    assert_eq!(parsed["error"]["details"]["ready"], false);
-    assert_eq!(parsed["error"]["details"]["state_file_written"], false);
-    assert_eq!(parsed["error"]["details"]["state_file_exists"], false);
-    assert_eq!(parsed["error"]["details"]["gates"]["configured_count"], 2);
-    assert_eq!(parsed["error"]["details"]["gates"]["executed_count"], 1);
-    assert_eq!(parsed["error"]["details"]["gates"]["stopped_early"], true);
-    let results = parsed["error"]["details"]["gates"]["results"]
-        .as_array()
-        .expect("results");
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0]["name"], "format");
-    assert_eq!(results[0]["passed"], false);
-    assert_eq!(results[0]["stderr"], "format-fail");
-    let blockers = parsed["error"]["details"]["blockers"]
-        .as_array()
-        .expect("blockers");
-    assert!(blockers
-        .iter()
-        .any(|value| value.as_str() == Some("gate `format` failed")));
     assert!(!root.join(".release-prepared.json").exists());
     assert!(
-        !root.join("simulate-second.txt").exists(),
-        "second gate should not run after fail-fast stop"
+        !root.join("plan-second.txt").exists(),
+        "no gate task may run during a plan"
     );
 
     let cargo_after = fs::read_to_string(root.join("Cargo.toml")).expect("read cargo after");
@@ -3499,6 +3473,29 @@ fn cli_release_simulate_json_mode_stops_after_first_gate_failure_without_writing
         fs::read_to_string(root.join("CHANGELOG.md")).expect("read changelog after");
     assert_eq!(cargo_after, cargo_before);
     assert_eq!(changelog_after, changelog_before);
+}
+
+#[test]
+fn cli_release_plan_replaces_the_retired_simulate_command() {
+    let root = temp_workspace("cli-release-simulate-retired");
+    fs::write(
+        root.join("effigy.toml"),
+        "[release]\nchangelog = \"CHANGELOG.md\"\n",
+    )
+    .expect("write manifest");
+
+    let output = run_cli_command(&root, &["release", "simulate"]);
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.status.success(), "got: {combined}");
+    assert!(combined.contains("retired"), "got: {combined}");
+    assert!(
+        combined.contains("effigy release --plan"),
+        "the refusal names the replacement: {combined}"
+    );
 }
 
 #[test]

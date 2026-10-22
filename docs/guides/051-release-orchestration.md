@@ -22,7 +22,7 @@ surface instead of a growing set of shell steps.
 
 If you only need the shortest operator path, use:
 
-- `simulate`
+- `--plan`
 - `status --check-gates`
 - `prepare --plan`
 - `prepare --yes --check-gates`
@@ -32,7 +32,7 @@ If you only need the shortest operator path, use:
 If you are approaching the release flow for the first time, start with:
 
 ```sh
-effigy release simulate
+effigy release --plan
 effigy release status --check-gates
 effigy release prepare --plan
 effigy release gates
@@ -40,7 +40,9 @@ effigy release gates
 
 Use the commands by intent:
 
-- `simulate` for a no-write preview of the likely release path
+- `--plan` for the whole pipeline with no mutation: every identity's next
+  version, the files to change, gates by stage, artifacts, targets and
+  approval checkpoints
 - `status --check-gates` for current readiness plus the configured gate verdict, reported independently of the optional next-version proposal
 - `prepare --plan` for the exact file mutations Effigy would make
 - `prepare` / `execute` text mode when a human is actively reviewing the flow
@@ -81,9 +83,10 @@ Current built-in release commands:
   - run configured release gates as a standalone fail-fast timed check
 - `effigy release resume`
   - recover an existing `.release-prepared.json` state and inspect drift
-- `effigy release simulate`
-  - full dry-run preview of gates, version and tag selection, and file
-    mutations with no written state; accepts `--version <SEMVER>`
+- `effigy release --plan`
+  - the whole pipeline with no mutation: identities with their current and next
+    versions, files to change, gates by stage, artifacts, targets and approval
+    checkpoints; accepts `--version <SEMVER>` for a single `semver` identity
 - `effigy release prepare --plan`
   - preview the exact version-file and changelog mutations; accepts
     `--version <SEMVER>`; `--dry-run` is an alias
@@ -232,7 +235,7 @@ tag-format = "v{version}"
 initial-tag-current-version = true
 ```
 
-In this mode, `release status`, `release simulate`, and `release prepare`
+In this mode, `release status`, `release --plan`, and `release prepare`
 select the current version. Prepare promotes `[Unreleased]` without rewriting
 the version file. The exception closes as soon as the changelog contains a
 released version or the matching local tag exists.
@@ -306,6 +309,85 @@ validate = "sh -lc './scripts/validate-all.sh'"
 Use this for multi-language repos where the release version should not be owned
 by one language manifest.
 
+## 4a) Identities, Targets and the Plan
+
+Contract [054](../knowledge/contracts/054-release-platform-contract.md) settles
+the shape every project's release fits. `effigy release status` and
+`effigy release --plan` resolve it and mutate nothing.
+
+Today's single-identity keys stay the shorthand for a one-identity release:
+
+```toml
+[release]
+version-file = "Cargo.toml"
+version-path = "workspace.package.version"
+changelog = "CHANGELOG.md"
+sync-files = ["Cargo.lock"]
+tag-format = "v{version}"
+gates = { test = "qa", build = "build:release" }
+```
+
+That means one identity named after the repository, gates in `certify`, one
+`tag` target and no artifacts. The 11 projects already declaring `[release]`
+keep working unchanged.
+
+A release with several things that get a version names them:
+
+```toml
+[release]
+changelog = "CHANGELOG.md"
+approve = ["publish"]
+
+[release.identities.core]
+version-file = "packages/core/package.json"
+tag-format = "core-v{version}"
+
+[release.identities.react]
+version-file = "packages/react/package.json"
+tag-format = "react-v{version}"
+follows = "core"
+
+[release.gates]
+qa = { task = "qa", stage = "pre" }
+pack = { task = "release:pack", stage = "certify" }
+
+[release.artifacts]
+core = { task = "release:pack:core", path = "dist/core-*.tgz" }
+
+[release.targets.tags]
+kind = "tag"
+
+[release.targets.npm]
+kind = "task"
+task = "release:publish:npm"
+check = "release:check:npm"
+verify = "release:verify:npm"
+```
+
+- `kind` is `semver` (the default, a version file bumped from the changelog),
+  `digest` (the artifact digest is the identity), `source` (the commit SHA) or
+  `task` (a project task prints the identity).
+- `follows` releases the follower at its leader's version under its own
+  `tag-format`; omit it for an independent bump.
+- A gate runs `command` or a project `task` in `stage = "pre"` or
+  `stage = "certify"`; the shorthand's gates run in `certify`.
+- A target is `kind = "tag"` or `kind = "task"`; a task target may declare a
+  `check` (idempotency probe) and a `verify` task.
+- `approve` names the stage boundaries that stop for approval. Absent, it
+  defaults to `["publish"]` when any target is not a `tag` target, and to none
+  for a tag-only release; `approve = []` means never.
+
+`effigy release --plan` prints every identity's current and next version and
+tag, the files to change, gates with their stage, artifacts, targets and
+approval checkpoints. `effigy release status` prints the same pipeline with the
+readiness, changelog and gate verdict it always reported. `release --plan`
+replaces the retired `release simulate`, which now refuses with that
+replacement.
+
+`release prepare` and `release execute` still run the single-identity shorthand.
+A release that declares identities, artifacts, targets or `approve` resolves in
+`status` and `--plan` today and will run through `release run`.
+
 ## 5) Workflow Walkthrough
 
 Recommended operator flow:
@@ -315,8 +397,8 @@ candidate_sha="$(git rev-parse HEAD)"
 gh workflow run ci.yml --ref main
 # Select the workflow_dispatch run whose headSha equals $candidate_sha.
 gh run watch <RUN_ID> --exit-status
-effigy release simulate
-effigy release simulate --version 0.2.8
+effigy release --plan
+effigy release --plan --version 0.2.8
 effigy release status --check-gates
 effigy release prepare
 effigy release prepare --dry-run
@@ -371,18 +453,18 @@ scp-style SSH remotes are normalized automatically for the install step.
 
 What each step is for:
 
-1. `simulate`
-   - safe preview, no file writes, no state file
+1. `--plan`
+   - the whole pipeline, no mutation, no state file
    - optional `--version <SEMVER>` keeps the same no-write contract while
-     previewing a deliberate valid override
+     previewing a deliberate valid override for the single `semver` identity
 2. `status --check-gates`
    - release readiness from current repo state plus gates
    - an empty `[Unreleased]` section means there is nothing to release, not
      that the gates failed: passed gates still exit successfully
      (`Gate check: passed`, `gate_check_passed: true`) while the status keeps
      `ready: false`, `next_version: null`, and the explicit unreleased-entries
-     blocker. `simulate`, `prepare`, and `execute` still require a derivable
-     next version.
+     blocker. `release --plan`, `prepare`, and `execute` still require a
+     derivable next version.
 3. `prepare`
    - interactive review before writing
 4. `prepare --plan`
@@ -509,7 +591,8 @@ reuse-hosted-evidence = true
 - lookup uses authenticated `gh run list --repo <origin-owner/name>`
 - the run must match this repository and the exact `HEAD` SHA
 - prepare mutations do not change `HEAD`; reuse attests the source commit
-- status, prepare, simulate, `release gates`, and execute share that verdict
+- status, prepare, `release --plan`, `release gates`, and execute share that
+  verdict
 - `.release-prepared.json` records each reused gate and its run URL
 - missing, pending, failed, ambiguous, wrong-repository, or wrong-SHA evidence
   fails the named gate; unlisted gates still run locally
@@ -582,7 +665,7 @@ Recommended migration direction:
 
 - move release gate definitions into `[release.gates]`
 - keep wrapper scripts only when an external caller still depends on them
-- prefer `effigy release simulate/status/prepare/execute` for operator-driven
+- prefer `effigy release --plan/status/prepare/execute` for operator-driven
   runs
 - for Effigy's binary release, use `effigy release verify-install` instead of
   bespoke tag-install helpers
@@ -616,6 +699,6 @@ verification through built-in commands instead of wrapper scripts.
 
 ## Next Step
 
-After adding `[release]` to a repo, run `effigy release simulate` and
+After adding `[release]` to a repo, run `effigy release --plan` and
 `effigy release status --check-gates` before replacing any existing release
 wrapper or CI entrypoint.

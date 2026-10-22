@@ -337,8 +337,32 @@ During v0.x, MINOR bumps may include breaking changes.
   `effigy.bootstrap.deps`, `children-status`, `children-sync` and
   `bootstrap-teardown` payloads are gone; `effigy.bootstrap.v1` keeps plan and
   executed phases with `sources`, `submodules`, `setup` and `start`.
+- `effigy release simulate` (contract 054 §5). Use `effigy release --plan`,
+  which shows the whole pipeline instead of only the version, tag and gate
+  preview; `release --plan --version <SEMVER>` covers the old
+  `simulate --version`. The refusal names the replacement.
 
 ### Added
+- The release platform's configuration and read surfaces (contract 054 §2, §4
+  and the `status`/`--plan` half of §5). `[release]` now expresses named
+  `[release.identities.<name>]` of kind `semver` (the default), `digest`,
+  `source` or `task`, with per-identity `version-file`, `tag-format`, `follows`
+  and `task`; `[release.artifacts.<name>]` with `task` and `path`;
+  `[release.targets.<name>]` of kind `tag` or `task` with `check` and `verify`;
+  gates with a `stage` (`pre` or `certify`, default `certify`) and a project
+  `task` as an alternative to `command`; and `approve`, which defaults to
+  `["publish"]` for any release with a non-`tag` target and to none for a
+  tag-only release. `effigy release --plan` shows the whole pipeline with no
+  mutation (each identity's current and next version, files to change, gates by
+  stage, artifacts, targets and approval checkpoints) as
+  `effigy.release.plan.v1`, and `effigy release status` reports the same
+  pipeline alongside its readiness. The single-identity shorthand is unchanged,
+  so the 11 projects already declaring `[release]` keep working.
+- `test:release:platform`, `check:release:platform` and
+  `lint:release:platform` selectors, with their `:cargo` escapes.
+- `tests/fixtures/release_platform/` holds one project per `[release]` shape
+  from contract 054 §4 plus Longhorn's, Poodle's and Underlay's real tables.
+
 - `test:focused` runs a focused Rust test selection through Cargo with
   `--locked`, keeping `Cargo.lock` read-only while a source-linked consumer
   checkout is under observation.

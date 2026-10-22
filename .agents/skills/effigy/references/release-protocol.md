@@ -17,7 +17,7 @@ Use these for inspection, planning, and reporting:
 
 | Command | What it does |
 |---------|--------------|
-| `effigy release simulate` | Dry-run the entire release flow |
+| `effigy release --plan` | Resolve the whole release pipeline with no mutation |
 | `effigy release status --check-gates` | Show current gate states |
 | `effigy release prepare --plan` | Preview prepare step |
 | `effigy release execute --plan` | Preview execute step |
@@ -44,7 +44,7 @@ When a human explicitly asks for a release:
 2. `gh workflow run ci.yml --ref main`
 3. Find the `workflow_dispatch` run whose `headSha` equals `$candidate_sha`,
    then run `gh run watch <RUN_ID> --exit-status`.
-4. `effigy release simulate`
+4. `effigy release --plan`
 5. `effigy release status --check-gates`
 6. `effigy release prepare --plan`
 7. `effigy release prepare --yes --check-gates`

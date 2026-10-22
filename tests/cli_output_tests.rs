@@ -17,6 +17,8 @@ mod json_envelope_tests;
 mod program_fallback_tests;
 #[path = "cli_output_tests/qa_groups_tests.rs"]
 mod qa_groups_tests;
+#[path = "cli_output_tests/release_platform_tests.rs"]
+mod release_platform_tests;
 #[path = "cli_output_tests/released_surface_transition_tests.rs"]
 mod released_surface_transition_tests;
 #[path = "cli_output_tests/released_surface_v0_2_13_tests.rs"]

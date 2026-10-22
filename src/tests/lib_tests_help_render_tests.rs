@@ -361,9 +361,9 @@ fn render_release_help_shows_status_and_gate_options() {
     assert!(rendered.contains("effigy release verify-install"));
     assert!(rendered.contains("Effigy's self-hosting tagged-binary check"));
     assert!(rendered.contains("repo-owned consumer smoke"));
-    assert!(rendered.contains("effigy release simulate"));
+    assert!(rendered.contains("effigy release --plan"));
     assert!(
-        rendered.contains("effigy release simulate [--repo <PATH>] [--version <SEMVER>] [--json]")
+        rendered.contains("effigy release --plan [--repo <PATH>] [--version <SEMVER>] [--json]")
     );
     assert!(rendered.contains("effigy release prepare [--repo <PATH>] [--check-gates]"));
     assert!(rendered.contains("effigy release prepare (--plan|--dry-run)"));

@@ -124,7 +124,7 @@ First prove the clean, pushed candidate commit through a manually dispatched
 accept a green run from another commit.
 
 ```bash
-effigy release simulate                # dry-run the release flow
+effigy release --plan                  # dry-run the release flow
 effigy release status --check-gates    # show gate states
 effigy release prepare --plan          # preview prepare step
 effigy release execute --plan          # preview execute step

@@ -8,7 +8,7 @@
     "completion"
   ],
   "release_status_schema": "effigy.release.status.v1",
-  "release_simulate_schema": "effigy.release.simulate.v1",
+  "release_plan_schema": "effigy.release.plan.v1",
   "release_gates_schema": "effigy.release.gates.v1",
   "release_verify_install_schema": "effigy.release.verify-install.v1",
   "test_plan_schema": "effigy.test.plan.v1",

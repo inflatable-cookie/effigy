@@ -1,0 +1,29 @@
+[release]
+changelog = "CHANGELOG.md"
+approve = ["publish"]
+
+[release.identities.core]
+version-file = "packages/core/package.json"
+tag-format = "core-v{version}"
+
+[release.identities.react]
+version-file = "packages/react/package.json"
+tag-format = "react-v{version}"
+follows = "core"
+
+[release.gates]
+qa = { task = "qa", stage = "pre" }
+pack = { command = "node pack.js", stage = "certify" }
+
+[release.artifacts]
+core = { task = "release:pack:core", path = "dist/core-*.tgz" }
+react = { task = "release:pack:react", path = "dist/react-*.tgz" }
+
+[release.targets.tags]
+kind = "tag"
+
+[release.targets.npm]
+kind = "task"
+task = "release:publish:npm"
+check = "release:check:npm"
+verify = "release:verify:npm"

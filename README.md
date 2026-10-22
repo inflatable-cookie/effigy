@@ -317,7 +317,7 @@ Effigy runs a local DNS server and reverse proxy. `*.test` domains resolve autom
 ### Release Without the Ritual
 
 ```bash
-effigy release simulate         # Dry-run: what would happen?
+effigy release --plan           # Dry-run: what would happen?
 effigy release prepare --plan   # Preview file mutations
 effigy release prepare --yes    # Bump version, update changelog
 effigy release execute --yes    # Commit, tag, push
@@ -442,7 +442,7 @@ effigy --json tasks              # Every task, catalog, and description
 effigy --json test --plan        # Resolved test plan without execution
 effigy <task>                    # Execute supported repo work
 effigy --help                    # Every command and flag, grouped by job
-effigy --json release simulate   # Machine-readable dry-runs
+effigy --json release --plan     # Machine-readable dry-runs
 ```
 
 Route by job: use `rg` and the documentation index (`docs/README.md`) for code and documentation understanding, `effigy tasks` for selector inventory, `effigy doctor` when routing or repo health is unclear, and `effigy test --plan` when test execution shape matters. Then run supported work through structured CLI output. No grepping Makefiles, no parsing package.json scripts, no guessing which directory to `cd` into.

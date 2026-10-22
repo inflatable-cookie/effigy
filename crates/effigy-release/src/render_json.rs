@@ -3,8 +3,8 @@ use serde::Serialize;
 use crate::text::{remediation_hints_for_blockers, ReleaseBlockedStage};
 use crate::{
     FileMutationPlan, GateResult, ReleaseExecutePlan, ReleaseExecuted, ReleaseGateRun,
-    ReleasePreparePlan, ReleasePrepared, ReleaseSimulation, ReleaseStatus, ReleaseVerifyInstall,
-    ResolvedVersionSource, ReusedGateRecord, VerificationStepResult,
+    ReleasePipelinePlan, ReleasePreparePlan, ReleasePrepared, ReleaseStatus, ReleaseVerifyInstall,
+    ResolvedTarget, ResolvedVersionSource, ReusedGateRecord, TargetKind, VerificationStepResult,
 };
 
 pub fn render_release_status_json(status: &ReleaseStatus) -> String {
@@ -35,10 +35,10 @@ pub fn render_release_prepare_plan_json(plan: &ReleasePreparePlan) -> String {
     )
 }
 
-pub fn render_release_simulation_json(simulation: &ReleaseSimulation) -> String {
+pub fn render_release_plan_json(plan: &ReleasePipelinePlan) -> String {
     render_pretty(
-        &ReleaseSimulationPayload::from(simulation),
-        "{\"schema\":\"effigy.release.simulate.v1\",\"ready\":false}",
+        &ReleasePipelinePlanPayload::from(plan),
+        "{\"schema\":\"effigy.release.plan.v1\",\"ready\":false}",
     )
 }
 
@@ -121,15 +121,6 @@ struct UnreleasedPayload {
 struct ReleaseGatesPayload {
     checked: bool,
     configured_count: usize,
-    results: Vec<GateResultPayload>,
-}
-
-#[derive(Serialize)]
-struct SimulationGatesPayload {
-    configured_count: usize,
-    executed_count: usize,
-    stopped_early: bool,
-    total_duration_ms: u128,
     results: Vec<GateResultPayload>,
 }
 
@@ -286,14 +277,20 @@ struct ReleaseStatusPayload {
     gates_passed: bool,
     gate_check_passed: bool,
     repo_root: String,
-    current_version: String,
-    version_source: VersionSourcePayload,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version_source: Option<VersionSourcePayload>,
     changelog: ChangelogPayload,
     unreleased: UnreleasedPayload,
     suggested_bump: String,
     next_version: Option<String>,
     tag: Option<String>,
     gates: ReleaseGatesPayload,
+    config_shape: &'static str,
+    identities: Vec<ReleaseIdentityPayload>,
+    plan: ReleasePlanSummaryPayload,
+    run: ReleaseRunPayload,
     #[serde(skip_serializing_if = "Option::is_none")]
     environment_path: Option<String>,
     blockers: Vec<String>,
@@ -308,8 +305,11 @@ impl From<&ReleaseStatus> for ReleaseStatusPayload {
             gates_passed: status.gates_passed,
             gate_check_passed: status.gate_check_passed(),
             repo_root: status.repo_root.display().to_string(),
-            current_version: status.current_version.to_string(),
-            version_source: VersionSourcePayload::from(&status.version_source),
+            current_version: status.current_version.as_ref().map(ToString::to_string),
+            version_source: status
+                .version_source
+                .as_ref()
+                .map(VersionSourcePayload::from),
             changelog: ChangelogPayload {
                 path: status.changelog_path.display().to_string(),
                 valid: status.changelog_valid,
@@ -334,7 +334,76 @@ impl From<&ReleaseStatus> for ReleaseStatusPayload {
                     .collect(),
             },
             environment_path: optional_path(&status.environment_path),
+            config_shape: if status.plan.single_identity_shorthand {
+                "single-identity-shorthand"
+            } else {
+                "named-identities"
+            },
+            identities: status
+                .plan
+                .identities
+                .iter()
+                .map(ReleaseIdentityPayload::from)
+                .collect(),
+            plan: ReleasePlanSummaryPayload::from(&status.plan),
+            run: ReleaseRunPayload::from_summary(&status.run),
             blockers: status.blockers.clone(),
+        }
+    }
+}
+
+/// The parts of the plan `release status` reports alongside its readiness:
+/// what would change, where it would go, and where the Run would stop.
+#[derive(Serialize)]
+struct ReleasePlanSummaryPayload {
+    files: Vec<String>,
+    gates: Vec<PlanGatePayload>,
+    artifacts: Vec<ReleaseArtifactPayload>,
+    targets: Vec<ReleaseTargetPayload>,
+    approvals: ReleaseApprovalsPayload,
+    working_tree_clean: Option<bool>,
+}
+
+impl From<&ReleasePipelinePlan> for ReleasePlanSummaryPayload {
+    fn from(plan: &ReleasePipelinePlan) -> Self {
+        Self {
+            files: plan
+                .files
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+            gates: plan
+                .gates
+                .iter()
+                .map(|gate| PlanGatePayload {
+                    name: gate.name.clone(),
+                    stage: gate.stage.stage_name(),
+                    command: gate.command.clone(),
+                    task: gate.task.clone(),
+                    description: gate.description.clone(),
+                    reuse_hosted_evidence: gate.reuse_hosted_evidence,
+                })
+                .collect(),
+            artifacts: plan
+                .artifacts
+                .iter()
+                .map(|artifact| ReleaseArtifactPayload {
+                    name: artifact.name.clone(),
+                    task: artifact.task.clone(),
+                    path: artifact.path.clone(),
+                    identity_kind: artifact.identity_kind.clone(),
+                })
+                .collect(),
+            targets: plan
+                .targets
+                .iter()
+                .map(ReleaseTargetPayload::from)
+                .collect(),
+            approvals: ReleaseApprovalsPayload {
+                checkpoints: plan.approvals.clone(),
+                defaulted: plan.approval_defaulted,
+            },
+            working_tree_clean: plan.working_tree_clean,
         }
     }
 }
@@ -478,72 +547,211 @@ impl From<&ReleasePreparePlan> for ReleasePreparePlanPayload {
 }
 
 #[derive(Serialize)]
-struct ReleaseSimulationPayload {
+struct ReleasePipelinePlanPayload {
     schema: &'static str,
     schema_version: u8,
     mode: &'static str,
     ready: bool,
     repo_root: String,
-    current_version: String,
-    version_source: VersionSourcePayload,
-    suggested_version: Option<String>,
-    planned_version: Option<String>,
-    suggested_tag: Option<String>,
-    tag: Option<String>,
-    version_override_used: bool,
-    release_date: String,
-    commit_message: Option<String>,
-    state_file: String,
-    state_file_exists: bool,
-    state_file_written: bool,
-    gates: SimulationGatesPayload,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    environment_path: Option<String>,
-    mutations: Vec<FileMutationPlanPayload>,
+    config_shape: &'static str,
+    changelog: ChangelogPayload,
+    unreleased: UnreleasedPayload,
+    identities: Vec<ReleaseIdentityPayload>,
+    files: Vec<String>,
+    gates: Vec<PlanGatePayload>,
+    artifacts: Vec<ReleaseArtifactPayload>,
+    targets: Vec<ReleaseTargetPayload>,
+    approvals: ReleaseApprovalsPayload,
+    working_tree_clean: Option<bool>,
+    run: ReleaseRunPayload,
     blockers: Vec<String>,
 }
 
-impl From<&ReleaseSimulation> for ReleaseSimulationPayload {
-    fn from(simulation: &ReleaseSimulation) -> Self {
+impl From<&ReleasePipelinePlan> for ReleasePipelinePlanPayload {
+    fn from(plan: &ReleasePipelinePlan) -> Self {
         Self {
-            schema: "effigy.release.simulate.v1",
+            schema: "effigy.release.plan.v1",
             schema_version: 1,
-            mode: "simulate",
-            ready: simulation.ready,
-            repo_root: simulation.repo_root.display().to_string(),
-            current_version: simulation.current_version.to_string(),
-            version_source: VersionSourcePayload::from(&simulation.version_source),
-            suggested_version: simulation
-                .suggested_version
-                .as_ref()
-                .map(ToString::to_string),
-            planned_version: simulation.planned_version.as_ref().map(ToString::to_string),
-            suggested_tag: simulation.suggested_tag.clone(),
-            tag: simulation.tag.clone(),
-            version_override_used: simulation.version_override_used,
-            release_date: simulation.release_date.clone(),
-            commit_message: simulation.commit_message.clone(),
-            state_file: simulation.state_file.display().to_string(),
-            state_file_exists: simulation.state_file_exists,
-            state_file_written: simulation.state_file_written,
-            gates: SimulationGatesPayload {
-                configured_count: simulation.configured_gate_count,
-                executed_count: simulation.executed_gate_count,
-                stopped_early: simulation.stopped_early,
-                total_duration_ms: simulation.total_duration_ms,
-                results: simulation
-                    .gate_results
-                    .iter()
-                    .map(GateResultPayload::from)
-                    .collect(),
+            mode: "plan",
+            ready: plan.ready,
+            repo_root: plan.repo_root.display().to_string(),
+            config_shape: if plan.single_identity_shorthand {
+                "single-identity-shorthand"
+            } else {
+                "named-identities"
             },
-            environment_path: optional_path(&simulation.environment_path),
-            mutations: simulation
-                .mutations
+            changelog: ChangelogPayload {
+                path: plan.changelog_path.display().to_string(),
+                valid: plan.changelog_valid,
+                diagnostic_count: plan.changelog_diagnostics.len(),
+                diagnostics: plan.changelog_diagnostics.clone(),
+            },
+            unreleased: UnreleasedPayload {
+                empty: plan.unreleased_empty,
+                entry_count: plan.unreleased_counts.values().copied().sum::<usize>(),
+                counts: plan.unreleased_counts.clone(),
+            },
+            identities: plan
+                .identities
                 .iter()
-                .map(FileMutationPlanPayload::from)
+                .map(ReleaseIdentityPayload::from)
                 .collect(),
-            blockers: simulation.blockers.clone(),
+            files: plan
+                .files
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+            gates: plan
+                .gates
+                .iter()
+                .map(|gate| PlanGatePayload {
+                    name: gate.name.clone(),
+                    stage: gate.stage.stage_name(),
+                    command: gate.command.clone(),
+                    task: gate.task.clone(),
+                    description: gate.description.clone(),
+                    reuse_hosted_evidence: gate.reuse_hosted_evidence,
+                })
+                .collect(),
+            artifacts: plan
+                .artifacts
+                .iter()
+                .map(|artifact| ReleaseArtifactPayload {
+                    name: artifact.name.clone(),
+                    task: artifact.task.clone(),
+                    path: artifact.path.clone(),
+                    identity_kind: artifact.identity_kind.clone(),
+                })
+                .collect(),
+            targets: plan
+                .targets
+                .iter()
+                .map(ReleaseTargetPayload::from)
+                .collect(),
+            approvals: ReleaseApprovalsPayload {
+                checkpoints: plan.approvals.clone(),
+                defaulted: plan.approval_defaulted,
+            },
+            working_tree_clean: plan.working_tree_clean,
+            run: ReleaseRunPayload::none(),
+            blockers: plan.blockers.clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ReleaseIdentityPayload {
+    name: String,
+    kind: &'static str,
+    current_version: Option<String>,
+    next_version: Option<String>,
+    identity: Option<String>,
+    bump: Option<String>,
+    tag: Option<String>,
+    follows: Option<String>,
+    version_file: Option<String>,
+    task: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    files: Vec<String>,
+}
+
+impl From<&crate::ReleaseIdentityPlan> for ReleaseIdentityPayload {
+    fn from(identity: &crate::ReleaseIdentityPlan) -> Self {
+        Self {
+            name: identity.name.clone(),
+            kind: identity.kind.label(),
+            current_version: identity.current_version.as_ref().map(ToString::to_string),
+            next_version: identity.next_version.as_ref().map(ToString::to_string),
+            identity: identity.identity_value.clone(),
+            bump: identity.bump.clone(),
+            tag: identity.tag.clone(),
+            follows: identity.follows.clone(),
+            version_file: identity
+                .version_source
+                .as_ref()
+                .map(|source| source.path.display().to_string()),
+            task: identity.task.clone(),
+            files: identity
+                .files
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct PlanGatePayload {
+    name: String,
+    stage: &'static str,
+    command: String,
+    task: Option<String>,
+    description: Option<String>,
+    reuse_hosted_evidence: bool,
+}
+
+#[derive(Serialize)]
+struct ReleaseArtifactPayload {
+    name: String,
+    task: String,
+    path: String,
+    identity_kind: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ReleaseTargetPayload {
+    name: String,
+    kind: &'static str,
+    task: Option<String>,
+    check: Option<String>,
+    verify: Option<String>,
+}
+
+impl From<&ResolvedTarget> for ReleaseTargetPayload {
+    fn from(target: &ResolvedTarget) -> Self {
+        Self {
+            name: target.name.clone(),
+            kind: match target.kind {
+                TargetKind::Tag => "tag",
+                TargetKind::Task => "task",
+            },
+            task: target.task.clone(),
+            check: target.check.clone(),
+            verify: target.verify.clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ReleaseApprovalsPayload {
+    checkpoints: Vec<String>,
+    defaulted: bool,
+}
+
+#[derive(Serialize)]
+struct ReleaseRunPayload {
+    active: bool,
+    id: Option<String>,
+    stage: Option<String>,
+    waiting_on: Option<String>,
+}
+
+impl ReleaseRunPayload {
+    fn none() -> Self {
+        Self {
+            active: false,
+            id: None,
+            stage: None,
+            waiting_on: None,
+        }
+    }
+
+    fn from_summary(run: &crate::ReleaseRunSummary) -> Self {
+        Self {
+            active: run.is_active(),
+            id: run.id.clone(),
+            stage: run.stage.clone(),
+            waiting_on: run.waiting_on.clone(),
         }
     }
 }

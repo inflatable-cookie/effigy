@@ -1,0 +1,7 @@
+[release]
+version-file = "Cargo.toml"
+version-path = "workspace.package.version"
+changelog = "CHANGELOG.md"
+sync-files = ["Cargo.lock"]
+tag-format = "v{version}"
+gates = { test = "qa", build = "build:release" }

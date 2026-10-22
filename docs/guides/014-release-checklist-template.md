@@ -27,7 +27,7 @@ Owner: `name/team`
 - [ ] Distribution preflight passes:
   - [ ] `effigy release preflight --tag v0.__.__`
 - [ ] Safe release simulation passes:
-  - [ ] `effigy release simulate`
+  - [ ] `effigy release --plan`
 - [ ] Release readiness check passes:
   - [ ] `effigy release status --check-gates`
 - [ ] Consolidated release gate pass:
