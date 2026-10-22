@@ -1907,7 +1907,15 @@ fn run_gateway_setup(
                 ));
             }
             if !remove {
-                setup::command(run, cx, vec!["mkcert".into(), "-install".into()], true)?;
+                // Custody spawns only absolute programs, so resolve mkcert the
+                // same way the TLS layer does (explicit override or a trusted
+                // install prefix) rather than passing a bare name.
+                let mkcert = effigy_gateway::tls::resolved_mkcert_program().ok_or_else(|| {
+                    std::io::Error::other(
+                        "mkcert was found on PATH but not in a trusted install prefix; set EFFIGY_GATEWAY_MKCERT_BIN to its absolute path, then run `effigy gateway setup`",
+                    )
+                })?;
+                setup::command(run, cx, vec![mkcert.into(), "-install".into()], true)?;
             }
             let mut argv = vec![
                 "/usr/bin/sudo".into(),
