@@ -230,6 +230,22 @@ State reports are plain files under `.effigy/reports/state/`:
 These are operator artifacts, not proof of execution. The canonical proof is the
 lineage record inside each report.
 
+## Standalone Data Artifacts
+
+`state artifact` inspects, stages, and captures data payloads on their own,
+outside a stack capture. It moved here from the retired top-level
+`effigy artifact` command in v0.15, with the same flags and JSON payloads:
+
+```sh
+effigy state artifact inspect ./data/legacy.sql.gz --json
+effigy state artifact stage oci://ghcr.io/acme/private-data:uat --json
+effigy state artifact capture ./dumps/uat.sql.gz \
+  --ref oci://ghcr.io/acme/uat-content:2026-05-06 --push --json
+```
+
+See [`072-artifact-commands-guide.md`](072-artifact-commands-guide.md) for the
+full command guide.
+
 ## Common Workflow
 
 1. Define the stack in `effigy.toml`.

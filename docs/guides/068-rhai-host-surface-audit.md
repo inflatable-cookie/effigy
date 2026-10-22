@@ -57,7 +57,7 @@ Policy:
 | Retired container eject | `container::eject` | Errors with the `effigy container render` replacement |
 | State stack orchestration | `state::plan`, `state::apply`, `state::capture`, `state::capture_set`, `state::history` | Exposed |
 | State capture context | `state::capture_context`, `state::capture_context_path`, `state::capture_source`, `state::capture_destination_ref` | Exposed |
-| Artifacts | `artifact::inspect`, `artifact::stage`, `artifact::capture` | Exposed |
+| State artifacts | `state::artifact_inspect`, `state::artifact_stage`, `state::artifact_capture` | Exposed; moved from the retired `artifact` module in v0.15 |
 | Docs checks | `docs::check_links`, `docs::check_json_examples`, `docs::check_headings`, `docs::check_paths`, `docs::check_contains`, `docs::check_forbidden`, `docs::check_index`, `docs::check_next_action`, `docs::check_workflow_paths`, `docs::add_log_index` | Exposed |
 | Bundles | `bundle::inspect` | Exposed |
 | Services | `service::list`, `service::extract` | Exposed |
@@ -65,7 +65,7 @@ Policy:
 | Doctor | `doctor::run` | Exposed |
 | Scan | `scan::god_files`, `scan::duplicate_blocks` | Exposed; the v0.15 scanner cut removed the other five `scan::` functions |
 | Cache | `cache::inspect`, `cache::invalidate` | Exposed |
-| Contracts | `contracts::check_json`, `contracts::validate_selection` | Exposed |
+| Contracts | `contracts::check_json` (including `validate_selection`) | Exposed |
 | Deploy | `deploy::model`, `deploy::emit`, `deploy::plan`, `deploy::apply`, `deploy::status`, `deploy::history`, `deploy::redeploy`, `deploy::provider_context`, `deploy::provider_context_path`, `deploy::provider_report_path`, `deploy::provider_report` | Exposed; apply/redeploy refuse in v0.15 |
 | Distribution | `distribution::validate_metadata`, `distribution::check_glibc_floor`, `distribution::preflight`, `distribution::first_publish`, `distribution::validate_artifacts`, `distribution::generate_closeout`, `distribution::write_summary` | Exposed |
 | Changelog | `changelog::validate`, `changelog::extract` | Exposed |

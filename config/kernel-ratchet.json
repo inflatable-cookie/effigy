@@ -1,13 +1,6 @@
 {
   "schema": 1,
   "production": {
-    "crates/effigy-artifacts/src/oci.rs": {
-      "std.process.Command.new": 3,
-      "std.process.Command.output": 3
-    },
-    "crates/effigy-artifacts/src/staging.rs": {
-      "std::fs::write": 1
-    },
     "crates/effigy-bootstrap/src/lib.rs": {
       "std.process.Command.new": 2,
       "std.process.Command.output": 2
@@ -239,6 +232,13 @@
       "std.fs.OpenOptions.write": 0,
       "std::fs::write": 0
     },
+    "crates/effigy-state/src/artifact/oci.rs": {
+      "std.process.Command.new": 3,
+      "std.process.Command.output": 3
+    },
+    "crates/effigy-state/src/artifact/staging.rs": {
+      "std::fs::write": 1
+    },
     "crates/effigy-state/src/paths.rs": {
       "std::fs::write": 2
     },
@@ -381,9 +381,6 @@
     }
   },
   "tests": {
-    "crates/effigy-artifacts/src/lib.rs": {
-      "std::fs::write": 8
-    },
     "crates/effigy-builtin/src/init/agent.rs": {
       "std::fs::write": 2
     },
@@ -519,7 +516,7 @@
       "std::fs::write": 26
     },
     "crates/effigy-contracts/src/tests.rs": {
-      "std::fs::write": 6
+      "std::fs::write": 17
     },
     "crates/effigy-core/src/build_info.rs": {
       "std.process.Command.new": 3,
@@ -680,6 +677,9 @@
       "std.process.Command.spawn": 1,
       "std.process.Command.status": 2,
       "std::fs::write": 3
+    },
+    "crates/effigy-state/src/artifact/tests.rs": {
+      "std::fs::write": 8
     },
     "crates/effigy-state/src/tests.rs": {
       "std::fs::write": 2

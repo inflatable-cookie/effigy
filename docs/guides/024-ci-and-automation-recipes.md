@@ -118,11 +118,11 @@ PR-style changed-only simulation:
 effigy contracts check-json --fast --changed-only origin/main --print-selected=json
 ```
 
-Validate artifact payload shape:
+Validate the selection payload shape (implicit in `--print-selected=json`):
 
 ```sh
-effigy contracts validate-selection --artifact ./json-contracts-selected.json
-cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture
+effigy contracts check-json --fast --changed-only origin/main --print-selected=json --validate-selection
+cargo test --test cli_output_tests cli_contracts_ -- --nocapture
 ```
 
 ## 3) Recipe: PR-Optimized Contracts Job
@@ -152,11 +152,8 @@ jobs:
           cargo run --bin effigy -- contracts check-json --full --print-selected=json | tee json-contracts.log
           grep -m1 '^{"selected":' json-contracts.log > json-contracts-selected.json
 
-      - name: Validate selection artifact contract
-        run: cargo run --bin effigy -- contracts validate-selection --artifact ./json-contracts-selected.json
-
       - name: Validator smoke check
-        run: cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture
+        run: cargo test --test cli_output_tests cli_contracts_ -- --nocapture
 
       - name: Upload contracts artifacts
         if: always()
@@ -225,20 +222,26 @@ Store JSON output for failed command triage:
 
 Use the doctor payload when you want the integrated health view. Capture `effigy --json scan god-files` or `effigy --json scan duplicate-blocks` alongside it when you need raw scanner findings and text rendering snapshots.
 
-## 6) Recipe: Contract Selection Artifact Gate
+## 6) Recipe: Contract Selection Gate
 
-If a workflow produces a `selected` payload, gate it with the validator:
+`check-json --print-selected=json` validates the selection payload it prints, so
+the gate is the same command:
 
 ```yaml
-- name: Validate selection artifact contract
-  run: cargo run --bin effigy -- contracts validate-selection --artifact ./json-contracts-selected.json
+- name: Validate JSON contracts and the selection payload
+  run: cargo run --bin effigy -- contracts check-json --full --print-selected=json
 ```
 
-This checks:
-- required keys exist,
-- `count == length(selected)`,
-- `selected` is string-only,
-- `mode` is allowed (`fast` or `full`).
+To gate a payload another job stored, validate the artifact:
+
+```yaml
+- name: Validate a stored selection artifact
+  run: cargo run --bin effigy -- contracts check-json --full --validate-selection --artifact ./json-contracts-selected.json
+```
+
+This checks the payload against the project's `[contracts].selection_contract`
+JSON Schema: required keys, string-only `selected`, the `mode` enum, and
+`changed_only_base` nullability. `count` is derived by the producer.
 
 ## 7) Failure Triage Playbook
 
@@ -256,18 +259,19 @@ Then inspect selection payload in log:
 grep -m1 '^{"selected":' json-contracts.log | jq .
 ```
 
-### Case: invalid selection artifact contract
+### Case: invalid selection payload
 
-Run validator directly:
+Validate the stored artifact directly:
 
 ```sh
-cargo run --bin effigy -- contracts validate-selection --artifact ./json-contracts-selected.json
+cargo run --bin effigy -- contracts check-json --full --validate-selection --artifact ./json-contracts-selected.json
 ```
 
-Then run smoke validator:
+The failure names the JSON pointer and the keyword message, for example
+`/mode: "unknown" is not one of "fast", "full"`. Then run the smoke checks:
 
 ```sh
-cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture
+cargo test --test cli_output_tests cli_contracts_ -- --nocapture
 ```
 
 ### Case: command payload schema mismatch

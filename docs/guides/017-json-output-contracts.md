@@ -160,9 +160,9 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.task.plan.v1`
 - `effigy.service.list.v2` (`sources` in precedence order; each fragment has `name`, `qualified`, `source`, `layer`, `path` and `shadows`)
 - `effigy.service.extract.v1`
-- `effigy.artifact.inspect.v1`
-- `effigy.artifact.stage.v1`
-- `effigy.artifact.capture.v1`
+- `effigy.artifact.inspect.v1` (`state artifact inspect --json`)
+- `effigy.artifact.stage.v1` (`state artifact stage --json`)
+- `effigy.artifact.capture.v1` (`state artifact capture --json`)
 - `effigy.container.hosts.v1`
 - `effigy.container.retire.v1`
 - `effigy.container.retire-dead.v1` (`container retire --dead --json`)
@@ -288,7 +288,18 @@ are unaffected.
 ## Contracts Validation Workflow
 
 Use `effigy contracts` when you need to validate JSON contract artifacts or check
-that Effigy's own command payloads still conform to declared schemas.
+that Effigy's own command payloads still conform to declared schemas. The schema
+index and the selection contract are declared by the project, not by Effigy:
+
+```toml
+[contracts]
+schema_index = "docs/knowledge/contracts/json-schema-index.json"
+selection_contract = "docs/knowledge/contracts/json-selection-contract.json"
+```
+
+`--index` and `--contract` override those paths. A project that declares neither
+is refused with "no JSON schema index configured" rather than being checked
+against Effigy's own documentation tree.
 
 ### Fast vs full checks
 
@@ -306,25 +317,31 @@ effigy contracts check-json --fast --changed-only origin/main
 Use `--fast` for daily local checks. Use `--full` before releases or when you
 suspect a broad schema change. Use `--changed-only` in CI to keep PR checks fast.
 
-### Validate a selection artifact
+### Validate the selection payload
 
-When CI produces a selection payload, gate it before using it:
+The selection payload is the `{"selected":...}` line that
+`--print-selected=json` prints. `check-json` validates it against the project's
+selection contract with the same JSON Schema engine it uses for payloads:
 
 ```bash
-# Generate a selection artifact
-effigy contracts check-json --full --print-selected=json > contracts-selected.json
+# Validate this run's selection payload as part of the check
+effigy contracts check-json --full --print-selected=json
+# equivalent, without printing it
+effigy contracts check-json --full --validate-selection
 
-# Validate it independently
-effigy contracts validate-selection --artifact ./contracts-selected.json
+# Validate a selection payload another job stored
+effigy contracts check-json --validate-selection --artifact ./contracts-selected.json
 ```
 
-This checks:
-- required keys exist,
-- `count == length(selected)`,
-- `selected` is string-only,
-- `mode` is allowed (`fast` or `full`).
+A violation is reported as a failure row for
+`effigy.json-contract-selection.v1` in the `effigy.contracts.check-json.v1`
+envelope, so the command still fails with an actionable, structured report.
+`--print-selected=json` implies `--validate-selection`.
 
-Use this in CI pipelines that pass contract selection data between jobs.
+JSON Schema cannot compare a property with an array length, so `count` is a
+producer guarantee: it is derived from `selected.length`. Everything else —
+required keys, string-only `selected`, the `mode` enum, `changed_only_base`
+nullability — is schema-checked.
 
 ### Print selected schemas
 

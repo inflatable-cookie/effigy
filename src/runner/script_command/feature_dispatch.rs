@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
 
 use effigy_cli::{
-    ArtifactArgs, ArtifactSubcommand, BootstrapDbSeedInput, BundleArgs, BundleSubcommand,
-    ChangelogArgs, ChangelogSubcommand, ContainerArgs, ContainerCacheSubcommand,
-    ContainerDataSubcommand, ContainerDbDumpInput, ContainerSubcommand, ContainerVolumeSubcommand,
-    ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode, ContractsSubcommand,
-    DeployArgs, DeploySubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs,
-    GatewayArgs, GatewaySubcommand, ReleaseArgs, ReleaseEvidenceSubcommand, ReleaseSubcommand,
-    ServiceArgs, ServiceSubcommand, StateArgs, StateSubcommand, TaskInvocation, TasksArgs,
+    BootstrapDbSeedInput, BundleArgs, BundleSubcommand, ChangelogArgs, ChangelogSubcommand,
+    ContainerArgs, ContainerCacheSubcommand, ContainerDataSubcommand, ContainerDbDumpInput,
+    ContainerSubcommand, ContainerVolumeSubcommand, ContractsArgs, ContractsCheckMode,
+    ContractsSelectionPrintMode, ContractsSubcommand, DeployArgs, DeploySubcommand, DocsArgs,
+    DocsBlockRequirement, DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand, ReleaseArgs,
+    ReleaseEvidenceSubcommand, ReleaseSubcommand, ServiceArgs, ServiceSubcommand, StateArgs,
+    StateSubcommand, TaskInvocation, TasksArgs,
 };
 use effigy_execution::ExecutionSurface;
 use effigy_rhai::surface::*;
@@ -570,6 +570,8 @@ pub(super) fn run_rhai_feature(
             effigy_cli::Command::Contracts(ContractsArgs {
                 subcommand: ContractsSubcommand::CheckJson {
                     index_path: path_option(&options, "index")?,
+                    contract_path: path_option(&options, "contract")?,
+                    artifact_path: path_option(&options, "artifact")?,
                     mode: match string_option(&options, "mode")?.as_deref() {
                         Some("full") => ContractsCheckMode::Full,
                         _ => ContractsCheckMode::Fast,
@@ -580,17 +582,7 @@ pub(super) fn run_rhai_feature(
                         Some("text") => ContractsSelectionPrintMode::Text,
                         _ => ContractsSelectionPrintMode::None,
                     },
-                },
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: true,
-            }),
-        ),
-        FEATURE_CONTRACTS_VALIDATE_SELECTION => run_typed_command(
-            repo_root,
-            effigy_cli::Command::Contracts(ContractsArgs {
-                subcommand: ContractsSubcommand::ValidateSelection {
-                    contract_path: path_option(&options, "contract")?,
-                    artifact_path: path_option(&options, "artifact")?,
+                    validate_selection: bool_option(&options, "validate_selection")?.unwrap_or(false),
                 },
                 repo_override: Some(repo_root.to_path_buf()),
                 output_json: true,
@@ -800,10 +792,10 @@ pub(super) fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        FEATURE_ARTIFACT_INSPECT => run_typed_command(
+        FEATURE_STATE_ARTIFACT_INSPECT => run_typed_command(
             repo_root,
-            effigy_cli::Command::Artifact(ArtifactArgs {
-                subcommand: ArtifactSubcommand::Inspect {
+            effigy_cli::Command::State(StateArgs {
+                subcommand: StateSubcommand::ArtifactInspect {
                     source: required_string(&options, "source")?,
                     farmyard_handoff: bool_option(&options, "farmyard_handoff")?.unwrap_or(false),
                 },
@@ -811,10 +803,10 @@ pub(super) fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        FEATURE_ARTIFACT_STAGE => run_typed_command(
+        FEATURE_STATE_ARTIFACT_STAGE => run_typed_command(
             repo_root,
-            effigy_cli::Command::Artifact(ArtifactArgs {
-                subcommand: ArtifactSubcommand::Stage {
+            effigy_cli::Command::State(StateArgs {
+                subcommand: StateSubcommand::ArtifactStage {
                     source: required_string(&options, "source")?,
                     farmyard_handoff: bool_option(&options, "farmyard_handoff")?.unwrap_or(false),
                 },
@@ -822,10 +814,10 @@ pub(super) fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        FEATURE_ARTIFACT_CAPTURE => run_typed_command(
+        FEATURE_STATE_ARTIFACT_CAPTURE => run_typed_command(
             repo_root,
-            effigy_cli::Command::Artifact(ArtifactArgs {
-                subcommand: ArtifactSubcommand::Capture {
+            effigy_cli::Command::State(StateArgs {
+                subcommand: StateSubcommand::ArtifactCapture {
                     source: required_string(&options, "source")?,
                     destination: required_string(&options, "destination")?,
                     kind: string_option(&options, "kind")?,
@@ -894,9 +886,9 @@ pub(super) fn is_runner_dispatch_feature(feature: &str) -> bool {
             | FEATURE_CONTAINER_VOLUME_PRUNE
             | FEATURE_CONTAINER_EJECT
             | FEATURE_CONTAINER_STATS
-            | FEATURE_ARTIFACT_INSPECT
-            | FEATURE_ARTIFACT_STAGE
-            | FEATURE_ARTIFACT_CAPTURE
+            | FEATURE_STATE_ARTIFACT_INSPECT
+            | FEATURE_STATE_ARTIFACT_STAGE
+            | FEATURE_STATE_ARTIFACT_CAPTURE
             | FEATURE_DOCS_CHECK_LINKS
             | FEATURE_DOCS_CHECK_JSON_EXAMPLES
             | FEATURE_DOCS_CHECK_HEADINGS
@@ -920,7 +912,6 @@ pub(super) fn is_runner_dispatch_feature(feature: &str) -> bool {
             | FEATURE_CACHE_INSPECT
             | FEATURE_CACHE_INVALIDATE
             | FEATURE_CONTRACTS_CHECK_JSON
-            | FEATURE_CONTRACTS_VALIDATE_SELECTION
             | FEATURE_DEPLOY_MODEL
             | FEATURE_DEPLOY_EMIT
             | FEATURE_DEPLOY_PLAN

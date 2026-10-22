@@ -1,7 +1,7 @@
-use crate::errors::ArtifactStagingError;
-use crate::metadata::ArtifactMetadata;
-use crate::refs::{ArtifactKind, ArtifactSourceRef, LocalArtifactRef, OciArtifactRef};
-use crate::util::{resolve_local_path, staging_dir_name};
+use super::errors::ArtifactStagingError;
+use super::metadata::ArtifactMetadata;
+use super::refs::{ArtifactKind, ArtifactSourceRef, LocalArtifactRef, OciArtifactRef};
+use super::util::{resolve_local_path, staging_dir_name};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -281,4 +281,14 @@ fn write_staged_report(
         metadata,
         metadata_path,
     })
+}
+
+/// Infer an artifact kind from the first staged payload path that names one.
+///
+/// Pulled OCI artifacts carry no kind of their own; the primary file names it.
+pub fn infer_kind_from_primary_files(primary_files: &[PathBuf]) -> ArtifactKind {
+    primary_files
+        .iter()
+        .find_map(|path| ArtifactKind::from_path(path))
+        .unwrap_or(ArtifactKind::AppSpecific)
 }

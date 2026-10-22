@@ -1,4 +1,3 @@
-mod artifact;
 mod bootstrap;
 mod bundle;
 mod changelog;
@@ -26,7 +25,6 @@ mod test;
 mod uninstall;
 mod workspace;
 
-pub(crate) use artifact::render_artifact_help;
 pub(crate) use bootstrap::render_bootstrap_help;
 pub(crate) use bundle::render_bundle_help;
 pub(crate) use changelog::render_changelog_help;

@@ -212,15 +212,17 @@ impl Drop for EnvGuard {
 pub(super) fn assert_waits_for_path_mutator(reader: fn(Box<dyn FnOnce() + Send>)) {
     let temp = tempfile::tempdir().expect("private empty PATH");
     let (serial_tx, serial_rx) = std::sync::mpsc::channel();
-    let (mutating_tx, mutating_rx) = std::sync::mpsc::channel();
+    let (mutating_tx, mutating_rx) = std::sync::mpsc::channel::<()>();
     let reader = thread::spawn(move || {
         reader(Box::new(move || {
             serial_tx
                 .send(())
                 .expect("reader acquired signal-proof lock");
-            mutating_rx
-                .recv_timeout(Duration::from_secs(30))
-                .expect("writer installed hostile PATH");
+            // No deadline: this wait spans our place in the environment queue
+            // behind unrelated admitted fixtures, which is not the rendezvous
+            // being proved. The writer drops its sender on every path,
+            // including an unwind, so the reader is always released.
+            let _ = mutating_rx.recv();
         }));
     });
     // Let the fixture acquire the group lock first: holding env while another
@@ -229,7 +231,9 @@ pub(super) fn assert_waits_for_path_mutator(reader: fn(Box<dyn FnOnce() + Send>)
         .recv_timeout(Duration::from_secs(30))
         .expect("reader reached environment boundary");
     let env = EnvGuard::set_many(&[("PATH", Some(temp.path().display().to_string()))]);
-    mutating_tx.send(()).expect("release reader to acquire env");
+    // The hostile PATH is installed now: release the reader to queue for the
+    // environment boundary and read its position in that queue.
+    drop(mutating_tx);
     let queued = test_lock_waiter_position(reader.thread().id(), Duration::from_secs(30));
     // Release before asserting/joining so the unlocked negative control also
     // settles, and an assertion cannot strand a reader behind our own guard.

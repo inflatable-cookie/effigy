@@ -1,5 +1,5 @@
-use crate::errors::ArtifactRefError;
-use crate::util::{looks_like_unprefixed_registry_ref, redact_oci_reference};
+use super::errors::ArtifactRefError;
+use super::util::{looks_like_unprefixed_registry_ref, redact_oci_reference};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 

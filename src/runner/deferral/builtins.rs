@@ -50,8 +50,7 @@ pub(crate) fn deferred_builtins_from_catalogs(
 fn is_top_level_builtin_command(name: &str) -> bool {
     matches!(
         name,
-        "artifact"
-            | "bootstrap"
+        "bootstrap"
             | "bundle"
             | "changelog"
             | "container"

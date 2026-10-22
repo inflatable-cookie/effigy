@@ -221,10 +221,10 @@ Current v1 helpers:
 - state apply hook context helpers:
   - `state::apply_context()`
   - `state::apply_context_path()`
-- artifact helpers:
-  - `artifact::inspect(options_map)`
-  - `artifact::stage(options_map)`
-  - `artifact::capture(options_map)`
+- state artifact helpers (moved from the retired `artifact` module in v0.15):
+  - `state::artifact_inspect(source[, options_map])`
+  - `state::artifact_stage(source[, options_map])`
+  - `state::artifact_capture(source, destination[, options_map])`
 - runtime context:
   - `runtime::context()` — returns the current `EffigyRuntimeContext` map
 - execution helpers:
@@ -286,8 +286,7 @@ Current v1 helpers:
   - `scan::duplicate_blocks(options_map)`
   - `cache::inspect(options_map)`
   - `cache::invalidate(options_map)`
-  - `contracts::check_json(options_map)`
-  - `contracts::validate_selection(options_map)`
+  - `contracts::check_json(options_map)` (`index`, `contract`, `artifact`, `mode`, `changed_only`, `print_selected`, `validate_selection`)
   - `deploy::model()`
   - `deploy::emit(#{ provider: "render", ... })`
   - `changelog::validate(options_map)`

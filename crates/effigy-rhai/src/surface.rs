@@ -13,7 +13,6 @@ pub const MODULE_STR: &str = "str";
 pub const MODULE_REGEX: &str = "regex";
 pub const MODULE_RANDOM: &str = "random";
 pub const MODULE_SEARCH: &str = "search";
-pub const MODULE_ARTIFACT: &str = "artifact";
 pub const MODULE_CONFIG: &str = "config";
 pub const MODULE_TASK: &str = "task";
 pub const MODULE_STATE: &str = "state";
@@ -55,7 +54,6 @@ pub const MODULE_NAMES: &[&str] = &[
     MODULE_REGEX,
     MODULE_RANDOM,
     MODULE_SEARCH,
-    MODULE_ARTIFACT,
     MODULE_CONFIG,
     MODULE_TASK,
     MODULE_STATE,
@@ -98,6 +96,9 @@ pub const FEATURE_STATE_APPLY: &str = "state.apply";
 pub const FEATURE_STATE_CAPTURE: &str = "state.capture";
 pub const FEATURE_STATE_CAPTURE_SET: &str = "state.capture_set";
 pub const FEATURE_STATE_HISTORY: &str = "state.history";
+pub const FEATURE_STATE_ARTIFACT_INSPECT: &str = "state.artifact_inspect";
+pub const FEATURE_STATE_ARTIFACT_STAGE: &str = "state.artifact_stage";
+pub const FEATURE_STATE_ARTIFACT_CAPTURE: &str = "state.artifact_capture";
 pub const FEATURE_CONTAINER_WORKSPACE_ARTIFACT_BUILD: &str = "container.workspace_artifact_build";
 pub const FEATURE_CONTAINER_STATUS: &str = "container.status";
 pub const FEATURE_CONTAINER_LOGS: &str = "container.logs";
@@ -112,9 +113,6 @@ pub const FEATURE_CONTAINER_VOLUME_LIST: &str = "container.volume_list";
 pub const FEATURE_CONTAINER_VOLUME_PRUNE: &str = "container.volume_prune";
 pub const FEATURE_CONTAINER_EJECT: &str = "container.eject";
 pub const FEATURE_CONTAINER_STATS: &str = "container.stats";
-pub const FEATURE_ARTIFACT_INSPECT: &str = "artifact.inspect";
-pub const FEATURE_ARTIFACT_STAGE: &str = "artifact.stage";
-pub const FEATURE_ARTIFACT_CAPTURE: &str = "artifact.capture";
 pub const FEATURE_DOCS_CHECK_LINKS: &str = "docs.check_links";
 pub const FEATURE_DOCS_CHECK_JSON_EXAMPLES: &str = "docs.check_json_examples";
 pub const FEATURE_DOCS_CHECK_HEADINGS: &str = "docs.check_headings";
@@ -138,7 +136,6 @@ pub const FEATURE_SCAN_DUPLICATE_BLOCKS: &str = "scan.duplicate_blocks";
 pub const FEATURE_CACHE_INSPECT: &str = "cache.inspect";
 pub const FEATURE_CACHE_INVALIDATE: &str = "cache.invalidate";
 pub const FEATURE_CONTRACTS_CHECK_JSON: &str = "contracts.check_json";
-pub const FEATURE_CONTRACTS_VALIDATE_SELECTION: &str = "contracts.validate_selection";
 pub const FEATURE_DEPLOY_MODEL: &str = "deploy.model";
 pub const FEATURE_DEPLOY_EMIT: &str = "deploy.emit";
 pub const FEATURE_DEPLOY_PLAN: &str = "deploy.plan";
@@ -189,9 +186,9 @@ pub const FEATURE_NAMES: &[&str] = &[
     FEATURE_CONTAINER_VOLUME_PRUNE,
     FEATURE_CONTAINER_EJECT,
     FEATURE_CONTAINER_STATS,
-    FEATURE_ARTIFACT_INSPECT,
-    FEATURE_ARTIFACT_STAGE,
-    FEATURE_ARTIFACT_CAPTURE,
+    FEATURE_STATE_ARTIFACT_INSPECT,
+    FEATURE_STATE_ARTIFACT_STAGE,
+    FEATURE_STATE_ARTIFACT_CAPTURE,
     FEATURE_DOCS_CHECK_LINKS,
     FEATURE_DOCS_CHECK_JSON_EXAMPLES,
     FEATURE_DOCS_CHECK_HEADINGS,
@@ -215,7 +212,6 @@ pub const FEATURE_NAMES: &[&str] = &[
     FEATURE_CACHE_INSPECT,
     FEATURE_CACHE_INVALIDATE,
     FEATURE_CONTRACTS_CHECK_JSON,
-    FEATURE_CONTRACTS_VALIDATE_SELECTION,
     FEATURE_DEPLOY_MODEL,
     FEATURE_DEPLOY_EMIT,
     FEATURE_DEPLOY_PLAN,
@@ -314,9 +310,9 @@ pub const FEATURE_DESCRIPTORS: &[RhaiFeatureDescriptor] = &[
     runner_feature(FEATURE_CONTAINER_VOLUME_PRUNE),
     runner_feature(FEATURE_CONTAINER_EJECT),
     runner_feature(FEATURE_CONTAINER_STATS),
-    runner_feature(FEATURE_ARTIFACT_INSPECT),
-    runner_feature(FEATURE_ARTIFACT_STAGE),
-    runner_feature(FEATURE_ARTIFACT_CAPTURE),
+    runner_feature(FEATURE_STATE_ARTIFACT_INSPECT),
+    runner_feature(FEATURE_STATE_ARTIFACT_STAGE),
+    runner_feature(FEATURE_STATE_ARTIFACT_CAPTURE),
     runner_feature(FEATURE_DOCS_CHECK_LINKS),
     runner_feature(FEATURE_DOCS_CHECK_JSON_EXAMPLES),
     runner_feature(FEATURE_DOCS_CHECK_HEADINGS),
@@ -340,7 +336,6 @@ pub const FEATURE_DESCRIPTORS: &[RhaiFeatureDescriptor] = &[
     runner_feature(FEATURE_CACHE_INSPECT),
     runner_feature(FEATURE_CACHE_INVALIDATE),
     runner_feature(FEATURE_CONTRACTS_CHECK_JSON),
-    runner_feature(FEATURE_CONTRACTS_VALIDATE_SELECTION),
     runner_feature(FEATURE_DEPLOY_MODEL),
     runner_feature(FEATURE_DEPLOY_EMIT),
     runner_feature(FEATURE_DEPLOY_PLAN),
@@ -1070,6 +1065,27 @@ const EXTRA_SURFACE_FUNCTIONS: &[RhaiSurfaceFunction] = &[
         signature: "container::exec_stream(name[, service], args)",
         description: "Run an argv-style command in a container service with inherited output.",
         safety: "runtime-mutation",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_STATE,
+        name: "artifact_inspect",
+        signature: "state::artifact_inspect(source[, options])",
+        description: "Inspect one local or `oci://` data artifact without staging it.",
+        safety: "read-only",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_STATE,
+        name: "artifact_stage",
+        signature: "state::artifact_stage(source[, options])",
+        description: "Stage one local or `oci://` data artifact into the repo-owned artifact cache.",
+        safety: "local-mutation",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_STATE,
+        name: "artifact_capture",
+        signature: "state::artifact_capture(source, destination[, options])",
+        description: "Stage and optionally push one local data artifact to an explicit `oci://` destination.",
+        safety: "network-local-mutation",
     },
     RhaiSurfaceFunction {
         module: MODULE_STATE,

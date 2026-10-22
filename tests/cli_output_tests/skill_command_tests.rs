@@ -8,11 +8,22 @@ fn fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/skill-task-runner")
 }
 
+/// These proofs run tasks inside the checked-in fixture checkout, which they
+/// only read. Task gates live under `$HOME/.effigy/state`, so a private home
+/// per test keeps one test's running task from refusing another's.
+fn skill_home() -> PathBuf {
+    thread_local! {
+        static HOME: std::cell::OnceCell<PathBuf> = const { std::cell::OnceCell::new() };
+    }
+    HOME.with(|home| home.get_or_init(|| unique_temp_root("skill-home")).clone())
+}
+
 fn run_skill(cwd: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(args)
         .current_dir(cwd)
         .env("NO_COLOR", "1")
+        .env("HOME", skill_home())
         .output()
         .expect("run skill command")
 }
@@ -22,6 +33,7 @@ fn run_skill_with_env(cwd: &Path, args: &[&str], key: &str, value: &str) -> Outp
         .args(args)
         .current_dir(cwd)
         .env("NO_COLOR", "1")
+        .env("HOME", skill_home())
         .env(key, value)
         .output()
         .expect("run skill command")

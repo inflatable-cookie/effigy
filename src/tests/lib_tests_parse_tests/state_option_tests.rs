@@ -552,3 +552,123 @@ fn parse_state_help_topic() {
 
     assert_eq!(cmd, Command::Help(HelpTopic::State));
 }
+
+#[test]
+fn parse_state_artifact_inspect_with_repo_json_and_handoff() {
+    let cmd = parse_command(vec![
+        "state".to_owned(),
+        "artifact".to_owned(),
+        "inspect".to_owned(),
+        "oci://ghcr.io/acme/private-data:uat".to_owned(),
+        "--repo".to_owned(),
+        "/tmp/repo".to_owned(),
+        "--farmyard-handoff".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::State(StateArgs {
+            subcommand: StateSubcommand::ArtifactInspect {
+                source: "oci://ghcr.io/acme/private-data:uat".to_owned(),
+                farmyard_handoff: true,
+            },
+            repo_override: Some(PathBuf::from("/tmp/repo")),
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_state_artifact_stage_local_path() {
+    let cmd = parse_command(vec![
+        "state".to_owned(),
+        "artifact".to_owned(),
+        "stage".to_owned(),
+        "data/legacy.sql.gz".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::State(StateArgs {
+            subcommand: StateSubcommand::ArtifactStage {
+                source: "data/legacy.sql.gz".to_owned(),
+                farmyard_handoff: false,
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_state_artifact_capture_with_planned_oci_ref() {
+    let cmd = parse_command(vec![
+        "state".to_owned(),
+        "artifact".to_owned(),
+        "capture".to_owned(),
+        "./dumps/uat.sql.gz".to_owned(),
+        "--ref".to_owned(),
+        "oci://ghcr.io/acme/uat-content:2026-05-06".to_owned(),
+        "--kind".to_owned(),
+        "uat-content-snapshot".to_owned(),
+        "--environment".to_owned(),
+        "uat".to_owned(),
+        "--farmyard-handoff".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::State(StateArgs {
+            subcommand: StateSubcommand::ArtifactCapture {
+                source: "./dumps/uat.sql.gz".to_owned(),
+                destination: "oci://ghcr.io/acme/uat-content:2026-05-06".to_owned(),
+                kind: Some("uat-content-snapshot".to_owned()),
+                environment_label: Some("uat".to_owned()),
+                farmyard_handoff: true,
+                push: false,
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_state_artifact_help_topic_is_state() {
+    for args in [
+        vec!["state", "artifact"],
+        vec!["state", "artifact", "--help"],
+        vec!["state", "artifact", "inspect", "--help"],
+    ] {
+        let cmd = parse_command(
+            args.iter()
+                .map(|value| (*value).to_owned())
+                .collect::<Vec<_>>(),
+        )
+        .expect("parse should succeed");
+        assert_eq!(cmd, Command::Help(HelpTopic::State));
+    }
+}
+
+#[test]
+fn parse_retired_top_level_artifact_command_names_the_state_form() {
+    let error = parse_command(vec![
+        "artifact".to_owned(),
+        "inspect".to_owned(),
+        "seed.sql".to_owned(),
+    ])
+    .expect_err("retired command must refuse");
+
+    let rendered = error.to_string();
+    assert!(rendered.contains("removed in v0.15"), "{rendered}");
+    assert!(
+        rendered.contains("effigy state artifact inspect|stage|capture"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("CHANGELOG.md"), "{rendered}");
+}

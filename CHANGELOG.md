@@ -214,6 +214,22 @@ During v0.x, MINOR bumps may include breaking changes.
   `--critical-marker` refuse the same way. `god-files` and `duplicate-blocks`
   remain. Papercut 3c249619 (stale-suppression severity) is moot with the
   scanner.
+- Retire `effigy contracts validate-selection` and the Rhai feature
+  `contracts.validate_selection`. `effigy contracts check-json
+  --validate-selection` validates the selection payload of the current run
+  (implied by `--print-selected=json`), and `--validate-selection --artifact
+  <PATH>` validates a stored artifact. A violation is a failure row for
+  `effigy.json-contract-selection.v1` inside the unchanged
+  `effigy.contracts.check-json.v1` envelope. The local
+  `scripts/write-json-contract-artifacts.rhai` artifact writer is gone;
+  `qa:ci:json` runs `contracts check-json --full --print-selected=json`.
+  Selection validation options now live on `contracts::check_json`
+  (`validate_selection`, `contract`, `artifact`).
+- Retire Effigy's implicit default JSON contract paths.
+  `effigy contracts check-json` reads `[contracts].schema_index` and
+  `[contracts].selection_contract` from the project manifest, so a project that
+  declares neither is refused with "no JSON schema index configured" instead of
+  being validated against Effigy's documentation tree.
 - `effigy system` is retired (Q-009). `effigy container [<NAME>] up|down|status|logs`
   is the environment lifecycle surface, and `effigy container profile repair`
   and `effigy container profile reset-runtime` replace `system repair` and
@@ -286,6 +302,13 @@ During v0.x, MINOR bumps may include breaking changes.
   status staleness. They are never read for exclusion or deleted; a live
   v0.14 holder still refuses its task until it exits, and `effigy doctor`
   lists the families still present.
+- The top-level `effigy artifact` command and the Rhai `artifact` module
+  (Q-009). `inspect`, `stage` and `capture` moved unchanged, same flags and
+  same `effigy.artifact.inspect|stage|capture.v1` payloads, to
+  `effigy state artifact` beside layered `effigy state capture`. Rhai scripts
+  call `state::artifact_inspect|artifact_stage|artifact_capture`. The old
+  command fails with that replacement. `crates/effigy-artifacts` folded into
+  `effigy-state` as the `artifact` module, one crate fewer.
 - Rebuild `effigy bootstrap` as one command over ordinary task selectors and
   pinned sources (Q-009, effigy#262). `[bootstrap].setup` is an ordered list of
   selectors, `start` is one selector and `submodules = true` initialises
@@ -688,6 +711,19 @@ During v0.x, MINOR bumps may include breaking changes.
   block, filters literal-only blocks (tables, fixtures, string lists) and
   generated/derived files, and uses a rolling window hash; it stays opt-in for
   doctor. Doctor's deep inventory runs only these two scanners.
+- `effigy contracts check-json` validates with one JSON Schema engine,
+  `effigy-json-schema` (Draft 2020-12 through `jsonschema` 0.50 with default
+  features off), instead of hand-written per-schema key assertions. A schema
+  index may declare a `payload_schemas` map from schema id to a JSON Schema
+  document, relative to the index file; Effigy's own index ships documents for
+  `effigy.command.v1`, `effigy.container.migrate.v1` and
+  `effigy.container.render.v1`. `format` is annotation-only, `$ref` never
+  leaves the document, and an invalid payload schema stops the run
+  ([contract 055](docs/knowledge/contracts/055-project-json-contract-validation-contract.md)).
+  The selection payload's `count` remains a producer guarantee derived from
+  `selected.length`, because JSON Schema cannot compare a property with an
+  array length. `--json` failures now report the structured
+  `effigy.contracts.check-json.v1` payload in `error.message`.
 - `effigy container` without a name resolves `[containers].default` and then the
   `[systems].default` workspace container, so a repo that declares only
   `[systems]` targets the environment its tasks use. `--system <NAME>` selects

@@ -8,19 +8,21 @@ pub(crate) fn render_contracts_help<R: HelpRenderer + ?Sized>(renderer: &mut R) 
 const CONTRACTS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "contracts",
     notices: &[
-        "Validate reusable JSON contract artifacts from Effigy-owned command surfaces instead of jq-heavy shell scripts.",
-        "Keep contract structure in JSON files and repo-specific policy in task wiring; the built-in command just enforces the published shape.",
+        "Validate the project's own JSON artifacts with one Draft 2020-12 JSON Schema engine instead of jq-heavy shell scripts.",
+        "The schema index and the selection contract come from `[contracts]` in effigy.toml; there is no built-in default path.",
     ],
     usage: &[
-        "effigy contracts check-json [--repo <PATH>] [--index <PATH>] [--fast|--full] [--changed-only <BASE>] [--print-selected|--print-selected=json] [--json]",
-        "effigy contracts validate-selection [--repo <PATH>] [--contract <PATH>] [--artifact <PATH>] [--json]",
-        "effigy --json contracts validate-selection [--repo <PATH>] [--artifact <PATH>]",
+        "effigy contracts check-json [--repo <PATH>] [--index <PATH>] [--contract <PATH>] [--fast|--full] [--changed-only <BASE>] [--print-selected[=text|json]] [--validate-selection] [--artifact <PATH>] [--json]",
     ],
     leading_common_options: &[CommonOption::Repo],
     options: &[
         (
             "--index <PATH>",
-            "Override the JSON schema index file (defaults to `docs/knowledge/contracts/json-schema-index.json`)",
+            "Override `contracts.schema_index` from effigy.toml",
+        ),
+        (
+            "--contract <PATH>",
+            "Override `contracts.selection_contract` from effigy.toml",
         ),
         ("--fast", "Run the lighter JSON contract subset"),
         ("--full", "Run the full active JSON contract set"),
@@ -34,15 +36,15 @@ const CONTRACTS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         ),
         (
             "--print-selected=json",
-            "Print the selected-schema payload as a single JSON line before running checks",
+            "Print the selected-schema payload as a single JSON line before running checks; also validates it against the selection contract",
         ),
         (
-            "--contract <PATH>",
-            "Override the JSON contract file (defaults to `docs/knowledge/contracts/json-selection-contract.json`)",
+            "--validate-selection",
+            "Validate the selection payload against the selection contract",
         ),
         (
             "--artifact <PATH>",
-            "Override the artifact file (defaults to `json-contracts-selected.json`)",
+            "Validate the selection payload stored in this artifact file instead of this run's payload",
         ),
     ],
     trailing_common_options: &[
@@ -52,8 +54,8 @@ const CONTRACTS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     examples: &[
         "effigy contracts check-json --fast --print-selected",
         "effigy contracts check-json --fast --changed-only origin/main --print-selected=json",
-        "effigy contracts validate-selection",
-        "effigy contracts validate-selection --artifact tmp/selected.json",
-        "effigy --json contracts validate-selection --artifact json-contracts-selected.json",
+        "effigy contracts check-json --validate-selection",
+        "effigy contracts check-json --validate-selection --artifact tmp/selected.json",
+        "effigy --json contracts check-json --print-selected=json --validate-selection",
     ],
 };

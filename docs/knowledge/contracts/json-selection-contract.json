@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "schema": "effigy.json-contract-selection.v1",
   "schema_version": 1,
   "producer": "effigy contracts check-json --print-selected=json",
@@ -19,7 +20,7 @@
     },
     "count": {
       "type": "number",
-      "description": "Selected schema count. Must equal selected.length."
+      "description": "Selected schema count. Derived by the producer from selected.length."
     },
     "changed_only_base": {
       "type": [
@@ -37,8 +38,8 @@
       "description": "Execution mode applied by checker."
     }
   },
-  "invariants": [
-    "count == len(selected)",
-    "all(selected[*] are strings)"
+  "producer_guarantees": [
+    "count is derived from selected.length and cannot disagree with it.",
+    "selected entries come from the project's schema index in index order."
   ]
 }
