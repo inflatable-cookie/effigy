@@ -78,16 +78,6 @@ pub(super) struct SeverityCounts {
     pub(super) warning: usize,
 }
 
-pub(super) fn style_snippet_line(color_enabled: bool, text: &str) -> String {
-    use anstyle::{Ansi256Color, Color, Style};
-
-    if !color_enabled {
-        return text.to_owned();
-    }
-    let muted = Style::new().fg_color(Some(Color::Ansi256(Ansi256Color(244))));
-    format!("{}{}{}", muted.render(), text, muted.render_reset())
-}
-
 pub(super) struct TextReportSpec {
     pub(super) title: &'static str,
     pub(super) metadata_lines: Vec<String>,

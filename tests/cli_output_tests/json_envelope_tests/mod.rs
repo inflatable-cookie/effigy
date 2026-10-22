@@ -41,20 +41,6 @@ fn write_duplicate_block_fixture(root: &Path) {
     fs::write(root.join("src/beta.rs"), format!("{block}\n")).expect("write beta");
 }
 
-fn write_comment_ratio_fixture(root: &Path) {
-    fs::create_dir_all(root.join("src")).expect("mkdir src");
-    let mut lines = (0..30)
-        .map(|idx| format!("// commentary line {idx}"))
-        .collect::<Vec<String>>();
-    lines.extend((0..20).map(|idx| format!("const line_{idx} = {idx};")));
-    fs::write(root.join("src/app.ts"), format!("{}\n", lines.join("\n"))).expect("write source");
-}
-
-fn write_src_fixture(root: &Path, rel: &str, contents: &str) {
-    fs::create_dir_all(root.join("src")).expect("mkdir src");
-    fs::write(root.join(rel), contents).expect("write source");
-}
-
 fn run_scan_command(root: &Path, scan: &str, args: &[&str]) -> Value {
     let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
     command.arg("--json").arg("scan").arg(scan);

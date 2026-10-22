@@ -149,7 +149,7 @@ through the help route.
 | `effigy deploy` | Derive a provider-neutral deployment model, export provider files, inspect plans/status/history; apply and redeploy refuse as unsupported in v0.15 (Q-003) | `model`, `export <PROVIDER>`, `plan`, `apply`, `status`, `history`, `redeploy`, `--repo`, `--path`, `--write-report`, `--deployment`, `--yes`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1`, `effigy.deploy.plan.v1`, `effigy.deploy.apply.v1`, `effigy.deploy.status.v1`, `effigy.deploy.history.v1` | `074-deployment-guide.md`, [`../contracts/002-production-deployment-model.md`](../knowledge/contracts/002-production-deployment-model.md), [`../contracts/019-deployment-transaction-system-contract.md`](../knowledge/contracts/019-deployment-transaction-system-contract.md) |
 | `effigy rhai` | Inspect the registered Rhai host API surface available to scripts, including module/function names and side-effect posture | `surface`, `--json` | `effigy.rhai.surface.v1` | `061-rhai-script-steps-guide.md`, `068-rhai-host-surface-audit.md` |
 | `effigy bootstrap` | Clone or update a repo from a git URL (or use this checkout with no URL), materialise its pinned bundle, catalog and `[sources.<name>]` sources, initialise submodules when `[bootstrap] submodules = true`, run its `setup` selectors in order as ordinary tasks, then start its `start` selector unless `--no-start` | `[<git-url>]`, `--path`, `--branch`, `--no-start`, `--plan`, `--json` | `effigy.bootstrap.v1` | `057-bootstrap-repo-bringup.md` |
-| `effigy scan` | Run built-in repo scanners such as oversized code-file detection, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--threshold/--warn`, `--high`, `--critical`, `--include`, `--exclude`, `--source-root`, marker overrides (`--warning-marker/--high-marker/--critical-marker`), `--show-warnings`, `--no-gitignore`, `--fail-on-findings`, `--markdown`, `--out`, `--json` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `022-manifest-cookbook.md` |
+| `effigy scan` | Run the built-in repo scanners `god-files` (oversized code files, per-language size defaults) and `duplicate-blocks` (repeated code spans, opt-in) | `god-files`, `duplicate-blocks`, `--threshold/--warn`, `--high`, `--critical`, `--include`, `--exclude`, `--show-warnings`, `--no-gitignore`, `--fail-on-findings`, `--markdown`, `--out`, `--json` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1` | `022-manifest-cookbook.md` |
 | `effigy test` | Plan or run detected and configured test suites | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
 | `effigy init` | Prepare repo setup through one front door: bounded TTY wizard for plain terminal use, baseline managed setup without a project skill copy, wider setup inventory via checklist mode, explicit optional skill snapshot action, or named starter emission | `--check`, `--apply`, `--repair`, `--checklist`, `--apply-actions`, `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1`, `effigy.init.checklist.v1`, `effigy.init.actions.v1`, `effigy.init.list.v1` | `019-init-foundation.md` |
 | `effigy config` | Render config reference/schema snippets, including the optional repository-defined `[docs_policy.graph]` profile, inspect the effective composed manifest, or manage user-global container defaults | `inspect`, `schema`, `path`, `get`, `set`, `unset`, `--inspect`, `--path`, `--schema`, `--minimal`, `--target`, `--runner`, `--user-inspect`, `--json` | `effigy.config.v1` | `021-quick-start-and-command-cookbook.md`, [`../contracts/041-documentation-graph-profile-contract.md`](../knowledge/contracts/041-documentation-graph-profile-contract.md) |
@@ -242,9 +242,8 @@ Common values:
   recursive walks skip `target/` and `node_modules/` at entry and still
   check explicit file paths ([docs-check source traversal](../knowledge/architecture/030-docs-check-source-traversal.md))
   default 24000, maximum 100000; `--max-hops` default 1, maximum 3
-- scanners: `god-files`, `duplicate-blocks`, `comment-ratio`,
-  `generated-assets`, `generated-in-src`, `attention-markers`,
-  `stale-suppressions`
+- scanners: `god-files`, `duplicate-blocks` (v0.15 removed the other five;
+  use `rg -n 'TODO|FIXME' <path>` for marker searches)
 
 ### Local Runtime and Services
 
@@ -363,8 +362,8 @@ See [`080-host-wide-validation-admission.md`](080-host-wide-validation-admission
 for heavy tasks, the admission hook, and run control.
 
 Use `effigy scan <subcommand> --help` (and per-scanner help) for optional scan
-flags such as `--include`, `--exclude`, `--threshold`, `--source-root`, marker
-overrides, and `--no-gitignore`.
+flags such as `--include`, `--exclude`, `--threshold`, `--high`, `--critical`
+and `--no-gitignore`.
 
 ### Completion, Changelog, and Release
 
@@ -587,10 +586,6 @@ effigy --json tasks
 effigy --json doctor
 effigy --json scan god-files
 effigy --json scan duplicate-blocks
-effigy --json scan comment-ratio
-effigy --json scan generated-in-src
-effigy --json scan attention-markers
-effigy --json scan stale-suppressions
 effigy --json bootstrap git@github.com:inflatable-cookie/loophole.git --plan
 effigy --json test --plan
 effigy state plan

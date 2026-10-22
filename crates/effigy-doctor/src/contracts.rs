@@ -13,11 +13,6 @@ pub mod check_id {
     pub const TASKS_LEGACY_STATE_PREFIX: &str = "tasks.legacy-state.";
     pub const SCAN_GOD_FILES: &str = "scan.god-files";
     pub const SCAN_DUPLICATE_BLOCKS: &str = "scan.duplicate-blocks";
-    pub const SCAN_COMMENT_RATIO: &str = "scan.comment-ratio";
-    pub const SCAN_GENERATED_ASSETS: &str = "scan.generated-assets";
-    pub const SCAN_GENERATED_IN_SRC: &str = "scan.generated-in-src";
-    pub const SCAN_ATTENTION_MARKERS: &str = "scan.attention-markers";
-    pub const SCAN_STALE_SUPPRESSIONS: &str = "scan.stale-suppressions";
     pub const HEALTH_TASK_DISCOVERY: &str = "health.task.discovery";
     pub const HEALTH_TASK_POSTURE: &str = "health.task.posture";
     pub const HEALTH_TASK_BOOTSTRAP: &str = "health.task.bootstrap";
@@ -26,7 +21,7 @@ pub mod check_id {
     pub const CATALOG_PACK_HEALTH: &str = "catalog.pack-health";
 }
 
-pub const ALL_CHECK_IDS: [&str; 22] = [
+pub const ALL_CHECK_IDS: [&str; 17] = [
     check_id::WORKSPACE_ROOT_RESOLUTION,
     check_id::ENVIRONMENT_TOOLS_REQUIRED,
     check_id::MANIFEST_PARSE,
@@ -38,11 +33,6 @@ pub const ALL_CHECK_IDS: [&str; 22] = [
     check_id::DEPENDENCY_LINK_HEALTH,
     check_id::SCAN_GOD_FILES,
     check_id::SCAN_DUPLICATE_BLOCKS,
-    check_id::SCAN_COMMENT_RATIO,
-    check_id::SCAN_GENERATED_ASSETS,
-    check_id::SCAN_GENERATED_IN_SRC,
-    check_id::SCAN_ATTENTION_MARKERS,
-    check_id::SCAN_STALE_SUPPRESSIONS,
     check_id::HEALTH_TASK_DISCOVERY,
     check_id::HEALTH_TASK_POSTURE,
     check_id::HEALTH_TASK_BOOTSTRAP,
@@ -75,16 +65,6 @@ pub mod remediation {
         "Split oversized files into smaller modules/components or raise thresholds intentionally.";
     pub const REDUCE_DUPLICATE_BLOCKS: &str =
         "Extract shared logic into reusable helpers/modules, suppress intentional boilerplate, or disable doctor integration intentionally.";
-    pub const REDUCE_COMMENT_RATIO: &str =
-        "Convert stale commentary into tests/docs, trim redundant inline comments, or disable doctor integration intentionally.";
-    pub const REMOVE_OR_IGNORE_GENERATED_ASSETS: &str =
-        "Remove bulky generated/vendor artifacts from versioned paths, tighten ignore rules, or raise thresholds intentionally.";
-    pub const REMOVE_GENERATED_FROM_SOURCE_TREES: &str =
-        "Move generated files out of source trees, tighten codegen output paths, or disable doctor integration intentionally.";
-    pub const RESOLVE_ATTENTION_MARKERS: &str =
-        "Resolve deferred-work/deprecation markers, remove stale placeholders, or disable doctor integration intentionally.";
-    pub const REMOVE_STALE_SUPPRESSIONS: &str =
-        "Remove stale suppressions, narrow broad disables, or disable doctor integration intentionally.";
     pub const SCHEMA_REMOVE_UNSUPPORTED_KEYS: &str =
         "Remove/rename unsupported keys to match `effigy config --schema`.";
     pub const DECLARE_CATALOG_MEMBERS: &str =

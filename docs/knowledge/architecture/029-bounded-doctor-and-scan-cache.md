@@ -89,19 +89,18 @@ Each selected scope is walked once per deep invocation. The inventory applies
 the effective ignore posture and streams reusable observations to all enabled
 scanners. It must not retain all source text merely to share the walk.
 
-The existing god-file, comment-ratio, generated-asset,
-generated-in-source, attention-marker, duplicate-block, and stale-suppression
-evaluators consume that shared observation stream when enabled. Their finding
-semantics and deterministic ordering remain compatible with the standalone
-scan surfaces.
+The god-file and duplicate-block evaluators consume that shared observation
+stream when enabled. Their finding semantics and deterministic ordering remain
+compatible with the standalone scan surfaces. v0.15 removed the other five
+scanners (Q-009), so the inventory no longer records comment counts, generated
+asset reasons, generated-in-source categories, or marker/suppression hits.
 
 ## Incremental cache
 
 Disposable workspace-owned cache state lives under
 `.effigy/doctor/cache/v1/<encoded-scope>/`. Entries contain per-file reusable
-facts, not rendered doctor output. Facts may include line/code/comment counts,
-generated classification, marker hits, suppression evidence, and normalized
-duplicate fingerprints.
+facts, not rendered doctor output. Facts may include line/code counts,
+generated classification, and normalized duplicate fingerprints.
 
 Cache identity includes:
 

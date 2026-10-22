@@ -114,8 +114,8 @@ fn run_manifest_task_builtin_scan_god_files_markdown_out_writes_report() {
         &report_path,
         &[
             "# God Files",
-            "| Severity | Code Lines | Total Lines | Path |",
-            "| warning | 12 | 12 | `src/app.ts` |",
+            "| Severity | Code Lines | Total Lines | Language | Path |",
+            "| warning | 12 | 12 | ts | `src/app.ts` |",
         ],
     );
 }
@@ -179,7 +179,7 @@ out = "reports/god-files.md"
         &[
             "# God Files",
             "- Thresholds: warn=`10` high=`20` critical=`30`",
-            "| warning | 12 | 12 | `src/app.ts` |",
+            "| warning | 12 | 12 | ts | `src/app.ts` |",
         ],
     );
 }

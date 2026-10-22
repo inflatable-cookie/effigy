@@ -43,6 +43,10 @@ pub(in crate::scan::execution) trait ScanThresholdOverrideOptions:
     type Thresholds: ScanThresholds;
 
     fn thresholds_mut(&mut self) -> &mut Self::Thresholds;
+
+    /// Called when the command line supplied an explicit threshold, which
+    /// replaces the per-language defaults.
+    fn mark_thresholds_configured(&mut self) {}
 }
 
 pub(in crate::scan::execution) trait ScanThresholds {

@@ -682,13 +682,23 @@ the table and let the tool's own cache (cargo, turbo, vite) decide.
 
 ## Built-in Scans
 
+v0.15 keeps two scanners whose findings are worth acting on: `god-files` and
+`duplicate-blocks`. The other five (`attention-markers`, `generated-in-src`,
+`comment-ratio`, `generated-assets`, `stale-suppressions`) were removed by
+Q-009; their `[scan.*]` tables are manifest errors with the replacement each
+one names (see `CHANGELOG.md`). Use `rg -n 'TODO|FIXME' <path>` for marker
+searches.
+
+Both scanners skip generated, derived, vendored and agent-skill trees, and
+respect `.gitignore`/`.ignore` unless `--no-gitignore` is passed.
+
 ### Built-in God-File Scanner
 
 ```toml
 [scan.god_files]
-warn = 250
-high = 400
-critical = 700
+warn = 1500
+high = 3000
+critical = 8000
 doctor = true
 fail_on_findings = false
 respect_gitignore = true
@@ -698,7 +708,8 @@ format = "markdown"
 out = "reports/god-files.md"
 ```
 
-Use this when you want a repo-level oversized-file check that can also feed `effigy doctor`.
+Use this when you want a repo-level oversized-file check that can also feed
+`effigy doctor`.
 
 Typical commands:
 - `effigy scan god-files`
@@ -707,45 +718,27 @@ Typical commands:
 - `effigy --json scan god-files`
 
 Behavior:
-- counts code-only lines for common source-file types and falls back to non-blank lines for unknown extensions
-- terminal text output hides warning rows by default and prints a warning count summary; `--show-warnings` restores the full list
-- skips common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts by default
+- counts code-only lines for common source-file types and falls back to
+  non-blank lines for unknown extensions
+- without an explicit `warn`/`high`/`critical`, each file uses its language
+  defaults (code lines): typescript/javascript/vue/svelte and
+  python/ruby/php `800/1400/2400`; rust/c/c++/c#/go/java/kotlin/scala/swift
+  `1000/1800/3000`; sql/css/html `1200/2000/3200`; shell/lua `500/900/1500`;
+  everything else `1000/1800/3000`. Any configured threshold replaces the
+  per-language defaults for every file
+- the JSON payload reports `thresholds_source` (`configured` or
+  `language-defaults`) and each finding's `language`
+- generated, derived, vendored and agent-skill trees are skipped, as are common
+  docs, lockfiles, migrations, fixtures, examples, benchmarks and
+  generated artefacts
 - respects `.gitignore`/`.ignore` during traversal unless disabled
-- `effigy doctor` uses the same scanner core but keeps its own report semantics; warning-level god-file findings still appear there when `doctor = true`
-- doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-god-files.md`
-- `doctor = false` keeps the config available for `scan` without surfacing it in `effigy doctor`
-
-### Built-in Generated-Assets Scanner
-
-```toml
-[scan.generated_assets]
-warn = 1000000
-high = 5000000
-critical = 20000000
-doctor = true
-fail_on_findings = false
-respect_gitignore = true
-include = ["dist/**", "vendor/**", "third_party/**"]
-exclude = ["docs/**"]
-format = "markdown"
-out = "reports/generated-assets.md"
-```
-
-Use this when you want a repo-level check for bulky vendored/generated artifacts that slipped into versioned paths.
-
-Typical commands:
-- `effigy scan generated-assets`
-- `effigy scan generated-assets --show-warnings`
-- `effigy scan generated-assets --fail-on-findings`
-- `effigy --json scan generated-assets`
-
-Behavior:
-- thresholds are measured in bytes
-- terminal text output hides warning rows by default and prints a warning count summary; `--show-warnings` restores the full list
-- matches vendored/build paths, bundle/minified/source-map names, and generated markers
-- respects `.gitignore`/`.ignore` during traversal unless disabled
-- `effigy doctor` uses the same scanner core and includes findings when `doctor = true`
-- doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-generated-assets.md`
+- `effigy doctor` uses the same scanner core but keeps its own report
+  semantics; warning-level god-file findings still appear there when
+  `doctor = true`
+- doctor text output summarizes scan counts and writes file-level details to
+  `.effigy/reports/doctor/scan-god-files.md`
+- `doctor = false` keeps the config available for `scan` without surfacing it
+  in `effigy doctor`
 
 ### Built-in Duplicate-Blocks Scanner
 
@@ -764,7 +757,9 @@ format = "markdown"
 out = "reports/duplicate-blocks.md"
 ```
 
-Use this when you want a repo-level scan for large repeated normalized code spans across source files.
+Use this when you want a repo-level scan for large repeated code spans across
+source files. It stays opt-in (`doctor = false`) and is not a default health
+gate.
 
 Typical commands:
 - `effigy scan duplicate-blocks`
@@ -773,148 +768,20 @@ Typical commands:
 - `effigy --json scan duplicate-blocks`
 
 Behavior:
-- thresholds are measured in normalized code lines after blank/comment-only line filtering
-- findings report merged duplicate spans, occurrence counts, snippets, and location ranges
-- terminal text output hides warning rows by default and prints a warning count summary; `--show-warnings` restores the full list
-- includes source and test files by default while skipping common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts
-- respects `.gitignore`/`.ignore` during traversal unless disabled
-- `effigy doctor` can include the same scanner when `doctor = true`, with file-level details written to `.effigy/reports/doctor/scan-duplicate-blocks.md`
-- keep `doctor = false` as the default; the current `example-app` benchmark takes about `16.9s` and yields enough findings that this is better as an opt-in health check
-
-### Built-in Generated-In-Src Scanner
-
-```toml
-[scan.generated_in_src]
-warn = 1
-high = 20000
-critical = 200000
-source_roots = ["src/**", "app/**", "lib/**", "crates/**", "packages/*/src/**"]
-doctor = true
-fail_on_findings = false
-respect_gitignore = true
-include = ["src/**", "app/**", "lib/**"]
-exclude = ["vendor/**"]
-format = "markdown"
-out = "reports/generated-in-src.md"
-```
-
-Use this when you want a repo-level scan for generated files that have landed inside maintained source trees.
-
-Typical commands:
-- `effigy scan generated-in-src`
-- `effigy scan generated-in-src --show-warnings`
-- `effigy scan generated-in-src --source-root src/** --source-root packages/*/src/**`
-- `effigy --json scan generated-in-src`
-
-Behavior:
-- thresholds are measured in bytes
-- target scope is bounded to configured `source_roots`, then generated-file heuristics run within those paths
-- terminal text output hides warning rows by default and prints a warning count summary; `--show-warnings` restores the full list
-- matches generated markers, generated-style filenames, and minified/source-map artifacts inside source trees
-- respects `.gitignore`/`.ignore` during traversal unless disabled
-- `effigy doctor` uses the same scanner core and includes findings when `doctor = true`
-- doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-generated-in-src.md`
-- keep `doctor = true` as the default; the current `example-app` benchmark takes about `2.1s` and yields `4` warning-level findings, which is acceptable for default health runs
-
-### Built-in Attention-Markers Scanner
-
-```toml
-[scan.attention_markers]
-warning = ["TODO", "REVIEW", "NOTE", "placeholder"]
-high = ["FIXME", "HACK", "@deprecated", "workaround"]
-critical = ["BUG", "SECURITY", "remove before release"]
-doctor = true
-fail_on_findings = false
-respect_gitignore = true
-include = ["src/**", "crates/**", "tests/**"]
-exclude = ["vendor/**"]
-format = "markdown"
-out = "reports/attention-markers.md"
-```
-
-Use this when you want a repo-level scan for deferred-work, deprecation, and placeholder markers that can also feed `effigy doctor`.
-
-Typical commands:
-- `effigy scan attention-markers`
-- `effigy scan attention-markers --show-warnings`
-- `effigy scan attention-markers --fail-on-findings`
-- `effigy --json scan attention-markers`
-
-Behavior:
-- matches explicit marker strings rather than fuzzy prose inference
-- terminal text output hides warning rows by default and prints a warning count summary; `--show-warnings` restores the full list
-- includes source and test files by default while skipping common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts
-- respects `.gitignore`/`.ignore` during traversal unless disabled
-- `effigy doctor` uses the same scanner core and includes findings when `doctor = true`
-- doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-attention-markers.md`
-
-### Built-in Comment-Ratio Scanner
-
-```toml
-[scan.comment_ratio]
-warn = 1.5
-high = 2.0
-critical = 3.0
-min_code_lines = 20
-doctor = true
-fail_on_findings = false
-respect_gitignore = true
-include = ["src/**", "crates/**", "tests/**"]
-exclude = ["vendor/**"]
-format = "markdown"
-out = "reports/comment-ratio.md"
-```
-
-Use this when you want a repo-level scan for files where comment-only lines materially outweigh executable lines.
-
-Typical commands:
-- `effigy scan comment-ratio`
-- `effigy scan comment-ratio --show-warnings`
-- `effigy scan comment-ratio --fail-on-findings`
-- `effigy --json scan comment-ratio`
-
-Behavior:
-- thresholds are measured as `comment_lines / code_lines`
-- only files with at least `min_code_lines` code-only lines are evaluated
-- terminal text output hides warning rows by default and prints a warning count summary; `--show-warnings` restores the full list
-- includes source and test files by default while skipping common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts
-- respects `.gitignore`/`.ignore` during traversal unless disabled
-- `effigy doctor` uses the same scanner core and includes findings when `doctor = true`
-- doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-comment-ratio.md`
-- keep `doctor = true` as the default; the current `example-app` benchmark takes about `2.4s` and yields `15` findings, which is acceptable for default health runs
-
-### Built-in Stale-Suppressions Scanner
-
-```toml
-[scan.stale_suppressions]
-warning = ["@ts-ignore", "@ts-expect-error", "type: ignore", "eslint-disable-next-line"]
-high = ["#[allow(", "#[expect(", "rubocop:disable", "swiftlint:disable"]
-critical = ["nolint", "#[allow(warnings)]", "shellcheck disable=", "eslint-disable"]
-doctor = false
-fail_on_findings = false
-respect_gitignore = true
-include = ["src/**", "crates/**", "tests/**"]
-exclude = ["vendor/**"]
-format = "markdown"
-out = "reports/stale-suppressions.md"
-```
-
-Use this when you want a repo-level scan for inline suppressions that hide warnings, lint failures, or type errors.
-
-Typical commands:
-- `effigy scan stale-suppressions`
-- `effigy scan stale-suppressions --show-warnings`
-- `effigy scan stale-suppressions --critical-marker "eslint-disable"`
-- `effigy --json scan stale-suppressions`
-
-Behavior:
-- matches explicit suppression markers rather than trying to prove a suppression is definitely stale
-- terminal text output hides warning rows by default and prints a warning count summary; `--show-warnings` restores the full list
-- includes source and test files by default while skipping common docs, lockfiles, migrations, fixtures, examples, benchmarks, and generated artifacts
-- respects `.gitignore`/`.ignore` during traversal unless disabled
-- `effigy doctor` uses the same scanner core and can include findings when `doctor = true`
-- doctor text output summarizes scan counts and writes file-level details to `.effigy/reports/doctor/scan-stale-suppressions.md`
-- keep `doctor = false` as the default; the current `example-app` benchmark takes about `3.9s` and yields `69` findings, which is useful but too noisy for routine doctor runs
+- thresholds are measured in normalized code lines after blank/comment-only
+  line filtering
+- string-literal contents are preserved during normalization, so unrelated
+  data maps cannot collapse into one block; blocks made only of literals and
+  punctuation (tables, fixtures, string lists) are filtered
+- generated, derived and vendored files are skipped, as are common docs,
+  lockfiles, migrations, fixtures, examples and benchmarks
+- findings report merged duplicate spans, occurrence counts, snippets, and
+  location ranges
+- terminal text output hides warning rows by default and prints a warning
+  count summary; `--show-warnings` restores the full list
+- `effigy doctor` can include the same scanner when `doctor = true`, with
+  file-level details written to
+  `.effigy/reports/doctor/scan-duplicate-blocks.md`
 
 ## System and Workspace Patterns
 

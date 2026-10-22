@@ -1230,7 +1230,6 @@ version = "0.14.1"
 name = "effigy-scan"
 version = "0.14.1"
 dependencies = [
- "anstyle",
  "effigy-manifest",
  "effigy-process",
  "effigy-tasks",

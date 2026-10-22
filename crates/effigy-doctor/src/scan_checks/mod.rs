@@ -4,15 +4,8 @@ use crate::DoctorError;
 use crate::{DoctorSeverity, DoctorState};
 use effigy_manifest::LoadedCatalog;
 use effigy_scan::{
-    catalog_scan_roots, format_bytes, format_ratio, AttentionMarkerFinding,
-    AttentionMarkerScanOptions, AttentionMarkerScanResult, AttentionMarkerSeverity,
-    CommentRatioFinding, CommentRatioScanOptions, CommentRatioScanResult, CommentRatioSeverity,
-    DuplicateBlockFinding, DuplicateBlockScanOptions, DuplicateBlockScanResult,
-    DuplicateBlockSeverity, GeneratedAssetFinding, GeneratedAssetScanOptions,
-    GeneratedAssetScanResult, GeneratedAssetSeverity, GeneratedInSrcFinding,
-    GeneratedInSrcScanOptions, GeneratedInSrcScanResult, GeneratedInSrcSeverity, GodFileFinding,
-    GodFileScanOptions, GodFileScanResult, GodFileSeverity, StaleSuppressionFinding,
-    StaleSuppressionScanOptions, StaleSuppressionScanResult, StaleSuppressionSeverity,
+    catalog_scan_roots, DuplicateBlockFinding, DuplicateBlockScanOptions, DuplicateBlockScanResult,
+    DuplicateBlockSeverity, GodFileFinding, GodFileScanOptions, GodFileScanResult, GodFileSeverity,
 };
 
 pub(crate) mod core;
