@@ -87,6 +87,7 @@ container = "web"
 [containers.web]
 compose_file = "infra/dev/docker-compose.yml"
 primary_service = "app"
+working_dir = "/workspace"
 "#,
     )
     .expect("write manifest");
@@ -114,10 +115,12 @@ default = "api"
 [containers.api]
 compose_file = "infra/dev/api-compose.yml"
 primary_service = "app"
+working_dir = "/workspace"
 
 [containers.web]
 compose_file = "infra/dev/web-compose.yml"
 primary_service = "app"
+working_dir = "/workspace"
 
 [systems]
 default = "dev"
