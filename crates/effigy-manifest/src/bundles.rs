@@ -206,8 +206,46 @@ fn resolve_local_bundle_defaults(
         path: defaults_path.clone(),
         error,
     })?;
-    crate::config_sections::reject_retired_vault_keys(&defaults_path, &rendered, &defaults)?;
+    reject_retired_bundle_vault_keys(
+        manifest_path,
+        &defaults_path,
+        &descriptor.bundle.name,
+        &rendered,
+        &defaults,
+    )?;
     Ok((defaults, bundle_dir.join(&descriptor.bundle.defaults)))
+}
+
+/// A retired `[secrets.vault]` key in a bundle's exported defaults.
+///
+/// A bundle export is not the operator's manifest: a pinned or cached bundle
+/// carries the key until it is refreshed, so the remedy is `effigy bundle
+/// sync`, not the consumer-manifest "delete this line". Say so, and name the
+/// export file and line instead of leaving a bare TOML parse error behind.
+fn reject_retired_bundle_vault_keys(
+    manifest_path: &Path,
+    defaults_path: &Path,
+    bundle_name: &str,
+    source: &str,
+    defaults: &Value,
+) -> Result<(), ManifestError> {
+    let Some(key) = crate::config_sections::retired_vault_policy_key(defaults) else {
+        return Ok(());
+    };
+    let location = match crate::config_sections::retired_vault_policy_line(source) {
+        Some(line) => format!("{}:{line}", defaults_path.display()),
+        None => defaults_path.display().to_string(),
+    };
+    Err(ManifestError::Compose {
+        path: manifest_path.to_path_buf(),
+        detail: format!(
+            "bundle `{bundle_name}` export {location} declares retired `[secrets.vault] {key}`; \
+             the key was removed in v0.15 and only restated the passphrase default. A pinned or \
+             cached bundle is stale: run `effigy bundle sync` to refresh it to a bundle that no \
+             longer declares the key. If you own this bundle, delete the line from its export \
+             instead"
+        ),
+    })
 }
 
 fn validate_local_bundle_descriptor(

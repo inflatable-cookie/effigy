@@ -225,7 +225,8 @@ pub struct TaskManifest {
     pub distribution: Option<ManifestDistributionConfig>,
     #[serde(default)]
     pub release: Option<ManifestReleaseConfig>,
-    /// Retired in v0.15 with no replacement; refused with the reason.
+    /// Retired in v0.15; each demo converts to an ordinary task. Refused with
+    /// the conversion recipe.
     #[serde(default, rename = "demos", deserialize_with = "reject_demos")]
     _retired_demos: Option<toml::Value>,
     #[serde(default, deserialize_with = "deserialize_tasks")]
@@ -253,7 +254,10 @@ fn reject_demos<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<toml::Value>, D::Error> {
     let _: serde::de::IgnoredAny = serde::Deserialize::deserialize(deserializer)?;
-    Err(serde::de::Error::custom("`[demos]` was removed in v0.15 with no replacement: the demo registry, receipts and browser are gone; delete the table and record terminal sessions with an external tool. See the v0.15.0 Removed entry in CHANGELOG.md"))
+    Err(serde::de::Error::custom(format!(
+        "`[demos]` was removed in v0.15: the demo registry, receipts and browser are gone, and {}. See the v0.15.0 Removed entry in CHANGELOG.md",
+        effigy_core::retirement_text::DEMO_TO_TASK_RECIPE
+    )))
 }
 
 fn deserialize_sources<'de, D>(
