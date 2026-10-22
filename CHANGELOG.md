@@ -394,20 +394,24 @@ During v0.x, MINOR bumps may include breaking changes.
   `effigy.release.output.v1` at `$EFFIGY_RELEASE_OUTPUT` with `committed`
   (`true`, `false` or `"unknown"`), destination IDs and an optional note. An
   unusable output is an unknown outcome, never an assumption.
-- Retries never publish blind. `effigy release resume` reconciles an unknown
-  `task` target by running its `check` task first (`committed: true` means the
-  candidate is already there, `false` means it is not), and a target with no
-  `check` stops at `awaiting-decision` until `effigy release decide <run>
-  --published|--not-published` records who decided, when, and what. A target
-  that succeeded stays recorded, so a partial fan-out resumes with the
-  remaining targets.
+- Retries never publish blind. Before a `task` target's publish task starts,
+  the target is written `Unknown` and the publish journalled as an
+  `Irreversible` effect, so a crash mid-task leaves an unknown outcome instead
+  of a target a resume would publish again blind. `effigy release resume`
+  reconciles an unknown target by running its `check` task first
+  (`committed: true` means the candidate is already there, `false` means it is
+  not), and a target with no `check` stops at `awaiting-decision` in that same
+  invocation until `effigy release decide <run> --published|--not-published`
+  records who decided, when, and what. A target that succeeded stays recorded,
+  so a partial fan-out resumes with the remaining targets.
 - Hosted evidence is a checkpoint, not a held process. A gate with
   `reuse-hosted-evidence = true` stops the Run at
   `awaiting-hosted-evidence` while the exact-commit GitHub Actions evidence is
-  missing or still running, keeps the previous checkpoints and holds no process
-  open; `effigy release resume <run>` re-checks it and skips the gates that
-  already passed. A failed run, the wrong commit or repository, an ambiguous
-  answer or an unusable lookup still fails the gate closed.
+  missing or still running, keeps the previous checkpoints, holds no process
+  open and captures no further artifacts for that stage; `effigy release
+  resume <run>` re-checks it and skips the gates that already passed. A failed
+  run, the wrong commit or repository, an ambiguous answer or an unusable
+  lookup still fails the gate closed.
 - The release platform's configuration and read surfaces (contract 054 §2, §4
   and the `status`/`--plan` half of §5). `[release]` now expresses named
   `[release.identities.<name>]` of kind `semver` (the default), `digest`,

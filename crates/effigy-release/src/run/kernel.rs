@@ -44,6 +44,8 @@ const CLEANUP_BUDGET: Duration = Duration::from_secs(60);
 pub const TAG_PUSH_EFFECT: &str = "release:tag-push";
 /// The release-commit push effect kind.
 pub const COMMIT_PUSH_EFFECT: &str = "release:commit-push";
+/// The `task` target publish effect kind. Its settlement is `Irreversible`.
+pub const TASK_PUBLISH_EFFECT: &str = "release:task-publish";
 
 /// An engine adapter that reports nothing it does not know.
 ///

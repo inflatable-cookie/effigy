@@ -193,6 +193,8 @@ struct TestEffects {
     failed_push_on: Option<usize>,
     /// Fail this task name, so a certify or verify task fails closed.
     fail_task: Option<String>,
+    /// Fail to start this task name, so the release cannot learn its outcome.
+    fail_task_start: Option<String>,
     /// Fail the prepare commit, so the rollback runs.
     fail_commit: bool,
     /// Print this on stdout for a `task` identity.
@@ -221,6 +223,7 @@ impl TestEffects {
             ambiguous_push_on: None,
             failed_push_on: None,
             fail_task: None,
+            fail_task_start: None,
             fail_commit: false,
             task_stdout: "identity-from-task\n".to_owned(),
             tasks: Vec::new(),
@@ -306,6 +309,12 @@ impl ReleaseEffects for TestEffects {
         self.inputs.push(
             serde_json::from_str(&input).unwrap_or_else(|error| panic!("input json: {error}")),
         );
+        if self.fail_task_start.as_deref() == Some(request.task.as_str()) {
+            return Err(ReleaseError::TaskInvocation(format!(
+                "simulated start failure for `{}`",
+                request.task
+            )));
+        }
         if self.fail_task.as_deref() == Some(request.task.as_str()) {
             return Ok(TaskResponse {
                 stdout: String::new(),
@@ -1283,10 +1292,14 @@ fn an_unknown_task_publish_without_a_check_stops_for_an_operator_decision() {
         .insert("release:publish:npm".to_owned(), npm_output("unknown", &[]));
 
     let paused = run(&fixture, &mut effects, ReleaseAction::Run, None);
-    let unknown = approve_publish(&fixture, &mut effects, &paused);
-    assert_eq!(unknown.record.status, ReleaseRunStatus::Failed);
+    let waiting = approve_publish(&fixture, &mut effects, &paused);
+    // No `check` task to reconcile it, so the Run stops for the operator in
+    // this same invocation instead of failing first (054 §7).
+    assert_eq!(waiting.record.status, ReleaseRunStatus::AwaitingDecision);
+    assert_eq!(waiting.record.waiting_on.as_deref(), Some("npm"));
+    assert!(waiting.succeeded(), "a waiting Run is not a failing one");
     assert_eq!(
-        unknown.record.target("npm").expect("npm").state,
+        waiting.record.target("npm").expect("npm").state,
         RecordTargetState::Unknown
     );
     assert_eq!(
@@ -1298,12 +1311,10 @@ fn an_unknown_task_publish_without_a_check_stops_for_an_operator_decision() {
         1
     );
 
-    // A resume re-enters publish, finds the unknown outcome and stops for the
-    // operator instead of retrying blind (§7).
-    let waiting = resume(&fixture, &mut effects);
-    assert_eq!(waiting.record.status, ReleaseRunStatus::AwaitingDecision);
-    assert_eq!(waiting.record.waiting_on.as_deref(), Some("npm"));
-    assert!(waiting.succeeded(), "a waiting Run is not a failing one");
+    // A resume re-enters publish, finds the unknown outcome and waits for the
+    // operator again instead of retrying blind (§7).
+    let resumed = resume(&fixture, &mut effects);
+    assert_eq!(resumed.record.status, ReleaseRunStatus::AwaitingDecision);
     assert_eq!(
         effects
             .tasks
@@ -1320,7 +1331,7 @@ fn an_unknown_task_publish_without_a_check_stops_for_an_operator_decision() {
         &fixture,
         &mut effects,
         ReleaseAction::Decide {
-            run: waiting.record.release_id.clone(),
+            run: resumed.record.release_id.clone(),
             decision: TargetDecision::Published,
         },
         None,
@@ -1470,6 +1481,75 @@ fn an_unknown_task_publish_with_a_check_reconciles_before_any_retry() {
 }
 
 #[test]
+fn a_task_publish_whose_outcome_is_lost_leaves_unknown_and_resumes_through_check() {
+    let fixture = fixture("task-crash");
+    single_identity_project(&fixture);
+    append_manifest(&fixture, NPM_TARGET_WITH_CHECK);
+    commit_and_push(&fixture);
+
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".to_owned());
+    // The publish is journalled, then the invocation loses the task: no result
+    // is ever recorded, as a crash mid-publish would leave it.
+    effects.fail_task_start = Some("release:publish:npm".to_owned());
+    effects.task_outputs.insert(
+        "release:check:npm".to_owned(),
+        npm_output("true", &["fixture@0.2.5"]),
+    );
+
+    let paused = run(&fixture, &mut effects, ReleaseAction::Run, None);
+    let crashed = approve_publish(&fixture, &mut effects, &paused);
+    assert_eq!(crashed.record.status, ReleaseRunStatus::Failed);
+    // The target is written `Unknown` before the task starts, so a crash never
+    // leaves a target that a resume would publish again blind.
+    assert_eq!(
+        crashed.record.target("npm").expect("npm").state,
+        RecordTargetState::Unknown
+    );
+    assert!(crashed
+        .record
+        .target("npm")
+        .expect("npm")
+        .destinations
+        .is_empty());
+
+    // The resume reconciles through the check task, which reports the
+    // candidate is already there, so the publish never runs a second time.
+    effects.fail_task_start = None;
+    let resumed = resume(&fixture, &mut effects);
+    assert!(
+        resumed.succeeded(),
+        "resume failed: {:?}",
+        resumed.record.errors
+    );
+    assert_eq!(
+        resumed.record.target("npm").expect("npm").state,
+        RecordTargetState::Published
+    );
+    assert_eq!(
+        effects
+            .tasks
+            .iter()
+            .filter(|task| *task == "release:publish:npm")
+            .count(),
+        1,
+        "the lost publish was reconciled, not retried blind"
+    );
+    assert_eq!(
+        effects
+            .tasks
+            .iter()
+            .filter(|task| *task == "release:check:npm")
+            .count(),
+        1
+    );
+    assert_eq!(
+        resumed.record.target("npm").expect("npm").destinations[0].destination,
+        "fixture@0.2.5"
+    );
+}
+
+#[test]
 fn a_partial_task_target_fan_out_resumes_with_the_remaining_target() {
     let fixture = fixture("task-fanout");
     single_identity_project(&fixture);
@@ -1566,13 +1646,23 @@ fn a_hosted_wait_stops_the_run_without_holding_a_process_open() {
         ReleaseRunStatus::AwaitingHostedEvidence
     );
     assert_eq!(waiting.record.waiting_on.as_deref(), Some("hosted"));
-    // The gate stage did not complete: the last checkpoint is still prepare.
+    // The gate stage did not complete: the last checkpoint is still prepare
+    // and nothing downstream of the gate stage ran.
     assert_eq!(waiting.record.stage, "prepare");
     assert!(waiting
         .record
         .gates
         .iter()
         .all(|gate| gate.stage != "certify" || gate.passed));
+    assert!(
+        waiting.record.artifacts.is_empty(),
+        "a hosted wait captures no artifacts"
+    );
+    assert!(
+        !effects.tasks.iter().any(|task| task == "release:pack"),
+        "the artifact task must not run after a hosted wait: {:?}",
+        effects.tasks
+    );
     assert!(
         remote_tags(&waited).is_empty(),
         "nothing publishes while waiting"

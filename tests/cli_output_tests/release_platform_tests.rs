@@ -657,21 +657,18 @@ fn release_decide_records_an_unknown_publish_outcome_and_continues() {
         .expect("release id")
         .to_owned();
 
-    let published = run_release_cli(&root, &home, &["release", "approve", &run_id]);
-    let published = parse_stdout_json(&published);
-    assert!(!published["ok"].as_bool().unwrap_or(true), "{published}");
-    assert_eq!(
-        published["error"]["details"]["receipt"]["targets"][0]["state"],
-        "unknown"
-    );
-
-    // Without a `check` task the Run stops for an operator ruling.
-    let waiting = run_release_cli(&root, &home, &["release", "resume", &run_id]);
+    // Without a `check` task the unknown outcome stops the Run for an
+    // operator ruling in the same invocation, not as a failure first.
+    let waiting = run_release_cli(&root, &home, &["release", "approve", &run_id]);
     let waiting = parse_stdout_json(&waiting);
     assert!(
         waiting["result"]["receipt"]["release"]["status"] == "awaiting-decision",
         "{}",
         serde_json::to_string_pretty(&waiting).expect("serialize")
+    );
+    assert_eq!(
+        waiting["result"]["receipt"]["targets"][0]["state"],
+        "unknown"
     );
 
     let decided = run_release_cli(&root, &home, &["release", "decide", &run_id, "--published"]);

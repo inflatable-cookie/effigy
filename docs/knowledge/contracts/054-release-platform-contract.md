@@ -404,18 +404,34 @@ not, and `"unknown"` (or an unusable answer) stops the Run at
 evidence, and the target name for a decision. `release decide <run>
 --published|--not-published` records the operator (same identity rule as an
 approval) and the time in the record's `decisions`, sets the target published
-or pending, and continues at `publish`. A hosted gate is checked before its
-command would run, for the candidate commit at `certify` and the source commit
-at `pre-gates`; missing or still-running evidence stops the Run at
-`awaiting-hosted-evidence` with no process open, and a resume re-checks it. A
-failed run, the wrong commit or repository, an ambiguous answer or an unusable
-lookup fails the gate closed, exactly as the previous synchronous
-`reuse-hosted-evidence` did. A resumed gate stage skips the gates it already
-recorded as passed, so a Run resumes in the middle of the stage it was in.
+or pending, and continues at `publish`.
+
+An unknown `task` result whose target declares no `check` stops that same
+invocation at `awaiting-decision`, so the operator can decide immediately
+instead of resuming a failed Run first. A target that declares a `check` fails
+at `publish` with the outcome recorded unknown, and the resume reconciles it
+through the check before any retry — §7's "on resume, a target whose last
+outcome is unknown is first reconciled".
+
+A hosted gate is checked before its command would run, for the candidate commit
+at `certify` and the source commit at `pre-gates`. Missing or still-running
+evidence stops the Run at `awaiting-hosted-evidence` with no process open, and
+it stops the gate stage itself: `certify` captures no artifacts until the gate
+has its exact-commit evidence. A resume re-checks the evidence, skips the gates
+it already recorded as passed, and continues the stage. A failed run, the wrong
+commit or repository, an ambiguous answer or an unusable lookup fails the gate
+closed, exactly as the previous synchronous `reuse-hosted-evidence` did.
 
 **Task targets publish in declared order.** A target that succeeded stays
-recorded, so a resume continues with the remaining targets. Every task publish
-is journalled as an `Irreversible` effect before the task starts.
+recorded, so a resume continues with the remaining targets. Before a task
+target's publish task starts, the Run writes the target as `Unknown` in the
+record and journals the publish as an `Irreversible` effect. A crash mid-task
+therefore leaves `Unknown`, never the `Pending` a resume would publish again
+blind, and the kernel settles the journalled effect as `Irreversible` rather
+than blocking the next invocation. A task publish settles `Applied` once the
+task reported a definite outcome — `committed` true or false, which the record
+keeps — and `Unknown` when the task could not tell, so only a real unknown
+reaches reconciliation.
 
 **The protocol schemas are file contracts.** `effigy.release.input.v1` and
 `effigy.release.output.v1` are documents a task reads and writes, not command

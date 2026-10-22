@@ -259,8 +259,9 @@ Gates run in declaration order. Put cheap checks first. A gate with
 successful GitHub Actions run for this repository's exact commit — the
 candidate commit once `prepare` committed it, and the source commit before
 that — verified through authenticated `gh`. While that evidence is missing or
-still running, the Run stops with status `awaiting-hosted-evidence` and holds
-no process open; `effigy release resume <run>` re-checks it. A failed run, the
+still running, the Run stops with status `awaiting-hosted-evidence`, holds no
+process open and runs no later work in that stage (no artifact task runs before
+the evidence exists); `effigy release resume <run>` re-checks it and continues. A failed run, the
 wrong commit, the wrong repository or an ambiguous answer fails the gate closed
 instead of running the local command. Gates without that flag run locally.
 
@@ -287,8 +288,10 @@ destination; `"unknown"` is never retried blind. A task that exits 0 without
 writing an output records `committed = "unknown"`. A target's `check` task
 writes the same document and answers whether this candidate is already at the
 destination (`true`), is not (`false`), or cannot tell (`"unknown"`). With no
-`check` task, an unknown outcome stops the Run at `awaiting-decision` until the
-operator records `--published` or `--not-published`.
+`check` task, an unknown outcome stops the Run at `awaiting-decision` in that
+same invocation, until the operator records `--published` or `--not-published`.
+A target is written unknown before its publish task starts, so a crash mid-task
+is reconciled the same way instead of being published again blind.
 
 For a new project that already declares its intended first release version,
 opt in explicitly:
