@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::value_parsing::{next_required_value, parse_repo_path};
 use crate::{
     Command, ExecArgs, GatewayArgs, GatewayPrivateArgs, GatewaySubcommand, HelpTopic, ServiceArgs,
-    ServiceSubcommand, SystemArgs, SystemSubcommand, WorkspaceArgs,
+    ServiceSubcommand, WorkspaceArgs,
 };
 
 use super::{unknown_argument, CliParseError};
@@ -159,59 +159,41 @@ pub(super) fn parse_gateway_addr(
     })
 }
 
+const RETIRED_SYSTEM_SUFFIX: &str =
+    "See CHANGELOG.md `[Unreleased]` > Removed for the v0.15 surface cut";
+
+/// `effigy system` retired in v0.15: every old spelling names its exact
+/// `effigy container` replacement before the argument is rejected.
 pub(super) fn parse_system_command<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
 {
+    const GENERAL_REPLACEMENT: &str = "Use `effigy container up|down|status|logs` for environment lifecycle and `effigy container profile repair|reset-runtime` for runtime recovery";
     let mut args = args.into_iter();
-    let Some(subcmd) = args.next() else {
-        return Ok(Command::Help(HelpTopic::System));
-    };
-
-    let mut subcommand = match subcmd.as_str() {
-        "--help" | "-h" => return Ok(Command::Help(HelpTopic::System)),
-        "up" => SystemSubcommand::Up,
-        "down" => SystemSubcommand::Down,
-        "status" => SystemSubcommand::Status,
-        "logs" => SystemSubcommand::Logs { follow: false },
-        "repair" => SystemSubcommand::Repair,
-        "reset-runtime" => SystemSubcommand::ResetRuntime,
-        other => return Err(unknown_argument(other)),
-    };
-    let mut system = None;
-    let mut repo_override = None;
-    let mut output_json = false;
-    let mut follow = false;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--system" => {
-                system = Some(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--system".to_owned(),
-                    },
-                )?)
-            }
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--follow" if matches!(subcommand, SystemSubcommand::Logs { .. }) => follow = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::System)),
-            other if other.starts_with('-') => return Err(unknown_argument(other)),
-            other => return Err(unknown_argument(other)),
+    let first = args.next();
+    let replacement = match first.as_deref() {
+        Some("up") => "Run `effigy container up` to start the environment",
+        Some("down") => "Run `effigy container down` to stop the environment",
+        Some("status") => "Run `effigy container status` to read environment state",
+        Some("logs" | "--follow") => "Run `effigy container logs` to read environment logs",
+        Some("repair") => "Run `effigy container profile repair` to recover the Colima runtime",
+        Some("reset-runtime") => {
+            "Run `effigy container profile reset-runtime` to stop the Colima runtime without deleting it"
         }
-    }
-
-    if matches!(subcommand, SystemSubcommand::Logs { .. }) {
-        subcommand = SystemSubcommand::Logs { follow };
-    }
-
-    Ok(Command::System(SystemArgs {
-        subcommand,
-        system,
-        repo_override,
-        output_json,
-    }))
+        Some("--help" | "-h") => {
+            "Use `effigy help container` for environment lifecycle and recovery help"
+        }
+        // No subcommand, or one this release never had: still name the
+        // lifecycle family rather than fall through as an unknown argument.
+        Some(_) | None => GENERAL_REPLACEMENT,
+    };
+    let spelling = match first.as_deref() {
+        Some(word) if !word.starts_with('-') => format!("`effigy system {word}`"),
+        _ => "`effigy system`".to_owned(),
+    };
+    Err(CliParseError::InvalidArguments(format!(
+        "{spelling} is retired in v0.15. {replacement}. {RETIRED_SYSTEM_SUFFIX}"
+    )))
 }
 
 pub(super) fn parse_workspace_command<I>(args: I) -> Result<Command, CliParseError>

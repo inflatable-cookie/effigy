@@ -69,7 +69,6 @@ fn is_top_level_builtin_command(name: &str) -> bool {
             | "run"
             | "runs"
             | "service"
-            | "system"
             | "tasks"
             | "workspace"
     )

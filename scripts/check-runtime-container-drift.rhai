@@ -89,7 +89,7 @@ failure_count += check_no_unlisted_matches(
     ["src/runner", "crates/effigy-runtime/src"],
     `Command::new\("(docker|colima|nerdctl)"`,
     #{ glob: "*.rs" },
-    `^(src/runner/doctor_ports\.rs|src/runner/bootstrap_command/mod\.rs|src/runner/system_command/workspace_permissions_gnu_accept\.rs)$`,
+    `^(src/runner/doctor_ports\.rs|src/runner/bootstrap_command/mod\.rs|src/runner/workspace_command/permissions_gnu_accept\.rs)$`,
 );
 
 failure_count += check_no_unlisted_matches(
@@ -97,7 +97,7 @@ failure_count += check_no_unlisted_matches(
     ["src/runner", "crates/effigy-runtime/src"],
     `compose_args\(`,
     #{ glob: "*.rs" },
-    `^(crates/effigy-runtime/src/container_manager\.rs|src/runner/managed_shell\.rs|src/runner/exec_command/transport\.rs|src/runner/exec_command/transport/colima\.rs|src/runner/container_runtime_prep/prep\.rs|src/runner/container_runtime_prep/mod\.rs|src/runner/container_command/support\.rs|src/runner/deferral/run\.rs|src/runner/execute/pipeline/managed\.rs|src/runner/system_command/workspace_provisioning\.rs)$`,
+    `^(crates/effigy-runtime/src/container_manager\.rs|src/runner/managed_shell\.rs|src/runner/exec_command/transport\.rs|src/runner/exec_command/transport/colima\.rs|src/runner/container_runtime_prep/prep\.rs|src/runner/container_runtime_prep/mod\.rs|src/runner/container_command/support\.rs|src/runner/deferral/run\.rs|src/runner/execute/pipeline/managed\.rs|src/runner/workspace_command/provisioning\.rs)$`,
 );
 
 failure_count += check_no_unlisted_matches(

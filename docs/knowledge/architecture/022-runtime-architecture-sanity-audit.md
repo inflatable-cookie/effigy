@@ -91,7 +91,7 @@ A new allowance needs a concrete adapter or debt owner; widening a directory
 pattern to make the check pass loses the boundary. Production callers in the
 same file as a legitimate fixture still fail: the GNU-findutils Colima
 acceptance lives in
-`src/runner/system_command/workspace_permissions_gnu_accept.rs`, not in
+`src/runner/workspace_command/permissions_gnu_accept.rs`, not in
 permission-prep production. QA-group scheduler submit consumes the
 already-captured invocation cwd. Member execution requests set
 `environment.cwd` to the group's resolved root (and capture there unless a

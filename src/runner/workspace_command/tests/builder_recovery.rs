@@ -232,23 +232,23 @@ impl Fixture {
         std::fs::create_dir_all(root.join("host-home")).unwrap();
         std::fs::write(
             root.join("scripts/build.rhai"),
-            include_str!("../../../../../scripts/build-linux-workspace-artifact.rhai"),
+            include_str!("../../../../scripts/build-linux-workspace-artifact.rhai"),
         )
         .unwrap();
         // Exercise the shipped declaration and Compose paths, not a test-only project.
-        let declaration = include_str!("../../../../../config/containers.toml");
+        let declaration = include_str!("../../../../config/containers.toml");
         std::fs::write(root.join("effigy.toml"), format!("[tasks.\"workspace:linux:artifact\"]\nrun = [{{ rhai = \"scripts/build.rhai\" }}]\n{declaration}")).unwrap();
         let fragment = root.join("infra/dev/catalog/linux-release-builder");
         std::fs::create_dir_all(&fragment).unwrap();
         std::fs::write(
             fragment.join("service.toml"),
-            include_str!("../../../../../infra/dev/catalog/linux-release-builder/service.toml"),
+            include_str!("../../../../infra/dev/catalog/linux-release-builder/service.toml"),
         )
         .unwrap();
         std::fs::write(
             fragment.join("compose.fragment.yml"),
             include_str!(
-                "../../../../../infra/dev/catalog/linux-release-builder/compose.fragment.yml"
+                "../../../../infra/dev/catalog/linux-release-builder/compose.fragment.yml"
             ),
         )
         .unwrap();

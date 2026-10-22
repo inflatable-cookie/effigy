@@ -6,7 +6,7 @@ use super::super::super::managed_shell::{
     InlineManagedExecRequest,
 };
 use super::super::super::runtime_session_context::current_runtime_session_context;
-use super::super::super::system_command::run_workspace_with_repo_root_and_cleanup_override;
+use super::super::super::workspace_command::run_workspace_with_repo_root_and_cleanup_override;
 use super::super::api::{
     ensure_inline_workspace_supported, resolve_execution_binding_resolution,
     ContainerExecutionBinding, InlineWorkspaceCapabilitySurface,

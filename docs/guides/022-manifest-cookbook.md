@@ -852,7 +852,7 @@ timeout_ms = 30000
 ```
 
 Use this when one repo should declare a reproducible developer substrate (VM +
-compose + gateway + workspace shell) that `effigy system up`, `effigy workspace`,
+compose + gateway + workspace shell) that `effigy container up`, `effigy workspace`,
 and managed `mode = "tui"` tasks can all bind to.
 
 Shape rules (current v0.3+ form):
@@ -863,7 +863,7 @@ Shape rules (current v0.3+ form):
   fragment (e.g. `postgres`, `redis`, `mariadb`, `workspace-rust-bun`).
 - `[systems.<name>.services.<svc>.health]` declares container health gates
   (`tcp = <port>`, `http = "<url>"`, `exec = ["..."]`, `timeout_ms = <N>`,
-  `interval_ms = <N>`) used by `health_wait = true` and `effigy system status`.
+  `interval_ms = <N>`) used by `health_wait = true` and `effigy container status`.
 - `[systems.<name>.workspaces.<ws>]` picks which service hosts the interactive
   workspace plus workspace-local overrides; defaults come from the system body.
 - generated compose is internal and immutable; read it with
@@ -872,10 +872,12 @@ Shape rules (current v0.3+ form):
   retired `compose_file`.
 
 Typical commands:
-- `effigy system up` / `effigy system down` / `effigy system status`
-- `effigy system logs --follow`
-- `effigy system repair` or `effigy system reset-runtime` for recovery
-- `effigy workspace` to open the resolved workspace shell after system is up
+- `effigy container up` / `effigy container down` / `effigy container status`
+- `effigy container logs --follow`
+- `effigy container profile repair` or `effigy container profile reset-runtime`
+  for runtime recovery
+- `effigy workspace` to open the resolved workspace shell after the environment
+  is up
 
 ### Multi-Catalog Monorepo Baseline
 

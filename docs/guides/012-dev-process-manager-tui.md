@@ -255,9 +255,9 @@ end of this chain:
    active bundle source the repo already declares
 2. `effigy service list` / `effigy service extract` for bundled service
    fragments when the repo needs to take ownership of one
-3. `effigy system up` / `effigy system status` for substrate lifecycle when
-   the manifest declares `[systems.<name>]`; or `effigy container up` for
-   the `[containers.<name>]` shape without surrounding system wiring
+3. `effigy container up` / `effigy container status` for substrate lifecycle;
+   without a name it resolves the `[systems].default` workspace container, and
+   `--system <NAME>` selects one declared system
 4. `effigy gateway up` / `effigy gateway status` for local domains and
    TLS-backed routes (usually auto-started via `gateway = true` on the
    managed task)
@@ -268,7 +268,7 @@ end of this chain:
    that under one named session front door
 
 That means `effigy dev` should normally be the repo's opinionated aggregator,
-not the only way the substrate can be used. Use `effigy system` + `effigy
+not the only way the substrate can be used. Use `effigy container` + `effigy
 workspace` when you want substrate access without launching the whole app
 concurrent; use `effigy dev` for daily runtime.
 
