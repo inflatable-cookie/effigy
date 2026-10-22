@@ -97,3 +97,32 @@ fn retired_demos_table_fails_with_its_explanation() {
     );
     assert!(stderr.contains("CHANGELOG.md"), "{stderr}");
 }
+
+#[test]
+fn retired_config_target_demos_fails_with_its_explanation() {
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("private fixture");
+    fs::write(
+        fixture.path().join("effigy.toml"),
+        "[tasks.build]\nrun = \"true\"\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .current_dir(fixture.path())
+        .args(["config", "--target", "demos"])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("config target demos");
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("`effigy config --target demos` was removed in v0.15"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("no replacement"), "{stderr}");
+    assert!(stderr.contains("CHANGELOG.md"), "{stderr}");
+    assert!(
+        !stderr.contains("supported: manifest"),
+        "the generic choice list must not stand in for the retirement reason: {stderr}"
+    );
+}

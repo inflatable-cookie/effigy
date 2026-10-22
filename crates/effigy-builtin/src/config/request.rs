@@ -103,6 +103,12 @@ const CONFIG_RUNNER_CHOICES: [(&str, ConfigTestRunner); 4] = [
     ("cargo-test", ConfigTestRunner::CargoTest),
 ];
 
+/// `config --target demos` was removed with the `[demos]` table (Q-009).
+const RETIRED_CONFIG_TARGET_DEMOS: &str =
+    "`effigy config --target demos` was removed in v0.15 with the `[demos]` table: the demo \
+    registry, receipts and browser are gone with no replacement, so delete `[demos]` and record \
+    terminal sessions with an external tool. See the v0.15.0 Removed entry in CHANGELOG.md";
+
 const CONFIG_USER_BACKEND_CHOICES: [(&str, UserContainerBackendPreference); 3] = [
     ("containerd", UserContainerBackendPreference::Containerd),
     ("colima-nerdctl", UserContainerBackendPreference::Containerd),
@@ -230,6 +236,16 @@ pub(super) fn parse_config_request(
             return Ok(ParseLoopAction::Handled);
         }
         if arg == "--target" {
+            // A retired value earns the retirement reason, not the generic
+            // invalid-choice list.
+            if parser
+                .remaining()
+                .first()
+                .is_some_and(|value| value.eq_ignore_ascii_case("demos"))
+            {
+                let _ = parser.next_value("`--target` requires a value for built-in `config`")?;
+                return Err(BuiltinError::task_invocation(RETIRED_CONFIG_TARGET_DEMOS));
+            }
             target = Some(parser.builtin_choice_flag_value(
                 "config",
                 "--target",

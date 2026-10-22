@@ -21,6 +21,11 @@ terms = [
   "DemoArgs",
   "DemoSubcommand",
   ".effigy/demo/",
+  "demo re-entry",
+  "demo task re-entry",
+  "demo surface",
+  "demo task",
+  "demo run",
 ]
 paths = [
   "crates/effigy-demo/",
@@ -45,6 +50,7 @@ paths = [
 config_keys = ["[demos", "--target demos"]
 allow = [
   "CHANGELOG.md",
+  "crates/effigy-builtin/src/config/request.rs",
   "crates/effigy-cli/src/command_parsing.rs",
   "crates/effigy-manifest/src/lib.rs",
   "docs/guides/085-v0.15.0-consumer-migration.md",

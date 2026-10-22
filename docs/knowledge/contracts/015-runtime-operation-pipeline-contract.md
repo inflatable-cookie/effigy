@@ -72,7 +72,7 @@ Required inputs:
 
 The resolved plan owns host, container, or local-container-handoff route
 selection. Rhai `exec::run(...)`, direct CLI, deferral, bootstrap, run-array,
-demo re-entry, and managed task dispatch must converge on equivalent plans for
+and managed task dispatch must converge on equivalent plans for
 equivalent inputs.
 
 ## Runtime Activation Rules
@@ -182,7 +182,6 @@ Minimum proof areas:
 - bootstrap task dispatch target preservation
 - Rhai `exec::run(... run_in=container ...)` with `stdin_file`
 - run-array embedded dispatch
-- demo task re-entry
 - managed dev activation identity and lease policy
 - `effigy exec` activation identity and handoff transport boundary
 - workspace seeded/bootstrap handoff cleanup and repo override propagation
