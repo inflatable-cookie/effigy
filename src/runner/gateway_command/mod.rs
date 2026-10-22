@@ -1917,10 +1917,26 @@ fn run_gateway_setup(
                 })?;
                 setup::command(run, cx, vec![mkcert.into(), "-install".into()], true)?;
             }
-            let mut argv = vec![
+            // The elevated child must authenticate the operator who owns the
+            // gateway directory (identity.rs `authenticated_elevated_operator`):
+            // the escalation marker, the operator UID claim, and HOME equal to
+            // that operator's passwd home. `sudo` strips the environment and
+            // `-H` would replace HOME, so pass all three through `env`, as the
+            // elevated identity reader does.
+            let operator_uid = nix::unistd::Uid::current();
+            let operator_home = nix::unistd::User::from_uid(operator_uid)
+                .map_err(std::io::Error::other)?
+                .ok_or_else(|| std::io::Error::other("operator account is missing"))?
+                .dir;
+            let mut home_assignment = std::ffi::OsString::from("HOME=");
+            home_assignment.push(operator_home.as_os_str());
+            let mut argv: Vec<std::ffi::OsString> = vec![
                 "/usr/bin/sudo".into(),
-                "-H".into(),
                 "--".into(),
+                "/usr/bin/env".into(),
+                home_assignment,
+                "EFFIGY_GATEWAY_ESCALATED=1".into(),
+                format!("EFFIGY_GATEWAY_OPERATOR_UID={}", operator_uid.as_raw()).into(),
                 std::env::current_exe()?.into(),
                 "gateway".into(),
                 "setup".into(),
