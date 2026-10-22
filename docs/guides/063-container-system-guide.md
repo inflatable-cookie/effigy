@@ -117,7 +117,6 @@ Useful backend controls:
 ```sh
 effigy config set containers.backend containerd
 effigy config set containers.backend docker
-effigy bootstrap <git-url> --backend docker
 effigy doctor --verbose
 ```
 
@@ -715,9 +714,9 @@ after the checkout is gone.
 
 Paseo worktree archive should call retire from `paseo.json`
 `worktree.teardown` before the checkout disappears. After the directory is
-gone, retry with `effigy container retire --scope <token> --yes`. Do not
-use `bootstrap teardown` for worker scopes; that command is only for
-`--fresh` bootstrap sessions. A failed retire must stay non-zero so the
+gone, retry with `effigy container retire --scope <token> --yes`. Bootstrap
+has no teardown of its own: environments own reset and retirement, so worker
+scopes are retired exactly as above. A failed retire must stay non-zero so the
 durable record remains and archive does not swallow residue.
 
 Worktrees removed without running their teardown (for example Queue task
@@ -1060,10 +1059,10 @@ Holder-based idle stop:
 The goal is one warm-runtime contract for non-shell tasks instead of separate
 behavior for deferred versus explicit container routing.
 
-For a fresh Bun worktree, prepare dependencies with `effigy bootstrap deps
-sync <path>` before QA. The default path uses the committed lock with `bun
-install --frozen-lockfile`. Built-in tests report this route when a selected
-Bun suite has no installed dependencies, before reporting source test failures.
+For a fresh Bun worktree, prepare dependencies with the repo's own dependency
+task before QA (normally the committed lock with `bun install
+--frozen-lockfile`). Built-in tests report this gap when a selected Bun suite
+has no installed dependencies, before reporting source test failures.
 
 ### Workspace Exec Identity
 
@@ -1214,7 +1213,7 @@ Push rules:
 ### Data Seed
 
 `effigy container data seed` stages local or OCI artifacts and invokes the
-standard `bootstrap:db-seed` task. It currently targets the repo default
+standard `data:seed` task. It currently targets the repo default
 container only.
 
 ```sh

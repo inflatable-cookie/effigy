@@ -905,3 +905,218 @@ fn anchor_spawn_overhead_is_measured() {
         std::fs::write(path, result.to_string()).unwrap();
     }
 }
+
+/// The no-anchor path (`Blocked::fork_with_nonce`) in its own session with a
+/// real controlling terminal. The owner gives the terminal to one foreground
+/// child and then to a second while the first still holds it: a `tcsetpgrp`
+/// from a background owner must not stop the owner. Every handover names the
+/// child's own process group, and the terminal returns to the owner's group.
+#[test]
+fn nononce_foreground_takes_the_terminal_from_the_background_and_hands_it_back() {
+    const OWNER: &str = "EFFIGY_KERNEL_TERMINAL_OWNER";
+    if let Some(home) = std::env::var_os(OWNER) {
+        nononce_foreground_owner(Path::new(&home));
+        return;
+    }
+    use std::io::Write;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::process::CommandExt;
+    let home = home();
+    let mut master = -1;
+    let mut slave = -1;
+    // SAFETY: initialized writable slots; null settings request OS defaults.
+    assert_eq!(
+        unsafe {
+            libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+    // SAFETY: openpty transferred two fresh distinct descriptors.
+    let mut master = unsafe { std::fs::File::from_raw_fd(master) };
+    let slave = unsafe { std::fs::File::from_raw_fd(slave) };
+    // SAFETY: live descriptors; observe the master nonblocking, never inherit it.
+    unsafe {
+        let flags = libc::fcntl(master.as_raw_fd(), libc::F_GETFL);
+        assert_eq!(
+            libc::fcntl(master.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK),
+            0
+        );
+        assert_eq!(
+            libc::fcntl(master.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC),
+            0
+        );
+    }
+    // Re-enter this same test binary in its own session rather than fork Rust
+    // in a threaded child: the owner needs a controlling terminal of its own.
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "custody::tests::nononce_foreground_takes_the_terminal_from_the_background_and_hands_it_back",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
+        .env(OWNER, home.path())
+        .stdin(slave)
+        .stdout(Stdio::null());
+    // SAFETY: only session and terminal syscalls run after fork, before exec.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut owner = OwnedChild(command.spawn().unwrap());
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut await_marker = |marker: &str| {
+        while !home.path().join(marker).exists() {
+            assert!(Instant::now() < deadline, "owner never wrote {marker}");
+            assert!(!owner_stopped(owner.0.id()), "the owner was stopped");
+            assert!(owner.0.try_wait().unwrap().is_none(), "owner exited early");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    await_marker("ready");
+    master.write_all(b"queued-input\n").unwrap();
+    await_marker("owner-done");
+    // macOS waits for its PTY peer during session-leader exit.
+    drop(master);
+    let status = owner.0.wait().unwrap();
+    assert!(status.success(), "terminal owner failed: {status:?}");
+}
+
+/// A stopped owner cannot write any marker: the whole point of the proof.
+fn owner_stopped(pid: u32) -> bool {
+    matches!(
+        crate::ident::process_state(pid),
+        Observed::Verified(crate::ident::ProcessState::Stopped, _)
+    )
+}
+
+fn nononce_foreground_owner(home: &Path) {
+    let cx = cx();
+    std::fs::write(home.join("ready"), b"yes").unwrap();
+    let child = |script: &str, gate: &Path| {
+        let spec = ProcessSpec {
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                script.into(),
+                "sh".into(),
+                gate.as_os_str().into(),
+            ],
+            cwd: home.into(),
+            env: BTreeMap::new(),
+            grace: Duration::from_millis(50),
+            lifetime: Lifetime::Finite(Duration::from_secs(15)),
+            terminal: Terminal::Foreground,
+            label: "no-anchor terminal proof".into(),
+        };
+        let mut blocked = spawn::Blocked::fork_with_nonce(
+            &spec,
+            "EFFIGY_CUSTODY_NONCE",
+            "terminal-proof",
+            cx.operation(),
+        )
+        .unwrap();
+        let pid = blocked.pid;
+        // The lease is taken before go, exactly as custody does: the workload
+        // never reads a background terminal.
+        let (stdout, stderr, lease) = blocked.take_streams();
+        let lease = lease.expect("a foreground child holds this owner's terminal");
+        blocked.go().unwrap();
+        blocked.executed(cx.operation()).unwrap();
+        drop(stderr);
+        (pid, lease, stdout)
+    };
+    let gate = |name: &str| home.join(name);
+    // The holder writes to the terminal, then waits (bounded) for its gate.
+    let (holder, holder_lease, holder_out) = child(
+        "printf 'a-ok' > /dev/tty; i=0; while [ ! -f \"$1\" ] && [ $i -lt 500 ]; do i=$((i+1)); sleep 0.02; done; printf 'a-done' > /dev/tty",
+        &gate("release-a"),
+    );
+    drop(holder_out);
+    assert_terminal(holder);
+    // The reader is spawned while the holder still owns the terminal, so this
+    // take happens from the background.
+    let (reader, reader_lease, mut reader_out) = child(
+        "i=0; while [ ! -f \"$1\" ] && [ $i -lt 500 ]; do i=$((i+1)); sleep 0.02; done; IFS= read -r line < /dev/tty && printf 'b-read:%s' \"$line\"",
+        &gate("release-b"),
+    );
+    assert_terminal(reader);
+    std::fs::write(gate("release-b"), b"go").unwrap();
+    let mut output = Vec::new();
+    read_to_eof(&mut reader_out, &mut output);
+    assert_eq!(exit_of(reader), 0);
+    drop(reader_lease);
+    // The holder still runs: the terminal is its own group's again.
+    assert_terminal(holder);
+    std::fs::write(gate("release-a"), b"go").unwrap();
+    assert_eq!(exit_of(holder), 0);
+    drop(holder_lease);
+    // SAFETY: observe this owner's own controlling terminal and group.
+    assert_eq!(
+        unsafe { libc::tcgetpgrp(0) },
+        unsafe { libc::getpgrp() },
+        "the owner did not get its terminal back"
+    );
+    assert_eq!(output, b"b-read:queued-input");
+    std::fs::write(home.join("owner-done"), b"yes").unwrap();
+}
+
+fn read_to_eof(pipe: &mut std::os::fd::OwnedFd, into: &mut Vec<u8>) {
+    use std::os::fd::AsRawFd;
+    let end = Instant::now() + Duration::from_secs(15);
+    loop {
+        let mut buffer = [0u8; 256];
+        // SAFETY: live nonblocking pipe and an initialized buffer.
+        let count =
+            unsafe { libc::read(pipe.as_raw_fd(), buffer.as_mut_ptr().cast(), buffer.len()) };
+        if count > 0 {
+            into.extend_from_slice(&buffer[..count as usize]);
+        } else if count == 0 {
+            return;
+        } else {
+            let error = std::io::Error::last_os_error();
+            assert!(
+                matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                ),
+                "terminal proof pipe: {error}"
+            );
+        }
+        assert!(Instant::now() < end, "workload output did not end");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// The terminal's foreground group is `pid`'s own group, as the workload set it.
+fn assert_terminal(pid: u32) {
+    // SAFETY: observe the live child's group and this owner's terminal.
+    let (foreground, group) = unsafe { (libc::tcgetpgrp(0), libc::getpgid(pid as i32)) };
+    assert_eq!(group, pid as i32, "the workload does not lead its group");
+    assert_eq!(foreground, group, "terminal group for workload {pid}");
+}
+
+fn exit_of(pid: u32) -> i32 {
+    let end = Instant::now() + Duration::from_secs(15);
+    loop {
+        match spawn::reap(pid) {
+            Ok(Some(exit)) => return exit.code,
+            Ok(None) => {}
+            Err(error) => panic!("reap {pid}: {error}"),
+        }
+        assert!(Instant::now() < end, "workload {pid} did not exit");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}

@@ -399,10 +399,18 @@ fn parse_gateway_help_is_scoped() {
 }
 
 #[test]
-fn parse_graph_help_is_scoped() {
-    let cmd =
-        parse_command(vec!["graph".to_owned(), "--help".to_owned()]).expect("parse should succeed");
-    assert_eq!(cmd, Command::Help(HelpTopic::Graph));
+fn parse_graph_is_retired_even_with_help() {
+    for args in [
+        vec!["graph".to_owned()],
+        vec!["graph".to_owned(), "--help".to_owned()],
+        vec!["graph".to_owned(), "explore".to_owned(), "x".to_owned()],
+    ] {
+        let error = parse_command(args).expect_err("retired graph must fail");
+        let message = error.to_string();
+        assert!(message.contains("was removed in v0.15"), "{message}");
+        assert!(message.contains("effigy test --plan"), "{message}");
+        assert!(message.contains("CHANGELOG.md"), "{message}");
+    }
 }
 
 #[test]

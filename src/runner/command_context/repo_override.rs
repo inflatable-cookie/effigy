@@ -16,7 +16,6 @@ pub(in crate::runner) fn command_repo_override(cmd: &Command) -> Option<PathBuf>
         Command::Workspace(args) => args.repo_override.clone(),
         Command::Gateway(_) => None,
         Command::Service(args) => args.repo_override.clone(),
-        Command::Graph(args) => args.repo_override.clone(),
         Command::Rhai(_) => None,
         Command::Skill(args) => match &args.subcommand {
             effigy_cli::SkillSubcommand::Run { repo_override, .. } => repo_override.clone(),
@@ -63,7 +62,6 @@ pub(in crate::runner) fn apply_repo_target_to_embedded_command(
         Command::State(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Workspace(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Service(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
-        Command::Graph(args) => assign_repo_override(&mut args.repo_override, &repo_root, mode),
         Command::Rhai(_) => {}
         Command::Skill(args) => {
             if let effigy_cli::SkillSubcommand::Run { repo_override, .. } = &mut args.subcommand {

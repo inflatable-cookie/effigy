@@ -109,8 +109,6 @@ fn public_help_families_and_current_contract_paths_are_documented() {
         );
     }
 
-    assert!(matrix.contains("status --refresh"));
-    assert!(matrix.contains("EFFIGY_GRAPH_TIMEOUT_MS"));
     assert!(matrix.contains("[docs_policy.graph]"));
 
     let root = read("README.md");
@@ -119,16 +117,12 @@ fn public_help_families_and_current_contract_paths_are_documented() {
         &root,
         &[
             "Route by job",
-            "`effigy graph` for code understanding",
             "`effigy tasks` for selector inventory",
             "`effigy doctor` when routing or repo health is unclear",
             "`effigy test --plan` when test execution shape matters",
         ],
     );
     assert!(!root.contains("start with `doctor`, `tasks`, and `test --plan`"));
-    let graph_guide = read("docs/guides/076-code-graph-and-agent-workflows.md");
-    assert!(graph_guide.contains("Status is always report-only"));
-    assert!(graph_guide.contains("flag warns for one release; update with `graph index`"));
     assert!(root.contains(".result.catalog_tasks[].task"));
     assert!(root.contains(".result.targets[].name"));
     assert!(!root.contains(".tasks[].name"));
@@ -308,7 +302,7 @@ fn help_first_discovery_paths_are_documented() {
 #[test]
 fn current_guidance_does_not_teach_namespace_prefixed_execution() {
     let forbidden = [
-        "`effigy repo graph`",
+        "`effigy repo scan`",
         "`effigy local container`",
         "`effigy deliver release`",
         "`effigy extend skill`",

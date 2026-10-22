@@ -62,6 +62,10 @@ pub enum Lifetime {
 pub enum Terminal {
     None,
     Pty,
+    /// The owner's terminal as the child's stdin, with the child's own process
+    /// group as the terminal's foreground group while it runs (a passphrase or
+    /// a `sudo` prompt). The lease ends when that child's exit is observed, so
+    /// one owner can run foreground children one after another.
     Foreground,
     /// The owner's own stdin, and its stdout and stderr unless `capture`:
     /// the operator's terminal or pipe, never an Effigy sink. The child's
@@ -696,6 +700,11 @@ impl ProcessCore {
         match spawn::peek(self.receipt.identity.pid) {
             Ok(Some(exit)) => {
                 self.exit = Some(exit);
+                // The foreground lease ends with the workload, not with the run:
+                // the owner gets its terminal straight back after each child, so
+                // a following sequential spawn starts from the foreground. The
+                // anchor, the group and the settle are not asked.
+                self.terminal.take();
                 Observed::Verified(exit, evidence())
             }
             Ok(None) => Observed::Unknown(UnknownReason::Inconsistent("leader running".into())),

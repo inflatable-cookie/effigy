@@ -33,7 +33,6 @@ pub enum Command {
     Workspace(WorkspaceArgs),
     Gateway(GatewayArgs),
     Service(ServiceArgs),
-    Graph(GraphArgs),
     Rhai(RhaiArgs),
     Skill(SkillArgs),
     Docs(DocsArgs),
@@ -126,7 +125,6 @@ pub enum HelpTopic {
     Workspace,
     Gateway,
     Service,
-    Graph,
     Rhai,
     Skill,
     Docs,
@@ -312,15 +310,6 @@ pub struct DocsArgs {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GraphArgs {
-    pub subcommand: GraphSubcommand,
-    pub repo_override: Option<PathBuf>,
-    pub output_json: bool,
-    /// Read committed files without waiting for or starting a refresh.
-    pub stale_index: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RhaiArgs {
     pub subcommand: RhaiSubcommand,
     pub output_json: bool,
@@ -329,38 +318,6 @@ pub struct RhaiArgs {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RhaiSubcommand {
     Surface,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GraphSubcommand {
-    Index,
-    Status {
-        refresh: bool,
-    },
-    Search {
-        query: String,
-        limit: Option<usize>,
-    },
-    Node {
-        id: String,
-        incoming: bool,
-        outgoing: bool,
-        limit: Option<usize>,
-    },
-    Affected {
-        changed_paths: Vec<String>,
-        read_stdin: bool,
-        depth: usize,
-        limit: Option<usize>,
-    },
-    Explore {
-        excerpts_only: bool,
-        request: String,
-        max_files: Option<usize>,
-        max_bytes: Option<usize>,
-        languages: Vec<String>,
-        paths: Vec<String>,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -432,17 +389,6 @@ pub enum DocsSubcommand {
     },
     AddLogIndex {
         log_path: PathBuf,
-    },
-    /// Bounded documentation evidence retrieval over the shared graph.
-    Context {
-        query: String,
-        max_sections: Option<usize>,
-        max_bytes: Option<usize>,
-        max_hops: Option<usize>,
-        /// Portfolio file (or directory) naming where opted-in repositories live.
-        sources: Option<PathBuf>,
-        /// Repeatable handle filter applied to the enumerated repositories.
-        only: Vec<String>,
     },
 }
 
@@ -577,7 +523,12 @@ pub struct WorkspaceArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootstrapArgs {
-    pub subcommand: BootstrapSubcommand,
+    /// The git URL to acquire. `None` uses the existing checkout.
+    pub repo_url: Option<String>,
+    pub path: Option<PathBuf>,
+    pub branch: Option<String>,
+    pub no_start: bool,
+    pub plan: bool,
     pub output_json: bool,
 }
 
@@ -586,21 +537,6 @@ pub struct UninstallArgs {
     pub plan: bool,
     pub yes: bool,
     pub output_json: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BootstrapBackendOverride {
-    Containerd,
-    Docker,
-}
-
-impl BootstrapBackendOverride {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Containerd => "containerd",
-            Self::Docker => "docker",
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -613,42 +549,6 @@ pub struct BootstrapDbSeedInput {
 pub struct ContainerDbDumpInput {
     pub target: Option<String>,
     pub path: PathBuf,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BootstrapSubcommand {
-    Clone {
-        repo_url: String,
-        path: Option<PathBuf>,
-        branch: Option<String>,
-        backend: Option<BootstrapBackendOverride>,
-        db_seeds: Vec<BootstrapDbSeedInput>,
-        fresh: bool,
-        no_prompt: bool,
-        reuse_path: bool,
-        start: bool,
-        plan: bool,
-    },
-    Teardown {
-        yes: bool,
-    },
-    DepsSync {
-        mode: BootstrapDepsSyncMode,
-        refresh_lock: bool,
-        paths: Vec<String>,
-    },
-    ChildrenStatus,
-    ChildrenSync {
-        fetch_only: bool,
-        checkout: bool,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BootstrapDepsSyncMode {
-    Both,
-    JsOnly,
-    RustOnly,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

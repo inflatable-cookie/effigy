@@ -36,7 +36,7 @@ idempotently.
 When a caller wants explicit non-interactive setup execution:
 
 ```sh
-effigy init --apply-actions manifest.effigy_toml,graph_status.inspect --json
+effigy init --apply-actions manifest.effigy_toml,secrets_surface.inspect --json
 ```
 
 `--version` shows the installed version (for example `v0.4.0`). Use it to confirm
@@ -224,8 +224,9 @@ paths:
   `effigy config set containers.backend containerd`
 - switch the machine default to Docker Desktop:
   `effigy config set containers.backend docker`
-- force one bootstrap session:
-  `effigy bootstrap <git-url> --backend docker`
+- pin one repo to a backend: bootstrap has no backend flag (Q-009); the
+  declared environment and the machine default choose it, so set the machine
+  default with `effigy config set containers.backend docker`
 
 If the repo uses local HTTPS routes (`tls = true`), also install `mkcert` and
 run the one-time trust-store install:
@@ -316,11 +317,14 @@ Initialization does not import package scripts.
 ```sh
 effigy bootstrap git@github.com:inflatable-cookie/loophole.git --plan
 effigy bootstrap git@github.com:inflatable-cookie/loophole.git
-effigy bootstrap git@github.com:inflatable-cookie/loophole.git --start
+effigy bootstrap
 ```
 
 Use this when the repo should describe its own bring-up path in `[bootstrap]`
-instead of relying on a setup checklist or local shell history.
+instead of relying on a setup checklist or local shell history. It clones (or
+uses this checkout), materialises pinned `[sources.<name>]`, initialises
+submodules when `submodules = true`, runs the `setup` selectors and then the
+`start` selector; `--no-start` skips the last step.
 
 ### Switch to automation-safe output
 
@@ -331,28 +335,6 @@ effigy --json test --plan
 ```
 
 Use JSON mode when CI, scripts, or agents are consuming Effigy output.
-
-### Build a bounded repo map before broad scanning
-
-```sh
-effigy graph index
-effigy graph status --json
-effigy graph explore "trace release orchestrator" --max-files 6 --max-bytes 12288 --json
-git diff --name-only | effigy graph affected --stdin --json
-effigy graph explore --excerpts-only "trace release orchestrator" --max-files 8 --max-bytes 4096 --json
-```
-
-Use this when an agent needs the first files to read without spraying `rg`
-across the whole repo.
-
-If `graph status --json` reports `stale_paths`, re-run `effigy graph index --json`
-before trusting query results.
-
-If the repo is changing while you work:
-
-```sh
-effigy graph index --json
-```
 
 ## 7) Manage Secrets
 

@@ -396,7 +396,7 @@ pub fn catalog_source_roots(manifest: &Path) -> Result<CatalogSourceRoots, Manif
 }
 fn notice(message: &str) {
     // A single bounded diagnostic per process; nested manifest discovery can
-    // resolve the same checkout repeatedly (completion and graph in particular).
+    // resolve the same checkout repeatedly (completion in particular).
     static EMITTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !EMITTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
         eprintln!("[bundle] {message}");

@@ -149,10 +149,7 @@ fn run_deep_doctor_reports_missing_child_bootstrap_and_skips_health() {
 
     let err = run_deep_doctor_task(root.clone(), &["--catalog", "member"])
         .expect_err("missing child bootstrap must fail deep doctor");
-    assert_doctor_non_zero_contains(
-        err,
-        &["health.task.bootstrap", "effigy bootstrap deps sync member"],
-    );
+    assert_doctor_non_zero_contains(err, &["health.task.bootstrap", "[bootstrap].setup"]);
     assert!(
         !marker.exists(),
         "member health must not run before dependency bootstrap"
@@ -617,52 +614,6 @@ fn run_deep_doctor_rejects_missing_install_for_pnpm_isolated_member() {
         !marker.exists(),
         "isolated pnpm member health must not run on the workspace root install"
     );
-}
-
-#[test]
-fn run_doctor_reports_stale_graph_index_with_refresh_remediation() {
-    let root = temp_workspace("doctor-stale-graph-index");
-    fs::create_dir_all(root.join("src")).expect("mkdir src");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.health]\nrun = \"printf health-ok\"\n",
-    );
-    fs::write(
-        root.join("src/lib.rs"),
-        "pub fn release_graph() { helper(); }\nfn helper() {}\n",
-    )
-    .expect("write rust");
-    effigy_codegraph::run_index(&root).expect("graph index");
-    fs::write(
-        root.join("src/lib.rs"),
-        "pub fn release_graph() { helper(); helper(); }\nfn helper() {}\n",
-    )
-    .expect("rewrite rust");
-
-    let out = run_doctor_task(root, &[]).expect("doctor run");
-    assert_output_contains_all(
-        &out,
-        &[
-            "graph.index",
-            "graph index is not current",
-            "effigy graph index",
-        ],
-    );
-}
-
-#[test]
-fn run_doctor_does_not_flag_missing_graph_index() {
-    let root = temp_workspace("doctor-no-graph-index");
-    fs::create_dir_all(root.join("src")).expect("mkdir src");
-    write_manifest(
-        &root.join("effigy.toml"),
-        "[tasks.health]\nrun = \"printf health-ok\"\n",
-    );
-    fs::write(root.join("src/lib.rs"), "pub fn release_graph() {}\n").expect("write rust");
-
-    let out = run_doctor_task(root, &[]).expect("doctor run");
-    assert_output_contains_all(&out, &["No findings."]);
-    assert_output_excludes_all(&out, &["graph.index", "graph status --refresh"]);
 }
 
 #[test]

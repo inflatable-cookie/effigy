@@ -18,6 +18,7 @@ mod manifest_section;
 pub mod portfolio;
 mod qa_groups;
 mod retired_keys;
+pub mod sources;
 mod task_defs;
 pub mod task_runtime;
 mod test_config;
@@ -37,14 +38,13 @@ pub use composition::{
     ManifestCompositionEdge, ManifestCompositionOverride, ManifestCompositionValueSource,
 };
 pub use config_sections::{
-    load_committed_docs_policy_sources, ManifestBootstrapConfig, ManifestBootstrapRun,
-    ManifestBootstrapStart, ManifestBootstrapStartEntry, ManifestBootstrapStartTable,
-    ManifestBootstrapSubmodulesPolicy, ManifestBundleBase, ManifestBundleConfig,
-    ManifestContainerConfig, ManifestContainerDataConfig, ManifestContainerDnsConfig,
-    ManifestContainerDnsDomainDefaults, ManifestContainerDnsRouteConfig, ManifestContainerDriver,
-    ManifestContainerExecAliasConfig, ManifestContainerExecAliasTableConfig,
-    ManifestContainerHostConfig, ManifestContainerHostMount, ManifestContainerHostMountTable,
-    ManifestContainerHostProcess, ManifestContainerHostProcessRestart, ManifestContainerOnTaskExit,
+    load_committed_docs_policy_sources, ManifestBootstrapConfig, ManifestBundleBase,
+    ManifestBundleConfig, ManifestContainerConfig, ManifestContainerDataConfig,
+    ManifestContainerDnsConfig, ManifestContainerDnsDomainDefaults,
+    ManifestContainerDnsRouteConfig, ManifestContainerDriver, ManifestContainerExecAliasConfig,
+    ManifestContainerExecAliasTableConfig, ManifestContainerHostConfig, ManifestContainerHostMount,
+    ManifestContainerHostMountTable, ManifestContainerHostProcess,
+    ManifestContainerHostProcessRestart, ManifestContainerOnTaskExit,
     ManifestContainerSecretDelivery, ManifestContainerSecretsConfig,
     ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
     ManifestContainersConfig, ManifestDataConfig, ManifestDataTargetConfig,
@@ -56,11 +56,11 @@ pub use config_sections::{
     ManifestDocsPolicyGraphRelationConfig, ManifestDocsPolicySourcesConfig,
     ManifestEnvSchemaConfig, ManifestInlineWorkspaceContainerConfig, ManifestIsolationAdoption,
     ManifestIsolationConfig, ManifestJsPackageManager, ManifestPackageManagerConfig,
-    ManifestReleaseConfig, ManifestScanConfig, ManifestSecretKeyConfig, ManifestSecretTarget,
-    ManifestSecretsBackend, ManifestSecretsConfig, ManifestSecretsExternalConfig,
-    ManifestSecretsVaultConfig, ManifestSystemConfig, ManifestSystemMount,
-    ManifestSystemMountTable, ManifestSystemsConfig, ManifestTaskDefaultsConfig,
-    ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
+    ManifestPinnedSourceConfig, ManifestReleaseConfig, ManifestScanConfig, ManifestSecretKeyConfig,
+    ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig,
+    ManifestSecretsExternalConfig, ManifestSecretsVaultConfig, ManifestSystemConfig,
+    ManifestSystemMount, ManifestSystemMountTable, ManifestSystemsConfig,
+    ManifestTaskDefaultsConfig, ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
 };
 pub use execution_binding::{
     resolve_task_execution_binding, resolve_task_execution_binding_from_parts,
@@ -76,6 +76,10 @@ pub use qa_groups::{
     ManifestQaGroupMember, ManifestQaGroupTable, ManifestQaLifecycle, ManifestQaMemberKind,
     ManifestQaMemberSurface, ManifestQaScopePolicy, ManifestQaSection, QaGroupDefinitionContext,
     QaScopeToken,
+};
+pub use sources::{
+    inspect_pinned_sources, prepare_pinned_sources, resolve_pinned_sources, PinnedSourceReport,
+    PinnedSourceSpec, PinnedSourceState,
 };
 use task_defs::deserialize_tasks;
 pub use task_runtime::{
@@ -157,6 +161,7 @@ pub const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &[
     "docs_policy",
     "task_defaults",
     "bootstrap",
+    "sources",
     "isolation",
     "containers",
     "systems",
@@ -205,6 +210,11 @@ pub struct TaskManifest {
     pub task_defaults: Option<ManifestTaskDefaultsConfig>,
     #[serde(default)]
     pub bootstrap: Option<ManifestBootstrapConfig>,
+    /// Pinned extra sources acquired beside this checkout (contract 020).
+    /// Declared as `[sources.<name>]`; replaces the removed
+    /// `[bootstrap].children`.
+    #[serde(default, deserialize_with = "deserialize_sources")]
+    pub sources: BTreeMap<String, ManifestPinnedSourceConfig>,
     #[serde(default)]
     pub isolation: Option<ManifestIsolationConfig>,
     #[serde(default)]
@@ -215,7 +225,8 @@ pub struct TaskManifest {
     pub distribution: Option<ManifestDistributionConfig>,
     #[serde(default)]
     pub release: Option<ManifestReleaseConfig>,
-    /// Retired in v0.15 with no replacement; refused with the reason.
+    /// Retired in v0.15; each demo converts to an ordinary task. Refused with
+    /// the conversion recipe.
     #[serde(default, rename = "demos", deserialize_with = "reject_demos")]
     _retired_demos: Option<toml::Value>,
     #[serde(default, deserialize_with = "deserialize_tasks")]
@@ -243,14 +254,58 @@ fn reject_demos<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<toml::Value>, D::Error> {
     let _: serde::de::IgnoredAny = serde::Deserialize::deserialize(deserializer)?;
-    Err(serde::de::Error::custom("`[demos]` was removed in v0.15 with no replacement: the demo registry, receipts and browser are gone; delete the table and record terminal sessions with an external tool. See the v0.15.0 Removed entry in CHANGELOG.md"))
+    Err(serde::de::Error::custom(format!(
+        "`[demos]` was removed in v0.15: the demo registry, receipts and browser are gone, and {}. See the v0.15.0 Removed entry in CHANGELOG.md",
+        effigy_core::retirement_text::DEMO_TO_TASK_RECIPE
+    )))
+}
+
+fn deserialize_sources<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, ManifestPinnedSourceConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = <toml::Value as serde::Deserialize>::deserialize(deserializer)?;
+    let sources =
+        <BTreeMap<String, ManifestPinnedSourceConfig> as serde::Deserialize>::deserialize(value)
+            .map_err(serde::de::Error::custom)?;
+    for (name, source) in &sources {
+        if name.trim().is_empty() || name.contains('/') || name.contains(':') {
+            return Err(serde::de::Error::custom(format!(
+                "pinned source `{name}` needs a plain handle: no whitespace, '/' or ':'"
+            )));
+        }
+        let inline = source
+            .rev
+            .as_deref()
+            .is_some_and(|rev| !rev.trim().is_empty());
+        let from_file = source
+            .rev_file
+            .as_deref()
+            .is_some_and(|file| !file.trim().is_empty());
+        match (inline, from_file) {
+            (true, true) => {
+                return Err(serde::de::Error::custom(format!(
+                    "pinned source `{name}` declares both `rev` and `rev_file`; keep exactly one so the pin is never ambiguous"
+                )))
+            }
+            (false, false) => {
+                return Err(serde::de::Error::custom(format!(
+                    "pinned source `{name}` needs `rev` or `rev_file`; a source is never advanced silently (see CHANGELOG.md)"
+                )))
+            }
+            _ => {}
+        }
+    }
+    Ok(sources)
 }
 
 fn reject_catalog_graph<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<toml::Value>, D::Error> {
     let _: serde::de::IgnoredAny = serde::Deserialize::deserialize(deserializer)?;
-    Err(serde::de::Error::custom("`[catalog.graph]` was removed in v0.15; remove the table; `effigy graph` indexes the whole checkout (use `graph explore --path <PREFIX>` to narrow results)"))
+    Err(serde::de::Error::custom("`[catalog.graph]` was removed in v0.15; remove the table. The code graph is gone in v0.15 with no replacement: use `rg` for code navigation (see CHANGELOG.md)"))
 }
 
 #[derive(Debug, serde::Deserialize)]

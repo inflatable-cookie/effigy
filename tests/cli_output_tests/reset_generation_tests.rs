@@ -1,6 +1,6 @@
 //! Public reset/teardown must never send Compose an unpublished generation.
 use effigy_test_support::Fixture as FixtureRoot;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -107,42 +107,6 @@ fn reset_publishes_fresh_and_changed_compose_and_keeps_sibling_files() {
     assert!(last["args"].as_array().unwrap().iter().any(|a| a == "-v"));
     assert_eq!(fs::read(sibling).unwrap(), sibling_bytes);
     assert!(Path::new(first["files"][0].as_str().unwrap()).is_file());
-}
-
-#[test]
-fn bootstrap_teardown_prepares_generated_compose_and_removes_generated_images() {
-    let f = Fixture::new();
-    fs::write(f.repo.join("effigy.toml"), "[containers]\ndefault='web'\n[containers.web]\nprimary_service='app'\n[containers.web.services.app]\ncatalog='php-fpm'\n").unwrap();
-    let prospective = f.run(&["container", "render", "web"]);
-    assert!(!Path::new(prospective["result"]["path"].as_str().unwrap()).exists());
-    let runtime = f.repo.join(".effigy/runtime");
-    fs::create_dir_all(runtime.join("compose")).unwrap();
-    let legacy = runtime.join("compose/legacy.yml");
-    fs::write(&legacy, "legacy sibling sentinel").unwrap();
-    let record = runtime.join("bootstrap-fresh-session.json");
-    fs::write(
-        &record,
-        json!({"session_id":"reset-proof","root_repo":f.repo,"repos":[f.repo],"active":true})
-            .to_string(),
-    )
-    .unwrap();
-    let result = f.run(&["bootstrap", "teardown", "--yes"]);
-    assert_eq!(
-        result["result"]["result"]["reset_containers"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    assert!(!record.exists());
-    assert_eq!(
-        fs::read_to_string(legacy).unwrap(),
-        "legacy sibling sentinel"
-    );
-    let calls = f.calls();
-    let down = calls.iter().find(|c| c["args"][0] == "compose").unwrap();
-    assert!(down["args"].as_array().unwrap().iter().any(|a| a == "-v"));
-    assert!(calls.iter().any(|c| c["args"][0] == "image"), "{calls:?}");
 }
 
 #[test]

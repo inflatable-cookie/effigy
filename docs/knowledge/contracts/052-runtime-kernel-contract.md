@@ -879,6 +879,27 @@ Exit codes: cancelled is 128 plus the signal number (INT 130, TERM 143,
 HUP 129). A `Foreground` child receives the terminal with `tcsetpgrp`; the
 kernel restores it on exit.
 
+Terminal handover (effigy#272): one owner runs any number of `Foreground`
+children one after another — `effigy gateway setup` runs `mkcert -install` and
+then `/usr/bin/sudo -H -- effigy gateway setup`. The rule has four parts.
+
+- The workload's handover names the workload's own process group, read from
+  the child after it became a group leader and before it ran. The group anchor
+  joins that group; it never leads it and never holds the terminal.
+- The owner blocks `SIGTTOU` on the calling thread around every `tcsetpgrp`,
+  taking and restoring alike. A handover from the background — the previous
+  child's lease, a restored owner group — is routine, never a stop.
+- The lease ends when that child's exit is observed, which is where a wait or
+  a poll first sees it, not when the anchor retires and not at settle. The
+  owner's group is the terminal's foreground group again before the next
+  sequential spawn, so no second take starts from the background.
+- Only the owner's own group, or a group this owner already leases to a
+  foreground child, is displaced. A terminal another program holds, or stdin
+  that is not a terminal, takes no lease; the child keeps its inherited stdin
+  and the run is unaffected. Restoration prefers a still-leased group and
+  otherwise the owner, so no reaped group is ever named (`SIGTTOU`, `TOSTOP`
+  and a group anchor are all exercised on a real pty).
+
 #### Invariants
 
 - I-P1: the owner exists before the first spawn. `spawn` takes `&mut Run`,
@@ -971,6 +992,25 @@ kernel restores it on exit.
   window and is reported as such.
 - A descendant that clears its environment survives recovery as `Unknown`
   residue and is never signalled by group number.
+- `custody_sequential_foreground_spawns_keep_the_owner_in_the_foreground` and
+  `custody_sequential_foreground_spawns_survive_tostop`: on a real pty, one
+  owner runs two `Terminal::Foreground` children in sequence, the first
+  writing to the terminal and the second reading a line from it, with
+  `TOSTOP` set in the second case. The owner never enters state `T`, each
+  child reads and writes the terminal, and the owner's own group is the
+  terminal's foreground group after each child exits — before the run
+  settles (effigy#272).
+- `nononce_foreground_takes_the_terminal_from_the_background_and_hands_it_back`:
+  the same handover without the group anchor (`Blocked::fork_with_nonce`),
+  where the second child is given the terminal while the first still holds
+  it, so the take happens from the background. Each handover names the
+  child's own group, and the lease released first returns the terminal to the
+  group still leased, then to the owner.
+- `proof:gateway:setup:terminal` runs
+  `setup::tests::setup_sequence_runs_two_foreground_commands_in_one_run`: the
+  gateway setup sequence (`mkcert -install`, then `/usr/bin/sudo -H -- effigy
+  gateway setup`) through `command(…, terminal = true)` twice in one run
+  against fake absolute programs, settling with `Complete` cleanup.
 - No secret bytes appear in `ps -o args` during any run.
 - A Rhai script cannot swallow a stop.
 
@@ -1660,10 +1700,9 @@ for the rest.
 | 10 | Private vault | `<checkout>/.effigy/secrets/local.vault` (+ `.prev`) | secrets | `Gate(Store vault)` + pointer commit | previous generation kept | no: masked from the workspace mount (§8.2) |
 | 11 | Key wraps | secrets lane decides | secrets | pointer commit with the vault | with the vault generation | no: masked from the workspace mount when beside the vault (§8.2) |
 | 12 | Machine preferences | `~/.effigy/config.toml` | config | `atomic_replace` | user-owned | no |
-| 13 | Graph store | `<checkout>/.effigy/graph/` | graph | RefreshDerived, `Gate(Store graph)` | per worktree | read |
-| 14 | Other derived caches | per owner | owners | RefreshDerived; corrupt is a miss | owner-defined | — |
-| 15 | Reports and exports | explicit paths | engines | `atomic_replace` | user-owned | — |
-| 16 | Platform setup outputs | `/etc/resolver/`, launchd, completion | setup adapters | ownership verified before change (R3) | until removed by setup | no |
+| 13 | Other derived caches | per owner | owners | RefreshDerived; corrupt is a miss | owner-defined | — |
+| 14 | Reports and exports | explicit paths | engines | `atomic_replace` | user-owned | — |
+| 15 | Platform setup outputs | `/etc/resolver/`, launchd, completion | setup adapters | ownership verified before change (R3) | until removed by setup | no |
 
 ### 7.4 Retention
 
@@ -2180,7 +2219,6 @@ Environment reconciler adoption, tranche 3 (effigy#230, 2026-10-20):
 | Deploy reports success for unexecuted work | `src/runner/deploy_command/transaction.rs:109`, `:287` | R5 and I-OC1; ownership is Q-003 |
 | Vault written in place, unlocked | `src/runner/secret_vault.rs:177-194`; `crates/effigy-rhai/src/rhai_secrets.rs:665` | `Gate(Store vault)` + pointer commit (§5.5) |
 | Deps state: try-only lock, local atomic helper | `crates/effigy-deps/src/state.rs:497`, `:573` | gate with deadline; `atomic_replace` |
-| Graph reads and explicit refresh | `crates/effigy-codegraph/src/refresh.rs`; `storage.rs`; graph contract 045 | RefreshDerived owns a kernel store gate; Observe probes only. Queries never refresh; rollback-journal readers create no files. Existing WAL is migrated by explicit index. |
 | Catalog pack store lock | the retired catalog-pack runtime (removed under Q-005, effigy#234) | none: catalog sources reuse the bundle source pins |
 | Pending-facts journal with file and directory `fsync` | the retired host-run client (removed, effigy#227) | the pattern `atomic_replace` absorbs |
 | Doctor publication marker | `crates/effigy-scan/src/execution/doctor_inventory.rs:586` | `Gate` |

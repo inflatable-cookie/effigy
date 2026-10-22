@@ -440,10 +440,10 @@ The `Root Resolution` section shows:
 - the active Docker context, when Docker is installed
 
 Fix:
-- pin a global preference with `effigy config set containers.backend docker` or
-  `effigy config set containers.backend containerd`
-- for one-shot override, pass `--backend docker` or `--backend containerd` to
-  `bootstrap`
+- pin the machine preference with `effigy config set containers.backend docker`
+  or `effigy config set containers.backend containerd`; bootstrap has no
+  per-invocation backend flag (Q-009), so this preference and the repo's
+  declared environment choose the backend
 - clear a pinned preference with `effigy config unset containers.backend`
 
 When the repo is already bootstrapped and you are trying to understand what it
@@ -613,12 +613,12 @@ need no `index.js`. Local manager store links and verified workspace store
 links remain valid, including isolated member layouts.
 
 Fix:
-- prepare the named checkout with `effigy bootstrap deps sync <path>` (the
-  frozen Bun install for a committed `bun.lock`). When the scope has no valid
-  local install and no lock at all — `missing-local-lock`, typically a
-  standalone child repository — seed one first with `effigy bootstrap deps
-  sync --refresh-lock <path>` for Bun (pnpm and npm installs create their own
-  lock), then rerun `effigy doctor --deep`,
+- prepare the named checkout with the repo's own dependency task (the one
+  `[bootstrap].setup` selects, normally a frozen Bun install for a committed
+  `bun.lock`). When the scope has no valid local install and no lock at all —
+  `missing-local-lock`, typically a standalone child repository — create the
+  lock with the repo's lock-refresh task for Bun (pnpm and npm installs create
+  their own lock), then rerun `effigy doctor --deep`,
 - when the scope intentionally shares an ancestor locked workspace, declare it
   as a member in the manager-authoritative source: that ancestor's
   `package.json` `workspaces` patterns for Bun/npm, or its
@@ -640,7 +640,7 @@ Fix:
   - npm hoists by default; `.npmrc` `install-strategy = nested | shallow |
     linked` needs the member's own `node_modules`.
 
-  Run `effigy bootstrap deps sync <member>` so the member install is created.
+  Run the member's own dependency task so the member install is created.
 
 ## Expected Outcome
 

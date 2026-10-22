@@ -337,47 +337,35 @@ Finite `container logs --json` and `container <NAME> logs --json` snapshots supp
 
 ### One-Command Repo Bring-Up
 
-Give a git URL. Effigy clones, runs the repo's declared setup, and starts the dev stack:
+Give a git URL. Effigy clones, prepares its pinned sources, runs the repo's
+declared `setup` selectors, then starts its `start` selector:
 
 ```bash
 effigy bootstrap git@github.com:acme/app.git --plan    # Preview first
 effigy bootstrap git@github.com:acme/app.git           # Clone, setup, start
+effigy bootstrap                                        # Prepare this checkout
 ```
 
 The repo declares its own bring-up in `effigy.toml`:
 
 ```toml
 [bootstrap]
-run = { task = "bootstrap deps sync" }
-start = "dev"
+setup = ["workspace:js:prepare", "db:seed:schema"]  # ordered task selectors
+start = "dev"                                       # one selector; --no-start skips it
+submodules = true                                   # recursive init at recorded commits
+
+[sources.book]                     # pinned extra source, usually a sibling
+git = "git@github.com:acme/book.git"
+rev = "<commit>"                   # or rev_file = "book.rev"
+path = "../book"
 ```
 
-If the repo has a `.gitmodules` file, bootstrap initializes and updates those
-submodules recursively before running setup. Set `submodules = "none"` only when
-bootstrap should skip them.
-
-Need companion repos alongside it? Declare child repos in the same manifest:
-
-```toml
-[[bootstrap.children]]
-path = "shared-lib"
-repo = "git@github.com:acme/shared-lib.git"
-run = { task = "bootstrap deps sync" }
-required = true
-
-[[bootstrap.children]]
-path = "ops-tools"
-repo = "git@github.com:acme/ops-tools.git"
-run = { task = "bootstrap deps sync" }
-required = false
-```
-
-One command clones the root repo, clones every child into the right relative paths, runs each repo's setup, and starts the dev stack. After the initial bring-up, keep children in sync:
-
-```bash
-effigy bootstrap children status   # See what's ahead/behind or missing
-effigy bootstrap children sync     # Pull and fast-forward all children
-```
+`setup` and `start` are ordinary task selectors, so environment, gateway,
+readiness, secrets and cleanup behave exactly as for `effigy <selector>`. A
+pinned source is cloned at its committed `rev`; an existing working copy with
+local changes or another HEAD is reported as drift and left untouched, and
+`effigy doctor` reports it. Bootstrap never resets a working copy, runs no
+package manager and needs no seed flag — a first seed is a task in `setup`.
 
 Effigy itself keeps adjacent provider, bundle, and action repos under
 `external/` as Git submodules. In a normal checkout, hydrate them with:
@@ -385,8 +373,6 @@ Effigy itself keeps adjacent provider, bundle, and action repos under
 ```bash
 git submodule update --init --recursive
 ```
-
-Pass `--db-seed ./latest.sql` to stage a database dump before setup runs. Pass `--fresh` to isolate runtime state from earlier local runs. One command, one consistent path, no local folklore.
 
 ### Manifest Composition
 
@@ -437,7 +423,6 @@ for standalone proof tasks and the built-in legacy syntax migration.
 | Cut releases | [`docs/guides/051-release-orchestration.md`](docs/guides/051-release-orchestration.md) |
 | Wire up CI | [`docs/guides/024-ci-and-automation-recipes.md`](docs/guides/024-ci-and-automation-recipes.md) |
 | Test against local library edits | [`docs/guides/077-local-dependency-linking.md`](docs/guides/077-local-dependency-linking.md) |
-| Agent repo map / code graph | [`docs/guides/076-code-graph-and-agent-workflows.md`](docs/guides/076-code-graph-and-agent-workflows.md) |
 | Full guide map | [`docs/guides/README.md`](docs/guides/README.md) |
 
 Command reference: [`docs/guides/025-command-reference-matrix.md`](docs/guides/025-command-reference-matrix.md)
@@ -452,15 +437,12 @@ Effigy was designed so that AI agents can operate a repo without tribal knowledg
 effigy --json doctor             # Repo health and routing diagnostics
 effigy --json tasks              # Every task, catalog, and description
 effigy --json test --plan        # Resolved test plan without execution
-effigy --json graph explore "<task>"   # Bounded code-understanding packet (--path <PREFIX> narrows results)
 effigy <task>                    # Execute supported repo work
 effigy --help                    # Every command and flag, grouped by job
 effigy --json release simulate   # Machine-readable dry-runs
 ```
 
-Route by job: use `effigy graph` for code understanding, `effigy tasks` for selector inventory, `effigy doctor` when routing or repo health is unclear, and `effigy test --plan` when test execution shape matters. Then run supported work through structured CLI output. No grepping Makefiles, no parsing package.json scripts, no guessing which directory to `cd` into.
-
-Graph workflow guide: [`docs/guides/076-code-graph-and-agent-workflows.md`](docs/guides/076-code-graph-and-agent-workflows.md). One graph indexes the whole checkout, including catalog members. Use `graph node <ID|PATH> --in` or `--out` for relationships and `graph explore --excerpts-only` for ranked excerpts. Concurrent reads report `refreshing (n/N)` over committed files; timeouts preserve progress.
+Route by job: use `rg` and the documentation index (`docs/README.md`) for code and documentation understanding, `effigy tasks` for selector inventory, `effigy doctor` when routing or repo health is unclear, and `effigy test --plan` when test execution shape matters. Then run supported work through structured CLI output. No grepping Makefiles, no parsing package.json scripts, no guessing which directory to `cd` into.
 
 For agents that want a head start, we ship a skill that teaches Claude Code, OpenAI Codex, Cursor, and 50+ other agents the exact patterns:
 
@@ -482,5 +464,5 @@ effigy release gates       # Check release readiness
 If `effigy` is not on `PATH` yet:
 
 ```bash
-cargo run --bin effigy -- bootstrap:local
+cargo run --bin effigy -- install:local
 ```

@@ -107,8 +107,11 @@ default_workspace = "{{ inputs.default_workspace }}"
 container = "{{ inputs.container_name }}"
 
 [bootstrap]
-run = [{ rhai = "{{ bundle.root }}/scripts/write-env-if-present.rhai" }]
+setup = ["bootstrap:env"]
 start = "dev"
+
+[tasks."bootstrap:env"]
+run = [{ rhai = "{{ bundle.root }}/scripts/write-env-if-present.rhai" }]
 
 [tasks.dev]
 workspace = "{{ inputs.default_workspace }}"

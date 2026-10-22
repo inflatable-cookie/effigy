@@ -74,7 +74,7 @@ pub(crate) fn render_init_help<R: HelpRenderer + ?Sized>(renderer: &mut R) -> He
         "init scope",
         &[
             "plain `effigy init` creates missing baseline `effigy.toml`, README, managed `AGENTS.md` guidance, and local Effigy ignore rules; it does not create a project-local Effigy skill copy",
-            "plain TTY `effigy init` prompts for baseline setup and runnable setup jobs such as graph indexing, bundle inspection, and secrets inspection; health checks stay as next-step guidance",
+            "plain TTY `effigy init` prompts for baseline setup and runnable setup jobs such as bundle inspection and secrets inspection; health checks stay as next-step guidance",
             "existing project `effigy.toml` and `README.md` files are preserved by the plain initializer",
             "the installed shared Effigy Agent Skill is the maintained guidance source; init reports supported user-root discovery and never downloads, creates, or refreshes local/global skill copies by default",
             "`skill.codex_project` remains an explicit `--apply-actions` opt-in that snapshots maintained skill files into `.agents/skills/effigy`; matching local files may be replaced, and additional local files are preserved",

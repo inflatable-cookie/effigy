@@ -76,5 +76,5 @@ fn follow_up_renderer_surfaces_real_commands() {
     let rendered = render_follow_up_jobs_excluding(&jobs, &std::collections::BTreeSet::new());
     assert!(!rendered.contains("effigy tasks migrate"));
     assert!(rendered.contains("effigy bundle inspect"));
-    assert!(rendered.contains("effigy graph status --json"));
+    assert!(!rendered.contains("effigy graph"));
 }

@@ -1,9 +1,0 @@
-# Escalation rota playbook
-
-State: live
-Steward: ada
-
-## Paging order
-
-The escalation rota names the paging order for a stuck rebalance: steward
-first, then the standby steward, then the duty charter holder.

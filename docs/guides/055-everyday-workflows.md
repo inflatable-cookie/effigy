@@ -117,39 +117,17 @@ Deep dive:
 - [`022-manifest-cookbook.md`](022-manifest-cookbook.md)
 - [`023-troubleshooting-and-failure-recipes.md`](023-troubleshooting-and-failure-recipes.md)
 
-### Agent code-understanding context
+### Agent code- and documentation-understanding context
 
 ```sh
-effigy graph index
-effigy graph status --json
-effigy graph explore "trace deploy provider export" --max-files 6 --max-bytes 12288 --json
-git diff --name-only | effigy graph affected --stdin --json
-effigy graph explore --excerpts-only "trace deploy provider export" --max-files 8 --max-bytes 4096 --json
-effigy graph search release --limit 10 --json
+rg -n "<symbol>" crates src
+rg -n "<authority-shaped question>" docs
 ```
 
-Use the graph before broad file scanning when the job is code understanding and you need:
-
-- the first files to read
-- a symbol neighborhood
-- bounded machine-readable context
-- a narrowed validation target after edits
-
-Do not treat this as the front door for every task. For discovery, health, and
-test routing, start with `effigy doctor`, `effigy tasks`, and
-`effigy test --plan`.
-
-If `graph status --json` reports `stale_paths`, refresh with `effigy graph index --json`
-before trusting query output.
-
-If the repo is changing while you work:
-
-```sh
-effigy graph index --json
-```
-
-Deep dive:
-- [`076-code-graph-and-agent-workflows.md`](076-code-graph-and-agent-workflows.md)
+Effigy has no code graph in v0.15: `rg` finds code, `docs/README.md` indexes the
+knowledge, and `effigy test --plan` narrows validation after edits. For
+discovery, health, and test routing, start with `effigy doctor`, `effigy tasks`,
+and `effigy test --plan`.
 
 ## 4) Use One Local-Dev Chain
 
@@ -226,8 +204,8 @@ effigy container data seed --db-seed app=oci://ghcr.io/acme/private-data:uat
 # Dump and push to OCI in one command
 effigy container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --push --json
 
-# Bootstrap a new checkout with an OCI seed
-effigy bootstrap git@github.com:acme/app.git --db-seed app=oci://ghcr.io/acme/seed:v1.0.0
+# Seed a checkout during bootstrap through the repo's own setup task
+effigy bootstrap git@github.com:acme/app.git
 ```
 
 Workflow rules:
@@ -253,7 +231,7 @@ move that detail into `effigy.toml`.
 effigy init
 effigy init --check --json
 effigy init --checklist --json
-effigy init --apply-actions manifest.effigy_toml,graph_status.inspect --json
+effigy init --apply-actions manifest.effigy_toml,secrets_surface.inspect --json
 effigy config --schema --minimal
 ```
 

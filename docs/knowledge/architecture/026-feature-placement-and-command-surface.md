@@ -60,7 +60,7 @@ The exact primary help taxonomy is:
 | --- | --- |
 | work | `<task>`, `<catalog>/<task>`, `tasks`, `test`, `doctor`, `init` |
 | `local` | `container`, `workspace`, `gateway`, `service`, `exec` |
-| `repo` | `graph`, `scan`, `docs`, `contracts` |
+| `repo` | `scan`, `docs`, `contracts` |
 | `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap` |
 | `extend` | `skill`, `rhai` |
 | `admin` | `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`; `config completion` moves with `config` |
@@ -72,13 +72,15 @@ or `secrets` without creating another primary route.
 
 ## Repository Intelligence
 
-Graph, scan, docs, and contracts remain Effigy core. They provide
-provider-neutral, deterministic repository navigation and policy evidence for
-operators, agents, and CI.
+Scan, docs, and contracts remain Effigy core. They provide provider-neutral,
+deterministic policy evidence for operators, agents, and CI. v0.15 removed the
+code graph (`effigy graph`, `effigy docs context`) and the three graph-backed
+scanners; `rg` plus the `docs/README.md` index carry code and documentation
+navigation.
 
 Grouping improves discovery; it does not become execution grammar or justify a
-second implementation. `effigy graph` and `effigy docs` are the canonical
-routes and keep current manifest deferral behavior.
+second implementation. `effigy scan` and `effigy docs` are the canonical routes
+and keep current manifest deferral behavior.
 
 ## Local Runtime And Providers
 

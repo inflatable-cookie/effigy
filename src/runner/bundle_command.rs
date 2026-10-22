@@ -175,7 +175,10 @@ fn source_preparation() -> Result<effigy_manifest::SourcePreparation, RunnerErro
         budget: std::time::Duration::from_secs(120),
     })
 }
-pub(in crate::runner) fn prepare_sources_for_manifest(manifest: &Path) -> Result<(), RunnerError> {
+/// Acquire missing bundle and catalog sources through the kernel Prepare owner.
+pub(in crate::runner) fn prepare_bundle_sources_for_manifest(
+    manifest: &Path,
+) -> Result<(), RunnerError> {
     if !effigy_manifest::bundle_sources_need_preparation(manifest)
         .map_err(|err| RunnerError::task_invocation(err.to_string()))?
     {
@@ -184,6 +187,23 @@ pub(in crate::runner) fn prepare_sources_for_manifest(manifest: &Path) -> Result
     effigy_manifest::prepare_bundle_sources(manifest, &source_preparation()?)
         .map_err(|err| RunnerError::task_invocation(err.to_string()))?;
     Ok(())
+}
+
+/// Clone each missing pinned `[sources.<name>]` working copy. An existing
+/// checkout is inspected and never reset, fetched forward or cleaned.
+pub(in crate::runner) fn prepare_pinned_sources_for_manifest(
+    manifest: &Path,
+) -> Result<(), RunnerError> {
+    effigy_manifest::prepare_pinned_sources(manifest)
+        .map_err(|err| RunnerError::task_invocation(err.to_string()))?;
+    Ok(())
+}
+
+/// Prepare every missing pinned source for bootstrap and the first `dev`
+/// (contract 020): bundle and catalog sources first, then extra sources.
+pub(in crate::runner) fn prepare_sources_for_manifest(manifest: &Path) -> Result<(), RunnerError> {
+    prepare_bundle_sources_for_manifest(manifest)?;
+    prepare_pinned_sources_for_manifest(manifest)
 }
 
 fn discover_bundle_manifest_path(root_or_cwd: impl AsRef<Path>) -> Result<PathBuf, RunnerError> {

@@ -1,7 +1,6 @@
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::Path;
 
-use effigy_bootstrap::BootstrapStagedDbSeed;
 use effigy_builtin::{PromptDecision, PromptPolicy};
 
 use super::RunnerError;
@@ -28,7 +27,7 @@ pub(super) fn maybe_confirm_container_data_pull_production(
 
 pub(super) fn maybe_confirm_container_data_seed(
     container_name: &str,
-    staged_db_seeds: &[BootstrapStagedDbSeed],
+    staged_db_seeds: &[crate::runner::db_seed::StagedDbSeed],
     output_json: bool,
     yes: bool,
 ) -> Result<(), RunnerError> {
@@ -198,7 +197,7 @@ pub(super) fn confirm_container_data_pull_production_from_io<R: BufRead, W: Writ
 
 pub(super) fn confirm_container_data_seed_from_io<R: BufRead, W: Write>(
     container_name: &str,
-    staged_db_seeds: &[BootstrapStagedDbSeed],
+    staged_db_seeds: &[crate::runner::db_seed::StagedDbSeed],
     input: &mut R,
     output: &mut W,
 ) -> Result<(), RunnerError> {

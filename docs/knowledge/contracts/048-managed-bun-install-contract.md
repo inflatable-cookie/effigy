@@ -1,72 +1,58 @@
-# Managed Bun Install Contract
+# 048 - Managed Bun Install Contract
+
+Status: **retired in v0.15** (Q-009). Bootstrap no longer installs dependencies;
+this document records what replaced the retired route and what still holds.
 
 Owner: Bootstrap maintainers
 
-## Purpose
+Related: [020](020-remote-bundle-sources-git-and-oci-delivery-contract.md),
+[047](047-bounded-doctor-and-scan-cache-contract.md),
+[bootstrap guide 057](../../guides/057-bootstrap-repo-bringup.md),
+[retired concepts](../retired.toml)
 
-Define reproducible Bun preparation through `effigy bootstrap deps sync`, an
-explicit route to regenerate the text lockfile, and safe handling of Finder
-metadata copied from local `file:` dependencies into the managed install.
+## What was retired
 
-## Bun Preparation
+`effigy bootstrap deps sync`, its `--js-only`/`--rust-only`/`--refresh-lock`
+flags, the `effigy.bootstrap.deps.v1` payload, the bootstrap-owned missing-lock
+preflight, the Bun invocation and the Finder-metadata cleanup are gone. The
+command refuses with the replacement, and the
+`bootstrap-children-and-runtime-flags` entry in
+[retired.toml](../retired.toml) names every retired spelling.
 
-`bootstrap deps sync` selects Bun from `[package_manager].js` in the nearest
-Effigy manifest.
+## What replaced it
 
-- The normal path requires `bun.lock` or `bun.lockb` at the selected Bun
-  workspace root and checks for it before invoking Bun.
-- A missing lock is an actionable error that names the required refresh
-  command. Effigy must not let Bun silently proceed from `package.json` with
-  no lock.
-- The normal path runs `bun install --frozen-lockfile`. This path does not
-  update the committed lock.
-- `--refresh-lock` is the explicit regeneration path. It is supported only
-  for Bun and runs `bun install --save-text-lockfile`, which can create or
-  update `bun.lock`.
-- The operator reviews and commits the generated lock, then runs the normal
-  frozen path.
+Dependency preparation is a repo-owned task selector:
 
-Refreshing is a deliberate install action, not a fallback from frozen
-preparation. It does not change `deps pin bun`: pinning edits the consumer
-manifest only, and its install workflow remains owned by contract
-[`040`](040-bun-committed-dependency-pinning-contract.md).
+```toml
+[bootstrap]
+setup = ["workspace:js:prepare"]
+start = "dev"
+```
 
-Before executing a selected built-in Bun test suite, Effigy checks whether its
-locked workspace has `node_modules`. A fresh checkout without that directory
-fails with a bounded diagnostic naming `effigy bootstrap deps sync <path>`.
-Suites with an explicit `bun install` setup step handle their own hydration;
-workspaces without a committed Bun lock do not receive this frozen route hint.
+- `setup` holds ordinary task selectors, so the repo decides how to install
+  (frozen lock, refresh path, pnpm, npm or something else) and how to clean up
+  before or after. There is no bootstrap-owned package-manager policy.
+- A lock refresh is a deliberate repo task, not a bootstrap flag.
+- `effigy bootstrap` runs `setup` after it has acquired the checkout and its
+  pinned sources, and reports the selector it ran.
 
-## Local File Dependency Metadata
+## What still holds
 
-After a successful managed Bun install, Effigy removes entries named
-`.DS_Store`, prefixed `._`, or named `__MACOSX` from the selected workspace's
-`node_modules` tree.
-
-- Cleanup is limited to `node_modules` under the selected install root.
-- Recursive cleanup does not follow symlinks. If `node_modules` itself is a
-  symlink, Effigy leaves it alone.
-- Source files in local dependency checkouts remain untouched.
-- Other installed dependency files, including `package.json` and source
-  files, remain intact.
-
-Effigy does not edit a sibling dependency to make Bun install succeed. A Bun
-failure remains an install failure; cleanup runs only after Bun succeeds.
-
-## Ownership
-
-- `effigy-cli` owns the `--refresh-lock` grammar and validation.
-- The bootstrap runner owns missing-lock preflight, Bun invocation, and
-  metadata cleanup.
-- `effigy.bootstrap.deps.v1` stays stable; operation command text identifies
-  the frozen or refresh invocation.
+- A built-in Bun test suite whose locked workspace has no `node_modules` fails
+  with a bounded diagnostic before reporting source test failures, naming the
+  repo's own dependency task (the one `[bootstrap].setup` selects). Suites with
+  an explicit `bun install` setup step handle their own hydration.
+- `effigy doctor --deep` reports the same gap as `health.task.bootstrap` with the
+  observed install root, lock root and missing declared dependencies, and names
+  the same repo-owned preparation (contract
+  [047](047-bounded-doctor-and-scan-cache-contract.md)).
+- Effigy never edits a sibling dependency checkout to make an install succeed.
+  A failure stays an install failure of the task that ran it.
 
 ## Acceptance
 
-- Missing lock fails before Bun starts with a diagnostic that names
-  `--refresh-lock`.
-- Refresh creates or updates `bun.lock`; a subsequent normal preparation uses
-  `--frozen-lockfile`.
-- A successful local `file:` dependency install leaves Finder metadata out of
-  managed `node_modules` while preserving real package files and every source
-  file.
+- The retired `bootstrap deps sync` spellings refuse with a replacement and a
+  changelog pointer.
+- A missing local install is reported by `effigy doctor --deep` and by a
+  selected built-in Bun suite, and both name the repo-owned dependency task.
+- No bootstrap path runs a package manager.

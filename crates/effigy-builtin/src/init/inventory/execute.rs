@@ -1,8 +1,7 @@
 use std::path::Path;
 
 use effigy_cli::{
-    BundleArgs, BundleSubcommand, Command, GraphArgs, GraphSubcommand, SecretsArgs,
-    SecretsSubcommand, TaskInvocation,
+    BundleArgs, BundleSubcommand, Command, SecretsArgs, SecretsSubcommand, TaskInvocation,
 };
 
 use super::model::{InitActionReport, SetupActionOutcome, SetupActionStatus, SetupExecutionKind};
@@ -168,9 +167,7 @@ fn execute_delegated_job(
         )));
     };
     let status = match id {
-        "graph_index.build" | "secrets_vault.init" | "bundle_sync.run" => {
-            SetupActionStatus::Applied
-        }
+        "secrets_vault.init" | "bundle_sync.run" => SetupActionStatus::Applied,
         _ => SetupActionStatus::Inspected,
     };
     Ok((status, Some(output), "command executed".to_owned()))
@@ -194,20 +191,6 @@ fn task_invocation_for_job(id: &str) -> Option<TaskInvocation> {
 fn command_for_job(id: &str, target_root: &Path) -> Option<Command> {
     let repo_override = Some(target_root.to_path_buf());
     match id {
-        "graph_status.inspect" => Some(Command::Graph(GraphArgs {
-            subcommand: GraphSubcommand::Status { refresh: false },
-            repo_override,
-            output_json: true,
-
-            stale_index: false,
-        })),
-        "graph_index.build" => Some(Command::Graph(GraphArgs {
-            subcommand: GraphSubcommand::Index,
-            repo_override,
-            output_json: true,
-
-            stale_index: false,
-        })),
         "secrets_surface.inspect" => Some(Command::Secrets(SecretsArgs {
             subcommand: SecretsSubcommand::Doctor,
             repo_override,

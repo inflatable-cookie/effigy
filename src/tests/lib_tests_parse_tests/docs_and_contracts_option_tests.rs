@@ -389,150 +389,18 @@ fn parse_docs_removed_flat_check_spelling_reports_unknown_argument() {
 }
 
 #[test]
-fn parse_docs_context_with_budgets_and_repo_override() {
-    let cmd = parse_command(vec![
-        "docs".to_owned(),
-        "context".to_owned(),
-        "graph freshness".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-        "--max-sections".to_owned(),
-        "4".to_owned(),
-        "--max-bytes".to_owned(),
-        "8000".to_owned(),
-        "--max-hops".to_owned(),
-        "2".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Docs(DocsArgs {
-            subcommand: DocsSubcommand::Context {
-                query: "graph freshness".to_owned(),
-                max_sections: Some(4),
-                max_bytes: Some(8000),
-                max_hops: Some(2),
-                sources: None,
-                only: Vec::new(),
-            },
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_docs_context_defaults_budgets_to_none() {
-    let cmd = parse_command(vec![
+fn parse_docs_context_is_retired_with_an_actionable_message() {
+    let error = parse_command(vec![
         "docs".to_owned(),
         "context".to_owned(),
         "release gates".to_owned(),
     ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Docs(DocsArgs {
-            subcommand: DocsSubcommand::Context {
-                query: "release gates".to_owned(),
-                max_sections: None,
-                max_bytes: None,
-                max_hops: None,
-                sources: None,
-                only: Vec::new(),
-            },
-            repo_override: None,
-            output_json: false,
-        })
-    );
-}
-
-#[test]
-fn parse_docs_context_accepts_a_portfolio_and_repeated_only_handles() {
-    let cmd = parse_command(vec![
-        "docs".to_owned(),
-        "context".to_owned(),
-        "release gates".to_owned(),
-        "--sources".to_owned(),
-        "/tmp/portfolio.toml".to_owned(),
-        "--only".to_owned(),
-        "effigy".to_owned(),
-        "--only".to_owned(),
-        "northstar".to_owned(),
-    ])
-    .expect("parse should succeed");
-
-    assert_eq!(
-        cmd,
-        Command::Docs(DocsArgs {
-            subcommand: DocsSubcommand::Context {
-                query: "release gates".to_owned(),
-                max_sections: None,
-                max_bytes: None,
-                max_hops: None,
-                sources: Some(PathBuf::from("/tmp/portfolio.toml")),
-                only: vec!["effigy".to_owned(), "northstar".to_owned()],
-            },
-            repo_override: None,
-            output_json: false,
-        })
-    );
-}
-
-#[test]
-fn parse_docs_context_requires_values_for_sources_and_only() {
-    for flag in ["--sources", "--only"] {
-        let missing = parse_command(vec![
-            "docs".to_owned(),
-            "context".to_owned(),
-            "release gates".to_owned(),
-            flag.to_owned(),
-        ]);
-        assert!(
-            missing.is_err(),
-            "`{flag}` without a value must be a usage error"
-        );
-    }
-}
-
-#[test]
-fn parse_docs_context_requires_one_query() {
-    let missing = parse_command(vec!["docs".to_owned(), "context".to_owned()])
-        .expect_err("missing query should fail");
-    assert_eq!(missing.to_string(), "<QUERY> requires a value");
-
-    let extra = parse_command(vec![
-        "docs".to_owned(),
-        "context".to_owned(),
-        "one".to_owned(),
-        "two".to_owned(),
-    ])
-    .expect_err("second positional should fail");
-    assert_eq!(extra.to_string(), "unknown argument: two");
-}
-
-#[test]
-fn parse_docs_context_rejects_non_positive_budgets() {
-    for (flag, value) in [
-        ("--max-sections", "0"),
-        ("--max-bytes", "0"),
-        ("--max-hops", "nope"),
-    ] {
-        let error = parse_command(vec![
-            "docs".to_owned(),
-            "context".to_owned(),
-            "query".to_owned(),
-            flag.to_owned(),
-            value.to_owned(),
-        ])
-        .expect_err("invalid budget should fail");
-        assert_eq!(
-            error.to_string(),
-            format!("{flag} value `{value}` is invalid (expected a positive integer)")
-        );
-    }
+    .expect_err("retired docs context must fail");
+    let message = error.to_string();
+    assert!(message.contains("was removed in v0.15"), "{message}");
+    assert!(message.contains("docs/README.md"), "{message}");
+    assert!(message.contains("effigy docs check"), "{message}");
+    assert!(message.contains("CHANGELOG.md"), "{message}");
 }
 
 #[test]
