@@ -1,0 +1,12 @@
+# Copied from jal-accounts (DecodeLabs legacy site) as composed with the
+# decodelabs bundle on v0.14.1.
+[manifest]
+minimum_effigy_version = "0.9.0"
+
+[bootstrap]
+run = [{ rhai = "scripts/write-env-if-present.rhai" }]
+start = "dev"
+submodules = "recursive"
+
+[tasks.dev]
+run = "printf dev"

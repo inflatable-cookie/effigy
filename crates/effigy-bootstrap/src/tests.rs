@@ -123,16 +123,46 @@ fn a_plan_reports_an_unreadable_manifest_without_failing() {
     let fixture = tempfile::tempdir().expect("temp dir");
     let checkout = fixture.path().join("app");
     std::fs::create_dir_all(&checkout).expect("mkdir");
-    std::fs::write(checkout.join("effigy.toml"), "[bootstrap]\nchildren = []\n")
+    std::fs::write(checkout.join("effigy.toml"), "[bootstrap]\nsetup = 5\n")
         .expect("write manifest");
     let request = resolve_bootstrap_request(fixture.path(), None, Some(&checkout), None, true)
         .expect("request");
     let plan = plan_bootstrap_request(&request).expect("plan");
     assert!(plan.manifest_found);
+    assert!(plan.refusals.is_empty(), "{:?}", plan.refusals);
     let reason = plan.manifest_unreadable.as_deref().unwrap_or_default();
-    assert!(reason.contains("[bootstrap].children"), "{reason}");
+    assert!(reason.contains("bootstrap"), "{reason}");
     let text = render_bootstrap_plan(&plan, false);
     assert!(text.contains("manifest: unreadable"), "{text}");
+}
+
+#[test]
+fn a_plan_reports_retired_bootstrap_refusals_with_the_migration() {
+    let fixture = tempfile::tempdir().expect("temp dir");
+    let checkout = fixture.path().join("app");
+    std::fs::create_dir_all(&checkout).expect("mkdir");
+    std::fs::write(
+        checkout.join("effigy.toml"),
+        "[bootstrap]\nstart = \"dev\"\n\n[[bootstrap.children]]\npath = \"../book\"\nrepo = \"git@example.test:book.git\"\n",
+    )
+    .expect("write manifest");
+    let request = resolve_bootstrap_request(fixture.path(), None, Some(&checkout), None, true)
+        .expect("request");
+    let plan = plan_bootstrap_request(&request).expect("plan");
+    assert!(
+        plan.manifest_unreadable.is_none(),
+        "{:?}",
+        plan.manifest_unreadable
+    );
+    assert_eq!(plan.refusals.len(), 1, "{:?}", plan.refusals);
+    assert!(plan.refusals[0].contains("[bootstrap].children"));
+    assert!(plan.refusals[0].contains("[sources.<name>]"));
+    let text = render_bootstrap_plan(&plan, false);
+    assert!(text.contains("refused:"), "{text}");
+    assert!(text.contains("[sources.<name>]"), "{text}");
+    let json: serde_json::Value =
+        serde_json::from_str(&render_bootstrap_plan(&plan, true)).expect("plan json");
+    assert_eq!(json["refusals"].as_array().map(Vec::len), Some(1));
 }
 
 fn source_report(state: PinnedSourceState, dirty: bool) -> PinnedSourceReport {
@@ -231,6 +261,7 @@ fn plan_progress_variants_are_constructible() {
         },
         manifest_found: false,
         manifest_unreadable: None,
+        refusals: Vec::new(),
         sources: Vec::new(),
         submodules: false,
         setup: Vec::new(),

@@ -1,0 +1,15 @@
+[manifest]
+minimum_effigy_version = "0.10.0"
+extend = ["bootstrap.children"]
+
+[bootstrap]
+run = [{ rhai = "{{ bundle.root }}/scripts/bootstrap.rhai" }]
+start = "dev"
+
+[[bootstrap.children]]
+path = "../book"
+repo = "git@example.test:book.git"
+branch = "main"
+
+[tasks.dev]
+run = "printf dev"

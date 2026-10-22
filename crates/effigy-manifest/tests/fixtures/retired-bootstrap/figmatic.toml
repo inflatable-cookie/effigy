@@ -1,0 +1,23 @@
+# Copied from figmatic's v0.14.1 effigy.toml: a compact `run` definition plus
+# required children.
+[bootstrap]
+run = { task = "setup" }
+start = "dev"
+
+[[bootstrap.children]]
+path = "../longhorn"
+repo = "git@github.com:inflatable-cookie/longhorn.git"
+branch = "main"
+required = true
+
+[[bootstrap.children]]
+path = "../poodle"
+repo = "git@github.com:inflatable-cookie/poodle.git"
+branch = "main"
+required = true
+
+[tasks.setup]
+run = "printf setup"
+
+[tasks.dev]
+run = "printf dev"

@@ -20,9 +20,7 @@ use support::{
 };
 
 fn load_bootstrap(manifest_path: &Path) -> Result<Option<ManifestBootstrapConfig>, BootstrapError> {
-    let manifest = effigy_manifest::load_task_manifest(manifest_path)
-        .map_err(|error| BootstrapError::task_invocation(error.to_string()))?;
-    Ok(manifest.bootstrap)
+    effigy_bootstrap::load_manifest_bootstrap(manifest_path)
 }
 
 /// Record the selector order beside the checkout so setup-before-start is

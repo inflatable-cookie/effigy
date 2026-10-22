@@ -17,6 +17,7 @@ mod loaded_catalog;
 mod manifest_section;
 pub mod portfolio;
 mod qa_groups;
+mod retired_bootstrap;
 mod retired_keys;
 pub mod sources;
 mod task_defs;
@@ -77,6 +78,7 @@ pub use qa_groups::{
     ManifestQaMemberSurface, ManifestQaScopePolicy, ManifestQaSection, QaGroupDefinitionContext,
     QaScopeToken,
 };
+pub use retired_bootstrap::RetiredBootstrapDeclaration;
 pub use sources::{
     inspect_pinned_sources, prepare_pinned_sources, resolve_pinned_sources, PinnedSourceReport,
     PinnedSourceSpec, PinnedSourceState,
@@ -210,6 +212,12 @@ pub struct TaskManifest {
     pub task_defaults: Option<ManifestTaskDefaultsConfig>,
     #[serde(default)]
     pub bootstrap: Option<ManifestBootstrapConfig>,
+    /// What the one-release `[bootstrap]` retirement translation read for this
+    /// manifest. It is never part of the TOML shape:
+    /// [`load_task_manifest_with_inspection`] emits its notice once per run and
+    /// `effigy bootstrap` refuses with its refusals.
+    #[serde(skip)]
+    pub retired_bootstrap: RetiredBootstrapDeclaration,
     /// Pinned extra sources acquired beside this checkout (contract 020).
     /// Declared as `[sources.<name>]`; replaces the removed
     /// `[bootstrap].children`.

@@ -233,5 +233,15 @@ payload carries `plan` instead of the executed-only keys.
 | `effigy bootstrap --backend <b>` | the declared environment plus the machine backend preference |
 | `effigy bootstrap --start` | start is the default |
 
-Every retired spelling refuses with the replacement and points at
-[CHANGELOG.md](../../CHANGELOG.md).
+Every retired spelling in this table is a migration, not a hard stop for the
+whole v0.15 line: a v0.14.1 manifest still loads so `effigy tasks`, selectors,
+`container`, `test` and every other non-bootstrap command keep working. The
+manifest translation reads `run` as `setup` (selectors, with inline steps as
+internal tasks), the `submodules` policy string as a boolean and a
+multi-selector `start` chain as one internal task, and prints one deprecation
+notice per manifest (stderr and `effigy doctor`, never `--json` stdout).
+`effigy bootstrap` alone refuses the retired-only surfaces (`children`,
+`bootstrap deps sync`, `--db-seed`/`bootstrap:db-seed`) with the replacement
+above and points at [CHANGELOG.md](../../CHANGELOG.md); the translation is
+removed after v0.15. See
+[guide 085](085-v0.15.0-consumer-migration.md).
