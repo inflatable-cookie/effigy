@@ -23,7 +23,6 @@ const CURRENT_HELP_TOPICS: &[HelpTopic] = &[
     HelpTopic::Skill,
     HelpTopic::Docs,
     HelpTopic::Contracts,
-    HelpTopic::Artifact,
     HelpTopic::Container,
     HelpTopic::Bootstrap,
     HelpTopic::Release,
@@ -52,7 +51,6 @@ const CURRENT_TOP_LEVEL_HELP_ROUTES: &[(&str, HelpTopic)] = &[
     ("skill", HelpTopic::Skill),
     ("docs", HelpTopic::Docs),
     ("contracts", HelpTopic::Contracts),
-    ("artifact", HelpTopic::Artifact),
     ("container", HelpTopic::Container),
     ("bootstrap", HelpTopic::Bootstrap),
     ("release", HelpTopic::Release),
@@ -101,7 +99,6 @@ const CONTRACT_GROUP_INVENTORIES: &[(HelpGroup, &[&str])] = &[
     (
         HelpGroup::Deliver,
         &[
-            "effigy artifact",
             "effigy state",
             "effigy deploy",
             "effigy release",

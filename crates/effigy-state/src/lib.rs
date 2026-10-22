@@ -1,4 +1,5 @@
 mod apply;
+pub mod artifact;
 mod capture;
 mod config;
 mod history;

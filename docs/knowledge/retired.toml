@@ -735,6 +735,27 @@ config_keys = []
 allow = ["CHANGELOG.md", "src/runner/managed_run/legacy.rs", "docs/knowledge/contracts/052-runtime-kernel-contract.md"]
 
 [[retired]]
+id = "effigy-artifact-command"
+retired = "2026-10-23 (v0.15, Q-009)"
+replacement = "`effigy state artifact inspect|stage|capture` keeps the moved verbs, their flags and their effigy.artifact.*.v1 payloads; layered captures stay on `effigy state capture`. Rhai scripts call `state::artifact_inspect`, `state::artifact_stage` and `state::artifact_capture`. The effigy-artifacts crate is now the effigy_state::artifact module."
+owner = "docs/knowledge/contracts/014-artifact-substrate-contract.md"
+terms = ["effigy artifact inspect", "effigy artifact stage", "effigy artifact capture", "effigy artefact", "artifact.inspect", "artifact.stage", "artifact.capture"]
+paths = ["crates/effigy-artifacts/", "src/runner/artifact_command.rs", "src/runner/artifact_transport.rs", "crates/effigy-cli/src/command_parsing_artifact.rs", "crates/effigy-cli/src/help/topics/artifact.rs", "src/tests/lib_tests_parse_tests/artifact_option_tests.rs"]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-cli/src/command_parsing.rs",
+  "docs/guides/025-command-reference-matrix.md",
+  "docs/guides/072-artifact-commands-guide.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/architecture/010-package-map.md",
+  "docs/knowledge/contracts/031-artifact-and-crate-boundary-contract.md",
+  "docs/knowledge/questions.md",
+  "skills/effigy/references/built-in-surfaces.md",
+  ".agents/skills/effigy/references/built-in-surfaces.md",
+]
+
+[[retired]]
 id = "effigy-system-command"
 retired = "2026-10-22"
 replacement = "Use `effigy container [<NAME>] up|down|status|logs`; without a name it resolves `[containers].default` and then the `[systems].default` workspace container, and `--system <NAME>` selects one declared system. `effigy system repair` and `effigy system reset-runtime` are `effigy container profile repair` and `effigy container profile reset-runtime`, keeping their refusals and the `effigy.system.recover.v1` JSON envelope. `[systems]`, `effigy workspace` and `effigy exec` are unchanged. The Rhai `system` module (`system::status`, `system::logs`) has no replacement; invoke a task that runs `effigy container` instead. The retired spelling refuses with its exact replacement and points at CHANGELOG.md."
@@ -782,6 +803,57 @@ allow = [
   "src/tests/lib_tests_help_render_tests.rs",
   "tests/cli_output_tests/help_and_flags_tests.rs",
   "src/tests/lib_tests_parse_tests/gateway_option_tests.rs",
+]
+
+[[retired]]
+id = "effigy-contracts-validate-selection"
+retired = "2026-10-22 (v0.15, Q-009)"
+replacement = "`effigy contracts validate-selection` is folded into `check-json`: `effigy contracts check-json --validate-selection` validates this run's selection payload (implied by `--print-selected=json`) and `--validate-selection --artifact <PATH>` validates a stored artifact. The Rhai feature `contracts.validate_selection` is gone; use `contracts::check_json` with `validate_selection`, `contract` and `artifact` options. Validation uses the project's own `[contracts].selection_contract` and reports failures as `effigy.json-contract-selection.v1` rows inside `effigy.contracts.check-json.v1`. See CHANGELOG.md `[Unreleased]` and contract 055."
+owner = "docs/knowledge/contracts/055-project-json-contract-validation-contract.md"
+terms = [
+  "effigy contracts validate-selection",
+  "ContractsSubcommand::ValidateSelection",
+  "contracts.validate_selection",
+  "effigy.contracts.selection-validation.v1",
+  "write-json-contract-artifacts.rhai",
+  "json-contracts-selected.json",
+  "cli_contracts_validate_selection_rejects_invalid_artifacts",
+  "scripts/write-json-contract-artifacts.rhai",
+]
+paths = ["scripts/write-json-contract-artifacts.rhai"]
+config_keys = []
+# The hosted JSON Contracts workflow still runs the retired command and the
+# retired smoke test; `.github/workflows/` edits are the planner's (brief rule),
+# so the two references are recorded here instead of rewritten.
+allow = [
+  ".github/workflows/json-contracts.yml",
+  "CHANGELOG.md",
+  "crates/effigy-cli/src/command_parsing.rs",
+  "docs/guides/024-ci-and-automation-recipes.md",
+  "docs/guides/025-command-reference-matrix.md",
+  "docs/guides/028-migration-quick-paths.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/contracts/055-project-json-contract-validation-contract.md",
+  "docs/knowledge/questions.md",
+  "docs/knowledge/retired.toml",
+  "src/tests/lib_tests_help_render_tests.rs",
+  "src/tests/lib_tests_parse_tests/docs_and_contracts_option_tests.rs",
+  "tests/cli_output_tests/command_behavior_tests.rs",
+  "tests/cli_output_tests/help_and_flags_tests.rs",
+]
+
+[[retired]]
+id = "effigy-contracts-implicit-default-paths"
+retired = "2026-10-22 (v0.15, Q-009)"
+replacement = "`effigy contracts check-json` reads the project's own paths from `[contracts]` in effigy.toml: `schema_index` and `selection_contract` (repository relative). `--index` and `--contract` override them. A project that declares neither is refused with `no JSON schema index configured` instead of being validated against Effigy's documentation tree. Payload schemas are declared by the index's `payload_schemas` map. See CHANGELOG.md `[Unreleased]` and contract 055."
+owner = "docs/knowledge/contracts/055-project-json-contract-validation-contract.md"
+terms = ["DEFAULT_SCHEMA_INDEX", "DEFAULT_SELECTION_CONTRACT", "DEFAULT_SELECTION_ARTIFACT"]
+paths = []
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/contracts/055-project-json-contract-validation-contract.md",
+  "docs/knowledge/retired.toml",
 ]
 
 [[retired]]
@@ -904,4 +976,93 @@ allow = [
   "crates/effigy-builtin/src/init/inventory/tests.rs",
   "crates/effigy-manifest/src/loaded_catalog.rs",
   "effigy.toml",
+]
+
+[[retired]]
+id = "effigy-scan-cut-scanners"
+retired = "2026-10-22"
+replacement = "No replacement for the five removed scanners (Q-009). `god-files` and `duplicate-blocks` remain. For TODO/FIXME searches use `rg -n 'TODO|FIXME' <path>`; keep bulky generated output out of versioned paths with `.gitignore`; let each tool report its own unused suppressions. `effigy scan <name>` refuses with this explanation and each `[scan.<table>]` is a manifest error."
+owner = "docs/knowledge/questions.md"
+terms = [
+  "scan attention-markers",
+  "scan comment-ratio",
+  "scan generated-assets",
+  "scan generated-in-src",
+  "scan stale-suppressions",
+  "effigy.scan.attention-markers.v1",
+  "effigy.scan.comment-ratio.v1",
+  "effigy.scan.generated-assets.v1",
+  "effigy.scan.generated-in-src.v1",
+  "effigy.scan.stale-suppressions.v1",
+  "scan.attention_markers",
+  "scan.comment_ratio",
+  "scan.generated_assets",
+  "scan.generated_in_src",
+  "scan.stale_suppressions",
+  "scan::attention_markers",
+  "scan::comment_ratio",
+  "scan::generated_assets",
+  "scan::generated_in_src",
+  "scan::stale_suppressions",
+  "AttentionMarkerFinding",
+  "AttentionMarkerScanOptions",
+  "CommentRatioFinding",
+  "CommentRatioScanOptions",
+  "GeneratedAssetFinding",
+  "GeneratedAssetScanOptions",
+  "GeneratedInSrcFinding",
+  "GeneratedInSrcScanOptions",
+  "StaleSuppressionFinding",
+  "StaleSuppressionScanOptions",
+  "--min-code-lines",
+  "--source-root",
+  "--warning-marker",
+  "--high-marker",
+  "--critical-marker",
+  "scan-attention-markers.md",
+  "scan-comment-ratio.md",
+  "scan-generated-assets.md",
+  "scan-generated-in-src.md",
+  "scan-stale-suppressions.md",
+]
+paths = [
+  "crates/effigy-scan/src/model/generated.rs",
+  "crates/effigy-scan/src/model/markers.rs",
+  "crates/effigy-scan/src/execution/marker_scans.rs",
+  "crates/effigy-scan/src/execution/file_scans/generated.rs",
+  "crates/effigy-scan/src/support/heuristics/markers.rs",
+  "crates/effigy-scan/src/render/markers.rs",
+  "crates/effigy-scan/src/render/reports/size_and_paths.rs",
+  "crates/effigy-scan/src/render/reports/code_shape/comment_ratio.rs",
+  "crates/effigy-builtin/src/scan/help/markers.rs",
+  "crates/effigy-doctor/src/attention_markers.rs",
+  "crates/effigy-doctor/src/comment_ratio.rs",
+  "crates/effigy-doctor/src/generated_assets.rs",
+  "crates/effigy-doctor/src/generated_in_src.rs",
+  "crates/effigy-doctor/src/stale_suppressions.rs",
+  "crates/effigy-doctor/src/manifest_schema/scan_section/markers.rs",
+]
+config_keys = [
+  "scan.attention_markers",
+  "scan.comment_ratio",
+  "scan.generated_assets",
+  "scan.generated_in_src",
+  "scan.stale_suppressions",
+]
+allow = [
+  "CHANGELOG.md",
+  "docs/knowledge/questions.md",
+  "docs/knowledge/retired.toml",
+  "docs/guides/022-manifest-cookbook.md",
+  "docs/guides/027-copy-paste-snippets.md",
+  "docs/guides/047-agent-and-cross-repo-adoption.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "crates/effigy-builtin/src/scan/request/commands.rs",
+  "crates/effigy-builtin/src/scan/request/parser.rs",
+  "crates/effigy-builtin/src/scan/tests.rs",
+  "crates/effigy-manifest/src/retired_keys.rs",
+  "src/tests/runner_tests/config_builtin_tests/schema_output_tests.rs",
+  "src/tests/runner_tests/tasks_and_doctor_command_tests/doctor_command_tests/duplicate_blocks.rs",
+  "tests/cli_output_tests/json_envelope_tests/scan.rs",
+  "crates/effigy-rhai/src/tests/scan_retirement.rs",
 ]

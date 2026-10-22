@@ -20,10 +20,8 @@ pub mod task_references;
 
 // Orchestration tree — moved from `src/runner/doctor/**` under card
 // 254.
-mod attention_markers;
 mod checks;
 mod command;
-mod comment_ratio;
 mod conflicts;
 mod deep_inventory;
 mod dependency_health;
@@ -31,8 +29,6 @@ mod duplicate_blocks;
 mod environment;
 mod explain;
 mod finding_templates;
-mod generated_assets;
-mod generated_in_src;
 mod god_files;
 mod health;
 mod manifest;
@@ -42,7 +38,6 @@ mod references;
 mod render;
 mod render_support;
 mod scan_checks;
-mod stale_suppressions;
 mod task_graph;
 mod text_blocks;
 mod util;

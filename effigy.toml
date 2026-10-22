@@ -32,3 +32,12 @@ skill_roots = [".agents/skills"]
 
 [bootstrap]
 setup = ["install:local"]
+
+# ---- JSON contract validation ------------------------------------------------
+# `effigy contracts check-json` reads these paths instead of assuming a default
+# location, so a project validates its own JSON artifacts against its own
+# schema index (contract 055). Paths are repository relative.
+
+[contracts]
+schema_index = "docs/knowledge/contracts/json-schema-index.json"
+selection_contract = "docs/knowledge/contracts/json-selection-contract.json"

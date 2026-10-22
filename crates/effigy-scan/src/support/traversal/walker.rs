@@ -1,5 +1,3 @@
-use std::fs::File;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
@@ -97,22 +95,4 @@ where
     }
 
     Ok(())
-}
-
-pub fn read_asset_sample(path: &Path) -> Result<String, ScanError> {
-    let mut file = File::open(path).map_err(|error| {
-        ScanError::invocation(format!(
-            "scan sample read failed for {}: {error}",
-            path.display()
-        ))
-    })?;
-    let mut sample = vec![0u8; 16 * 1024];
-    let read = file.read(&mut sample).map_err(|error| {
-        ScanError::invocation(format!(
-            "scan sample read failed for {}: {error}",
-            path.display()
-        ))
-    })?;
-    sample.truncate(read);
-    Ok(String::from_utf8_lossy(&sample).to_ascii_lowercase())
 }

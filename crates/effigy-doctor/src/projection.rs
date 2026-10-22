@@ -115,13 +115,7 @@ pub fn doctor_fixes_table_rows(report: &DoctorReport) -> Vec<Vec<String>> {
 fn is_scan_check_id(check_id: &str) -> bool {
     matches!(
         check_id,
-        doctor_check_id::SCAN_GOD_FILES
-            | doctor_check_id::SCAN_DUPLICATE_BLOCKS
-            | doctor_check_id::SCAN_COMMENT_RATIO
-            | doctor_check_id::SCAN_GENERATED_ASSETS
-            | doctor_check_id::SCAN_GENERATED_IN_SRC
-            | doctor_check_id::SCAN_ATTENTION_MARKERS
-            | doctor_check_id::SCAN_STALE_SUPPRESSIONS
+        doctor_check_id::SCAN_GOD_FILES | doctor_check_id::SCAN_DUPLICATE_BLOCKS
     )
 }
 

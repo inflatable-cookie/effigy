@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use effigy_artifacts::OciArtifactAdapter;
 use effigy_cli::{BootstrapDbSeedInput, StateArgs, StateSubcommand, TaskInvocation};
 use effigy_execution::ExecutionSurface;
 use effigy_manifest::ManifestTaskOrReferenceDefinition;
+use effigy_state::artifact::OciArtifactAdapter;
 use effigy_state::{
     build_state_apply_hook_context, build_state_capture_task_context, capture_produced_layer,
     capture_profile_from_state_value, load_state_stack_manifest_file, mark_skipped_apply_layers,
@@ -23,6 +23,7 @@ use effigy_state::{
 };
 use serde_json::Value;
 
+use super::state_command_artifact::run_state_artifact;
 use crate::runner::command_context::resolve_active_command_context;
 use crate::runner::error::RunnerError;
 use crate::runner::manifest::load_task_manifest_with_inspection;
@@ -121,6 +122,14 @@ pub(super) fn run_state(args: StateArgs) -> Result<String, RunnerError> {
             kind.as_deref(),
             limit,
             lineage.as_deref(),
+            args.output_json,
+        ),
+        subcommand @ (StateSubcommand::ArtifactInspect { .. }
+        | StateSubcommand::ArtifactStage { .. }
+        | StateSubcommand::ArtifactCapture { .. }) => run_state_artifact(
+            subcommand,
+            &context.resolved.resolved_root,
+            &context.invocation_cwd,
             args.output_json,
         ),
     }
@@ -222,12 +231,12 @@ fn run_state_apply(
                     }
                 }
                 StateStackApplyLayerStatus::PlannedArtifactStage => {
-                    match crate::runner::artifact_command::stage_artifact_report(
+                    match crate::runner::state_command_artifact::stage_artifact_report(
                         &layer.source,
                         repo_root,
                         repo_root,
                         false,
-                        &crate::runner::artifact_transport::OrasCliArtifactAdapter::default(),
+                        &effigy_state::artifact::OrasCliArtifactAdapter::default(),
                     ) {
                         Ok(artifact_report) => {
                             layer.status = StateStackApplyLayerStatus::Staged;
@@ -428,7 +437,7 @@ fn run_state_capture_report(
         .plan_lineage()
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?
         .report("planned");
-    let adapter = crate::runner::artifact_transport::OrasCliArtifactAdapter::default();
+    let adapter = effigy_state::artifact::OrasCliArtifactAdapter::default();
     let mut report = build_state_stack_capture_report(&lineage, request, repo_root, &adapter)?;
     let paths = state_report_write_paths(
         repo_root,
@@ -875,8 +884,8 @@ fn build_state_stack_capture_report(
         request.destination_ref.as_deref(),
     ) {
         (true, Some(source), Some(destination)) => Some(
-            crate::runner::artifact_command::capture_artifact_report_with_adapter(
-                crate::runner::artifact_command::ArtifactCaptureRequest {
+            crate::runner::state_command_artifact::capture_artifact_report_with_adapter(
+                crate::runner::state_command_artifact::ArtifactCaptureRequest {
                     source,
                     destination,
                     kind: Some("app-specific"),
@@ -1022,12 +1031,12 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use effigy_artifacts::{
+    use effigy_manifest::ManifestManagedRun;
+    use effigy_secrets::{SecretValue, VaultPlaintextPayload, VaultSecretRecord};
+    use effigy_state::artifact::{
         OciArtifactDescriptor, OciArtifactError, OciArtifactInspectRequest, OciArtifactPullReport,
         OciArtifactPullRequest, OciArtifactPushReport, OciArtifactPushRequest,
     };
-    use effigy_manifest::ManifestManagedRun;
-    use effigy_secrets::{SecretValue, VaultPlaintextPayload, VaultSecretRecord};
     use effigy_state::{
         StateEnvironment, StateLayerApplyMode, StateLayerEnvironmentPolicy, StateLayerRole,
         StateManifestConfig, StateStackLineageLayer, StateStackLineageReport,

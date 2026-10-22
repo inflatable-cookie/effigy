@@ -8,8 +8,7 @@ use super::support::temp_workspace;
 const BUILTIN_TASKS_SECTION: &str = "\
 Built-in Tasks
 ──────────────
-- artifact : Inspect, stage, and capture artifact payloads
-- bootstrap : Clone or update repos, sync dependencies and children, and run bootstrap flows
+- bootstrap : Download and start a project: clone or use this checkout, prepare pinned sources and submodules, run its setup selectors, then its start selector
 - bundle : Inspect and sync bundle sources
 - changelog : Inspect and extract changelog release notes
 - config : Show supported project effigy.toml configuration keys/examples and machine-level config helpers
@@ -26,10 +25,10 @@ Built-in Tasks
 - gateway : Run internal gateway service surfaces
 - init : Initialize baseline effigy.toml scaffold with dry-run/force controls
 - release : Inspect, gate, prepare, execute, and verify releases
-- scan : Run built-in repository scanners such as `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, and `stale-suppressions`
+- scan : Run the built-in repository scanners `god-files` and `duplicate-blocks`
 - secrets : Inspect and manage local secret and encrypted vault surfaces
 - service : Run typed service command surfaces
-- state : Plan, apply, capture, and inspect state stacks
+- state : Plan, apply, and capture state stacks, and inspect, stage, or capture data artifacts
 - tasks : List effective catalogs and available tasks
 - test : Built-in test runner detection, supports <catalog>/test fallback, optional --plan
 - workspace : Run workspace command surfaces

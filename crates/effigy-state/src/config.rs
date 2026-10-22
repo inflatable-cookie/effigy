@@ -363,7 +363,7 @@ struct StateManifestStackLayerConfig {
     #[serde(default)]
     depends_on: Vec<String>,
     #[serde(default)]
-    artifact_kind: Option<effigy_artifacts::ArtifactKind>,
+    artifact_kind: Option<crate::artifact::ArtifactKind>,
     #[serde(default)]
     snapshot_identity: Option<String>,
     #[serde(default)]

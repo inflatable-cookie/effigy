@@ -1135,7 +1135,7 @@ A run whose owner exited without a result reads `"state": "interrupted"` with
 
 `effigy doctor` preserves scanner-backed warning/high/critical findings in its own report model even when plain `effigy scan god-files` text output hides warning rows by default.
 
-The same normalization applies to `scan.duplicate-blocks`, `scan.comment-ratio`, `scan.generated-assets`, `scan.generated-in-src`, and `scan.attention-markers` when those scanners are enabled for doctor.
+The same normalization applies to `scan.duplicate-blocks` when that scanner is enabled for doctor.
 
 ### 4) Doctor Explain (`effigy.doctor.explain.v1`)
 
@@ -1392,31 +1392,27 @@ Read these fields first:
   "format": "text",
   "root": "/workspace/app",
   "thresholds": {
-    "warn": 250,
-    "high": 400,
-    "critical": 700
+    "warn": 1000,
+    "high": 1800,
+    "critical": 3000
   },
+  "thresholds_source": "language-defaults",
   "scanned_files": 38,
   "skipped_generated": 4,
-  "finding_count": 2,
+  "finding_count": 1,
   "fail_on_findings": false,
   "respect_gitignore": true,
   "output_path": null,
   "findings": [
     {
       "path": "src/server/router.ts",
-      "code_lines": 512,
-      "total_lines": 588,
-      "severity": "high"
-    },
-    {
-      "path": "src/ui/dashboard.tsx",
-      "code_lines": 274,
-      "total_lines": 340,
-      "severity": "warning"
+      "code_lines": 1912,
+      "total_lines": 2088,
+      "severity": "high",
+      "language": "ts"
     }
   ],
-  "text": "God Files\n\nroot: /workspace/app\nthresholds: warn=250 high=400 critical=700\nscanned-files: 38  skipped-generated: 4  findings: 2\nseverity-counts: critical=0 high=1 warning=1\nwarning-rows-hidden: 1  use --show-warnings to list them\n\nFindings\nhigh  512 code lines (588 total)  src/server/router.ts"
+  "text": "God Files\n\nroot: /workspace/app\nthresholds: language-defaults (see `effigy scan god-files --help`)\nscanned-files: 38  skipped-generated: 4  findings: 1\nseverity-counts: critical=0 high=1 warning=0\n\nFindings\nhigh  1912 code lines (2088 total) [ts]  src/server/router.ts"
 }
 ```
 
@@ -1482,131 +1478,6 @@ Read these fields first:
     }
   ],
   "text": "Duplicate Blocks\n\nroot: /workspace/app\nthresholds: warn=20 high=40 critical=80 min-occurrences=2\nscanned-files: 41  candidate-blocks: 182  findings: 2\nseverity-counts: critical=0 high=1 warning=1\nwarning-rows-hidden: 1  use --show-warnings to list them\n\nFindings\nhigh  46 lines  2 occurrences  pub fn build_input(payload: Value) -> Result<Input, AppError> { let title = payload.title(); let slug = payload.slug();  [src/admin/build_input.rs:7-52, src/user/build_input.rs:9-54]"
-}
-```
-
-### 14) Scan Comment Ratio (`effigy.scan.comment-ratio.v1`)
-
-```json
-{
-  "schema": "effigy.scan.comment-ratio.v1",
-  "schema_version": 1,
-  "scan": "comment-ratio",
-  "format": "text",
-  "root": "/workspace/app",
-  "thresholds": {
-    "warn": 1.5,
-    "high": 2.0,
-    "critical": 3.0,
-    "min_code_lines": 20
-  },
-  "scanned_files": 41,
-  "candidate_files": 28,
-  "finding_count": 2,
-  "fail_on_findings": false,
-  "respect_gitignore": true,
-  "output_path": null,
-  "findings": [
-    {
-      "path": "src/dev_server.rs",
-      "code_lines": 60,
-      "comment_lines": 144,
-      "ratio": 2.4,
-      "severity": "high"
-    },
-    {
-      "path": "src/lib.rs",
-      "code_lines": 38,
-      "comment_lines": 57,
-      "ratio": 1.5,
-      "severity": "warning"
-    }
-  ],
-  "text": "Comment Ratio\n\nroot: /workspace/app\nthresholds: warn=1.50 high=2.00 critical=3.00 min-code-lines=20\nscanned-files: 41  candidate-files: 28  findings: 2\nseverity-counts: critical=0 high=1 warning=1\nwarning-rows-hidden: 1  use --show-warnings to list them\n\nFindings\nhigh  ratio=2.40  144 comment / 60 code  src/dev_server.rs"
-}
-```
-
-### 15) Scan Generated Assets (`effigy.scan.generated-assets.v1`)
-
-```json
-{
-  "schema": "effigy.scan.generated-assets.v1",
-  "schema_version": 1,
-  "scan": "generated-assets",
-  "format": "text",
-  "root": "/workspace/app",
-  "thresholds": {
-    "warn": 1000000,
-    "high": 5000000,
-    "critical": 20000000
-  },
-  "scanned_files": 6,
-  "finding_count": 2,
-  "fail_on_findings": false,
-  "respect_gitignore": true,
-  "output_path": null,
-  "findings": [
-    {
-      "path": "dist/app.min.js",
-      "bytes": 1840000,
-      "severity": "warning",
-      "reason": "vendor-or-build-path"
-    },
-    {
-      "path": "vendor/runtime.wasm",
-      "bytes": 6200000,
-      "severity": "high",
-      "reason": "vendor-or-build-path"
-    }
-  ],
-  "text": "Generated Assets\n\nroot: /workspace/app\nthresholds-bytes: warn=1000000 high=5000000 critical=20000000\nscanned-files: 6  findings: 2\nseverity-counts: critical=0 high=1 warning=1\nwarning-rows-hidden: 1  use --show-warnings to list them\n\nFindings\nhigh  6.2 MB  vendor/runtime.wasm  [vendor-or-build-path]"
-}
-```
-
-### 16) Scan Generated In Src (`effigy.scan.generated-in-src.v1`)
-
-```json
-{
-  "schema": "effigy.scan.generated-in-src.v1",
-  "schema_version": 1,
-  "scan": "generated-in-src",
-  "format": "text",
-  "root": "/workspace/app",
-  "thresholds": {
-    "warn": 1,
-    "high": 20000,
-    "critical": 200000
-  },
-  "source_roots": [
-    "src/**",
-    "app/**",
-    "lib/**",
-    "crates/**",
-    "packages/*/src/**"
-  ],
-  "scanned_files": 18,
-  "candidate_files": 2,
-  "finding_count": 2,
-  "fail_on_findings": false,
-  "respect_gitignore": true,
-  "output_path": null,
-  "findings": [
-    {
-      "path": "src/generated/client.generated.ts",
-      "category": "generated-path",
-      "severity": "warning",
-      "reason": "generated-path-component",
-      "size_bytes": 6400
-    },
-    {
-      "path": "src/graphql/schema.generated.ts",
-      "category": "generated-filename",
-      "severity": "high",
-      "reason": "filename-marker",
-      "size_bytes": 52000
-    }
-  ],
-  "text": "Generated In Src\n\nroot: /workspace/app\nthresholds-bytes: warn=1 high=20000 critical=200000\nsource-roots: src/**, app/**, lib/**, crates/**, packages/*/src/**\nscanned-files: 18  candidate-files: 2  findings: 2\nseverity-counts: critical=0 high=1 warning=1\nwarning-rows-hidden: 1  use --show-warnings to list them\n\nFindings\nhigh  52.0 KB  src/graphql/schema.generated.ts  [generated-filename] [filename-marker]"
 }
 ```
 
@@ -1848,7 +1719,6 @@ is the holder's liveness, so there is nothing to unlock.
   "commands": [
     "help",
     "version",
-    "artifact",
     "bootstrap",
     "bundle",
     "changelog",
@@ -1928,102 +1798,6 @@ Miss example (invalid env policy fallback):
 ```
 
 ## More Scan Payloads
-
-### 20) Scan Attention Markers (`effigy.scan.attention-markers.v1`)
-
-```json
-{
-  "schema": "effigy.scan.attention-markers.v1",
-  "schema_version": 1,
-  "ok": true,
-  "scan": "attention-markers",
-  "format": "text",
-  "root": "/workspace/app",
-  "patterns": {
-    "warning": ["TODO", "REVIEW", "NOTE", "placeholder"],
-    "high": ["FIXME", "HACK", "@deprecated", "workaround"],
-    "critical": ["BUG", "SECURITY", "remove before release"]
-  },
-  "scanned_files": 142,
-  "matched_lines": 3,
-  "finding_count": 3,
-  "fail_on_findings": false,
-  "respect_gitignore": true,
-  "output_path": null,
-  "findings": [
-    {
-      "path": "src/app.ts",
-      "line": 18,
-      "category": "deferred-work",
-      "severity": "warning",
-      "marker": "TODO",
-      "snippet": "// TODO: split render path"
-    },
-    {
-      "path": "src/api/router.ts",
-      "line": 91,
-      "category": "deferred-work",
-      "severity": "high",
-      "marker": "FIXME",
-      "snippet": "// FIXME: remove fallback before merge"
-    },
-    {
-      "path": "src/legacy.rs",
-      "line": 12,
-      "category": "deprecation",
-      "severity": "high",
-      "marker": "@deprecated",
-      "snippet": "#[deprecated(note = \"use new_api\")]"
-    }
-  ],
-  "text": "Attention Markers\n\nroot: /workspace/app\nmarkers: warning=4 high=4 critical=3\nscanned-files: 142  matched-lines: 3  findings: 3\nseverity-counts: critical=0 high=2 warning=1\nwarning-rows-hidden: 1  use --show-warnings to list them\n\nFindings\nhigh  src/api/router.ts:91  deferred-work  [FIXME]  // FIXME: remove fallback before merge\nhigh  src/legacy.rs:12  deprecation  [@deprecated]  #[deprecated(note = \"use new_api\")]"
-}
-```
-
-### 21) Scan Stale Suppressions (`effigy.scan.stale-suppressions.v1`)
-
-```json
-{
-  "schema": "effigy.scan.stale-suppressions.v1",
-  "schema_version": 1,
-  "ok": true,
-  "scan": "stale-suppressions",
-  "format": "text",
-  "root": "/workspace/app",
-  "patterns": {
-    "warning": ["@ts-ignore", "@ts-expect-error", "type: ignore", "eslint-disable-next-line"],
-    "high": ["#[allow(", "#[expect(", "rubocop:disable", "swiftlint:disable"],
-    "critical": ["nolint", "#[allow(warnings)]", "shellcheck disable=", "eslint-disable"]
-  },
-  "scanned_files": 142,
-  "matched_lines": 2,
-  "finding_count": 2,
-  "fail_on_findings": false,
-  "respect_gitignore": true,
-  "output_path": null,
-  "findings": [
-    {
-      "path": "src/app.ts",
-      "line": 18,
-      "category": "lint-disable",
-      "severity": "warning",
-      "marker": "eslint-disable-next-line",
-      "snippet": "// eslint-disable-next-line no-console"
-    },
-    {
-      "path": "src/legacy.rs",
-      "line": 12,
-      "category": "type-ignore",
-      "severity": "high",
-      "marker": "#[allow(",
-      "snippet": "#[allow(dead_code)]"
-    }
-  ],
-  "text": "Stale Suppressions\n\nroot: /workspace/app\nmarkers: warning=4 high=4 critical=4\nscanned-files: 142  matched-lines: 2  findings: 2\nseverity-counts: critical=0 high=1 warning=1\nwarning-rows-hidden: 1  use --show-warnings to list them\n\nFindings\nhigh  src/legacy.rs:12  type-ignore  [#[allow(]  #[allow(dead_code)]"
-}
-```
-
-## Execution Payloads
 
 ### 22) Task Run (`effigy.task.run.v1`)
 

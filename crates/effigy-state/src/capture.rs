@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
-use effigy_artifacts::ArtifactKind;
+use crate::artifact::ArtifactKind;
 use serde::Serialize;
 use serde_json::Value;
 

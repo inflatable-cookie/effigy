@@ -252,11 +252,10 @@ fn cli_contracts_help_is_command_specific() {
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
     assert!(stdout.contains("contracts Help"));
     assert!(stdout.contains(
-        "effigy contracts check-json [--repo <PATH>] [--index <PATH>] [--fast|--full] [--changed-only <BASE>] [--print-selected|--print-selected=json] [--json]"
+        "effigy contracts check-json [--repo <PATH>] [--index <PATH>] [--contract <PATH>] [--fast|--full] [--changed-only <BASE>] [--print-selected[=text|json]] [--validate-selection] [--artifact <PATH>] [--json]"
     ));
-    assert!(stdout.contains(
-        "effigy contracts validate-selection [--repo <PATH>] [--contract <PATH>] [--artifact <PATH>] [--json]"
-    ));
+    assert!(!stdout.contains("effigy contracts validate-selection"));
+    assert!(stdout.contains("--validate-selection"));
     assert!(!stdout.contains("docs Help"));
 }
 
@@ -390,7 +389,6 @@ fn cli_help_repo_group_lists_only_repository_intelligence_commands() {
         "effigy exec",
         "effigy release",
         "effigy deploy",
-        "effigy artifact",
         "effigy bundle",
         "effigy skill",
     ] {
@@ -728,7 +726,7 @@ fn cli_help_for_builtin_owned_help_matches_the_direct_command_exactly() {
 
     let cases: [(&str, &[&str]); 2] = [
         ("config", &["effigy.toml Reference", "[tasks]"]),
-        ("scan", &["god-files", "attention-markers"]),
+        ("scan", &["god-files", "duplicate-blocks"]),
     ];
 
     for (command, required) in cases {

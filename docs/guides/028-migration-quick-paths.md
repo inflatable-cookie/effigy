@@ -99,7 +99,7 @@ Core scripts:
 
 ```sh
 effigy contracts check-json --full --print-selected=json
-effigy contracts validate-selection --artifact ./json-contracts-selected.json
+effigy contracts check-json --validate-selection --artifact ./json-contracts-selected.json
 ```
 
 Exit criteria:

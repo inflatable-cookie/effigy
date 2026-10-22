@@ -94,7 +94,6 @@ effigy init --check --json         # no-write setup report for agents/tools
 ```bash
 effigy doctor --verbose              # health + enabled scan checks
 effigy scan god-files --json
-effigy scan attention-markers --json
 effigy scan duplicate-blocks --json
 ```
 

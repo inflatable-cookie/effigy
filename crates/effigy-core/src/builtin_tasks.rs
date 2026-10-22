@@ -4,7 +4,6 @@
 //! task listing, and routing probes.
 
 pub const BUILTIN_TASKS: &[(&str, &str)] = &[
-    ("artifact", "Inspect, stage, and capture artifact payloads"),
     (
         "bootstrap",
         "Download and start a project: clone or use this checkout, prepare pinned sources and submodules, run its setup selectors, then its start selector",
@@ -43,10 +42,10 @@ pub const BUILTIN_TASKS: &[(&str, &str)] = &[
         "Initialize baseline effigy.toml scaffold with dry-run/force controls",
     ),
     ("release", "Inspect, gate, prepare, execute, and verify releases"),
-    ("scan", "Run built-in repository scanners such as `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, and `stale-suppressions`"),
+    ("scan", "Run the built-in repository scanners `god-files` and `duplicate-blocks`"),
     ("secrets", "Inspect and manage local secret and encrypted vault surfaces"),
     ("service", "Run typed service command surfaces"),
-    ("state", "Plan, apply, capture, and inspect state stacks"),
+    ("state", "Plan, apply, and capture state stacks, and inspect, stage, or capture data artifacts"),
     ("tasks", "List effective catalogs and available tasks"),
     (
         "test",

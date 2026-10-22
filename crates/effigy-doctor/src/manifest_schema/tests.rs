@@ -1051,10 +1051,47 @@ repo = "git@example.test:book.git"
 
     let mut sink = TestSink::default();
     validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
     assert!(
         sink.findings.is_empty(),
         "v0.14.1 bootstrap keys must load for one release, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_accepts_contracts_section() {
+    let manifest: Value = toml::from_str(
+        r#"
+[contracts]
+schema_index = "docs/knowledge/contracts/json-schema-index.json"
+selection_contract = "docs/knowledge/contracts/json-selection-contract.json"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+    assert!(
+        sink.findings.is_empty(),
+        "expected no schema findings, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
+fn validate_manifest_schema_rejects_unknown_contracts_keys() {
+    let manifest: Value = toml::from_str(
+        "[contracts]\nschema_index = \"index.json\"\nartifact = \"selected.json\"\n",
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+    assert!(
+        sink.findings
+            .iter()
+            .any(|finding| finding.evidence.contains("contracts.artifact")),
+        "expected contracts.artifact to be unsupported, got: {:?}",
         sink.findings
     );
 }

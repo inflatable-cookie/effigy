@@ -194,3 +194,44 @@ fn run_manifest_task_builtin_scan_god_files_include_and_exclude_flags_override_t
     assert_output_contains_all(&exclude_scripts, &["findings: 1", "src/app.ts"]);
     assert_output_excludes_all(&exclude_scripts, &["scripts/dev.ts"]);
 }
+
+#[test]
+fn run_manifest_task_builtin_scan_god_files_skips_generated_vendored_and_derived_files() {
+    let root = temp_workspace("builtin-scan-god-files-generated-vendored-derived");
+    write_root_manifest(&root, "");
+    fs::create_dir_all(root.join("src/generated")).expect("mkdir src/generated");
+    fs::create_dir_all(root.join("vendor")).expect("mkdir vendor");
+    write_large_rust_file(&root.join("src/huge.rs"), 30);
+    write_large_rust_file(&root.join("src/generated/contract.rs"), 30);
+    write_large_code_file(&root.join("vendor/bundle.js"), 30);
+    fs::write(
+        root.join("src/derived.rs"),
+        format!(
+            "// DERIVED BINDING. Not editable authority.\n{}\n",
+            (0..30)
+                .map(|idx| format!("pub fn derived_{idx}() -> usize {{ {idx} }}"))
+                .collect::<Vec<String>>()
+                .join("\n")
+        ),
+    )
+    .expect("write derived binding");
+
+    let out = run_builtin_ok(
+        root,
+        "scan",
+        &["god-files", "--threshold", "10", "--show-warnings"],
+    );
+
+    assert_output_contains_all(
+        &out,
+        &["findings: 1", "src/huge.rs", "skipped-generated: 1"],
+    );
+    assert_output_excludes_all(
+        &out,
+        &[
+            "src/generated/contract.rs",
+            "vendor/bundle.js",
+            "src/derived.rs",
+        ],
+    );
+}

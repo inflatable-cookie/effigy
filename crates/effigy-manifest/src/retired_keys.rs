@@ -1,7 +1,10 @@
 //! Retired task-manifest keys.
 //!
 //! A retired table is refused with the replacement an operator can act on,
-//! never silently accepted or translated (contract 043, `retired.toml`).
+//! never silently accepted or translated (contract 043, `retired.toml`). The
+//! one exception is the v0.15 `[bootstrap]` retirement, which
+//! [`crate::retired_bootstrap`] reads for one release so a v0.14.1 project
+//! keeps loading.
 use serde::Deserialize;
 use toml::Value;
 
@@ -51,9 +54,28 @@ fn reject_retired_tables(value: &Value) -> Result<(), String> {
 }
 
 /// Scan sections that only configured the graph-backed scanners. Each is a
-/// manifest error rather than a silently ignored table.
-fn reject_retired_scan_sections(scan: &toml::value::Table) -> Result<(), String> {
+/// manifest error rather than a silently ignored table.fn reject_retired_scan_sections(scan: &toml::value::Table) -> Result<(), String> {
     for (key, message) in [
+        (
+            "attention_markers",
+            "`[scan.attention_markers]` was removed in v0.15; search markers with `rg -n 'TODO|FIXME' <path>` and delete the table (see CHANGELOG.md)",
+        ),
+        (
+            "comment_ratio",
+            "`[scan.comment_ratio]` was removed in v0.15 and has no replacement; delete the table (see CHANGELOG.md)",
+        ),
+        (
+            "generated_assets",
+            "`[scan.generated_assets]` was removed in v0.15 and has no replacement; keep bulky generated output out of versioned paths with `.gitignore` and delete the table (see CHANGELOG.md)",
+        ),
+        (
+            "generated_in_src",
+            "`[scan.generated_in_src]` was removed in v0.15 and has no replacement; keep generated output outside source trees and delete the table (see CHANGELOG.md)",
+        ),
+        (
+            "stale_suppressions",
+            "`[scan.stale_suppressions]` was removed in v0.15 and has no replacement; let each tool report its own unused suppressions and delete the table (see CHANGELOG.md)",
+        ),
         (
             "boundary_violations",
             "`[scan.boundary_violations]` was removed in v0.15 with the code graph and has no replacement; delete the table and rely on code review (see CHANGELOG.md)",
@@ -175,6 +197,23 @@ mod tests {
     }
 
     #[test]
+    fn retired_scan_sections_are_refused_with_their_replacement() {
+        for (section, expected) in [
+            ("comment_ratio", "no replacement"),
+            ("generated_assets", ".gitignore"),
+            ("generated_in_src", "generated output outside source trees"),
+            ("attention_markers", "rg -n 'TODO|FIXME'"),
+            ("stale_suppressions", "unused suppressions"),
+        ] {
+            let manifest = format!("[scan.{section}]\nwarn = 1");
+            let error = toml::from_str::<TaskManifest>(&manifest).expect_err("retired table");
+            let error = error.to_string();
+            assert!(error.contains("removed in v0.15"), "{section}: {error}");
+            assert!(error.contains(expected), "{section}: {error}");
+            assert!(error.contains("CHANGELOG.md"), "{section}: {error}");
+        }
+    }
+
     fn draft_step_reference_is_refused_with_the_task_key() {
         let error = toml::from_str::<TaskManifest>(
             "[tasks]\nentry = [{ draft = 'helper' }]\nhelper = 'echo helper'",

@@ -85,9 +85,10 @@ Rules:
   `docs/README.md` and use `rg` for exact text
 - use `effigy test --plan` to narrow validation after edits, not as exhaustive
   test proof
-- `effigy scan` keeps god-files, duplicate-blocks, comment-ratio,
-  generated-assets, generated-in-src, attention-markers and stale-suppressions;
-  the graph-backed boundary, dead-code and validation-gap scanners are gone
+- `effigy scan` keeps god-files and duplicate-blocks; comment-ratio,
+  generated-assets, generated-in-src, attention-markers and
+  stale-suppressions are gone, as are the graph-backed boundary, dead-code and
+  validation-gap scanners. Use `rg -n 'TODO|FIXME' <path>` for marker searches
 
 ## 3) Reusable `AGENTS.md` Snippet
 

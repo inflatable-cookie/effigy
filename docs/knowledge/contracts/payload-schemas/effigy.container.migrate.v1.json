@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "effigy.container.migrate.v1 payload",
+  "description": "Payload of `effigy container migrate <name> --json`; `fragments` hold the written project-layer catalog fragments.",
+  "type": "object",
+  "required": [
+    "environment",
+    "compose_file",
+    "manifest",
+    "fragments",
+    "render_unchanged"
+  ],
+  "properties": {
+    "environment": { "type": "string" },
+    "compose_file": { "type": "string" },
+    "manifest": { "type": "string" },
+    "fragments": { "type": "array" },
+    "render_unchanged": { "type": "boolean" }
+  }
+}

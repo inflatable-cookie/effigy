@@ -8,14 +8,6 @@ fn write_large_code_file(path: &std::path::Path, line_count: usize) {
     fs::write(path, format!("{body}\n")).expect("write code file");
 }
 
-fn write_asset_file(path: &std::path::Path, size: usize) {
-    fs::write(path, vec![b'a'; size]).expect("write asset file");
-}
-
-fn write_attention_file(path: &std::path::Path, lines: &[&str]) {
-    fs::write(path, format!("{}\n", lines.join("\n"))).expect("write attention file");
-}
-
 fn write_duplicate_block_file(path: &std::path::Path, block_prefix: &str) {
     let mut lines = vec![format!("pub fn {block_prefix}_alpha() -> usize {{")];
     lines.push("    let seed = 1;".to_owned());
@@ -26,14 +18,6 @@ fn write_duplicate_block_file(path: &std::path::Path, block_prefix: &str) {
     lines.push("}".to_owned());
     let body = lines.join("\n");
     fs::write(path, format!("{body}\n")).expect("write duplicate block file");
-}
-
-fn write_comment_ratio_file(path: &std::path::Path, comment_lines: usize, code_lines: usize) {
-    let mut lines = (0..comment_lines)
-        .map(|idx| format!("// commentary line {idx}"))
-        .collect::<Vec<String>>();
-    lines.extend((0..code_lines).map(|idx| format!("const line_{idx} = {idx};")));
-    fs::write(path, format!("{}\n", lines.join("\n"))).expect("write comment ratio file");
 }
 
 fn assert_base_scan_payload(parsed: &serde_json::Value, schema: &str, scan: &str, heading: &str) {
@@ -72,6 +56,5 @@ fn assert_non_zero_scan_payload(parsed: &serde_json::Value, schema: &str) {
     assert_eq!(parsed["fail_on_findings"], true);
 }
 
-mod duplicate_and_comment;
-mod markers;
-mod size_and_generated;
+mod duplicate_blocks;
+mod god_files;

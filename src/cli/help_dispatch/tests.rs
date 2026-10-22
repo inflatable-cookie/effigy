@@ -79,18 +79,24 @@ fn build_help_group_payload_hides_explicitly_deferred_builtins() {
     let root = temp_workspace("help-group-explicit-deferral");
     fs::write(
         root.join("effigy.toml"),
-        "[defer]\nrun = \"printf deferred\"\nbuiltins = [\"scan\"]\n",
+        "[defer]\nrun = \"printf deferred\"\nbuiltins = [\"contracts\"]\n",
     )
     .expect("write manifest");
 
     let group = build_help_group_payload_for_root(HelpGroup::Repo, &root);
     let group_text = group["text"].as_str().expect("group help text");
-    assert!(!group_text.contains("effigy scan"), "got: {group_text}");
+    assert!(
+        !group_text.contains("effigy contracts"),
+        "got: {group_text}"
+    );
     assert!(group_text.contains("effigy docs"), "got: {group_text}");
 
     let general = build_help_payload_for_root(HelpTopic::General, &root);
     let general_text = general["text"].as_str().expect("general help text");
-    assert!(!general_text.contains("effigy scan"), "got: {general_text}");
+    assert!(
+        !general_text.contains("effigy contracts"),
+        "got: {general_text}"
+    );
 }
 
 #[test]

@@ -5,6 +5,7 @@ use globset::GlobSet;
 
 use super::super::{
     DEFAULT_DATA_DIRS, DEFAULT_DOC_DIRS, DEFAULT_EXCLUDED_DIRS, DEFAULT_LOCK_FILE_NAMES,
+    GENERATED_PATH_COMPONENTS,
 };
 
 pub fn should_skip_path(
@@ -17,7 +18,9 @@ pub fn should_skip_path(
         return true;
     }
     if rel.components().any(|component| {
-        DEFAULT_EXCLUDED_DIRS.contains(&component.as_os_str().to_string_lossy().as_ref())
+        let name = component.as_os_str().to_string_lossy();
+        DEFAULT_EXCLUDED_DIRS.contains(&name.as_ref())
+            || GENERATED_PATH_COMPONENTS.contains(&name.as_ref())
     }) {
         return true;
     }
@@ -33,7 +36,9 @@ pub fn should_skip_path(
     !is_probable_code_file(rel)
 }
 
-pub fn should_skip_generated_asset_path(
+/// Path filter for the shared doctor inventory walk. It keeps every file except
+/// Effigy's own internal state so each enabled scanner applies its own filter.
+pub fn should_skip_inventory_path(
     rel: &Path,
     rel_str: &str,
     include: Option<&GlobSet>,

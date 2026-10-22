@@ -3,7 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use effigy_contracts::{
-    prepare_check_json, run_prepared_check_json, validate_selection, ContractsError,
+    prepare_check_json, run_prepared_check_json, ContractsConfig, ContractsError,
+    SelectionValidation,
 };
 
 use crate::runner::command_context::resolve_active_repo_root;
@@ -17,68 +18,72 @@ pub(super) fn run_contracts(args: ContractsArgs) -> Result<String, RunnerError> 
     let repo_root = resolved.resolved_root;
 
     match args.subcommand {
-        ContractsSubcommand::ValidateSelection {
-            contract_path,
-            artifact_path,
-        } => run_validate_selection(
-            &repo_root,
-            contract_path.as_ref(),
-            artifact_path.as_ref(),
-            args.output_json,
-        ),
         ContractsSubcommand::CheckJson {
             index_path,
+            contract_path,
+            artifact_path,
             mode,
             changed_only_base,
             print_selected,
+            validate_selection,
         } => run_check_json(
             &repo_root,
             index_path.as_ref(),
+            contract_path.as_ref(),
+            artifact_path.as_ref(),
             mode,
             changed_only_base.as_deref(),
             print_selected,
+            validate_selection,
             args.output_json,
         ),
     }
 }
 
-fn run_validate_selection(
-    repo_root: &Path,
-    contract_override: Option<&PathBuf>,
-    artifact_override: Option<&PathBuf>,
-    output_json: bool,
-) -> Result<String, RunnerError> {
-    let report = validate_selection(repo_root, contract_override, artifact_override)
-        .map_err(map_contracts_error)?;
-    let payload = report.to_json_value();
-    let ok = report.ok();
-    let text = if ok {
-        report.render_success_text()
-    } else {
-        report.render_failure_text()
-    };
-    render_command_result(output_json, ok, payload, text)
-}
-
+#[allow(clippy::too_many_arguments)]
 fn run_check_json(
     repo_root: &Path,
     index_override: Option<&PathBuf>,
+    contract_override: Option<&PathBuf>,
+    artifact_override: Option<&PathBuf>,
     mode: effigy_cli::ContractsCheckMode,
     changed_only_base: Option<&str>,
     print_selected: ContractsSelectionPrintMode,
+    validate_selection: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let prepared = prepare_check_json(repo_root, index_override, mode, changed_only_base)
-        .map_err(map_contracts_error)?;
+    let config = ContractsConfig::load(repo_root).map_err(map_contracts_error)?;
+    // `--print-selected=json` is the CI-facing form: it publishes the selection
+    // payload, so that payload is what gets validated.
+    let selection_validation = match artifact_override {
+        Some(path) => SelectionValidation::Artifact(path.clone()),
+        None if validate_selection || print_selected == ContractsSelectionPrintMode::Json => {
+            SelectionValidation::Payload
+        }
+        None => SelectionValidation::Skip,
+    };
+
+    let prepared = prepare_check_json(
+        repo_root,
+        &config,
+        index_override,
+        mode,
+        changed_only_base,
+        &selection_validation,
+        contract_override,
+    )
+    .map_err(map_contracts_error)?;
 
     if output_json {
         let report =
             run_prepared_check_json(repo_root, &prepared, false).map_err(map_contracts_error)?;
         let payload = prepared.build_json_payload(&report);
         let ok = report.failures.is_empty();
+        // JSON callers read the structured payload either way; the text form is
+        // only for the human path below.
         let text = report
             .render_text(prepared.changed_only_base())
-            .map_err(RunnerError::task_invocation)?;
+            .unwrap_or_default();
         return render_command_result(output_json, ok, payload, text);
     }
 

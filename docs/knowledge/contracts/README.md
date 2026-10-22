@@ -54,6 +54,7 @@ schema artifacts live beside these files.
 | [049-heavy-validation-admission-contract.md](049-heavy-validation-admission-contract.md) | Heavy-task metadata, the `EFFIGY_ADMISSION_HOOK` protocol, and generic run control (`--run-id`, `runs`, `run status|logs|stop`) on the kernel run journal (Q-006). |
 | [050-rhai-fs-atomic-publish-contract.md](050-rhai-fs-atomic-publish-contract.md) | Atomic create-if-absent Rhai file publication for `write_file_if_absent` and `copy_if_missing`, collision and cleanup semantics, and `copy`/`move_path` replacement limits. |
 | [051-bounded-qa-groups-contract.md](051-bounded-qa-groups-contract.md) | Implemented bounded QA-group contract for explicit members, typed scope, lifecycle, admission, run evidence, and migration; `stop`/`hard_timeout_ms` wait on [052](052-runtime-kernel-contract.md). |
+| [055-project-json-contract-validation-contract.md](055-project-json-contract-validation-contract.md) | project-declared JSON contract paths, the `[contracts]` keys, the schema index `payload_schemas` map, the single Draft 2020-12 engine, and the folded selection validation. |
 | [053-environment-reconciler-contract.md](053-environment-reconciler-contract.md) | Implemented environment reconciler: one kernel record per environment, `Gate(Env)` transitions, the hold API, holder-based idle stop, the backend seam with recorded reasons, and the v0.14.1 marker importer. |
 | [054-release-platform-contract.md](054-release-platform-contract.md) | Accepted release platform, not yet implemented: one checkpointed release Run (validate, pre-gates, prepare, certify, publish, verify, closeout), several versioned identities of four kinds, certified artifacts with digests, `tag` and `task` targets in v0.15, approval and hosted waits, idempotent retries and receipts. |
 | [052-runtime-kernel-contract.md](052-runtime-kernel-contract.md) | Runtime kernel contract, specified and not implemented: identity, gates, the store, the run journal and settle, process and remote custody, signals, deadlines, tri-state observation, effect classes, outcomes, host/guest authority, adoption map, migration and proof plan. |
@@ -63,9 +64,10 @@ schema artifacts live beside these files.
 ## Machine Contracts
 
 - [JSON schema index](json-schema-index.json) maps command schemas to their
-  validation surfaces.
+  validation surfaces, including the payload schemas in
+  [payload-schemas/](payload-schemas/).
 - [JSON selection contract](json-selection-contract.json) defines the CI
-  selection artifact.
+  selection payload.
 - [Rust quality profile](rust-quality-profile.json) is the repository-owned
   strict Northstar Rust quality profile, including MSRV sources and exclusions.
 - [Rust quality deviations](rust-quality-deviations.json) holds accepted

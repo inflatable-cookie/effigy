@@ -34,7 +34,7 @@ also supports `--headless` / `EFFIGY_MANAGED_HEADLESS=1` plus task-local
 | `doctor` | Health checks; `doctor <selector>` explain mode; running-workspace ownership diagnosis |
 | `test` | Built-in test orchestration (`--plan`, `--tui`) |
 | `defer` | Run `[defer]` fallback explicitly |
-| `scan` | Repo scanners (`god-files`, `attention-markers`, …) |
+| `scan` | Repo scanners (`god-files`, `duplicate-blocks`) |
 | `config` | Inspect merged manifest; schema snippets; `config get/set` |
 | `config completion` | Shell completion + selector candidates |
 | `deps` | Inspect, link, and unlink full Cargo/Bun local dependency closures |
@@ -61,9 +61,8 @@ context`; use `docs/README.md` as the docs index and `rg` for exact text.
 
 | Built-in | Purpose |
 |----------|---------|
-| `state` | Layered schema/seed/capture stacks |
+| `state` | Layered schema/seed/capture stacks; `state artifact` inspects/stages/captures standalone data artifacts |
 | `deploy` | Model, export, plan/status/history; apply/redeploy refuse in v0.15 (guide 074 / Q-003) |
-| `artifact` | OCI/local data artifacts |
 | `bundle` | Bundle source inspect/sync |
 | `secrets` | Vault init/set/list/doctor/**import** |
 

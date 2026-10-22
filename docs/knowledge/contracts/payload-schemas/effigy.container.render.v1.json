@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "effigy.container.render.v1 payload",
+  "description": "Payload of `effigy container render <name> --json`: the exact generated Compose render, its path and digest.",
+  "type": "object",
+  "required": [
+    "environment",
+    "path",
+    "digest",
+    "compose_files",
+    "environment_variables",
+    "files"
+  ],
+  "properties": {
+    "environment": { "type": "string" },
+    "path": { "type": "string" },
+    "digest": { "type": "string" },
+    "compose_files": { "type": "array" },
+    "environment_variables": { "type": "object" },
+    "files": { "type": "array" }
+  }
+}

@@ -2,6 +2,7 @@ mod bootstrap;
 mod bundle;
 mod common;
 mod container;
+mod contracts;
 mod distribution;
 mod docs_policy;
 mod release;
@@ -10,11 +11,10 @@ mod secrets;
 pub use bootstrap::{ManifestBootstrapConfig, ManifestPinnedSourceConfig};
 pub use bundle::{ManifestBundleBase, ManifestBundleConfig};
 pub use common::{
-    ManifestAttentionMarkersConfig, ManifestCommentRatioConfig, ManifestDuplicateBlocksConfig,
-    ManifestEnvSchemaConfig, ManifestGeneratedAssetsConfig, ManifestGeneratedInSrcConfig,
-    ManifestGodFilesConfig, ManifestIsolationAdoption, ManifestIsolationConfig,
-    ManifestJsPackageManager, ManifestPackageManagerConfig, ManifestScanConfig,
-    ManifestScanOutputFormat, ManifestStaleSuppressionsConfig, ManifestTaskDefaultsConfig,
+    ManifestDuplicateBlocksConfig, ManifestEnvSchemaConfig, ManifestGodFilesConfig,
+    ManifestIsolationAdoption, ManifestIsolationConfig, ManifestJsPackageManager,
+    ManifestPackageManagerConfig, ManifestScanConfig, ManifestScanOutputFormat,
+    ManifestTaskDefaultsConfig,
 };
 pub use container::{
     ManifestContainerConfig, ManifestContainerDataConfig, ManifestContainerDnsConfig,
@@ -31,6 +31,7 @@ pub use container::{
     ManifestSystemMount, ManifestSystemMountTable, ManifestSystemsConfig, ManifestWorkspaceConfig,
     ManifestWorkspaceContainerRef,
 };
+pub use contracts::ManifestContractsConfig;
 pub use distribution::{
     ManifestDistributionCloseoutConfig, ManifestDistributionConfig,
     ManifestDistributionMetadataConfig, ManifestDistributionPackageConfig,

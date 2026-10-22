@@ -291,5 +291,16 @@ from v0.14.1, so that v0.16 doesn't need a second migration. Each retirement add
     - **First database seed.** A first seed is a setup task. Tom: CBS's seed "was commented out because of a race condition from a few versions ago - let's make sure it works now".
 - **Not cut:** the internal restructuring from the weight map (extracting code from the binary crate, merging small crates). It isn't user-facing and can follow v0.15.
 
+**Implemented** (effigy#258, 2026-10-23). `artifact` folds into `state`:
+`effigy state artifact inspect|stage|capture` keeps every flag and the
+`effigy.artifact.*.v1` payloads, and the retired top-level `effigy artifact`
+fails with that replacement. `state capture` already owned layered captures, so
+the standalone data-artifact verbs keep their own namespace rather than a second
+meaning for `state capture`. `crates/effigy-artifacts` merged into `effigy-state`
+as the `artifact` module (its only consumers were that crate and the binary), and
+the Rhai `artifact` module became `state::artifact_inspect|artifact_stage|artifact_capture`. `container data seed` and
+`container data dump` keep using the same substrate unchanged. Tom's v0.16
+revisit of the deployment-data surface is untouched.
+
 Each item lands with its implementing PR, which updates the owning knowledge.
 That includes `vision.md` "Agent operations", which loses graph and docs context.

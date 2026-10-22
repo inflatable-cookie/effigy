@@ -48,8 +48,8 @@ pub use config_sections::{
     ManifestContainerHostProcessRestart, ManifestContainerOnTaskExit,
     ManifestContainerSecretDelivery, ManifestContainerSecretsConfig,
     ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
-    ManifestContainersConfig, ManifestDataConfig, ManifestDataTargetConfig,
-    ManifestDistributionConfig, ManifestDistributionMetadataConfig,
+    ManifestContainersConfig, ManifestContractsConfig, ManifestDataConfig,
+    ManifestDataTargetConfig, ManifestDistributionConfig, ManifestDistributionMetadataConfig,
     ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig,
     ManifestDocsPolicyConfig, ManifestDocsPolicyGraphCardinality, ManifestDocsPolicyGraphConfig,
     ManifestDocsPolicyGraphCurrentnessClass, ManifestDocsPolicyGraphCurrentnessConfig,
@@ -169,6 +169,7 @@ pub const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &[
     "systems",
     "distribution",
     "release",
+    "contracts",
     "demos",
     "tasks",
     "qa",
@@ -233,6 +234,8 @@ pub struct TaskManifest {
     pub distribution: Option<ManifestDistributionConfig>,
     #[serde(default)]
     pub release: Option<ManifestReleaseConfig>,
+    #[serde(default)]
+    pub contracts: Option<ManifestContractsConfig>,
     /// Retired in v0.15; each demo converts to an ordinary task. Refused with
     /// the conversion recipe.
     #[serde(default, rename = "demos", deserialize_with = "reject_demos")]

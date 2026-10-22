@@ -102,14 +102,6 @@ impl BuiltinArgParser<'_> {
         self.positive_flag_value(flag, missing_message, "a positive integer")
     }
 
-    pub(crate) fn positive_usize_flag_value(
-        &mut self,
-        flag: &str,
-        missing_message: &str,
-    ) -> Result<usize, BuiltinError> {
-        self.positive_flag_value(flag, missing_message, "an integer >= 1")
-    }
-
     fn positive_flag_value<T>(
         &mut self,
         flag: &str,

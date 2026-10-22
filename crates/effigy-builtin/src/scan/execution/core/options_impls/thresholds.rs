@@ -1,8 +1,6 @@
 use super::super::api::{ScanThresholdOverrideOptions, ScanThresholds};
 use effigy_scan::{
-    DuplicateBlockScanOptions, DuplicateBlockThresholds, GeneratedAssetScanOptions,
-    GeneratedAssetThresholds, GeneratedInSrcScanOptions, GeneratedInSrcThresholds,
-    GodFileScanOptions, GodFileThresholds,
+    DuplicateBlockScanOptions, DuplicateBlockThresholds, GodFileScanOptions, GodFileThresholds,
 };
 
 impl ScanThresholdOverrideOptions for GodFileScanOptions {
@@ -11,21 +9,9 @@ impl ScanThresholdOverrideOptions for GodFileScanOptions {
     fn thresholds_mut(&mut self) -> &mut Self::Thresholds {
         &mut self.thresholds
     }
-}
 
-impl ScanThresholdOverrideOptions for GeneratedAssetScanOptions {
-    type Thresholds = GeneratedAssetThresholds;
-
-    fn thresholds_mut(&mut self) -> &mut Self::Thresholds {
-        &mut self.thresholds
-    }
-}
-
-impl ScanThresholdOverrideOptions for GeneratedInSrcScanOptions {
-    type Thresholds = GeneratedInSrcThresholds;
-
-    fn thresholds_mut(&mut self) -> &mut Self::Thresholds {
-        &mut self.thresholds
+    fn mark_thresholds_configured(&mut self) {
+        self.explicit_thresholds = true;
     }
 }
 
@@ -38,30 +24,6 @@ impl ScanThresholdOverrideOptions for DuplicateBlockScanOptions {
 }
 
 impl ScanThresholds for GodFileThresholds {
-    fn warn_mut(&mut self) -> &mut usize {
-        &mut self.warn
-    }
-    fn high_mut(&mut self) -> &mut usize {
-        &mut self.high
-    }
-    fn critical_mut(&mut self) -> &mut usize {
-        &mut self.critical
-    }
-}
-
-impl ScanThresholds for GeneratedAssetThresholds {
-    fn warn_mut(&mut self) -> &mut usize {
-        &mut self.warn
-    }
-    fn high_mut(&mut self) -> &mut usize {
-        &mut self.high
-    }
-    fn critical_mut(&mut self) -> &mut usize {
-        &mut self.critical
-    }
-}
-
-impl ScanThresholds for GeneratedInSrcThresholds {
     fn warn_mut(&mut self) -> &mut usize {
         &mut self.warn
     }
