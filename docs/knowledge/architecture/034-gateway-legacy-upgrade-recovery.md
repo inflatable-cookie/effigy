@@ -1,7 +1,7 @@
 # 034 - Gateway Migration and Listener Handoff
 
 Owner: gateway
-Status: source-only listener handoff candidate; live administrator activation remains unqualified.
+Status: the experimental launchd handoff surface was retired in v0.15 (Q-009); only the internal adoption boundary remains, source-only and unqualified for live use.
 
 ## Migration boundary
 
@@ -115,25 +115,27 @@ activation, migration and rollback commands must come from implementation and
 review; source and private fixture qualification cannot establish live
 administrator installation or cross-boot behavior. Tom owns those later steps.
 
-### Implemented source candidate (task 156)
+### Retained adoption boundary (task 156, cut in v0.15)
 
-Task 156 implements the capability as `crates/effigy-gateway/src/listener_handoff.rs`
+Task 156 implemented the capability as `crates/effigy-gateway/src/listener_handoff.rs`
 plus the `effigy gateway setup-listener-handoff` command and the internal
-`__gateway-run --listener-handoff` opt-in. Status: **source implementation
-candidate, privately qualified only**. The unexecuted set stays exactly as the
-ruling requires: no agent has registered a launchd job, bound the privileged
-endpoints, migrated a live gateway, or observed a boot. The implemented
-surface:
+`__gateway-run --listener-handoff` opt-in. v0.15 (Q-009) retired the definition
+generator, the command and the read-only status/removal plan; the internal
+`--listener-handoff` opt-in and the descriptor adoption boundary below remain,
+source-only and privately qualified only. The unexecuted set stays exactly as
+the ruling requires: no agent has registered a launchd job, bound the
+privileged endpoints, migrated a live gateway, or observed a boot. No command
+generates, inspects or removes a definition, so an operator who wrote one by
+hand is on their own. The retained surface:
 
-- Definition: `ListenerHandoffSetup` renders deterministic launchd plist bytes
-  — label `dev.effigy.gateway.user`, the canonical reviewed executable,
-  `__gateway-run --listener-handoff`, the operator's passwd user, group and
-  home (`HOME` pinned, never the calling shell's environment), `RunAtLoad` and
-  `KeepAlive`, and a `Sockets` dict owning exactly `http` = TCP `127.0.0.1:80`
-  and `https` = TCP `127.0.0.1:443` over IPv4. A strict parser plus
-  `validate_launchd_definition` refuse any other shape — different label,
-  wildcard node, moved port, extra socket keys, disabled KeepAlive — so an
-  unknown definition never validates.
+- Definition (retired): `ListenerHandoffSetup` rendered deterministic launchd
+  plist bytes — label `dev.effigy.gateway.user`, the canonical reviewed
+  executable, `__gateway-run --listener-handoff`, the operator's passwd user,
+  group and home (`HOME` pinned, never the calling shell's environment),
+  `RunAtLoad` and `KeepAlive`, and a `Sockets` dict owning exactly `http` = TCP
+  `127.0.0.1:80` and `https` = TCP `127.0.0.1:443` over IPv4. The generator, its
+  strict parser and `validate_launchd_definition` were removed in v0.15; use
+  `effigy gateway up` instead.
 - Activation: the daemon adopts sockets through launchd's documented
   `launch_activate_socket` ABI (`<launch.h>`, macOS 10.10+; `ESRCH` outside a
   launchd job, `ENOENT` for a missing socket name). Every handed descriptor is
@@ -148,26 +150,26 @@ surface:
   environment value ever authorizes it. Private fixtures exercise this same
   adoption boundary on ephemeral loopback endpoints with owned descriptors and
   real accept round trips.
-- Operator shape: the guide's listener-handoff section carries the exact
-  install, verify and rollback plan (`launchctl bootstrap`/`bootout`, the
-  task-155 migration order, and the KeepAlive consequence that `gateway down`
-  cannot durably stop the job). Resolver files, `lo0` aliases and CA trust
-  remain separate administrator steps; alias reapply after reboot is declared
-  separately there. Resolver, alias and CA needs do not silently pass because
-  the sockets hand off.
+- Operator shape: the standard operator gateway (`gateway setup`,
+  `gateway up|down|status`, `gateway repair`) installs and controls its own
+  listeners; no launchd install, verification or rollback plan is shipped.
+  Resolver files, `lo0` aliases and CA trust remain separate administrator
+  steps.
 
-Unexecuted, still required before any migration depends on this: Tom's
-administrator install and activation, a live `gateway status` against the
+Unexecuted, still required before any launchd handoff could be depended on:
+Tom's administrator install and activation, a live `gateway status` against the
 user-owned daemon, and one real cross-boot restore proof.
 
-### Handoff status and removal plan (task 157)
+### Handoff status and removal plan (task 157, retired in v0.15)
 
-Task 157 adds the symmetric operator surface without widening the
-source-only and Tom-only boundary: `effigy gateway listener-handoff-status` is
-read-only, and `effigy gateway remove-listener-handoff` emits a checked
-**unexecuted** administrator plan. Neither command registers, activates,
-signals, removes, elevates or migrates anything, and no command was run
-against the fixed live definition or launchd job.
+Task 157 added the symmetric operator surface: read-only
+`effigy gateway listener-handoff-status` and an **unexecuted** administrator
+removal plan from `effigy gateway remove-listener-handoff`. v0.15 (Q-009)
+retired both commands with the rest of the experimental listener-handoff
+surface, and `crates/effigy-gateway/src/listener_handoff/maintenance.rs` with
+them. Neither command had installed, run, removed or migrated anything, so the
+retirement changes no live gateway state and needs no operator step. The
+semantics below record what the surface did while it existed.
 
 - Definition observation: the fixed path
   `/Library/LaunchDaemons/dev.effigy.gateway.user.plist` is opened with

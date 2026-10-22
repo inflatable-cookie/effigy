@@ -1549,16 +1549,6 @@ route. A route from a retired checkout generation can be reclaimed on the
 next registration. `effigy gateway repair --yes` can clean stale TCP alias
 conflicts, but leaves live checkout routes alone.
 
-### User gateway listener handoff (SOURCE candidate; operator-run install)
-
-The experimental `setup-listener-handoff`, `listener-handoff-status` and
-`remove-listener-handoff` commands retain their source-only inspection and
-unexecuted-plan behavior. They do not install or control the standard gateway.
-Use `gateway setup` and ordinary kernel-owned lifecycle commands for the
-operator gateway. Its bind broker transfers listeners after exec; it does not
-pass launchd sockets through the custody spawn barrier. Descriptor validation
-is shared with the experimental adoption proof.
-
 ### Route-table trust
 
 The operator daemon reads routes from the gateway endpoint Store in
