@@ -183,7 +183,7 @@ fn validate_test_suite_run_step(context: &mut SchemaContext<'_, '_>, path: &str,
         context.unsupported_value(
             path,
             SchemaContext::value_type(step),
-            "expected non-empty string command or table with one of `run`, `task`, `draft`, or `rhai`",
+            "expected non-empty string command or table with one of `run`, `task`, or `rhai`",
         );
         return;
     };
@@ -195,7 +195,6 @@ fn validate_test_suite_run_step(context: &mut SchemaContext<'_, '_>, path: &str,
         &[
             "run",
             "task",
-            "draft",
             "rhai",
             "env",
             "env_file",
@@ -208,7 +207,7 @@ fn validate_test_suite_run_step(context: &mut SchemaContext<'_, '_>, path: &str,
         ],
     );
 
-    let route_fields = ["run", "task", "draft", "rhai"];
+    let route_fields = ["run", "task", "rhai"];
     let selected_routes = route_fields
         .iter()
         .filter(|field| step_table.contains_key(**field))
@@ -218,13 +217,13 @@ fn validate_test_suite_run_step(context: &mut SchemaContext<'_, '_>, path: &str,
         context.unsupported_value(
             path,
             "multiple run-step commands",
-            "expected exactly one of `run`, `task`, `draft`, or `rhai`",
+            "expected exactly one of `run`, `task`, or `rhai`",
         );
     } else if selected_routes == 0 && !has_env_directive {
         context.unsupported_value(
             path,
             "missing run-step command",
-            "expected one of `run`, `task`, `draft`, or `rhai`",
+            "expected one of `run`, `task`, or `rhai`",
         );
     }
 

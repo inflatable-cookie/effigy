@@ -723,7 +723,7 @@ fn toml_type_name(value: &Value) -> &'static str {
 /// task definition (`[secrets.vault].generate`), a deploy hook
 /// (`[deploy.model.services.build]`), a bootstrap entry, or the single-object
 /// shorthand for `run`. Cargo-style tool tables use none of these keys.
-const STEP_EXECUTOR_KEYS: [&str; 4] = ["run", "task", "draft", "rhai"];
+const STEP_EXECUTOR_KEYS: [&str; 3] = ["run", "task", "rhai"];
 
 fn names_step_executor(table: &toml::map::Map<String, Value>) -> bool {
     STEP_EXECUTOR_KEYS
