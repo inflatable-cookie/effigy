@@ -7,6 +7,10 @@ pub struct ManifestTask {
     pub visibility: Option<ManifestTaskVisibility>,
     #[serde(default)]
     pub group: Option<String>,
+    /// One line of human context for a public selector, shown by
+    /// `effigy tasks` and `effigy <task> --help`.
+    #[serde(default)]
+    pub description: Option<String>,
     #[serde(default)]
     pub run: Option<ManifestManagedRun>,
     #[serde(default)]
@@ -335,6 +339,8 @@ pub struct ManifestInlineTaskDefinition {
     pub rhai: Option<String>,
     #[serde(default)]
     pub run_in: Option<ManifestTaskRunIn>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 impl ManifestInlineTaskDefinition {
@@ -352,6 +358,7 @@ impl ManifestInlineTaskDefinition {
                 })),
             ])),
             run_in: self.run_in,
+            description: self.description,
             ..ManifestTask::default()
         }
     }

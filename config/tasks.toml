@@ -393,9 +393,9 @@
 "fmt:secrets:vault" = { visibility = "internal", group = "Maintenance", run = "rustfmt --edition 2021 --config skip_children=true crates/effigy-secrets/src/lib.rs crates/effigy-secrets/src/storage.rs crates/effigy-secrets/src/storage/tests.rs crates/effigy-kernel/src/lib.rs crates/effigy-kernel/src/fault_injection.rs crates/effigy-kernel/qa/ratchet.rs crates/effigy-kernel/tests/ratchet.rs crates/effigy-kernel/src/faults/scenarios.rs crates/effigy-rhai/src/rhai_secrets.rs crates/effigy-rhai/src/tests/secrets.rs crates/effigy-rhai/src/tests/mod.rs src/runner/secret_vault.rs src/runner/secrets_command.rs src/runner/container_command/secret_env.rs src/runner/execute/pipeline/standard.rs src/tests/runner_tests/runner_core_tests/secrets_tests.rs tests/secrets_local_dev_cli_tests.rs" }
 
 # Common local commands
-"fmt:check" = { visibility = "public", group = "Development", run = "sh scripts/oxide-selector.sh fmt --all -- --check" }
-"fmt:apply" = { visibility = "public", group = "Development", run = "sh scripts/oxide-selector.sh fmt --all" }
-"build:release" = { visibility = "public", group = "Development", run = "sh scripts/oxide-selector.sh build --release --bin effigy" }
+"fmt:check" = { visibility = "public", group = "Development", description = "Check formatting with rustfmt without rewriting files.", run = "sh scripts/oxide-selector.sh fmt --all -- --check" }
+"fmt:apply" = { visibility = "public", group = "Development", description = "Rewrite formatting with rustfmt.", run = "sh scripts/oxide-selector.sh fmt --all" }
+"build:release" = { visibility = "public", group = "Development", description = "Build the release-mode Effigy binary.", run = "sh scripts/oxide-selector.sh build --release --bin effigy" }
 
 # All maintained JSON contract rows and their authority/ownership controls.
 "test:audit:contracts" = { visibility = "internal", group = "Maintenance", run = [
@@ -451,10 +451,12 @@
 # for a mutating run, and never forwards execute, resume, tag or publish. It
 # mutates this checkout by design, unlike Queue milestone `project.qa.run`,
 # which uses a disposable checkout. Ordinary milestone QA stays on Queue.
+"release:prepare".description = "Prepare this checkout for release in place; heavy admission wraps the whole operation."
 "release:prepare".admission = "heavy"
 "release:prepare".run = "bash scripts/release-prepare.sh {args}"
 # The self-hosting install verifier runs from a compatible source build; keep
 # its subcommand fixed and admit the complete tagged-source install proof.
+"release:verify-install".description = "Prove the tagged-source install from a compatible source build."
 "release:verify-install".admission = "heavy"
 "release:verify-install".run = "./target/debug/effigy release verify-install {args}"
 
@@ -1362,7 +1364,7 @@
   "effigy docs check links CHANGELOG.md docs/knowledge/architecture/020-container-infrastructure-design.md docs/knowledge/architecture/034-gateway-legacy-upgrade-recovery.md docs/knowledge/architecture/README.md docs/knowledge/questions.md docs/guides/012-dev-process-manager-tui.md docs/guides/063-container-system-guide.md docs/guides/083-v0.14.0-consumer-migration.md",
   "effigy changelog validate CHANGELOG.md",
 ] }
-"qa:docs" = { visibility = "public", group = "Validation", run = [
+"qa:docs" = { visibility = "public", group = "Validation", description = "Check documentation links, examples, agent defaults, knowledge and the changelog.", run = [
   { task = "qa:docs:links" },
   { task = "qa:docs:examples" },
   { task = "qa:docs:agent-defaults" },
@@ -1371,7 +1373,7 @@
 ] }
 
 # JSON contract QA
-"qa:json" = { visibility = "public", group = "Validation", run = "effigy contracts check-json --fast --print-selected=text" }
+"qa:json" = { visibility = "public", group = "Validation", description = "Validate the JSON contract rows changed against the schema index.", run = "effigy contracts check-json --fast --print-selected=text" }
 "qa:json:ci" = { visibility = "internal", group = "Maintenance", run = "effigy contracts check-json --full --print-selected=json" }
 "qa:ci:json" = { visibility = "internal", group = "Maintenance", run = [
   "effigy contracts check-json --full --print-selected=json",
@@ -1414,7 +1416,7 @@
   "sh scripts/oxide-selector.sh test -p effigy-runtime read::tests::primary_service_exec_readiness_ -- --nocapture",
   "sh scripts/oxide-selector.sh test -p effigy exec_readiness_recovery_ -- --nocapture",
 ] }
-"qa:architecture" = { visibility = "public", group = "Validation", run = [
+"qa:architecture" = { visibility = "public", group = "Validation", description = "Guard the kernel ratchet, runtime-container drift and container exec readiness.", run = [
   { task = "qa:kernel-ratchet" },
   { task = "qa:architecture:runtime-container-drift" },
   { task = "qa:architecture:container-exec-readiness" },
@@ -1422,6 +1424,7 @@
 
 # CI mirrors and release gates
 "qa:released-surface" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test --test cli_output_tests released_surface_ -- --nocapture" }
+"qa:ci:fast".description = "Run the workspace test suite, doc tests and JSON contracts."
 "qa:ci:fast".admission = "heavy"
 "qa:ci:fast".run = [
   "bash -lc 'if sh scripts/oxide-selector.sh nextest --version >/dev/null 2>&1; then sh scripts/oxide-selector.sh nextest run --workspace --no-fail-fast; else echo \"[warn] cargo-nextest not installed; falling back to sh scripts/oxide-selector.sh test --workspace --no-fail-fast\" >&2; sh scripts/oxide-selector.sh test --workspace --no-fail-fast; fi'",
@@ -1429,6 +1432,7 @@
   { task = "qa:released-surface" },
   { task = "qa:ci:json" },
 ]
+"qa:ci:local".description = "Run CI locally: format, clippy, workspace tests, docs and JSON contracts."
 "qa:ci:local".admission = "heavy"
 "qa:ci:local".run = [
   { task = "fmt:check" },
@@ -1440,13 +1444,13 @@
   { task = "qa:ci:json" },
 ]
 "qa:gates" = { visibility = "internal", group = "Maintenance", run = [{ task = "qa:docs" }, { task = "qa:json" }, { task = "qa:architecture" }] }
-"qa:ci" = { visibility = "public", group = "Validation", run = [
+"qa:ci" = { visibility = "public", group = "Validation", description = "Mirror hosted CI: docs, JSON contracts, released surface and architecture.", run = [
   { task = "qa:docs" },
   { task = "qa:json:ci" },
   { task = "qa:released-surface" },
   { task = "qa:architecture" },
 ] }
-"prepush:ci" = { visibility = "public", group = "Validation", run = [
+"prepush:ci" = { visibility = "public", group = "Validation", description = "Pre-push mirror of CI's task tests, docs and architecture checks.", run = [
   { task = "qa:json:ci" },
   "sh scripts/oxide-selector.sh test --test cli_output_tests cli_json_mode",
   "sh scripts/oxide-selector.sh test --lib",
@@ -1456,12 +1460,12 @@
 ] }
 
 # Default validation shortcuts
-health = { visibility = "public", group = "Validation", run = [{ task = "fmt:check" }, "sh scripts/oxide-selector.sh check --workspace --locked"] }
-validate = { visibility = "public", group = "Validation", run = [{ task = "health" }, "sh scripts/oxide-selector.sh clippy --workspace --all-targets -- -D warnings"] }
-qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { task = "qa:docs" }, { task = "qa:json" }] }
+health = { visibility = "public", group = "Validation", description = "Format check plus a locked compile of the workspace.", run = [{ task = "fmt:check" }, "sh scripts/oxide-selector.sh check --workspace --locked"] }
+validate = { visibility = "public", group = "Validation", description = "Health plus clippy across every workspace target.", run = [{ task = "health" }, "sh scripts/oxide-selector.sh clippy --workspace --all-targets -- -D warnings"] }
+qa = { visibility = "public", group = "Validation", description = "Built-in tests, docs checks and changed JSON contracts.", run = [{ task = "test" }, { task = "qa:docs" }, { task = "qa:json" }] }
 
 # Visibility/discovery changes: bounded tests and compilation of their owners.
-"test:tasks:visibility" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-builtin --lib -E 'test(visibility) | test(task_defs::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
+"test:tasks:visibility" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-builtin -p effigy-doctor --lib -E 'test(visibility) | test(task_defs::) | test(task_description_validation_tests) | test(manifest_schema)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 "check:tasks:visibility" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-builtin -p effigy-doctor -p effigy-managed -p effigy-routing -p effigy-core --all-targets", timeout_ms = 900000 }] }
 "lint:tasks:visibility" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-builtin -p effigy-doctor -p effigy-managed -p effigy-routing -p effigy-core --all-targets -- -D warnings", timeout_ms = 900000 }] }
 "build:tasks:visibility" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 900000 }] }
@@ -1479,7 +1483,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 "qa:ci:local".visibility = "public"
 "qa:ci:local".group = "Validation"
 "test:tasks:visibility:crates" = { visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-routing -p effigy-managed -p effigy-doctor -p effigy-builtin -p effigy --lib -E 'package(effigy-manifest) | package(effigy-tasks) | package(effigy-cli) | package(effigy-routing) | test(run_spec::) | test(manifest_schema) | test(task_graph) | test(semantic::) | test(completion) | test(tasks_contract_tests) | test(retired_keys::) | test(selector_env_names)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1200000 }] }
-"test:tasks:visibility:runtime" = { visibility = "internal", run = [ { run = "sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 900000 }, { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(visibility_tests::) | test(qa_groups_tests::) | test(tasks_rendering_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 } ] }
+"test:tasks:visibility:runtime" = { visibility = "internal", run = [ { run = "sh scripts/oxide-selector.sh build --bin effigy", timeout_ms = 900000 }, { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(visibility_tests::) | test(qa_groups_tests::) | test(tasks_rendering_tests::) | test(task_description_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 } ] }
 "test:tasks:visibility:fixes" = { visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest -p effigy --lib --test cli_output_tests -E 'test(top_level_keys_match_task_manifest_fields) | test(builtin_completion_json_contract_has_versioned_shape) | test(retired_drafts_table_is_refused_with_the_task_namespace_replacement)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 "test:tasks:visibility:execution" = { visibility = "internal", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-doctor -p effigy --lib --test cli_output_tests -E 'test(internal_and_referenced_tasks_run_directly) | (package(effigy-doctor) & test(checks::))' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 "fmt:tasks:visibility" = { visibility = "internal", run = "rustfmt --edition 2021 --config skip_children=true src/tests/runner_tests/run_array_tests/rhai_script_tests.rs src/tests/runner_tests/runner_core_tests/help_tests/json_contract_tests.rs src/tests/lib_tests_help_render_tests.rs src/cli/help_dispatch.rs crates/effigy-builtin/src/help.rs crates/effigy-builtin/src/registry.rs crates/effigy-builtin/src/support.rs tests/cli_output_tests/help_and_flags_tests.rs crates/effigy-builtin/src/completion/candidates/cache/manifests.rs crates/effigy-builtin/src/completion/scripts/command_index.rs crates/effigy-builtin/src/config/docs/tasks.rs crates/effigy-builtin/src/tasks.rs crates/effigy-builtin/src/tasks/request.rs crates/effigy-builtin/src/test/planning/resolve/target_config.rs crates/effigy-cli/src/command_parsing.rs crates/effigy-cli/src/command_surface.rs crates/effigy-cli/src/command_surface/tests.rs crates/effigy-cli/src/help/topics/tasks.rs crates/effigy-cli/src/lib.rs crates/effigy-core/src/task_selection.rs crates/effigy-doctor/src/checks/catalog_checks.rs crates/effigy-doctor/src/checks/definitions.rs crates/effigy-doctor/src/checks/tests.rs crates/effigy-doctor/src/contracts.rs crates/effigy-doctor/src/health/tests.rs crates/effigy-doctor/src/lib.rs crates/effigy-doctor/src/manifest/scan.rs crates/effigy-doctor/src/manifest_schema/tasks/mod.rs crates/effigy-doctor/src/references.rs crates/effigy-doctor/src/task_graph.rs crates/effigy-managed/src/render_support.rs crates/effigy-managed/src/run_spec.rs crates/effigy-managed/src/run_spec/command.rs crates/effigy-managed/src/run_spec/run_step.rs crates/effigy-managed/src/run_spec/sequence/env_resolution/tests.rs crates/effigy-managed/src/scheduler/graph/tests.rs crates/effigy-manifest/src/lib.rs crates/effigy-manifest/src/lifecycle_date.rs crates/effigy-manifest/src/loaded_catalog.rs crates/effigy-manifest/src/qa_groups.rs crates/effigy-manifest/src/task_defs.rs crates/effigy-manifest/src/retired_keys.rs crates/effigy-manifest/src/task_runtime.rs crates/effigy-routing/src/error.rs crates/effigy-routing/src/lib.rs crates/effigy-routing/src/membership.rs crates/effigy-routing/src/selection.rs crates/effigy-routing/src/selection/candidates.rs crates/effigy-routing/src/selection/errors.rs crates/effigy-tasks/src/lib.rs crates/effigy-tasks/src/listing.rs crates/effigy-tasks/src/qa_groups/inventory.rs crates/effigy-tasks/src/qa_groups/mod.rs crates/effigy-tasks/src/qa_groups/plan.rs crates/effigy-tasks/src/visibility.rs src/cli/output/labels/tests.rs src/runner/embedded_runner.rs src/runner/entrypoints/dispatch.rs src/runner/error.rs src/runner/execute/api.rs src/runner/execute/json_payload.rs src/runner/execute/json_payload/payload.rs src/runner/execute/pipeline/managed.rs src/runner/execute/pipeline/standard.rs src/runner/execute/preflight/context.rs src/runner/execute/process_run.rs src/runner/execute/route.rs src/runner/execute/selection.rs src/runner/execute/sequence_run.rs src/runner/qa_group_command/mod.rs src/runner/script_command/feature_dispatch.rs src/runner/task_engine/identity.rs src/runner/task_engine/legacy.rs src/runner/task_engine/tests.rs src/runner/tasks_command/prepare.rs src/tests/json_contract_tests/tasks_contract_tests.rs src/tests/lib_tests_json_mode_tests.rs src/tests/lib_tests_parse_tests/doctor_and_tasks_option_tests.rs src/tests/lib_tests_parse_tests/help_and_flag_tests.rs src/tests/runner_test_support/tasks.rs src/tests/runner_tests/runner_core_tests/init_migrate_tests/init_tests.rs tests/cli_output_tests/visibility_tests.rs tests/cli_output_tests/qa_groups_tests.rs tests/cli_output_tests/tasks_rendering_tests/listings.rs tests/cli_output_tests/tasks_rendering_tests/managed_profiles.rs" }

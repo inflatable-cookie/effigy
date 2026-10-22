@@ -58,7 +58,7 @@ These commands produce stable JSON payloads suitable for agents to consume:
 
 | Command | Payload contains |
 |---------|------------------|
-| `effigy --json tasks` | `result.catalog_tasks[]` and `result.builtin_tasks[]`; catalog rows use `task`, `manifest`, and `run` |
+| `effigy --json tasks` | `result.catalog_tasks[]` and `result.builtin_tasks[]`; catalog rows use `task`, `manifest`, `run`, `group`, `visibility` and `description` |
 | `effigy --json doctor` | `result.findings[]` with `check_id`, `evidence`, `severity`, and `remediation` |
 | `effigy --json doctor <selector> <args...>` | routing decision tree |
 | `effigy --json test --plan` | `result.targets[]` with resolved test plans |
@@ -74,6 +74,14 @@ These commands produce stable JSON payloads suitable for agents to consume:
 
 ```bash
 effigy --json tasks | jq -r '.result.catalog_tasks[].task'
+```
+
+**Read what each task is for:**
+
+```bash
+effigy --json tasks \
+  | jq -r '.result.catalog_tasks[] | select(.description) | "\(.task): \(.description)"'
+effigy --json <task> --help   # effigy.help.v1 for one task; nothing runs
 ```
 
 **Find all failing doctor checks:**

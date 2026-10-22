@@ -24,6 +24,9 @@ pub(in crate::runner) struct ExecutionPreflight {
     pub(in crate::runner) runtime_args_exec: TaskRuntimeArgs,
     pub(in crate::runner) output_json: bool,
     pub(in crate::runner) plan: bool,
+    /// The invocation asked for the selected task's own help page, so the
+    /// pipeline renders it instead of running the task.
+    pub(in crate::runner) help: bool,
     pub(in crate::runner) output_mode: ExecutionOutputMode,
     pub(in crate::runner) resolved: ResolvedTarget,
     pub(in crate::runner) discovery_plan: ExecutionDiscoveryPlan,
@@ -65,7 +68,7 @@ pub(in crate::runner) fn build_execution_preflight_from_input(
         name: input.selector.clone(),
         args: input.args.clone(),
     };
-    let (runtime_args_raw, runtime_args_exec, output_json, plan) =
+    let (runtime_args_raw, runtime_args_exec, output_json, plan, help) =
         prepare_execution_runtime_args(&input.args)?;
     let discovery = discovery::discover_execution_preflight(
         &input.selector,
@@ -81,6 +84,7 @@ pub(in crate::runner) fn build_execution_preflight_from_input(
         runtime_args_exec,
         output_json: output_json || crate::runner::task_engine::nested_capture(),
         plan,
+        help,
         output_mode: input.output_mode,
         resolved: discovery.resolved,
         selector: discovery_plan.selector.clone(),

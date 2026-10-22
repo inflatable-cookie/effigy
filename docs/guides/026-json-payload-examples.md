@@ -625,7 +625,9 @@ Companion references:
     {
       "catalog": "api",
       "task": "build",
-      "run": "cargo run -p api --bin build"
+      "run": "cargo run -p api --bin build",
+      "group": "Development",
+      "description": "Build the api binary from the workspace"
     }
   ],
   "managed_profiles": [

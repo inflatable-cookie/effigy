@@ -1,7 +1,7 @@
 [[retired]]
 id = "effigy-demo-surface"
 retired = "2026-10-21"
-replacement = "No replacement (Q-009): the demo registry, receipts, retained history and browser are gone. Each `[demos.<name>]` converts to `[tasks.\"demo:<name>\"]` with the same `run`, the `title` and `summary` kept as a TOML comment (tasks have no description field), and optional `group = \"Demos\"`. `effigy demo` refuses with this explanation, a `[demos]` table and `effigy config --target demos` are errors with the conversion recipe, and historical `.effigy/demo/` state and a consumer's own `demos/` script directory are untouched."
+replacement = "No replacement (Q-009): the demo registry, receipts, retained history and browser are gone. Each `[demos.<name>]` converts to `[tasks.\"demo:<name>\"]` with the same `run`, the `title` and `summary` merged into the task `description` (effigy#271), and optional `group = \"Demos\"`. `effigy demo` refuses with this explanation, a `[demos]` table and `effigy config --target demos` are errors with the conversion recipe, and historical `.effigy/demo/` state and a consumer's own `demos/` script directory are untouched."
 owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md"
 terms = [
   "effigy demo",

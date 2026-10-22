@@ -79,7 +79,7 @@ Pick the first Effigy command that matches the job.
 |-----|----------|---------------|
 | Understand code | Ownership, behavior, implementation, impact | `rg` for the symbol, then read `docs/README.md` for the owning knowledge |
 | Find documentation authority | Which contract, decision, lane, or prior decision governs the work | `rg` the docs tree, then `docs/README.md` for the index |
-| Find runnable selectors | You need repo tasks or QA surfaces | `effigy tasks` |
+| Find runnable selectors | You need repo tasks or QA surfaces | `effigy tasks` (task `description` in text and `--json`) |
 | Inspect test shape | You need to know what `effigy test` will actually do | `effigy test --plan` |
 | Diagnose routing or repo health | Selector resolution is unclear, or health/drift is the task | `effigy doctor` |
 | Inspect local dependency links | Cargo/Bun desired state, drift, or lock/peer hygiene is the task | `effigy --json deps status` |
@@ -103,6 +103,11 @@ knowledge, and `effigy test --plan` answers which tests run. Details:
 - use `--json` whenever another agent step will consume the result; it is an
   output format, never a planning or safety flag
 - use `effigy --plan <selector>` to inspect command shape without executing; Effigy flags go before the task, everything after it is the task's
+- read a task's declared `description` before choosing it: `effigy tasks --json`
+  carries `catalog_tasks[].description` (`null` when undeclared), and
+  `effigy <task> --help` prints that task's group, description, run preview and
+  manifest without running it. Arguments after `--` stay the task's, so
+  `effigy <task> -- --help` reaches the wrapped command
 
 Good navigation question shapes:
 

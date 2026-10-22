@@ -4,7 +4,7 @@ use effigy_tasks::TaskRuntimeArgs;
 
 pub(super) fn prepare_execution_runtime_args(
     args: &[String],
-) -> Result<(TaskRuntimeArgs, TaskRuntimeArgs, bool, bool), RunnerError> {
+) -> Result<(TaskRuntimeArgs, TaskRuntimeArgs, bool, bool, bool), RunnerError> {
     let plan = ExecutionRuntimeArgsPlan::from_args(args)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     // Effigy's flags go before the task; everything after belongs to it.
@@ -25,5 +25,6 @@ pub(super) fn prepare_execution_runtime_args(
         plan.exec_task_runtime_args(),
         plan.output_json,
         plan.plan,
+        plan.help,
     ))
 }

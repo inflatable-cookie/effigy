@@ -224,6 +224,9 @@ pub struct ExecutionRuntimeArgsPlan {
     pub lock_wait_ms: Option<u64>,
     pub output_json: bool,
     pub plan: bool,
+    /// The invocation asks for the selected task's own help page. Everything
+    /// after a `--` belongs to the task, so it is not read.
+    pub help: bool,
     /// `--plan` or `--json` read from directly after the selector, for one
     /// release.
     pub compat_flags: Vec<String>,
@@ -240,6 +243,7 @@ impl ExecutionRuntimeArgsPlan {
                 .map_err(ExecutionRequestError::InvalidRuntimeArgs)?;
             let (mut exec_args, output_json, plan) = strip_task_output_flags(&raw.passthrough);
             exec_args.extend(split.task.iter().cloned());
+            let help = task_help_requested(&split.effigy) || task_help_requested(&split.task);
             let mut raw_args = raw.passthrough;
             raw_args.extend(split.task);
             return Ok(Self {
@@ -251,12 +255,14 @@ impl ExecutionRuntimeArgsPlan {
                 lock_wait_ms: raw.lock_wait_ms,
                 output_json,
                 plan,
+                help,
                 compat_flags: split.compat,
                 passed_through_flags: split.passed_through,
             });
         }
         let raw = effigy_tasks::parse_task_runtime_args(args)
             .map_err(ExecutionRequestError::InvalidRuntimeArgs)?;
+        let help = task_help_requested(&raw.passthrough);
         let (exec_args, output_json, plan) = strip_task_output_flags(&raw.passthrough);
 
         Ok(Self {
@@ -270,6 +276,7 @@ impl ExecutionRuntimeArgsPlan {
             lock_wait_ms: raw.lock_wait_ms,
             output_json,
             plan,
+            help,
         })
     }
 
@@ -292,6 +299,14 @@ impl ExecutionRuntimeArgsPlan {
             passthrough: self.exec_args.clone(),
         }
     }
+}
+
+/// Whether these arguments ask for help. A `--` ends Effigy's own flags, so
+/// everything after it is the task's exact argv and never a help request.
+fn task_help_requested(args: &[String]) -> bool {
+    args.iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| matches!(arg.as_str(), "--help" | "-h"))
 }
 
 fn strip_task_output_flags(args: &[String]) -> (Vec<String>, bool, bool) {
