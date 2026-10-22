@@ -2823,6 +2823,9 @@ struct OwnedHostChild {
     identity: Option<ChildProcessIdentity>,
     reaped: bool,
     stop_attempted: bool,
+    /// Set once the kernel has reported this child's exit. macOS consumes the
+    /// wait state for a repeated non-reaping peek, and an exit is monotone.
+    exit_observed: bool,
 }
 
 /// Observation availability does not decide whether the retained Child can
@@ -2840,11 +2843,35 @@ impl OwnedHostChild {
             identity: None,
             reaped: false,
             stop_attempted: false,
+            exit_observed: false,
         }
     }
 
     fn id(&self) -> u32 {
         self.child.id()
+    }
+
+    /// Observe the retained child's exit without reaping it. The exit stays
+    /// unreaped so this Child keeps pinning the PID and group; only the real
+    /// owned wait supplies a status.
+    fn observe_exit(&mut self, deadline: Instant) -> Result<bool, RunnerError> {
+        if self.reaped {
+            return Err(RunnerError::task_invocation(format!(
+                "owned child exit observation failed: root already reaped; owned_pid={}",
+                self.id()
+            )));
+        }
+        if self.exit_observed {
+            return Ok(true);
+        }
+        if Instant::now() >= deadline {
+            return Err(RunnerError::task_invocation(format!(
+                "owned child exit observation failed: deadline; owned_pid={}",
+                self.id()
+            )));
+        }
+        self.exit_observed = peek_owned_child_exit(self.id())?;
+        Ok(self.exit_observed)
     }
 
     fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
@@ -2881,10 +2908,9 @@ impl OwnedHostChild {
             Err(OwnedChildReapError::Observation(error)) => Some(error),
             Err(OwnedChildReapError::Wait(error)) => return Err(error),
         };
-        if let Err(error) = self.signal(Signal::SIGTERM) {
-            // On macOS a zombie-only group can reject signaling with EPERM.
+        if let Err(error) = self.send_group_signal(Signal::SIGTERM, deadline) {
             // A race to quiescence is success only after positive observation
-            // and the actual owned reap; never ignore a permission failure.
+            // and the actual owned reap; never ignore an unverified refusal.
             return match observe(self, deadline) {
                 Ok(Some(status)) => Ok(status),
                 Err(OwnedChildReapError::Wait(wait_error)) => Err(wait_error),
@@ -2903,7 +2929,7 @@ impl OwnedHostChild {
                     )));
                 }
                 deadline = Instant::now() + Duration::from_secs(2);
-                if let Err(error) = self.signal(Signal::SIGKILL) {
+                if let Err(error) = self.send_group_signal(Signal::SIGKILL, deadline) {
                     return match observe(self, deadline) {
                         Ok(Some(status)) => Ok(status),
                         Err(OwnedChildReapError::Wait(wait_error)) => Err(wait_error),
@@ -2932,14 +2958,15 @@ impl OwnedHostChild {
         &mut self,
         deadline: Instant,
     ) -> Result<Option<std::process::ExitStatus>, OwnedChildReapError> {
-        if !observe_owned_child_exit(self.id(), deadline)
+        if !self
+            .observe_exit(deadline)
             .map_err(OwnedChildReapError::Observation)?
         {
             return Ok(None);
         }
         // Observe exit first, then members: the exited root cannot fork
-        // between this snapshot and its reap. Any other member holds it.
-        let members = observe_owned_group_members(self.id(), deadline)
+        // between this snapshot and its reap. Any other live member holds it.
+        let members = observe_owned_group_live_members(self.id(), deadline)
             .map_err(OwnedChildReapError::Observation)?;
         if members.iter().any(|pid| *pid != self.id()) {
             return Ok(None);
@@ -2961,6 +2988,24 @@ impl OwnedHostChild {
             ))),
         }
     }
+
+    /// Send `signal` to the group this spawn path created. macOS answers a
+    /// group signal with EPERM when every remaining member is a zombie, so a
+    /// refusal is verified against a fresh live-member inventory before it is
+    /// treated as lost authority (papercut 91d3fd91).
+    fn send_group_signal(&self, signal: Signal, deadline: Instant) -> Result<(), RunnerError> {
+        match kill(Pid::from_raw(-(self.id() as i32)), signal) {
+            Ok(()) | Err(nix::errno::Errno::ESRCH) => Ok(()),
+            Err(nix::errno::Errno::EPERM) => classify_owned_signal_refusal(
+                signal,
+                nix::errno::Errno::EPERM,
+                observe_owned_group_live_members(self.id(), deadline),
+            ),
+            Err(error) => Err(RunnerError::task_invocation(format!(
+                "cannot signal directly owned child group: {error}"
+            ))),
+        }
+    }
 }
 
 impl Drop for OwnedHostChild {
@@ -2977,89 +3022,70 @@ impl Drop for OwnedHostChild {
     }
 }
 
-/// A small bounded observation from the system process table. In particular,
-/// macOS proc_pidinfo cannot read a zombie's start identity. This does not
-/// authorize any signal or supply an exit code; the owned Child does both.
-fn observe_owned_child_exit(pid: u32, deadline: Instant) -> Result<bool, RunnerError> {
-    use super::exec_command::{BoundedCommandBudget, BoundedCommandPhase};
-    let started = Instant::now();
-    let mut budget = BoundedCommandBudget::new(
-        started,
-        deadline.min(started + Duration::from_millis(500)),
-        64,
-        128,
-    );
-    let capture = budget
-        .run_command(
-            Path::new("/"),
-            std::ffi::OsStr::new("/bin/ps"),
-            &[
-                "-p".into(),
-                pid.to_string().into(),
-                "-o".into(),
-                "stat=".into(),
-            ],
-            None,
-            &[],
-            BoundedCommandPhase::CommandExecution,
+/// Owner-side exit observation through the kernel: `waitid(WNOWAIT)` reports
+/// the retained child's exit without reaping it, so its PID and group stay
+/// pinned. The kernel answers immediately, while a process-table sample under
+/// a loaded shared-process host can outlast any fixed probe budget (papercut
+/// 24e9c4ab).
+fn peek_owned_child_exit(pid: u32) -> Result<bool, RunnerError> {
+    // SAFETY: a zeroed siginfo is a valid initial value for waitid to fill.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    // SAFETY: the pid is this process's own unreaped child, the siginfo is
+    // initialized writable storage, and WNOWAIT leaves the exit unreaped.
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
         )
-        .map_err(|failure| owned_child_capture_failure(pid, &failure.failure, started.elapsed()))?;
-    classify_owned_child_exit(pid, &capture, started.elapsed())
-}
-
-fn owned_child_capture_failure(
-    pid: u32,
-    failure: &super::exec_command::BoundedCaptureFailure,
-    elapsed: Duration,
-) -> RunnerError {
-    RunnerError::task_invocation(format!(
-        "owned child exit observation failed: {failure:?}; owned_pid={pid}; elapsed_ms={}",
-        elapsed.as_millis()
+    };
+    if result < 0 {
+        return Err(RunnerError::task_invocation(format!(
+            "owned child exit observation failed: unavailable; owned_pid={pid}; {}",
+            std::io::Error::last_os_error()
+        )));
+    }
+    Ok(matches!(
+        info.si_code,
+        libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED
     ))
 }
 
-/// Only structural information about the bounded, fixed `ps stat=` response.
-/// Neither these diagnostics nor a positive state confer signal authority.
-fn classify_owned_child_exit(
-    pid: u32,
-    capture: &super::exec_command::BoundedCapture,
-    elapsed: Duration,
-) -> Result<bool, RunnerError> {
-    use sha2::{Digest, Sha256};
-    let text = std::str::from_utf8(&capture.stdout);
-    let (tokens, state) = match text {
-        Ok(text) => {
-            let mut rows = text.split_whitespace();
-            let first = rows.next().and_then(|row| row.as_bytes().first()).copied();
-            (usize::from(first.is_some()) + rows.count(), first)
-        }
-        Err(_) => (0, None),
-    };
-    let category = if !capture.status.success() {
-        "status_unavailable"
-    } else if text.is_err() {
-        "invalid_utf8"
-    } else if tokens == 0 {
-        "empty"
-    } else if tokens != 1 {
-        "multiple_tokens"
-    } else if !matches!(
-        state,
-        Some(b'I' | b'R' | b'S' | b'T' | b'U' | b'D' | b'W' | b'Z' | b'X')
-    ) {
-        "unknown_state"
-    } else {
-        return Ok(matches!(state, Some(b'Z' | b'X')));
-    };
-    Err(RunnerError::task_invocation(format!(
-        "owned child exit observation refused: category={category}; owned_pid={pid}; status_code={:?}; stdout_bytes={}; stdout_sha256={}; stderr_bytes={}; stderr_sha256={}; utf8={}; tokens={tokens}; elapsed_ms={}",
-        capture.status.code(), capture.stdout.len(), Sha256::digest(&capture.stdout).iter().map(|byte| format!("{byte:02x}")).collect::<String>(),
-        capture.stderr.len(), Sha256::digest(&capture.stderr).iter().map(|byte| format!("{byte:02x}")).collect::<String>(), text.is_ok(), elapsed.as_millis()
-    )))
+/// A group this process created can only be refused by a live member that will
+/// not accept the signal. Re-inventory before believing the refusal: no live
+/// member means the group holds no workload and the caller may keep settling.
+/// An unavailable inventory proves nothing and keeps the refusal.
+fn classify_owned_signal_refusal(
+    signal: Signal,
+    error: nix::errno::Errno,
+    live_members: Result<Vec<u32>, RunnerError>,
+) -> Result<(), RunnerError> {
+    match live_members {
+        Ok(members) if members.is_empty() => Ok(()),
+        Ok(members) => Err(RunnerError::task_invocation(format!(
+            "cannot signal directly owned child group: {error}; live members refused {signal:?}: {members:?}"
+        ))),
+        Err(observation) => Err(RunnerError::task_invocation(format!(
+            "cannot signal directly owned child group: {error}; group liveness is unavailable: {observation}"
+        ))),
+    }
 }
 
-/// Finite PID/group-only inventory: never retain arguments or command output.
-fn observe_owned_group_members(pid: u32, deadline: Instant) -> Result<Vec<u32>, RunnerError> {
+/// A member in a zombie or dead state holds no workload, so it keeps no group
+/// open (`052` §12: an unreaped zombie supplies no workload). Any other state,
+/// including one this build cannot classify, is live: uncertainty never widens
+/// authority.
+fn member_state_is_dead(state: &str) -> bool {
+    matches!(state.as_bytes().first(), Some(b'Z' | b'X'))
+}
+
+/// Finite PID/group/state inventory: never retain arguments or command output.
+/// `holds_workload` is false only for a member in a zombie or dead state.
+fn observe_owned_group_inventory(
+    pid: u32,
+    deadline: Instant,
+) -> Result<Vec<(u32, bool)>, RunnerError> {
     use super::exec_command::{BoundedCommandBudget, BoundedCommandPhase};
     let started = Instant::now();
     let mut budget = BoundedCommandBudget::new(
@@ -3072,7 +3098,7 @@ fn observe_owned_group_members(pid: u32, deadline: Instant) -> Result<Vec<u32>, 
         .run_command(
             Path::new("/"),
             std::ffi::OsStr::new("/bin/ps"),
-            &["-Ao".into(), "pid=,pgid=".into()],
+            &["-Ao".into(), "pid=,pgid=,stat=".into()],
             None,
             &[],
             BoundedCommandPhase::CommandExecution,
@@ -3095,10 +3121,13 @@ fn observe_owned_group_members(pid: u32, deadline: Instant) -> Result<Vec<u32>, 
         let mut fields = row.split_whitespace();
         let member = fields.next().and_then(|value| value.parse::<u32>().ok());
         let group = fields.next().and_then(|value| value.parse::<u32>().ok());
-        match (member, group, fields.next()) {
-            (Some(member), Some(group), None) if member > 0 && member <= i32::MAX as u32 => {
+        let state = fields.next();
+        match (member, group, state, fields.next()) {
+            (Some(member), Some(group), Some(state), None)
+                if member > 0 && member <= i32::MAX as u32 =>
+            {
                 if group == pid {
-                    members.push(member);
+                    members.push((member, !member_state_is_dead(state)));
                 }
             }
             _ => {
@@ -3109,6 +3138,24 @@ fn observe_owned_group_members(pid: u32, deadline: Instant) -> Result<Vec<u32>, 
         }
     }
     Ok(members)
+}
+
+/// Every process the kernel still lists in the owned group, including zombies.
+/// Proofs use the full list; settlement uses only members that hold workload.
+#[cfg(test)]
+fn observe_owned_group_members(pid: u32, deadline: Instant) -> Result<Vec<u32>, RunnerError> {
+    Ok(observe_owned_group_inventory(pid, deadline)?
+        .into_iter()
+        .map(|(member, _)| member)
+        .collect())
+}
+
+/// Members that still hold workload: a zombie keeps no group open.
+fn observe_owned_group_live_members(pid: u32, deadline: Instant) -> Result<Vec<u32>, RunnerError> {
+    Ok(observe_owned_group_inventory(pid, deadline)?
+        .into_iter()
+        .filter_map(|(member, holds_workload)| holds_workload.then_some(member))
+        .collect())
 }
 
 fn terminate_owned_child_group(
@@ -3583,94 +3630,24 @@ mod tests {
     }
 
     #[test]
-    fn host_process_exit_observation_classifies_strict_bounded_capture_without_output() {
-        use super::super::exec_command::BoundedCapture;
-        for (bytes, code, expected) in [
-            (&b" S+E\n"[..], 0, Some(false)),
-            (&b"R\n"[..], 0, Some(false)),
-            (&b"I"[..], 0, Some(false)),
-            (&b"T"[..], 0, Some(false)),
-            (&b"U"[..], 0, Some(false)),
-            (&b"D"[..], 0, Some(false)),
-            (&b"W"[..], 0, Some(false)),
-            (&b"Z+\n"[..], 0, Some(true)),
-            (&b"X\n"[..], 0, Some(true)),
-            (&b""[..], 0, None),
-            (&b" \n"[..], 0, None),
-            (&b"Z S"[..], 0, None),
-            (&b"E"[..], 0, None),
-            (&b"secret-marker"[..], 0, None),
-            (&b"\xff"[..], 0, None),
-            (&b"Z"[..], 1, None),
-        ] {
-            let capture = BoundedCapture {
-                status: std::process::ExitStatus::from_raw(code << 8),
-                stdout: bytes.to_vec(),
-                stderr: b"secret-stderr".to_vec(),
-            };
-            let result = classify_owned_child_exit(123, &capture, Duration::from_millis(4));
-            match expected {
-                Some(expected) => assert_eq!(result.unwrap(), expected),
-                None => {
-                    let error = result.unwrap_err().to_string();
-                    assert!(
-                        error.contains("owned_pid=123")
-                            && error.contains("stdout_sha256=")
-                            && error.contains("elapsed_ms=4")
-                    );
-                    assert!(!error.contains("secret-marker") && !error.contains("secret-stderr"));
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn host_process_exit_observation_incomplete_capture_categories_remain_refusals() {
-        use super::super::exec_command::{BoundedCaptureFailure, BoundedStream};
-        for failure in [
-            BoundedCaptureFailure::Deadline,
-            BoundedCaptureFailure::ReadFailure {
-                stream: BoundedStream::Stdout,
-            },
-            BoundedCaptureFailure::IncompleteOutput {
-                stream: BoundedStream::Stderr,
-            },
-            BoundedCaptureFailure::Overflow {
-                stream: BoundedStream::Stdout,
-                limit_bytes: 64,
-                retained_bytes: 64,
-            },
-            BoundedCaptureFailure::Launch,
-        ] {
-            let error =
-                owned_child_capture_failure(123, &failure, Duration::from_millis(5)).to_string();
-            assert!(
-                error.contains("owned child exit observation failed:")
-                    && error.contains("owned_pid=123")
-                    && error.contains("elapsed_ms=5")
-            );
-        }
-    }
-
-    #[test]
-    #[cfg_attr(
-        effigy_shared_process,
-        ignore = "known v0.15 rebuild defect: papercut 24e9c4ab-07e8-45f1-b5ee-3f1560f92735; owner lane v015-supervisor"
-    )]
     fn host_process_exit_observation_native_active_zombie_reaped_and_deadline() {
         let mut child = TestChild::sleep();
-        assert!(
-            !observe_owned_child_exit(child.0.id(), Instant::now() + Duration::from_secs(1))
-                .unwrap()
-        );
-        assert!(observe_owned_child_exit(child.0.id(), Instant::now()).is_err());
+        assert!(!child
+            .0
+            .observe_exit(Instant::now() + Duration::from_secs(1))
+            .unwrap());
+        assert!(child.0.observe_exit(Instant::now()).is_err());
         child.0.signal(Signal::SIGTERM).unwrap();
-        wait_for_owned_fixture_root_exit(child.0.id(), Instant::now() + Duration::from_secs(5));
-        let pid = child.0.id();
-        child.0.stop(Duration::from_secs(2)).unwrap();
+        wait_for_owned_fixture_root_exit(&mut child.0, Instant::now() + Duration::from_secs(5));
+        let status = child.0.stop(Duration::from_secs(2)).unwrap();
+        assert_eq!(status.signal(), Some(libc::SIGTERM));
         assert!(child.0.reaped);
-        // Empty/nonzero ps for an absent root remains unavailable, never clean.
-        assert!(observe_owned_child_exit(pid, Instant::now() + Duration::from_secs(1)).is_err());
+        // A reaped root is unavailable, never clean: the owned wait already
+        // supplied its status and no further observation is possible.
+        assert!(child
+            .0
+            .observe_exit(Instant::now() + Duration::from_secs(1))
+            .is_err());
     }
 
     struct TestChild(OwnedHostChild);
@@ -3693,9 +3670,9 @@ mod tests {
         _root: tempfile::TempDir,
     }
 
-    fn wait_for_owned_fixture_root_exit(pid: u32, deadline: Instant) {
+    fn wait_for_owned_fixture_root_exit(child: &mut OwnedHostChild, deadline: Instant) {
         loop {
-            match observe_owned_child_exit(pid, deadline) {
+            match child.observe_exit(deadline) {
                 Ok(true) => return,
                 observation => {
                     assert!(
@@ -3748,7 +3725,7 @@ mod tests {
                 start_identity: live.start_identity,
             };
             fs::write(release, b"exit").unwrap();
-            wait_for_owned_fixture_root_exit(child.id(), deadline);
+            wait_for_owned_fixture_root_exit(&mut child, deadline);
             Self {
                 child,
                 identity,
@@ -3862,12 +3839,73 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(
-        all(target_os = "macos", effigy_shared_process),
-        ignore = "known v0.15 rebuild defect: papercut 91d3fd91-3890-40c6-a138-ecb6fd7c4e83; owner lane v015-supervisor"
-    )]
     fn host_process_owned_observation_unavailable_after_term_keeps_stop_authority() {
         assert_owned_observation_recovers(UnavailablePhase::AfterTerm);
+    }
+
+    #[test]
+    fn host_process_owned_signal_refusal_separates_settled_groups_from_live_refusals() {
+        assert!(classify_owned_signal_refusal(
+            Signal::SIGTERM,
+            nix::errno::Errno::EPERM,
+            Ok(Vec::new())
+        )
+        .is_ok());
+        let live = classify_owned_signal_refusal(
+            Signal::SIGKILL,
+            nix::errno::Errno::EPERM,
+            Ok(vec![4242]),
+        )
+        .expect_err("a live member that refused the signal is a genuine refusal");
+        assert!(live.to_string().contains("4242"), "{live}");
+        let unknown = classify_owned_signal_refusal(
+            Signal::SIGTERM,
+            nix::errno::Errno::EPERM,
+            Err(RunnerError::task_invocation(
+                "controlled unavailable group inventory",
+            )),
+        )
+        .expect_err("an unavailable inventory cannot prove settlement");
+        assert!(
+            unknown
+                .to_string()
+                .contains("group liveness is unavailable"),
+            "{unknown}"
+        );
+    }
+
+    /// macOS refuses a group signal with EPERM when every remaining member is a
+    /// zombie (papercut 91d3fd91). That is not foreign ownership: this spawn
+    /// path created the group, the unreaped Child pins its PID, and the group
+    /// holds no live workload. With completion observation unavailable the stop
+    /// still cannot supply an exit status, so it reports the held generation
+    /// rather than lost signal authority.
+    #[test]
+    fn host_process_owned_zombie_only_group_signal_refusal_keeps_stop_authority() {
+        let mut command = ProcessCommand::new("/bin/sh");
+        command.args(["-c", "exit 7"]);
+        configure_child_process_group(&mut command);
+        let mut owned = OwnedHostChild::new(command.spawn().unwrap());
+        wait_for_owned_fixture_root_exit(&mut owned, Instant::now() + Duration::from_secs(5));
+        let error = owned
+            .stop_with_observer(Duration::from_millis(50), |_, _| {
+                Err(OwnedChildReapError::Observation(
+                    RunnerError::task_invocation("controlled unavailable completion observation"),
+                ))
+            })
+            .unwrap_err();
+        let rendered = error.to_string();
+        assert!(rendered.contains("leaving generation held"), "{rendered}");
+        assert!(
+            !rendered.contains("cannot signal directly owned child group"),
+            "a zombie-only owned group must keep stop authority: {rendered}"
+        );
+        assert!(!owned.reaped, "uncertainty cannot supply an exit status");
+        // The real positive predicate and the actual owned wait settle this
+        // private fixture, so teardown needs no extra signal or retry.
+        let status = owned.stop(Duration::from_secs(2)).unwrap();
+        assert_eq!(status.code(), Some(7));
+        assert!(owned.reaped);
     }
 
     #[test]
@@ -3986,11 +4024,10 @@ mod tests {
         for ignore_term in [false, true] {
             let mut owned = OwnedGroupFixture::new(ignore_term);
             // The bounded observation leaves the root PID/group reserved until reap.
-            assert!(observe_owned_child_exit(
-                owned.identity.pid,
-                Instant::now() + Duration::from_secs(1)
-            )
-            .unwrap());
+            assert!(owned
+                .child
+                .observe_exit(Instant::now() + Duration::from_secs(1))
+                .unwrap());
             assert!(!owned.child.reaped);
             assert!(observe_owned_group_members(
                 owned.identity.pid,
@@ -4040,7 +4077,7 @@ mod tests {
         let mut child = OwnedHostChild::new(command.spawn().unwrap());
         fs::write(release, b"exit").unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
-        wait_for_owned_fixture_root_exit(child.id(), deadline);
+        wait_for_owned_fixture_root_exit(&mut child, deadline);
         let pid = child.id();
         let status = child.stop(Duration::from_secs(2)).unwrap();
         assert_eq!(status.code(), Some(7));

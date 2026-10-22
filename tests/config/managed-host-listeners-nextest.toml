@@ -13,3 +13,10 @@ slow-timeout = { period = "120s", terminate-after = 1 }
 [[profile.default.overrides]]
 filter = "test(managed_host_dependent_replacement_) | test(container_hybrid_environment_switch_) | test(container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clone)"
 slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }
+
+# The 108-cell managed matrix runs nine cases per test with an immediate
+# restart each; one takes about 300s on a quiet host. A sweep that selects
+# gateway_private under this profile must not terminate it at the 45s default.
+[[profile.default.overrides]]
+filter = "test(managed_matrix_)"
+slow-timeout = { period = "600s", terminate-after = 1, grace-period = "2s" }

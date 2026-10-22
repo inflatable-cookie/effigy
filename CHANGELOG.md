@@ -861,6 +861,19 @@ During v0.x, MINOR bumps may include breaking changes.
   `Created` field, and expects the current read-only drift report for missing
   isolated host mount points. The live holder finishes its own workload
   instead of being signalled, so its run settles through the production path.
+- A managed host child group that macOS reports as refusing a group signal
+  with `EPERM` keeps its stop authority when every remaining member is a
+  zombie. The stop now re-inventories live members instead of treating the
+  refusal itself as failure, so a macOS stop no longer reports "cannot signal
+  directly owned child group" for a group that has already quiesced. A live
+  member that refuses the signal, and a group whose liveness cannot be read,
+  still leave the generation held (papercut 91d3fd91).
+- A managed host child's exit is observed through the kernel's non-reaping
+  `waitid` peek instead of a bounded `/bin/ps` sample, so a loaded host can no
+  longer report a live child's exit state as unavailable and fail its stop
+  (papercut 24e9c4ab). The retained child still pins its PID and group until
+  the actual owned wait, and a reaped child or an expired observation stays
+  unavailable rather than clean.
 - Sequential `Terminal::Foreground` children no longer stop their owner with
   SIGTTOU, which suspended `effigy gateway setup` after `mkcert -install`
   ("suspended (tty output)") while it held the `gateway-setup` gate
