@@ -1870,7 +1870,6 @@ is the holder's liveness, so there is nothing to unlock.
     "secrets",
     "service",
     "state",
-    "system",
     "tasks",
     "test",
     "workspace"

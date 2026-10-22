@@ -464,7 +464,7 @@ fn collect_step_task_refs<'a>(steps: &'a [ManifestManagedRunStep], out: &mut Vec
 }
 
 fn is_container_builtin(task_name: &str) -> bool {
-    matches!(task_name, "container" | "system" | "workspace")
+    matches!(task_name, "container" | "workspace")
 }
 
 fn render_skill_tasks(

@@ -20,7 +20,7 @@ use crate::runner::error::RunnerError;
 use crate::runner::exec_command::{
     runtime_backend_is_running_bounded, BoundedCommandBudget, BoundedCommandPhase,
 };
-use crate::runner::system_command::ensure_workspace_effigy_available_for_policy;
+use crate::runner::workspace_command::ensure_workspace_effigy_available_for_policy;
 
 const DOCKER_PS_FORMAT: &str = "{{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}\t{{.Label \"com.docker.compose.oneoff\"}}";
 
@@ -263,7 +263,7 @@ pub(super) fn maybe_refresh_workspace_effigy_for_shell_bounded(
     if !service_requires_workspace_effigy_refresh(policy, service) {
         return Ok(());
     }
-    crate::runner::system_command::ensure_workspace_effigy_available_for_policy_bounded(
+    crate::runner::workspace_command::ensure_workspace_effigy_available_for_policy_bounded(
         repo_root, policy, target_id, budget,
     )
 }

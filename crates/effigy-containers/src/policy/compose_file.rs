@@ -225,7 +225,7 @@ pub fn plan_migration(
             "manifest does not define a `[containers]` registry".to_owned(),
         )
     })?;
-    let name = super::load::resolve_container_name(containers, requested)?;
+    let name = super::load::resolve_container_name(&loaded.manifest, containers, requested)?;
     let config = containers.environments.get(&name).ok_or_else(|| {
         ContainerPolicyError::TaskInvocation(format!(
             "container `{name}` is not defined in `[containers]`"

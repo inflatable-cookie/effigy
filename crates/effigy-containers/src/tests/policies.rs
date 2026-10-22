@@ -70,6 +70,87 @@ primary_service = "app"
 }
 
 #[test]
+fn load_container_policy_falls_back_to_the_default_system_workspace_container() {
+    let root = temp_repo("system-default");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+working_dir = "/workspace"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    assert_eq!(policy.name, "web");
+}
+
+#[test]
+fn load_container_policy_prefers_the_container_default_over_the_system_binding() {
+    let root = temp_repo("container-default-before-system");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "api"
+
+[containers.api]
+compose_file = "infra/dev/api-compose.yml"
+primary_service = "app"
+working_dir = "/workspace"
+
+[containers.web]
+compose_file = "infra/dev/web-compose.yml"
+primary_service = "app"
+working_dir = "/workspace"
+
+[systems]
+default = "dev"
+
+[systems.dev]
+default_workspace = "app"
+
+[systems.dev.workspaces.app]
+container = "web"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(
+        root.join("infra/dev/api-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
+    fs::write(
+        root.join("infra/dev/web-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    assert_eq!(policy.name, "api");
+}
+
+#[test]
 fn creation_policy_resolves_direct_workspace_mounts_after_preparation() {
     let root = temp_repo("workspace-mount-create-direct");
     let absolute_source = root.join("absolute-extra");
@@ -374,7 +455,7 @@ mounts = ["late:/var/www/late:ro"]
 }
 
 #[test]
-fn load_container_policy_requires_default_when_name_omitted() {
+fn load_container_policy_requires_a_default_when_name_omitted() {
     let root = temp_repo("sole-container");
     fs::write(
         root.join("effigy.toml"),
@@ -398,7 +479,7 @@ primary_service = "app"
 
     assert!(error
         .to_string()
-        .contains("container name omitted but `[containers].default` is not defined"));
+        .contains("container name omitted but neither `[containers].default` nor a `[systems].default` workspace container is defined"));
 }
 
 #[test]

@@ -879,6 +879,27 @@ Exit codes: cancelled is 128 plus the signal number (INT 130, TERM 143,
 HUP 129). A `Foreground` child receives the terminal with `tcsetpgrp`; the
 kernel restores it on exit.
 
+Terminal handover (effigy#272): one owner runs any number of `Foreground`
+children one after another — `effigy gateway setup` runs `mkcert -install` and
+then `/usr/bin/sudo -H -- effigy gateway setup`. The rule has four parts.
+
+- The workload's handover names the workload's own process group, read from
+  the child after it became a group leader and before it ran. The group anchor
+  joins that group; it never leads it and never holds the terminal.
+- The owner blocks `SIGTTOU` on the calling thread around every `tcsetpgrp`,
+  taking and restoring alike. A handover from the background — the previous
+  child's lease, a restored owner group — is routine, never a stop.
+- The lease ends when that child's exit is observed, which is where a wait or
+  a poll first sees it, not when the anchor retires and not at settle. The
+  owner's group is the terminal's foreground group again before the next
+  sequential spawn, so no second take starts from the background.
+- Only the owner's own group, or a group this owner already leases to a
+  foreground child, is displaced. A terminal another program holds, or stdin
+  that is not a terminal, takes no lease; the child keeps its inherited stdin
+  and the run is unaffected. Restoration prefers a still-leased group and
+  otherwise the owner, so no reaped group is ever named (`SIGTTOU`, `TOSTOP`
+  and a group anchor are all exercised on a real pty).
+
 #### Invariants
 
 - I-P1: the owner exists before the first spawn. `spawn` takes `&mut Run`,
@@ -971,6 +992,25 @@ kernel restores it on exit.
   window and is reported as such.
 - A descendant that clears its environment survives recovery as `Unknown`
   residue and is never signalled by group number.
+- `custody_sequential_foreground_spawns_keep_the_owner_in_the_foreground` and
+  `custody_sequential_foreground_spawns_survive_tostop`: on a real pty, one
+  owner runs two `Terminal::Foreground` children in sequence, the first
+  writing to the terminal and the second reading a line from it, with
+  `TOSTOP` set in the second case. The owner never enters state `T`, each
+  child reads and writes the terminal, and the owner's own group is the
+  terminal's foreground group after each child exits — before the run
+  settles (effigy#272).
+- `nononce_foreground_takes_the_terminal_from_the_background_and_hands_it_back`:
+  the same handover without the group anchor (`Blocked::fork_with_nonce`),
+  where the second child is given the terminal while the first still holds
+  it, so the take happens from the background. Each handover names the
+  child's own group, and the lease released first returns the terminal to the
+  group still leased, then to the owner.
+- `proof:gateway:setup:terminal` runs
+  `setup::tests::setup_sequence_runs_two_foreground_commands_in_one_run`: the
+  gateway setup sequence (`mkcert -install`, then `/usr/bin/sudo -H -- effigy
+  gateway setup`) through `command(…, terminal = true)` twice in one run
+  against fake absolute programs, settling with `Complete` cleanup.
 - No secret bytes appear in `ps -o args` during any run.
 - A Rhai script cannot swallow a stop.
 

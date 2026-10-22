@@ -65,7 +65,7 @@ For narrative workflow guidance instead of lookup, start with:
 - Need a host-clean local web/service environment or data lifecycle tools: use
   `effigy container`.
 - Need substrate lifecycle (VM + compose + gateway + workspace handoff) for the
-  repo's declared system: use `effigy system` and `effigy workspace`.
+  repo's declared system: use `effigy container` and `effigy workspace`.
 - Need to inspect or refresh a local, git, or OCI bundle source: use
   `effigy bundle`.
 - Need a provider-neutral production model derived from the effective manifest
@@ -102,7 +102,7 @@ no new top-level built-in name, and leaves manifest selectors named `work`,
 | Topic | Primary commands |
 | --- | --- |
 | `effigy help work` | `effigy <task>`, `effigy <catalog>/<task>`, `effigy tasks`, `effigy test`, `effigy doctor`, `effigy init` |
-| `effigy help local` | `effigy container`, `effigy system`, `effigy workspace`, `effigy gateway`, `effigy service`, `effigy exec` |
+| `effigy help local` | `effigy container`, `effigy workspace`, `effigy gateway`, `effigy service`, `effigy exec` |
 | `effigy help repo` | `effigy scan`, `effigy docs`, `effigy contracts` |
 | `effigy help deliver` | `effigy artifact`, `effigy state`, `effigy deploy`, `effigy release`, `effigy bundle`, `effigy bootstrap` |
 | `effigy help extend` | `effigy skill`, `effigy rhai surface` |
@@ -143,8 +143,7 @@ through the help route.
 | `effigy docs` | Run reusable docs QA checks such as path presence, link validation, heading/content/forbidden-text checks, JSON example validation, markdown index consistency checks, next-action policy validation, workflow-path validation, and log-index entry insertion | `check <KIND>`, `add-log-index`, `--repo`, `--file`, `--section`, `--min-blocks`, `--require`, `--require-heading`, `--require-block`, `--forbid`, `--policy-index`, `--policy`, `--dir`, `--index`, `--json` | `effigy.docs.link-check.v1`, `effigy.docs.json-examples.v1`, `effigy.docs.heading-check.v1`, `effigy.docs.path-check.v1`, `effigy.docs.contains-check.v1`, `effigy.docs.forbidden-check.v1`, `effigy.docs.index-check.v1`, `effigy.docs.next-action-check.v1`, `effigy.docs.workflow-path-check.v1`, `effigy.docs.add-log-index.v1` | `029-docs-qa-checklist-and-validation.md` |
 | `effigy contracts` | Validate reusable JSON contract artifacts such as selection payloads and schema-index contract coverage | `check-json`, `validate-selection`, `--repo`, `--index`, `--fast`, `--full`, `--changed-only`, `--print-selected`, `--contract`, `--artifact`, `--json` | `effigy.contracts.check-json.v1`, `effigy.contracts.selection-validation.v1` | `017-json-output-contracts.md` |
 | `effigy release` | Inspect release readiness, run gates, prepare/execute releases, verify installs, run release preflight, check binary floors, capture proof evidence, validate artifacts, and generate closeout evidence | `status`, `gates`, `resume`, `verify-install`, `preflight`, `validate`, `check-binary`, `proof`, `evidence validate`, `evidence closeout`, `evidence summary`, `simulate`, `prepare`, `execute`, `--repo`, `--tag`, `--skip-docs`, `--skip-smoke`, `--skip-homebrew`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--output`, `--owner`, `--expect-homebrew`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.release.status.v1`, `effigy.release.gates.v1`, `effigy.release.verify-install.v1`, `effigy.distribution.preflight.v1`, `effigy.distribution.metadata.v1`, `effigy.distribution.artifacts.v1`, `effigy.distribution.closeout.v1`, `effigy.distribution.summary.v1` | `051-release-orchestration.md`, `062-distribution-system-guide.md` |
-| `effigy container` | Operate manifest-defined local container environments across Colima/containerd or Docker, along with data lifecycle, cleanup surfaces, shared-service reuse, scoped identity and host discovery, and per-scope retirement | `up`, `down`, `status`, `stats`, `logs`, `shell`, `data`, `reset`, `eject`, `render`, `hosts`, `scope`, `retire`, `ports status`, `ports reclaim`, `volume`, `cache`, `--apply`, `--expect-plan`, `--repo`, `--attach`, `--detach`, `--service`, `--command`, `--bounded`, `--deadline-ms`, `--stdout-limit-bytes`, `--stderr-limit-bytes`, `--follow`, `--global`, `--dormant`, `--orphans`, `--project`, `--kind`, `--db-seed`, `--db-dump`, `--no-prompt`, `--push`, `--keep-data`, `--scope`, `--yes`, `--json` | `effigy.container.up.v1`, `effigy.container.down.v1`, `effigy.container.status.v1`, `effigy.container.logs.v1`, `effigy.container.hosts.v1`, `effigy.container.scope.v1`, `effigy.container.retire.v1`, `effigy.container.ports.v1`, `effigy.container.bounded-exec.v1` | `063-container-system-guide.md` |
-| `effigy system` | Operate the manifest's declared default system substrate (VM + compose + gateway) with lifecycle, log streaming, and recovery surfaces | `up`, `down`, `status`, `logs`, `repair`, `reset-runtime`, `--system`, `--repo`, `--follow`, `--json` | `effigy.system.recover.v1` | `064-system-workspace-and-dev-contract.md` |
+| `effigy container` | Operate manifest-defined local container environments across Colima/containerd or Docker, along with data lifecycle, cleanup surfaces, shared-service reuse, scoped identity and host discovery, and per-scope retirement | `up`, `down`, `status`, `stats`, `logs`, `shell`, `data`, `reset`, `eject`, `render`, `hosts`, `scope`, `retire`, `ports status`, `ports reclaim`, `volume`, `cache`, `profile status`, `profile resize`, `profile recreate`, `profile purge`, `profile repair`, `profile reset-runtime`, `--apply`, `--expect-plan`, `--repo`, `--system`, `--attach`, `--detach`, `--service`, `--command`, `--bounded`, `--deadline-ms`, `--stdout-limit-bytes`, `--stderr-limit-bytes`, `--follow`, `--global`, `--dormant`, `--orphans`, `--project`, `--kind`, `--profile`, `--disk`, `--db-seed`, `--db-dump`, `--no-prompt`, `--push`, `--keep-data`, `--scope`, `--yes`, `--json` | `effigy.container.up.v1`, `effigy.container.down.v1`, `effigy.container.status.v1`, `effigy.container.logs.v1`, `effigy.container.hosts.v1`, `effigy.container.scope.v1`, `effigy.container.retire.v1`, `effigy.container.ports.v1`, `effigy.container.bounded-exec.v1`, `effigy.system.recover.v1` (`profile repair` and `profile reset-runtime` keep this envelope) | `063-container-system-guide.md`, `064-system-workspace-and-dev-contract.md` |
 | `effigy workspace` | Ensure the selected system is up and then open the resolved workspace shell for the repo's declared developer surface | `<WORKSPACE>`, `--system`, `--repo` | (interactive; no JSON payload) | `064-system-workspace-and-dev-contract.md` |
 | `effigy bundle` | Inspect the active repo bundle source and refresh repo-local git/OCI bundle sources | `inspect`, `sync`, `--repo`, `--json` | `effigy.bundle.inspect.v1`, `effigy.bundle.sync.v1` | `065-external-bundle-adoption.md` |
 | `effigy deploy` | Derive a provider-neutral deployment model, export provider files, inspect plans/status/history; apply and redeploy refuse as unsupported in v0.15 (Q-003) | `model`, `export <PROVIDER>`, `plan`, `apply`, `status`, `history`, `redeploy`, `--repo`, `--path`, `--write-report`, `--deployment`, `--yes`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1`, `effigy.deploy.plan.v1`, `effigy.deploy.apply.v1`, `effigy.deploy.status.v1`, `effigy.deploy.history.v1` | `074-deployment-guide.md`, [`../contracts/002-production-deployment-model.md`](../knowledge/contracts/002-production-deployment-model.md), [`../contracts/019-deployment-transaction-system-contract.md`](../knowledge/contracts/019-deployment-transaction-system-contract.md) |
@@ -291,7 +290,6 @@ effigy container <NAME> hosts [--repo <PATH>] [--json]
 effigy container scope [--repo <PATH>] [--json]
 effigy container retire [--repo <PATH>] [--scope <TOKEN>] [--yes] [--json]
 effigy container retire --dead [--yes] [--json]
-effigy system <up|down|status|logs|repair|reset-runtime> [--system <NAME>] [--repo <PATH>] [--follow] [--json]
 effigy workspace [<NAME>] [--system <NAME>] [--repo <PATH>]
 ```
 
@@ -451,10 +449,13 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   fragments with an unchanged render; `container eject` is retired
 - volume and data commands run on the environment's exact backend and touch
   only volumes whose Effigy labels name the project
-- `system logs --json` returns a finite snapshot; `system logs --follow` streams
-  logs and rejects `--json`. The same distinction applies to `container <NAME> logs`
-- `system repair` and `system reset-runtime` are the recovery surfaces for
-  half-up substrate state
+- `container logs --json` returns a finite snapshot; `container logs --follow`
+  streams logs and rejects `--json`.
+- `container profile repair` and `container profile reset-runtime` are the
+  recovery surfaces for half-up substrate state; they keep the
+  `effigy.system.recover.v1` JSON envelope and accept `--repo` and `--system`
+- `effigy container` without a name resolves `[containers].default` and then the
+  `[systems].default` workspace container; `--system <NAME>` selects one system
 - mounted sibling repos listed in `systems.<name>.mounts` auto-adopt
   producer-declared isolation paths into workspace containers
 - `bundle inspect` reports the active repo bundle source only; there is no named

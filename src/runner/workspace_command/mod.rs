@@ -1,3 +1,7 @@
+pub(in crate::runner) mod permissions;
+mod provisioning;
+mod session;
+
 use effigy_cli::{ContainerArgs, ContainerSubcommand, WorkspaceArgs};
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_manifest::ManifestTask;
@@ -25,6 +29,41 @@ use crate::runner::manifest::load_task_manifest;
 use crate::runner::runtime_session_context::PublicWorkspaceCleanupOverride;
 
 use super::RunnerError;
+
+/// Make sure the resolved workspace binary is present before the handoff
+/// shell opens.
+pub(in crate::runner) fn ensure_workspace_effigy_available_for_policy(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    repo_override: Option<PathBuf>,
+) -> Result<(), RunnerError> {
+    provisioning::ensure_workspace_effigy_available_for_policy(repo_root, policy, repo_override)
+}
+
+pub(in crate::runner) fn ensure_workspace_effigy_available_for_policy_bounded(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    target_id: &str,
+    budget: &mut crate::runner::exec_command::BoundedCommandBudget,
+) -> Result<(), RunnerError> {
+    provisioning::ensure_workspace_effigy_available_for_policy_bounded(
+        repo_root, policy, target_id, budget,
+    )
+}
+
+pub(in crate::runner) fn ensure_workspace_permissions_ready(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    container_name: Option<&str>,
+    repo_override: Option<PathBuf>,
+) -> Result<(), RunnerError> {
+    provisioning::ensure_workspace_permissions_ready(
+        repo_root,
+        policy,
+        container_name,
+        repo_override,
+    )
+}
 
 pub(super) fn run_workspace(args: WorkspaceArgs) -> Result<String, RunnerError> {
     if args.output_json {
@@ -109,7 +148,7 @@ pub(in crate::runner) fn run_workspace_seeded_session(
     )
 }
 
-pub(super) fn resolve_public_workspace_container(
+pub(in crate::runner) fn resolve_public_workspace_container(
     repo_root: &Path,
     system: Option<&str>,
     workspace: Option<&str>,
@@ -158,7 +197,7 @@ fn run_workspace_container_session(
     session_intent: InteractiveSessionIntent,
     cleanup_override: Option<PublicWorkspaceCleanupOverride>,
 ) -> Result<String, RunnerError> {
-    super::workspace_session::run_workspace_container_session(
+    session::run_workspace_container_session(
         repo_root,
         container_name,
         repo_override,
@@ -172,7 +211,10 @@ pub(super) fn load_workspace_session_policy(
     repo_root: &Path,
     container_name: Option<&str>,
 ) -> Result<EffectiveContainerPolicy, RunnerError> {
-    let policy = super::load_resolved_container_policy(repo_root, container_name)?;
+    let policy = crate::runner::container_command::policy::load_resolved_container_policy(
+        repo_root,
+        container_name,
+    )?;
     emit_workspace_info(
         &format!(
             "preparing workspace container `{}` for handoff",
@@ -209,7 +251,7 @@ pub(super) fn finish_workspace_handoff_after_activation(
         |_repo_root, _policy| Ok(routes_were_ready_before_handoff),
         |_policy| Ok(()),
         |_repo_root, _policy| Ok(()),
-        super::workspace_provisioning::ensure_workspace_provisioning_ready,
+        provisioning::ensure_workspace_provisioning_ready,
         render_workspace_handoff_transition,
     )
 }
@@ -303,6 +345,7 @@ pub(super) fn cleanup_workspace_session(
     run_container(ContainerArgs {
         subcommand: ContainerSubcommand::Down {
             name: container_name,
+            system: None,
             global: false,
         },
         repo_override,

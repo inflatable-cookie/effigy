@@ -8,7 +8,7 @@ use effigy_containers::{
 };
 use effigy_core::shell::shell_quote;
 
-use super::workspace_provisioning::{
+use super::provisioning::{
     is_dependency_tree_path, plan_workspace_permission_prep, WorkspacePermissionMode,
 };
 use super::RunnerError;
@@ -2685,7 +2685,7 @@ pub(in crate::runner) fn compose_backend_with_deadline<'a>(
 }
 
 #[cfg(all(test, unix))]
-#[path = "workspace_permissions_gnu_accept.rs"]
+#[path = "permissions_gnu_accept.rs"]
 mod gnu_accept;
 
 #[cfg(test)]
