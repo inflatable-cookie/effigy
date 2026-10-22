@@ -57,7 +57,7 @@
     "crates/effigy-contracts/src/lib.rs": {
       "std.process.Command.new": 5,
       "std.process.Command.output": 5,
-      "std::fs::write": 16
+      "std::fs::write": 13
     },
     "crates/effigy-core/src/build_info.rs": {
       "std.process.Command.new": 3,
@@ -601,7 +601,7 @@
     },
     "crates/effigy-gateway/src/setup.rs": {
       "std::fs::remove_file": 2,
-      "std::fs::write": 9
+      "std::fs::write": 10
     },
     "crates/effigy-gateway/src/setup/broker.rs": {
       "std::fs::remove_file": 1,
@@ -887,9 +887,6 @@
     },
     "src/tests/runner_tests/runner_core_tests/direct_task_dispatch_tests.rs": {
       "std::fs::write": 1
-    },
-    "src/tests/runner_tests/runner_core_tests/docs_context_time_budget_tests.rs": {
-      "std::fs::write": 4
     },
     "src/tests/runner_tests/runner_core_tests/init_migrate_tests/init_tests.rs": {
       "std::fs::write": 15

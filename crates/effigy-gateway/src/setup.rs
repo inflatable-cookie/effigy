@@ -917,6 +917,113 @@ mod tests {
             .unwrap();
     }
     #[test]
+    #[ignore = "proof: needs the kernel custody fixture (EFFIGY_KERNEL_CUSTODY_FIXTURE)"]
+    fn setup_sequence_runs_two_foreground_commands_in_one_run() {
+        // `effigy gateway setup` runs `mkcert -install` and then
+        // `sudo -H -- effigy gateway setup`, both as `Terminal::Foreground`
+        // children of one run. A first lease that outlives its child leaves the
+        // owner in the background, and the second `tcsetpgrp` then stops the
+        // whole setup with SIGTTOU.
+        //
+        // `command` hands the operator environment to its children, so the
+        // nonce of the custody process running this proof (a selector runs it
+        // inside Effigy) must not leak into the fakes.
+        let _env = crate::env_test_support::EnvGuard::set_many(&[
+            ("EFFIGY_CUSTODY_NONCE", None),
+            ("EFFIGY_PROBE_NONCE", None),
+        ]);
+        let home = tempfile::tempdir().unwrap();
+        let calls = home.path().join("calls");
+        let fake = |name: &str| {
+            let path = home.path().join(name);
+            std::fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh\nprintf '%s\\n' {name}\nprintf '{name} %s\\n' \"$*\" >> {}\n",
+                    calls.display()
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let mkcert = fake("mkcert");
+        let sudo = fake("sudo");
+        let executable = std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
+            .map(PathBuf::from)
+            .expect("EFFIGY_KERNEL_CUSTODY_FIXTURE: the kernel custody fixture");
+        let op = operator::context(Duration::from_secs(30), EffectClass::Mutate);
+        let cx = op.effects().unwrap();
+        let cleanup = op.cleanup(Duration::from_secs(10)).unwrap();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let mut adapter = operator::Adapter;
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &operator::invocation(setup_owner()),
+            BeginOpts {
+                id: operator::run_id().unwrap(),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                // The qualification sentinel is the kernel custody fixture,
+                // whose recovery entry takes this one fixed invocation.
+                next: effigy_kernel::outcome::Invocation::validated(
+                    vec!["recover".into()],
+                    |args| args == ["recover"],
+                )
+                .unwrap(),
+                custody: Some(LifecyclePlan {
+                    executable: Executable::capture(&executable).unwrap(),
+                    placement: Placement::Inline,
+                }),
+            },
+            &cleanup,
+            &mut adapter,
+        )
+        .unwrap();
+        let installed = command(
+            &mut run,
+            &cx,
+            vec![mkcert.clone().into_os_string(), "-install".into()],
+            true,
+        )
+        .unwrap();
+        let elevated = command(
+            &mut run,
+            &cx,
+            vec![
+                sudo.into_os_string(),
+                "-H".into(),
+                "--".into(),
+                mkcert.into_os_string(),
+                "gateway".into(),
+                "setup".into(),
+            ],
+            true,
+        )
+        .unwrap();
+        run.finish(WorkloadOutcome::Succeeded).unwrap();
+        let settled = run.settle(&cleanup, &mut adapter).unwrap();
+        assert_eq!(
+            settled.cleanup(),
+            effigy_kernel::outcome::CleanupOutcome::Complete
+        );
+        assert_eq!(String::from_utf8_lossy(&installed), "mkcert\n");
+        assert_eq!(String::from_utf8_lossy(&elevated), "sudo\n");
+        let calls = std::fs::read_to_string(&calls).unwrap();
+        let lines: Vec<&str> = calls.lines().collect();
+        assert_eq!(lines.len(), 2, "{calls:?}");
+        assert_eq!(lines.first(), Some(&"mkcert -install"));
+        assert!(
+            lines
+                .last()
+                .is_some_and(|line| line.starts_with("sudo -H -- ")
+                    && line.ends_with("/mkcert gateway setup")),
+            "{calls:?}"
+        );
+    }
+
+    #[test]
     fn managed_setup_output_preserves_foreign_files_and_is_idempotent() {
         with_run(|run, cx, home| {
             let dir = DirFd::open(home).unwrap();
