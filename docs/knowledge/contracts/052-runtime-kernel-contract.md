@@ -1,7 +1,7 @@
 # 052 - Runtime Kernel Contract
 
-Q-010 amendment (2026-10-22): **proposed contract, awaiting planner and Tom
-review before implementation**. §3.1, §7, §11.1 and §12.6 specify in-memory
+Q-010 amendment (2026-10-22): **proposed contract, approved by planner and Tom (2026-10-22: "Approve")
+for implementation**. §3.1, §7, §11.1 and §12.6 specify in-memory
 foreground runs, checkout journals and the small machine store. They supersede
 the former single-root assumptions in the API sketches, failure tables and
 implementation/adoption notes below. Those notes describe the existing binary,
@@ -1830,6 +1830,14 @@ number. Machine endpoint/port claims survive deletion and protect their values
 until explicit verified retirement; unknown owners are not garbage-collected.
 No machine copy of the deleted checkout's journal exists.
 
+Dead-worktree retirement cannot rely on the deleted journal or a central
+checkout index. `container retire --dead` inventories the selected backend's
+Effigy ownership labels and surviving gateway/port claims. It validates the
+recorded checkout token/path generation and exact container/network/volume
+identity before retirement; inaccessible/ambiguous ownership remains Unknown.
+Only positively dead scopes enter the ordinary fenced retirement path. Backend
+inventory supplies lost-checkout provenance; names or PID/PGID values do not.
+
 ### 7.2 Tables and transaction boundaries
 
 The §5.5/§5.6 record shapes remain in the checkout journal: `meta`, one owning
@@ -2540,6 +2548,17 @@ requiring legacy state enters this protocol. Unrelated new foreground owners
 can run without a machine store, but must refuse unresolved or unreadable legacy
 evidence for their own owner until imported.
 
+**Busy-machine preflight (Tom, 2026-10-22).** Before creating staging files or
+changing any destination, migration reports every legacy writer that blocks
+cutover: verified pid, boot/start identity, checkout, run/resource id, owner type
+and its exact executable stop/drain command with arguments. There is no generic
+"stop agents" diagnostic. A writer with no safe protocol is listed as requiring
+natural completion; unknown identity is named as unknown and is never signalled.
+A blocking report refuses with no partially imported state. Ordinary foreground
+runs continue while migration is pending; pending import alone is not a
+machine-wide admission gate. A live-legacy-writer fixture must prove the exact
+blocking commands, no destination changes and concurrent foreground progress.
+
 **M1/M3 compatibility boundary.** Holding the new migration lock alone cannot
 fence an old binary that does not know that lock or schema. Before snapshotting,
 setup inventories and verifies legacy writers (owners, supervisors, sentinels,
@@ -2731,7 +2750,8 @@ only those identities, remove fixtures and preserve exit codes before reporting.
 | Task status read model | `tasks status <task>` and `tasks status --all`, text/JSON: first foreground run with no token/DB is live, not never-run; free/stale gates and foreground exit produce not-recorded; old durable success stays historical; held/unverifiable identity and discovered residue are unknown; interrupted durable runs keep recovery commands. No history row or token is created. Validate the v3 envelopes and durable-only latest/history per 018 |
 | Gates/layout/deletion | Fresh checkout, linked worktree, primary, non-Git root, same-path replacement, explicit retire and external deletion; gate inode continuity while held, token-init races, host-only guest masking, unknown residue/claims protected, no primary journal fallback |
 | Discovery/admission | Configured/unconfigured roots, linked worktrees, duplicate/ambiguous keys, symlink, missing/unreadable/corrupt checkout, depth/count/time limits, empty roots; R2 filesystem diff empty. Nested live/dead/forged admission capabilities and hook death/owner death do not use a central run lookup |
-| Migration scale and faults | Private copy of a large current store (at least the outage scale: 138 MB and 18,700 runs), plus v0.14.1 fixtures; live environments, verified active custody, manual routes, pins, unknown fields and quarantine survive. Kill/ENOSPC at each staging/fsync/manifest/custody-handoff crossing: exactly one authority, byte-identical legacy hashes, no restarts or new identities, completed history dropped safely. Old/unquiesceable writer and missing destination refuse before publication |
+| Migration scale and faults | Read-only copy of the operator's actual central store into a fresh private root; never open the original for writing. Report elapsed migration duration and each checkout's destination path, imported live/unresolved counts and integrity outcome. Also exercise a private copy of a large current store (at least the outage scale: 138 MB and 18,700 runs), plus v0.14.1 fixtures; live environments, verified active custody, manual routes, pins, unknown fields and quarantine survive. Kill/ENOSPC at each staging/fsync/manifest/custody-handoff crossing: exactly one authority, byte-identical legacy hashes, no restarts or new identities, completed history dropped safely. Old/unquiesceable writer and missing destination refuse before publication |
+| Deleted-worktree retirement (Tom, 2026-10-22) | Disposable backend stacks from deleted linked/Queue worktrees, with their checkout journals removed and no central index: `effigy container retire --dead` discovers exact surviving ownership from backend labels and shared endpoint/port facts, retires the dead scopes, and preserves live/unknown/foreign scopes, persistent data and the unselected backend |
 | Gateway/environment regression | Private gateway and disposable engine fixtures: unchanged pins/routes after migration, proxy readiness, container reuse, R4 holder refusal, idle-stop and interrupted recovery; no calls to the unselected backend or operator's gateway |
 
 Use installed Effigy selectors, and build the changed binary once per source

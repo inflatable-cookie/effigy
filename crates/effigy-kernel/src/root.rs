@@ -1,5 +1,5 @@
-//! The host state root `~/.effigy/state/` (§7.1) and its kernel-owned path
-//! families (§7.3, families 1–6).
+//! Verified checkout and machine state roots (§7.1), with separate database
+//! names. A machine root never implicitly opens the legacy central database.
 use crate::ctx::{Capability, EffectContext, ObserveContext, Placement};
 use crate::fs::{DirFd, FsError, Trust};
 use crate::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
@@ -32,6 +32,13 @@ impl Family {
 pub struct StateRoot {
     dir: DirFd,
     writable: bool,
+    database: Database,
+}
+
+#[derive(Debug)]
+enum Database {
+    Checkout,
+    Machine,
 }
 impl StateRoot {
     /// The existing Effigy home rule: `$HOME/.effigy`. Test isolation uses a
@@ -41,7 +48,9 @@ impl StateRoot {
             .map(PathBuf::from)
             .filter(|home| home.is_absolute())
     }
-    /// Opens (creating 0700 as needed) for Prepare, RefreshDerived and Mutate.
+    /// Opens a checkout's `.effigy/state/`, creating private directories as
+    /// needed for Prepare, RefreshDerived and Mutate. `home` is the resolved
+    /// owning checkout, not its invocation subdirectory.
     /// A guest placement is refused before any filesystem call (R1).
     pub fn effects(cx: &EffectContext, home: &Path) -> Result<Self, FsError> {
         cx.require(Capability::HostAuthority)
@@ -57,6 +66,7 @@ impl StateRoot {
         Ok(Self {
             dir,
             writable: true,
+            database: Database::Checkout,
         })
     }
     /// Read-only open. Missing is `Absent`; untrusted or unreadable is
@@ -76,11 +86,33 @@ impl StateRoot {
                 Self {
                     dir,
                     writable: false,
+                    database: Database::Checkout,
                 },
                 Evidence::new("kernel state root".into(), None).expect("fixed source"),
             ),
             Ok(None) => Observed::Absent(AbsenceProof::NoStateRoot),
             Err(error) => Observed::Unknown(unknown(&error)),
+        }
+    }
+    /// Shared-fact storage under `$HOME/.effigy/state/machine.db`. This never
+    /// opens, initializes or repairs the legacy `kernel.db` beside it.
+    pub fn machine_effects(cx: &EffectContext, home: &Path) -> Result<Self, FsError> {
+        let mut root = Self::effects(cx, home)?;
+        root.database = Database::Machine;
+        Ok(root)
+    }
+    /// Pure machine-store observation. Absence never falls back to legacy data;
+    /// importing a legacy source is a separate, explicitly fenced operation.
+    pub fn machine_observe(cx: &ObserveContext, home: &Path) -> Observed<Self> {
+        Self::observe(cx, home).map(|mut root| {
+            root.database = Database::Machine;
+            root
+        })
+    }
+    pub(crate) fn database_name(&self) -> &'static str {
+        match self.database {
+            Database::Checkout => crate::store::DB_NAME,
+            Database::Machine => "machine.db",
         }
     }
     pub fn path(&self) -> &Path {

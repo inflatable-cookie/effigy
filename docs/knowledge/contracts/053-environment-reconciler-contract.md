@@ -7,7 +7,7 @@ its host authority channel are later work (§9).
 
 Q-010 touch-points: the storage/custody amendment in contract
 [052](052-runtime-kernel-contract.md) §3.1, §7 and §11.1 is **proposed,
-awaiting planner and Tom review before implementation**. The current engine
+approved by planner and Tom (2026-10-22: "Approve") for implementation**. The current engine
 still uses the central store. The following specifies its required relocation.
 
 Owner: environment reconciler (Queue lane `v015-environment`)

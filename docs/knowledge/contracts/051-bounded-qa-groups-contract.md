@@ -32,7 +32,7 @@ planner-owned through Queue on `main` at milestones and release points.
 ### Q-010 durability touch-point (proposed)
 
 The storage amendment in [052 §3.1](052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary)
-is awaiting planner and Tom review before implementation. A group execution
+is approved by planner and Tom (2026-10-22: "Approve") for implementation. A group execution
 always selects `CheckoutDurable`, including a temporary group or one whose
 members are all local, light and terminal-bound. Retained evidence is part of
 the group workflow: the definition snapshot, head/worktree context, member

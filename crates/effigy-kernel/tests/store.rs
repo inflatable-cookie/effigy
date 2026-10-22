@@ -77,6 +77,116 @@ fn store_layout_settings_and_schema_metadata() {
 }
 
 #[test]
+fn store_machine_root_does_not_open_or_rewrite_the_legacy_database() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let legacy_root = root(home.path());
+    let mut legacy = Store::open(&cx, &legacy_root).unwrap();
+    legacy
+        .txn(&cx, |txn| txn.resource(&task("legacy"), "task").map(|_| ()))
+        .unwrap();
+    drop(legacy);
+    let legacy_path = legacy_root.path().join(DB_NAME);
+    let before = std::fs::read(&legacy_path).unwrap();
+
+    let machine_root = StateRoot::machine_effects(&cx, home.path()).unwrap();
+    let machine = Store::open(&cx, &machine_root).unwrap();
+    machine.check_integrity().unwrap();
+    drop(machine);
+    let reader = match Store::read(&observe(), &machine_root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("machine reader {other:?}"),
+    };
+    assert!(matches!(
+        reader.resource(&task("legacy")),
+        Observed::Absent(_)
+    ));
+    assert_eq!(std::fs::read(&legacy_path).unwrap(), before);
+    assert!(machine_root.path().join("machine.db").is_file());
+    assert!(!machine_root.path().join("machine.db-journal").exists());
+}
+
+#[test]
+fn store_machine_observation_without_state_is_read_only() {
+    let home = home();
+    assert!(matches!(
+        StateRoot::machine_observe(&observe(), home.path()),
+        Observed::Absent(AbsenceProof::NoStateRoot)
+    ));
+    assert!(!home.path().join(".effigy").exists());
+
+    let cx = effects(EffectClass::Mutate);
+    let legacy_root = root(home.path());
+    Store::open(&cx, &legacy_root).unwrap();
+    let machine_root = match StateRoot::machine_observe(&observe(), home.path()) {
+        Observed::Verified(root, _) => root,
+        other => panic!("machine root {other:?}"),
+    };
+    assert!(matches!(
+        Store::read(&observe(), &machine_root),
+        Observed::Absent(AbsenceProof::NoStore)
+    ));
+    assert!(!machine_root.path().join("machine.db").exists());
+}
+
+#[test]
+fn store_machine_repair_does_not_move_the_legacy_database() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let legacy_root = root(home.path());
+    Store::open(&cx, &legacy_root).unwrap();
+    let legacy_path = legacy_root.path().join(DB_NAME);
+    let before = std::fs::read(&legacy_path).unwrap();
+    let machine_root = StateRoot::machine_effects(&cx, home.path()).unwrap();
+    let machine_path = machine_root.path().join("machine.db");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&machine_path)
+        .unwrap();
+    std::fs::write(&machine_path, b"not a database").unwrap();
+    let aside = Store::repair(&cx, &machine_root).unwrap();
+    assert!(aside.as_str().starts_with("machine.db.corrupt-"));
+    assert!(!machine_path.exists());
+    assert_eq!(std::fs::read(&legacy_path).unwrap(), before);
+    assert_eq!(
+        std::fs::read(machine_root.path().join(aside.as_str())).unwrap(),
+        b"not a database"
+    );
+}
+
+#[test]
+fn store_checkout_write_lock_does_not_block_another_checkout_or_machine() {
+    let home = home();
+    let a = home.path().join("checkout-a");
+    let b = home.path().join("checkout-b");
+    std::fs::create_dir(&a).unwrap();
+    std::fs::create_dir(&b).unwrap();
+    let cx = effects(EffectClass::Mutate);
+    let a_root = root(&a);
+    let b_root = root(&b);
+    let machine_root = StateRoot::machine_effects(&cx, home.path()).unwrap();
+    let a_store = Store::open(&cx, &a_root).unwrap();
+    let mut b_store = Store::open(&cx, &b_root).unwrap();
+    let mut machine_store = Store::open(&cx, &machine_root).unwrap();
+    a_store.check_integrity().unwrap();
+    // A distinct SQLite connection holds the first checkout's write lock.
+    let a_writer = rusqlite::Connection::open(a_root.path().join(DB_NAME)).unwrap();
+    a_writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    b_store
+        .txn(&cx, |txn| txn.resource(&task("other"), "task").map(|_| ()))
+        .unwrap();
+    machine_store
+        .txn(&cx, |txn| {
+            txn.resource(&ResourceId::gateway("default").unwrap(), "gateway")
+                .map(|_| ())
+        })
+        .unwrap();
+    a_writer.execute_batch("ROLLBACK").unwrap();
+}
+
+#[test]
 fn store_transactions_commit_related_records_together_or_not_at_all() {
     let home = home();
     let cx = effects(EffectClass::Mutate);

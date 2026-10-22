@@ -4,7 +4,7 @@ Owner: Platform
 Last Updated: 2026-10-22
 
 Q-010 touch-points below are proposed with contract [052](052-runtime-kernel-contract.md)
-§3.1 and §7, awaiting planner and Tom review before implementation. The existing
+§3.1 and §7, approved by planner and Tom (2026-10-22: "Approve") for implementation. The existing
 binary still journals every task in the central store. The amended contract
 distinguishes foreground memory from durable checkout runs; it does not claim
 the cutover has shipped.

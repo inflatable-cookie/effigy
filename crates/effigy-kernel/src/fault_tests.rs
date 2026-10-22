@@ -818,6 +818,15 @@ fn run_count(store: &Store, filter: &str) -> i64 {
         )
         .unwrap()
 }
+// Retention fixtures are also read by the fixture helper drain, so their ids
+// must use the public encoding even when their rows are inserted directly.
+fn retention_run_id(label: &str) -> String {
+    let digest = Digest::of(label.as_bytes());
+    let mut random = [0; 10];
+    random.copy_from_slice(&digest.0[..10]);
+    RunId::new(0, random).unwrap().to_string()
+}
+
 #[test]
 fn store_retention_keeps_unsettled_and_the_newest_twenty_settled_runs() {
     let home = home();
@@ -830,7 +839,7 @@ fn store_retention_keeps_unsettled_and_the_newest_twenty_settled_runs() {
     ensure(&mut store, &cx, &claimed);
     let runs = home.path().join(".effigy/state/runs");
     for index in 0..25 {
-        let id = format!("settled-{index:02}");
+        let id = retention_run_id(&format!("settled-{index:02}"));
         insert_run(&store, &id, &owner, "closed", Some("complete"), index);
         private_dir(&runs.join(&id));
         std::fs::write(runs.join(&id).join("stdout.log"), b"log").unwrap();
@@ -844,19 +853,33 @@ fn store_retention_keeps_unsettled_and_the_newest_twenty_settled_runs() {
     }
     insert_run(
         &store,
-        "incomplete",
+        &retention_run_id("incomplete"),
         &owner,
         "closed",
         Some("incomplete"),
         -2,
     );
-    insert_run(&store, "active", &owner, "active", None, -1);
-    insert_run(&store, "held-claim", &owner, "closed", Some("complete"), -3);
+    insert_run(
+        &store,
+        &retention_run_id("active"),
+        &owner,
+        "active",
+        None,
+        -1,
+    );
+    insert_run(
+        &store,
+        &retention_run_id("held-claim"),
+        &owner,
+        "closed",
+        Some("complete"),
+        -3,
+    );
     store
         .conn()
         .execute(
-            "INSERT INTO claims(resource, run_id, state, generation, revision) VALUES (?1, 'held-claim', 'live', 1, 1)",
-            [claimed.name().to_string()],
+            "INSERT INTO claims(resource, run_id, state, generation, revision) VALUES (?1, ?2, 'live', 1, 1)",
+            params![claimed.name().to_string(), retention_run_id("held-claim")],
         )
         .unwrap();
     assert_eq!(
@@ -885,14 +908,21 @@ fn store_retention_keeps_unsettled_and_the_newest_twenty_settled_runs() {
         "settled-05",
         "settled-24",
     ] {
-        assert_eq!(run_count(&store, &format!("run_id='{kept}'")), 1, "{kept}");
+        assert_eq!(
+            run_count(&store, &format!("run_id='{}'", retention_run_id(kept))),
+            1,
+            "{kept}"
+        );
     }
     for gone in 0..5 {
-        let id = format!("settled-{gone:02}");
+        let id = retention_run_id(&format!("settled-{gone:02}"));
         assert_eq!(run_count(&store, &format!("run_id='{id}'")), 0);
         assert!(!runs.join(&id).exists(), "{id} logs kept");
     }
-    assert!(runs.join("settled-05/stdout.log").exists());
+    assert!(runs
+        .join(retention_run_id("settled-05"))
+        .join("stdout.log")
+        .exists());
     let events: i64 = store
         .conn()
         .query_row("SELECT count(*) FROM events", [], |row| row.get(0))
@@ -910,29 +940,39 @@ fn store_retention_caps_logs_oldest_settled_first() {
     let owner = machine("deps");
     ensure(&mut store, &cx, &owner);
     let runs = home.path().join(".effigy/state/runs");
-    for (index, id) in ["a", "b", "c"].iter().enumerate() {
-        insert_run(&store, id, &owner, "closed", Some("complete"), index as i64);
-        private_dir(&runs.join(id));
+    for (index, label) in ["a", "b", "c"].iter().enumerate() {
+        let id = retention_run_id(label);
+        insert_run(
+            &store,
+            &id,
+            &owner,
+            "closed",
+            Some("complete"),
+            index as i64,
+        );
+        private_dir(&runs.join(&id));
         store
             .conn()
             .execute(
                 "INSERT INTO logs(run_id, stream, path, bytes, truncated, redaction) VALUES (?1, 'stdout', 'x', ?2, 0, 'default')",
-                params![id, 1i64 << 30],
+                params![&id, 1i64 << 30],
             )
             .unwrap();
     }
-    insert_run(&store, "live", &owner, "active", None, 9);
+    insert_run(&store, &retention_run_id("live"), &owner, "active", None, 9);
     store
         .conn()
         .execute(
-            "INSERT INTO logs(run_id, stream, path, bytes, truncated, redaction) VALUES ('live', 'stdout', 'x', ?1, 0, 'default')",
-            [1i64 << 30],
+            "INSERT INTO logs(run_id, stream, path, bytes, truncated, redaction) VALUES (?1, 'stdout', 'x', ?2, 0, 'default')",
+            params![retention_run_id("live"), 1i64 << 30],
         )
         .unwrap();
     let report = retain(&cx, &root, &mut store, budget(100)).unwrap();
     assert_eq!(report.log_sets, 2);
-    assert!(!runs.join("a").exists() && !runs.join("b").exists());
-    assert!(runs.join("c").exists());
+    assert!(
+        !runs.join(retention_run_id("a")).exists() && !runs.join(retention_run_id("b")).exists()
+    );
+    assert!(runs.join(retention_run_id("c")).exists());
     let remaining: i64 = store
         .conn()
         .query_row("SELECT count(*) FROM logs", [], |row| row.get(0))

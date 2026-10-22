@@ -344,3 +344,10 @@ and admission touch-points. Task status is owned by
 [018](contracts/018-task-status-query-surface-and-read-model-contract.md);
 [051](contracts/051-bounded-qa-groups-contract.md) preserves durable group
 evidence. The runtime cutover is not implemented by the amendment.
+
+Tom, 2026-10-22: "Approve" (planner relayed acceptance of the Q-010 design).
+The conditions are owned by contract 052 §11.1 (busy-machine migration lists
+exact blocking writers and stop/drain commands without partial work; ordinary
+foreground runs continue) and §12.6 (read-only copy of the actual large store,
+elapsed duration/per-checkout results, and deleted-worktree `retire --dead`
+without a central index). The amendment and implementation ship together.

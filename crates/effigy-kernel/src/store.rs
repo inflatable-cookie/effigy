@@ -1,5 +1,5 @@
-//! The runtime store (§5.5, §7.2): one SQLite `kernel.db` under the state
-//! root, typed records and multi-record transactions.
+//! Runtime records (§5.5, §7.2): checkout `kernel.db` or machine `machine.db`
+//! under a verified state root, with typed multi-record transactions.
 //!
 //! SQLite opens `kernel.db` by path. The kernel first creates or verifies the
 //! file descriptor-relative (regular, operator-owned, 0600, one link, bounded)
@@ -182,7 +182,7 @@ impl Store {
                 reason: "state root opened read-only".into(),
             });
         }
-        let name = FileName::new(DB_NAME)?;
+        let name = FileName::new(root.database_name())?;
         let (_, stat) = root
             .dir()
             .open_file(&name, libc::O_RDWR, Some(FILE_MODE), Trust::Private)?
@@ -194,7 +194,7 @@ impl Store {
         }
         check_journal(root)?;
         let conn = Connection::open_with_flags(
-            root.dir().join(DB_NAME),
+            root.dir().join(root.database_name()),
             OpenFlags::SQLITE_OPEN_READ_WRITE
                 | OpenFlags::SQLITE_OPEN_NOFOLLOW
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -221,7 +221,7 @@ impl Store {
             return injected;
         }
         let busy = cx.remaining();
-        let name = FileName::new(DB_NAME).expect("fixed name");
+        let name = FileName::new(root.database_name()).expect("fixed name");
         match root
             .dir()
             .open_file(&name, libc::O_RDONLY, None, Trust::Private)
@@ -234,7 +234,7 @@ impl Store {
             Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
         }
         let opened = Connection::open_with_flags(
-            root.dir().join(DB_NAME),
+            root.dir().join(root.database_name()),
             OpenFlags::SQLITE_OPEN_READ_ONLY
                 | OpenFlags::SQLITE_OPEN_NOFOLLOW
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -330,13 +330,14 @@ impl Store {
             Err(other) => return Err(other),
         }
         let stamp = wall_ms();
-        let aside = FileName::new(&format!("{DB_NAME}.corrupt-{stamp}"))?;
-        let journal = FileName::new(&format!("{DB_NAME}-journal"))?;
+        let aside = FileName::new(&format!("{}.corrupt-{stamp}", root.database_name()))?;
+        let journal = FileName::new(&format!("{}-journal", root.database_name()))?;
         if root.dir().entry(&journal)?.is_some() {
             root.dir()
                 .rename(&journal, &aside.with_suffix("-journal")?)?;
         }
-        root.dir().rename(&FileName::new(DB_NAME)?, &aside)?;
+        root.dir()
+            .rename(&FileName::new(root.database_name())?, &aside)?;
         root.dir().sync()?;
         Ok(aside)
     }
@@ -766,7 +767,7 @@ fn busy_timeout(remaining: Option<Duration>) -> Result<Duration, StoreError> {
     }
 }
 fn check_journal(root: &StateRoot) -> Result<(), StoreError> {
-    let journal = FileName::new(&format!("{DB_NAME}-journal"))?;
+    let journal = FileName::new(&format!("{}-journal", root.database_name()))?;
     if let Some(stat) = root.dir().entry(&journal)? {
         crate::fs::check(
             &stat,

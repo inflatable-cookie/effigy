@@ -4,7 +4,7 @@ Owner: Platform (task engine)
 Created: 2026-05-10
 Rebuilt: 2026-10-19 on run records ([017](017-task-status-record-and-active-run-model-contract.md), [052](052-runtime-kernel-contract.md) §5.6 status)
 
-Q-010 read model below is **proposed**, awaiting planner and Tom review before
+Q-010 read model below is **proposed**, approved by planner and Tom (2026-10-22: "Approve") for
 implementation with [052 §3.1](052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary).
 The existing binary still implements the row-based v2 envelopes. Phase 2
 introduces the v3 envelopes specified here; this doc PR changes no JSON output.
