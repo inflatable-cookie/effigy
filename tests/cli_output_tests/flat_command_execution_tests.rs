@@ -76,14 +76,14 @@ fn unowned_former_grouped_spelling_does_not_reach_the_child_builtin() {
     )
     .expect("write manifest");
 
-    let output = run_json_cli_command(&root, &["repo", "graph", "status"]);
-    assert!(!output.status.success(), "unowned repo graph: {output:?}");
+    let output = run_json_cli_command(&root, &["repo", "scan", "god-files"]);
+    assert!(!output.status.success(), "unowned repo scan: {output:?}");
     let payload = parse_stdout_json(&output);
     assert_ne!(
-        payload["command"]["kind"], "graph",
-        "unowned `repo graph` must not reach the graph built-in: {payload}"
+        payload["command"]["kind"], "scan",
+        "unowned `repo scan` must not reach the scan built-in: {payload}"
     );
-    assert_ne!(payload["command"]["name"], "graph", "{payload}");
+    assert_ne!(payload["command"]["name"], "scan", "{payload}");
     assert_json_has_no_warning_metadata(&payload);
     assert_no_migration_diagnostics(&output);
 }
@@ -137,14 +137,14 @@ fn leading_repo_and_json_flags_still_select_direct_builtins() {
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(["--json", "--repo"])
         .arg(&root)
-        .args(["graph", "status"])
+        .args(["scan", "god-files"])
         .env("NO_COLOR", "1")
         .output()
         .expect("run effigy");
     assert!(output.status.success(), "leading flags: {output:?}");
     let payload = parse_stdout_json(&output);
     assert_eq!(payload["ok"], true);
-    assert_eq!(payload["command"]["kind"], "graph");
+    assert_eq!(payload["command"]["kind"], "scan");
     assert_json_has_no_warning_metadata(&payload);
     assert_no_migration_diagnostics(&output);
 }
@@ -153,22 +153,18 @@ fn leading_repo_and_json_flags_still_select_direct_builtins() {
 fn direct_text_and_json_success_have_no_migration_metadata() {
     let root = temp_workspace("flat-json-success");
 
-    let text = run_cli_command(&root, &["graph", "status"]);
+    let text = run_cli_command(&root, &["scan", "god-files"]);
     assert!(text.status.success(), "text: {text:?}");
+    assert!(stdout_of(&text).contains("God Files"));
     assert_no_migration_diagnostics(&text);
 
-    let json = run_json_cli_command(&root, &["graph", "status"]);
+    let json = run_json_cli_command(&root, &["scan", "god-files"]);
     assert!(json.status.success(), "json: {json:?}");
     let payload = parse_stdout_json(&json);
     assert_eq!(payload["ok"], true);
-    assert_eq!(payload["command"]["kind"], "graph");
+    assert_eq!(payload["command"]["kind"], "scan");
     assert_json_has_no_warning_metadata(&payload);
     assert_no_migration_diagnostics(&json);
-
-    let scan = run_cli_command(&root, &["scan", "god-files"]);
-    assert!(scan.status.success(), "scan: {scan:?}");
-    assert!(stdout_of(&scan).contains("God Files"));
-    assert_no_migration_diagnostics(&scan);
 
     let config = run_cli_command(&root, &["config"]);
     assert!(config.status.success(), "config: {config:?}");
@@ -179,7 +175,7 @@ fn direct_text_and_json_success_have_no_migration_metadata() {
 fn direct_usage_and_runtime_errors_have_no_migration_metadata() {
     let root = temp_workspace("flat-json-errors");
 
-    let usage = run_json_cli_command(&root, &["graph", "status", "--bogus"]);
+    let usage = run_json_cli_command(&root, &["scan", "god-files", "--bogus"]);
     assert_eq!(usage.status.code(), Some(2), "usage: {usage:?}");
     let payload = parse_stdout_json(&usage);
     assert_eq!(payload["ok"], false);
@@ -197,22 +193,23 @@ fn direct_usage_and_runtime_errors_have_no_migration_metadata() {
 }
 
 #[test]
-fn retired_graph_watch_returns_a_json_usage_error() {
+fn retired_graph_returns_a_json_usage_error() {
     let fixture =
         effigy_test_support::Fixture::new("effigy-cli-private-").expect("private fixture");
-    let output = run_json_cli_command(fixture.path(), &["graph", "watch"]);
-    assert_eq!(output.status.code(), Some(2));
-    let payload = parse_stdout_json(&output);
-    assert_eq!(payload["ok"], false);
-    assert!(payload.to_string().contains("graph index"));
-    assert!(payload.to_string().contains("removed in v0.15"));
+    for args in [&["graph"][..], &["graph", "explore", "x"][..]] {
+        let output = run_json_cli_command(fixture.path(), args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        let payload = parse_stdout_json(&output);
+        assert_eq!(payload["ok"], false);
+        assert!(payload.to_string().contains("effigy test --plan"));
+        assert!(payload.to_string().contains("removed in v0.15"));
+    }
 }
 
 #[test]
 fn genuine_subcommands_keep_nested_help() {
     let root = temp_workspace("flat-nested-subcommands");
     for args in [
-        &["docs", "context", "--help"][..],
         &["release", "gates", "--help"][..],
         &["service", "list", "--help"][..],
     ] {

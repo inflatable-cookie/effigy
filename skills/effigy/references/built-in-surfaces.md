@@ -16,10 +16,9 @@ selectors.
 | `doctor` | Health + routing on entry |
 | `tasks` | Task inventory |
 | `test` | Test plan (`--plan`) and execution |
-| `graph` | Code understanding (`explore`, `affected`) |
 | `<selector>` | Repo work the manifest defines |
 
-Details: `agent-operating-loop.md`, `graph-assist.md`.
+Details: `agent-operating-loop.md`.
 
 ## Manifest selector runtime
 
@@ -40,35 +39,11 @@ also supports `--headless` / `EFFIGY_MANAGED_HEADLESS=1` plus task-local
 | `config completion` | Shell completion + selector candidates |
 | `deps` | Inspect, link, and unlink full Cargo/Bun local dependency closures |
 
-## Code graph
+## Documentation navigation
 
-| Subcommand | Purpose |
-|------------|---------|
-| `graph index` | Build/refresh `.effigy/graph/graph.db` |
-| `graph status` | Freshness trust (`freshness.state`) + counts |
-| `graph explore` | One-call agent navigation packet |
-| `graph affected` | Post-edit validation narrowing |
-| `graph explore --excerpts-only` | Lower-level ranked context items |
-| `graph search` | FTS term lookup |
-| `graph node <ID|PATH> [--in|--out]` | File and symbol neighborhoods |
-
-Trust states on `graph status --json`: `ready`, `refresh-recommended`,
-`degraded`, `missing-index`, `stale-index`, `refreshing`. Reindex when not `ready` and
-`usable` is false. `stale-index` is usable navigation from committed data and is not current.
-
-Guide: `docs/guides/076-code-graph-and-agent-workflows.md`
-
-## Documentation context
-
-`effigy docs context <QUERY> [--max-sections N] [--max-bytes N] [--max-hops N]`
-returns exact Markdown sections with path, span, kind, authority, currentness,
-fields, typed relation path, and match reason, as `effigy.docs.context.v1`.
-Defaults are 8 sections, 24000 bytes, 1 hop; maxima are 32, 100000, 3. It shares
-the read-only graph database - no second index. Semantics come from the
-selected repository's committed `[docs_policy.graph]` block, never from an
-installed skill; baseline mode works with no profile.
-
-Guide: `docs/guides/079-documentation-graph-profiles-and-context.md`
+`effigy docs check` validates links, JSON examples, headings, paths, forbidden
+text, indexes, next-actions and workflow paths. v0.15 removed `effigy docs
+context`; use `docs/README.md` as the docs index and `rg` for exact text.
 
 ## Local runtime
 
@@ -80,7 +55,7 @@ Guide: `docs/guides/079-documentation-graph-profiles-and-context.md`
 | `gateway` | Host DNS/TLS for container routes |
 | `service` | Catalog inspect/extract |
 | `exec` | One-shot command in dev workspace container; primary-service workspace identity; no TTY for non-console callers |
-| `bootstrap` | Clone/bring-up repo from git URL |
+| `bootstrap` | Download and start a project: clone (or use this checkout), pinned sources, submodules, `setup` selectors, then `start` |
 
 ## Data, deploy, and proof
 
@@ -97,7 +72,7 @@ Guide: `docs/guides/079-documentation-graph-profiles-and-context.md`
 |----------|---------|
 | `release` | Gates, prepare/execute, verify-install, distribution evidence |
 | `changelog` | Validate/format/analyze/extract changelog |
-| `docs` | Link/JSON/index/workflow-path QA checks, plus bounded `docs context` documentation retrieval |
+| `docs` | Link/JSON/index/workflow-path QA checks |
 | `contracts` | JSON contract validation |
 | `init` | Repo setup wizard; `--check`, `--checklist`, `--apply` |
 

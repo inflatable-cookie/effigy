@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use super::common::{ScanGraphFileContext, ScanRenderFormat};
+use super::common::ScanRenderFormat;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -46,8 +46,6 @@ pub struct AttentionMarkerFinding {
     pub severity: AttentionMarkerSeverity,
     pub marker: String,
     pub snippet: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub graph: Option<ScanGraphFileContext>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

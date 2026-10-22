@@ -106,8 +106,6 @@ Use when:
 
 Read:
 - [`017-json-output-contracts.md`](017-json-output-contracts.md)
-- [`076-code-graph-and-agent-workflows.md`](076-code-graph-and-agent-workflows.md)
-- [`079-documentation-graph-profiles-and-context.md`](079-documentation-graph-profiles-and-context.md)
 - [`077-local-dependency-linking.md`](077-local-dependency-linking.md)
 - [`024-ci-and-automation-recipes.md`](024-ci-and-automation-recipes.md)
 - [`026-json-payload-examples.md`](026-json-payload-examples.md)
@@ -119,7 +117,7 @@ Read:
 Use when:
 - another tool is calling Effigy
 - you need stable JSON
-- you want the graph as the code-understanding lane inside a wider agent flow
+- you want the documentation profile alongside a wider agent flow
 - you are adopting Effigy across multiple repos
 - you want a periodic agent to inventory project papercut queues
 
@@ -228,8 +226,6 @@ This section is inventory, not a recommended reading order.
 - [`073-state-stack-guide.md`](073-state-stack-guide.md)
 - [`074-deployment-guide.md`](074-deployment-guide.md)
 - [`075-secrets-and-vault-guide.md`](075-secrets-and-vault-guide.md)
-- [`076-code-graph-and-agent-workflows.md`](076-code-graph-and-agent-workflows.md)
-- [`079-documentation-graph-profiles-and-context.md`](079-documentation-graph-profiles-and-context.md)
 - [`080-host-wide-validation-admission.md`](080-host-wide-validation-admission.md)
 - [`081-bounded-qa-groups-workflow.md`](081-bounded-qa-groups-workflow.md)
 - [`068-rhai-host-surface-audit.md`](068-rhai-host-surface-audit.md)

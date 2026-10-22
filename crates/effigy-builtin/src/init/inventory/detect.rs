@@ -7,7 +7,6 @@ use effigy_core::repo_markers::is_effigy_config_filename;
 pub(super) struct RepoSetupContext {
     pub(super) has_makefile: bool,
     pub(super) has_cargo_aliases: bool,
-    pub(super) has_graph_index: bool,
     pub(super) has_secrets: bool,
     pub(super) has_bundle: bool,
     pub(super) has_containers: bool,
@@ -24,7 +23,6 @@ pub(super) fn inspect_repo_setup_context(target_root: &Path) -> RepoSetupContext
     RepoSetupContext {
         has_makefile: target_root.join("Makefile").is_file(),
         has_cargo_aliases: cargo_alias_config_present(target_root),
-        has_graph_index: target_root.join(".effigy/graph/graph.db").is_file(),
         has_secrets: manifest_declares(&manifest_snippets, "secrets"),
         has_bundle: manifest_declares(&manifest_snippets, "bundle"),
         has_containers: manifest_declares(&manifest_snippets, "containers")

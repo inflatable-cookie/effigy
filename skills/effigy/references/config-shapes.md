@@ -16,10 +16,11 @@ itself; see `effigy --help` for the list.
 
 ## `[docs_policy.graph]`
 
-This optional repository-owned profile teaches the local Markdown graph how to
-classify documentation, resolve currentness, and name typed relations. It is
-consumed by `effigy graph index` and by `effigy docs context <QUERY>`, the
-bounded documentation retrieval surface.
+This optional repository-owned profile used to teach the local Markdown graph how
+to classify documentation, resolve currentness, and name typed relations. v0.15
+removed the `effigy graph` and `effigy docs context` readers, so the profile is
+validated config with no consumer; keep it in place until a decision retires or
+replaces it.
 
 ```toml
 [docs_policy.graph]
@@ -66,9 +67,7 @@ installed skill directory, and no template cache is read while answering a
 query. Adopting a newer template is an explicit merge
 (`effigy init northstar --dry-run`), never an automatic reinterpretation.
 
-Adoption guide and example queries:
-`docs/guides/079-documentation-graph-profiles-and-context.md`. The profile
-grammar and ranking rules live in
+The profile grammar and ranking rules live in
 `docs/knowledge/contracts/041-documentation-graph-profile-contract.md`; the architecture
 decision is `docs/knowledge/architecture/024-repository-defined-documentation-graph.md`.
 
@@ -99,7 +98,7 @@ Tasks can be shell strings, refs to other tasks, or Rhai scripts. Examples:
 "release:artifacts:check" = { rhai = "scripts/check-release-artifacts.rhai" }
 
 # Mixed chain
-"bootstrap:local" = [
+"install:local" = [
   { rhai = "scripts/build-local-bin.rhai" },
   { rhai = "scripts/install-local-bin-links.rhai" },
 ]
@@ -185,24 +184,28 @@ from the workspace catalog crate rather than redefining.
 
 ## `[bootstrap]`
 
-First-run setup steps, executed by `effigy bootstrap`:
+The one command for downloading and starting someone else's project
+(`effigy bootstrap [<git-url>]`; no URL prepares this checkout in place):
 
 ```toml
 [bootstrap]
-run = [
-  { task = "bootstrap deps sync" },
-  { task = "doctor" },
-]
-start = "dev"                              # single selector
-# start = ["container:up", "dev"]          # or array, sequential
-# start = [{ task = "container:up" }, { task = "dev" }]   # table form
-submodules = "recursive"
+setup = ["workspace:js:prepare", "db:seed:schema"]  # ordered task selectors
+start = "dev"                                       # one selector; --no-start skips it
+submodules = true                                   # recursive init at recorded commits
+
+[sources.book]                     # pinned extra source; replaces `children`
+git = "git@github.com:contact-patch/book.git"
+rev = "<commit>"                   # or rev_file = "book.rev"; exactly one
+path = "../book"                   # relative to the manifest; siblings are normal
 ```
 
-`start` accepts a scalar selector or an array. Array entries are either
-bare selector strings or `{ task = "..." }` tables (mixed allowed).
-Args travel inline in the selector string (`"dev --foo bar"`). Arrays
-run in declaration order; the first failure aborts the chain.
+`setup` and `start` are ordinary task selectors, so environment, gateway,
+readiness, secrets and cleanup behave as they do for `effigy <selector>`.
+`[sources.<name>]` is a working copy pinned to one commit: a missing path is
+cloned at the pin, and an existing one with local changes or another HEAD is
+reported as drift and left untouched. `effigy doctor` reports that drift.
+Bootstrap never resets a working copy and never runs a package manager; a first
+database seed is a repo task in `setup`.
 
 ## `[release]`
 

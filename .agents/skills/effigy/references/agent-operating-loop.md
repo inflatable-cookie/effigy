@@ -8,8 +8,7 @@ even when the work is clearly code understanding or direct execution.
 
 | Job | First command |
 |-----|---------------|
-| Code understanding | `effigy graph explore "<question>" --json` |
-| Graph-backed risk review | `effigy scan <graph-aware-subcommand> --json` |
+| Code understanding | `rg` for the symbol, then `docs/README.md` for owning knowledge |
 | Selector inventory | `effigy tasks` |
 | Test-routing inspection | `effigy test --plan` |
 | Routing ambiguity or repo health | `effigy doctor` |
@@ -32,23 +31,11 @@ effigy doctor <selector> <args...>
 
 Details: `first-five-commands.md` and `selector-routing.md`.
 
-## Code-understanding lane (before broad scanning)
+## Code-understanding lane
 
-Do this when you need to find owners, trace behavior, or orient in an
-unfamiliar tree — **before** spraying `rg` or opening many files.
-
-```bash
-effigy graph explore "<question>" --max-files 6 --max-bytes 12288 --json
-```
-
-Graph queries never refresh or write state. Use `graph status` for freshness
-diagnostics and explicit `graph index` when a packet reports missing or stale data.
-
-Details: `graph-assist.md`.
-
-Do not force this phase onto unrelated tasks. If the job is clearly execution,
-deployment, state orchestration, docs validation, or release inspection, use
-the matching built-in instead of inserting `graph` ritualistically.
+Effigy has no code graph in v0.15. Start with `rg` on the symbol or string, then
+read `docs/README.md` and the owning knowledge file it links. Do not front-load
+health or inventory commands for a code-location question.
 
 ## Execution lane
 
@@ -63,7 +50,7 @@ built-in covers the path.
 ## Validation lane
 
 ```bash
-git diff --name-only | effigy graph affected --stdin --json
+effigy test --plan
 effigy test <focused-selector>
 ```
 
@@ -79,18 +66,7 @@ Full `effigy qa` belongs to the planner on `main` at Queue milestones, not the
 default per-task check. See the current host-wide admission guide at
 `docs/guides/080-host-wide-validation-admission.md`.
 
-Use `graph affected` to pick a smaller target; it is not exhaustive proof.
-
-## Risk-review lane
-
-```bash
-effigy scan boundary-violations --json
-effigy scan dead-code --json
-git diff --name-only | effigy scan validation-gaps --stdin --json
-```
-
-Use this lane when the question is boundary drift, likely isolation, or
-validation risk. Do not substitute it for code navigation or exact proof.
+`effigy test --plan` narrows a target; it is not exhaustive proof.
 
 ## Health lane (when drift matters)
 
@@ -106,7 +82,7 @@ Use only when the repo or user needs them:
 | Need | Surface |
 |------|---------|
 | Local stack | `effigy container up`, `effigy dev` (repo task) |
-| Cross-repo clone | `effigy bootstrap <git-url>` |
+| Cross-repo download and start | `effigy bootstrap <git-url>` (`effigy bootstrap` in a checkout runs its `setup`) |
 | Secrets | `effigy secrets doctor`, `effigy secrets list` |
 | State / deploy | `effigy state plan`, `effigy deploy plan` |
 | Release cut | human-gated; see `release-protocol.md` |

@@ -33,7 +33,7 @@ creating or refreshing a local snapshot; it is not part of the baseline.
 effigy init
 effigy init --check --json
 effigy init --checklist --json
-effigy init --apply-actions manifest.effigy_toml,graph_status.inspect --json
+effigy init --apply-actions manifest.effigy_toml,secrets_surface.inspect --json
 effigy init minimal --dry-run
 effigy init northstar --force
 ```

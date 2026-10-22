@@ -13,7 +13,6 @@
       "crates/effigy-catalog/Cargo.toml",
       "crates/effigy-changelog/Cargo.toml",
       "crates/effigy-cli/Cargo.toml",
-      "crates/effigy-codegraph/Cargo.toml",
       "crates/effigy-containers/Cargo.toml",
       "crates/effigy-context/Cargo.toml",
       "crates/effigy-contracts/Cargo.toml",

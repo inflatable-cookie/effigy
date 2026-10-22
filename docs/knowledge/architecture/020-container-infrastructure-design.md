@@ -1018,7 +1018,7 @@ SQL `dump`, and `seed`. `dump` writes local files by default. OCI destinations
 are staged first and published only with `--push`, which reports the resulting
 digest. `seed` stages local or `oci://` artifacts under
 `.effigy/local/db-seeds/`, then dispatches the repository's
-`bootstrap:db-seed` task. It currently targets the default container. The
+`data:seed` task. It currently targets the default container. The
 [container guide](../../guides/063-container-system-guide.md#data-lifecycle)
 shows command syntax and confirmation rules. The main shapes are:
 

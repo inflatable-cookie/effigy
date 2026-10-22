@@ -48,8 +48,6 @@ Use these docs intentionally:
 - [026-feature-placement-and-command-surface.md](026-feature-placement-and-command-surface.md)
   defines semantic core ownership, group-first command organization, provider
   placement, catalog sources, and release/distribution separation
-- [027-catalog-scoped-code-graph.md](027-catalog-scoped-code-graph.md) defines
-  one checkout corpus, per-file transactions and cooperative refresh
 - [028-published-and-draft-task-surfaces.md](028-published-and-draft-task-surfaces.md)
   keeps public/internal discovery metadata on one task namespace and runtime
 - [029-bounded-doctor-and-scan-cache.md](029-bounded-doctor-and-scan-cache.md)
@@ -65,9 +63,6 @@ Use these docs intentionally:
   defines isolated skill loading and source/target path semantics
 - [`contract/043`](../contracts/043-feature-placement-and-surface-migration-contract.md)
   defines feature-placement gates and alias-stable migration rules
-- [`contract/045`](../contracts/045-catalog-scoped-code-graph-contract.md)
-  defines checkout graph grammar, storage, refresh, and query
-  isolation
 - [`contract/046`](../contracts/046-published-and-draft-task-surface-contract.md)
   defines task visibility, grouped discovery, complete JSON inventory and legacy syntax translation
 - [`contract/047`](../contracts/047-bounded-doctor-and-scan-cache-contract.md)

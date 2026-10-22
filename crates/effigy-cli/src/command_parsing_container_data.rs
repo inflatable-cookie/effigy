@@ -2,11 +2,10 @@ use std::path::PathBuf;
 
 use crate::value_parsing::{next_required_value, parse_repo_path};
 use crate::{
-    Command, ContainerArgs, ContainerDataSubcommand, ContainerDbDumpInput, ContainerSubcommand,
-    HelpTopic,
+    BootstrapDbSeedInput, Command, ContainerArgs, ContainerDataSubcommand, ContainerDbDumpInput,
+    ContainerSubcommand, HelpTopic,
 };
 
-use super::bootstrap::parse_bootstrap_db_seed;
 use super::{unknown_argument, CliParseError};
 
 pub(super) fn parse_container_data<I>(
@@ -119,7 +118,7 @@ fn parse_container_db_dump(value: String) -> Result<ContainerDbDumpInput, CliPar
         });
     }
 
-    let parsed = parse_bootstrap_db_seed(value)?;
+    let parsed = parse_db_seed_input(value)?;
     Ok(ContainerDbDumpInput {
         target: parsed.target,
         path: parsed.path,
@@ -237,7 +236,7 @@ where
                         flag: "--db-seed".to_owned(),
                     },
                 )?;
-                db_seeds.push(parse_bootstrap_db_seed(value)?);
+                db_seeds.push(parse_db_seed_input(value)?);
             }
             "--no-prompt" => no_prompt = true,
             "--yes" => yes = true,
@@ -300,4 +299,42 @@ where
         repo_override,
         output_json,
     }))
+}
+
+/// `<file>`, `<target>=<file>` or a bare target name reading `./<target>.sql`.
+fn parse_db_seed_input(value: String) -> Result<BootstrapDbSeedInput, CliParseError> {
+    if let Some((target, path)) = value.split_once('=') {
+        if target.is_empty() || path.is_empty() {
+            return Err(CliParseError::InvalidArguments(
+                "--db-seed requires <file> or <target>=<file>".to_owned(),
+            ));
+        }
+        return Ok(BootstrapDbSeedInput {
+            target: Some(target.to_owned()),
+            path: PathBuf::from(path),
+        });
+    }
+
+    if looks_like_bare_db_target(&value) {
+        return Ok(BootstrapDbSeedInput {
+            target: Some(value.clone()),
+            path: PathBuf::from(format!("{value}.sql")),
+        });
+    }
+
+    Ok(BootstrapDbSeedInput {
+        target: None,
+        path: PathBuf::from(value),
+    })
+}
+
+fn looks_like_bare_db_target(value: &str) -> bool {
+    !value.is_empty()
+        && !value.contains('/')
+        && !value.contains('\\')
+        && !value.starts_with('.')
+        && !value.contains('.')
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }

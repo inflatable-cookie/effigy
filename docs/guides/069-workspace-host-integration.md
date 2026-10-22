@@ -168,10 +168,12 @@ backend = "containerd"
 profile = "effigy"
 ```
 
-One-shot override example:
+Bootstrap has no per-invocation backend flag (Q-009): the declared environment
+and the machine preference choose the backend, so set the preference first:
 
 ```sh
-effigy bootstrap git@github.com:inflatable-cookie/loophole.git --backend docker --fresh
+effigy config set containers.backend docker
+effigy bootstrap git@github.com:inflatable-cookie/loophole.git
 ```
 
 Inspect or clear them with:

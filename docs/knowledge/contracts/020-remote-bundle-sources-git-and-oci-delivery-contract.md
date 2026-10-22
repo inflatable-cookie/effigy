@@ -24,6 +24,8 @@ This contract owns:
 - cache-key identity and stale/update detection rules for git and OCI sources
 - the bounded first-round `bundle sync` and `bundle inspect` source metadata
   expectations
+- pinned extra sources (`[sources.<name>]`), the bootstrap replacement for
+  `[bootstrap].children`
 
 This contract does not own:
 
@@ -123,6 +125,35 @@ Gate admission and source acquisition share a 120-second deadline. Git and ORAS
 run through `Custody::spawn_source`, with journalled intent and a registered
 sentinel. Failure and cancellation settle through the kernel. Guests consume
 materialized pins; source acquisition requires host authority.
+
+## Pinned extra sources
+
+`[sources.<name>]` declares one extra checkout beside the project, usually for
+content that is not a published package (a manuscript, an artwork tree, a client
+content repository):
+
+```toml
+[sources.book]
+git = "git@github.com:contact-patch/book.git"
+rev = "<commit>"           # or rev_file = "book.rev"; exactly one
+path = "../book"           # relative to the manifest, so siblings are normal
+```
+
+- The pin is committed in the manifest. `rev` or `rev_file` must supply exactly
+  one commit; declaring both or neither is a manifest error.
+- Bootstrap and the first `dev` acquire only a missing checkout: clone, then
+  check out exactly the pin.
+- An existing checkout is verified against the remote. A different HEAD or local
+  changes are reported as drift and left untouched. Nothing resets, fetches
+  forward or cleans a developer's working copy, and nothing advances a pin
+  silently. Moving a pin means editing `rev` or `rev_file`.
+- `effigy doctor` reports drift in its `sources.pinned-drift` check. Drift is
+  never repaired automatically.
+- These are working copies, not cache objects, so they add no entry to
+  `.effigy/sources.lock.json`. There is exactly one lock, and it stays the lock
+  for cache-backed bundle and catalog sources. No second lock file is allowed.
+- A source is usable outside bootstrap. `[systems.*.mounts]` and repo tasks can
+  reference the same path.
 
 ## Acquisition and publication
 

@@ -181,8 +181,11 @@ Existing seed/dump command UX should accept artifact sources laterally.
 
 Required integrations:
 
-- `bootstrap --db-seed <target>=<artifact-source>`
 - `container data seed --db-seed <target>=<artifact-source>`
+
+Bootstrap has no artifact flag since v0.15 (Q-009): a first seed is an ordinary
+repo task selected by `[bootstrap].setup`, and that task may call
+`container data seed`.
 - `container data dump --db-dump <target>=<artifact-destination>`
 
 For seed operations, local files and OCI artifacts must resolve to the same

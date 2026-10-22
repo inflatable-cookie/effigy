@@ -5,7 +5,7 @@ use crate::BuiltinError;
 use effigy_cli::TaskInvocation;
 use effigy_scan::ScanRenderFormat;
 
-use super::commands::parse_scan_command;
+use super::commands::{parse_scan_command, retired_scan_subcommand};
 use super::model::{ScanCommand, ScanRequest};
 use super::values::{parse_positive_f64_flag, parse_positive_usize_flag};
 
@@ -16,9 +16,6 @@ pub(super) fn parse_scan_request(
     let mut parser = BuiltinArgParser::new(args);
     let mut command: Option<ScanCommand> = None;
     let mut output_json = false;
-    let mut graph_context = false;
-    let mut read_stdin = false;
-    let mut changed_paths = Vec::<String>::new();
     let mut format: Option<ScanRenderFormat> = None;
     let mut out: Option<PathBuf> = None;
     let mut warn_raw: Option<String> = None;
@@ -40,19 +37,12 @@ pub(super) fn parse_scan_request(
             output_json = true;
             Ok(ParseLoopAction::Handled)
         }
-        "--graph-context" => {
-            graph_context = true;
-            Ok(ParseLoopAction::Handled)
-        }
-        "--stdin" => {
-            read_stdin = true;
-            Ok(ParseLoopAction::Handled)
-        }
-        "--path" => {
-            let value = parser.next_value("`--path` requires a path")?;
-            changed_paths.push(value.to_owned());
-            Ok(ParseLoopAction::Handled)
-        }
+        "--graph-context" => Err(BuiltinError::task_invocation(
+            "`--graph-context` was removed in v0.15 with the code graph; delete the flag and use `rg` for code navigation (see CHANGELOG.md)",
+        )),
+        "--stdin" | "--path" => Err(BuiltinError::task_invocation(format!(
+            "`{arg}` belonged to `scan validation-gaps`, which was removed in v0.15 with the code graph; use `effigy test --plan` to choose tests for changed files (see CHANGELOG.md)"
+        ))),
         "--markdown" => {
             format = Some(ScanRenderFormat::Markdown);
             Ok(ParseLoopAction::Handled)
@@ -131,6 +121,11 @@ pub(super) fn parse_scan_request(
             critical_markers.push(value.to_owned());
             Ok(ParseLoopAction::Handled)
         }
+        other if command.is_none() && retired_scan_subcommand(other).is_some() => {
+            Err(BuiltinError::task_invocation(
+                retired_scan_subcommand(other).expect("checked above"),
+            ))
+        }
         other if command.is_none() => match parse_scan_command(other) {
             Some(parsed) => {
                 command = Some(parsed);
@@ -148,7 +143,7 @@ pub(super) fn parse_scan_request(
     }
     let command = command.ok_or_else(|| {
         BuiltinError::task_invocation(
-            "scan requires a subcommand (currently supported: `god-files`, `boundary-violations`, `dead-code`, `validation-gaps`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`)",
+            "scan requires a subcommand (currently supported: `god-files`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`)",
         )
     })?;
 
@@ -174,9 +169,6 @@ pub(super) fn parse_scan_request(
     Ok(ScanRequest {
         command,
         output_json,
-        graph_context,
-        read_stdin,
-        changed_paths,
         format,
         out,
         warn,

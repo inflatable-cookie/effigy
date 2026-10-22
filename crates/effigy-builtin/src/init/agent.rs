@@ -17,14 +17,10 @@ const AGENTS_BLOCK: &str = r#"<!-- BEGIN EFFIGY AGENT CONTRACT -->
 Use Effigy as the default command surface for supported project work.
 
 Route by job, not by startup ritual:
-- use `effigy graph` for code understanding
+- use `rg` and the documentation index (`docs/README.md`) for code and docs understanding
 - use `effigy tasks` for selector inventory
 - use `effigy doctor` for routing ambiguity or repo health
 - use `effigy test --plan` when test execution shape matters
-
-Use `effigy graph` when the job is code understanding: ownership, flow,
-implementation, or changed-file impact. Do not insert graph into unrelated
-deployment, state, docs, release, or direct task-execution work.
 
 Prefer `effigy <task>`, `effigy test`, and the matching built-in surface over
 raw package-manager or shell commands when Effigy covers the path. Use
@@ -64,7 +60,6 @@ repo):
 - [Effigy agent adoption](https://github.com/inflatable-cookie/effigy/blob/main/docs/guides/047-agent-and-cross-repo-adoption.md)
 - [Installed skill task sources](https://github.com/inflatable-cookie/effigy/blob/main/docs/knowledge/contracts/042-external-skill-task-runner-contract.md)
 - [Heavy validation admission](https://github.com/inflatable-cookie/effigy/blob/main/docs/guides/080-host-wide-validation-admission.md)
-- [Graph workflows](https://github.com/inflatable-cookie/effigy/blob/main/docs/guides/076-code-graph-and-agent-workflows.md)
 - [JSON contracts](https://github.com/inflatable-cookie/effigy/blob/main/docs/guides/017-json-output-contracts.md)
 <!-- END EFFIGY AGENT CONTRACT -->
 "#;
@@ -101,10 +96,6 @@ const SKILL_FILES: &[(&str, &str)] = &[
     (
         "references/footguns.md",
         include_str!("../../../../skills/effigy/references/footguns.md"),
-    ),
-    (
-        "references/graph-assist.md",
-        include_str!("../../../../skills/effigy/references/graph-assist.md"),
     ),
     (
         "references/json-envelope.md",

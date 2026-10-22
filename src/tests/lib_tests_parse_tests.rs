@@ -10,8 +10,6 @@ mod docs_and_contracts_option_tests;
 mod doctor_and_tasks_option_tests;
 #[path = "lib_tests_parse_tests/gateway_option_tests.rs"]
 mod gateway_option_tests;
-#[path = "lib_tests_parse_tests/graph_option_tests.rs"]
-mod graph_option_tests;
 #[path = "lib_tests_parse_tests/help_and_flag_tests.rs"]
 mod help_and_flag_tests;
 #[path = "lib_tests_parse_tests/qa_group_option_tests.rs"]

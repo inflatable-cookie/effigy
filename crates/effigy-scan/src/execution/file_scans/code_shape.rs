@@ -93,7 +93,6 @@ fn run_god_file_scan_single(
                     code_lines,
                     total_lines: contents.lines().count(),
                     severity,
-                    graph: None,
                 });
             }
             Ok(())

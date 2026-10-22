@@ -1243,7 +1243,7 @@ task = [{ rhai = "scripts/capture.rhai" }]
 
 fn manifest_state_sql_apply_task_fixture() -> &'static str {
     r#"
-[tasks."bootstrap:db-seed"]
+[tasks."data:seed"]
 run = "printf \"$EFFIGY_DB_SEED_TARGET\n$EFFIGY_DB_SEED_FILE\n\" > sql-import-env.txt"
 
 [data.targets.app]

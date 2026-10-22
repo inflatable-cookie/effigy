@@ -12,8 +12,6 @@ mod container_data;
 mod deploy;
 #[path = "command_parsing_docs.rs"]
 mod docs;
-#[path = "command_parsing_graph.rs"]
-mod graph;
 #[path = "command_parsing_release.rs"]
 mod release;
 #[path = "command_parsing_runtime.rs"]
@@ -38,7 +36,6 @@ use changelog::parse_changelog_command;
 use container::parse_container_command;
 use deploy::parse_deploy_command;
 use docs::parse_docs_command;
-use graph::parse_graph_command;
 use release::parse_release_command;
 use runtime::{
     parse_exec_command, parse_gateway_command, parse_service_command, parse_system_command,
@@ -81,10 +78,13 @@ where
         "workspace" => parse_workspace_command(args),
         "gateway" => parse_gateway_command(args),
         "service" => parse_service_command(args),
-        "demo" => Err(CliParseError::InvalidArguments(
-            "`effigy demo` is retired in v0.15 with no replacement: the demo registry, receipts and browser are gone; record terminal sessions with an external tool. See the v0.15.0 Removed entry in CHANGELOG.md".to_owned(),
+        "demo" => Err(CliParseError::InvalidArguments(format!(
+            "`effigy demo` is retired in v0.15: the demo registry, receipts and browser are gone, and {}. See the v0.15.0 Removed entry in CHANGELOG.md",
+            effigy_core::retirement_text::DEMO_TO_TASK_RECIPE
+        ))),
+        "graph" => Err(CliParseError::InvalidArguments(
+            "`effigy graph` was removed in v0.15 with no replacement: the code graph, its SQLite index and the graph-backed scanners are gone. Use `rg` to navigate code, `docs/README.md` for the documentation index, and `effigy test --plan` to choose tests. See the v0.15.0 Removed entry in CHANGELOG.md".to_owned(),
         )),
-        "graph" => parse_graph_command(args),
         "rhai" => parse_rhai_command(args),
         "skill" => parse_skill_command(args),
         "docs" => parse_docs_command(args),

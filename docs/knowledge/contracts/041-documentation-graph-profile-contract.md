@@ -6,20 +6,20 @@ Spec: `108` (in Git history)
 
 ## Purpose
 
-Define a repository-neutral documentation graph whose semantic shape is owned
-by the selected repository. The contract covers the optional manifest profile,
-deterministic Markdown facts and relations, bounded context retrieval, and the
-Northstar adoption boundary.
+Define the optional, repository-owned `[docs_policy.graph]` manifest profile
+that classified documentation, named currentness values, authority weights and
+typed relations.
 
-## Baseline Contract
+## Status: readers removed in v0.15
 
-`effigy docs context` must work when `[docs_policy.graph]` is absent. Baseline
-mode indexes Markdown documents, exact sections, ordinary links, local path
-references, and lexical source. Results use kind `document`, authority `0`, and
-currentness `unknown`.
-
-No baseline behavior may assume a `docs/` directory, Northstar headings,
-numbered files, status values, or roadmap vocabulary.
+Q-009 cut the code graph and `effigy docs context`. The profile is still parsed
+and validated by `effigy-manifest` and rendered by `effigy config --schema`, so
+an existing committed profile keeps working, but no v0.15 command reads it.
+`docs check` is unchanged. `effigy docs context`, `--sources` routing, the
+`effigy.graph.*`/`effigy.docs.context.*` payloads, the retrieval pipeline, the
+graph freshness lifecycle and `EFFIGY_GRAPH_TIMEOUT_MS` are retired; see
+`docs/knowledge/retired.toml` (`effigy-code-graph`). A later decision retires or
+replaces the profile itself.
 
 ## Manifest Grammar
 
@@ -112,76 +112,6 @@ Historical results remain eligible. Default ranking prefers a relevant current
 document over a similarly relevant historical document, while a query that
 directly names historical material may still rank it first.
 
-## Command Contract
-
-```text
-effigy docs context <QUERY> [--max-sections <N>] [--max-bytes <N>]
-                            [--max-hops <N>] [--sources <PATH>]
-                            [--only <HANDLE>]
-```
-
-Standard leading `--repo <PATH>` and `--json` behavior applies.
-
-- defaults: `max-sections = 8`, `max-bytes = 24000`, `max-hops = 1`
-- hard limits: `max-sections <= 32`, `max-bytes <= 100000`, `max-hops <= 3`
-- all budgets must be positive
-- a query reads the committed graph without writing or refreshing
-- read-only retrieval uses the shared graph wall-clock policy,
-  `EFFIGY_GRAPH_TIMEOUT_MS`; `0` disables the bound
-- a cold or stale read emits an explicit `effigy graph index` hint on stderr;
-  text and JSON stdout remain contract-pure
-- an empty or whitespace-only query is a usage error
-- no-match is a successful empty report, not a fallback to arbitrary files
-
-Text output is concise evidence suitable for an agent context window. JSON uses
-a versioned `effigy.docs.context.v1` payload inside the standard command
-envelope. With `--sources`, it uses the distinct grouped
-`effigy.docs.context.sources.v1` payload; each repository retains its own
-ranking, authority, currentness, freshness, and identity.
-
-Minimum JSON fields:
-
-- query, repo root, profile state, profile fingerprint, and graph freshness
-- requested and applied budgets
-- result path, heading, kind, authority, currentness, exact span, and source
-- extracted fields and typed relation path
-- lexical/traversal match reasons and truncation state
-- diagnostics and actionable next steps when profile or links are unhealthy
-
-The payload contains source evidence, not an answer or generated summary.
-
-## Retrieval Rules
-
-1. Restrict lexical candidates to configured roots, or all Markdown in baseline
-   mode.
-2. Seed from exact path, heading, field, and source-text matches.
-3. Rank textual relevance before currentness and authority.
-4. Traverse only configured relation edges up to `max-hops`.
-5. Deduplicate overlapping sections from the same document.
-6. Apply section count and byte budgets deterministically. When
-   `max-sections >= 2`, preserve the highest-ranked lexical result and reserve
-   one slot for the highest-ranked traversed candidate that fits whole. Fill
-   remaining slots with the existing rank order. With `max-sections = 1`, keep
-   the single best lexical result.
-7. Preserve at least the matched source span or omit the result with an explicit
-   budget diagnostic; never emit a misleading partial line.
-
-Tie-breaking uses stable path, heading position, and relation order. Filesystem
-iteration order must not affect output.
-
-## Freshness
-
-The documentation graph shares the code graph database, lock, health, and lazy
-refresh behavior. A normalized profile fingerprint joins the freshness identity.
-A profile edit must refresh semantic documentation records even when Markdown
-files did not change.
-
-The graph command and every lazy-refresh consumer share one time-budget parser,
-bounded execution path, typed timeout detail, health snapshot, and recovery
-guidance. A docs query must not introduce a second refresh or timeout model.
-
-No second index directory or background service is allowed.
-
 ## Northstar Boundary
 
 Northstar may ship a profile template through a skill, starter, or init asset.
@@ -193,56 +123,25 @@ Northstar-specific kind names, paths, statuses, and relations belong in that
 template. They must not appear as fallback rules in generic extraction or
 retrieval code.
 
-## Cross-Repository Source Integrity
-
-When `docs context --sources` enumerates a neighboring checkout, only the
-committed root `effigy.toml` at its `HEAD` can grant
-`[docs_policy.sources] share = true`. A working-tree edit, include, local
-overlay, or bundle default cannot change membership. If committed consent
-cannot be established, the neighbor is not queried. After consent, the
-neighbor's own normal retrieval and freshness rules apply.
-
-The portfolio's repository-directory basename is its handle. Duplicate
-handles across named directories are an invalid portfolio and fail before any
-repository query, with a diagnostic naming the collision. `--only` never
-selects more than one repository for one handle. A missing directory reports
-`missing`; a directory that cannot be read reports `invalid` with the actual
-I/O reason and a useful next step. A failure while enumerating children cannot
-silently turn partial membership into a complete report.
-
-An excerpt is labelled `committed` only with positive Git evidence that its
-exact path is unchanged from `HEAD`. Dirty paths, including Git-quoted names
-and rename endpoints, plus untracked or uncertain paths are labelled as
-working-tree content. Git uncertainty never creates an optimistic committed
-claim.
-
 ## Acceptance
 
-- baseline retrieval works in a repository with Markdown and no docs profile
-- a non-Northstar fixture defines arbitrary kinds, fields, and relations
+- a committed profile parses and validates through `effigy-manifest`
+- `effigy config --schema` renders the profile shape
+- a non-Northstar manifest defines arbitrary kinds, fields, and relations
 - invalid roots, escaped paths, kind overlap, duplicate single-valued facts,
   and invalid currentness references produce deterministic diagnostics
-- heading spans isolate exact sections rather than the complete file
-- a profile-only edit refreshes semantic records
-- current authoritative evidence wins relevant ties over historical evidence
-- direct historical queries still retrieve the named historical section
-- count, byte, and hop budgets are enforced in text and JSON
-- every result has exact provenance and a machine-readable match reason
 - a Northstar profile works from committed consumer config with the skill absent
 
 ## Out Of Scope
 
+- the retired retrieval surface: `effigy graph`, `effigy docs context`, graph
+  freshness, and the `effigy.docs.context.*` payloads
 - embeddings, semantic vector search, or remote inference
 - LLM-authored graph nodes, summaries, or relations
-- external-site crawling
-- graph mutation from query commands
-- profile inheritance from an installed skill at runtime
 - replacing code-navigation commands or ordinary exact-text search
 - a daemon, required MCP integration, or editor-specific protocol
 
 ## Drift Triggers
 
 Update this contract with changes to profile grammar, source-routing grammar,
-matching precedence,
-section boundaries, currentness, authority use, query budgets, JSON shape,
-freshness identity, or Northstar runtime independence.
+validation diagnostics, or Northstar runtime independence.

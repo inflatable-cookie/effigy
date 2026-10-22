@@ -780,7 +780,6 @@ mod tests {
         resolve_db_dump_output_paths, resolve_db_dump_plans, run_container_data_dump,
         run_container_data_dump_with_hooks,
     };
-    use effigy_bootstrap::BootstrapStagedDbSeed;
     use effigy_cli::ContainerDbDumpInput;
     use effigy_containers::{
         EffectiveComposeSource, EffectiveContainerPolicy, SharedServiceBinding,
@@ -1257,7 +1256,7 @@ database = "acowtancy"
         let mut output = Vec::new();
         confirm_container_data_seed_from_io(
             "web",
-            &[BootstrapStagedDbSeed {
+            &[crate::runner::db_seed::StagedDbSeed {
                 target: Some("contactpatch".to_owned()),
                 source_path: PathBuf::from("/tmp/latest.sql"),
                 staged_path: PathBuf::from(".effigy/local/db-seeds/contactpatch--latest.sql"),

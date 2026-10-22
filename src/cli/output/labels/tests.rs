@@ -1,10 +1,10 @@
 use super::{command_kind_and_name, help_topic_label};
 use effigy_cli::{
-    BootstrapArgs, BootstrapSubcommand, BundleArgs, BundleSubcommand, Command, ContainerArgs,
-    ContainerSubcommand, ContractsArgs, ContractsSubcommand, DeployArgs, DeploySubcommand,
-    DoctorArgs, ExecArgs, GatewayArgs, GatewaySubcommand, GraphArgs, GraphSubcommand, HelpTopic,
-    ReleaseArgs, ReleaseSubcommand, SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand,
-    SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs, WorkspaceArgs,
+    BootstrapArgs, BundleArgs, BundleSubcommand, Command, ContainerArgs, ContainerSubcommand,
+    ContractsArgs, ContractsSubcommand, DeployArgs, DeploySubcommand, DoctorArgs, ExecArgs,
+    GatewayArgs, GatewaySubcommand, HelpTopic, ReleaseArgs, ReleaseSubcommand, SecretsArgs,
+    SecretsSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand,
+    TaskInvocation, TasksArgs, WorkspaceArgs,
 };
 
 #[test]
@@ -21,7 +21,6 @@ fn help_topic_label_maps_all_topics() {
     assert_eq!(help_topic_label(HelpTopic::Workspace), "workspace");
     assert_eq!(help_topic_label(HelpTopic::Gateway), "gateway");
     assert_eq!(help_topic_label(HelpTopic::Service), "service");
-    assert_eq!(help_topic_label(HelpTopic::Graph), "graph");
     assert_eq!(help_topic_label(HelpTopic::Docs), "docs");
     assert_eq!(help_topic_label(HelpTopic::Contracts), "contracts");
     assert_eq!(help_topic_label(HelpTopic::Container), "container");
@@ -91,12 +90,6 @@ fn command_kind_and_name_maps_command_variants() {
         refresh: false,
         explain: None,
     });
-    let graph = Command::Graph(GraphArgs {
-        subcommand: GraphSubcommand::Status { refresh: false },
-        repo_override: None,
-        output_json: false,
-        stale_index: false,
-    });
     let contracts = Command::Contracts(ContractsArgs {
         subcommand: ContractsSubcommand::ValidateSelection {
             contract_path: None,
@@ -106,18 +99,11 @@ fn command_kind_and_name_maps_command_variants() {
         output_json: false,
     });
     let bootstrap = Command::Bootstrap(BootstrapArgs {
-        subcommand: BootstrapSubcommand::Clone {
-            repo_url: "git@github.com:inflatable-cookie/effigy.git".to_owned(),
-            path: None,
-            branch: None,
-            backend: None,
-            db_seeds: Vec::new(),
-            fresh: false,
-            no_prompt: false,
-            reuse_path: false,
-            start: true,
-            plan: true,
-        },
+        repo_url: Some("git@github.com:inflatable-cookie/effigy.git".to_owned()),
+        path: None,
+        branch: None,
+        no_start: false,
+        plan: true,
         output_json: false,
     });
     let container = Command::Container(ContainerArgs {
@@ -183,7 +169,6 @@ fn command_kind_and_name_maps_command_variants() {
         command_kind_and_name(&service),
         ("service", "service".to_owned())
     );
-    assert_eq!(command_kind_and_name(&graph), ("graph", "graph".to_owned()));
     assert_eq!(
         command_kind_and_name(&release),
         ("release", "release".to_owned())

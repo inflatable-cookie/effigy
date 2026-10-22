@@ -202,6 +202,24 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- The code graph (Q-009): `effigy graph` (`index`, `status`, `search`, `node`,
+  `affected`, `explore` and the earlier retired spellings), `effigy docs
+  context` and its `--sources` portfolio routing, the `effigy-codegraph` crate
+  and its SQLite index, `EFFIGY_GRAPH_TIMEOUT_MS`, and the `effigy.graph.*` /
+  `effigy.docs.context*` JSON contracts. Use `rg` for code navigation,
+  `docs/README.md` for the documentation index, and `effigy test --plan` to
+  choose tests; `docs check` is unchanged. The three scanners that needed the
+  graph go with it: `scan boundary-violations`, `scan dead-code` and
+  `scan validation-gaps`, plus `scan --graph-context`, `scan --path` and
+  `scan --stdin`. Their `[scan.boundary_violations]`, `[scan.dead_code]` and
+  `[scan.validation_gaps]` tables, and `[catalog.graph]`, are manifest errors.
+  The other scanners keep working without graph enrichment. The index lived in
+  `.effigy/graph/` inside each checkout, which is repository-local state, not
+  Effigy-owned machine state: `effigy uninstall` and state cleanup never remove
+  it, and an existing `.effigy/graph/` directory is ignored. Delete it by hand
+  if the disk space matters. The `[docs_policy.graph]` documentation profile
+  and `[docs_policy.sources]` table are still parsed and validated so committed
+  manifests keep working; nothing reads them in v0.15.
 - Retire the experimental gateway listener-handoff commands:
   `effigy gateway setup-listener-handoff`, `listener-handoff-status` and
   `remove-listener-handoff`, with the launchd definition generator, its strict
@@ -239,10 +257,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - The demo feature: `effigy demo` (`list`, `inspect`, `history`, `run`,
   `stop`, `input`, `resize`, `rerun`, `browser`), the `[demos]` manifest
   table, `config/demos.toml` in this repository, the `effigy-demo` crate, the
-  `demo.*` Rhai host features and the TUI demo browser. It has no replacement:
-  record terminal sessions with an external tool. `effigy demo` and a
-  `[demos]` table both refuse with that explanation, and
-  `effigy config --target demos` is gone with the section.
+  `demo.*` Rhai host features and the TUI demo browser. Each demo converts to
+  an ordinary task: `[tasks."demo:<name>"]` with the same `run`, `title` and
+  `summary` kept as a TOML comment, and optional `group = "Demos"`. `effigy
+  demo` and a `[demos]` table both refuse with that recipe, and `effigy config
+  --target demos` is gone with the section.
 - v0.14 lease locks (`.effigy/locks/`), task status records
   (`.effigy/runtime/tasks/`, `.effigy/reports/tasks/`) and the 20-second
   status staleness. They are never read for exclusion or deleted; a live
@@ -255,6 +274,34 @@ During v0.x, MINOR bumps may include breaking changes.
   call `state::artifact_inspect|artifact_stage|artifact_capture`. The old
   command fails with that replacement. `crates/effigy-artifacts` folded into
   `effigy-state` as the `artifact` module, one crate fewer.
+- Rebuild `effigy bootstrap` as one command over ordinary task selectors and
+  pinned sources (Q-009, effigy#262). `[bootstrap].setup` is an ordered list of
+  selectors, `start` is one selector and `submodules = true` initialises
+  submodules recursively at their recorded commits. Every retired spelling
+  refuses with its replacement: `[bootstrap].run` and the `setup` alias for it
+  became `setup`; inline run steps and `{ task = ... }`/array `start` entries
+  moved into the task they name; `[bootstrap].children` and
+  `bootstrap children status|sync` became pinned `[sources.<name>]` (`git`,
+  `rev` or `rev_file`, `path`); `bootstrap deps sync` became a repo-owned
+  selector in `setup`; `--db-seed`, the dump prompts and the
+  `bootstrap:db-seed` bootstrap callback became a first-seed task in `setup`;
+  `--fresh` and `bootstrap teardown` became environment lifecycle
+  (`effigy container <name> down`); `--backend` became the declared environment
+  plus the machine backend preference; `--start` is the default; and
+  `bootstrap deps sync --refresh-lock` became a deliberate repo task. A
+  non-empty foreign destination is refused instead of prompted for, and
+  `effigy bootstrap` with no URL prepares the existing checkout in place.
+  `effigy doctor` reports pinned-source drift; bootstrap and doctor never reset,
+  fetch forward or clean a developer's working copy, and the first `dev` also
+  acquires a missing pinned checkout (contract 020). Bootstrap fails once,
+  early, with a collected prerequisite list — `git`, an absolute `HOME`, a
+  container runtime when `[containers]` is declared, the JS manager and Node for
+  a `package.json`, `cargo`/`rustc` for a Rust checkout, and a running
+  user-owned gateway when routed domains are declared — and never installs a
+  toolchain, starts a runtime, sets up the gateway or impersonates a login. The
+  `effigy.bootstrap.deps`, `children-status`, `children-sync` and
+  `bootstrap-teardown` payloads are gone; `effigy.bootstrap.v1` keeps plan and
+  executed phases with `sources`, `submodules`, `setup` and `start`.
 
 ### Added
 - `test:focused` runs a focused Rust test selection through Cargo with
@@ -616,10 +663,10 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- The contributor task that builds this checkout and installs it as the machine's `effigy` is renamed `bootstrap:local` → `install:local`, so it no longer reads as the `effigy bootstrap` feature (clone and start a project). `bootstrap:local` now fails with the new name.
 - Effigy's own repository builds through Oxide. Selectors run Cargo through
   `scripts/oxide-selector.sh`, which leases Oxide's shared slot pool so Rust
-  intermediates stay off the internal SSD, and `scripts/effigy-selfbuild.sh`
-  builds the checkout's binary before running it. Every routed selector keeps a
+  intermediates stay off the internal SSD. Every routed selector keeps a
   named `<selector>:cargo` escape with the plain-Cargo command it replaced;
   `EFFIGY_OXIDE_ESCAPE=cargo`, `effigy cargo <args>` and `cargo run --bin
   effigy --` keep the rest. The `cargo qa*` and `prepush-ci` aliases are
@@ -723,6 +770,25 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Sequential `Terminal::Foreground` children no longer stop their owner with
+  SIGTTOU, which suspended `effigy gateway setup` after `mkcert -install`
+  ("suspended (tty output)") while it held the `gateway-setup` gate
+  (effigy#272). The owner takes the terminal with `SIGTTOU` blocked on the
+  calling thread, for the workload's own process group (never a group an
+  anchor leads), and hands it back the moment that child's exit is observed
+  instead of at settle, so the next sequential spawn starts from the
+  foreground. A terminal another program holds is left alone, and stdin that
+  is not a terminal takes no lease at all.
+- The `[demos]` retirement error and `effigy config --target demos` now give
+  the Q-009 conversion recipe instead of telling operators to delete the table
+  and record sessions elsewhere: each `[demos.<name>]` becomes
+  `[tasks."demo:<name>"]` with the same `run`, the `title` and `summary` kept as
+  a comment, and optional `group = "Demos"`, with a before/after example.
+- A retired `[secrets.vault]` key in a bundle export, such as a stale cached
+  Underlay export, refuses with the export file and line and the remedy:
+  `effigy bundle sync` for a pinned or cached bundle, or deleting the line when
+  you own the bundle. It no longer surfaces as a bare TOML parse error carrying
+  the consumer-manifest advice.
 - `effigy gateway status --json` refuses unprovable state with a structured
   `effigy.gateway.status.v1` document instead of only prose: `ok: false`,
   `status: "unknown"`, the recorded `pid`, `observations.record` /

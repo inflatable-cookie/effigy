@@ -12,15 +12,6 @@
       "std.process.Command.new": 1,
       "std.process.Command.spawn": 1
     },
-    "crates/effigy-codegraph/src/docs_context/sources_tests.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.output": 1,
-      "std::fs::write": 1
-    },
-    "crates/effigy-codegraph/src/git.rs": {
-      "std.process.Command.new": 4,
-      "std.process.Command.output": 4
-    },
     "crates/effigy-containers/src/colima.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1,
@@ -59,7 +50,7 @@
     "crates/effigy-contracts/src/lib.rs": {
       "std.process.Command.new": 5,
       "std.process.Command.output": 5,
-      "std::fs::write": 16
+      "std::fs::write": 13
     },
     "crates/effigy-core/src/build_info.rs": {
       "std.process.Command.new": 3,
@@ -142,6 +133,10 @@
     "crates/effigy-manifest/src/config_sections/docs_policy.rs": {
       "std.process.Command.new": 2,
       "std.process.Command.output": 2
+    },
+    "crates/effigy-manifest/src/sources.rs": {
+      "std.process.Command.new": 1,
+      "std.process.Command.output": 1
     },
     "crates/effigy-manifest/src/user_config.rs": {
       "std::fs::write": 1
@@ -255,22 +250,6 @@
     "crates/effigy-tui/src/multiprocess/transcript.rs": {
       "std::fs::write": 1
     },
-    "src/runner/bootstrap_command/deps.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.output": 1
-    },
-    "src/runner/bootstrap_command/mod.rs": {
-      "std.process.Command.new": 2,
-      "std.process.Command.output": 2,
-      "std::env::remove_var": 1,
-      "std::env::set_var": 2
-    },
-    "src/runner/bootstrap_command/session.rs": {
-      "std::env::remove_var": 1,
-      "std::env::set_var": 2,
-      "std::fs::remove_file": 1,
-      "std::fs::write": 1
-    },
     "src/runner/container_command/data/hooks.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1
@@ -302,8 +281,6 @@
       "std::fs::remove_file": 2
     },
     "src/runner/db_seed.rs": {
-      "std::env::remove_var": 1,
-      "std::env::set_var": 2,
       "std::fs::remove_file": 2,
       "std::fs::write": 1
     },
@@ -410,30 +387,6 @@
     "crates/effigy-cli/src/header.rs": {
       "std::env::remove_var": 1,
       "std::env::set_var": 2
-    },
-    "crates/effigy-codegraph/src/docs_context/tests.rs": {
-      "std::fs::write": 22
-    },
-    "crates/effigy-codegraph/src/git.rs": {
-      "std.process.Command.new": 2,
-      "std.process.Command.output": 2
-    },
-    "crates/effigy-codegraph/src/tests/file_transactions.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.output": 1
-    },
-    "crates/effigy-codegraph/src/tests/git_gate.rs": {
-      "std.process.Command.new": 2,
-      "std.process.Command.output": 1,
-      "std.process.Command.status": 1
-    },
-    "crates/effigy-codegraph/src/tests/language_indexers.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.status": 1
-    },
-    "crates/effigy-codegraph/src/tests/read_purity.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.spawn": 1
     },
     "crates/effigy-containers/src/backend/tests.rs": {
       "std::fs::remove_file": 1,
@@ -631,7 +584,7 @@
     },
     "crates/effigy-gateway/src/setup.rs": {
       "std::fs::remove_file": 2,
-      "std::fs::write": 9
+      "std::fs::write": 10
     },
     "crates/effigy-gateway/src/setup/broker.rs": {
       "std::fs::remove_file": 1,
@@ -731,11 +684,9 @@
     "crates/effigy-state/src/tests.rs": {
       "std::fs::write": 2
     },
-    "src/runner/bootstrap_command/session.rs": {
-      "std::fs::write": 1
-    },
     "src/runner/bootstrap_command/tests.rs": {
-      "std::fs::write": 64
+      "std.process.Command.new": 1,
+      "std.process.Command.output": 1
     },
     "src/runner/container_command/admission.rs": {
       "std::fs::write": 1
@@ -920,12 +871,6 @@
     },
     "src/tests/runner_tests/runner_core_tests/direct_task_dispatch_tests.rs": {
       "std::fs::write": 1
-    },
-    "src/tests/runner_tests/runner_core_tests/docs_context_time_budget_tests.rs": {
-      "std::fs::write": 4
-    },
-    "src/tests/runner_tests/runner_core_tests/graph_catalog_tests.rs": {
-      "std::fs::write": 3
     },
     "src/tests/runner_tests/runner_core_tests/init_migrate_tests/init_tests.rs": {
       "std::fs::write": 15

@@ -1,5 +1,5 @@
 use crate::runner::json_contract_tests::prelude::{execution::*, harness::*, json::*, runtime::*};
-use effigy_cli::{BootstrapArgs, BootstrapDepsSyncMode, BootstrapSubcommand, Command};
+use effigy_cli::{BootstrapArgs, Command};
 
 #[test]
 fn builtin_help_json_contract_has_versioned_shape() {
@@ -28,53 +28,34 @@ fn builtin_config_json_contract_has_versioned_shape() {
 }
 
 #[test]
-fn bootstrap_deps_json_contract_has_versioned_shape() {
+fn bootstrap_plan_json_contract_has_versioned_shape() {
     let _lock = lock_test();
-    let root = temp_workspace("deps-json-contract");
+    let root = temp_workspace("bootstrap-plan-json-contract");
     write_manifest(
         &root.join("effigy.toml"),
-        "[package_manager]\njs = \"bun\"\n",
+        "[bootstrap]\nsetup = [\"prepare\"]\nstart = \"dev\"\n\n[tasks.prepare]\nrun = \"true\"\n\n[tasks.dev]\nrun = \"true\"\n",
     );
-    fs::create_dir_all(root.join("ui")).expect("mkdir ui");
-    fs::write(root.join("ui/package.json"), "{}\n").expect("write package");
-    fs::write(root.join("ui/bun.lock"), "lockfile-version = 1\n").expect("write Bun lock");
-    fs::create_dir_all(root.join("bin")).expect("mkdir bin");
-    fs::write(root.join("bin/bun"), "#!/bin/sh\nprintf bun > bun.marker\n").expect("write bun");
-    let mut perms = fs::metadata(root.join("bin/bun"))
-        .expect("stat bun")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(root.join("bin/bun"), perms).expect("chmod bun");
-    let original_path = std::env::var("PATH").unwrap_or_default();
-    let _env = EnvGuard::set_many(&[(
-        "PATH",
-        Some(format!("{}:{}", root.join("bin").display(), original_path)),
-    )]);
 
     let original_cwd = std::env::current_dir().expect("current dir");
     std::env::set_current_dir(&root).expect("set cwd");
     let parsed = parse_json(
         &run_command(Command::Bootstrap(BootstrapArgs {
-            subcommand: BootstrapSubcommand::DepsSync {
-                mode: BootstrapDepsSyncMode::Both,
-                refresh_lock: false,
-                paths: vec!["ui".to_owned()],
-            },
+            repo_url: None,
+            path: None,
+            branch: None,
+            no_start: false,
+            plan: true,
             output_json: true,
         }))
-        .expect("run bootstrap deps"),
+        .expect("run bootstrap plan"),
     );
     std::env::set_current_dir(original_cwd).expect("restore cwd");
-    assert_schema_v1(&parsed, "effigy.bootstrap.deps.v1");
+    assert_schema_v1(&parsed, "effigy.bootstrap.v1");
     assert_eq!(parsed["ok"], true);
-    assert_eq!(parsed["mode"], "both");
-    assert!(parsed["operations"].is_array());
-    assert_eq!(parsed["operations"][0]["path"], "ui");
-    assert_eq!(parsed["operations"][0]["kind"], "js");
-    assert_eq!(
-        parsed["operations"][0]["command"],
-        "bun install --frozen-lockfile"
-    );
+    assert_eq!(parsed["phase"], "plan");
+    assert_eq!(parsed["plan"]["setup"][0], "prepare");
+    assert_eq!(parsed["plan"]["start"], "dev");
+    assert!(parsed["plan"]["sources"].is_array());
 }
 
 #[test]
@@ -265,7 +246,7 @@ fn builtin_init_actions_json_contract_has_versioned_shape() {
         "init",
         &[
             "--apply-actions",
-            "manifest.effigy_toml,graph_explore.guidance",
+            "manifest.effigy_toml,secrets_surface.inspect",
             "--json",
         ],
     );

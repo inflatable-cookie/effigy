@@ -166,7 +166,6 @@ pub fn run_cli(raw_args: Vec<String>) {
         | Command::Workspace(_)
         | Command::Gateway(_)
         | Command::Service(_)
-        | Command::Graph(_)
         | Command::Rhai(_)
         | Command::Skill(_)
         | Command::Docs(_)
@@ -597,9 +596,8 @@ mod help_deferral_tests {
         assert!(message.contains("run `effigy docs --help`"), "{message}");
 
         assert_eq!(
-            parse(&root, &["help", "graph"]).expect("parse"),
-            Command::Help(HelpTopic::Graph),
-            "unrelated built-in help topics stay available"
+            parse(&root, &["help", "service"]).expect("parse"),
+            Command::Help(HelpTopic::Service)
         );
     }
 
@@ -608,14 +606,14 @@ mod help_deferral_tests {
         let root = temp_root("explicit-defer");
         fs::write(
             root.join("effigy.toml"),
-            "[defer]\nrun = \"printf deferred\"\nbuiltins = [\"graph\"]\n",
+            "[defer]\nrun = \"printf deferred\"\nbuiltins = [\"service\"]\n",
         )
         .expect("write manifest");
 
-        let message = parse(&root, &["help", "graph"])
+        let message = parse(&root, &["help", "service"])
             .expect_err("explicitly deferred built-ins have no help panel")
             .to_string();
-        assert!(message.contains("`graph` is deferred"), "{message}");
+        assert!(message.contains("`service` is deferred"), "{message}");
     }
 
     #[test]

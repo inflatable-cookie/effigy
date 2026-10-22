@@ -1,762 +1,598 @@
-//! Integration tests for `effigy-bootstrap`.
+//! Integration tests for the v0.15 `effigy bootstrap` engine.
 //!
-//! These exercise `execute_bootstrap_request` end-to-end against real git
-//! remotes via `sh` scripts. The callbacks provide just enough glue — parse
-//! the manifest via `effigy-manifest`, run bootstrap-local managed runs
-//! through `sh -c`, and run explicit start tasks — to drive the contract
-//! without pulling in the runner.
+//! Everything runs against local fixture remotes under an owned fixture root.
+//! No real project is cloned or bootstrapped.
 
 mod support;
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use effigy_bootstrap::{
-    execute_bootstrap_request, execute_bootstrap_request_with_progress, render_bootstrap_result,
-    resolve_bootstrap_request, status_bootstrap_children, sync_bootstrap_children, BootstrapError,
-    BootstrapResolution,
+    execute_bootstrap_request_with_progress, plan_bootstrap_request, render_bootstrap_plan,
+    render_bootstrap_result, resolve_bootstrap_request, BootstrapError,
 };
-use effigy_manifest::{
-    load_task_manifest, ManifestBootstrapConfig, ManifestBootstrapRun,
-    ManifestBootstrapSubmodulesPolicy, ManifestManagedRun, ManifestManagedRunStep,
-};
+use effigy_manifest::{ManifestBootstrapConfig, PinnedSourceState};
 use support::{
-    attach_remote_and_push, bare_remote_path, clone_remote, commit_all,
-    create_root_remote_with_bootstrap, create_root_remote_with_optional_missing_child,
-    init_bare_remote, init_git_repo, temp_dir,
+    attach_remote_and_push, bare_remote_path, clone_remote, commit_all, create_content_remote,
+    create_project_remote, git_stdout, head_commit, init_bare_remote, init_git_repo, temp_dir,
 };
 
-fn create_child_remote(name: &str) -> PathBuf {
-    let worktree = temp_dir(&format!("{name}-worktree"));
-    fs::create_dir_all(worktree.join("scripts")).expect("mkdir child scripts");
-    fs::write(worktree.join("README.md"), format!("# {name}\n")).expect("write child readme");
-    fs::write(
-        worktree.join("effigy.toml"),
-        r#"[bootstrap]
-run = "sh ./scripts/child-setup.sh"
-"#,
-    )
-    .expect("write child manifest");
-    fs::write(
-        worktree.join("scripts/child-setup.sh"),
-        "#!/bin/sh\nset -eu\nprintf child-setup > child-setup.txt\n",
-    )
-    .expect("write child setup");
-    let mut perms = fs::metadata(worktree.join("scripts/child-setup.sh"))
-        .expect("child setup metadata")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(worktree.join("scripts/child-setup.sh"), perms).expect("chmod child setup");
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init child");
-    let remote = bare_remote_path(&format!("{name}-bare"));
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
-fn create_root_remote_with_sibling_child(child_remote: &Path) -> PathBuf {
-    let worktree = temp_dir("root-sibling-worktree");
-    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
-    fs::write(
-        worktree.join("effigy.toml"),
-        format!(
-            r#"[bootstrap]
-run = "sh ./scripts/root-setup.sh"
-
-[[bootstrap.children]]
-path = "../child-app"
-repo = "{}"
-run = "sh ./scripts/child-setup.sh"
-required = true
-"#,
-            child_remote.display()
-        ),
-    )
-    .expect("write manifest");
-    fs::write(
-        worktree.join("scripts/root-setup.sh"),
-        "#!/bin/sh\nset -eu\nprintf root-setup > root-setup.txt\n",
-    )
-    .expect("write root setup");
-    let script = worktree.join("scripts/root-setup.sh");
-    let mut perms = fs::metadata(&script)
-        .expect("script metadata")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&script, perms).expect("chmod script");
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init root sibling child");
-    let remote = bare_remote_path("root-sibling-bare");
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
-fn create_plain_root_remote() -> PathBuf {
-    let worktree = temp_dir("root-plain-worktree");
-    fs::write(worktree.join("README.md"), "# plain root\n").expect("write readme");
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init plain root");
-    let remote = bare_remote_path("root-plain-bare");
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
-fn create_catalog_alias_remote(alias: &str) -> PathBuf {
-    let worktree = temp_dir("root-catalog-alias-worktree");
-    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
-    fs::write(
-        worktree.join("effigy.toml"),
-        format!(
-            r#"[catalog]
-alias = "{alias}"
-
-[bootstrap]
-run = "sh ./scripts/root-setup.sh"
-"#,
-        ),
-    )
-    .expect("write manifest");
-    fs::write(
-        worktree.join("scripts/root-setup.sh"),
-        "#!/bin/sh\nset -eu\nprintf aliased > root-setup.txt\n",
-    )
-    .expect("write root setup");
-    let script = worktree.join("scripts/root-setup.sh");
-    let mut perms = fs::metadata(&script)
-        .expect("script metadata")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&script, perms).expect("chmod script");
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init alias root");
-    let remote = bare_remote_path("root-catalog-alias-bare");
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
-fn create_catalog_alias_root_remote() -> PathBuf {
-    create_catalog_alias_remote("contact-patch")
-}
-
-fn create_bundle_default_root_alias_remote() -> PathBuf {
-    let worktree = temp_dir("bundle-default-root-alias-worktree");
-    let bundle = temp_dir("bundle-default-root-alias-bundle");
-    fs::create_dir_all(&bundle).expect("mkdir bundle");
-    fs::write(
-        worktree.join("effigy.toml"),
-        format!(
-            r#"
-[bundle]
-base = {{ type = "path", dir = "{}" }}
-
-[bootstrap]
-run = "sh ./scripts/root-setup.sh"
-"#,
-            bundle.display()
-        ),
-    )
-    .expect("write manifest");
-    fs::create_dir_all(worktree.join("scripts")).expect("mkdir scripts");
-    fs::write(
-        worktree.join("scripts/root-setup.sh"),
-        "#!/bin/sh\nset -eu\nprintf bundled > root-setup.txt\n",
-    )
-    .expect("write root setup");
-    let script = worktree.join("scripts/root-setup.sh");
-    let mut perms = fs::metadata(&script)
-        .expect("script metadata")
-        .permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&script, perms).expect("chmod script");
-    fs::write(
-        bundle.join("bundle.toml"),
-        r#"
-[bundle]
-name = "legacy-site"
-description = "legacy site fixture"
-"#,
-    )
-    .expect("write bundle descriptor");
-    fs::write(
-        bundle.join("effigy.toml"),
-        r#"
-[catalog]
-alias = "root"
-
-[tasks.bundle]
-run = "printf bundle"
-"#,
-    )
-    .expect("write bundle defaults");
-    init_git_repo(&worktree);
-    commit_all(&worktree, "init bundled root alias");
-    let remote = bare_remote_path("acowtancy");
-    init_bare_remote(&remote);
-    attach_remote_and_push(&worktree, &remote);
-    remote
-}
-
-/// Parse the manifest at `path` and surface its `[bootstrap]` section.
-fn load_bootstrap_from_manifest(
-    path: &Path,
-) -> Result<Option<ManifestBootstrapConfig>, BootstrapError> {
-    let manifest =
-        load_task_manifest(path).map_err(|e| BootstrapError::task_invocation(e.to_string()))?;
+fn load_bootstrap(manifest_path: &Path) -> Result<Option<ManifestBootstrapConfig>, BootstrapError> {
+    let manifest = effigy_manifest::load_task_manifest(manifest_path)
+        .map_err(|error| BootstrapError::task_invocation(error.to_string()))?;
     Ok(manifest.bootstrap)
 }
 
-fn run_bootstrap_run_via_sh(
-    repo_root: &Path,
-    run: &ManifestBootstrapRun,
-    phase: &str,
-) -> Result<(), BootstrapError> {
-    let task = run.as_manifest_task();
-    let Some(run) = task.run.as_ref() else {
-        return Ok(());
-    };
-    match run {
-        ManifestManagedRun::Command(command) => run_shell_command(repo_root, command, phase),
-        ManifestManagedRun::Sequence(steps) => {
-            for step in steps {
-                match step {
-                    ManifestManagedRunStep::Command(command) => {
-                        run_shell_command(repo_root, command, phase)?
-                    }
-                    ManifestManagedRunStep::Step(table) => {
-                        let Some(command) = table.run.as_deref() else {
-                            return Err(BootstrapError::task_invocation(format!(
-                                "{phase}: bootstrap integration test shim only supports shell `run` steps"
-                            )));
-                        };
-                        run_shell_command(repo_root, command, phase)?;
-                    }
-                }
-            }
-            Ok(())
-        }
-    }
-}
-
-fn run_shell_command(repo_root: &Path, command: &str, phase: &str) -> Result<(), BootstrapError> {
+/// Record the selector order beside the checkout so setup-before-start is
+/// provable without leaving the checkout dirty.
+fn record_selector(root: &Path, selector: &str, _phase: &str) -> Result<(), BootstrapError> {
+    let log = root.parent().unwrap_or(root).join("selectors.txt");
+    let script = format!("printf '%s\\n' '{selector}' >> '{}'", log.display());
     let output = ProcessCommand::new("sh")
         .arg("-c")
-        .arg(command)
-        .current_dir(repo_root)
+        .arg(&script)
+        .current_dir(root)
         .output()
-        .map_err(|e| BootstrapError::task_invocation(format!("{phase}: spawn sh: {e}")))?;
+        .map_err(|error| BootstrapError::task_invocation(error.to_string()))?;
     if !output.status.success() {
         return Err(BootstrapError::task_invocation(format!(
-            "{phase}: shell command failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            "selector `{selector}` failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
     Ok(())
 }
 
-/// Resolve `selector` to a shell command via the repo's `effigy.toml` and run
-/// it through `sh -c` in `repo_root`.
-fn run_task_via_sh(repo_root: &Path, selector: &str, phase: &str) -> Result<(), BootstrapError> {
-    let manifest_path = repo_root.join("effigy.toml");
-    let manifest = load_task_manifest(&manifest_path)
-        .map_err(|e| BootstrapError::task_invocation(format!("{phase}: load manifest: {e}")))?;
-    let task = manifest.tasks.get(selector).ok_or_else(|| {
-        BootstrapError::task_invocation(format!("{phase}: no task `{selector}` in manifest"))
-    })?;
-    let command = match task.run.as_ref() {
-        Some(ManifestManagedRun::Command(cmd)) => cmd.clone(),
-        _ => {
-            return Err(BootstrapError::task_invocation(format!(
-                "{phase}: task `{selector}` missing simple `run` command"
-            )));
-        }
-    };
-    let output = ProcessCommand::new("sh")
-        .arg("-c")
-        .arg(&command)
-        .current_dir(repo_root)
-        .output()
-        .map_err(|e| BootstrapError::task_invocation(format!("{phase}: spawn sh: {e}")))?;
-    if !output.status.success() {
-        return Err(BootstrapError::task_invocation(format!(
-            "{phase}: task `{selector}` failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
+fn run_bootstrap(
+    request: &effigy_bootstrap::BootstrapRequest,
+) -> Result<effigy_bootstrap::BootstrapExecutionResult, BootstrapError> {
+    execute_bootstrap_request_with_progress(request, load_bootstrap, record_selector, |_| Ok(()))
+}
+
+fn write_root_manifest(
+    worktree: &Path,
+    setup: &[&str],
+    start: Option<&str>,
+    sources: &str,
+    submodules: bool,
+) {
+    let mut manifest = String::from("[bootstrap]\n");
+    let setup = setup
+        .iter()
+        .map(|selector| format!("\"{selector}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if !setup.is_empty() {
+        manifest.push_str(&format!("setup = [{setup}]\n"));
     }
-    Ok(())
+    if let Some(start) = start {
+        manifest.push_str(&format!("start = \"{start}\"\n"));
+    }
+    if submodules {
+        manifest.push_str("submodules = true\n");
+    }
+    manifest.push_str(sources);
+    fs::write(worktree.join("effigy.toml"), manifest).expect("write manifest");
+}
+
+fn create_project_with_source(
+    name: &str,
+    setup: &[&str],
+    start: Option<&str>,
+) -> (PathBuf, PathBuf) {
+    let source = create_content_remote(&format!("{name}-content"), "content.txt", "pinned\n");
+    let source_head = head_commit(&clone_remote(&source, &format!("{name}-content-probe")));
+    let worktree = temp_dir(&format!("{name}-worktree"));
+    write_root_manifest(
+        &worktree,
+        setup,
+        start,
+        &format!(
+            "\n[sources.book]\ngit = \"{}\"\nrev = \"{source_head}\"\npath = \"../{name}-book\"\n",
+            source.display()
+        ),
+        false,
+    );
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init project");
+    let remote = bare_remote_path(&format!("{name}-bare"));
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+    (remote, source)
+}
+
+fn read_selectors(checkout: &Path) -> Vec<String> {
+    let log = checkout.parent().unwrap_or(checkout).join("selectors.txt");
+    fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
 }
 
 #[test]
-fn execute_bootstrap_request_clones_root_and_runs_setup_and_children() {
-    let child_remote = create_child_remote("child-app");
-    let root_remote = create_root_remote_with_bootstrap(&child_remote);
-    let cwd = temp_dir("bootstrap-execution");
+fn a_clean_bootstrap_clones_prepares_the_source_and_runs_setup_then_start() {
+    let workspace = temp_dir("clean-bootstrap");
+    let (project, _source) = create_project_with_source(
+        "clean",
+        &["workspace:js:prepare", "db:seed:schema"],
+        Some("dev"),
+    );
+    let checkout = workspace.join("app");
     let request = resolve_bootstrap_request(
-        &cwd,
-        &root_remote.display().to_string(),
+        &workspace,
+        Some(&project.display().to_string()),
+        Some(&checkout),
         None,
-        None,
-        &[],
-        false,
-        false,
+        true,
     )
     .expect("resolve request");
+    let result = run_bootstrap(&request).expect("bootstrap");
 
-    let result = execute_bootstrap_request(
-        &request,
-        load_bootstrap_from_manifest,
-        run_bootstrap_run_via_sh,
-        run_task_via_sh,
-    )
-    .expect("execute bootstrap");
     assert_eq!(result.root_repo_state, "cloned");
-    assert!(result.manifest_found);
     assert!(result.bootstrap_contract_found);
-    assert_eq!(
-        result.submodules_policy,
-        ManifestBootstrapSubmodulesPolicy::None
-    );
-    assert_eq!(result.root_run.as_deref(), Some("command"));
-    assert_eq!(result.child_results.len(), 1);
-    assert_eq!(result.child_results[0].repo_state, "cloned");
-    assert_eq!(
-        fs::read_to_string(request.destination.join("root-setup.txt")).expect("root setup file"),
-        "root-setup"
-    );
-    assert_eq!(
-        fs::read_to_string(request.destination.join("child-app/child-setup.txt"))
-            .expect("child setup file"),
-        "child-setup"
-    );
-}
-
-#[test]
-fn sync_bootstrap_children_fast_forwards_existing_child() {
-    let child_remote = create_child_remote("child-sync");
-    let root_remote = create_root_remote_with_bootstrap(&child_remote);
-    let cwd = temp_dir("bootstrap-children-sync");
-    let request = resolve_bootstrap_request(
-        &cwd,
-        &root_remote.display().to_string(),
-        None,
-        None,
-        &[],
-        false,
-        false,
-    )
-    .expect("resolve request");
-    let result = execute_bootstrap_request(
-        &request,
-        load_bootstrap_from_manifest,
-        run_bootstrap_run_via_sh,
-        run_task_via_sh,
-    )
-    .expect("execute bootstrap");
-    let child_checkout = result.request.destination.join("child-app");
-    commit_all(&child_checkout, "record child setup");
-    let push_setup = ProcessCommand::new("git")
-        .arg("-C")
-        .arg(&child_checkout)
-        .args(["push"])
-        .output()
-        .expect("git push child setup");
+    assert_eq!(result.sources.len(), 1);
+    assert_eq!(result.sources[0].state, PinnedSourceState::Cloned);
+    assert!(result.sources[0].path.is_file() || result.sources[0].path.is_dir());
     assert!(
-        push_setup.status.success(),
-        "git push child setup failed: {push_setup:?}"
+        workspace.join("clean-book").join("content.txt").exists(),
+        "sibling source cloned"
     );
-
-    let child_worktree = clone_remote(&child_remote, "child-sync-update");
-    fs::write(child_worktree.join("SYNCED.md"), "# synced\n").expect("write synced");
-    commit_all(&child_worktree, "sync update");
-    let push = ProcessCommand::new("git")
-        .arg("-C")
-        .arg(&child_worktree)
-        .args(["push"])
-        .output()
-        .expect("git push");
-    assert!(push.status.success(), "git push failed: {push:?}");
-
-    let sync =
-        sync_bootstrap_children(&result.request.destination, false, false).expect("sync children");
-    assert_eq!(sync.children.len(), 1);
-    assert_eq!(sync.children[0].state, "updated");
-    assert!(result
-        .request
-        .destination
-        .join("child-app")
-        .join("SYNCED.md")
-        .is_file());
-}
-
-#[test]
-fn status_bootstrap_children_reports_clean_existing_child() {
-    let child_remote = create_child_remote("child-status");
-    let root_remote = create_root_remote_with_bootstrap(&child_remote);
-    let cwd = temp_dir("bootstrap-children-status");
-    let request = resolve_bootstrap_request(
-        &cwd,
-        &root_remote.display().to_string(),
-        None,
-        None,
-        &[],
-        false,
-        false,
-    )
-    .expect("resolve request");
-    let result = execute_bootstrap_request(
-        &request,
-        load_bootstrap_from_manifest,
-        run_bootstrap_run_via_sh,
-        run_task_via_sh,
-    )
-    .expect("execute bootstrap");
-    commit_all(
-        &result.request.destination.join("child-app"),
-        "record child setup",
-    );
-
-    let status = status_bootstrap_children(&result.request.destination).expect("status children");
-    assert_eq!(status.children.len(), 1);
-    assert_eq!(status.children[0].state, "clean");
-    assert_eq!(status.children[0].remote_status, "match");
-    assert!(status.children[0].git_checkout);
-    assert!(!status.children[0].dirty);
-}
-
-#[test]
-fn execute_bootstrap_request_fails_for_existing_remote_mismatch() {
-    let child_remote = create_child_remote("child-app-mismatch");
-    let root_remote = create_root_remote_with_bootstrap(&child_remote);
-    let other_remote = create_root_remote_with_bootstrap(&child_remote);
-    let destination = clone_remote(&other_remote, "bootstrap-remote-mismatch-clone");
-    let request = BootstrapResolution {
-        repo_url: root_remote.display().to_string(),
-        repo_name: "remote".to_owned(),
-        destination,
-        destination_source: "explicit-path",
-        branch: None,
-        db_seeds: Vec::new(),
-        fresh: false,
-        start_requested: false,
-    };
-
-    let err = execute_bootstrap_request(
-        &request,
-        load_bootstrap_from_manifest,
-        run_bootstrap_run_via_sh,
-        run_task_via_sh,
-    )
-    .expect_err("remote mismatch should fail");
-    let message = err.to_string();
-    assert!(message.contains("bootstrap destination remote mismatch"));
-}
-
-#[test]
-fn execute_bootstrap_request_fails_for_existing_dirty_checkout() {
-    let child_remote = create_child_remote("child-app-dirty");
-    let root_remote = create_root_remote_with_bootstrap(&child_remote);
-    let destination = clone_remote(&root_remote, "bootstrap-dirty-clone");
-    fs::write(destination.join("DIRTY.txt"), "dirty\n").expect("write dirty file");
-    let request = BootstrapResolution {
-        repo_url: root_remote.display().to_string(),
-        repo_name: "remote".to_owned(),
-        destination,
-        destination_source: "explicit-path",
-        branch: None,
-        db_seeds: Vec::new(),
-        fresh: false,
-        start_requested: false,
-    };
-
-    let err = execute_bootstrap_request(
-        &request,
-        load_bootstrap_from_manifest,
-        run_bootstrap_run_via_sh,
-        run_task_via_sh,
-    )
-    .expect_err("dirty checkout should fail");
-    let message = err.to_string();
-    assert!(message.contains("bootstrap destination has uncommitted changes"));
-}
-
-#[test]
-fn execute_bootstrap_request_warns_for_optional_child_failures() {
-    let root_remote = create_root_remote_with_optional_missing_child();
-    let cwd = temp_dir("bootstrap-optional-child");
-    let request = resolve_bootstrap_request(
-        &cwd,
-        &root_remote.display().to_string(),
-        None,
-        None,
-        &[],
-        false,
-        false,
-    )
-    .expect("resolve request");
-
-    let result = execute_bootstrap_request(
-        &request,
-        load_bootstrap_from_manifest,
-        run_bootstrap_run_via_sh,
-        run_task_via_sh,
-    )
-    .expect("execute bootstrap");
-    assert_eq!(result.child_results.len(), 1);
-    assert_eq!(result.child_results[0].repo_state, "failed");
-    assert!(!result.child_results[0].required);
-    assert!(result.child_results[0]
-        .warning
-        .as_deref()
-        .expect("optional child warning")
-        .contains("optional child `missing-child` failed"));
-    assert_eq!(result.root_run.as_deref(), Some("command"));
-    assert_eq!(result.warnings.len(), 1);
-}
-
-#[test]
-fn execute_bootstrap_request_allows_sibling_child_paths_under_root_parent() {
-    let child_remote = create_child_remote("child-app-sibling");
-    let root_remote = create_root_remote_with_sibling_child(&child_remote);
-    let cwd = temp_dir("bootstrap-sibling-child");
-    let request = resolve_bootstrap_request(
-        &cwd,
-        &root_remote.display().to_string(),
-        None,
-        None,
-        &[],
-        false,
-        false,
-    )
-    .expect("resolve request");
-
-    let result = execute_bootstrap_request(
-        &request,
-        load_bootstrap_from_manifest,
-        run_bootstrap_run_via_sh,
-        run_task_via_sh,
-    )
-    .expect("execute bootstrap");
-    assert_eq!(result.child_results.len(), 1);
-    assert_eq!(result.child_results[0].repo_state, "cloned");
-    assert_eq!(result.child_results[0].destination, cwd.join("child-app"));
     assert_eq!(
-        fs::read_to_string(cwd.join("child-app/child-setup.txt")).expect("child setup file"),
-        "child-setup"
+        read_selectors(&checkout),
+        vec![
+            "workspace:js:prepare".to_owned(),
+            "db:seed:schema".to_owned(),
+            "dev".to_owned()
+        ]
+    );
+    assert!(result.start_ran);
+    assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+    let text = render_bootstrap_result(&result, false);
+    assert!(text.contains("[ok] bootstrap completed"), "{text}");
+    assert!(text.contains("- source book: cloned"), "{text}");
+}
+
+#[test]
+fn a_re_run_is_idempotent() {
+    let workspace = temp_dir("rerun-bootstrap");
+    let (project, source) = create_project_with_source("rerun", &["prepare"], Some("dev"));
+    let checkout = workspace.join("app");
+    let request = resolve_bootstrap_request(
+        &workspace,
+        Some(&project.display().to_string()),
+        Some(&checkout),
+        None,
+        true,
+    )
+    .expect("resolve request");
+    run_bootstrap(&request).expect("first bootstrap");
+    let source_head = git_stdout(
+        &clone_remote(&source, "rerun-source-probe"),
+        &["rev-parse", "HEAD"],
+    );
+
+    let result = run_bootstrap(&request).expect("second bootstrap");
+    assert_eq!(result.root_repo_state, "updated");
+    assert_eq!(result.sources[0].state, PinnedSourceState::Present);
+    assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+    // The source was not re-cloned and still sits exactly at its pin.
+    assert_eq!(
+        git_stdout(&workspace.join("rerun-book"), &["rev-parse", "HEAD"]),
+        source_head
+    );
+    assert_eq!(
+        read_selectors(&checkout),
+        vec![
+            "prepare".to_owned(),
+            "dev".to_owned(),
+            "prepare".to_owned(),
+            "dev".to_owned()
+        ]
     );
 }
 
 #[test]
-fn execute_bootstrap_request_reports_missing_bootstrap_contract_cleanly() {
-    let root_remote = create_plain_root_remote();
-    let cwd = temp_dir("bootstrap-no-manifest");
+fn an_existing_sibling_working_copy_with_local_changes_is_untouched_and_reported() {
+    let workspace = temp_dir("drift-bootstrap");
+    let (project, source) = create_project_with_source("drift", &["prepare"], None);
+    let sibling = workspace.join("drift-book");
+    fs::create_dir_all(&sibling).expect("mkdir sibling");
+    let clone = ProcessCommand::new("git")
+        .arg("clone")
+        .arg(&source)
+        .arg(&sibling)
+        .output()
+        .expect("git clone");
+    assert!(clone.status.success(), "clone sibling: {clone:?}");
+    fs::write(sibling.join("draft.txt"), "local work\n").expect("write local change");
+
     let request = resolve_bootstrap_request(
-        &cwd,
-        &root_remote.display().to_string(),
+        &workspace,
+        Some(&project.display().to_string()),
+        Some(&workspace.join("app")),
         None,
-        None,
-        &[],
-        false,
         false,
     )
     .expect("resolve request");
+    let result = run_bootstrap(&request).expect("bootstrap");
 
-    let result = execute_bootstrap_request(
-        &request,
-        load_bootstrap_from_manifest,
-        run_bootstrap_run_via_sh,
-        run_task_via_sh,
+    assert_eq!(result.sources[0].state, PinnedSourceState::Drift);
+    assert!(result.sources[0].dirty);
+    assert!(fs::read_to_string(sibling.join("draft.txt"))
+        .expect("local change kept")
+        .contains("local work"));
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("drift")),
+        "{:?}",
+        result.warnings
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("nothing was reset")),
+        "{:?}",
+        result.warnings
+    );
+}
+
+#[test]
+fn rev_file_supplies_the_pin() {
+    let workspace = temp_dir("rev-file-bootstrap");
+    let source = create_content_remote("rev-file-content", "content.txt", "content\n");
+    let probe = clone_remote(&source, "rev-file-probe");
+    let pinned = head_commit(&probe);
+    let worktree = temp_dir("rev-file-worktree");
+    fs::write(worktree.join("book.rev"), format!("{pinned}\n")).expect("write rev file");
+    write_root_manifest(
+        &worktree,
+        &[],
+        None,
+        &format!(
+            "\n[sources.book]\ngit = \"{}\"\nrev_file = \"book.rev\"\npath = \"../rev-file-book\"\n",
+            source.display()
+        ),
+        false,
+    );
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init project");
+    let remote = bare_remote_path("rev-file-bare");
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+
+    let request = resolve_bootstrap_request(
+        &workspace,
+        Some(&remote.display().to_string()),
+        Some(&workspace.join("app")),
+        None,
+        true,
     )
-    .expect("execute bootstrap");
+    .expect("resolve request");
+    let result = run_bootstrap(&request).expect("bootstrap");
+    assert_eq!(result.sources[0].state, PinnedSourceState::Cloned);
+    assert_eq!(
+        git_stdout(&workspace.join("rev-file-book"), &["rev-parse", "HEAD"]),
+        pinned
+    );
+    assert_eq!(result.sources[0].revision, pinned);
+}
+
+#[test]
+fn submodules_are_initialised_at_the_recorded_commits() {
+    // Local-path submodules need the file protocol explicitly allowed.
+    let _protocol = FileProtocolGuard::allow();
+    let workspace = temp_dir("submodule-bootstrap");
+    let submodule_remote = create_content_remote("submodule-lib", "lib.txt", "lib\n");
+    let submodule_head = head_commit(&clone_remote(&submodule_remote, "submodule-lib-probe"));
+
+    let worktree = temp_dir("submodule-worktree");
+    write_root_manifest(&worktree, &[], None, "", true);
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init project");
+    let add = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(&worktree)
+        .args(["-c", "protocol.file.allow=always", "submodule", "add"])
+        .arg(&submodule_remote)
+        .arg("vendor/lib")
+        .output()
+        .expect("git submodule add");
+    assert!(add.status.success(), "submodule add: {add:?}");
+    commit_all(&worktree, "add submodule");
+    let remote = bare_remote_path("submodule-bare");
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+
+    let checkout = workspace.join("app");
+    let request = resolve_bootstrap_request(
+        &workspace,
+        Some(&remote.display().to_string()),
+        Some(&checkout),
+        None,
+        false,
+    )
+    .expect("resolve request");
+    let result = run_bootstrap(&request).expect("bootstrap");
+    assert!(result.submodules.requested);
+    assert!(result.submodules.applied);
+    assert!(
+        result.submodules.drift.is_empty(),
+        "{:?}",
+        result.submodules.drift
+    );
+    assert_eq!(
+        fs::read_to_string(checkout.join("vendor/lib/lib.txt")).expect("submodule content"),
+        "lib\n"
+    );
+    assert_eq!(
+        git_stdout(&checkout.join("vendor/lib"), &["rev-parse", "HEAD"]),
+        submodule_head
+    );
+}
+
+#[test]
+fn an_initialised_submodule_at_a_different_commit_is_drift_and_is_left_untouched() {
+    let _protocol = FileProtocolGuard::allow();
+    let workspace = temp_dir("submodule-drift-bootstrap");
+    let submodule_remote = create_content_remote("submodule-drift-lib", "lib.txt", "lib\n");
+    let worktree = temp_dir("submodule-drift-worktree");
+    write_root_manifest(&worktree, &[], None, "", true);
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init project");
+    let add = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(&worktree)
+        .args(["-c", "protocol.file.allow=always", "submodule", "add"])
+        .arg(&submodule_remote)
+        .arg("vendor/lib")
+        .output()
+        .expect("git submodule add");
+    assert!(add.status.success(), "submodule add: {add:?}");
+    commit_all(&worktree, "add submodule");
+    let remote = bare_remote_path("submodule-drift-bare");
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+
+    let destination = workspace.join("submodule-drift");
+    let clone = ProcessCommand::new("git")
+        .arg("clone")
+        .arg(&remote)
+        .arg(&destination)
+        .output()
+        .expect("git clone");
+    assert!(clone.status.success(), "clone: {clone:?}");
+    let update = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(&destination)
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+            "--recursive",
+        ])
+        .output()
+        .expect("git submodule update");
+    assert!(update.status.success(), "submodule update: {update:?}");
+    // Move the submodule off its recorded commit without committing that.
+    fs::write(destination.join("vendor/lib/lib.txt"), "moved\n").expect("write submodule file");
+    let dirty_head = git_stdout(&destination.join("vendor/lib"), &["rev-parse", "HEAD"]);
+
+    let request = resolve_bootstrap_request(&workspace, None, Some(&destination), None, false)
+        .expect("resolve request");
+    let result = run_bootstrap(&request).expect("bootstrap");
+    assert!(
+        !result.submodules.drift.is_empty(),
+        "{:?}",
+        result.submodules
+    );
+    assert!(!result.submodules.applied);
+    assert_eq!(
+        fs::read_to_string(destination.join("vendor/lib/lib.txt")).expect("submodule content"),
+        "moved\n"
+    );
+    assert_eq!(
+        git_stdout(&destination.join("vendor/lib"), &["rev-parse", "HEAD"]),
+        dirty_head
+    );
+}
+
+#[test]
+fn a_plan_mutates_nothing() {
+    let workspace = temp_dir("plan-bootstrap");
+    let (project, _source) = create_project_with_source("plan", &["prepare"], Some("dev"));
+    let destination = workspace.join("app");
+    let request = resolve_bootstrap_request(
+        &workspace,
+        Some(&project.display().to_string()),
+        Some(&destination),
+        None,
+        true,
+    )
+    .expect("resolve request");
+    let plan = plan_bootstrap_request(&request).expect("plan");
+    // Nothing was cloned or acquired by the plan.
+    assert!(!destination.exists());
+    assert!(!workspace.join("plan-book").exists());
+    assert!(!plan.manifest_found);
+    let text = render_bootstrap_plan(&plan, false);
+    assert!(text.contains("clone: yes"), "{text}");
+    // The checkout does not exist yet, so the plan cannot read its contract.
+    assert!(text.contains("manifest: none yet"), "{text}");
+
+    // A plan over an existing checkout lists its sources without acquiring them.
+    let view = workspace.join("view");
+    let clone = ProcessCommand::new("git")
+        .arg("clone")
+        .arg(&project)
+        .arg(&view)
+        .output()
+        .expect("git clone");
+    assert!(clone.status.success(), "clone: {clone:?}");
+    let plan = plan_bootstrap_request(
+        &resolve_bootstrap_request(&workspace, None, Some(&view), None, true).expect("request"),
+    )
+    .expect("plan");
+    assert!(plan.manifest_found);
+    assert_eq!(plan.sources.len(), 1);
+    assert_eq!(plan.sources[0].state, PinnedSourceState::Missing);
+    assert!(!workspace.join("plan-book").exists());
+    let text = render_bootstrap_plan(&plan, false);
+    assert!(text.contains("source book: missing"), "{text}");
+    assert!(text.contains("setup: prepare"), "{text}");
+}
+
+#[test]
+fn a_non_empty_foreign_directory_is_refused() {
+    let workspace = temp_dir("foreign-destination");
+    let destination = workspace.join("app");
+    fs::create_dir_all(&destination).expect("mkdir destination");
+    fs::write(destination.join("notes.txt"), "mine\n").expect("write notes");
+    let request = resolve_bootstrap_request(
+        &workspace,
+        Some("git@example.test:acme/app.git"),
+        Some(&destination),
+        None,
+        true,
+    )
+    .expect("resolve request");
+    let error = run_bootstrap(&request).expect_err("refuse foreign directory");
+    assert!(
+        error
+            .to_string()
+            .contains("not empty and is not a checkout"),
+        "{error}"
+    );
+    assert!(destination.join("notes.txt").exists());
+}
+
+#[test]
+fn an_existing_checkout_of_another_remote_is_refused() {
+    let workspace = temp_dir("foreign-checkout");
+    let project = create_project_remote("foreign-checkout", "[bootstrap]\nstart = \"dev\"\n");
+    let destination = workspace.join("app");
+    let clone = ProcessCommand::new("git")
+        .arg("clone")
+        .arg(&project)
+        .arg(&destination)
+        .output()
+        .expect("git clone");
+    assert!(clone.status.success(), "clone: {clone:?}");
+    let request = resolve_bootstrap_request(
+        &workspace,
+        Some("git@example.test:acme/other.git"),
+        Some(&destination),
+        None,
+        true,
+    )
+    .expect("resolve request");
+    let error = run_bootstrap(&request).expect_err("refuse foreign checkout");
+    assert!(error.to_string().contains("is a checkout of"), "{error}");
+}
+
+#[test]
+fn no_url_uses_the_existing_checkout_in_place() {
+    let workspace = temp_dir("existing-checkout");
+    let worktree = workspace.join("app");
+    fs::create_dir_all(&worktree).expect("mkdir app");
+    write_root_manifest(&worktree, &["prepare"], Some("dev"), "", false);
+    let request =
+        resolve_bootstrap_request(&worktree, None, None, None, true).expect("resolve request");
+    let result = run_bootstrap(&request).expect("bootstrap");
+    assert_eq!(result.root_repo_state, "existing");
+    assert_eq!(
+        read_selectors(&worktree),
+        vec!["prepare".to_owned(), "dev".to_owned()]
+    );
+}
+
+#[test]
+fn a_missing_start_is_not_an_error() {
+    let workspace = temp_dir("no-start");
+    let worktree = workspace.join("app");
+    fs::create_dir_all(&worktree).expect("mkdir app");
+    write_root_manifest(&worktree, &["prepare"], None, "", false);
+    let request =
+        resolve_bootstrap_request(&worktree, None, None, None, true).expect("resolve request");
+    let result = run_bootstrap(&request).expect("bootstrap");
+    assert_eq!(result.start_selector, None);
+    assert!(!result.start_ran);
+    assert_eq!(read_selectors(&worktree), vec!["prepare".to_owned()]);
+}
+
+#[test]
+fn retired_bootstrap_keys_fail_bootstrap_with_their_replacement() {
+    let workspace = temp_dir("retired-keys");
+    let worktree = workspace.join("app");
+    fs::create_dir_all(&worktree).expect("mkdir app");
+    fs::write(
+        worktree.join("effigy.toml"),
+        "[bootstrap]\nstart = \"dev\"\n\n[[bootstrap.children]]\npath = \"../book\"\nrepo = \"git@example.test:book.git\"\n",
+    )
+    .expect("write manifest");
+    let request =
+        resolve_bootstrap_request(&worktree, None, None, None, false).expect("resolve request");
+    let error = run_bootstrap(&request).expect_err("retired children");
+    let message = error.to_string();
+    assert!(message.contains("[bootstrap].children"), "{message}");
+    assert!(message.contains("[sources.<name>]"), "{message}");
+}
+
+#[test]
+fn a_bootstrap_with_no_task_manifest_still_acquires_the_checkout() {
+    let workspace = temp_dir("plain-checkout");
+    let worktree = temp_dir("plain-checkout-worktree");
+    fs::write(worktree.join("README.md"), "# plain\n").expect("write readme");
+    init_git_repo(&worktree);
+    commit_all(&worktree, "init plain");
+    let remote = bare_remote_path("plain-checkout-bare");
+    init_bare_remote(&remote);
+    attach_remote_and_push(&worktree, &remote);
+    let request = resolve_bootstrap_request(
+        &workspace,
+        Some(&remote.display().to_string()),
+        Some(&workspace.join("app")),
+        None,
+        true,
+    )
+    .expect("resolve request");
+    let result = run_bootstrap(&request).expect("bootstrap");
     assert!(!result.manifest_found);
     assert!(!result.bootstrap_contract_found);
-    assert!(result.root_run.is_none());
-    assert!(result.child_results.is_empty());
-    let text = render_bootstrap_result(&result, false);
-    assert!(text.contains("no effigy.toml bootstrap contract found"));
-    let json = render_bootstrap_result(&result, true);
-    let parsed: serde_json::Value = serde_json::from_str(&json).expect("parse json");
-    assert_eq!(parsed["manifest"]["file_found"], false);
-    assert_eq!(parsed["manifest"]["bootstrap_contract_found"], false);
-    assert_eq!(parsed["children"], serde_json::json!([]));
-}
-
-#[test]
-fn execute_bootstrap_request_uses_catalog_alias_for_default_destination() {
-    let remote = create_catalog_alias_root_remote();
-    let cwd = temp_dir("bootstrap-catalog-alias");
-    let request = resolve_bootstrap_request(
-        &cwd,
-        &remote.display().to_string(),
-        None,
-        None,
-        &[],
-        false,
-        false,
-    )
-    .expect("resolve request");
-
-    let result = execute_bootstrap_request(
-        &request,
-        load_bootstrap_from_manifest,
-        run_bootstrap_run_via_sh,
-        run_task_via_sh,
-    )
-    .expect("execute bootstrap");
-
-    let destination = cwd.join("contact-patch");
-    assert_eq!(result.request.destination, destination);
-    assert!(destination.is_dir());
-    assert!(!cwd.join("remote").exists());
+    assert!(!result.start_ran);
     assert_eq!(
-        fs::read_to_string(destination.join("root-setup.txt")).expect("root setup marker"),
-        "aliased"
+        fs::read_to_string(workspace.join("app").join("README.md")).expect("readme"),
+        "# plain\n"
     );
 }
 
-#[test]
-fn execute_bootstrap_request_honors_explicit_root_catalog_alias_for_default_destination() {
-    let remote = create_catalog_alias_remote("root");
-    let cwd = temp_dir("bootstrap-root-catalog-alias");
-    let request = resolve_bootstrap_request(
-        &cwd,
-        &remote.display().to_string(),
-        None,
-        None,
-        &[],
-        false,
-        false,
-    )
-    .expect("resolve request");
+/// `protocol.file.allow=always` for local-path submodule fixtures only.
+struct FileProtocolGuard;
 
-    let result = execute_bootstrap_request(
-        &request,
-        load_bootstrap_from_manifest,
-        run_bootstrap_run_via_sh,
-        run_task_via_sh,
-    )
-    .expect("execute bootstrap");
-
-    let destination = cwd.join("root");
-    assert_eq!(result.request.destination, destination);
-    assert!(destination.is_dir());
-    assert!(!cwd.join("remote").exists());
+impl FileProtocolGuard {
+    fn allow() -> Self {
+        unsafe {
+            std::env::set_var("GIT_CONFIG_COUNT", "1");
+            std::env::set_var("GIT_CONFIG_KEY_0", "protocol.file.allow");
+            std::env::set_var("GIT_CONFIG_VALUE_0", "always");
+        }
+        Self
+    }
 }
 
-#[test]
-fn execute_bootstrap_request_ignores_bundle_default_root_alias_for_default_destination() {
-    let remote = create_bundle_default_root_alias_remote();
-    let cwd = temp_dir("bootstrap-bundle-default-root-alias");
-    let request = BootstrapResolution {
-        repo_url: remote.display().to_string(),
-        repo_name: "acowtancy".to_owned(),
-        destination: cwd.join("acowtancy"),
-        destination_source: "cwd-default",
-        branch: None,
-        db_seeds: Vec::new(),
-        fresh: false,
-        start_requested: false,
-    };
-
-    let result = execute_bootstrap_request(
-        &request,
-        load_bootstrap_from_manifest,
-        run_bootstrap_run_via_sh,
-        run_task_via_sh,
-    )
-    .expect("execute bootstrap");
-
-    let destination = cwd.join("acowtancy");
-    assert_eq!(result.request.destination, destination);
-    assert!(destination.is_dir());
-    assert!(!cwd.join("root").exists());
-    assert_eq!(
-        fs::read_to_string(destination.join("root-setup.txt")).expect("root setup marker"),
-        "bundled"
-    );
-}
-
-#[test]
-fn execute_bootstrap_request_reuses_existing_catalog_alias_destination_when_confirmed() {
-    let remote = create_catalog_alias_root_remote();
-    let cwd = temp_dir("bootstrap-catalog-alias-reuse");
-    let alias_destination = cwd.join("contact-patch");
-    ProcessCommand::new("git")
-        .arg("clone")
-        .arg(&remote)
-        .arg(&alias_destination)
-        .status()
-        .expect("git clone alias destination");
-
-    let request = resolve_bootstrap_request(
-        &cwd,
-        &remote.display().to_string(),
-        None,
-        None,
-        &[],
-        false,
-        false,
-    )
-    .expect("resolve request");
-
-    let result = execute_bootstrap_request_with_progress(
-        &request,
-        load_bootstrap_from_manifest,
-        run_bootstrap_run_via_sh,
-        run_task_via_sh,
-        |_event| Ok(()),
-        |_destination| Ok(true),
-    )
-    .expect("execute bootstrap with alias reuse");
-
-    assert_eq!(result.request.destination, alias_destination);
-    assert!(result.request.destination.is_dir());
-    assert!(!cwd.join("remote").exists());
-    assert_eq!(
-        fs::read_to_string(result.request.destination.join("root-setup.txt"))
-            .expect("root setup marker"),
-        "aliased"
-    );
-}
-
-#[test]
-fn execute_bootstrap_request_keeps_reused_default_destination_when_catalog_alias_differs() {
-    let remote = create_catalog_alias_remote("root");
-    let cwd = temp_dir("bootstrap-reused-default-destination");
-    let reused_destination = cwd.join("cbs");
-    ProcessCommand::new("git")
-        .arg("clone")
-        .arg(&remote)
-        .arg(&reused_destination)
-        .status()
-        .expect("git clone reused destination");
-
-    let request = BootstrapResolution {
-        repo_url: remote.display().to_string(),
-        repo_name: "cbs".to_owned(),
-        destination: reused_destination.clone(),
-        destination_source: "cwd-default",
-        branch: None,
-        db_seeds: Vec::new(),
-        fresh: false,
-        start_requested: false,
-    };
-
-    let result = execute_bootstrap_request_with_progress(
-        &request,
-        load_bootstrap_from_manifest,
-        run_bootstrap_run_via_sh,
-        run_task_via_sh,
-        |_event| Ok(()),
-        |_destination| Ok(true),
-    )
-    .expect("execute bootstrap with reused destination");
-
-    assert_eq!(result.request.destination, reused_destination);
-    assert!(cwd.join("cbs").is_dir());
-    assert!(!cwd.join("root").exists());
+impl Drop for FileProtocolGuard {
+    fn drop(&mut self) {
+        unsafe {
+            std::env::remove_var("GIT_CONFIG_COUNT");
+            std::env::remove_var("GIT_CONFIG_KEY_0");
+            std::env::remove_var("GIT_CONFIG_VALUE_0");
+        }
+    }
 }

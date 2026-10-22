@@ -29,7 +29,7 @@ Shortest path:
 1. install `oras` and log in to your registry
 2. inspect or stage a local SQL dump
 3. capture and push to an OCI registry
-4. consume the artifact from `data seed` or `bootstrap --db-seed`
+4. consume the artifact from `container data seed`
 
 ## Prerequisites
 
@@ -131,7 +131,9 @@ Effigy metadata is descriptive. App logic still decides what a file means.
 
 ## Seed and Dump Integration
 
-Artifacts integrate with container data lifecycle and bootstrap:
+Artifacts integrate with the container data lifecycle. Bootstrap has no seed
+flag: a first seed is an ordinary repo task selected by `[bootstrap].setup`, and
+that task decides whether it imports a staged artifact.
 
 ### Container Data Seed
 
@@ -159,19 +161,20 @@ effigy container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --json
 effigy container data dump app=oci://ghcr.io/acme/uat-content:2026-05-07 --push --json
 ```
 
-### Bootstrap with DB Seed
+### Bootstrap and DB Seed
 
-```sh
-effigy bootstrap git@github.com:acme/app.git --db-seed app=oci://ghcr.io/acme/seed:v1.0.0
+Bootstrap has no `--db-seed`, no dump prompt and no `--backend` override
+(`Q-009`). A first seed is a repo task:
+
+```toml
+[bootstrap]
+setup = ["container up --detach", "db:seed:schema"]
+start = "dev"
 ```
 
-If the bootstrap flow also needs a specific runtime, combine the two:
-
-```sh
-effigy bootstrap git@github.com:acme/app.git \
-  --backend docker \
-  --db-seed app=oci://ghcr.io/acme/seed:v1.0.0
-```
+Import a user-supplied artifact explicitly with
+`effigy container data seed --db-seed app=oci://ghcr.io/acme/seed:v1.0.0`, then
+run `effigy bootstrap` (or `effigy <setup-selector>`) as usual.
 
 OCI refs must use the explicit `oci://` prefix. Unprefixed registry-looking refs
 are rejected.
@@ -235,5 +238,5 @@ Every staged artifact carries an `effigy-artifact.json` metadata file shaped lik
 ## Next Step
 
 After staging or capturing your first artifact, use `effigy container data seed`
-or `effigy bootstrap --db-seed` to wire it into the repo's standard data
-lifecycle.
+to import it, and select that step from the repo's `[bootstrap].setup` when a
+fresh checkout needs it.
