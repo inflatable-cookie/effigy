@@ -6,6 +6,7 @@ mod pipeline;
 mod prepare_helpers;
 mod render_json;
 mod review;
+mod run;
 #[cfg(test)]
 pub mod test_support;
 mod text;
@@ -41,6 +42,18 @@ pub use prepare_helpers::{
 };
 pub use verify_install::{
     normalize_verify_install_repo_url, resolve_verify_install_tag, run_release_verify_install,
+};
+
+pub use run::{
+    new_run_id, read_release_record, read_release_record_for_root, release_input_value,
+    release_owner, render_release_receipt_json, render_release_receipt_text, run_release,
+    sha256_bytes, verify_artifact_digests, GitEffects, RecordApproval, RecordArtifact,
+    RecordArtifactFile, RecordCheckpoint, RecordDestination, RecordGate, RecordIdentity,
+    RecordTarget, RecordTargetState, RecordVerification, ReleaseAction, ReleaseCheckpoint,
+    ReleaseEffects, ReleaseReceipt, ReleaseRecord, ReleaseRunOutcome, ReleaseRunRequest,
+    ReleaseRunStatus, ReleaseSession, ReleaseStage, ReleaseState, TaskRequest, TaskResponse,
+    RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV, RELEASE_RECEIPT_SCHEMA, RELEASE_RECORD_SCHEMA,
+    RELEASE_TASK_INPUT_SCHEMA,
 };
 
 pub use effigy_changelog::BumpKind;
