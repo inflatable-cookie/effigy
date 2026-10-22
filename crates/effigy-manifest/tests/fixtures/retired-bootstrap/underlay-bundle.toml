@@ -1,0 +1,14 @@
+# Copied from the underlay bundle's v0.14.1 export.toml as composed into a
+# consumer manifest: inline rhai and command steps in `run`, and a
+# `bootstrap deps sync` invocation that is no longer a bootstrap subcommand.
+[bootstrap]
+run = [
+  { task = "secrets init" },
+  { rhai = "scripts/bootstrap-minio.rhai" },
+  { task = "bootstrap deps sync ../underlay app-api" },
+  { run = "printf done" },
+]
+start = "dev"
+
+[tasks.dev]
+run = "printf dev"

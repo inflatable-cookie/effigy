@@ -693,7 +693,14 @@ Behavior:
 - `effigy doctor` reports pinned-source drift (`sources.pinned-drift`)
 - inline run steps, `{ task = ... }` entries, `[bootstrap].children`,
   `bootstrap deps sync`, `--db-seed`, `--fresh`, `--backend` and `--start` are
-  retired in v0.15 and refuse with their replacement (Q-009)
+  retired in v0.15 (Q-009). For the whole v0.15 line a v0.14.1 manifest still
+  loads: `run` is read as `setup`, `{ task = ... }` entries and inline steps
+  are read as selectors and internal tasks, a `submodules` policy string is
+  read as a boolean, and a multi-selector `start` chain runs as one internal
+  task, with one deprecation notice per manifest. Only `effigy bootstrap`
+  refuses the retired-only surfaces (children, `bootstrap deps sync`,
+  `bootstrap:db-seed`) with their replacement; see
+  [guide 085](085-v0.15.0-consumer-migration.md).
 
 ## Developer Session Patterns
 

@@ -1,0 +1,16 @@
+# Copied from cbs (DecodeLabs legacy site) as composed with the decodelabs
+# bundle on v0.14.1: the local children table plus the bundle's bootstrap run.
+[manifest]
+minimum_effigy_version = "0.7.0"
+
+[[bootstrap.children]]
+path = "../cbs-mortcalc"
+repo = "git@github.com:Cumberland-BS/mortgage-calculator.git"
+required = true
+
+[bootstrap]
+run = [{ rhai = "scripts/write-env-if-present.rhai" }]
+start = "dev"
+
+[tasks.dev]
+run = "printf dev"

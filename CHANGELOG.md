@@ -312,10 +312,12 @@ During v0.x, MINOR bumps may include breaking changes.
 - Rebuild `effigy bootstrap` as one command over ordinary task selectors and
   pinned sources (Q-009, effigy#262). `[bootstrap].setup` is an ordered list of
   selectors, `start` is one selector and `submodules = true` initialises
-  submodules recursively at their recorded commits. Every retired spelling
-  refuses with its replacement: `[bootstrap].run` and the `setup` alias for it
-  became `setup`; inline run steps and `{ task = ... }`/array `start` entries
-  moved into the task they name; `[bootstrap].children` and
+  submodules recursively at their recorded commits. The retired spellings keep
+  loading for the whole v0.15 line so a v0.14.1 project still works (see
+  Fixed, effigy#273); inline run steps and `{ task = ... }`/array `start`
+  entries are read as internal tasks, and only `effigy bootstrap` refuses the
+  retired-only ones, with their replacement: `[bootstrap].run` and the `setup`
+  alias for it became `setup`; `[bootstrap].children` and
   `bootstrap children status|sync` became pinned `[sources.<name>]` (`git`,
   `rev` or `rev_file`, `path`); `bootstrap deps sync` became a repo-owned
   selector in `setup`; `--db-seed`, the dump prompts and the
@@ -848,6 +850,21 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- A v0.14.1 project keeps loading after an update (effigy#273): the retired
+  `[bootstrap]` spellings are read for the whole v0.15 line instead of failing
+  the parse, so `effigy tasks`, selectors, `container`, `test` and every other
+  non-bootstrap command work unchanged. One deprecation notice per manifest is
+  printed on stderr (and by `effigy doctor`) and never in `--json` stdout:
+  `run` is read as `setup` (`{ task = ... }` entries become selectors, inline
+  `run`/`rhai`/command steps become internal tasks that `setup` selects in
+  order), `submodules = "none"|"init"|"recursive"` becomes a boolean, a
+  multi-selector `start` chain runs as one internal task, and
+  `[bootstrap].children`/the `bootstrap:db-seed` callback keep loading. Only
+  `effigy bootstrap` refuses the retired-only surfaces, with today's migration
+  message: pinned `[sources.<name>]` for children, a first-seed task in `setup`
+  for `bootstrap:db-seed`, and a repo-owned dependency task for
+  `bootstrap deps sync`. Bundles and `[manifest].extend = ["bootstrap.children"]`
+  follow the same rules. The translation is removed after v0.15.
 - A Colima profile that reports Running while `containerd`/`buildkit` are
   stopped is recovered in place: Effigy starts those units inside its own
   profile, re-probes with a bounded deadline, and otherwise refuses with the

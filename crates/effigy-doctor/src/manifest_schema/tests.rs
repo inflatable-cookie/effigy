@@ -1031,6 +1031,34 @@ fn validate_manifest_schema_names_the_retired_shell_table() {
 }
 
 #[test]
+fn validate_manifest_schema_accepts_the_one_release_bootstrap_retirement_spellings() {
+    let manifest: Value = toml::from_str(
+        r#"
+[bootstrap]
+run = [
+  { task = "secrets init" },
+  { rhai = "scripts/bootstrap.rhai" },
+]
+start = [{ task = "container:up" }, { task = "dev" }]
+submodules = "recursive"
+
+[[bootstrap.children]]
+path = "../book"
+repo = "git@example.test:book.git"
+"#,
+    )
+    .expect("parse manifest");
+
+    let mut sink = TestSink::default();
+    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
+    assert!(
+        sink.findings.is_empty(),
+        "v0.14.1 bootstrap keys must load for one release, got: {:?}",
+        sink.findings
+    );
+}
+
+#[test]
 fn validate_manifest_schema_accepts_contracts_section() {
     let manifest: Value = toml::from_str(
         r#"
