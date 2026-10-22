@@ -3,9 +3,9 @@ use effigy_cli::{
     BootstrapArgs, BootstrapSubcommand, BundleArgs, BundleSubcommand, Command, ContainerArgs,
     ContainerSubcommand, ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode,
     ContractsSubcommand, DeployArgs, DeploySubcommand, DoctorArgs, ExecArgs, GatewayArgs,
-    GatewaySubcommand, GraphArgs, GraphSubcommand, HelpTopic, ReleaseArgs, ReleaseSubcommand,
-    SecretsArgs, SecretsSubcommand, ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand,
-    TaskInvocation, TasksArgs, WorkspaceArgs,
+    GatewaySubcommand, HelpTopic, ReleaseArgs, ReleaseSubcommand, SecretsArgs, SecretsSubcommand,
+    ServiceArgs, ServiceSubcommand, SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs,
+    WorkspaceArgs,
 };
 
 #[test]
