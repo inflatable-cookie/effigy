@@ -1419,6 +1419,7 @@ fn parse_system_names_the_container_replacement_for_each_subcommand() {
 #[test]
 fn parse_container_rejects_a_named_container_with_system_selection() {
     let error = parse_command(vec![
+        "container".to_owned(),
         "web".to_owned(),
         "up".to_owned(),
         "--system".to_owned(),
