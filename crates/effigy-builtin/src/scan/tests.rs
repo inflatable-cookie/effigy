@@ -27,7 +27,6 @@ fn parse_scan_request_accepts_god_files_thresholds_and_output_flags() {
             "god-files".to_owned(),
             "--threshold".to_owned(),
             "300".to_owned(),
-            "--graph-context".to_owned(),
             "--markdown".to_owned(),
             "--show-warnings".to_owned(),
             "--out".to_owned(),
@@ -36,7 +35,6 @@ fn parse_scan_request_accepts_god_files_thresholds_and_output_flags() {
     )
     .expect("scan request should parse");
     assert_eq!(parsed.warn, Some(300));
-    assert!(parsed.graph_context);
     assert_eq!(parsed.format, Some(ScanRenderFormat::Markdown));
     assert!(parsed.show_warnings);
     assert_eq!(
@@ -123,36 +121,34 @@ fn parse_scan_request_accepts_stale_suppression_marker_overrides() {
 }
 
 #[test]
-fn parse_scan_request_accepts_dead_code_subcommand() {
+fn parse_scan_request_refuses_retired_graph_scanners_with_their_replacement() {
     let task = TaskInvocation {
         name: "scan".to_owned(),
         args: Vec::new(),
     };
-    let parsed = parse_scan_request(&task, &["dead-code".to_owned(), "--json".to_owned()])
-        .expect("scan request should parse");
-    assert_eq!(parsed.command, crate::scan::ScanCommand::DeadCode);
-    assert!(parsed.output_json);
+    for (name, expected) in [
+        ("boundary-violations", "no replacement"),
+        ("dead-code", "[scan.dead_code]"),
+        ("validation-gaps", "effigy test --plan"),
+    ] {
+        let error = parse_scan_request(&task, &[name.to_owned()])
+            .expect_err("retired scan subcommand should fail");
+        let message = error.to_string();
+        assert!(message.contains("removed in v0.15"), "{message}");
+        assert!(message.contains(expected), "{message}");
+    }
 }
 
 #[test]
-fn parse_scan_request_accepts_validation_gaps_changed_path_flags() {
+fn parse_scan_request_refuses_the_retired_graph_context_flag() {
     let task = TaskInvocation {
         name: "scan".to_owned(),
         args: Vec::new(),
     };
-    let parsed = parse_scan_request(
+    let error = parse_scan_request(
         &task,
-        &[
-            "validation-gaps".to_owned(),
-            "--path".to_owned(),
-            "src/live/mod.rs".to_owned(),
-            "--stdin".to_owned(),
-            "--json".to_owned(),
-        ],
+        &["god-files".to_owned(), "--graph-context".to_owned()],
     )
-    .expect("scan request should parse");
-    assert_eq!(parsed.command, crate::scan::ScanCommand::ValidationGaps);
-    assert_eq!(parsed.changed_paths, vec!["src/live/mod.rs".to_owned()]);
-    assert!(parsed.read_stdin);
-    assert!(parsed.output_json);
+    .expect_err("retired flag should fail");
+    assert!(error.to_string().contains("--graph-context"), "{error}");
 }

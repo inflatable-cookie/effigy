@@ -175,14 +175,6 @@ pub(super) fn fmt_runner_error(
             write!(f, "command failed (json output available)")
         }
         RunnerError::BoundedExecFailure { message, .. } => f.write_str(message),
-        RunnerError::GraphOperationTimeout {
-            command,
-            timeout_ms,
-            ..
-        } => write!(
-            f,
-            "`{command}` exceeded its {timeout_ms}ms budget; inspect `effigy graph status --json`, or raise `EFFIGY_GRAPH_TIMEOUT_MS`"
-        ),
         RunnerError::DepsOperationNonZero {
             command,
             outcome,

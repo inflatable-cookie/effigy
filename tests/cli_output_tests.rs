@@ -7,14 +7,8 @@ mod container_migrate_tests;
 mod core_output_tests;
 #[path = "shared/deploy_fixture_support.rs"]
 mod deploy_fixture_support;
-#[path = "cli_output_tests/docs_context_sources_tests.rs"]
-mod docs_context_sources_tests;
-#[path = "cli_output_tests/docs_context_tests.rs"]
-mod docs_context_tests;
 #[path = "cli_output_tests/flat_command_execution_tests.rs"]
 mod flat_command_execution_tests;
-#[path = "cli_output_tests/graph_surface_tests.rs"]
-mod graph_surface_tests;
 #[path = "cli_output_tests/help_and_flags_tests.rs"]
 mod help_and_flags_tests;
 #[path = "cli_output_tests/json_envelope_tests/mod.rs"]

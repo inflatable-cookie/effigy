@@ -16,10 +16,11 @@ itself; see `effigy --help` for the list.
 
 ## `[docs_policy.graph]`
 
-This optional repository-owned profile teaches the local Markdown graph how to
-classify documentation, resolve currentness, and name typed relations. It is
-consumed by `effigy graph index` and by `effigy docs context <QUERY>`, the
-bounded documentation retrieval surface.
+This optional repository-owned profile used to teach the local Markdown graph how
+to classify documentation, resolve currentness, and name typed relations. v0.15
+removed the `effigy graph` and `effigy docs context` readers, so the profile is
+validated config with no consumer; keep it in place until a decision retires or
+replaces it.
 
 ```toml
 [docs_policy.graph]
@@ -66,9 +67,7 @@ installed skill directory, and no template cache is read while answering a
 query. Adopting a newer template is an explicit merge
 (`effigy init northstar --dry-run`), never an automatic reinterpretation.
 
-Adoption guide and example queries:
-`docs/guides/079-documentation-graph-profiles-and-context.md`. The profile
-grammar and ranking rules live in
+The profile grammar and ranking rules live in
 `docs/knowledge/contracts/041-documentation-graph-profile-contract.md`; the architecture
 decision is `docs/knowledge/architecture/024-repository-defined-documentation-graph.md`.
 

@@ -155,49 +155,6 @@ pub(super) fn health_jobs() -> Vec<SetupJob> {
     ]
 }
 
-pub(super) fn graph_jobs(context: &RepoSetupContext) -> Vec<SetupJob> {
-    vec![
-        guidance_job(
-            "graph_status.inspect",
-            JobClass::new(
-                SetupCategory::Graph,
-                SetupExecutionKind::Inspect,
-                SetupSafetyClass::SafeCheck,
-            ),
-            "Inspect graph freshness.".to_owned(),
-            "graph status shows whether the repo already has a usable local index".to_owned(),
-            Some("effigy graph status --json".to_owned()),
-            true,
-        ),
-        contextual_job(
-            "graph_index.build",
-            JobClass::new(
-                SetupCategory::Graph,
-                SetupExecutionKind::Apply,
-                SetupSafetyClass::SafeApply,
-            ),
-            !context.has_graph_index,
-            "Build the local graph index.".to_owned(),
-            "no local graph index found under `.effigy/graph/graph.db`".to_owned(),
-            Some("effigy graph index --json".to_owned()),
-            true,
-        ),
-        contextual_job(
-            "graph_explore.guidance",
-            JobClass::new(
-                SetupCategory::Graph,
-                SetupExecutionKind::Guidance,
-                SetupSafetyClass::SafeCheck,
-            ),
-            context.has_graph_index,
-            "Navigate code with automatic graph refresh.".to_owned(),
-            "graph queries refresh stale files automatically; no watcher is needed".to_owned(),
-            Some("effigy graph explore \"trace implementation ownership\" --json".to_owned()),
-            false,
-        ),
-    ]
-}
-
 pub(super) fn secrets_jobs(context: &RepoSetupContext) -> Vec<SetupJob> {
     vec![
         contextual_job(
