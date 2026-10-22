@@ -207,59 +207,6 @@ Example:
 effigy test --plan
 ```
 
-## Code Graph
-
-Definition:
-- Effigy's local deterministic repo index under `.effigy/graph/graph.db`, built
-  by first-party extractors and queried through `effigy graph`.
-
-Notes:
-- it is a navigation aid for agents and humans, not compiler-grade semantic truth
-- queries do not rebuild the index; run `effigy graph index` explicitly
-
-Deep dive:
-- [`076-code-graph-and-agent-workflows.md`](076-code-graph-and-agent-workflows.md)
-
-## Graph Explore
-
-Definition:
-- One-call agent navigation command that returns primary owners, excerpts,
-  relations, freshness, overflow, and guidance under `effigy.graph.explore.v1`.
-
-Example:
-
-```sh
-effigy graph explore "trace release orchestrator" --max-files 6 --max-bytes 12288 --json
-```
-
-## Graph Affected
-
-Definition:
-- Changed-file validation narrowing command that turns edited paths into
-  affected files, likely test files, and candidate Effigy test tasks under
-  `effigy.graph.affected.v1`.
-
-Example:
-
-```sh
-git diff --name-only | effigy graph affected --stdin --json
-```
-
-## Graph Freshness State
-
-Definition:
-- Compact trust label on graph query payloads under `freshness.state`, paired with
-  `freshness.usable` and `freshness.summary`.
-
-Values:
-
-- `ready` — safe to trust navigation queries
-- `refresh-recommended` — reindex before trusting queries
-- `degraded` — partial problems; treat output as bounded guidance
-- `missing-index` — run `graph index` first
-- `stale-index` — committed files, read-only and not current
-- `refreshing` — committed file generations while another writer advances through files
-
 ## Managed TUI Task
 
 Definition:

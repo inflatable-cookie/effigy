@@ -16,7 +16,7 @@ fn parse(args: &[&str]) -> Command {
 fn former_namespace_words_parse_as_task_selectors_and_keep_following_args() {
     for (word, args) in [
         ("local", &["up", "--attach"][..]),
-        ("repo", &["graph", "status"][..]),
+        ("repo", &["scan", "god-files"][..]),
         ("deliver", &["release", "gates"][..]),
         ("extend", &["skill", "tasks"][..]),
         ("admin", &["config", "get", "key"][..]),
@@ -39,8 +39,8 @@ fn former_namespace_words_parse_as_task_selectors_and_keep_following_args() {
 #[test]
 fn unowned_former_grouped_spellings_do_not_parse_as_the_child_builtin() {
     assert_ne!(
-        parse(&["repo", "graph", "status"]),
-        parse(&["graph", "status"])
+        parse(&["repo", "scan", "god-files"]),
+        parse(&["scan", "god-files"])
     );
     assert_ne!(
         parse(&["deliver", "release", "gates"]),

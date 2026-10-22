@@ -30,7 +30,6 @@ pub(super) fn build_setup_inventory(
     jobs.extend(catalog::baseline_jobs(baseline_checks));
     jobs.extend(catalog::task_jobs(&context));
     jobs.extend(catalog::health_jobs());
-    jobs.extend(catalog::graph_jobs(&context));
     jobs.extend(catalog::secrets_jobs(&context));
     jobs.extend(catalog::runtime_jobs(&context));
     jobs.extend(catalog::bundle_jobs(&context));

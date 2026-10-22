@@ -73,8 +73,9 @@ complexity.
 
 - **Deterministic spine:** catalog membership, task routing, tests, JSON
   envelopes, and release gates remain inspectable.
-- **Agent operations:** graph, docs context, scan, and doctor should
-  reduce reconstruction work without making generated summaries authoritative.
+- **Agent operations:** scan and doctor should reduce reconstruction work
+  without making generated summaries authoritative; code and documentation
+  navigation stay on `rg` and the docs index.
   Shared Effigy guidance belongs in one maintained installed skill;
   repository-specific instructions belong in `AGENTS.md` and owning knowledge.
   Consumer repositories should not freeze the shared skill in vendored copies.

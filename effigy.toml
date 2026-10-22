@@ -12,9 +12,11 @@ include = [
 ]
 
 # ---- Cross-repository source sharing -----------------------------------------
-# Effigy's own half of two-sided membership for `effigy docs context --sources`
-# (roadmap `g09.006`, spec `122`). A portfolio file names directories to look
-# in; this table is how this repository says it wants to be found there.
+# Effigy's own half of two-sided documentation membership (roadmap `g09.006`,
+# spec `122`): a portfolio file names directories to look in, and this table is
+# how this repository says it wants to be found there. v0.15 removed the
+# `docs context` retrieval that read it; the declaration is retained until a
+# decision retires or replaces the cross-repository profile.
 #
 # It lives in this root manifest on purpose. Membership is read from the
 # committed bytes of `effigy.toml` alone - no include, no `effigy.local.toml`

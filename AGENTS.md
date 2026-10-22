@@ -14,8 +14,7 @@ The plan (lanes, their documents and their order), leads, papercuts, brief draft
 
 ## Commands
 
-- `effigy graph` for code ownership and changed-file impact.
-- `effigy docs context "<question>"` for documentation authority.
+- `rg` and the docs index (`docs/README.md`) for code and documentation understanding.
 - `effigy tasks` for selector inventory; `effigy doctor` for routing or health ambiguity.
 - `effigy test --plan` when test selection matters; narrow Effigy selectors for task validation.
 - Without an installed binary, use `sh scripts/effigy-selfbuild.sh <command>`. It builds this checkout through Oxide and runs the built `target/debug/effigy`. `cargo run --bin effigy -- <command>` is the plain-Cargo escape.

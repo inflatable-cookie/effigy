@@ -216,7 +216,7 @@ pub fn load_isolated_catalog(
 /// effective catalog.
 ///
 /// Root resolution promotes a nested catalog only one level, so a member at
-/// `apps/<name>` still resolves to itself. Catalog-scoped graph selection needs
+/// `apps/<name>` still resolves to itself. Catalog-scoped member selection needs
 /// the owning workspace to know the member's posture, so this walks upward and
 /// asks each ancestor's explicit membership. A root that no ancestor declares
 /// is its own workspace.

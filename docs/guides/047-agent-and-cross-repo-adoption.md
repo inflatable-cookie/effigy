@@ -16,8 +16,8 @@ needed, execute through Effigy, then validate through Effigy.
 For repos that adopt Effigy as the primary local loop, the default contract
 should be job-based, not ritual-based:
 
-- use `effigy graph` when the job is code understanding and the agent needs a
-  bounded repo map before broad file scanning (see Section 2a)
+- use `rg` and the documentation index (`docs/README.md`) when the job is code
+  or documentation understanding (see Section 2a)
 - use `effigy tasks` when the agent needs runnable selectors or QA surfaces
 - use `effigy doctor` when routing is unclear or repo health is itself the task
 - use `effigy test --plan` when test execution shape matters
@@ -70,69 +70,24 @@ Agents should not assume:
 - that `cargo run --bin effigy -- ...` is the normal daily interface outside
   bootstrap or explicit source-run fallback
 
-## 2a) Code Graph Assist
+## 2a) Code and Documentation Navigation
 
-When the job is code understanding before editing or review, prefer the local
-graph over spraying `rg` across the whole repo:
+Effigy has no code graph in v0.15, and `effigy docs context` is gone with it.
 
 ```sh
-effigy graph explore "<task-shaped question>" --max-files 6 --max-bytes 12288 --json
-git diff --name-only | effigy graph affected --stdin --json
+rg -n "<symbol>" crates src
+rg -n "<authority-shaped question>" docs
 ```
 
 Rules:
 
-- use `graph explore` first for task-shaped navigation
-- do not insert `graph` ritualistically for unrelated work; deployment, state,
-  docs, release, and direct task execution should use their matching Effigy
-  surfaces first
-- phrase graph queries as implementation questions such as:
-  - `where are redirect responses handled`
-  - `where are config migrations validated before apply`
-  - `where does shell exit cleanup prompt run`
-- trust returned excerpts for first-pass orientation; open files only when the
-  excerpt is insufficient for the edit or review
-- use `graph affected` to narrow validation after edits, not as exhaustive test
-  proof
-- use graph-aware scans when the question is review risk rather than
-  navigation, for example:
-  - `effigy scan boundary-violations --json`
-  - `effigy scan dead-code --json`
-  - `git diff --name-only | effigy scan validation-gaps --stdin --json`
-- use `rg` for exact token verification and final checks before editing
-- graph queries refresh stale or missing indexes before reading; use
-  `graph status` only for the report-only pre-refresh view
-
-Full workflow and limits:
-[`076-code-graph-and-agent-workflows.md`](076-code-graph-and-agent-workflows.md)
-
-## 2b) Documentation Context Assist
-
-When the job is documentation authority rather than code ownership - which
-contract, architecture decision, planning lane, or prior decision governs the
-work - use the documentation graph instead of guessing at file layout:
-
-```sh
-effigy docs context "<authority-shaped question>" --max-sections 4 --max-bytes 8000
-effigy --json docs context "<authority-shaped question>"
-```
-
-Rules:
-
-- ask which document governs, not which file contains a string; `rg` is still
-  the right tool for exact token verification
-- results are exact repository sections with path, span, kind, authority,
-  currentness, fields, relation path, and match reason. They are evidence to
-  read, never a generated answer
-- historical material is not suppressed: a query that names an archived decision
-  directly still retrieves it
-- the semantics come from the selected repository's committed
-  `[docs_policy.graph]` block. Nothing is read from an installed skill, so a
-  skill upgrade never changes what a repository means
-- baseline mode works with no profile at all; a profile adds local meaning
-
-Full profile grammar, adoption boundary, and example queries:
-[`079-documentation-graph-profiles-and-context.md`](079-documentation-graph-profiles-and-context.md)
+- ask which document governs, not which file contains a string; start from
+  `docs/README.md` and use `rg` for exact text
+- use `effigy test --plan` to narrow validation after edits, not as exhaustive
+  test proof
+- `effigy scan` keeps god-files, duplicate-blocks, comment-ratio,
+  generated-assets, generated-in-src, attention-markers and stale-suppressions;
+  the graph-backed boundary, dead-code and validation-gap scanners are gone
 
 ## 3) Reusable `AGENTS.md` Snippet
 
@@ -146,7 +101,7 @@ Use Effigy as the default command surface for supported project work.
 
 Default flow:
 1. Route by job, not by startup ritual
-2. Use `effigy graph explore` before broad repo scanning when codebase context is needed
+2. Use `rg` and the documentation index before broad repo scanning when codebase context is needed
 3. Use `effigy tasks` when you need selector inventory
 4. Use `effigy doctor` when routing is unclear or repo health is the task
 5. Use `effigy test --plan` when test execution shape matters
@@ -498,7 +453,6 @@ Release adoption policy:
 - [`056-northstar-effigy-consumer-repo-contract.md`](056-northstar-effigy-consumer-repo-contract.md)
 - [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
 - [`027-copy-paste-snippets.md`](027-copy-paste-snippets.md)
-- [`076-code-graph-and-agent-workflows.md`](076-code-graph-and-agent-workflows.md)
 
 ## Next Step
 

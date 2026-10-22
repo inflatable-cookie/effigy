@@ -10,7 +10,6 @@ pub mod check_id {
     /// v0.14 task state families (`tasks.legacy-state.<family>`): informational,
     /// but listed so an operator knows what is safe to delete.
     pub const TASKS_LEGACY_STATE_PREFIX: &str = "tasks.legacy-state.";
-    pub const GRAPH_INDEX: &str = "graph.index";
     pub const SCAN_GOD_FILES: &str = "scan.god-files";
     pub const SCAN_DUPLICATE_BLOCKS: &str = "scan.duplicate-blocks";
     pub const SCAN_COMMENT_RATIO: &str = "scan.comment-ratio";
@@ -26,7 +25,7 @@ pub mod check_id {
     pub const CATALOG_PACK_HEALTH: &str = "catalog.pack-health";
 }
 
-pub const ALL_CHECK_IDS: [&str; 22] = [
+pub const ALL_CHECK_IDS: [&str; 21] = [
     check_id::WORKSPACE_ROOT_RESOLUTION,
     check_id::ENVIRONMENT_TOOLS_REQUIRED,
     check_id::MANIFEST_PARSE,
@@ -35,7 +34,6 @@ pub const ALL_CHECK_IDS: [&str; 22] = [
     check_id::MANIFEST_CONFLICTS,
     check_id::TASK_REFERENCES_RESOLVE,
     check_id::DEPENDENCY_LINK_HEALTH,
-    check_id::GRAPH_INDEX,
     check_id::SCAN_GOD_FILES,
     check_id::SCAN_DUPLICATE_BLOCKS,
     check_id::SCAN_COMMENT_RATIO,
@@ -104,8 +102,6 @@ pub mod remediation {
         "Align keys/types with `effigy config --schema` and retry.";
     pub const INSTALL_JS_PM_OR_CONFIGURE: &str =
         "Install one of bun/pnpm/npm or define `[package_manager].js` to match your toolchain.";
-    pub const GRAPH_INDEX_REFRESH: &str =
-        "Run `effigy graph index` to rebuild a stale or missing graph index.";
 }
 
 pub fn install_tool(tool: &str) -> String {
