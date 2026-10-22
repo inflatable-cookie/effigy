@@ -23,9 +23,11 @@ tag-format = "v{version}"
 
 # The preflight runs before `prepare` writes a version: metadata and docs must
 # hold on the source tree. Its smoke slice is the `smoke` certify gate, which
-# runs against the prepared commit.
+# runs against the prepared commit, so the gate passes `--skip-smoke` rather
+# than proving the same smoke twice. The manual task `effigy release:preflight`
+# still runs all three slices.
 [release.gates.preflight]
-task = "release:preflight"
+command = "sh scripts/release/checks.sh preflight --skip-smoke"
 stage = "pre"
 description = "Effigy release metadata and docs hold on the source tree"
 

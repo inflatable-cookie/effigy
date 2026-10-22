@@ -35,7 +35,7 @@ usage:
   scripts/release/checks.sh evidence-closeout --tag TAG --artifacts-dir DIR [--output PATH]
   scripts/release/checks.sh publish-binaries
   scripts/release/checks.sh check-binaries
-  scripts/release/checks.sh verify-binaries [--repo-url URL]
+  scripts/release/checks.sh verify-binaries [--repo-url URL] [--skip-homebrew]
 USAGE
 }
 
@@ -312,8 +312,13 @@ case "$verb" in
         sh "$root/scripts/release/checks.sh" check-binary "$artifacts_dir/$binary" --glibc-floor 2.35
       fi
     done
-    if [ -x "$artifacts_dir/effigy-$(uname -m)-apple-darwin" ] && [ "$(uname -s)" = Darwin ]; then
-      smoke_status=$("$artifacts_dir/effigy-$(uname -m)-apple-darwin" smoke:release "$artifacts_dir/effigy-$(uname -m)-apple-darwin" 2>&1) \
+    case "$(uname -m)" in
+      arm64) host_arch=aarch64 ;;
+      *) host_arch=$(uname -m) ;;
+    esac
+    host_binary="$artifacts_dir/effigy-$host_arch-apple-darwin"
+    if [ "$(uname -s)" = Darwin ] && [ -x "$host_binary" ]; then
+      smoke_status=$("$host_binary" smoke:release "$host_binary" 2>&1) \
         || fail "release binary smoke failed: $smoke_status"
       ok "release binary smoke passed"
     fi
@@ -508,9 +513,11 @@ case "$verb" in
 
   verify-binaries)
     repo_url=""
+    skip_homebrew=false
     while [ $# -gt 0 ]; do
       case "$1" in
         --repo-url) repo_url=${2:?--repo-url needs a value}; shift 2 ;;
+        --skip-homebrew) skip_homebrew=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage; fail "unknown argument: $1" ;;
       esac
@@ -525,12 +532,15 @@ case "$verb" in
       printf '%s\n' "$assets" | grep -qx "$asset" || fail "GitHub Release $tag is missing asset $asset"
     done
     ok "GitHub Release $tag publishes every binary and macOS checksum asset"
-    brew_formula=$(brew info --json=v2 inflatable-cookie/effigy/effigy 2>/dev/null | jq -r '.formulae[0].versions.stable // ""' || true)
-    if [ -n "$brew_formula" ]; then
+    if [ "$skip_homebrew" = true ]; then
+      printf '[warn] Homebrew tap check skipped by --skip-homebrew; record why\n' >&2
+    else
+      command -v brew >/dev/null 2>&1 \
+        || fail "brew is not available, so the Homebrew tap cannot be verified; install Homebrew, verify the tap another way, or pass --skip-homebrew deliberately"
+      brew_formula=$(brew info --json=v2 inflatable-cookie/effigy/effigy 2>/dev/null | jq -r '.formulae[0].versions.stable // ""' || true)
+      [ -n "$brew_formula" ] || fail "the Homebrew tap does not publish effigy"
       [ "$brew_formula" = "${tag#v}" ] || fail "Homebrew tap publishes $brew_formula, expected ${tag#v}"
       ok "Homebrew tap publishes $brew_formula"
-    else
-      printf '[warn] Homebrew tap is not installed on this host; the tap check is unproven\n' >&2
     fi
     sh "$root/scripts/release/checks.sh" verify-install --tag "$tag" ${repo_url:+--repo-url "$repo_url"}
     ok "release $tag verified"

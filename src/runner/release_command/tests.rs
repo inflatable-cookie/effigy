@@ -257,7 +257,11 @@ fn current_repo_release_config_matches_the_contract_054_shape() {
         .find(|gate| gate.name == "preflight")
         .expect("preflight gate");
     assert_eq!(preflight.stage, GateStage::Pre);
-    assert_eq!(preflight.task.as_deref(), Some("release:preflight"));
+    assert_eq!(
+        preflight.command,
+        "sh scripts/release/checks.sh preflight --skip-smoke"
+    );
+    assert_eq!(preflight.task, None);
     let metadata = pipeline
         .gates
         .iter()

@@ -866,7 +866,7 @@ fn effigy_release_plan_reports_the_contract_054_declaration() {
             (
                 "preflight".to_owned(),
                 "pre-gates".to_owned(),
-                "release:preflight".to_owned()
+                String::new()
             ),
             ("ci".to_owned(), "certify".to_owned(), String::new()),
             ("format".to_owned(), "certify".to_owned(), String::new()),
@@ -880,6 +880,14 @@ fn effigy_release_plan_reports_the_contract_054_declaration() {
                 "release:metadata".to_owned()
             ),
         ]
+    );
+
+    // The pre gate runs the repo script with `--skip-smoke`; the certify smoke
+    // gate is what proves the prepared binary.
+    let preflight = &gates[0];
+    assert_eq!(
+        preflight["command"],
+        "sh scripts/release/checks.sh preflight --skip-smoke"
     );
 
     let artifacts = plan["artifacts"].as_array().expect("artifacts");

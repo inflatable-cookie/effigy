@@ -485,10 +485,13 @@ composition in `config/tasks.toml`; `evidence summary` has no task because the
 Run's receipt is the record. Their code is a repo script,
 [`scripts/release/checks.sh`](../../../scripts/release/checks.sh), so it can
 name Effigy's own artifacts, workflow and tap without becoming product surface.
-`metadata` is a `certify` gate because it reads the prepared version, changelog
-and lockfile; `preflight` is a **`pre` gate** whose docs slice runs before any
-version edit and whose smoke slice is the `smoke` certify gate, so no check runs
-twice. `proof` and `evidence closeout` stay manual tasks: both need a human to
+`metadata` is a `certify` gate declared as `task = "release:metadata"`, because
+it reads the prepared version, changelog and lockfile and needs no arguments —
+which also keeps the task-gate form (§11) exercised by Effigy's own release.
+`preflight` is a **`pre` gate** whose docs slice runs before any version edit;
+it runs the repo script with `--skip-smoke` because the `smoke` certify gate
+already proves the prepared binary, so no check runs twice. The manual
+`effigy release:preflight` task still runs all three slices. `proof` and `evidence closeout` stay manual tasks: both need a human to
 name an artifact directory, and neither is part of a Run's stages.
 
 **The artifact is the release binary the build gate produced.** `release:artifact`

@@ -15,7 +15,7 @@ certified artifact and the two targets:
 
 | Part | Declaration |
 | --- | --- |
-| `pre` gate | `preflight = { task = "release:preflight", stage = "pre" }` — metadata and docs on the source tree |
+| `pre` gate | `preflight` — `sh scripts/release/checks.sh preflight --skip-smoke` (metadata and docs on the source tree; the certify `smoke` gate proves the prepared binary) |
 | `certify` gates | `ci`, `format`, `test`, `qa`, `build`, `smoke`, and `metadata = { task = "release:metadata" }` — all against the prepared commit |
 | artifact | `binary` from `release:artifact`, pattern `target/release/effigy`; certify copies it and records `sha256` |
 | target `tag` | one annotated tag per identity, pushed at publish |
@@ -36,7 +36,7 @@ commands refuse with these replacements:
 | Retired command | Repo task | Wired as |
 | --- | --- | --- |
 | `effigy release validate` | `effigy release:metadata` | the `metadata` certify gate, and the metadata slice of `release:preflight` |
-| `effigy release preflight` | `effigy release:preflight` | the `preflight` pre gate (its smoke slice is the `smoke` certify gate) |
+| `effigy release preflight` | `effigy release:preflight` | the `preflight` pre gate, with `--skip-smoke` (the smoke slice is the `smoke` certify gate) |
 | `effigy release proof` | `effigy release:proof` | manual; proves a release asset directory |
 | `effigy release check-binary` | `effigy release:check-binary` | used by `release:proof` and by the binary workflow |
 | `effigy release verify-install` | `effigy release:verify:install` | the `binaries` target's `verify`, through `release:verify:binaries` |
@@ -47,7 +47,14 @@ commands refuse with these replacements:
 `release:verify:binaries` checks the GitHub Release assets (four binaries and the
 two macOS checksum sidecars), the Homebrew formula version and the
 tagged-source install. It is what marks a published release verified in the
-receipt.
+receipt. It fails closed when `brew` is missing rather than reporting a release
+verified without the tap; pass `--skip-homebrew` deliberately when that is the
+intent, and record why.
+
+A gate declared as `task` runs as `effigy <task>` (contract 054 §11), so an
+operator's installed `effigy` must be at least as new as the checkout: a stale
+one fails the gate loudly while parsing `[release]`. The Run itself always runs
+from the source-built binary the `release:run` selector names.
 
 ## Before the next publication: the binary workflow's GLIBC step
 

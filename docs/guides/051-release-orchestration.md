@@ -581,8 +581,10 @@ Effigy's own repository wraps authorized in-place release work in a maintained
 ```
 
 The selector runs `./target/debug/effigy release run --to certify {args}` from a
-source-built binary, so an installed or PATH binary cannot supply stale release
-logic. It never forwards a different subcommand: publishing is a separate,
+source-built binary, so the Run itself never uses an installed or PATH binary.
+A gate declared as `task` still runs as `effigy <task>` (contract 054 §11), so
+keep the installed `effigy` at least as new as the checkout; a stale one fails
+the gate loudly at config parse. It never forwards a different subcommand: publishing is a separate,
 explicitly authorized `release run` with no `--to`, or the `release:run -- --to
 closeout` form when the operator has decided to publish. The whole operation is
 admitted once; nested gate work reuses that run. This selector is for approved
@@ -600,7 +602,9 @@ effigy release:verify:install --tag vX.Y.Z
 
 The task runs `sh scripts/release/checks.sh verify-install {args}`; the task
 runner shell-quotes each argument, so a value cannot become another shell
-command. The script installs the tag with `cargo install --git` into its own
+command. `release:verify:binaries` (the `binaries` target's verify) also checks
+the GitHub Release assets and the Homebrew formula, and fails when `brew` is
+missing instead of reporting an unverified tap. The script installs the tag with `cargo install --git` into its own
 temporary root and checks the installed command's version, fixture tasks,
 prefixed builtin tasks and JSON help envelope. It never replaces the installed
 local Effigy.
@@ -613,6 +617,10 @@ or grant tag, publish, workflow-edit or live-operation authority. See
 ## 6) Gate Configuration
 
 Gate commands are normal shell commands. They do not need to be Rust-specific.
+A gate may also declare `task = "<task>"`, which runs as `effigy <task>`; use it
+when the gate needs no arguments, and the command form when it does (Effigy's
+own `preflight` gate runs `sh scripts/release/checks.sh preflight --skip-smoke`
+for that reason).
 
 Examples:
 
