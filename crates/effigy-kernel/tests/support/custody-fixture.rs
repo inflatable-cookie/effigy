@@ -109,6 +109,56 @@ fn main() {
         }
         return;
     }
+    if entry == "foreground-owner" {
+        let home = Path::new(args.get(1).expect("private fixture root"));
+        let cx = op(router.root_cancel()).effects().unwrap();
+        let root = StateRoot::effects(&cx, home).unwrap();
+        let mut run = ForegroundRun::begin(
+            &cx,
+            &root,
+            &invocation(),
+            BeginOpts {
+                id: RunId::new(1, [1; 10]).unwrap(),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: Some(LifecyclePlan {
+                    executable: Executable::current().unwrap(),
+                    placement: effigy_kernel::supervise::Placement::Inline,
+                }),
+            },
+        )
+        .unwrap();
+        let mut child = Custody::spawn_foreground(&mut run, spec(home), &cx).unwrap();
+        std::fs::write(
+            home.join("foreground.pending"),
+            serde_json::to_vec(&serde_json::json!({
+                "process": child.identity(), "guard": run.guard_identity(),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::rename(
+            home.join("foreground.pending"),
+            home.join("foreground.json"),
+        )
+        .unwrap();
+        loop {
+            if let Some(signal) = router.poll().first() {
+                let received = signal.received;
+                run.interrupt(WorkloadOutcome::Cancelled {
+                    cause: StopCause::Signal(received),
+                    signal: Some(received),
+                })
+                .unwrap();
+                run.settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+                    .unwrap();
+                std::process::exit(128 + received);
+            }
+            let _ = child.poll();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
     if entry == "anchor-no-children" {
         let mut status = 0;
         // SAFETY: WNOHANG observes only this disposable workload's children;

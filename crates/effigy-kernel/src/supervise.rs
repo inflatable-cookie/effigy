@@ -31,6 +31,7 @@ use std::time::{Duration, Instant};
 
 pub(crate) mod anchor;
 mod image;
+pub(crate) mod memory;
 use image::{private_image, PrivateImage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -652,7 +653,11 @@ fn sentinel(
 ) -> Result<(), RunError> {
     let mut input = std::io::stdin().lock();
     nonblocking(input.as_raw_fd())?;
-    let config: SentinelConfig = serde_json::from_slice(&read_frame(&mut input)?)?;
+    let config: serde_json::Value = serde_json::from_slice(&read_frame(&mut input)?)?;
+    if config.get("memory").and_then(serde_json::Value::as_bool) == Some(true) {
+        return memory::serve(config, &mut input);
+    }
+    let config: SentinelConfig = serde_json::from_value(config)?;
     config
         .executable
         .verify()

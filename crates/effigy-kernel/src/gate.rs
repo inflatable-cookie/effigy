@@ -117,13 +117,50 @@ pub struct GateGuard {
 /// A lock belongs to the open description, including copies in a concurrent
 /// fork. Explicit unlock makes release independent of the child's close/exec.
 #[derive(Debug)]
-struct GateFile(File);
+struct GateFile {
+    file: File,
+    unlock_on_drop: bool,
+}
 impl Drop for GateFile {
     fn drop(&mut self) {
-        fs::unlock(&self.0);
+        if self.unlock_on_drop {
+            fs::unlock(&self.file);
+        }
     }
 }
 impl GateGuard {
+    /// Foreground backup custody retains these same open descriptions. Once
+    /// shared, closing a custodian must not explicitly unlock the other's
+    /// flock. Workload forks still inherit only CLOEXEC copies.
+    pub(crate) fn share_custody(&mut self) -> std::io::Result<Vec<std::os::fd::OwnedFd>> {
+        use std::os::fd::{AsRawFd, FromRawFd};
+        let mut copies = Vec::new();
+        for file in self
+            .gates
+            .iter()
+            .map(|(_, f)| f)
+            .chain(self.scopes.iter().map(|(_, f)| f))
+        {
+            // SAFETY: the gate owns this live descriptor; fcntl returns a
+            // fresh CLOEXEC description reference or -1. No fd is consumed.
+            let fd = unsafe { libc::fcntl(file.file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 128) };
+            if fd < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            // SAFETY: successful fcntl transferred this fresh fd exactly once.
+            copies.push(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) });
+        }
+        for file in self
+            .gates
+            .iter_mut()
+            .map(|(_, f)| f)
+            .chain(self.scopes.iter_mut().map(|(_, f)| f))
+        {
+            file.unlock_on_drop = false;
+        }
+        Ok(copies)
+    }
+
     pub fn ids(&self) -> impl Iterator<Item = &ResourceId> {
         self.gates.iter().map(|(id, _)| id)
     }
@@ -141,7 +178,7 @@ impl GateGuard {
     pub fn set_run(&self, run: &RunId) {
         let body = body(Some(run.to_string()));
         for (_, file) in &self.gates {
-            let _ = fs::rewrite(&file.0, &body);
+            let _ = fs::rewrite(&file.file, &body);
         }
     }
 }
@@ -246,7 +283,7 @@ impl Gate {
             .map_err(|e| GateError::Io(IoError::new("gate acquire", root.path(), &e)))?;
         let body = body(None);
         for (_, file) in &guard.gates {
-            let _ = fs::rewrite(&file.0, &body);
+            let _ = fs::rewrite(&file.file, &body);
         }
         Ok(guard)
     }
@@ -358,7 +395,10 @@ impl Gate {
             return Ok(ScopeRemoval::Busy);
         }
         // Also release on every early return or filesystem error below.
-        let file = GateFile(file);
+        let file = GateFile {
+            file,
+            unlock_on_drop: true,
+        };
         let Some(dir) = gates.child(&name, Trust::Private, false)? else {
             return Ok(ScopeRemoval::Absent);
         };
@@ -494,7 +534,12 @@ fn lock(
     let mut pause = POLL_MIN;
     loop {
         match fs::try_flock(&file, op) {
-            Ok(true) => return Ok(GateFile(file)),
+            Ok(true) => {
+                return Ok(GateFile {
+                    file,
+                    unlock_on_drop: true,
+                })
+            }
             Ok(false) => {}
             Err(error) => {
                 return Err(GateError::Io(IoError::new(

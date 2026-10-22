@@ -293,7 +293,109 @@ fn lock(core: &Mutex<ProcessCore>) -> std::sync::MutexGuard<'_, ProcessCore> {
     core.lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
+/// The two intent stores share the same spawn barrier and process mechanics.
+/// This private seam cannot grant an engine raw spawn or signal authority.
+trait ProcessOwner {
+    fn id(&self) -> crate::id::RunId;
+    fn fence(&self) -> &crate::run::Fence;
+    fn has_sentinel(&self) -> bool;
+    fn intend_process(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError>;
+    fn applied(&mut self, ticket: &EffectTicket, receipt: Value) -> Result<(), RunError>;
+    fn ack_process(&mut self, ticket: &EffectTicket) -> Result<(), RunError>;
+    fn anchor_image(&self) -> Result<crate::supervise::anchor::Image<'_>, RunError>;
+    fn capture_log(
+        &self,
+        sequence: i64,
+        stream: Stream,
+        limits: &crate::ctx::Limits,
+    ) -> io::Result<Option<capture::Log>>;
+    fn retain_process(&mut self, sequence: i64, core: Arc<Mutex<ProcessCore>>);
+}
+impl ProcessOwner for Run<'_> {
+    fn id(&self) -> crate::id::RunId {
+        self.id()
+    }
+    fn fence(&self) -> &crate::run::Fence {
+        self.fence()
+    }
+    fn has_sentinel(&self) -> bool {
+        self.has_sentinel()
+    }
+    fn intend_process(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
+        self.intend_process(spec)
+    }
+    fn applied(&mut self, ticket: &EffectTicket, receipt: Value) -> Result<(), RunError> {
+        self.applied(ticket, receipt)
+    }
+    fn ack_process(&mut self, _: &EffectTicket) -> Result<(), RunError> {
+        Ok(())
+    }
+    fn anchor_image(&self) -> Result<crate::supervise::anchor::Image<'_>, RunError> {
+        self.anchor_image()
+    }
+    fn capture_log(
+        &self,
+        sequence: i64,
+        stream: Stream,
+        limits: &crate::ctx::Limits,
+    ) -> io::Result<Option<capture::Log>> {
+        self.capture_log(sequence, stream, limits).map(Some)
+    }
+    fn retain_process(&mut self, sequence: i64, core: Arc<Mutex<ProcessCore>>) {
+        self.retain_process(sequence, core);
+    }
+}
+impl ProcessOwner for crate::run::ForegroundRun {
+    fn id(&self) -> crate::id::RunId {
+        self.record().incarnation().run
+    }
+    fn fence(&self) -> &crate::run::Fence {
+        self.record().fence()
+    }
+    fn has_sentinel(&self) -> bool {
+        self.has_guard()
+    }
+    fn intend_process(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
+        self.record_mut().intend_process(spec)
+    }
+    fn applied(&mut self, ticket: &EffectTicket, receipt: Value) -> Result<(), RunError> {
+        self.record_mut().applied(ticket, receipt)
+    }
+    fn ack_process(&mut self, ticket: &EffectTicket) -> Result<(), RunError> {
+        self.ack_process(ticket)
+    }
+    fn anchor_image(&self) -> Result<crate::supervise::anchor::Image<'_>, RunError> {
+        self.anchor_image()
+    }
+    fn capture_log(
+        &self,
+        _: i64,
+        _: Stream,
+        _: &crate::ctx::Limits,
+    ) -> io::Result<Option<capture::Log>> {
+        Ok(None)
+    }
+    fn retain_process(&mut self, sequence: i64, core: Arc<Mutex<ProcessCore>>) {
+        self.retain_process(sequence, core);
+    }
+}
+
 impl Custody {
+    pub fn spawn_foreground(
+        run: &mut crate::run::ForegroundRun,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+    ) -> Result<OwnedProcess, SpawnError> {
+        Self::spawn_inner(
+            run,
+            spec,
+            cx,
+            None,
+            crate::ctx::Capability::AdapterEffect,
+            true,
+        )
+    }
+
     pub fn spawn(
         run: &mut Run<'_>,
         spec: ProcessSpec,
@@ -358,7 +460,7 @@ impl Custody {
         )
     }
     fn spawn_inner(
-        run: &mut Run<'_>,
+        run: &mut impl ProcessOwner,
         spec: ProcessSpec,
         cx: &EffectContext,
         registration: Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>>,
@@ -438,6 +540,7 @@ impl Custody {
             )
             .map_err(SpawnError::Unrecorded)?;
             crate::fault_point!(AnchorRecord)?;
+            run.ack_process(&ticket)?; // memory backup retains the receipt before go
             let (stdout, stderr, terminal) = pending.take_streams();
             let logs = [Stream::Stdout, Stream::Stderr]
                 .map(|stream| run.capture_log(ticket.sequence(), stream, cx.operation().limits()));
@@ -450,7 +553,7 @@ impl Custody {
             let core = Arc::new(Mutex::new(ProcessCore {
                 receipt,
                 anchor,
-                logs: [stdout_log.ok(), stderr_log.ok()],
+                logs: [stdout_log.ok().flatten(), stderr_log.ok().flatten()],
                 output: VecDeque::new(),
                 streams: [VecDeque::new(), VecDeque::new()],
                 queue_max: cx.operation().limits().queue_bytes,
@@ -546,6 +649,23 @@ impl OwnedProcess {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+    pub fn complete_foreground(
+        &self,
+        run: &mut crate::run::ForegroundRun,
+        exit: Exit,
+    ) -> Result<(), RunError> {
+        let core = lock(&self.core);
+        if core.exit != Some(exit) {
+            return Err(RunError::Invalid(
+                "unverified foreground process exit".into(),
+            ));
+        }
+        run.record_mut().completed(
+            &self.ticket,
+            crate::outcome::RequiredObligation::ProcessExit(exit.code),
+        )
+    }
+
     pub fn complete(&self, run: &mut Run<'_>, exit: Exit) -> Result<(), RunError> {
         let core = lock(&self.core);
         if core.exit != Some(exit) {
@@ -857,6 +977,35 @@ impl ProcessCore {
         }
     }
 }
+/// The memory backup independently validates the complete pre-go receipt.
+/// Only a ready, tagged anchor and the exact run/sequence nonce can be acked.
+pub(crate) fn verify_foreground_receipt(
+    effect: &Effect,
+    run: crate::id::RunId,
+) -> Result<(), RunError> {
+    let record: ProcessRecord = serde_json::from_value(
+        effect
+            .receipt
+            .clone()
+            .ok_or_else(|| RunError::Invalid("missing foreground receipt".into()))?,
+    )?;
+    if record.process.nonce != format!("{}:{}", run, effect.sequence)
+        || record.process.pgid != record.process.identity.pid
+        || platform::generation(&record.process.identity)
+            .verified()
+            .is_none()
+        || !record
+            .anchor
+            .as_ref()
+            .is_some_and(|a| anchor::verified(&record.process, a))
+    {
+        return Err(RunError::Invalid(
+            "foreground receipt identity or anchor unavailable".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn settle_effect(
     effect: &Effect,
     live: Option<Arc<Mutex<ProcessCore>>>,

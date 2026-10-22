@@ -12,7 +12,20 @@ pub(crate) struct Image<'a> {
 impl<'a> Image<'a> {
     pub(crate) fn prepare(root: &'a StateRoot, executable: &Executable) -> Result<Self, RunError> {
         let pin = private_image(root, executable)?;
-        let expected = pin.as_ref().map_or(executable, |pin| &pin.executable);
+        let expected = pin
+            .as_ref()
+            .map_or(executable, |pin| &pin.executable)
+            .clone();
+        Self::from_image(pin, &expected)
+    }
+
+    /// Foreground anchors use the verified image without creating a runtime
+    /// pin. Replacement is refused before a workload can cross its barrier.
+    pub(crate) fn memory(executable: &Executable) -> Result<Self, RunError> {
+        Self::from_image(None, executable)
+    }
+
+    fn from_image(pin: Option<PrivateImage<'a>>, expected: &Executable) -> Result<Self, RunError> {
         expected.verify()?;
         #[cfg(target_os = "linux")]
         let fd = Some(crate::custody::spawn::high(

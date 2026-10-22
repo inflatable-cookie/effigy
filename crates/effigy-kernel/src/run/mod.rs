@@ -5,11 +5,15 @@
 mod attachments;
 mod children;
 mod claims;
+mod foreground;
 mod history;
+pub use foreground::ForegroundRun;
 mod journal;
 mod lifecycle;
 mod logs;
+mod memory;
 pub use lifecycle::{metadata, RunMetadata, SentinelStatus};
+pub use memory::{ForegroundRecord, Incarnation};
 #[path = "../objects/run.rs"]
 mod objects;
 mod settle;

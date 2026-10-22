@@ -7,6 +7,12 @@ the former single-root assumptions in the API sketches, failure tables and
 implementation/adoption notes below. Those notes describe the existing binary,
 which still uses the central database; this document change does not claim a
 runtime cutover. The amendment's custody limits are explicit in §3.1.
+`run::ForegroundRecord` implements memory-only intents, incarnation tickets,
+phases and completion. `run::ForegroundRun` adds checkout gates, pure durable
+predecessor reads and the pipe-only memory sentinel; local custody shares the
+same spawn barrier and positive closure mechanisms as durable runs. These
+kernel APIs create no database, run logs or control socket. Command admission
+still uses the durable path until whole-tree classification is connected.
 
 Status: foundation types are implemented in `crates/effigy-kernel/`: identity
 encoding v1, operation contexts and class capabilities, observation and Probe

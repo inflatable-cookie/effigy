@@ -155,11 +155,6 @@ impl Run<'_> {
         }
         let effects = self.effects()?;
         let complete = effects.iter().all(|e| e.state.terminal());
-        let cleanup_result = if complete {
-            CleanupOutcome::Complete
-        } else {
-            CleanupOutcome::Incomplete
-        };
         // ENOSPC at Closed retains liveness until commit succeeds or the cleanup
         // deadline expires. The caller never mistakes a missing close for success.
         loop {
@@ -188,46 +183,62 @@ impl Run<'_> {
         if let Some(mut sentinel) = self.sentinel.take() {
             sentinel.close(cleanup)?;
         }
-        let result = if complete {
-            Ok(Settled { run: self.id })
-        } else {
-            Err(ErrorInfo {
-                code: ErrorCode::Incomplete,
-                message: "cleanup has unresolved effects".into(),
-                details: Value::Null,
-            })
-        };
-        let mut outcome = Outcome::new(result, workload, cleanup_result, &[])
-            .map_err(|_| RunError::Invalid("stored workload outcome".into()))?;
-        for effect in effects {
-            outcome.add_effect(EffectReport {
-                resource: effect.spec.target.resource.clone(),
-                generation: effect.spec.target.generation,
-                disposition: match effect.state {
-                    EffectState::Released => EffectDisposition::Released,
-                    EffectState::Retained => EffectDisposition::Retained,
-                    EffectState::Irreversible => EffectDisposition::Irreversible,
-                    EffectState::Failed => EffectDisposition::Failed,
-                    _ => EffectDisposition::Unknown,
-                },
-            });
-            if !effect.state.terminal() {
-                outcome.add_residue(Residue {
-                    kind: effect.spec.kind,
-                    id: effect.spec.target.resource,
-                    observation: Observed::Unknown(UnknownReason::Inconsistent(
-                        effect.reason.unwrap_or_else(|| "unresolved effect".into()),
-                    )),
-                    next: self.next.clone(),
-                });
-            }
-        }
-        if !complete {
-            outcome.add_next(self.next.clone());
-        }
-        Ok(outcome)
+        outcome(self.id, &self.next, workload, effects)
     }
 }
+
+pub(super) fn outcome(
+    id: RunId,
+    next: &Invocation,
+    workload: WorkloadOutcome,
+    effects: Vec<Effect>,
+) -> Result<Outcome<Settled>, RunError> {
+    let complete = effects.iter().all(|e| e.state.terminal());
+    let cleanup_result = if complete {
+        CleanupOutcome::Complete
+    } else {
+        CleanupOutcome::Incomplete
+    };
+    let result = if complete {
+        Ok(Settled { run: id })
+    } else {
+        Err(ErrorInfo {
+            code: ErrorCode::Incomplete,
+            message: "cleanup has unresolved effects".into(),
+            details: Value::Null,
+        })
+    };
+    let mut outcome = Outcome::new(result, workload, cleanup_result, &[])
+        .map_err(|_| RunError::Invalid("stored workload outcome".into()))?;
+    for effect in effects {
+        outcome.add_effect(EffectReport {
+            resource: effect.spec.target.resource.clone(),
+            generation: effect.spec.target.generation,
+            disposition: match effect.state {
+                EffectState::Released => EffectDisposition::Released,
+                EffectState::Retained => EffectDisposition::Retained,
+                EffectState::Irreversible => EffectDisposition::Irreversible,
+                EffectState::Failed => EffectDisposition::Failed,
+                _ => EffectDisposition::Unknown,
+            },
+        });
+        if !effect.state.terminal() {
+            outcome.add_residue(Residue {
+                kind: effect.spec.kind,
+                id: effect.spec.target.resource,
+                observation: Observed::Unknown(UnknownReason::Inconsistent(
+                    effect.reason.unwrap_or_else(|| "unresolved effect".into()),
+                )),
+                next: next.clone(),
+            });
+        }
+    }
+    if !complete {
+        outcome.add_next(next.clone());
+    }
+    Ok(outcome)
+}
+
 fn resolve(
     adapter: &mut impl SettlementAdapter,
     effect: &Effect,

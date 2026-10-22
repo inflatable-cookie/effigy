@@ -1304,3 +1304,321 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
         Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
     ));
 }
+
+fn foreground_begin(cx: &EffectContext, root: &StateRoot) -> ForegroundRun {
+    ForegroundRun::begin(
+        cx,
+        root,
+        &invocation(),
+        BeginOpts {
+            id: id(1),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: Some(LifecyclePlan {
+                executable: Executable::capture(&fixture()).unwrap(),
+                placement: effigy_kernel::supervise::Placement::Inline,
+            }),
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn foreground_custody_completes_without_database_or_logs() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    for _ in 0..2 {
+        let mut run = foreground_begin(&cx, &root);
+        let mut child =
+            Custody::spawn_foreground(&mut run, spec(home.path(), "printf hello"), &cx).unwrap();
+        let exit = child.wait(cx.operation()).verified().copied().unwrap();
+        assert_eq!(exit.code, 0);
+        child.complete_foreground(&mut run, exit).unwrap();
+        run.finish(WorkloadOutcome::Succeeded).unwrap();
+        let outcome = run
+            .settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+            .unwrap();
+        assert_eq!(outcome.cleanup(), CleanupOutcome::Complete);
+        assert_eq!(outcome.workload(), &WorkloadOutcome::Succeeded);
+        assert!(!root.path().join("kernel.db").exists());
+        assert!(!root.path().join("runs").exists());
+        assert!(!root.path().join("sock").exists());
+        assert!(!root.path().join("objects").exists());
+        assert!(matches!(
+            effigy_kernel::gate::Gate::probe(
+                &cx.operation().observe().unwrap(),
+                &root,
+                &invocation().spec().owner
+            ),
+            Observed::Verified(effigy_kernel::gate::GateState::Free, _)
+        ));
+    }
+}
+
+#[test]
+fn foreground_leader_exit_keeps_descendant_custody_and_cleans_on_drop() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    let mut child = Custody::spawn_foreground(
+        &mut run,
+        spec(home.path(), "/bin/sleep 30 >/dev/null 2>&1 & exit 0"),
+        &cx,
+    )
+    .unwrap();
+    let receipt = child.identity();
+    let exit = child.wait(cx.operation()).verified().copied().unwrap();
+    assert_eq!(exit.code, 0);
+    child.complete_foreground(&mut run, exit).unwrap();
+    drop(run);
+    assert!(matches!(
+        effigy_kernel::gate::Gate::probe(
+            &cx.operation().observe().unwrap(),
+            &root,
+            &invocation().spec().owner
+        ),
+        Observed::Verified(effigy_kernel::gate::GateState::Free, _)
+    ));
+    // Numeric reuse is not authority: the observable group must be gone.
+    let output = Command::new("/bin/ps")
+        .args(["-axo", "pgid="])
+        .output()
+        .unwrap();
+    assert!(!String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|line| line.trim() == receipt.pgid.to_string()));
+    assert!(!root.path().join("kernel.db").exists());
+}
+
+#[test]
+fn foreground_guard_death_refuses_new_go_but_owner_closes_existing_custody() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    let child =
+        Custody::spawn_foreground(&mut run, spec(home.path(), "exec /bin/sleep 30"), &cx).unwrap();
+    let guard = run.guard_identity().unwrap().clone();
+    // SAFETY: this is the exact guard started and retained by this fixture's
+    // run. The owner has not reaped it, so its PID cannot have been reused.
+    assert_eq!(unsafe { libc::kill(guard.pid as i32, libc::SIGKILL) }, 0);
+    eventually(|| {
+        !matches!(
+            effigy_kernel::ident::process_state(guard.pid),
+            Observed::Verified(
+                effigy_kernel::ident::ProcessState::Active
+                    | effigy_kernel::ident::ProcessState::Stopped,
+                _
+            )
+        )
+    });
+    assert!(Custody::spawn_foreground(
+        &mut run,
+        spec(home.path(), "printf forbidden > forbidden"),
+        &cx
+    )
+    .is_err());
+    assert!(!home.path().join("forbidden").exists());
+    drop(run);
+    eventually(|| {
+        !matches!(
+            effigy_kernel::ident::process_identity(child.identity().identity.pid),
+            Observed::Verified(_, _)
+        )
+    });
+    assert!(!root.path().join("kernel.db").exists());
+}
+
+#[test]
+fn foreground_owner_kill_retains_gate_until_memory_guard_closes_group() {
+    let home = home();
+    let cx = context();
+    let mut owner = ChildGuard(
+        Command::new(fixture())
+            .arg("foreground-owner")
+            .arg(home.path())
+            .env("HOME", home.path())
+            .spawn()
+            .unwrap(),
+    );
+    eventually(|| home.path().join("foreground.json").exists());
+    let data: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.path().join("foreground.json")).unwrap())
+            .unwrap();
+    let process: ProcessReceipt = serde_json::from_value(data["process"].clone()).unwrap();
+    let guard: effigy_kernel::ident::ProcessIdentity =
+        serde_json::from_value(data["guard"].clone()).unwrap();
+    struct ResumeGuard(effigy_kernel::ident::ProcessIdentity);
+    impl Drop for ResumeGuard {
+        fn drop(&mut self) {
+            // SAFETY: only the memory guard started by this fixture is named;
+            // generation is rechecked before resuming on a failure path.
+            if effigy_kernel::ident::process_identity(self.0.pid).verified() == Some(&self.0) {
+                unsafe {
+                    libc::kill(self.0.pid as i32, libc::SIGCONT);
+                }
+            }
+        }
+    }
+    let resume = ResumeGuard(guard.clone());
+    // SAFETY: exact guard of the newly started, live fixture; no PID scan.
+    assert_eq!(unsafe { libc::kill(guard.pid as i32, libc::SIGSTOP) }, 0);
+    eventually(|| {
+        matches!(
+            effigy_kernel::ident::process_state(guard.pid),
+            Observed::Verified(effigy_kernel::ident::ProcessState::Stopped, _)
+        )
+    });
+    owner.0.kill().unwrap();
+    owner.0.wait().unwrap();
+    let observe = cx.operation().observe().unwrap();
+    let root = StateRoot::observe(&observe, home.path())
+        .verified()
+        .unwrap()
+        .path()
+        .to_path_buf();
+    assert!(!root.join("kernel.db").exists());
+    let state = match StateRoot::observe(&observe, home.path()) {
+        Observed::Verified(root, _) => root,
+        other => panic!("{other:?}"),
+    };
+    assert!(matches!(
+        effigy_kernel::gate::Gate::probe(&observe, &state, &invocation().spec().owner),
+        Observed::Verified(effigy_kernel::gate::GateState::Held(_), _)
+    ));
+    assert_eq!(
+        effigy_kernel::ident::process_identity(process.identity.pid).verified(),
+        Some(&process.identity)
+    );
+    drop(resume);
+    eventually(|| {
+        matches!(
+            effigy_kernel::gate::Gate::probe(&observe, &state, &invocation().spec().owner),
+            Observed::Verified(effigy_kernel::gate::GateState::Free, _)
+        )
+    });
+    eventually(|| {
+        effigy_kernel::ident::process_identity(process.identity.pid).verified()
+            != Some(&process.identity)
+    });
+    let output = Command::new("/bin/ps")
+        .args(["-axo", "pgid="])
+        .output()
+        .unwrap();
+    assert!(!String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|line| line.trim() == process.pgid.to_string()));
+}
+
+#[test]
+fn foreground_open_lifetime_reads_predecessors_with_a_finite_budget() {
+    let home = home();
+    let bounded = context();
+    let cx = OperationContext::new(
+        Deadline::Open(OpenReason::Shell),
+        CancelToken::default(),
+        bounded.operation().limits().clone(),
+        EffectClass::Mutate,
+        effigy_kernel::ctx::Placement::Host,
+    )
+    .effects()
+    .unwrap();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    let mut child = Custody::spawn_foreground(&mut run, spec(home.path(), "exit 0"), &cx).unwrap();
+    let exit = child.wait(bounded.operation()).verified().copied().unwrap();
+    child.complete_foreground(&mut run, exit).unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    assert_eq!(
+        run.settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+            .unwrap()
+            .cleanup(),
+        CleanupOutcome::Complete
+    );
+}
+
+#[test]
+fn foreground_refuses_unresolved_durable_predecessor_without_database_writes() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let previous = Run::begin(
+        &cx,
+        &root,
+        &invocation(),
+        BeginOpts {
+            id: id(2),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: None,
+        },
+        &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    drop(previous);
+    let before = std::fs::read(root.path().join("kernel.db")).unwrap();
+    let refused = ForegroundRun::begin(
+        &cx,
+        &root,
+        &invocation(),
+        BeginOpts {
+            id: id(1),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: Some(LifecyclePlan {
+                executable: Executable::capture(&fixture()).unwrap(),
+                placement: effigy_kernel::supervise::Placement::Inline,
+            }),
+        },
+    );
+    assert!(matches!(refused, Err(RunError::PredecessorUnsettled { run, .. }) if run == id(2)));
+    assert_eq!(
+        before,
+        std::fs::read(root.path().join("kernel.db")).unwrap()
+    );
+    settle_interrupted(
+        &cx,
+        &root,
+        &invocation().spec().owner,
+        id(2),
+        next(),
+        &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+}
+
+#[test]
+fn foreground_same_owner_is_busy_and_never_reclaims_a_live_gate() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let run = foreground_begin(&cx, &root);
+    let refused = ForegroundRun::begin(
+        &cx,
+        &root,
+        &invocation(),
+        BeginOpts {
+            id: id(2),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: Some(LifecyclePlan {
+                executable: Executable::capture(&fixture()).unwrap(),
+                placement: effigy_kernel::supervise::Placement::Inline,
+            }),
+        },
+    );
+    assert!(matches!(
+        refused,
+        Err(RunError::Gate(effigy_kernel::gate::GateError::Busy { .. }))
+    ));
+    drop(run);
+    assert!(!root.path().join("kernel.db").exists());
+}
