@@ -17,8 +17,8 @@ mod loaded_catalog;
 mod manifest_section;
 pub mod portfolio;
 mod qa_groups;
+mod retired_keys;
 mod task_defs;
-mod task_migration;
 pub mod task_runtime;
 mod test_config;
 pub mod user_config;
@@ -58,7 +58,7 @@ pub use config_sections::{
     ManifestIsolationConfig, ManifestJsPackageManager, ManifestPackageManagerConfig,
     ManifestReleaseConfig, ManifestScanConfig, ManifestSecretKeyConfig, ManifestSecretTarget,
     ManifestSecretsBackend, ManifestSecretsConfig, ManifestSecretsExternalConfig,
-    ManifestSecretsVaultConfig, ManifestShellConfig, ManifestSystemConfig, ManifestSystemMount,
+    ManifestSecretsVaultConfig, ManifestSystemConfig, ManifestSystemMount,
     ManifestSystemMountTable, ManifestSystemsConfig, ManifestTaskDefaultsConfig,
     ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
 };
@@ -152,7 +152,6 @@ pub const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &[
     "test",
     "package_manager",
     "scan",
-    "shell",
     "env_schema",
     "secrets",
     "docs_policy",
@@ -165,7 +164,6 @@ pub const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &[
     "release",
     "demos",
     "tasks",
-    "drafts",
     "qa",
 ];
 
@@ -197,8 +195,6 @@ pub struct TaskManifest {
     pub package_manager: Option<ManifestPackageManagerConfig>,
     #[serde(default)]
     pub scan: Option<ManifestScanConfig>,
-    #[serde(default)]
-    pub shell: Option<ManifestShellConfig>,
     #[serde(default)]
     pub env_schema: Option<ManifestEnvSchemaConfig>,
     #[serde(default)]
@@ -1422,7 +1418,7 @@ mod top_level_keys_tests {
         let declared: BTreeSet<&str> = MANIFEST_TOP_LEVEL_KEYS
             .iter()
             .copied()
-            .filter(|key| !matches!(*key, "manifest" | "drafts"))
+            .filter(|key| !matches!(*key, "manifest"))
             .collect();
         assert_eq!(declared, fields);
     }

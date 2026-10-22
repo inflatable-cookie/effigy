@@ -19,8 +19,8 @@ pub use common::{
     ManifestEnvSchemaConfig, ManifestGeneratedAssetsConfig, ManifestGeneratedInSrcConfig,
     ManifestGodFilesConfig, ManifestIsolationAdoption, ManifestIsolationConfig,
     ManifestJsPackageManager, ManifestPackageManagerConfig, ManifestScanConfig,
-    ManifestScanOutputFormat, ManifestShellConfig, ManifestStaleSuppressionsConfig,
-    ManifestTaskDefaultsConfig, ManifestValidationGapsConfig,
+    ManifestScanOutputFormat, ManifestStaleSuppressionsConfig, ManifestTaskDefaultsConfig,
+    ManifestValidationGapsConfig,
 };
 pub use container::{
     ManifestContainerConfig, ManifestContainerDataConfig, ManifestContainerDnsConfig,

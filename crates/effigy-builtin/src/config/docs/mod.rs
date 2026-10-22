@@ -20,10 +20,6 @@ pub(super) fn docs_policy_graph_lines(profile: ConfigDocProfile) -> Vec<&'static
     tasks::docs_policy_graph_lines(profile)
 }
 
-pub(super) fn shell_lines() -> &'static [&'static str] {
-    sections::shell_lines()
-}
-
 pub(super) fn scan_lines() -> &'static [&'static str] {
     sections::scan_lines()
 }

@@ -10,14 +10,6 @@ use effigy_cli::{
 };
 use effigy_containers::exec::list_running_compose_containers;
 use effigy_gateway::identity::{self, GatewayIdentityProbe, GatewayRecordSnapshot};
-use effigy_gateway::listener_handoff::maintenance::{
-    observe_handoff_maintenance, observe_handoff_maintenance_for_removal, removal_plan_steps,
-    render_removal_human, render_status_human, HandoffMaintenanceReport, RemovalDisposition,
-    LAUNCHD_PLIST_PATH,
-};
-use effigy_gateway::listener_handoff::{
-    ListenerHandoffSetup, HANDOFF_HTTPS_SOCKET_NAME, HANDOFF_HTTP_SOCKET_NAME, LAUNCHD_JOB_LABEL,
-};
 use effigy_gateway::routes::RouteTable;
 use effigy_gateway::server::{
     self, GatewayConfig, GatewayProcessProbe, GatewayStatus, VerifiedGatewayStatus,
@@ -123,15 +115,6 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
             run_gateway_repair_with_config(&config, yes, args.output_json)
         }
         GatewaySubcommand::SetupTls => run_gateway_setup_tls_with_config(&config, args.output_json),
-        GatewaySubcommand::SetupListenerHandoff => {
-            run_gateway_setup_listener_handoff_with_config(&config, args.output_json)
-        }
-        GatewaySubcommand::ListenerHandoffStatus => {
-            run_gateway_listener_handoff_status(args.output_json)
-        }
-        GatewaySubcommand::RemoveListenerHandoff => {
-            run_gateway_remove_listener_handoff(args.output_json)
-        }
     }
 }
 
@@ -434,7 +417,7 @@ fn resolve_gateway_status_for_config(
         Ok(status) => Ok(Some(status)),
         Err(effigy_gateway::GatewayError::NotRunning) => Ok(None),
         Err(error @ effigy_gateway::GatewayError::LegacyIdentityRequired { .. }) => {
-            Err(legacy_identity_status_error(error, false))
+            Err(RunnerError::task_invocation(error.to_string()))
         }
         Err(error) => Err(RunnerError::task_invocation(format!(
             "cannot determine gateway state ({error}); current diagnosis: {}; no signal was sent and the gateway PID record is left in place for reconciliation. If the reason is a permission denial for a root-owned gateway, rerun from an interactive admin-capable terminal and approve the bounded identity prompt",
@@ -682,28 +665,106 @@ fn route_table_trust_fields(
     }
 }
 
-fn legacy_identity_status_error(
-    error: effigy_gateway::GatewayError,
-    output_json: bool,
+/// Structured refusal for a gateway status this caller cannot prove.
+///
+/// The truth stays `unknown`: `ok` is false and the command exits non-zero, so
+/// no caller can read this as a positive root-owned-gateway gate. What it adds
+/// is the supported evidence a headless plan may gate on instead: the record,
+/// process and identity labels plus the recorded PID, and the observation
+/// precondition spelled out (papercut 0694ef12).
+fn gateway_status_refusal_json(
+    error: &'static str,
+    message: &str,
+    diagnosis: &effigy_gateway::server::GatewayStatusDiagnosis,
+    recovery: serde_json::Value,
+) -> serde_json::Value {
+    use effigy_gateway::server::{GatewayProcessProbe, GatewayRecordKind};
+    let process = diagnosis
+        .process_probe
+        .map(GatewayProcessProbe::label)
+        .unwrap_or("not-probed");
+    json!({
+        "schema": "effigy.gateway.status.v1",
+        "schema_version": 1,
+        "ok": false,
+        "exit_code": 1,
+        "status": "unknown",
+        "error": error,
+        "message": message,
+        "pid": diagnosis.pid,
+        "observations": {
+            "record": diagnosis.record.label(),
+            "process": process,
+            "identity": diagnosis.identity.label(),
+        },
+        "headless": {
+            "precondition": "observations.record=authenticated and observations.process=running with a recorded pid",
+            "satisfied": diagnosis.record == GatewayRecordKind::Authenticated
+                && diagnosis.process_probe == Some(GatewayProcessProbe::Running)
+                && diagnosis.pid.is_some(),
+            "requires_exit_zero": false,
+            "note": "a headless planner gates on these observations, never on `effigy gateway status` exit 0; identity=permission-denied or identity=unknown keeps the status unknown and the command non-zero"
+        },
+        "recovery": recovery,
+    })
+}
+
+/// Build the refusal for one status command, from the same read-only diagnosis
+/// the text message carries.
+fn gateway_status_refusal(
+    config: &GatewayConfig,
+    error: &'static str,
+    message: &str,
+    recovery: serde_json::Value,
 ) -> RunnerError {
-    match error {
-        effigy_gateway::GatewayError::LegacyIdentityRequired { pid } if output_json => {
-            RunnerError::CommandJsonFailure {
-                rendered: json!({
-                    "schema": "effigy.gateway.status.v1",
-                    "schema_version": 1,
-                    "ok": false,
-                    "error": "legacy_identity_required",
-                    "pid": pid,
-                    "recovery": {
-                        "action": "Ask the host administrator to verify and stop the pre-0.14 gateway; after confirmed absence, remove only its old PID/version records and run effigy gateway up",
-                        "reason": "gateway.identity is missing"
-                    }
-                })
-                .to_string(),
-            }
+    let diagnosis = effigy_gateway::server::diagnose_gateway_status(config);
+    RunnerError::CommandJsonFailure {
+        rendered: gateway_status_refusal_json(error, message, &diagnosis, recovery).to_string(),
+    }
+}
+
+fn legacy_identity_recovery(pid: u32) -> serde_json::Value {
+    json!({
+        "pid": pid,
+        "action": "Ask the host administrator to verify and stop the pre-0.14 gateway; after confirmed absence, remove only its old PID/version records and run effigy gateway up",
+        "reason": "gateway.identity is missing"
+    })
+}
+
+fn unverified_gateway_recovery() -> serde_json::Value {
+    json!({
+        "action": "Rerun from an interactive admin-capable terminal to approve the bounded read-only identity check, or migrate the legacy gateway with `effigy gateway setup`",
+        "reason": "this caller cannot prove the recorded gateway generation"
+    })
+}
+
+/// Status resolution for the `status` command only. A refusal is structured
+/// when the caller asked for JSON; the text form keeps its diagnosis message.
+fn resolve_status_for_status_command(
+    config: &GatewayConfig,
+    status: Result<VerifiedGatewayStatus, effigy_gateway::GatewayError>,
+    output_json: bool,
+) -> Result<Option<VerifiedGatewayStatus>, RunnerError> {
+    if !output_json {
+        return resolve_gateway_status_for_config(config, status);
+    }
+    match status {
+        Ok(status) => Ok(Some(status)),
+        Err(effigy_gateway::GatewayError::NotRunning) => Ok(None),
+        Err(error @ effigy_gateway::GatewayError::LegacyIdentityRequired { pid }) => {
+            Err(gateway_status_refusal(
+                config,
+                "legacy_identity_required",
+                &error.to_string(),
+                legacy_identity_recovery(pid),
+            ))
         }
-        other => RunnerError::task_invocation(other.to_string()),
+        Err(error) => Err(gateway_status_refusal(
+            config,
+            "gateway_status_unverified",
+            &error.to_string(),
+            unverified_gateway_recovery(),
+        )),
     }
 }
 
@@ -712,8 +773,18 @@ fn run_gateway_status_with_config(
     output_json: bool,
 ) -> Result<String, RunnerError> {
     if !config.is_private() {
-        let result = effigy_gateway::operator::status(config)
-            .map_err(|e| RunnerError::task_invocation(e.to_string()))?;
+        let result = match effigy_gateway::operator::status(config) {
+            Ok(result) => result,
+            Err(error) if output_json => {
+                return Err(gateway_status_refusal(
+                    config,
+                    "gateway_status_unverified",
+                    &error.to_string(),
+                    unverified_gateway_recovery(),
+                ))
+            }
+            Err(error) => return Err(RunnerError::task_invocation(error.to_string())),
+        };
         return Ok(if output_json {
             serde_json::to_string(&result)
                 .map_err(|e| RunnerError::task_invocation(e.to_string()))?
@@ -725,12 +796,8 @@ fn run_gateway_status_with_config(
             )
         });
     }
-    let status = match verified_gateway_status(config) {
-        Err(error @ effigy_gateway::GatewayError::LegacyIdentityRequired { .. }) => {
-            return Err(legacy_identity_status_error(error, output_json));
-        }
-        other => resolve_gateway_status_for_config(config, other)?,
-    };
+    let status =
+        resolve_status_for_status_command(config, verified_gateway_status(config), output_json)?;
     let route_table = RouteTable::load(&config.route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let mut tls = gateway_tls_summary(config, &route_table);
@@ -1331,139 +1398,6 @@ fn run_gateway_setup_tls_with_config(
             .unwrap_or_default(),
         tls_config.certs_dir.display()
     ))
-}
-
-/// Render the launchd listener-handoff setup definition for the operator.
-///
-/// SOURCE candidate only: this prints generated definition bytes and the
-/// operator-owned next steps. It never registers a launchd job, binds the
-/// privileged endpoints, or touches live gateway state; installation and
-/// verification belong to Tom alone (architecture 034, guide 063).
-fn run_gateway_setup_listener_handoff_with_config(
-    _config: &GatewayConfig,
-    output_json: bool,
-) -> Result<String, RunnerError> {
-    let setup = ListenerHandoffSetup::for_current_operator()
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let definition = setup.render_launchd_plist();
-
-    if output_json {
-        return Ok(json!({
-            "schema": "effigy.gateway.command.v1",
-            "schema_version": 1,
-            "ok": true,
-            "action": "setup-listener-handoff",
-            "result": "definition_generated",
-            "label": setup.label,
-            "program": setup.program_path.display().to_string(),
-            "user": setup.user_name,
-            "group": setup.group_name,
-            "home": setup.home.display().to_string(),
-            "registration": "operator_managed",
-            "definition": definition,
-        })
-        .to_string());
-    }
-
-    Ok(format!(
-        "[ok] listener handoff definition generated (SOURCE candidate; nothing is installed)\n\nlabel: {LAUNCHD_JOB_LABEL}\nsockets: tcp/127.0.0.1:80 ({HANDOFF_HTTP_SOCKET_NAME}), tcp/127.0.0.1:443 ({HANDOFF_HTTPS_SOCKET_NAME})\nruns as: {}:{} with HOME {}\n\n--8<-- definition (save, review, then install as an administrator) --8<--\n{definition}--8<-- end definition --8<--\n\nnext steps are operator-owned and unexecuted by this command; see docs/guides/063-container-system-guide.md (user gateway listener handoff) for the exact install, verify, and rollback plan.",
-        setup.user_name,
-        setup.group_name,
-        setup.home.display()
-    ))
-}
-
-/// Report the read-only launchd listener-handoff status.
-///
-/// Read-only: this never registers, activates, signals, removes or elevates.
-/// launchd and file observations are bounded findings, not source identity.
-fn run_gateway_listener_handoff_status(output_json: bool) -> Result<String, RunnerError> {
-    let report = observe_handoff_maintenance();
-    if output_json {
-        return Ok(gateway_handoff_report_json(
-            "listener-handoff-status",
-            "observed",
-            &report,
-            None,
-        ));
-    }
-    Ok(render_status_human(&report))
-}
-
-/// Emit a checked, unexecuted administrator removal plan, or refuse.
-///
-/// The command itself never runs `sudo`, `launchctl`, `rm`, or any elevation.
-/// It only prints fixed literal steps after the on-disk definition verifies as
-/// the exact reviewed generator for the current operator and executable and
-/// the launchd observation is determinate.
-fn run_gateway_remove_listener_handoff(output_json: bool) -> Result<String, RunnerError> {
-    let report = observe_handoff_maintenance_for_removal();
-    if output_json {
-        let (result, steps) = removal_result_for_disposition(report.removal);
-        return Ok(gateway_handoff_report_json(
-            "remove-listener-handoff",
-            result,
-            &report,
-            steps,
-        ));
-    }
-    Ok(render_removal_human(&report))
-}
-
-/// Map a removal disposition to its bounded JSON result and optional steps.
-///
-/// Pure mapping so the production `run_gateway_remove_listener_handoff`
-/// branch is fixture-proven without touching live launchd state: only an
-/// available plan carries the two fixed literal steps; nothing-installed and
-/// refusals carry none.
-fn removal_result_for_disposition(
-    removal: RemovalDisposition,
-) -> (&'static str, Option<[&'static str; 2]>) {
-    match removal {
-        RemovalDisposition::PlanAvailable => ("plan_emitted", Some(removal_plan_steps())),
-        RemovalDisposition::NothingInstalled => ("nothing_installed", None),
-        RemovalDisposition::Refused(_) => ("removal_refused", None),
-    }
-}
-
-/// Render a bounded listener-handoff report as command-envelope JSON.
-fn gateway_handoff_report_json(
-    action: &str,
-    result: &str,
-    report: &HandoffMaintenanceReport,
-    steps: Option<[&'static str; 2]>,
-) -> String {
-    let mut payload = json!({
-        "schema": "effigy.gateway.command.v1",
-        "schema_version": 1,
-        "ok": true,
-        "action": action,
-        "result": result,
-        "effects": "unexecuted",
-        "label": LAUNCHD_JOB_LABEL,
-        "definition_path": LAUNCHD_PLIST_PATH,
-        "definition": report.definition.label(),
-        "program": report.program.label(),
-        "job": report.job.label(),
-        "operator": report.operator.label(),
-        "removal": report.removal.label(),
-    });
-    if let Some(refusal) = report.removal.refusal() {
-        payload["refusal"] = json!(refusal);
-    }
-    if let Some(identity) = report.identity {
-        payload["observed_file"] = json!({
-            "uid": identity.uid,
-            "gid": identity.gid,
-            "mode": identity.mode & 0o7777,
-            "size": identity.size,
-            "inode": identity.inode,
-        });
-    }
-    if let Some(steps) = steps {
-        payload["steps"] = json!(steps);
-    }
-    payload.to_string()
 }
 
 fn ensure_gateway_tls_ca_ready(

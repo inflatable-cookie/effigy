@@ -1,15 +1,13 @@
 //! `effigy tasks status`: the task engine's run journal plus a fresh gate
 //! probe (contract 018, `effigy.tasks-status.v2`). A pure read: nothing is
-//! created, imported or repaired. A task with no runs yet shows its v0.14
-//! status record read-only, for one minor (contract 052 §11, M6).
+//! created, imported or repaired. Kernel run rows are the only task status;
+//! v0.14 status records are neither read nor imported (contract 052 §10.1).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use effigy_cli::TasksArgs;
-use effigy_execution::{TaskStatusState, TaskStatusTargetIdentity};
 use effigy_manifest::LoadedCatalog;
-use effigy_runtime::task_status::{reconcile_task_status_records, TaskStatusReadSnapshot};
 use effigy_tasks::{parse_task_selector, CatalogSelectionMode};
 use effigy_ui::{text_renderer, Renderer};
 use serde::Serialize;
@@ -32,16 +30,6 @@ pub(super) fn run_task_status(args: &TasksArgs, raw_selector: &str) -> Result<St
         .map_err(RunnerError::from)?;
     let target = TaskTarget::for_selection(&repo_root, &selector.task_name, &selection);
     let view = task_status(&target, HISTORY_LIMIT);
-    let legacy = (!view.has_runs())
-        .then(|| {
-            legacy_view(
-                &repo_root,
-                &selection.catalog.catalog_root,
-                raw_selector,
-                &selector,
-            )
-        })
-        .flatten();
 
     if args.output_json {
         let payload = json!({
@@ -53,7 +41,6 @@ pub(super) fn run_task_status(args: &TasksArgs, raw_selector: &str) -> Result<St
             "latest": view.latest,
             "history": view.history,
             "next": view.next,
-            "legacy": legacy,
             "warnings": view.warnings,
             "routing": {
                 "repo_root": repo_root.display().to_string(),
@@ -72,7 +59,6 @@ pub(super) fn run_task_status(args: &TasksArgs, raw_selector: &str) -> Result<St
         &selection.catalog.alias,
         &selection.evidence,
         &view,
-        legacy.as_ref(),
     ))
 }
 
@@ -226,45 +212,6 @@ fn task_json(target: &TaskTarget) -> serde_json::Value {
     })
 }
 
-/// The v0.14 record for this task, read-only. Its liveness fields are not
-/// trusted: v0.14 judged a run stale after 20 s without a stage change.
-fn legacy_view(
-    repo_root: &Path,
-    catalog_root: &Path,
-    raw_selector: &str,
-    selector: &effigy_tasks::TaskSelector,
-) -> Option<serde_json::Value> {
-    let identity = TaskStatusTargetIdentity::new(
-        repo_root.to_path_buf(),
-        catalog_root.to_path_buf(),
-        raw_selector.to_owned(),
-        selector.task_name.clone(),
-        None,
-    );
-    let snapshot: TaskStatusReadSnapshot =
-        reconcile_task_status_records(repo_root, &identity.status_key()).ok()?;
-    let latest = snapshot.latest.as_ref()?;
-    Some(json!({
-        "schema": "effigy.tasks-status.v1",
-        "read_only": true,
-        "state": legacy_state_label(latest.state),
-        "finished_at": latest.finished_at,
-        "outcome": latest.outcome.summary,
-        "note": "recorded by Effigy v0.14; run the task once to start run-journal status",
-    }))
-}
-
-fn legacy_state_label(state: TaskStatusState) -> &'static str {
-    match state {
-        TaskStatusState::Running => "running",
-        TaskStatusState::Succeeded => "succeeded",
-        TaskStatusState::Failed => "failed",
-        TaskStatusState::Cancelled => "cancelled",
-        TaskStatusState::Blocked => "blocked",
-        TaskStatusState::Unknown => "unknown",
-    }
-}
-
 fn render_json(payload: &serde_json::Value) -> Result<String, RunnerError> {
     serde_json::to_string_pretty(payload).map_err(|error| {
         RunnerError::task_invocation(format!("failed to render task status json: {error}"))
@@ -277,7 +224,6 @@ fn render_task_status_text(
     catalog_alias: &str,
     evidence: &[String],
     view: &TaskStatusView,
-    legacy: Option<&serde_json::Value>,
 ) -> String {
     use effigy_core::widgets::KeyValue;
     let mut renderer = text_renderer();
@@ -341,18 +287,7 @@ fn render_task_status_text(
     }
     if view.history.is_empty() {
         let _ = renderer.text("");
-        match legacy {
-            Some(legacy) => {
-                let _ = renderer.text(&format!(
-                    "No runs yet. Effigy v0.14 recorded `{}` at {} (read-only).",
-                    legacy["state"].as_str().unwrap_or("unknown"),
-                    legacy["finished_at"].as_str().unwrap_or("an unknown time"),
-                ));
-            }
-            None => {
-                let _ = renderer.text("No runs recorded yet.");
-            }
-        }
+        let _ = renderer.text("No runs recorded yet.");
     }
     if !view.warnings.is_empty() {
         let _ = renderer.text("");

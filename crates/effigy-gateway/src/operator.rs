@@ -27,8 +27,12 @@ pub(crate) fn error(reason: impl std::fmt::Debug) -> io::Error {
     io::Error::other(format!("{reason:?}"))
 }
 pub fn context(budget: Duration, class: EffectClass) -> OperationContext {
+    context_until(Deadline::At(Instant::now() + budget), class)
+}
+
+fn context_until(deadline: Deadline, class: EffectClass) -> OperationContext {
     OperationContext::new(
-        Deadline::At(Instant::now() + budget),
+        deadline,
         CancelToken::default(),
         Limits {
             capture_tail: 65536,
@@ -41,6 +45,13 @@ pub fn context(budget: Duration, class: EffectClass) -> OperationContext {
         class,
         Placement::Host,
     )
+}
+
+/// Deadline of the readiness phase's own budget. The phase starts when
+/// admission completes, so the deadline is that instant plus the readiness
+/// budget and never the caller's earlier start (papercut a9b40685).
+fn readiness_deadline(admitted_at: Instant, readiness: Duration) -> Instant {
+    admitted_at + readiness
 }
 pub fn run_id() -> io::Result<RunId> {
     let mut random = [0; 10];
@@ -387,9 +398,43 @@ pub fn self_test(config: &GatewayConfig, budget: Duration) -> io::Result<()> {
 pub fn up(config: &GatewayConfig) -> io::Result<Status> {
     up_with_executable(config, &std::env::current_exe()?)
 }
+
+/// Bounded phases of one operator gateway start.
+///
+/// Supervisor admission (spawn, journal begin, gate, custody) and the daemon's
+/// own readiness self-test are separate phases with separate budgets. A slow
+/// admission on a saturated host must not consume the readiness budget, and
+/// each phase reports its own timeout (papercut a9b40685).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StartupBudget {
+    /// How long this caller waits for the supervisor to admit the run.
+    pub admission: Duration,
+    /// How long the admitted daemon has to pass its self-test. Measured from
+    /// the moment admission completed, never from before it.
+    pub readiness: Duration,
+}
+
+impl StartupBudget {
+    /// Production bounds.
+    pub const DEFAULT: Self = Self {
+        admission: Duration::from_secs(15),
+        readiness: Duration::from_secs(15),
+    };
+}
+
 /// Embedders supply the same-binary kernel entry point explicitly. Identity is
 /// captured before spawn and rechecked by every supervisor and sentinel.
 pub fn up_with_executable(config: &GatewayConfig, executable_path: &Path) -> io::Result<Status> {
+    up_with_executable_within(config, executable_path, StartupBudget::DEFAULT)
+}
+
+/// [`up_with_executable`] with explicit phase bounds. Production uses
+/// [`StartupBudget::DEFAULT`]; the phase-boundary proofs use their own.
+pub fn up_with_executable_within(
+    config: &GatewayConfig,
+    executable_path: &Path,
+    budget: StartupBudget,
+) -> io::Result<Status> {
     require_operator()?;
     let before = status(config)?;
     if before.ready {
@@ -412,8 +457,6 @@ pub fn up_with_executable(config: &GatewayConfig, executable_path: &Path) -> io:
     crate::endpoint_store::EndpointStore::new(home)
         .require_active()
         .map_err(error)?;
-    let op = context(Duration::from_secs(15), EffectClass::Mutate);
-    let cx = op.effects().map_err(error)?;
     let executable = Executable::capture(executable_path)?;
     let mut env: BTreeMap<OsString, EnvValue> = std::env::vars_os()
         .map(|(key, value)| (key, EnvValue::Plain(value)))
@@ -451,7 +494,12 @@ pub fn up_with_executable(config: &GatewayConfig, executable_path: &Path) -> io:
         terminal: Terminal::None,
         label: "operator gateway".into(),
     };
-    let mut client = supervise::start_detached(
+    // Admission phase: everything up to the supervisor reporting the run
+    // active has its own bound, so a timeout names admission instead of the
+    // daemon's self-test.
+    let admission = context(budget.admission, EffectClass::Mutate);
+    let cx = admission.effects().map_err(error)?;
+    let mut client = match supervise::start_detached(
         &cx,
         home,
         &invocation(owner()),
@@ -460,29 +508,61 @@ pub fn up_with_executable(config: &GatewayConfig, executable_path: &Path) -> io:
         vec![spec],
         &executable,
         ClientMode::Owning,
-    )
-    .map_err(error)?;
+    ) {
+        Ok(client) => client,
+        Err(err) if admission.check("gateway admission").is_err() => {
+            return Err(error(format!(
+                "gateway supervisor admission did not complete within its {}s budget: {err}",
+                budget.admission.as_secs()
+            )))
+        }
+        Err(err) => return Err(error(err)),
+    };
     // Admission precedes child spawn. Consume its result so a refused spawn
     // reports its cause instead of waiting for the readiness deadline.
-    match client.event(&op).map_err(error)? {
-        supervise::Event::Active => {}
-        event => return Err(error(format!("gateway daemon failed to start: {event:?}"))),
+    match client.event(&admission) {
+        Ok(supervise::Event::Active) => {}
+        Ok(event) => return Err(error(format!("gateway daemon failed to start: {event:?}"))),
+        Err(err) if admission.check("gateway admission").is_err() => {
+            let _ = client.stop(&cx, run_id()?);
+            return Err(error(format!(
+                "gateway supervisor admission did not complete within its {}s budget: {err}",
+                budget.admission.as_secs()
+            )));
+        }
+        Err(err) => return Err(error(format!("gateway supervisor admission failed: {err}"))),
     }
+    // Readiness phase: the budget starts here, after admission, so time spent
+    // admitting the run (spawn, journal, gate, custody) is not counted twice.
+    let admitted_at = Instant::now();
+    let op = context_until(
+        Deadline::At(readiness_deadline(admitted_at, budget.readiness)),
+        EffectClass::Observe,
+    );
+    // Stopping and detaching are control operations, not observations, and they
+    // must not depend on the admission context's expired deadline.
+    let control = context(budget.readiness, EffectClass::Mutate);
+    let control_cx = control.effects().map_err(error)?;
     loop {
         if op.check("gateway readiness").is_err() {
-            let _ = client.stop(&cx, run_id()?);
-            return Err(error("gateway did not accept its self-test before the startup deadline; inspect `effigy gateway status`"));
+            let _ = client.stop(&control_cx, run_id()?);
+            return Err(error(format!(
+                "gateway did not accept its self-test within the {}s readiness phase that started after admission; inspect `effigy gateway status`",
+                budget.readiness.as_secs()
+            )));
         }
         if let Ok(result) = status(config) {
             if result.run == Some(client.run) && result.status == "stopped" {
                 let reason = result
                     .reason
                     .unwrap_or_else(|| "gateway daemon stopped during startup".into());
-                client.wait(&op).map_err(error)?;
+                client
+                    .wait(&context(budget.readiness, EffectClass::Observe))
+                    .map_err(error)?;
                 return Err(error(reason));
             }
             if result.ready {
-                client.detach(&cx, run_id()?).map_err(error)?;
+                client.detach(&control_cx, run_id()?).map_err(error)?;
                 return Ok(result);
             }
         }
@@ -575,6 +655,33 @@ fn http_probe(config: &GatewayConfig, cx: &ObserveContext) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn gateway_readiness_budget_starts_after_admission() {
+        // A slow admission is a separate phase: the readiness deadline is the
+        // admission-completion instant plus its own budget. The old code
+        // measured both phases from before admission, so this deadline would
+        // have been 13s earlier and expired before the daemon self-tested.
+        let started = Instant::now();
+        let admitted_at = started + Duration::from_secs(14);
+        let deadline = readiness_deadline(admitted_at, StartupBudget::DEFAULT.readiness);
+        assert_eq!(
+            deadline,
+            admitted_at + StartupBudget::DEFAULT.readiness,
+            "the readiness budget is scoped after admission"
+        );
+        assert!(
+            deadline > started + StartupBudget::DEFAULT.readiness,
+            "a slow admission must not consume the readiness budget"
+        );
+        assert_eq!(
+            StartupBudget::DEFAULT,
+            StartupBudget {
+                admission: Duration::from_secs(15),
+                readiness: Duration::from_secs(15),
+            }
+        );
+    }
+
     #[test]
     fn missing_setup_status_is_read_only_and_never_launches_an_elevation_tool() {
         let home = tempfile::tempdir().unwrap();

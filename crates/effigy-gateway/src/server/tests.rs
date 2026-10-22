@@ -1096,3 +1096,30 @@ fn permission_reuse_structural_diagnosis_distinguishes_each_gate() {
         assert!(rendered.len() < 1024, "diagnosis stays bounded");
     }
 }
+
+/// Papercut 0694ef12: a record this caller may not open is reported as
+/// unreadable, never as a malformed record, so a headless diagnosis can tell
+/// "root-owned and invisible to me" from "untrusted bytes".
+#[cfg(unix)]
+#[test]
+fn gateway_status_diagnosis_distinguishes_an_unreadable_record() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let config = GatewayConfig::standard(dir.path().join("gateway"));
+    std::fs::create_dir_all(config.pid_file_path.parent().unwrap()).unwrap();
+    std::fs::write(&config.pid_file_path, "4242\n").unwrap();
+    let identity = config.pid_file_path.with_extension("identity");
+    std::fs::write(&identity, b"{}").unwrap();
+    std::fs::set_permissions(&identity, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let diagnosis = diagnose_gateway_status_with(
+        &config,
+        |_| panic!("an unreadable record must not be probed"),
+        |_| panic!("an unreadable record must not be probed for identity"),
+    );
+    assert_eq!(diagnosis.record, GatewayRecordKind::Unreadable);
+    assert_eq!(diagnosis.pid, None);
+    assert_eq!(diagnosis.identity, GatewayIdentityOutcome::NotChecked);
+    assert!(render_gateway_diagnosis(&diagnosis).contains("record=unreadable"));
+    // Restore the fixture's mode so the temporary directory is removable.
+    std::fs::set_permissions(&identity, std::fs::Permissions::from_mode(0o600)).unwrap();
+}

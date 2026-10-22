@@ -269,7 +269,7 @@ pub enum ManifestManagedRunStep {
 pub struct ManifestManagedRunStepTable {
     #[serde(default)]
     pub run: Option<String>,
-    #[serde(default, alias = "draft")]
+    #[serde(default)]
     pub task: Option<String>,
     #[serde(default)]
     pub rhai: Option<String>,
@@ -344,7 +344,6 @@ impl ManifestInlineTaskDefinition {
                 ManifestManagedRunStep::Step(Box::new(ManifestManagedRunStepTable {
                     run: self.run,
                     task: self.task,
-
                     rhai: self.rhai,
                     env: None,
                     env_file: None,

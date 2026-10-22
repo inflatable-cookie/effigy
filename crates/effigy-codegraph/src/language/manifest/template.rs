@@ -258,7 +258,6 @@ pub(super) fn looks_like_effigy_manifest(table: &TomlMap<String, Value>) -> bool
                 | "test"
                 | "package_manager"
                 | "scan"
-                | "shell"
                 | "env_schema"
                 | "secrets"
                 | "docs_policy"

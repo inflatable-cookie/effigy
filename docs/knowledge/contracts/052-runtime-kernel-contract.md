@@ -776,34 +776,84 @@ Spawn protocol:
 | Step | Action | If the owner dies here |
 | --- | --- | --- |
 | 1 | `intend(Process { spec digest, label })` | `Intended`, nothing spawned |
-| 2 | fork; the child calls `setpgid(0, 0)`, then blocks reading a barrier pipe in `pre_exec` | child reads EOF and `_exit`s before exec: no workload ran |
-| 3 | parent records `{pid, pgid, start identity, boot identity}` as `Applied` | child reads EOF and exits; settle observes the group `Absent` |
-| 4 | parent writes the go byte; the child execs the workload | settle stops the recorded group |
+| 2 | fork; child creates its group (`setsid` for a PTY), forks and waits for its anchor, then blocks on the barrier | barrier EOF exits child and pre-go anchor; no workload ran |
+| 3 | parent records `{pid, pgid, start identity, boot identity, anchor}` as `Applied` | child and pre-go anchor exit; settle observes closure |
+| 4 | parent writes go; child releases the anchor, then execs the workload | settle stops the workload and anchor by identity |
 
 Every custody spawn sets `EFFIGY_CUSTODY_NONCE=<run>:<effect>` in the child's
 environment; descendants inherit it. It is evidence, not a credential.
+Before acknowledging the barrier, the blocked child forks an anchor inside
+its already-created process group (and its session for a PTY). A transient
+intermediate child reparents the anchor and is reaped before workload exec,
+so the workload never inherits a hidden child to wait for. The anchor
+re-execs the run's retained startup image as `__kernel-anchor`, verifies the
+image (I-SV4), ignores HUP, INT and TERM, then acknowledges its pid. Linux
+executes and verifies the held descriptor; macOS uses the existing private
+image pin when the startup path was replaced. Its environment contains only
+the custody nonce. The parent records the full `{pid, start, boot}` identity
+in the optional `anchor` field alongside the existing receipt. Old receipts
+omit that field and deserialize unchanged; imports infer no anchor.
+
+The anchor reads a separate go channel until launch. Barrier EOF closes that
+channel when the blocked child exits, so an unrecorded anchor cannot persist.
+After the durable receipt and owner go byte, the child releases the anchor
+before execing the workload. The anchor closes its last descriptors and
+waits in `pause`; owner or leader death cannot retire it. It inherits no
+workload streams, gate descriptors or sentinel writer, and its output and
+exit never become workload output or status. This costs one persistent
+process and a transient reparenting fork per custody group. A protected OS
+shell is unsuitable on macOS because its environment may be unavailable to
+recovery; the native helper keeps the full nonce verification requirement.
+`PR_SET_CHILD_SUBREAPER` helps reap Linux orphans but does not pin a group;
+cgroups add Linux-only infrastructure and delegation policy. Neither replaces the
+portable anchor needed on macOS.
+
+A fork-only anchor in the blocked leader cannot obtain the new effect's nonce
+through macOS `KERN_PROCARGS2`: it exposes the exec-time environment, even when
+the libc environment was changed before fork. The existing single-threaded
+sentinel is in another session and cannot join a PTY workload's group.
+`fork_only_anchor_cannot_obtain_the_effect_nonce_or_join_a_pty_session` proves
+both constraints. A fork-only anchor would require an execed custody leader
+helper, or delegating workload creation and descriptor transfer to a sentinel
+launched with its own recorded nonce. This implementation execs only the
+anchor and preserves the existing workload barrier protocol. The retained
+startup image is the only
+shipped native image with the kernel entry point; using it preserves I-SV4 and
+avoids adding a separately distributed helper. After the leader's descriptor
+closure, anchor setup closes only its newly created descriptors; the helper
+closes the protocol's known inherited descriptors after image verification.
+
+Planner ruling (2026-10-21, effigy-bd): about 500 net production lines plus
+proofs are authorized; proof and benchmark lines do not count toward the
+original approximate 600-line tripwire. Spawn cost is the acceptance gate:
+measure a release image with at least 20 paired samples on quiet and loaded
+hosts, reporting p50 and p90 added latency. Target p50 is at most 25 ms; if
+p50 cannot reach 50 ms, stop and report alternatives rather than ship.
 
 If step 3 fails (ENOSPC), the parent kills the blocked child and returns
 `SpawnError::Unrecorded`. A later spawn failure in `spawn_all` stops every
 earlier child and returns both the primary and the cleanup errors.
 
 Owner stop. The owner holds the leader's `Child` and does not reap it until
-group closure is verified. The leader's pid is the group id, so neither can
-be reused while the owner signals. TERM plus CONT to the group, wait the
-grace, KILL the group, verify that no member other than the unreaped leader
-remains, then reap. `kill(-pgid, 0)` returning `ESRCH` proves the group
-`Absent`. `EPERM` is `Unknown`. Leader exit alone is never closure. Output
-EOF and exit are separate events; capture drains under its own deadline
-after closure. `src/runner/host_process.rs:3114-3149` and `:3217` already
-hold the unreaped root and refuse an unverified group; the regression at
-`:4297` is the model.
+workload closure and capture drain are verified. With an anchor, TERM plus
+CONT and then KILL target individually inventoried workload identities,
+checking the anchor and membership before every signal. KILL inventories
+repeat until closure, covering children forked during an earlier inventory.
+The anchor itself is excluded from workload closure and killed last, after
+no live workload member remains. Group closure is then verified, and only
+then is the leader reaped. Output EOF and exit are separate events; capture
+drains under its own deadline. Unanchored custody retains the unreaped-leader
+group-signal path. `ESRCH` proves absence; unreadable observations remain
+`Unknown`. Leader exit alone is never closure.
 
 Recovery stop. A sentinel or successor settles after the owner died; the
 leader was reparented and its number is no longer pinned.
 
 | Observation | Signal authority |
 | --- | --- |
-| Leader alive with the recorded start and boot identity | signal the group. On Linux 6.9 or later: open a pidfd, check identity, then call `pidfd_send_signal` with `PIDFD_SIGNAL_PROCESS_GROUP`, which targets the original group's kernel identity, not its number. Elsewhere (older Linux, macOS): a numeric group signal follows the identity check, with the window below. |
+| Recorded anchor has its start and boot identity, custody nonce and recorded group membership | Its continuous presence pins the original group. Signal workload members individually after fresh identity and membership checks; Linux uses per-process pidfds, macOS has the documented check/signal window. Exclude the anchor from workload closure and stop it last. |
+| Recorded anchor missing, killed, replaced or unreadable; workload members remain | `Unknown`; no anchor-derived signal, never a numeric group signal. An empty group still proves closure. |
+| No anchor in the receipt; leader alive with the recorded start and boot identity | signal the group. On Linux 6.9 or later: open a pidfd, check identity, then call `pidfd_send_signal` with `PIDFD_SIGNAL_PROCESS_GROUP`, which targets the original group's kernel identity, not its number. Elsewhere (older Linux, macOS): a numeric group signal follows the identity check, with the window below. |
 | Leader gone or identity differs, and `kill(-pgid, 0)` returns `ESRCH` | none needed: `Absent` |
 | Leader gone or identity differs, and the group has members | signal each member individually, only if its environment carries the run's custody nonce and it started no earlier than the recorded spawn. On Linux, through a per-process pidfd opened before the check. A member that has provably left the group since the inventory (its pid is gone or a zombie) is re-inventoried, never residue. Other members: `Unknown`, residue, never signalled. |
 | Process table or member environment unreadable | `Unknown`, residue |
@@ -833,13 +883,17 @@ kernel restores it on exit.
 
 - I-P1: the owner exists before the first spawn. `spawn` takes `&mut Run`,
   which exists only after `Admitted` (K6).
-- I-P2: no workload executes without a durable custody record. The barrier
-  enforces this.
+- I-P2: no workload executes without a durable custody record including its
+  ready anchor. Both share the existing barrier and go byte; the anchor holds
+  the group before either can release workload execution. No parent-side
+  `setpgid` races an exec, including on macOS or for a PTY session.
 - I-P3: the owner keeps the leader unreaped, and the group retained, until
   closure is verified, not until the leader exits.
 - I-P4: signals need positive generation evidence: the owner's unreaped
-  leader; in recovery, the leader's verified start and boot identity, or a
-  member's custody nonce plus start time. A non-empty group or session is
+  leader; in recovery, a verified anchor's continuous group membership plus
+  the target's fresh identity and membership; or, for an unanchored receipt,
+  the leader's verified start and boot identity or a member's custody nonce
+  plus start time. A non-empty group or session is
   never ownership evidence. No pattern kills (`pkill -f`). Missing evidence
   is residue only while the member is still present: a member that exited
   between the group inventory and its evidence read is re-inventoried, so a
@@ -849,15 +903,15 @@ kernel restores it on exit.
 - I-P6: secrets never appear in argv; no `set_var`.
 - I-P7: one router per process (K9). Libraries take `CancelToken`. Rhai polls
   the token and never installs a handler.
-- I-P8: a process that creates a new session escapes the group, and one that
-  clears its environment loses the nonce. Either is outside custody in
-  recovery and is reported, never signalled by number. Guest-placement
-  Effigy never creates sessions or clears the nonce.
-  A nonce-free descendant surviving a reaped leader (papercut aedb6038) is
-  likewise `Unknown` residue: recovery preserves its records and files and
-  never signals it. PGID, boot identity and a start after launch cannot prove
-  continuity across an emptied and reused group. A retained group anchor is
-  deferred to Queue lead `9717909b` (planner ruling, 2026-10-21).
+- I-P8: a process that creates a new session escapes the group and remains
+  outside custody. Clearing the environment loses the nonce but no longer
+  escapes recovery when the recorded anchor is verified: the anchor proves
+  uninterrupted group continuity after the leader is reaped. If the anchor
+  was killed externally, or the receipt predates anchors (including v0.14.1
+  imports), nonce-free survivors are still `Unknown` residue, never signalled
+  by number. PGID, boot identity and a start after launch alone cannot prove
+  continuity across an emptied and reused group. Guest-placement Effigy
+  never creates sessions or clears the nonce.
 
 #### Failure model
 
@@ -865,6 +919,9 @@ kernel restores it on exit.
 | --- | --- |
 | Crash, Kill of owner before the go byte | The child exits on barrier EOF. No workload ran. |
 | Crash, Kill of owner after the go byte | The sentinel or the next gate holder stops the recorded group by identity. |
+| Anchor killed externally | Live workload members become `Unknown` in anchored recovery; no signal is authorized by the dead anchor. |
+| Crash at anchor spawn or record | Pre-go barrier EOF retires the blocked child and anchor; after record the sentinel can observe both. |
+| Crash at anchor stop | Workload closure was already verified. Recovery stops a surviving verified anchor or observes the already closed group. |
 | SIGSTOP of a child | CONT follows TERM; KILL works on stopped processes. |
 | ENOSPC on the custody record | Child killed before exec; `Unrecorded`. |
 | ENOSPC on logs | Capture continues in the ring; the log is marked truncated. The outcome is unchanged (K10). |
@@ -873,6 +930,17 @@ kernel restores it on exit.
 
 #### Proof
 
+- `anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor`: real
+  nonce-free orphan recovery after reaping the leader (ordinary and PTY),
+  externally killed anchor refusal and old-receipt refusal.
+- `anchor_spawn_overhead_is_measured`: matched before/after measurements
+  with 24 alternating release-build pairs per acceptance condition, p50 and
+  p90 added latency, host load, and a workload with no hidden child to reap.
+- `fault_matrix_registration_spawn_and_socket_kill_enospc` and the custody
+  fault scenarios cross `AnchorSpawn`, `AnchorRecord`, `AnchorStop` and
+  `AnchorStopped`, including owner SIGKILL. The driver waits for writer
+  helpers before recovery and requires all recorded nonwriting anchors to
+  retire after recovery, including anchors that never reached registration.
 - `custody_prepare_source_requires_its_class_and_settles_with_a_sentinel`
   qualifies Prepare acquisition through `Custody::spawn_source`: successful,
   failed and deadline-expired children settle through the registered sentinel.
@@ -1525,6 +1593,7 @@ them; the table governs new kernel-backed surfaces.
 | Perm | Refuse before effects; observations become `Unknown`. | That an `Unknown` resource is safe to act on. |
 | Clock jump, suspend | No authority from wall time; gates have no time; quarantine uses the boot clock. | Accurate displayed timestamps. |
 | SIGSTOP of a holder | Never stolen; waiters time out naming it. | Progress. |
+| Lost group anchor | Unverifiable live groups stay `Unknown`; no numeric group signal. | Cleanup of nonce-free descendants after anchor loss, or session escapes. |
 | External boundaries | At-least-once attempts with idempotent undo, inspect-and-reconcile, or a recorded `Irreversible` or `Unknown`. | Exactly-once delivery across filesystem, engine or network. |
 
 ## 7. Store layout
@@ -1952,9 +2021,9 @@ Task engine adoption (effigy#217, 2026-10-19):
 | Row | State |
 | --- | --- |
 | Lock key, lease lock, `tasks unlock`, hostname as namespace | Done. `TaskId` from the one resolver; `Gate(Task)` per run; shared locks are `Store(task-lock:<name>)` runs; holders are host gates only. `tasks unlock` refuses for one minor. |
-| Status rows | Done. `effigy.tasks-status.v2` projects run rows plus a gate probe ([018](018-task-status-query-surface-and-read-model-contract.md)). |
+| Status rows | Done. `effigy.tasks-status.v2` projects run rows plus a gate probe ([018](018-task-status-query-surface-and-read-model-contract.md)). The one-minor v0.14 read-only fallback (M6) is retired in v0.15: kernel run rows are the only task status, and `effigy tasks status` no longer reads `.effigy/runtime/tasks/` or `.effigy/reports/tasks/`. |
 | Status write failure | Done. Journal failures are warnings; the task's exit code stands (K10). |
-| Process group always; owned-children stop | Done for plain host commands: `Custody::spawn` with `Terminal::Inherit`, a per-run sentinel, the router installed before the first custody spawn. Host sequence steps also use child-run custody (effigy#226). Container task routes, inline workspace tasks, sequence container steps, built-in `exec` steps and named-container managed setup run under remote custody (§5.10, effigy#236). Top-level `effigy exec`, aliases, shells and managed processes keep their current spawners until their owners adopt custody. |
+| Process group always; owned-children stop | Local groups retain a recorded anchor before workload go (effigy#252), allowing recovery of nonce-free members after the leader is reaped; lost anchors and old unanchored receipts retain the conservative refusal (§5.7). Done for plain host commands: `Custody::spawn` with `Terminal::Inherit`, a per-run sentinel, the router installed before the first custody spawn. Host sequence steps also use child-run custody (effigy#226). Container task routes, inline workspace tasks, sequence container steps, built-in `exec` steps and named-container managed setup run under remote custody (§5.10, effigy#236). Top-level `effigy exec`, aliases, shells and managed processes keep their current spawners until their owners adopt custody. |
 | Generated sequence script | One typed engine with child Runs for every placement, in text and JSON: host steps (effigy#226) and container steps under remote custody (effigy#236); the `legacy_container_step` seam and the generated named-container setup script are gone. Container setup embedded in a lifecycle-managed process command still runs inside that managed process, so its per-step journals need the run supervisor's custody of managed processes; not done in #236. |
 | Env-schema commands | Done. Resolved after `Admitted`; each `exec()` is a custody effect of the run with bounded capture. |
 | `set_var` | Done for the vault passphrase, the local-dev marker and the managed run token. Sequence environments use lexical spawn inputs, never process-global mutation (effigy#226). The external task source isolation marker remains. |
@@ -1962,7 +2031,7 @@ Task engine adoption (effigy#217, 2026-10-19):
 | Git exclude on reads; bundle refresh during reads; scheduler signal handler | Not this task. Read paths no longer refresh bundles or append Git excludes (source pins, effigy#220). The scheduler client and its signal handler are gone (Q-006, effigy#227). |
 | Heavy admission and run control (Q-006) | Done (effigy#227). `admission = "heavy"` is metadata; `EFFIGY_ADMISSION_HOOK` runs as an auxiliary custody process held until settle; `--run-id` derives the run id; `runs`, `run status|logs|stop` read the journal, the per-stream logs (family 6) and request `Stop`. Contract [049](049-heavy-validation-admission-contract.md). |
 | QA group records | Done for liveness: a group run is a kernel run, and status reads its gate, not a PID or heartbeat. The member report files remain reports. |
-| Per-run scratch directory (effigy#244) | Done. With user config `[scratch] root` naming a mounted volume's root, each host-placed run — the built-in `effigy test` route too, through a standalone engine run — records a `scratch:run-dir` effect with `Reconcile` settlement before creating `<root>/<8-character run directory>/`, a name derived from the run's whole id so same-instant and keyed runs differ, and its host processes see that directory as `TMPDIR`, `TMP` and `TEMP`. Ownership is the marker plus that derived name: no other directory at that path is ever observed as this run's, given a verdict or removed, and a failed creation confers no cleanup authority. The built-in route's host suites are child runs of its run, so each suite's process group is custody the run settles before the directory is released; that run carries a sentinel (`Run::owns_sentinel`), which settles the run and its suites after an owner death, so the directory is retained with a close time and the sweep can expire it; the multi-suite TUI is not used while such a run holds the suites, because it spawns processes of its own. With no configured root the route opens no run, so it needs no Effigy state home. The settle releases the directory when the run succeeded and retains it otherwise; retention starts when the run ended (the owner's marker, or the journal's close time when the sentinel concluded) and a bounded Prepare-step sweep removes retained directories of closed runs after 24 hours. Only the run that opened the directory concludes it: a step or nested run holds an inherited handle and decides nothing, and a nested task's `scratch = false` hides its parent's directory from its own host processes. A nested run or step reuses its parent's directory, container workloads never see it, and a task's `scratch = false` (managed sessions included) or `EFFIGY_SCRATCH=0` opts out. The gate proves the root is the volume's mount point, a separate, root-owned volume root with no ACL and no other-write, and checks the optional UUID pin on an opened descriptor; a refusal falls back to the default temp directory with the reason `effigy doctor` reports. The marker is run metadata on the operator's volume, outside the state root and outside this contract's families, so `qa:kernel-ratchet` accounts for its one raw write by name and ceiling rather than routing it through a kernel it does not belong to. |
+| Per-run scratch directory (effigy#244, effigy#253) | Done. With user config `[scratch] root` naming any directory on a separate drive, each host-placed run — the built-in `effigy test` route too, through a standalone engine run — records a `scratch:run-dir` effect with `Reconcile` settlement before creating `<root>/<8-character run directory>/`, a name derived from the run's whole id so same-instant and keyed runs differ, and its host processes see that directory as `TMPDIR`, `TMP` and `TEMP`. Ownership is the marker plus that derived name: no other directory at that path is ever observed as this run's, given a verdict or removed, a failed creation confers no cleanup authority, and the retention sweep removes only run-named directories carrying Effigy's own marker, so foreign directories and files in the root are never touched. The built-in route's host suites are child runs of its run, so each suite's process group is custody the run settles before the directory is released; that run carries a sentinel (`Run::owns_sentinel`), which settles the run and its suites after an owner death, so the directory is retained with a close time and the sweep can expire it; the multi-suite TUI is not used while such a run holds the suites, because it spawns processes of its own. With no configured root the route opens no run, so it needs no Effigy state home. The settle releases the directory when the run succeeded and retains it otherwise; retention starts when the run ended (the owner's marker, or the journal's close time when the sentinel concluded) and a bounded Prepare-step sweep removes retained directories of closed runs after 24 hours. Only the run that opened the directory concludes it: a step or nested run holds an inherited handle and decides nothing, and a nested task's `scratch = false` hides its parent's directory from its own host processes. A nested run or step reuses its parent's directory, container workloads never see it, and a task's `scratch = false` (managed sessions included) or `EFFIGY_SCRATCH=0` opts out. The gate proves the root's volume is a separately mounted volume — its device differs from the boot and data volumes and a mount point above it is held by another device — checks the optional UUID pin on an opened descriptor, and accepts a root owned by the current user or by root that is closed to group and world writes and carries no ACL. A missing root is created with mode 0700 only when its nearest existing ancestor passes the volume proof, and `effigy doctor` inspects without creating. A refusal falls back to the default temp directory with the reason `effigy doctor` reports. Effigy hardcodes no path, UUID or other tool's directory. The marker is run metadata on the operator's volume, outside the state root and outside this contract's families, so `qa:kernel-ratchet` accounts for its one raw write by name and ceiling rather than routing it through a kernel it does not belong to. |
 
 Prerequisite kernel additions for that adoption: `run::history`,
 `run::unclosed` and `RunSummary` (§5.6 status reads); `TaskId` and
@@ -2101,7 +2170,7 @@ Environment reconciler adoption, tranche 3 (effigy#230, 2026-10-20):
 | Record and transition locks | `crates/effigy-gateway/src/identity.rs:870`; `crates/effigy-gateway/src/transition_lock.rs` | `Gate(Gateway)` |
 | Routes, ports and loopback files under `RouteTableLock` | `crates/effigy-gateway/src/routes.rs:188`, `:262`; `crates/effigy-gateway/src/ports.rs:137-155`; `crates/effigy-gateway/src/ports/reclaim.rs:109-113`; `crates/effigy-gateway/src/loopback.rs:81` | endpoint claims with revisions (I-A3, I-A4) |
 | Listener claim check turns unknown into false | `crates/effigy-gateway/src/registration.rs:81` | `Observed` (R3) |
-| Reuse of an unverified gateway | `src/runner/gateway_command/mod.rs:168` | R3 |
+| Reuse of an unverified gateway | `src/runner/gateway_command/mod.rs:140` | R3 |
 
 ### 10.5 Other runs and stores
 
@@ -2146,7 +2215,7 @@ other scope gains downgrade support. The owning protocol and proofs are in
 | Legacy family | Location | Import | Quiesce condition | `Unknown` handling |
 | --- | --- | --- | --- | --- |
 | Task lease locks | `<root>/.effigy/locks/` | not imported | a live legacy holder (same host, PID alive, Effigy command) refuses Mutate on that task with the next command | foreign hostname or unreadable record: refuse, never delete |
-| Task status v1 | `<root>/.effigy/runtime/tasks/`, `<root>/.effigy/reports/tasks/` | not imported; read-only legacy view for one minor | — | — |
+| Task status v1 | `<root>/.effigy/runtime/tasks/`, `<root>/.effigy/reports/tasks/` | not imported and not read; the one-minor read-only view is retired in v0.15 (M6), so old status history is dropped. Status history is not state: nothing restarts or unlocks from it. | — | — |
 | Managed sessions, stop markers, exec group markers, lifecycle state | `<root>/.effigy/runtime/managed*/` | a run with phase from its status, owner identity PID-only | a live legacy owner refuses `begin` for that owner and names the legacy stop control, kept for one minor | PID-only owners and bare PGIDs are `Unknown`; never signalled by number |
 | Environment markers, lease, persistent owner, handover, admission | `~/.effigy/runtime/host-container-leases/`, `<root>/.effigy/runtime/` | `resources` row: desired from persistent or lease, applied from complete, failed-unknown from partial without complete | a live reaper sleeper is waited for or refused | containers adopted only by `Verified` labels |
 | Generated renders | `<root>/.effigy/runtime/compose/` | not imported; re-rendered into objects on the next apply | — | — |

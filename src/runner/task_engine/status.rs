@@ -58,12 +58,6 @@ pub(in crate::runner) struct TaskStatusView {
     pub(in crate::runner) warnings: Vec<String>,
 }
 
-impl TaskStatusView {
-    pub(in crate::runner) fn has_runs(&self) -> bool {
-        !self.history.is_empty()
-    }
-}
-
 /// Pure read (R2): opens nothing for writing and mints no checkout token.
 pub(in crate::runner) fn task_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
     let mut view = TaskStatusView {

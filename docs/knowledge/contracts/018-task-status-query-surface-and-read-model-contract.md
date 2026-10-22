@@ -42,8 +42,8 @@ For the resolved task, newest run first (at most 20):
 `current` is the newest run while it is open. `latest` is the newest closed
 run. A live run is never replaced by an older outcome.
 
-A task with no runs shows its v0.14 `latest` record, read-only and marked
-`legacy`, for one minor.
+A task with no runs is `never-run`. v0.14 status records are retired and are
+not read, so there is no legacy view (contract 017, contract 052 §10.1).
 
 ## JSON
 
@@ -58,7 +58,6 @@ Single selector: `effigy.tasks-status.v2`.
 | `history` | newest first, the same run shape |
 | run `steps` | additive v2 field: direct child runs, recursively with the same state/cleanup fields and `step` labels; absent for a run with no child rows |
 | `next` | the settling command for an interrupted run |
-| `legacy` | the v0.14 record when the task has no runs |
 | `warnings` | unreadable-state evidence |
 | `routing` | repo root, catalog alias, catalog root and manifest, selection mode and evidence |
 
@@ -78,4 +77,4 @@ each child, its outcome, exit code, cleanup and run ID. `--all` groups rows by c
 ## Drift triggers
 
 Update this contract when the projection rules, the state set, the history
-bound, the legacy view or either schema changes.
+bound or either schema changes.

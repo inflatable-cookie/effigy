@@ -18,7 +18,6 @@ mod deps_command;
 mod distribution_command;
 mod docs_command;
 mod doctor_ports;
-mod drafts_command;
 mod embedded_runner;
 mod entrypoints;
 mod environment;

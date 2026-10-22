@@ -4,40 +4,66 @@ mod gateway_legacy_fixture;
 use effigy_gateway::{operator, GatewayConfig};
 use gateway_legacy_fixture::LegacyRegistryFixture;
 use std::net::{TcpListener, UdpSocket};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-#[test]
-fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
+/// A private operator HOME with an active setup receipt and a route table, so
+/// a start has everything it needs except the daemon itself. The control
+/// socket needs a short external pathname.
+fn operator_fixture(prefix: &str) -> (effigy_test_support::Fixture, GatewayConfig) {
     use std::os::unix::fs::PermissionsExt;
-    // The operator control socket needs a short external pathname.
-    let home =
-        effigy_test_support::Fixture::in_parent("g219-", std::path::Path::new("/tmp")).unwrap();
+    let home = effigy_test_support::Fixture::in_parent(prefix, std::path::Path::new("/tmp"))
+        .expect("private operator home");
     let gateway = home.path().join(".effigy/gateway");
-    std::fs::create_dir_all(gateway.join("certs")).unwrap();
+    std::fs::create_dir_all(gateway.join("certs")).expect("gateway cert directory");
     let mut config = GatewayConfig::standard(gateway.clone());
-    let dns = UdpSocket::bind("127.0.0.1:0").unwrap();
-    config.dns.bind_addr = dns.local_addr().unwrap();
+    let dns = UdpSocket::bind("127.0.0.1:0").expect("free DNS address");
+    config.dns.bind_addr = dns.local_addr().expect("DNS address");
     drop(dns);
     let available = || {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        listener.local_addr().unwrap()
+        let listener = TcpListener::bind("127.0.0.1:0").expect("free TCP address");
+        listener.local_addr().expect("TCP address")
     };
     config.proxy.bind_addr = available();
     config.proxy.tls_bind_addr = Some(available());
     effigy_gateway::routes::RouteTable::new()
         .save(&config.route_table_path)
-        .unwrap();
+        .expect("route table");
     let receipt = serde_json::json!({"version":1,"uid":nix::unistd::Uid::effective().as_raw(),"suffixes":["test"]});
     std::fs::write(
         gateway.join("setup.json"),
-        serde_json::to_vec(&receipt).unwrap(),
+        serde_json::to_vec(&receipt).expect("receipt json"),
     )
-    .unwrap();
+    .expect("receipt");
     std::fs::set_permissions(
         gateway.join("setup.json"),
         std::fs::Permissions::from_mode(0o600),
     )
-    .unwrap();
+    .expect("receipt mode");
+    (home, config)
+}
+
+/// Poll the private status until the run settles. A refusal must stop what it
+/// admitted rather than leave a live daemon behind.
+fn settled_status(config: &GatewayConfig) -> operator::Status {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let status = operator::status(config).expect("status");
+        if status.status == "stopped" {
+            return status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "run did not settle after a startup refusal: {status:?}"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[test]
+fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
+    use std::os::unix::fs::PermissionsExt;
+    let (home, config) = operator_fixture("g219-");
+
     // The actor gets a strict PATH. Any accidental elevation writes evidence
     // and fails; all fixture writes stay under this HOME.
     let bin = home.path().join("bin");
@@ -144,4 +170,55 @@ fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
         assert_eq!(std::env::var_os(key), Some(value));
     }
     drop(occupied);
+}
+
+/// Supervisor admission and daemon readiness are separate bounded phases
+/// (papercut a9b40685). An exhausted admission budget refuses as admission
+/// without waiting out a readiness deadline, and an exhausted readiness budget
+/// is reported after a real admission, which it then stops.
+#[test]
+fn operator_startup_bounds_admission_and_readiness_separately() {
+    let executable = std::path::Path::new(env!("CARGO_BIN_EXE_effigy"));
+
+    let (_unadmitted_home, unadmitted) = operator_fixture("g248a-");
+    let refusal = operator::up_with_executable_within(
+        &unadmitted,
+        executable,
+        operator::StartupBudget {
+            admission: Duration::ZERO,
+            readiness: Duration::from_secs(30),
+        },
+    )
+    .expect_err("a spent admission budget refuses the start")
+    .to_string();
+    assert!(refusal.contains("admission"), "{refusal}");
+    assert!(!refusal.contains("self-test"), "{refusal}");
+    assert!(
+        !operator::status(&unadmitted).expect("status").ready,
+        "a refused admission never advertises a gateway"
+    );
+
+    let (_unready_home, unready) = operator_fixture("g248b-");
+    let started = Instant::now();
+    let refusal = operator::up_with_executable_within(
+        &unready,
+        executable,
+        operator::StartupBudget {
+            admission: Duration::from_secs(30),
+            readiness: Duration::ZERO,
+        },
+    )
+    .expect_err("a spent readiness budget refuses the started daemon")
+    .to_string();
+    let elapsed = started.elapsed();
+    assert!(refusal.contains("readiness phase"), "{refusal}");
+    assert!(!refusal.contains("admission did not complete"), "{refusal}");
+    assert!(
+        elapsed < Duration::from_secs(20),
+        "the readiness refusal must not wait out a deadline: {elapsed:?}"
+    );
+    // The refusal stops the run it admitted instead of leaving it behind.
+    let settled = settled_status(&unready);
+    assert!(!settled.ready);
+    assert!(!unready.pid_file_path.exists());
 }

@@ -564,12 +564,14 @@ tasks stay public. The same keys work in compact task forms, includes and
 bundle exports. Use explicit internal visibility for standalone generated
 proofs; references alone cannot identify them.
 
-For v0.15, legacy `[drafts]` tables translate in memory to internal tasks with
-a warning. Move each definition to `[tasks.<name>]`, add
-`visibility = "internal"`, remove `created`/`expires`/`purpose`, and replace
-`draft` step keys with `task`. Then run it by name. Task expiry checks and the
-separate inventory are removed. Includes remain explicit; Effigy never scans
-for or deletes temporary task files.
+The draft namespace was removed in v0.15 (`[drafts]`, `draft` step keys, the
+QA member `surface = "draft"` value and the `effigy draft`/`effigy drafts`
+commands). Each definition is refused with the fix: move it to
+`[tasks.<name>]`, add `visibility = "internal"`, remove
+`created`/`expires`/`purpose`, and replace `draft` step keys with `task`. Then
+run it by name. Task expiry checks and the separate inventory are gone.
+Includes remain explicit; Effigy never scans for or deletes temporary task
+files.
 
 ## Testing and Legacy Interop
 
@@ -685,14 +687,11 @@ Behavior:
 
 ## Developer Session Patterns
 
-### Shell Override for Managed Tabs
+### Managed Shell Tabs
 
-```toml
-[shell]
-run = "exec ${SHELL:-/bin/zsh} -i"
-```
-
-Use when you need predictable interactive shell startup behavior in TUI shell tabs.
+`[shell]` was removed in v0.15. Managed shell tabs always use
+`exec ${SHELL:-/bin/zsh} -i`; there is no manifest override, and a manifest
+that still declares `[shell]` is refused with that replacement.
 
 ### Task Cache (removed)
 

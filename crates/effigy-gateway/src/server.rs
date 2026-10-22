@@ -441,7 +441,8 @@ impl GatewayProcessProbe {
         matches!(self, Self::Unknown)
     }
 
-    fn label(self) -> &'static str {
+    /// Stable label used by the rendered and JSON diagnosis.
+    pub fn label(self) -> &'static str {
         match self {
             Self::Running => "running",
             Self::ConfirmedAbsent => "confirmed-absent",
@@ -463,6 +464,10 @@ pub enum GatewayRecordKind {
     LegacyPidOnly,
     /// Present but untrusted: malformed, mismatched, unsafe, or symlink.
     UntrustedOrMalformed,
+    /// This caller may not read the record at all (kernel permission denial).
+    /// Kept apart from an untrusted record so headless callers can tell a
+    /// root-owned record they cannot open from a malformed one.
+    Unreadable,
     /// No PID record at all.
     Absent,
     /// The record names this process; never probed or signalled.
@@ -470,11 +475,13 @@ pub enum GatewayRecordKind {
 }
 
 impl GatewayRecordKind {
-    fn label(self) -> &'static str {
+    /// Stable label used by the rendered and JSON diagnosis.
+    pub fn label(self) -> &'static str {
         match self {
             Self::Authenticated => "authenticated",
             Self::LegacyPidOnly => "legacy-pid-only",
             Self::UntrustedOrMalformed => "untrusted-or-malformed",
+            Self::Unreadable => "unreadable",
             Self::Absent => "absent",
             Self::SelfReference => "self-reference",
         }
@@ -501,7 +508,8 @@ pub enum GatewayIdentityOutcome {
 }
 
 impl GatewayIdentityOutcome {
-    fn label(self) -> &'static str {
+    /// Stable label used by the rendered and JSON diagnosis.
+    pub fn label(self) -> &'static str {
         match self {
             Self::Matched => "matched",
             Self::Mismatch => "mismatch",
@@ -561,10 +569,14 @@ fn diagnose_gateway_status_with(
                 identity: GatewayIdentityOutcome::NotChecked,
             };
         }
-        Err(_) => {
+        Err(error) => {
             return GatewayStatusDiagnosis {
                 pid: None,
-                record: GatewayRecordKind::UntrustedOrMalformed,
+                record: if identity_permission_denied_error(&error) {
+                    GatewayRecordKind::Unreadable
+                } else {
+                    GatewayRecordKind::UntrustedOrMalformed
+                },
                 process_probe: None,
                 identity: GatewayIdentityOutcome::NotChecked,
             };
@@ -642,6 +654,17 @@ pub fn render_gateway_diagnosis(diagnosis: &GatewayStatusDiagnosis) -> String {
         rendered.push_str("; pre-0.14 numeric-only record requires host administrator migration");
     }
     rendered
+}
+
+/// True when the trusted record read failed because this caller may not open
+/// the record. An unreadable record is reported as such, never as malformed.
+fn identity_permission_denied_error(error: &GatewayError) -> bool {
+    matches!(
+        error,
+        GatewayError::Io(error)
+            if error.kind() == std::io::ErrorKind::PermissionDenied
+                || matches!(error.raw_os_error(), Some(libc::EACCES) | Some(libc::EPERM))
+    )
 }
 
 /// Captured `ps` invocation result used to classify a probe.

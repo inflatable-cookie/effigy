@@ -1,4 +1,4 @@
-//! Public/internal discovery and the one-release draft migration, through the CLI.
+//! Public/internal discovery and retired task-namespace keys, through the CLI.
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -38,15 +38,6 @@ build = { run = "printf build-ok", group = "Development", visibility = "public" 
 entry = [{ task = "step:helper" }]
 "step:helper" = "printf step:helper-ok > helper.marker; printf step:helper-ok"
 internal = { run = "printf internal-ok > internal.marker; printf internal-ok", visibility = "internal", group = "Proofs" }
-[drafts.proof]
-created = "2026-09-15"
-expires = "2026-09-29"
-purpose = "Temporary proof"
-run = "printf migrated-ok > migrated.marker; printf migrated-ok"
-[drafts.composed]
-created = "2026-09-15"
-purpose = "Temporary sequence"
-run = [{ draft = "proof" }]
 "#;
 
 #[test]
@@ -57,7 +48,7 @@ fn visibility_default_is_grouped_and_all_matches_json_inventory() {
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(text.contains("Development"), "{text}");
     assert!(text.contains("General"), "{text}");
-    for hidden in ["internal-ok", "step:helper-ok", "migrated-ok"] {
+    for hidden in ["internal-ok", "step:helper-ok"] {
         assert!(!text.contains(hidden), "{text}");
     }
     let payload = json(root.path(), &["tasks", "--json"]);
@@ -72,17 +63,14 @@ fn visibility_default_is_grouped_and_all_matches_json_inventory() {
         assert!(row.get("visibility_reason").is_some());
         assert!(row.get("group").is_some());
     }
-    assert!(String::from_utf8_lossy(&output.stderr).contains("one release"));
 }
 
 #[test]
-fn internal_and_migrated_tasks_run_directly_and_legacy_draft_shares_identity() {
+fn internal_and_referenced_tasks_run_directly() {
     let root = fixture(MANIFEST);
     for (task, stdout, marker) in [
         ("internal", "internal-ok", "internal.marker"),
-        ("proof", "migrated-ok", "migrated.marker"),
         ("entry", "step:helper-ok", "helper.marker"),
-        ("composed", "migrated-ok", "migrated.marker"),
     ] {
         let marker = root.path().join(marker);
         if marker.exists() {
@@ -100,17 +88,13 @@ fn internal_and_migrated_tasks_run_directly_and_legacy_draft_shares_identity() {
         );
         assert_eq!(fs::read_to_string(marker).expect("task executed"), stdout);
     }
-    let direct = json(root.path(), &["--json", "--plan", "proof"]);
-    let legacy = json(root.path(), &["--json", "draft", "proof", "--plan"]);
-    assert_eq!(direct["result"], legacy["result"]);
-    assert!(legacy["result"].get("surface_identity").is_none());
-    let status = json(root.path(), &["tasks", "status", "proof", "--json"]);
+    let status = json(root.path(), &["tasks", "status", "internal", "--json"]);
     let serialized = status["result"].to_string();
     assert!(serialized.contains("succeeded"), "{serialized}");
 }
 
 #[test]
-fn completion_visibility_lists_public_only_after_migration() {
+fn completion_visibility_lists_public_only() {
     let root = fixture(MANIFEST);
     let output = json(
         root.path(),
@@ -120,42 +104,51 @@ fn completion_visibility_lists_public_only_after_migration() {
         .as_array()
         .expect("candidates");
     assert!(candidates.iter().any(|name| name == "build"));
-    for hidden in [
-        "step:helper",
-        "internal",
-        "proof",
-        "composed",
-        "draft",
-        "drafts",
-    ] {
+    for hidden in ["step:helper", "internal"] {
         assert!(!candidates.iter().any(|name| name == hidden), "{hidden}");
     }
 }
 
 #[test]
-fn drafts_inventory_names_the_replacement() {
+fn retired_draft_commands_name_their_replacement() {
     let root = fixture(MANIFEST);
-    let output = run(root.path(), &["drafts"]);
-    assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("effigy tasks --all"));
+    for (args, replacement) in [
+        (vec!["drafts"], "effigy tasks --all"),
+        (vec!["draft", "build"], "effigy <task>"),
+    ] {
+        let output = run(root.path(), &args);
+        assert!(!output.status.success(), "{args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("removed in v0.15"), "{stderr}");
+        assert!(stderr.contains(replacement), "{stderr}");
+        assert!(stderr.contains("CHANGELOG.md"), "{stderr}");
+    }
 }
 
 #[test]
-fn draft_collision_is_actionable_and_unreferenced_files_stay_unloaded() {
-    let root = fixture("[tasks]\nproof = 'echo public'\n[drafts.proof]\nrun = 'echo old'");
+fn retired_drafts_table_is_refused_with_the_task_namespace_replacement() {
+    let root = fixture(
+        "[tasks]\nproof = 'echo public'\n[drafts.proof]\ncreated = '2026-09-15'\nrun = 'echo old'",
+    );
     let output = run(root.path(), &["tasks"]);
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("both `[tasks]` and `[drafts]`"));
-    fs::write(
-        root.path().join("effigy.toml"),
-        "[tasks]\nentry = 'echo entry'",
-    )
-    .expect("replace fixture");
-    fs::write(
-        root.path().join("unreferenced.toml"),
-        "[drafts.orphan]\nrun = 'echo orphan'",
-    )
-    .expect("orphan fragment");
-    let payload = json(root.path(), &["tasks", "--json"]);
-    assert!(!payload["result"].to_string().contains("orphan"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("`[drafts]` was removed in v0.15"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("[tasks.<name>]"), "{stderr}");
+    assert!(stderr.contains("visibility = \"internal\""), "{stderr}");
+    assert!(stderr.contains("CHANGELOG.md"), "{stderr}");
+}
+
+#[test]
+fn retired_draft_step_reference_is_refused() {
+    let root = fixture("[tasks]\nproof = { run = [{ draft = 'helper' }] }\nhelper = 'echo helper'");
+    let output = run(root.path(), &["tasks"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("`draft` step reference"), "{stderr}");
+    assert!(stderr.contains("task ="), "{stderr}");
+    assert!(stderr.contains("CHANGELOG.md"), "{stderr}");
 }

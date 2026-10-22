@@ -75,27 +75,31 @@ are public and grouped. Consumers need no manifest migration to keep running.
 `tasks status --all` is a separate status query and retains its existing scope;
 the listing `--all` flag never changes execution or status identity.
 
-## Built-in migration from v0.14.1
+## Retired draft namespace (v0.15)
 
-For one release, the manifest decoder translates `[drafts.<name>]` into
-`[tasks.<name>]` with explicit internal visibility. It removes the old `created`,
-`expires` and `purpose` lifecycle fields and translates `{ draft = "..." }`
-steps into ordinary task references, including managed setup/profile steps.
-A definition declared in both namespaces fails with an actionable rename error;
-it is never silently overwritten. Includes and bundles use the same decoder.
-The translation is in memory and never edits a consumer checkout.
+The draft task namespace is retired (Q-009). `[drafts]`, `draft` step
+references, QA member `surface = "draft"` and the `effigy draft`/`effigy
+drafts` commands fail with an actionable error that names `[tasks.<name>]`
+with `visibility = "internal"`, `task = "<name>"` and `effigy tasks --all`.
+Nothing is translated, warned or ignored, and no consumer checkout is edited.
 
-Legacy QA member `surface = "draft"` translates to `published`, the single
-runtime surface for public and internal tasks. QA group lifecycle dates remain
-supported independently of task visibility.
+A legacy definition moves to ordinary tasks:
 
-The decoder warns with the replacement syntax. `effigy draft <name>` warns and
-runs the ordinary task; `effigy drafts` refuses with `effigy tasks --all` and
-`effigy tasks --json` as replacements. The old commands are absent from general
-help and completion; their dedicated help panels explain migration.
+```toml
+[tasks."proof:smoke"]
+run = "printf smoke"
+visibility = "internal"
+```
 
-The separate draft task model, inventory, expiry check, selection namespace,
-step executor and draft run-payload additions are removed. Existing historical
-surface discriminators remain readable as historical identities; migrated new
-runs always use the ordinary task identity. No draft-specific mutable state or
-parallel writer remains. No files are implicitly discovered, pruned or deleted.
+```toml
+[tasks.entry]
+run = [{ task = "proof:smoke" }]
+```
+
+The `created`, `expires` and `purpose` lifecycle fields are not part of the
+task grammar; remove them. A definition that used to be a draft is now an
+internal task with the ordinary task identity, resolver, gate, run journal and
+payload. Existing historical surface discriminators remain readable as
+historical identities; new runs always use the ordinary task identity. No
+files are implicitly discovered, pruned or deleted.
+

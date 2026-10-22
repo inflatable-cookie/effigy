@@ -41,7 +41,7 @@ contexts.
 
 | Module | Contract § | Absorbs |
 | --- | --- | --- |
-| `id` | 5.1 | typed-selector lock names (`src/runner/manifest.rs`), FNV status keys (`crates/effigy-execution/src/task_status.rs`), `safe_component` slugs, runtime-scope tokens (`crates/effigy-core/src/worktree_scope.rs`) |
+| `id` | 5.1 | typed-selector lock names (`src/runner/manifest.rs`), the retired v0.14 FNV status keys, `safe_component` slugs, runtime-scope tokens (`crates/effigy-core/src/worktree_scope.rs`) |
 | `ctx` | 5.2, 5.3 | ad hoc budgets (`src/runner/graph_time_budget.rs`, `crates/effigy-env/src/exec.rs`) |
 | `gate` | 5.4 | the task lease (replaced by task gates in effigy#217), `RouteTableLock`, `fs2` sites; keeps the flock rationale in `crates/effigy-codegraph/src/refresh.rs` |
 | `store` | 5.5 | seven atomic-write helpers; the retired host-run client's fsynced journal was the model |
@@ -394,15 +394,25 @@ when the caller drops its handle. Owner cleanup retains the direct leader throug
 group closure and bounded capture drain. PTY children own their terminal session;
 foreground children borrow the caller's terminal and restore its foreground group.
 
-Recovery signals a group only with fresh leader generation evidence. Linux 6.9's
-pidfd group operation targets the original kernel group; EINVAL selects the
-contract's older-kernel fallback after another identity check. macOS and older
-Linux retain the documented numeric check/signal window. After leader loss,
-member signals require both nonce and start identity, with a pidfd opened first
-on Linux. Unreadable or cleared environments grant no authority. Apple-protected
-binaries can omit their environment from `KERN_PROCARGS2`; that is `Unknown`,
-not a missing nonce that permits a group kill. The nonce qualification uses a
-controlled executable whose environment is observable.
+Recovery verifies a recorded anchor's PID, start time, boot identity, custody
+nonce and membership in the recorded group. Its continuous presence proves
+group continuity after the leader is reaped, allowing signals to nonce-free
+workload members after fresh identity, membership and anchor checks. Linux uses
+per-process pidfds; macOS retains the documented numeric check/signal window.
+The anchor is excluded from workload closure and stopped last. A missing, killed
+or unverifiable anchor grants no signal authority while workload members remain;
+an empty group still proves closure. Session escapes remain outside custody.
+
+For receipts without an anchor, recovery signals a group only with fresh leader
+generation evidence. Linux 6.9's pidfd group operation targets the original
+kernel group; EINVAL selects the contract's older-kernel fallback after another
+identity check. macOS and older Linux retain the documented numeric check/signal
+window. After leader loss, member signals require both nonce and start identity,
+with a pidfd opened first on Linux. Unreadable or cleared member environments
+grant no authority on this unanchored path. Apple-protected binaries can omit
+their environment from `KERN_PROCARGS2`; that is `Unknown`, not a missing nonce
+that permits a group kill. The nonce qualification uses a controlled executable
+whose environment is observable.
 
 `SignalRouter` is installed once by binary main; libraries receive its root
 cancel token, which observes the signal mailbox without requiring an owner-loop
@@ -454,7 +464,7 @@ outcome. No engine topology or command grammar lives in the kernel.
 | --- | --- | --- |
 | I-P1/I-P2, K6; partial spawn | `custody`, child barrier, Run effect tickets | partial-spawn rollback; Kill/ENOSPC at fork, before record, before go, after go |
 | I-P3; group and streams | retained direct child and group inventory | exited leader with live descendant; PTY and foreground terminal restoration |
-| I-P4/I-P8, O12 | process-table trait; leader/pidfd or member nonce plus start | reused/foreign/mixed/cleared-environment strict fakes; race refusal; native nonce recovery |
+| I-P4/I-P8, O12 | verified anchor identity, nonce and group membership; per-member identity checks; unanchored leader/pidfd or member nonce plus start | anchored nonce-free recovery after leader reap (plain and PTY); killed-anchor and old-receipt refusal; reused/foreign/mixed/cleared-environment strict fakes; race refusal; native nonce recovery |
 | I-P5/I-P6, K10/K12 | streaming redactor, rotating log, bounded queues; explicit env | split secret and ps argv; log ENOSPC preserves ring and success |
 | I-P7, K9; cascade/escalation | one main router; signal-sourced cancel token; durable escalation request | HUP/INT/TERM cascade; duplicate router refused; Rhai try/catch cannot swallow token cancellation; repeated INT without polling |
 | I-SV1/I-SV4; startup | same-binary re-exec, checked invocation decoder, Run-owned registration/socket | replacement refusal; socket fault produces NotStarted; registration atomicity under Kill/ENOSPC |

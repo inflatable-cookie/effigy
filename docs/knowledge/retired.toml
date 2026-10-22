@@ -85,27 +85,28 @@ allow = [
 
 [[retired]]
 id = "effigy-draft-task-namespace"
-retired = "2026-10-19"
-replacement = "Use ordinary tasks with visibility = internal and optional group. Legacy task tables and draft step/member references translate for one release; invoke tasks by name. The old inventory command names tasks --all and tasks --json as replacements."
+retired = "2026-10-19; routes and translation removed 2026-10-22 (v0.15, Q-009)"
+replacement = "Use ordinary tasks with visibility = internal and optional group: move each [drafts.<name>] definition to [tasks.<name>], remove created/expires/purpose, replace draft step keys with task = \"<name>\", and run the task by name. [drafts], draft steps, QA member surface = \"draft\", effigy draft and effigy drafts fail with this replacement; nothing translates. Inventory is effigy tasks --all or effigy tasks --json."
 owner = "docs/knowledge/contracts/046-published-and-draft-task-surface-contract.md"
-terms = ["effigy.drafts.v1", "[drafts]", "effigy drafts", "effigy draft "]
-paths = ["crates/effigy-manifest/src/draft_defs.rs", "crates/effigy-tasks/src/drafts.rs", "crates/effigy-doctor/src/draft_lifecycle.rs"]
-config_keys = ["[drafts."]
+terms = ["effigy.drafts.v1", "[drafts]", "[drafts.", "effigy drafts", "effigy draft ", "draft = \"", "surface = \"draft\""]
+paths = ["crates/effigy-manifest/src/draft_defs.rs", "crates/effigy-tasks/src/drafts.rs", "crates/effigy-doctor/src/draft_lifecycle.rs", "crates/effigy-manifest/src/task_migration.rs", "crates/effigy-cli/src/help/topics/draft.rs", "crates/effigy-cli/src/help/topics/drafts.rs", "src/runner/drafts_command.rs"]
+config_keys = ["[drafts.", "tasks.<name>.run[].draft", "qa.groups.<name>.members[].surface"]
 allow = [
   "CHANGELOG.md",
+  "docs/guides/022-manifest-cookbook.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/architecture/028-published-and-draft-task-surfaces.md",
   "docs/knowledge/contracts/046-published-and-draft-task-surface-contract.md",
   "docs/knowledge/contracts/051-bounded-qa-groups-contract.md",
-  "docs/guides/022-manifest-cookbook.md",
-  "crates/effigy-manifest/src/task_migration.rs",
   "crates/effigy-cli/src/command_parsing.rs",
-  "crates/effigy-cli/src/help/topics/draft.rs",
-  "crates/effigy-cli/src/help/topics/drafts.rs",
-  "src/runner/drafts_command.rs",
-  "src/runner/entrypoints/dispatch.rs",
-  "src/runner/host_scheduler/tests.rs",
-  "tests/cli_output_tests/drafts_tests.rs",
+  "crates/effigy-doctor/src/contracts.rs",
+  "crates/effigy-doctor/src/manifest_schema/diagnostics.rs",
+  "crates/effigy-doctor/src/manifest_schema/tests.rs",
+  "crates/effigy-manifest/src/retired_keys.rs",
+  "crates/effigy-manifest/src/qa_groups.rs",
+  "src/tests/runner_tests/tasks_listing_tests/status_query_tests.rs",
   "tests/cli_output_tests/qa_groups_tests.rs",
-  "tests/cli_output_tests/fixture_parent_tests.rs",
+  "tests/cli_output_tests/visibility_tests.rs",
 ]
 
 [[retired]]
@@ -464,13 +465,33 @@ allow = ["CHANGELOG.md", "docs/knowledge/contracts/052-runtime-kernel-contract.m
 
 [[retired]]
 id = "effigy-task-status-v1"
-retired = "2026-10-19"
-replacement = "effigy.tasks-status.v2 and effigy.tasks-status-all.v2: run rows plus a fresh gate probe, no staleness window. A task with no runs shows its v0.14 record read-only for one release."
+retired = "2026-10-19; v0.14 read fallback removed 2026-10-22 (v0.15, Q-009)"
+replacement = "effigy.tasks-status.v2 and effigy.tasks-status-all.v2: run rows plus a fresh gate probe, no staleness window and no legacy view. Kernel run rows are the only task status; a task with no runs reads never-run. Old records under .effigy/runtime/tasks/ and .effigy/reports/tasks/ are dropped (history, not state), never imported, read or deleted."
 owner = "docs/knowledge/contracts/018-task-status-query-surface-and-read-model-contract.md"
-terms = ["effigy.tasks-status-all.v1", "stale_active", "TASK_STATUS_ACTIVE_STALE_MS"]
-paths = ["src/runner/execute/task_status.rs"]
+terms = ["effigy.tasks-status-all.v1", "effigy.tasks-status.v1", "stale_active", "TASK_STATUS_ACTIVE_STALE_MS", "effigy.tasks-status.v1.legacy"]
+paths = ["src/runner/execute/task_status.rs", "crates/effigy-runtime/src/task_status.rs", "crates/effigy-execution/src/task_status.rs"]
 config_keys = []
-allow = ["CHANGELOG.md", "crates/effigy-runtime/src/task_status.rs", "crates/effigy-execution/src/task_status.rs", "docs/knowledge/contracts/052-runtime-kernel-contract.md"]
+allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "docs/knowledge/contracts/017-task-status-record-and-active-run-model-contract.md", "docs/knowledge/contracts/018-task-status-query-surface-and-read-model-contract.md", "docs/knowledge/contracts/052-runtime-kernel-contract.md", "src/runner/tasks_command/status.rs", "src/tests/runner_tests/tasks_listing_tests/status_query_tests.rs"]
+
+[[retired]]
+id = "effigy-manifest-shell-table"
+retired = "2026-10-22 (v0.15, Q-009)"
+replacement = "No replacement: managed shell tabs always run `exec ${SHELL:-/bin/zsh} -i`. Delete [shell] and its run key; the command that needed it belongs in the task that runs it."
+owner = "docs/guides/012-dev-process-manager-tui.md"
+terms = ["[shell]", "ManifestShellConfig", "shell.run"]
+paths = []
+config_keys = ["[shell]", "shell.run"]
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-manifest/src/retired_keys.rs",
+  "docs/guides/012-dev-process-manager-tui.md",
+  "docs/guides/022-manifest-cookbook.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/questions.md",
+  "crates/effigy-doctor/src/contracts.rs",
+  "crates/effigy-doctor/src/manifest_schema/diagnostics.rs",
+  "crates/effigy-doctor/src/manifest_schema/tests.rs",
+]
 
 [[retired]]
 id = "effigy-watch"
@@ -710,3 +731,26 @@ terms = ["effigy.managed.headless.v1", "ManagedRunSettle", "redacted_secret_valu
 paths = ["crates/effigy-managed/src/runtime/headless.rs", "crates/effigy-managed/src/runtime/redaction.rs"]
 config_keys = []
 allow = ["CHANGELOG.md", "src/runner/managed_run/legacy.rs", "docs/knowledge/contracts/052-runtime-kernel-contract.md"]
+
+[[retired]]
+id = "effigy-gateway-listener-handoff-commands"
+retired = "2026-10-21"
+replacement = "There is no replacement: the gateway runs as the operator, so use `effigy gateway up` and inspect it with `effigy gateway status` (Q-009). The three retired spellings refuse with this guidance and name the changelog entry. The descriptor adoption boundary and the internal `--listener-handoff` opt-in remain."
+owner = "docs/knowledge/architecture/034-gateway-legacy-upgrade-recovery.md"
+terms = ["setup-listener-handoff", "listener-handoff-status", "remove-listener-handoff", "test:gateway:listener-handoff", "check:gateway:listener-handoff", "test:gateway:handoff-maintenance", "check:gateway:handoff-maintenance", "test:release:listener-handoff-fixture-ownership", "ListenerHandoffSetup", "Launchd listener-handoff"]
+paths = ["crates/effigy-gateway/src/listener_handoff/maintenance.rs", "crates/effigy-gateway/src/listener_handoff/maintenance/"]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-cli/src/command_parsing_runtime.rs",
+  "crates/effigy-gateway/src/listener_handoff.rs",
+  "docs/guides/025-command-reference-matrix.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/architecture/020-container-infrastructure-design.md",
+  "docs/knowledge/architecture/034-gateway-legacy-upgrade-recovery.md",
+  "docs/knowledge/contracts/033-gateway-route-table-trust-contract.md",
+  "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md",
+  "docs/knowledge/questions.md",
+  "docs/knowledge/retired.toml",
+  "src/tests/lib_tests_parse_tests/gateway_option_tests.rs",
+]

@@ -101,9 +101,11 @@ A SIGSTOPped holder keeps it. Nothing steals, reclaims or unlocks a gate.
 ## Migration
 
 v0.14 status records (`.effigy/runtime/tasks/`, `.effigy/reports/tasks/`) are
-never imported or rewritten. For one minor, `effigy tasks status` shows a
-task's v0.14 latest record read-only until the task first runs. `doctor`
-lists the v0.14 families still present.
+retired in v0.15: never imported, read or rewritten. Kernel run rows are the
+only task status, so a task with no runs reads `never-run` even when a v0.14
+record exists. Old status history is dropped, not state: nothing restarts,
+unlocks or settles from it. `doctor` lists the v0.14 families still present;
+they are left untouched.
 
 ## Drift triggers
 

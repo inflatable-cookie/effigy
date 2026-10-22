@@ -29,6 +29,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::{Duration, Instant};
 
+pub(crate) mod anchor;
 mod image;
 use image::{private_image, PrivateImage};
 
@@ -161,6 +162,7 @@ pub struct LifecyclePlan {
 #[derive(Debug)]
 pub(crate) struct SentinelLease {
     pub identity: ProcessIdentity,
+    pub(crate) executable: Executable,
     child: Child,
     writer: Option<ChildStdin>,
 }
@@ -452,6 +454,7 @@ fn sentinel_attempt(
         .ok_or_else(|| RunError::Invalid("sentinel identity unavailable".into()))?;
     Ok(SentinelLease {
         identity,
+        executable: plan.executable.clone(),
         child,
         writer: Some(writer),
     })
@@ -567,6 +570,7 @@ pub fn internal_entry(
     validate_next: impl Fn(&[OsString]) -> bool,
 ) -> Option<Result<(), RunError>> {
     let result = match entry {
+        "__kernel-anchor" => anchor::entry(),
         SENTINEL => sentinel(adapter, validate_next),
         SUPERVISOR => read_supervisor_config().and_then(|config| match config.work {
             Work::Engine { .. } => {
@@ -600,6 +604,7 @@ pub fn engine_entry(
     engine: impl FnOnce(EngineSession, RouterHandle) -> Result<(), RunError>,
 ) -> Option<Result<(), RunError>> {
     let result = match entry {
+        "__kernel-anchor" => anchor::entry(),
         SENTINEL => sentinel(adapter, validate_next),
         SUPERVISOR => read_supervisor_config().and_then(|config| match config.work {
             Work::Engine { payload } => {
