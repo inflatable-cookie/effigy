@@ -4,8 +4,6 @@ mod artifact_option_tests;
 mod bootstrap_option_tests;
 #[path = "lib_tests_parse_tests/catalog_and_container_option_tests.rs"]
 mod catalog_and_container_option_tests;
-#[path = "lib_tests_parse_tests/demo_option_tests.rs"]
-mod demo_option_tests;
 #[path = "lib_tests_parse_tests/deps_option_tests.rs"]
 mod deps_option_tests;
 #[path = "lib_tests_parse_tests/docs_and_contracts_option_tests.rs"]

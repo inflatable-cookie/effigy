@@ -11,8 +11,7 @@ caller rebuilding runtime intent, cwd, env, output mode, or container routing
 locally.
 
 This contract covers direct task execution, deferral, bootstrap task dispatch,
-Rhai execution helpers, run-array re-entry, demo task re-entry, and managed task
-flows.
+Rhai execution helpers, run-array re-entry, and managed task flows.
 
 It exists to stop bugs where the caller knows too little about whether Effigy is
 running on the host or inside a container and guesses the wrong path or process
@@ -120,7 +119,6 @@ Covered surfaces:
 - bootstrap
 - Rhai
 - run-array
-- demo
 - managed
 
 Surface labels are not routing hints by themselves. They preserve caller
@@ -163,7 +161,6 @@ This includes:
 - bootstrap `start`
 - run-array builtin command re-entry
 - Rhai command re-entry
-- demo task re-entry
 - deferral replay
 
 Embedded dispatch must preserve the parent or explicit target repo from

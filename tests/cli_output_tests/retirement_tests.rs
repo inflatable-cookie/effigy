@@ -15,6 +15,8 @@ fn retirement_commands_emit_json_errors_without_effects() {
         vec!["tasks", "migrate", "--apply"],
         vec!["gateway", "recover", "--yes"],
         vec!["docs", "qualified", "resolve"],
+        vec!["demo", "list"],
+        vec!["demo", "run", "build"],
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
             .current_dir(fixture.path())
@@ -68,4 +70,30 @@ fn retirement_user_catalog_warns_and_preserves_ignored_fragments() {
         fs::read_to_string(sentinel).unwrap(),
         "malformed retired content"
     );
+}
+
+#[test]
+fn retired_demos_table_fails_with_its_explanation() {
+    let fixture =
+        effigy_test_support::Fixture::new("effigy-cli-private-").expect("private fixture");
+    fs::write(
+        fixture.path().join("effigy.toml"),
+        "[demos.login-smoke]\ntitle = \"Login Smoke\"\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .current_dir(fixture.path())
+        .arg("tasks")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("tasks inventory");
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("[demos]"), "{stderr}");
+    assert!(stderr.contains("was removed in v0.15"), "{stderr}");
+    assert!(
+        stderr.contains("record terminal sessions with an external tool"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("CHANGELOG.md"), "{stderr}");
 }

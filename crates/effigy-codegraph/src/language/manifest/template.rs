@@ -269,7 +269,6 @@ pub(super) fn looks_like_effigy_manifest(table: &TomlMap<String, Value>) -> bool
                 | "systems"
                 | "distribution"
                 | "release"
-                | "demos"
                 | "tasks"
         )
     })

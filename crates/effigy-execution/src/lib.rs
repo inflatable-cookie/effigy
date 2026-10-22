@@ -564,7 +564,6 @@ pub enum ExecutionSurface {
     DataSeed,
     Rhai,
     RunArray,
-    Demo,
     Managed,
     /// Explicit `effigy draft` selection over the draft surface.
     Draft,

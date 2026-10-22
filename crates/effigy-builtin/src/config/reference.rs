@@ -76,11 +76,6 @@ pub(super) fn render_config_reference(color_enabled: bool) -> Result<String, Bui
     emit_doc_lines(
         &mut renderer,
         color_enabled,
-        docs::demos_lines(ConfigDocProfile::Reference),
-    )?;
-    emit_doc_lines(
-        &mut renderer,
-        color_enabled,
         docs::defer_lines().iter().copied(),
     )?;
     emit_doc_lines(

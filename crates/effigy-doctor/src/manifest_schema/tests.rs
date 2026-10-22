@@ -998,35 +998,3 @@ run = "printf dev"
         sink.findings
     );
 }
-
-#[test]
-fn validate_manifest_schema_accepts_demo_registry_section() {
-    let manifest: Value = toml::from_str(
-        r#"
-[demos.login-smoke]
-title = "Login Smoke"
-summary = "Proves local login works."
-proof = "Verify the default local login journey succeeds."
-owner = "auth"
-mode = "interactive"
-status = "ready"
-covers = ["auth.login"]
-tags = ["auth", "smoke"]
-receipt = "demos/receipts/login-smoke.receipt.json"
-artifacts = ["demos/receipts/login-smoke.view.html"]
-task = "demo:login-smoke"
-prerequisites = ["api", "db"]
-dependencies = ["auth/session-baseline"]
-"#,
-    )
-    .expect("parse manifest");
-
-    let mut sink = TestSink::default();
-    validate_manifest_schema(Path::new("/tmp/effigy.toml"), &manifest, &mut sink);
-
-    assert!(
-        sink.findings.is_empty(),
-        "expected no schema findings, got: {:?}",
-        sink.findings
-    );
-}

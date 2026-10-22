@@ -1,4 +1,58 @@
 [[retired]]
+id = "effigy-demo-surface"
+retired = "2026-10-21"
+replacement = "No replacement (Q-009): the demo registry, receipts, retained history and browser are gone. Record terminal sessions with an external tool. `effigy demo` refuses with this explanation, a `[demos]` table is a manifest error, and `effigy config --target demos` is gone. Historical `.effigy/demo/` state and a consumer's own `demos/` script directory are untouched."
+owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md"
+terms = [
+  "effigy demo",
+  "effigy.demo.",
+  "demo::list",
+  "demo::inspect",
+  "demo::history",
+  "demo.list",
+  "demo.inspect",
+  "demo.history",
+  "effigy-demo",
+  "effigy_demo",
+  "demo_command",
+  "demo_browser",
+  "DemoStateError",
+  "DemoBrowser",
+  "DemoArgs",
+  "DemoSubcommand",
+  ".effigy/demo/",
+]
+paths = [
+  "crates/effigy-demo/",
+  "src/runner/demo_command/",
+  "src/tui/",
+  "crates/effigy-tui/src/demo_browser.rs",
+  "crates/effigy-tui/src/demo_browser_overlay.rs",
+  "crates/effigy-tui/src/demo_browser_render.rs",
+  "crates/effigy-tui/src/demo_browser_state_methods.rs",
+  "crates/effigy-tui/src/demo_browser_terminal.rs",
+  "crates/effigy-manifest/src/config_sections/demo.rs",
+  "crates/effigy-doctor/src/manifest_schema/demos_section.rs",
+  "crates/effigy-cli/src/command_parsing_demo.rs",
+  "crates/effigy-cli/src/help/topics/demo.rs",
+  "config/demos.toml",
+  "docs/guides/058-demo-system-guide.md",
+  "docs/guides/060-consumer-demo-migration-guide.md",
+  "scripts/write-browser-proof-report.rhai",
+  "scripts/run-lifecycle-window.rhai",
+  "src/tests/lib_tests_parse_tests/demo_option_tests.rs",
+]
+config_keys = ["[demos", "--target demos"]
+allow = [
+  "CHANGELOG.md",
+  "crates/effigy-cli/src/command_parsing.rs",
+  "crates/effigy-manifest/src/lib.rs",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/questions.md",
+  "tests/cli_output_tests/retirement_tests.rs",
+]
+
+[[retired]]
 id = "effigy-catalog-pack-runtime"
 retired = "2026-10-20"
 replacement = "Catalog sources (Q-005): services resolve from infra/dev/catalog/, the bundle's catalog/, declared [catalog.sources.<name>] pinned by effigy bundle sync, then the compiled baseline; effigy service list shows each source. The service pack commands refuse with this replacement, the workspace pack handoff and the release support-policy mutation are gone, and ~/.effigy/catalog-packs/ is ignored with a one-release notice and left untouched."

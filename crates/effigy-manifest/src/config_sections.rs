@@ -2,7 +2,6 @@ mod bootstrap;
 mod bundle;
 mod common;
 mod container;
-mod demo;
 mod distribution;
 mod docs_policy;
 mod release;
@@ -38,7 +37,6 @@ pub use container::{
     ManifestSystemMount, ManifestSystemMountTable, ManifestSystemsConfig, ManifestWorkspaceConfig,
     ManifestWorkspaceContainerRef,
 };
-pub use demo::{ManifestDemoConfig, ManifestDemoMode, ManifestDemoStatus};
 pub use distribution::{
     ManifestDistributionCloseoutConfig, ManifestDistributionConfig,
     ManifestDistributionMetadataConfig, ManifestDistributionPackageConfig,

@@ -65,7 +65,7 @@ Primary ownership is fixed as follows:
 | `work` (direct) | `<task>`, `<catalog>/<task>`, `tasks`, `runs` (with `run status\|logs\|stop`), `draft`, `drafts`, `test`, `doctor`, `init` |
 | `local` | `container`, `system`, `workspace`, `gateway`, `service`, `exec` |
 | `repo` | `graph`, `scan`, `docs`, `contracts` |
-| `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap`, `demo` |
+| `deliver` | `artifact`, `state`, `deploy`, `release`, `bundle`, `bootstrap` |
 | `extend` | `skill`, `rhai` |
 | `admin` | `admission`, `config`, `deps`, `secrets`, `defer`, `uninstall`, `version`; `config completion` moves with `config` |
 

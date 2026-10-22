@@ -34,7 +34,6 @@ pub enum Command {
     Workspace(WorkspaceArgs),
     Gateway(GatewayArgs),
     Service(ServiceArgs),
-    Demo(DemoArgs),
     Graph(GraphArgs),
     Rhai(RhaiArgs),
     Skill(SkillArgs),
@@ -131,7 +130,6 @@ pub enum HelpTopic {
     Workspace,
     Gateway,
     Service,
-    Demo,
     Graph,
     Rhai,
     Skill,
@@ -372,158 +370,6 @@ pub enum GraphSubcommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DemoArgs {
-    pub subcommand: DemoSubcommand,
-    pub repo_override: Option<PathBuf>,
-    pub output_json: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct DemoListQuery {
-    pub search: Option<String>,
-    pub owner: Option<String>,
-    pub tag: Option<String>,
-    pub mode: Option<DemoListMode>,
-    pub cover: Option<String>,
-    pub status: Option<DemoListStatus>,
-    pub gap: Option<DemoListGap>,
-    pub stale_only: bool,
-    pub group_by: Option<DemoListGroupBy>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DemoListMode {
-    Headless,
-    Interactive,
-    Hybrid,
-}
-
-impl DemoListMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Headless => "headless",
-            Self::Interactive => "interactive",
-            Self::Hybrid => "hybrid",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DemoListStatus {
-    Planned,
-    Ready,
-    Running,
-    Passed,
-    Failed,
-    Broken,
-    Missing,
-}
-
-impl DemoListStatus {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Planned => "planned",
-            Self::Ready => "ready",
-            Self::Running => "running",
-            Self::Passed => "passed",
-            Self::Failed => "failed",
-            Self::Broken => "broken",
-            Self::Missing => "missing",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DemoListGap {
-    Existing,
-    Planned,
-    Missing,
-    Broken,
-    Stale,
-}
-
-impl DemoListGap {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Existing => "existing",
-            Self::Planned => "planned",
-            Self::Missing => "missing",
-            Self::Broken => "broken",
-            Self::Stale => "stale",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DemoListGroupBy {
-    Owner,
-    Tag,
-    Mode,
-    Cover,
-    Status,
-    Gap,
-}
-
-impl DemoListGroupBy {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Owner => "owner",
-            Self::Tag => "tag",
-            Self::Mode => "mode",
-            Self::Cover => "cover",
-            Self::Status => "status",
-            Self::Gap => "gap",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DemoSubcommand {
-    Browser {
-        group_by: Option<DemoListGroupBy>,
-    },
-    List {
-        query: DemoListQuery,
-    },
-    Inspect {
-        demo_id: String,
-    },
-    History {
-        demo_id: String,
-        limit: Option<usize>,
-        outcome: Option<DemoHistoryOutcome>,
-        attempt_id: Option<String>,
-        attempt_ordinal: Option<usize>,
-    },
-    Run {
-        demo_id: String,
-    },
-    Stop {
-        demo_id: String,
-    },
-    Input {
-        demo_id: String,
-        text: String,
-        append_newline: bool,
-    },
-    Resize {
-        demo_id: String,
-        cols: u16,
-        rows: u16,
-    },
-    Rerun {
-        demo_id: String,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DemoHistoryOutcome {
-    Passed,
-    Failed,
-    Terminated,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateArgs {
     pub subcommand: StateSubcommand,
     pub repo_override: Option<PathBuf>,
@@ -570,16 +416,6 @@ pub enum StateSubcommand {
         limit: Option<usize>,
         lineage: Option<String>,
     },
-}
-
-impl DemoHistoryOutcome {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Passed => "passed",
-            Self::Failed => "failed",
-            Self::Terminated => "terminated",
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

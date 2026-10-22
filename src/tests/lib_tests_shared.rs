@@ -5,15 +5,13 @@ pub(super) use effigy_cli::{
     strip_global_json_flags, ArtifactArgs, ArtifactSubcommand, BootstrapArgs,
     BootstrapBackendOverride, BootstrapDepsSyncMode, BootstrapSubcommand, Command, ContainerArgs,
     ContainerSubcommand, ContractsArgs, ContractsCheckMode, ContractsSelectionPrintMode,
-    ContractsSubcommand, DeferArgs, DemoArgs, DemoListGap, DemoListGroupBy, DemoListMode,
-    DemoListQuery, DemoListStatus, DemoSubcommand, DeployArgs, DeploySubcommand, DepsArgs,
-    DepsManager, DepsSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs,
-    DraftArgs, DraftsArgs, ExecArgs, GatewayArgs, GatewayPrivateArgs, GatewaySubcommand,
-    GraphSubcommand, HelpGroup, HelpTopic, InternalGatewayArgs, ReleaseArgs,
-    ReleaseEvidenceSubcommand, ReleaseSubcommand, RhaiArgs, RhaiSubcommand, ServiceArgs,
-    ServiceSubcommand, SkillArgs, SkillStdioMode, SkillSubcommand, StateArgs, StateSubcommand,
-    SystemArgs, SystemSubcommand, TaskInvocation, TasksArgs, TasksQaCommand, UninstallArgs,
-    WorkspaceArgs,
+    ContractsSubcommand, DeferArgs, DeployArgs, DeploySubcommand, DepsArgs, DepsManager,
+    DepsSubcommand, DocsArgs, DocsBlockRequirement, DocsSubcommand, DoctorArgs, DraftArgs,
+    DraftsArgs, ExecArgs, GatewayArgs, GatewayPrivateArgs, GatewaySubcommand, GraphSubcommand,
+    HelpGroup, HelpTopic, InternalGatewayArgs, ReleaseArgs, ReleaseEvidenceSubcommand,
+    ReleaseSubcommand, RhaiArgs, RhaiSubcommand, ServiceArgs, ServiceSubcommand, SkillArgs,
+    SkillStdioMode, SkillSubcommand, StateArgs, StateSubcommand, SystemArgs, SystemSubcommand,
+    TaskInvocation, TasksArgs, TasksQaCommand, UninstallArgs, WorkspaceArgs,
 };
 pub(super) use effigy_ui::PlainRenderer;
 pub(super) use std::path::PathBuf;

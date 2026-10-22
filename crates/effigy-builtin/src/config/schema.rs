@@ -18,7 +18,6 @@ pub(super) fn render_builtin_config_schema() -> String {
     );
     append_doc_lines(&mut doc, docs::distribution_lines(ConfigDocProfile::Schema));
     append_doc_lines(&mut doc, docs::containers_lines(ConfigDocProfile::Schema));
-    append_doc_lines(&mut doc, docs::demos_lines(ConfigDocProfile::Schema));
     append_doc_lines(
         &mut doc,
         docs::package_manager_lines(ConfigDocProfile::Schema),
@@ -47,7 +46,6 @@ pub(super) fn render_builtin_config_schema_minimal() -> String {
     append_doc_lines(&mut doc, docs::manifest_lines(ConfigDocProfile::Schema));
     append_doc_lines(&mut doc, docs::distribution_lines(ConfigDocProfile::Schema));
     append_doc_lines(&mut doc, docs::containers_lines(ConfigDocProfile::Schema));
-    append_doc_lines(&mut doc, docs::demos_lines(ConfigDocProfile::Schema));
     append_doc_lines(
         &mut doc,
         docs::package_manager_lines(ConfigDocProfile::Schema),
@@ -160,9 +158,6 @@ fn target_schema_lines(
                 .chain(docs::docs_policy_graph_lines(ConfigDocProfile::Schema)),
         ),
         ConfigSchemaTarget::Bundle => unreachable!("bundle target is rendered dynamically"),
-        ConfigSchemaTarget::Demos => {
-            Box::new(docs::demos_lines(ConfigDocProfile::Schema).into_iter())
-        }
         ConfigSchemaTarget::PackageManager => {
             Box::new(docs::package_manager_lines(ConfigDocProfile::Schema).into_iter())
         }
