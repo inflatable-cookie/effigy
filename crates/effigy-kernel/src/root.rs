@@ -35,7 +35,7 @@ pub struct StateRoot {
     database: Database,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Database {
     Checkout,
     Machine,

@@ -13,6 +13,10 @@ predecessor reads and the pipe-only memory sentinel; local custody shares the
 same spawn barrier and positive closure mechanisms as durable runs. These
 kernel APIs create no database, run logs or control socket. Command admission
 still uses the durable path until whole-tree classification is connected.
+`migration::inspect` performs read-only gate and recorded process-identity
+inspection before destination work. `Store::read_sealed` refuses hot logs and
+uses a checkpointed source without creating SQLite side files; this inspection
+is diagnostic, not a transfer of custody or migration authority.
 
 Status: foundation types are implemented in `crates/effigy-kernel/`: identity
 encoding v1, operation contexts and class capabilities, observation and Probe
@@ -693,7 +697,7 @@ deadline: at least 30 s for admission and effects, and up to two minutes for
 settle and outcome writes (K4). Opening a current store reads it and takes no
 write lock, so an ordinary run's admission is one short insert transaction.
 Class-capability and trust refusal rules are unchanged. SQLite opens files by
-path, so `kernel.db` is the one K13 exception to
+path, so checkout `kernel.db` and machine `machine.db` are the K13 exceptions to
 descriptor-relative opens: the kernel creates or verifies it
 descriptor-relative inside the verified 0700 root (regular, operator-owned,
 0600, one link, size-bounded) and SQLite then opens it with

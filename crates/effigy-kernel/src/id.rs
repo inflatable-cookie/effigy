@@ -302,6 +302,90 @@ impl ResourceId {
         }
         out
     }
+    /// Decode the stored encoding v1 without trusting its hashed filename or
+    /// descriptive columns. Migration and gate discovery re-encode the result
+    /// and require byte equality before using it as a resource identity.
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, IdentityError> {
+        fn take<'a>(input: &mut &'a [u8], n: usize) -> Result<&'a [u8], IdentityError> {
+            let head = input.get(..n).ok_or(IdentityError::InvalidInvocation)?;
+            *input = input.get(n..).ok_or(IdentityError::InvalidInvocation)?;
+            Ok(head)
+        }
+        fn byte(input: &mut &[u8]) -> Result<u8, IdentityError> {
+            let (head, tail) = input
+                .split_first()
+                .ok_or(IdentityError::InvalidInvocation)?;
+            *input = tail;
+            Ok(*head)
+        }
+        let mut input = bytes;
+        if take(&mut input, 12)? != b"effigy.rid\0\x01" {
+            return Err(IdentityError::InvalidInvocation);
+        }
+        let kind = match byte(&mut input)? {
+            0 => ResourceKind::Checkout,
+            1 => ResourceKind::Task,
+            2 => ResourceKind::Run,
+            3 => ResourceKind::Env,
+            4 => ResourceKind::Data,
+            5 => ResourceKind::Endpoint,
+            6 => ResourceKind::Store,
+            7 => ResourceKind::Gateway,
+            _ => return Err(IdentityError::InvalidInvocation),
+        };
+        let scope = match byte(&mut input)? {
+            0 => Scope::Machine,
+            1 => {
+                let kind = match byte(&mut input)? {
+                    0 => CheckoutKind::Primary,
+                    1 => CheckoutKind::LinkedWorktree,
+                    2 => CheckoutKind::EphemeralClone,
+                    3 => CheckoutKind::Machine,
+                    _ => return Err(IdentityError::InvalidInvocation),
+                };
+                let token = take(&mut input, 16)?
+                    .try_into()
+                    .map_err(|_| IdentityError::InvalidInvocation)?;
+                Scope::Checkout(CheckoutId::new(kind, token))
+            }
+            _ => return Err(IdentityError::InvalidInvocation),
+        };
+        let count = match kind {
+            ResourceKind::Task => 4,
+            ResourceKind::Data => 3,
+            ResourceKind::Endpoint => 2,
+            _ => 1,
+        };
+        let mut key = Vec::with_capacity(count);
+        for _ in 0..count {
+            let present = byte(&mut input)?;
+            let length = u32::from_be_bytes(
+                take(&mut input, 4)?
+                    .try_into()
+                    .map_err(|_| IdentityError::InvalidInvocation)?,
+            ) as usize;
+            let field = take(&mut input, length)?;
+            key.push(match present {
+                0 if field.is_empty() => None,
+                1 => Some(
+                    std::str::from_utf8(field)
+                        .map_err(|_| IdentityError::InvalidInvocation)?
+                        .to_owned(),
+                ),
+                _ => return Err(IdentityError::InvalidInvocation),
+            });
+        }
+        if !input.is_empty() {
+            return Err(IdentityError::InvalidInvocation);
+        }
+        let id = Self::new(kind, scope, key);
+        let normalized = id.validate_record()?;
+        if id != normalized || id.canonical() != bytes {
+            return Err(IdentityError::InvalidInvocation);
+        }
+        Ok(id)
+    }
+
     pub fn name(&self) -> GateName {
         GateName(base32(&Sha256::digest(self.canonical())[..20]))
     }

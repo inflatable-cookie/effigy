@@ -331,6 +331,35 @@ impl Store {
             }
         }
     }
+    /// A checkpointed, quiescent source read which cannot create a WAL index
+    /// or modify any source file. Migration uses this stricter read; a hot log
+    /// requires recovery/checkpoint by the old owner before import can proceed.
+    pub fn read_sealed(cx: &ObserveContext, root: &StateRoot) -> Observed<StoreReader> {
+        if cx.check("sealed store read").is_err() {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "sealed store read".into(),
+            });
+        }
+        let opened = (|| {
+            check_store_files(root)?;
+            let name = FileName::new(root.database_name())?;
+            let Some(stat) = root.dir().entry(&name)? else {
+                return Ok(None);
+            };
+            if stat.st_size as u64 > MAX_DB_BYTES {
+                return Err(StoreError::TooLarge {
+                    limit: MAX_DB_BYTES,
+                });
+            }
+            read_immutable(root, cx.remaining())
+        })();
+        match opened {
+            Ok(Some(reader)) => Observed::Verified(reader, evidence("sealed kernel store")),
+            Ok(None) => Observed::Absent(AbsenceProof::NoStore),
+            Err(error) => Observed::Unknown(read_unknown(&error)),
+        }
+    }
+
     /// Read-only open (R2): no record or schema file is created or written.
     /// A WAL store's shared-memory index (`kernel.db-shm`) is SQLite's, so a
     /// read on a writable root may create it; on a read-only root the same
@@ -359,7 +388,8 @@ impl Store {
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
             | OpenFlags::SQLITE_OPEN_NOFOLLOW
             | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-        let opened = match Connection::open_with_flags(root.dir().join(root.database_name()), flags) {
+        let opened = match Connection::open_with_flags(root.dir().join(root.database_name()), flags)
+        {
             Ok(conn) => match verify_reader(conn, busy) {
                 // A WAL store on a read-only root cannot create its `-shm`
                 // index: SQLite refuses on open or on the first read with
@@ -1184,7 +1214,10 @@ fn read_immutable(root: &StateRoot, busy: Duration) -> Result<Option<StoreReader
             }
         }
     }
-    let uri = format!("file:{}?immutable=1", uri_path(root.path().join(root.database_name())));
+    let uri = format!(
+        "file:{}?immutable=1",
+        uri_path(root.path().join(root.database_name()))
+    );
     let conn = Connection::open_with_flags(
         uri,
         OpenFlags::SQLITE_OPEN_READ_ONLY
