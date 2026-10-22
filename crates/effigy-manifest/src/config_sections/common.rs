@@ -29,13 +29,6 @@ pub enum ManifestScanOutputFormat {
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ManifestShellConfig {
-    #[serde(default)]
-    pub run: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ManifestPackageManagerConfig {
     #[serde(default, alias = "js_ts", alias = "typescript")]
     pub js: Option<ManifestJsPackageManager>,

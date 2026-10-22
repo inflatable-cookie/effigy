@@ -231,14 +231,13 @@ fn resolve_task_process_run_and_cwd<'a>(
 ) -> Result<(String, PathBuf), crate::ManagedError> {
     let EntryResolutionContext {
         selector,
-        catalog,
         catalogs,
         task_scope_cwd,
         resolver,
         ..
     } = context;
     if task_ref.trim() == "shell" {
-        return resolve_shell_process_run(selector, process_name, catalog, task_scope_cwd);
+        return resolve_shell_process_run(selector, process_name, task_scope_cwd);
     }
     references::resolve_task_reference_run(
         &selector.task_name,
@@ -253,7 +252,6 @@ fn resolve_task_process_run_and_cwd<'a>(
 fn resolve_shell_process_run(
     selector: &TaskSelector,
     process_name: &str,
-    catalog: &LoadedCatalog,
     task_scope_cwd: &Path,
 ) -> Result<(String, PathBuf), crate::ManagedError> {
     if process_name != "shell" {
@@ -263,13 +261,10 @@ fn resolve_shell_process_run(
             "task `shell` must use process name `shell` (omit `name` or set `name = \"shell\"`)",
         ));
     }
-    let shell_run = catalog
-        .manifest
-        .shell
-        .as_ref()
-        .and_then(|shell| shell.run.clone())
-        .unwrap_or_else(|| DEFAULT_MANAGED_SHELL_RUN.to_owned());
-    Ok((shell_run, task_scope_cwd.to_path_buf()))
+    Ok((
+        DEFAULT_MANAGED_SHELL_RUN.to_owned(),
+        task_scope_cwd.to_path_buf(),
+    ))
 }
 
 fn normalize_role(

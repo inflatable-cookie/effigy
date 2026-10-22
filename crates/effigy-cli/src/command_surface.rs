@@ -204,14 +204,6 @@ pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
         command_name: None,
     },
     CommandDescriptor {
-        topic: HelpTopic::Drafts,
-        command_name: Some("drafts"),
-    },
-    CommandDescriptor {
-        topic: HelpTopic::Draft,
-        command_name: Some("draft"),
-    },
-    CommandDescriptor {
         topic: HelpTopic::Test,
         command_name: Some("test"),
     },
@@ -499,8 +491,6 @@ pub const HELP_COMMAND_TOPICS: &[(&str, HelpTopic)] = &[
     ("deps", HelpTopic::Deps),
     ("docs", HelpTopic::Docs),
     ("doctor", HelpTopic::Doctor),
-    ("draft", HelpTopic::Draft),
-    ("drafts", HelpTopic::Drafts),
     ("exec", HelpTopic::Exec),
     ("gateway", HelpTopic::Gateway),
     ("graph", HelpTopic::Graph),

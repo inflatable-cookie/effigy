@@ -123,10 +123,11 @@ During v0.x, MINOR bumps may include breaking changes.
   Human inventory, general/work help and completion show public tasks; `tasks --all` and
   `tasks --json` include everything. Unnamespaced entry points stay public;
   referenced namespaced helpers default to internal. Internal tasks run by name.
-  Legacy `[drafts]` and draft steps translate to internal tasks for one release
-  with a warning. Move their definitions under `[tasks]`, remove lifecycle
-  metadata, and use ordinary task references. `effigy draft <name>` warns and
-  runs the normal task; `effigy drafts` names `tasks --all` as its replacement.
+  The draft task namespace is removed: `[drafts]`, `draft` step keys, QA
+  member `surface = "draft"` and `effigy draft`/`effigy drafts` are refused
+  with their replacement. Move each definition under `[tasks.<name>]` with
+  `visibility = "internal"`, replace `draft` steps with `task = "<name>"`,
+  remove lifecycle metadata, and run the task by name.
 - Host task and setup sequences now use one typed engine in text and JSON.
   Steps are child kernel runs; custody settles descendants on timeout, stop,
   INT, TERM, HUP and owner loss. JSON adds per-step outcomes and preserves the
@@ -167,10 +168,17 @@ During v0.x, MINOR bumps may include breaking changes.
   (`effigy.tasks-status.v2`, `effigy.tasks-status-all.v2`). A run is `running`
   while it holds its gate, however long it takes; a run whose owner died reads
   `interrupted` with the command that settles it; the newest 20 runs are kept.
-  A task with no runs yet shows its v0.14 record read-only for one release.
+  The v0.14 read-only fallback is removed: kernel run rows are the only task
+  status, so a task with no runs reads `never-run`. Old status history under
+  `.effigy/runtime/tasks/` and `.effigy/reports/tasks/` is dropped, never
+  imported or read; it is history, not state, so nothing restarts or unlocks
+  from it, and the files are left untouched.
 - Running from inside a member catalog, however deep, resolves to the root
   that declares it in `[catalog.members]`, so subdirectory and root runs see
   the same catalogs, locks and status.
+- `[shell]` is removed from the manifest; it configured the interactive command
+  of managed shell tabs. Tabs always run `exec ${SHELL:-/bin/zsh} -i`, and a
+  manifest that still declares `[shell]` keeps its replacement.
 - `effigy tasks --resolve` uses the same resolver as execution and reports
   `route`: `typed-command`, `task`, `builtin`, `exec-alias`, `defer` or
   `error`. A typed command such as `release` is reported as such when it

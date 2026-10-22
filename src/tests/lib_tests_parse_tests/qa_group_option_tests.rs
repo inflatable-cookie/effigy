@@ -1,6 +1,4 @@
-use crate::tests::prelude::{
-    parse_command, Command, DraftArgs, HelpTopic, PathBuf, TasksQaCommand,
-};
+use crate::tests::prelude::{parse_command, Command, HelpTopic, PathBuf, TasksQaCommand};
 
 #[test]
 fn parse_tasks_qa_groups_list_with_filter_and_file() {
@@ -205,26 +203,4 @@ fn parse_tasks_qa_group_help_returns_tasks_panel() {
     ])
     .expect("parse should succeed");
     assert_eq!(cmd, Command::Help(HelpTopic::Tasks));
-}
-
-#[test]
-fn parse_draft_accepts_plan_for_non_executing_inspection() {
-    // Contract 046 documents `draft <SELECTOR> --plan`; the flag travels in
-    // the invocation passthrough so the canonical preflight selects plan
-    // mode, exactly like `--json`.
-    let cmd = parse_command(vec![
-        "draft".to_owned(),
-        "heavy-probe".to_owned(),
-        "--plan".to_owned(),
-    ])
-    .expect("draft --plan parses");
-    assert_eq!(
-        cmd,
-        Command::Draft(DraftArgs {
-            repo_override: None,
-            selector: "heavy-probe".to_owned(),
-            args: vec!["--plan".to_owned()],
-            output_json: false,
-        })
-    );
 }
