@@ -63,7 +63,7 @@ Policy:
 | Services | `service::list`, `service::extract` | Exposed |
 | Gateway | `gateway::status`, `gateway::setup_tls`, `gateway::up`, `gateway::down` | Exposed |
 | Doctor | `doctor::run` | Exposed |
-| Scan | `scan::god_files`, `scan::generated_assets`, `scan::generated_in_src`, `scan::duplicate_blocks`, `scan::comment_ratio`, `scan::attention_markers`, `scan::stale_suppressions` | Exposed |
+| Scan | `scan::god_files`, `scan::duplicate_blocks` | Exposed; the v0.15 scanner cut removed the other five `scan::` functions |
 | Cache | `cache::inspect`, `cache::invalidate` | Exposed |
 | Contracts | `contracts::check_json`, `contracts::validate_selection` | Exposed |
 | Deploy | `deploy::model`, `deploy::emit`, `deploy::plan`, `deploy::apply`, `deploy::status`, `deploy::history`, `deploy::redeploy`, `deploy::provider_context`, `deploy::provider_context_path`, `deploy::provider_report_path`, `deploy::provider_report` | Exposed; apply/redeploy refuse in v0.15 |

@@ -870,6 +870,11 @@ terms = [
   "scan.generated_assets",
   "scan.generated_in_src",
   "scan.stale_suppressions",
+  "scan::attention_markers",
+  "scan::comment_ratio",
+  "scan::generated_assets",
+  "scan::generated_in_src",
+  "scan::stale_suppressions",
   "AttentionMarkerFinding",
   "AttentionMarkerScanOptions",
   "CommentRatioFinding",
@@ -930,4 +935,5 @@ allow = [
   "src/tests/runner_tests/config_builtin_tests/schema_output_tests.rs",
   "src/tests/runner_tests/tasks_and_doctor_command_tests/doctor_command_tests/duplicate_blocks.rs",
   "tests/cli_output_tests/json_envelope_tests/scan.rs",
+  "crates/effigy-rhai/src/tests/scan_retirement.rs",
 ]
