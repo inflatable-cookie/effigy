@@ -408,21 +408,6 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   canonically escaping Rhai assets before task side effects
 - `skill run --stdio passthrough` gives the selected task raw
   stdin/stdout/stderr and its exit status, and cannot combine with `--json`
-  gates inclusion, so an unrelated high-authority document cannot enter the
-  report; currentness and authority only order results that already match, and
-  they outrank heading specificity across documents. It refreshes the shared
-  graph through the existing lazy path and adds no second index. Budgets must be
-  positive and inside the maxima above; a section that does not fit is omitted
-  whole and named in `truncation.reasons` rather than truncated mid-section.
-  `truncation.truncated` covers section, byte, and hop exhaustion alike. Typed
-  relation steps report the destination exactly as the source document declared
-  it in `target`, with the resolved path in `to_path`. A traversed result names
-  its lexical origin in `seed_path` and prefixes every inherited reason with
-  that path, so it never claims its own section contains a seed-only term. An empty query is a usage
-  error; no match is a successful empty report, and corpus term weighting is a
-  ranking optimization that never suppresses the query's only lexical evidence.
-  Repository vocabulary comes only from committed `[docs_policy.graph]`
-  configuration
 - `deps` and `deps status` are the same read-only inspection path; manager
   filtering is optional; `deps link cargo` applies the verified full closure
   and `deps unlink cargo` proves committed-source and lock recovery; `deps
@@ -581,27 +566,6 @@ environment in `session.json` so a whole-environment handover can end
   the normal child capture reports
 - `state history` is read-only; it scans report JSON files and ignores malformed
   files with warnings instead of maintaining an index
-- graph queries read one checkout corpus without writes or implicit refresh;
-  explicit `graph index` commits each file's graph, search and freshness together
-- concurrent queries read committed files with `refreshing (n/N)`; `--stale-index`
-  explicitly labels data `stale-index` or `refreshing`, never current
-- graph query budgets default to 120000ms; `EFFIGY_GRAPH_TIMEOUT_MS=<MS>`
-  overrides the cooperative deadline and `0` disables it; explicit index is unbounded
-- `graph status --json` is report-only; use `graph index` to update it; gate on
-  `freshness.state` and `freshness.usable`
-- legacy `graph status --refresh` warns and returns read-only status for one release
-- the graph walk prunes `.git/`, `.effigy/`, `.venv/`, `__pycache__/`,
-  `coverage/`, `dist/`, `node_modules/`, `target/`, `vendor/`, `.svelte-kit/`,
-  `.next/`, `.nuxt/`, `.output/`, `.turbo/`, and `.parcel-cache/` at any depth
-- `[docs_policy.graph]` is optional committed repository configuration for
-  Markdown kinds, fields, currentness, authority, and typed relations; the
-  separate bounded docs-context query remains a planned surface
-- `graph explore` is the preferred one-call agent navigation packet for
-  code-understanding work; use `graph explore --excerpts-only` when you want the lower-level
-  ranked item list instead
-- `graph affected` accepts changed paths as args or via `--stdin`; it narrows
-  likely validation targets but does not prove exhaustive test reachability
-
 ## Common Recipes
 
 Routing diagnosis:

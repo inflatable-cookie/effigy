@@ -102,8 +102,8 @@ Examples:
 - `effigy.tasks.v1`
 - `effigy.doctor.v1`
 - `effigy.test.plan.v1`
-- `effigy.graph.explore.v1`
-- `effigy.graph.affected.v1`
+- `effigy.scan.god-files.v1`
+- `effigy.config.v1`
 
 ## Suite
 

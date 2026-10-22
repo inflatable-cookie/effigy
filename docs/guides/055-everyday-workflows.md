@@ -231,7 +231,7 @@ move that detail into `effigy.toml`.
 effigy init
 effigy init --check --json
 effigy init --checklist --json
-effigy init --apply-actions manifest.effigy_toml,graph_status.inspect --json
+effigy init --apply-actions manifest.effigy_toml,secrets_surface.inspect --json
 effigy config --schema --minimal
 ```
 

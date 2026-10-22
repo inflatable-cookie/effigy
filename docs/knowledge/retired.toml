@@ -227,7 +227,7 @@ owner = "docs/knowledge/questions.md"
 terms = ["effigy.graph.fanout.v1", "graph index --all-catalogs", "graph status --all-catalogs", "graph index --catalog"]
 paths = []
 config_keys = ["catalog.graph"]
-allow = ["CHANGELOG.md", "docs/knowledge/contracts/json-schema-index.json", "crates/effigy-manifest/src/lib.rs", "crates/effigy-manifest/src/loaded_catalog.rs"]
+allow = ["CHANGELOG.md", "docs/guides/085-v0.15.0-consumer-migration.md", "docs/knowledge/contracts/json-schema-index.json", "crates/effigy-manifest/src/lib.rs", "crates/effigy-manifest/src/loaded_catalog.rs"]
 
 [[retired]]
 id = "effigy-host-run-client"
@@ -818,11 +818,8 @@ allow = [
   "src/tests/lib_tests_help_render_tests.rs",
   "tests/cli_output_tests/help_and_flags_tests.rs",
   "docs/guides/017-json-output-contracts.md",
-  "docs/guides/025-command-reference-matrix.md",
   "docs/guides/026-json-payload-examples.md",
-  "docs/guides/034-task-and-command-glossary.md",
   "docs/guides/047-agent-and-cross-repo-adoption.md",
-  "docs/guides/055-everyday-workflows.md",
   "docs/guides/056-northstar-effigy-consumer-repo-contract.md",
   "docs/guides/085-v0.15.0-consumer-migration.md",
   "docs/knowledge/architecture/000-overview.md",
