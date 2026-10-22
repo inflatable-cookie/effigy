@@ -65,7 +65,7 @@ Policy:
 | Doctor | `doctor::run` | Exposed |
 | Scan | `scan::god_files`, `scan::generated_assets`, `scan::generated_in_src`, `scan::duplicate_blocks`, `scan::comment_ratio`, `scan::attention_markers`, `scan::stale_suppressions` | Exposed |
 | Cache | `cache::inspect`, `cache::invalidate` | Exposed |
-| Contracts | `contracts::check_json`, `contracts::validate_selection` | Exposed |
+| Contracts | `contracts::check_json` (including `validate_selection`) | Exposed |
 | Deploy | `deploy::model`, `deploy::emit`, `deploy::plan`, `deploy::apply`, `deploy::status`, `deploy::history`, `deploy::redeploy`, `deploy::provider_context`, `deploy::provider_context_path`, `deploy::provider_report_path`, `deploy::provider_report` | Exposed; apply/redeploy refuse in v0.15 |
 | Distribution | `distribution::validate_metadata`, `distribution::check_glibc_floor`, `distribution::preflight`, `distribution::first_publish`, `distribution::validate_artifacts`, `distribution::generate_closeout`, `distribution::write_summary` | Exposed |
 | Changelog | `changelog::validate`, `changelog::extract` | Exposed |

@@ -480,13 +480,6 @@ fn build_contracts_module(context: Arc<ScriptContext>, callbacks: HostCallbacks)
         context.clone(),
         callbacks.clone(),
     );
-    module_feature_options(
-        &mut module,
-        "validate_selection",
-        FEATURE_CONTRACTS_VALIDATE_SELECTION,
-        context.clone(),
-        callbacks.clone(),
-    );
     module
 }
 

@@ -3,12 +3,55 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use effigy_cli::{ContractsCheckMode, ContractsSelectionPrintMode};
+use effigy_json_schema::CompiledSchema;
+use effigy_manifest::{load_task_manifest, TASK_MANIFEST_FILE};
 use serde_json::{json, Value};
 
-pub const DEFAULT_SCHEMA_INDEX: &str = "docs/knowledge/contracts/json-schema-index.json";
-pub const DEFAULT_SELECTION_CONTRACT: &str =
-    "docs/knowledge/contracts/json-selection-contract.json";
-pub const DEFAULT_SELECTION_ARTIFACT: &str = "json-contracts-selected.json";
+/// The schema id reported for a selection payload failure, so a caller can tell
+/// a contract violation from a command-payload violation.
+pub const SELECTION_PAYLOAD_SCHEMA: &str = "effigy.json-contract-selection.v1";
+
+/// The project's own JSON contract paths, from `[contracts]` in `effigy.toml`.
+///
+/// There is no built-in default: a project that has not declared its schema
+/// index is told to, rather than being checked against Effigy's own tree.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ContractsConfig {
+    pub schema_index: Option<PathBuf>,
+    pub selection_contract: Option<PathBuf>,
+}
+
+impl ContractsConfig {
+    /// Read `[contracts]` from the project manifest at `repo_root`.
+    ///
+    /// A directory with no manifest has no configuration either; the caller
+    /// then gets the "not configured" error rather than a read failure.
+    pub fn load(repo_root: &Path) -> Result<Self, ContractsError> {
+        let manifest_path = repo_root.join(TASK_MANIFEST_FILE);
+        if !manifest_path.exists() {
+            return Ok(Self::default());
+        }
+        let manifest = load_task_manifest(&manifest_path)
+            .map_err(|error| ContractsError::Message(error.to_string()))?;
+        let config = manifest.contracts.unwrap_or_default();
+        Ok(Self {
+            schema_index: config.schema_index.map(PathBuf::from),
+            selection_contract: config.selection_contract.map(PathBuf::from),
+        })
+    }
+}
+
+/// What `check-json` should do about the selection payload.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum SelectionValidation {
+    /// Do not validate the selection payload.
+    #[default]
+    Skip,
+    /// Validate the payload this run selected.
+    Payload,
+    /// Validate the payload stored in an artifact file.
+    Artifact(PathBuf),
+}
 
 #[derive(Debug)]
 pub enum ContractsError {
@@ -36,54 +79,6 @@ impl std::fmt::Display for ContractsError {
 }
 
 impl std::error::Error for ContractsError {}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SelectionValidationReport {
-    pub contract: PathBuf,
-    pub artifact: PathBuf,
-    pub contract_schema: Value,
-    pub contract_schema_version: Value,
-    pub errors: Vec<String>,
-}
-
-impl SelectionValidationReport {
-    pub fn ok(&self) -> bool {
-        self.errors.is_empty()
-    }
-
-    pub fn to_json_value(&self) -> Value {
-        json!({
-            "schema": "effigy.contracts.selection-validation.v1",
-            "schema_version": 1,
-            "ok": self.ok(),
-            "contract": self.contract.display().to_string(),
-            "artifact": self.artifact.display().to_string(),
-            "contract_schema": self.contract_schema,
-            "contract_schema_version": self.contract_schema_version,
-            "errors": self.errors,
-        })
-    }
-
-    pub fn render_success_text(&self) -> String {
-        format!(
-            "[ok] selection artifact valid ({} v{}): {}",
-            self.contract_schema.as_str().unwrap_or("unknown"),
-            self.contract_schema_version
-                .as_i64()
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "unknown".to_owned()),
-            self.artifact.display()
-        )
-    }
-
-    pub fn render_failure_text(&self) -> String {
-        format!(
-            "artifact does not satisfy selection payload contract: {}\n{}",
-            self.artifact.display(),
-            self.errors.join("\n")
-        )
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectionPayload {
@@ -234,13 +229,34 @@ impl CheckReport {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PreparedCheckJson {
     index_path: PathBuf,
     mode: ContractsCheckMode,
     changed_only_base: Option<String>,
     selection: SelectionPayload,
     selected_rows: Vec<ContractRow>,
+    payload_schemas: BTreeMap<String, CompiledSchema>,
+    selection_check: Option<SelectionCheck>,
+}
+
+#[derive(Debug, Clone)]
+struct SelectionCheck {
+    contract: PathBuf,
+    artifact: Option<PathBuf>,
+    errors: Vec<String>,
+}
+
+impl SelectionCheck {
+    fn describe(&self) -> String {
+        match self.artifact.as_ref() {
+            Some(artifact) => format!(
+                "effigy contracts check-json --validate-selection --artifact {}",
+                artifact.display()
+            ),
+            None => "effigy contracts check-json --validate-selection".to_owned(),
+        }
+    }
 }
 
 impl PreparedCheckJson {
@@ -260,6 +276,11 @@ impl PreparedCheckJson {
         &self.selection
     }
 
+    /// Whether this run validates the selection payload at all.
+    pub fn validates_selection(&self) -> bool {
+        self.selection_check.is_some()
+    }
+
     pub fn build_json_payload(&self, report: &CheckReport) -> Value {
         json!({
             "schema": "effigy.contracts.check-json.v1",
@@ -269,6 +290,15 @@ impl PreparedCheckJson {
             "mode": self.mode_label(),
             "changed_only_base": self.changed_only_base(),
             "selection": self.selection.to_json_value(),
+            "selection_contract": self
+                .selection_check
+                .as_ref()
+                .map(|check| check.contract.display().to_string()),
+            "selection_artifact": self
+                .selection_check
+                .as_ref()
+                .and_then(|check| check.artifact.as_ref())
+                .map(|artifact| artifact.display().to_string()),
             "checks": report.checks,
             "skipped": report.skipped,
             "failures": report.failures.iter().map(CheckFailure::to_json).collect::<Vec<_>>(),
@@ -292,53 +322,24 @@ struct ResolvedSchemaPayload {
     payload: Value,
 }
 
-pub fn validate_selection(
-    repo_root: &Path,
-    contract_override: Option<&PathBuf>,
-    artifact_override: Option<&PathBuf>,
-) -> Result<SelectionValidationReport, ContractsError> {
-    let contract_path = resolve_repo_input(
-        repo_root,
-        contract_override
-            .cloned()
-            .unwrap_or_else(|| PathBuf::from(DEFAULT_SELECTION_CONTRACT)),
-    );
-    let artifact_path = resolve_repo_input(
-        repo_root,
-        artifact_override
-            .cloned()
-            .unwrap_or_else(|| PathBuf::from(DEFAULT_SELECTION_ARTIFACT)),
-    );
-
-    let contract = read_json_file(&contract_path)?;
-    let artifact = read_json_file(&artifact_path)?;
-    let errors = validate_selection_payload(&contract, &artifact);
-
-    Ok(SelectionValidationReport {
-        contract: contract_path,
-        artifact: artifact_path,
-        contract_schema: contract.get("schema").cloned().unwrap_or(Value::Null),
-        contract_schema_version: contract
-            .get("schema_version")
-            .cloned()
-            .unwrap_or(Value::Null),
-        errors,
-    })
-}
-
 pub fn prepare_check_json(
     repo_root: &Path,
+    config: &ContractsConfig,
     index_override: Option<&PathBuf>,
     mode: ContractsCheckMode,
     changed_only_base: Option<&str>,
+    selection_validation: &SelectionValidation,
+    contract_override: Option<&PathBuf>,
 ) -> Result<PreparedCheckJson, ContractsError> {
     let index_path = resolve_repo_input(
         repo_root,
         index_override
             .cloned()
-            .unwrap_or_else(|| PathBuf::from(DEFAULT_SCHEMA_INDEX)),
+            .or_else(|| config.schema_index.clone())
+            .ok_or_else(no_schema_index_configured)?,
     );
     let index = read_json_file(&index_path)?;
+    let payload_schemas = compile_payload_schemas(&index, &index_path)?;
     let active_rows = load_active_contract_rows(&index)?;
     let selected_rows =
         select_contract_rows(repo_root, &index_path, &active_rows, changed_only_base)?;
@@ -350,6 +351,13 @@ pub fn prepare_check_json(
         changed_only_base: changed_only_base.map(ToOwned::to_owned),
         mode: mode_label(mode).to_owned(),
     };
+    let selection_check = prepare_selection_check(
+        repo_root,
+        config,
+        selection_validation,
+        contract_override,
+        &selection,
+    )?;
 
     Ok(PreparedCheckJson {
         index_path,
@@ -357,53 +365,16 @@ pub fn prepare_check_json(
         changed_only_base: changed_only_base.map(ToOwned::to_owned),
         selection,
         selected_rows,
+        payload_schemas,
+        selection_check,
     })
 }
 
-pub fn run_prepared_check_json(
-    repo_root: &Path,
-    prepared: &PreparedCheckJson,
-    emit_progress: bool,
-) -> Result<CheckReport, ContractsError> {
-    let mut report = CheckReport {
-        checks: 0,
-        skipped: 0,
-        failures: Vec::new(),
-    };
-    let mut fixtures = ContractFixtures::new(repo_root);
-
-    for row in &prepared.selected_rows {
-        if prepared.mode == ContractsCheckMode::Fast && is_heavy_json_contract_schema(&row.schema) {
-            if emit_progress {
-                println!("[skip] {} :: skipped in --fast mode", row.schema);
-            }
-            report.skipped += 1;
-            continue;
-        }
-
-        if emit_progress {
-            println!(
-                "[check] {} v{} :: {}",
-                row.schema, row.schema_version, row.command
-            );
-        }
-        report.checks += 1;
-        match run_contract_row(repo_root, row, &mut fixtures) {
-            Ok(()) => {
-                if emit_progress {
-                    println!("  [ok] schema and required keys validated");
-                }
-            }
-            Err(failure) => {
-                if emit_progress {
-                    println!("  [fail] {}", failure.reason);
-                }
-                report.failures.push(failure);
-            }
-        }
-    }
-
-    Ok(report)
+fn no_schema_index_configured() -> ContractsError {
+    ContractsError::Message(
+        "no JSON schema index configured: declare `[contracts] schema_index = \"<path>\"` in effigy.toml (paths are repository relative; `--index` overrides it). See CHANGELOG.md `[Unreleased]`"
+            .to_owned(),
+    )
 }
 
 fn resolve_repo_input(repo_root: &Path, path: PathBuf) -> PathBuf {
@@ -425,74 +396,156 @@ fn read_json_file(path: &Path) -> Result<Value, ContractsError> {
     })
 }
 
-fn validate_selection_payload(contract: &Value, artifact: &Value) -> Vec<String> {
-    let mut errors = Vec::new();
-    let Some(contract_obj) = contract.as_object() else {
-        return vec!["contract root must be a JSON object".to_owned()];
+/// Compile every payload schema the index declares, keyed by schema id.
+///
+/// Paths in `payload_schemas` are relative to the index file. A schema that
+/// cannot be compiled stops the run instead of passing checks silently.
+fn compile_payload_schemas(
+    index: &Value,
+    index_path: &Path,
+) -> Result<BTreeMap<String, CompiledSchema>, ContractsError> {
+    let Some(entries) = index.get("payload_schemas") else {
+        return Ok(BTreeMap::new());
     };
-    let Some(artifact_obj) = artifact.as_object() else {
-        return vec!["artifact root must be a JSON object".to_owned()];
+    let Some(entries) = entries.as_object() else {
+        return Err(ContractsError::Message(
+            "schema index `payload_schemas` must be an object of schema id to schema path"
+                .to_owned(),
+        ));
     };
 
-    let required = contract_obj
-        .get("required")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    for key in required.iter().filter_map(Value::as_str) {
-        if !artifact_obj.contains_key(key) {
-            errors.push(format!("missing required key `{key}`"));
+    let base = index_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut compiled = BTreeMap::new();
+    for (schema, path) in entries {
+        let Some(relative) = path.as_str() else {
+            return Err(ContractsError::Message(format!(
+                "schema index `payload_schemas.{schema}` must be a path string"
+            )));
+        };
+        let schema_path = resolve_repo_input(base, PathBuf::from(relative));
+        let document = read_json_file(&schema_path)?;
+        let validator = CompiledSchema::compile(&document).map_err(|error| {
+            ContractsError::Message(format!(
+                "payload schema {} is not valid Draft 2020-12 JSON Schema: {error}",
+                schema_path.display()
+            ))
+        })?;
+        compiled.insert(schema.clone(), validator);
+    }
+    Ok(compiled)
+}
+
+pub fn run_prepared_check_json(
+    repo_root: &Path,
+    prepared: &PreparedCheckJson,
+    emit_progress: bool,
+) -> Result<CheckReport, ContractsError> {
+    let mut report = CheckReport {
+        checks: 0,
+        skipped: 0,
+        failures: Vec::new(),
+    };
+    let mut fixtures = ContractFixtures::new(repo_root);
+
+    if let Some(check) = &prepared.selection_check {
+        if emit_progress {
+            println!(
+                "[check] {SELECTION_PAYLOAD_SCHEMA} v1 :: {}",
+                check.describe()
+            );
+        }
+        report.checks += 1;
+        if check.errors.is_empty() {
+            if emit_progress {
+                println!("  [ok] selection payload satisfies the contract");
+            }
+        } else {
+            if emit_progress {
+                println!("  [fail] {}", check.errors.join("; "));
+            }
+            report.failures.push(CheckFailure {
+                schema: SELECTION_PAYLOAD_SCHEMA.to_owned(),
+                command: check.describe(),
+                reason: check.errors.join("; "),
+            });
         }
     }
 
-    if !artifact_obj
-        .get("selected")
-        .and_then(Value::as_array)
-        .is_some_and(|values| values.iter().all(|value| value.is_string()))
-    {
-        errors.push("`selected` must be an array of strings".to_owned());
-    }
+    for row in &prepared.selected_rows {
+        if prepared.mode == ContractsCheckMode::Fast && is_heavy_json_contract_schema(&row.schema) {
+            if emit_progress {
+                println!("[skip] {} :: skipped in --fast mode", row.schema);
+            }
+            report.skipped += 1;
+            continue;
+        }
 
-    if !artifact_obj.get("count").is_some_and(Value::is_number) {
-        errors.push("`count` must be a number".to_owned());
-    }
-
-    if let (Some(selected), Some(count)) = (
-        artifact_obj.get("selected").and_then(Value::as_array),
-        artifact_obj.get("count").and_then(Value::as_u64),
-    ) {
-        if count != selected.len() as u64 {
-            errors.push("`count` must equal the number of `selected` entries".to_owned());
+        if emit_progress {
+            println!(
+                "[check] {} v{} :: {}",
+                row.schema, row.schema_version, row.command
+            );
+        }
+        report.checks += 1;
+        match run_contract_row(repo_root, row, &prepared.payload_schemas, &mut fixtures) {
+            Ok(()) => {
+                if emit_progress {
+                    println!("  [ok] schema, version and payload schema validated");
+                }
+            }
+            Err(failure) => {
+                if emit_progress {
+                    println!("  [fail] {}", failure.reason);
+                }
+                report.failures.push(failure);
+            }
         }
     }
 
-    if !artifact_obj
-        .get("changed_only_base")
-        .is_some_and(|value| value.is_null() || value.is_string())
-    {
-        errors.push("`changed_only_base` must be null or a string".to_owned());
-    }
+    Ok(report)
+}
 
-    let mode_values = contract_obj
-        .get("properties")
-        .and_then(Value::as_object)
-        .and_then(|properties| properties.get("mode"))
-        .and_then(Value::as_object)
-        .and_then(|mode| mode.get("enum"))
-        .and_then(Value::as_array)
+fn prepare_selection_check(
+    repo_root: &Path,
+    config: &ContractsConfig,
+    selection_validation: &SelectionValidation,
+    contract_override: Option<&PathBuf>,
+    selection: &SelectionPayload,
+) -> Result<Option<SelectionCheck>, ContractsError> {
+    let artifact = match selection_validation {
+        SelectionValidation::Skip => return Ok(None),
+        SelectionValidation::Payload => None,
+        // Keep the configured artifact path for reporting; IO resolves it.
+        SelectionValidation::Artifact(path) => Some(path.clone()),
+    };
+
+    let contract_path = contract_override
         .cloned()
-        .unwrap_or_default();
-    match artifact_obj.get("mode").and_then(Value::as_str) {
-        Some(mode)
-            if mode_values
-                .iter()
-                .filter_map(Value::as_str)
-                .any(|value| value == mode) => {}
-        Some(_) => errors.push("`mode` must be one of the contract enum values".to_owned()),
-        None => errors.push("`mode` must be a string".to_owned()),
-    }
+        .or_else(|| config.selection_contract.clone())
+        .ok_or_else(|| {
+            ContractsError::Message(
+                "no selection contract configured: declare `[contracts] selection_contract = \"<path>\"` in effigy.toml (paths are repository relative; `--contract` overrides it). See CHANGELOG.md `[Unreleased]`"
+                    .to_owned(),
+            )
+        })?;
+    let contract = read_json_file(&resolve_repo_input(repo_root, contract_path.clone()))?;
+    let contract_schema = CompiledSchema::compile(&contract).map_err(|error| {
+        ContractsError::Message(format!(
+            "selection contract {} is not valid Draft 2020-12 JSON Schema: {error}",
+            contract_path.display()
+        ))
+    })?;
 
-    errors
+    let instance = match artifact.as_ref() {
+        Some(path) => read_json_file(&resolve_repo_input(repo_root, path.clone()))?,
+        None => selection.to_json_value(),
+    };
+
+    Ok(Some(SelectionCheck {
+        contract: contract_path,
+        artifact,
+        errors: contract_schema.validate(&instance),
+    }))
 }
 
 fn load_active_contract_rows(index: &Value) -> Result<Vec<ContractRow>, ContractsError> {
@@ -599,6 +652,7 @@ fn select_contract_rows(
 fn run_contract_row(
     repo_root: &Path,
     row: &ContractRow,
+    payload_schemas: &BTreeMap<String, CompiledSchema>,
     fixtures: &mut ContractFixtures,
 ) -> Result<(), CheckFailure> {
     let args =
@@ -684,12 +738,19 @@ fn run_contract_row(
             ),
         });
     }
-    if let Err(reason) = assert_required_json_contract_keys(&row.schema, &resolved.payload) {
-        return Err(CheckFailure {
-            schema: row.schema.clone(),
-            command: row.command.clone(),
-            reason,
-        });
+    if let Some(payload_schema) = payload_schemas.get(&resolved.schema) {
+        let errors = payload_schema.validate(&resolved.payload);
+        if !errors.is_empty() {
+            return Err(CheckFailure {
+                schema: row.schema.clone(),
+                command: row.command.clone(),
+                reason: format!(
+                    "payload does not satisfy the {} JSON Schema: {}",
+                    resolved.schema,
+                    errors.join("; ")
+                ),
+            });
+        }
     }
     Ok(())
 }
@@ -750,59 +811,6 @@ fn value_to_schema_version(value: &Value) -> String {
         Value::String(text) => text.clone(),
         Value::Number(number) => number.to_string(),
         _ => String::new(),
-    }
-}
-
-fn assert_required_json_contract_keys(schema: &str, payload: &Value) -> Result<(), String> {
-    match schema {
-        "effigy.command.v1" => {
-            let command = payload.get("command").and_then(Value::as_object);
-            if payload.get("schema").is_none()
-                || payload.get("schema_version").is_none()
-                || payload.get("ok").is_none()
-                || command.is_none()
-                || !command.is_some_and(|object| object.contains_key("kind"))
-                || !command.is_some_and(|object| object.contains_key("name"))
-                || payload.get("result").is_none()
-                || payload.get("error").is_none()
-            {
-                return Err("required keys missing for effigy.command.v1".to_owned());
-            }
-            Ok(())
-        }
-        "effigy.container.migrate.v1" => {
-            if ["environment", "compose_file", "manifest"]
-                .iter()
-                .any(|key| !payload.get(key).is_some_and(Value::is_string))
-                || !payload.get("fragments").is_some_and(Value::is_array)
-                || !payload
-                    .get("render_unchanged")
-                    .is_some_and(Value::is_boolean)
-            {
-                return Err(format!("required keys missing for {schema}"));
-            }
-            Ok(())
-        }
-        "effigy.container.render.v1" => {
-            if ["environment", "path", "digest"]
-                .iter()
-                .any(|key| !payload.get(key).is_some_and(Value::is_string))
-                || !payload.get("compose_files").is_some_and(Value::is_array)
-                || !payload
-                    .get("environment_variables")
-                    .is_some_and(Value::is_object)
-                || !payload.get("files").is_some_and(Value::is_array)
-            {
-                return Err(format!("required keys missing for {schema}"));
-            }
-            Ok(())
-        }
-        _ => {
-            if payload.get("schema").is_none() || payload.get("schema_version").is_none() {
-                return Err(format!("required keys missing for {schema}"));
-            }
-            Ok(())
-        }
     }
 }
 

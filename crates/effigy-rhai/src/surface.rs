@@ -143,7 +143,6 @@ pub const FEATURE_SCAN_STALE_SUPPRESSIONS: &str = "scan.stale_suppressions";
 pub const FEATURE_CACHE_INSPECT: &str = "cache.inspect";
 pub const FEATURE_CACHE_INVALIDATE: &str = "cache.invalidate";
 pub const FEATURE_CONTRACTS_CHECK_JSON: &str = "contracts.check_json";
-pub const FEATURE_CONTRACTS_VALIDATE_SELECTION: &str = "contracts.validate_selection";
 pub const FEATURE_DEPLOY_MODEL: &str = "deploy.model";
 pub const FEATURE_DEPLOY_EMIT: &str = "deploy.emit";
 pub const FEATURE_DEPLOY_PLAN: &str = "deploy.plan";
@@ -225,7 +224,6 @@ pub const FEATURE_NAMES: &[&str] = &[
     FEATURE_CACHE_INSPECT,
     FEATURE_CACHE_INVALIDATE,
     FEATURE_CONTRACTS_CHECK_JSON,
-    FEATURE_CONTRACTS_VALIDATE_SELECTION,
     FEATURE_DEPLOY_MODEL,
     FEATURE_DEPLOY_EMIT,
     FEATURE_DEPLOY_PLAN,
@@ -355,7 +353,6 @@ pub const FEATURE_DESCRIPTORS: &[RhaiFeatureDescriptor] = &[
     runner_feature(FEATURE_CACHE_INSPECT),
     runner_feature(FEATURE_CACHE_INVALIDATE),
     runner_feature(FEATURE_CONTRACTS_CHECK_JSON),
-    runner_feature(FEATURE_CONTRACTS_VALIDATE_SELECTION),
     runner_feature(FEATURE_DEPLOY_MODEL),
     runner_feature(FEATURE_DEPLOY_EMIT),
     runner_feature(FEATURE_DEPLOY_PLAN),

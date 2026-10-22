@@ -398,14 +398,15 @@
 # All maintained JSON contract rows and their authority/ownership controls.
 "test:audit:contracts" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh test -p effigy-contracts --lib -- --nocapture",
+  "sh scripts/oxide-selector.sh test -p effigy-json-schema --lib -- --nocapture",
   "sh scripts/oxide-selector.sh test --test cli_output_tests cli_contracts_ -- --nocapture",
 ] }
 "check:audit:contracts" = { visibility = "internal", group = "Maintenance", run = [
   { task = "fmt:check" },
-  "sh scripts/oxide-selector.sh check -p effigy-contracts -p effigy --all-targets",
+  "sh scripts/oxide-selector.sh check -p effigy-contracts -p effigy-json-schema -p effigy --all-targets",
 ] }
-"lint:audit:contracts" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh clippy -p effigy-contracts -p effigy --all-targets -- -D warnings" }
-"fmt:audit:contracts" = { visibility = "internal", group = "Maintenance", run = "rustfmt --edition 2021 crates/effigy-contracts/src/lib.rs crates/effigy-contracts/src/tests.rs" }
+"lint:audit:contracts" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh clippy -p effigy-contracts -p effigy-json-schema -p effigy --all-targets -- -D warnings" }
+"fmt:audit:contracts" = { visibility = "internal", group = "Maintenance", run = "rustfmt --edition 2021 crates/effigy-contracts/src/lib.rs crates/effigy-contracts/src/tests.rs crates/effigy-json-schema/src/lib.rs crates/effigy-json-schema/src/tests.rs" }
 
 # All consumers of the maintained YAML compatibility backend; no live systems.
 "check:audit:yaml" = { visibility = "internal", group = "Maintenance", run = [
@@ -1368,9 +1369,8 @@
 "qa:json" = { visibility = "public", group = "Validation", run = "effigy contracts check-json --fast --print-selected=text" }
 "qa:json:ci" = { visibility = "internal", group = "Maintenance", run = "effigy contracts check-json --full --print-selected=json" }
 "qa:ci:json" = { visibility = "internal", group = "Maintenance", run = [
-  { rhai = "scripts/write-json-contract-artifacts.rhai" },
-  "effigy contracts validate-selection --artifact ./json-contracts-selected.json",
-  "sh scripts/oxide-selector.sh test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture",
+  "effigy contracts check-json --full --print-selected=json",
+  "sh scripts/oxide-selector.sh test --test cli_output_tests cli_contracts_ -- --nocapture",
 ] }
 
 # Run the Rhai library together so process-wide fixture leaks are observable.
@@ -1688,7 +1688,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 ] }
 "check:audit:contracts:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { task = "fmt:check:cargo" },
-  "cargo check -p effigy-contracts -p effigy --all-targets --profile test",
+  "cargo check -p effigy-contracts -p effigy-json-schema -p effigy --all-targets --profile test",
 ] }
 "check:audit:yaml:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { task = "fmt:check:cargo" },
@@ -1901,7 +1901,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 "lint:audit:assurance-boundary:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { id = "assurance-strict-clippy", run = "cargo clippy -p effigy -p effigy-core -p effigy-process -p effigy-scan -p effigy-bootstrap -p effigy-cli --all-targets -- -D warnings", timeout_ms = 600000 },
 ] }
-"lint:audit:contracts:cargo" = { visibility = "internal", group = "Maintenance", run = "cargo clippy -p effigy-contracts -p effigy --all-targets -- -D warnings" }
+"lint:audit:contracts:cargo" = { visibility = "internal", group = "Maintenance", run = "cargo clippy -p effigy-contracts -p effigy-json-schema -p effigy --all-targets -- -D warnings" }
 "lint:audit:yaml:cargo" = { visibility = "internal", group = "Maintenance", run = "cargo clippy -p effigy -p effigy-catalog -p effigy-containers -p effigy-doctor -p effigy-rhai -p effigy-runtime --all-targets -- -D warnings" }
 "lint:containers:isolated-dirs:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { task = "lint:containers:render:cargo" },
@@ -1995,9 +1995,8 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 "qa:ci:fast:cargo".visibility = "internal"
 "qa:ci:fast:cargo".group = "Validation"
 "qa:ci:json:cargo" = { visibility = "internal", group = "Maintenance", run = [
-  { rhai = "scripts/write-json-contract-artifacts.rhai" },
-  "cargo run --bin effigy -- contracts validate-selection --artifact ./json-contracts-selected.json",
-  "cargo test --test cli_output_tests cli_contracts_validate_selection_rejects_invalid_artifacts -- --nocapture",
+  "cargo run --bin effigy -- contracts check-json --full --print-selected=json",
+  "cargo test --test cli_output_tests cli_contracts_ -- --nocapture",
 ] }
 "qa:ci:local:cargo".admission = "heavy"
 "qa:ci:local:cargo".run = [
@@ -2056,6 +2055,7 @@ qa = { visibility = "public", group = "Validation", run = [{ task = "test" }, { 
 ] }
 "test:audit:contracts:cargo" = { visibility = "internal", group = "Maintenance", run = [
   "cargo test -p effigy-contracts --lib -- --nocapture",
+  "cargo test -p effigy-json-schema --lib -- --nocapture",
   "cargo test --test cli_output_tests cli_contracts_ -- --nocapture",
 ] }
 "test:audit:yaml:cargo" = { visibility = "internal", group = "Maintenance", run = [

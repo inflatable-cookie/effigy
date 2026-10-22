@@ -519,7 +519,7 @@
       "std::fs::write": 26
     },
     "crates/effigy-contracts/src/tests.rs": {
-      "std::fs::write": 6
+      "std::fs::write": 17
     },
     "crates/effigy-core/src/build_info.rs": {
       "std.process.Command.new": 3,

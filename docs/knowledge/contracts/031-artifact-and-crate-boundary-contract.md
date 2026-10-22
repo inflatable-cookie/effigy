@@ -65,6 +65,8 @@ The current small crates are retained by ownership, not size:
 - `effigy-routing`: selector routing and task lookup order
 - `effigy-gateway`: local gateway registry and route primitives
 - `effigy-ui`: renderer abstraction and output primitives
+- `effigy-json-schema`: the single JSON Schema validation engine shared by
+  project contract checks and the planned Rhai JSON Schema API (055)
 
 No immediate crate merge candidate is accepted in this lane.
 

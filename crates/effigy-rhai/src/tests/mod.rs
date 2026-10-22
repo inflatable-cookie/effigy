@@ -248,7 +248,6 @@ fn allowed_first_party_process_script(relative: &str, contents: &str) -> bool {
             contents.contains("process::run(\"curl\",")
                 && contents.contains("process::run(\"curl\", [\"--version\"])")
         }
-        "scripts/write-json-contract-artifacts.rhai" => contents.contains("process::tee("),
         "scripts/build-local-bin.rhai" => {
             contents.contains("process::stream(program, process_args, options)")
         }

@@ -179,7 +179,8 @@ fn render_contracts_help_shows_validation_options() {
     let rendered = render_help_text(HelpTopic::Contracts);
     assert!(rendered.contains("contracts Help"));
     assert!(rendered.contains("effigy contracts check-json"));
-    assert!(rendered.contains("effigy contracts validate-selection"));
+    assert!(!rendered.contains("effigy contracts validate-selection"));
+    assert!(rendered.contains("--validate-selection"));
     assert!(rendered.contains("--index <PATH>"));
     assert!(rendered.contains("--fast"));
     assert!(rendered.contains("--full"));
