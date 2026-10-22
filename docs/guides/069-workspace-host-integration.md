@@ -222,15 +222,20 @@ run, and Effigy removes it again.
 ```toml
 # ~/.effigy/config.toml
 [scratch]
-root = "/Volumes/EffigyScratch"
+root = "/Volumes/Builds/scratch"
 volume_uuid = "A6AC3ED7-33EA-46B4-8082-7254CF291ED2"
 require_separate_volume = true
 ```
 
-`root` is the volume's **mount point**, not a directory inside the volume:
-that is the only path whose device and ownership Effigy can prove belong to a
-separate, mounted volume. Point it at a dedicated volume (`/Volumes/<name>`),
-or at an existing volume's mount root, as the preparation recipe below does.
+`root` may be any directory on the drive, not only the volume's mount point:
+Effigy proves the volume that holds it, not the path's depth. Point it at a
+subdirectory with room for builds (`/Volumes/Builds/scratch`), or at the mount
+point itself — both work.
+
+If `root` does not exist, Effigy creates it — and any missing parent below the
+nearest existing directory — with mode `0700`, provided that nearest existing
+directory passes the volume proof. A mount point is never created: if the
+drive is absent, the proof fails and nothing is created.
 
 With that block set, every host-placed run gets its own `<root>/<8-character
 run directory>/`, named from the run's whole identity (so two runs started in
@@ -242,49 +247,51 @@ never rewrites the temp environment, and a command that would hold no scratch
 directory (including `effigy test`) opens no run at all, so it needs no Effigy
 state home.
 
-**Recommendation: always set `volume_uuid`.** Without the pin, a mount point
-that happens to be reused by another disk is accepted as long as the other
-checks pass. `diskutil info /Volumes/<name> | grep "Volume UUID"` prints the
-value; Effigy compares it case-insensitively against the volume that actually
-holds the root.
+**Recommendation: always set `volume_uuid`.** Without the pin, a volume that
+happens to be mounted at the same path is accepted as long as the other checks
+pass. `diskutil info /Volumes/<name> | grep "Volume UUID"` prints the value;
+Effigy compares it case-insensitively against the volume that actually holds
+the root.
 
 ### What Effigy refuses
 
 Every condition is checked before a run creates anything, on an opened
-descriptor of the root. A failure falls back to the default temp directory and
-`effigy doctor` reports the reason, so the run still works — it just writes to
-the internal disk:
+descriptor of the root (or of its nearest existing ancestor, when the root is
+missing). A failure falls back to the default temp directory and `effigy
+doctor` reports the reason, so the run still works — it just writes to the
+internal disk:
 
-- the root does not exist (Effigy never creates a mount point or the root);
-- the root's volume is the boot volume `/`;
-- the root's volume is `/System/Volumes/Data`;
-- the root is not the volume's mount point (`require_separate_volume = true`,
-  the default), including a plain directory inside the volume or a stale
-  directory left under `/Volumes` after the drive went away;
+- the nearest existing ancestor is on the boot volume `/` or on
+  `/System/Volumes/Data` (`require_separate_volume = true`, the default) — this
+  is what refuses a stale `/Volumes/<name>` directory left on the internal disk
+  after the drive went away;
+- no mount point holds the path, so nothing proves it is on a mounted volume;
 - the volume UUID is unreadable, or different from `volume_uuid`;
-- the root is inside `/Volumes/Builds/oxide-pool`, which belongs to Oxide;
-- the root is not owned by `root` (uid 0), carries an ACL, or is writable by
-  others.
+- the root is owned by neither the account running Effigy nor `root`;
+- the root is group- or world-writable, or carries an ACL;
+- the root is missing and cannot be created: its ancestor is not on the
+  volume, or a missing component exists but cannot be resolved (a dangling
+  symlink, a loop) — Effigy then creates nothing.
 
 The ownership rule is what makes the root trustworthy against another local
-account. A fresh volume's root is root-owned and not writable by you, so give
-your own group write access to the mount point once:
+account. The directory Effigy creates is already yours and `0700`. For an
+existing directory, make sure it is yours (or root's) and closed to group and
+world writes:
 
 ```sh
-# The volume is already mounted at /Volumes/EffigyScratch.
-sudo chown root:staff /Volumes/EffigyScratch
-sudo chmod 0775 /Volumes/EffigyScratch
+# An existing directory on the drive, owned by you.
+chmod 0700 /Volumes/Builds/scratch
 ```
 
-No ACL, and no world write: those two are why `chmod 0775` is the right shape
-(`0777` is refused).
+Group write is refused as well as world write (`0755` and `0750` are fine,
+`0775` and `0777` are not), so another account cannot replace a run directory
+under the root.
 
 `require_separate_volume = false` relaxes only the two volume-identity checks
-(boot/data volume and the mounted-volume-root requirement, so a directory
-inside a trusted volume is accepted); the UUID pin, when set, and the
-structural checks still apply. It exists for an explicitly trusted directory
-on an already-verified volume, not as a way to keep scratch on the internal
-disk.
+(boot/data volume and the mounted-volume requirement, so a directory on the
+internal disk is accepted); the UUID pin, when set, and the ownership checks
+still apply. It exists for an explicitly trusted directory, not as a way to
+keep scratch on the internal disk by accident.
 
 ### Precedence
 

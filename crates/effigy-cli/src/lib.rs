@@ -838,9 +838,6 @@ pub enum GatewaySubcommand {
     Status,
     Repair { yes: bool },
     SetupTls,
-    SetupListenerHandoff,
-    ListenerHandoffStatus,
-    RemoveListenerHandoff,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

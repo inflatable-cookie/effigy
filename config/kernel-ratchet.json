@@ -139,10 +139,6 @@
       "std::fs::rename": 2,
       "std::fs::write": 1
     },
-    "crates/effigy-gateway/src/listener_handoff/maintenance.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.spawn": 1
-    },
     "crates/effigy-gateway/src/resolver_setup.rs": {
       "std.process.Command.new": 3,
       "std.process.Command.output": 2,
@@ -657,9 +653,6 @@
       "std::fs::remove_file": 1,
       "std::fs::write": 14
     },
-    "crates/effigy-gateway/src/listener_handoff/maintenance/tests.rs": {
-      "std::fs::write": 6
-    },
     "crates/effigy-gateway/src/macos_socket.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.spawn": 1
@@ -886,7 +879,7 @@
       "std.process.Command.status": 2
     },
     "src/runner/scratch.rs": {
-      "std::fs::write": 3
+      "std::fs::write": 6
     },
     "src/runner/script_command/tests.rs": {
       "std::fs::write": 1

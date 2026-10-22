@@ -22,7 +22,7 @@ pub(crate) fn pipe() -> io::Result<(OwnedFd, OwnedFd)> {
     }
     Ok(pair)
 }
-pub(super) fn high(fd: OwnedFd) -> io::Result<OwnedFd> {
+pub(crate) fn high(fd: OwnedFd) -> io::Result<OwnedFd> {
     // SAFETY: duplicates a live fd above the child's reserved descriptors.
     let copy = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 10) };
     if copy < 0 {
@@ -78,20 +78,35 @@ impl Drop for TerminalLease {
 #[derive(Debug)]
 pub(crate) struct Blocked {
     pub pid: u32,
+    pub anchor: Option<u32>,
     barrier: Option<OwnedFd>,
     status: OwnedFd,
     streams: Option<(OwnedFd, OwnedFd, Option<TerminalLease>)>,
     released: bool,
 }
 impl Blocked {
-    pub fn fork(spec: &ProcessSpec, nonce: &str, cx: &OperationContext) -> io::Result<Self> {
-        Self::fork_with_nonce(spec, "EFFIGY_CUSTODY_NONCE", nonce, cx)
+    pub fn fork(
+        spec: &ProcessSpec,
+        nonce: &str,
+        cx: &OperationContext,
+        image: &crate::supervise::anchor::Image<'_>,
+    ) -> io::Result<Self> {
+        Self::fork_inner(spec, "EFFIGY_CUSTODY_NONCE", nonce, cx, Some(image))
     }
     pub(crate) fn fork_with_nonce(
         spec: &ProcessSpec,
         key: &str,
         nonce: &str,
         cx: &OperationContext,
+    ) -> io::Result<Self> {
+        Self::fork_inner(spec, key, nonce, cx, None)
+    }
+    fn fork_inner(
+        spec: &ProcessSpec,
+        key: &str,
+        nonce: &str,
+        cx: &OperationContext,
+        image: Option<&crate::supervise::anchor::Image<'_>>,
     ) -> io::Result<Self> {
         if !["EFFIGY_CUSTODY_NONCE", "EFFIGY_PROBE_NONCE"].contains(&key) {
             return Err(io::Error::new(
@@ -145,6 +160,20 @@ impl Blocked {
         args.push(std::ptr::null());
         let mut vars: Vec<_> = env.iter().map(|a| a.as_ptr()).collect();
         vars.push(std::ptr::null());
+        let anchor_args = [
+            image.map_or(c"".as_ptr(), |i| i.path.as_ptr()),
+            c"__kernel-anchor".as_ptr(),
+            image.map_or(c"".as_ptr(), |i| i.metadata.as_ptr()),
+            std::ptr::null(),
+        ];
+        let anchor_env = [
+            env.last().expect("nonce present").as_ptr(),
+            std::ptr::null(),
+        ];
+        let anchor_fd = image
+            .and_then(|i| i.fd.as_ref())
+            .map_or(-1, AsRawFd::as_raw_fd);
+        let anchored = image.is_some();
         let cwd = DirFd::walk(&spec.cwd, Trust::Operator).map_err(io::Error::other)?;
         let _fork = FORK
             .lock()
@@ -223,13 +252,18 @@ impl Blocked {
                 }
                 libc::fcntl(3, libc::F_SETFD, libc::FD_CLOEXEC);
                 libc::fcntl(4, libc::F_SETFD, libc::FD_CLOEXEC);
+                if anchor_fd >= 0 && libc::dup2(anchor_fd, 5) < 0 {
+                    libc::_exit(125);
+                }
+                let close_from = if anchor_fd >= 0 { 6 } else { 5 };
                 #[cfg(target_os = "linux")]
                 {
-                    if libc::syscall(libc::SYS_close_range, 5u32, u32::MAX, 0u32) != 0 {
+                    if libc::syscall(libc::SYS_close_range, close_from as u32, u32::MAX, 0u32) != 0
+                    {
                         // Linux before close_range: a finite descriptor-table bound
                         // captured by the OS. sysconf itself is async-signal-safe.
                         let max = i64::from(fd_limit);
-                        let mut fd = 5;
+                        let mut fd = close_from;
                         while i64::from(fd) < max {
                             libc::close(fd);
                             fd += 1;
@@ -238,7 +272,7 @@ impl Blocked {
                 }
                 #[cfg(target_os = "macos")]
                 {
-                    let mut fd = 5;
+                    let mut fd = close_from;
                     while fd < fd_limit {
                         libc::close(fd);
                         fd += 1;
@@ -256,8 +290,104 @@ impl Blocked {
                 let mut mask: libc::sigset_t = std::mem::zeroed();
                 libc::sigemptyset(&mut mask);
                 libc::sigprocmask(libc::SIG_SETMASK, &mask, std::ptr::null_mut());
+                // Fork inside the blocked leader's session, including PTY
+                // setsid. Its group already exists; neither parent setpgid nor
+                // a join across sessions can race workload execution.
+                let mut anchor_pid = [0u8; 4];
+                let mut control = [-1; 2];
+                if anchored {
+                    let mut ready = [-1; 2];
+                    if libc::pipe(control.as_mut_ptr()) != 0 || libc::pipe(ready.as_mut_ptr()) != 0
+                    {
+                        libc::_exit(125);
+                    }
+                    let middle = libc::fork();
+                    if middle < 0 {
+                        libc::_exit(125);
+                    }
+                    if middle == 0 {
+                        let leaf = libc::fork();
+                        if leaf < 0 {
+                            libc::_exit(125);
+                        }
+                        if leaf > 0 {
+                            libc::_exit(0);
+                        }
+                        // Reparent before workload exec: waitpid(-1) in the
+                        // workload must never see the kernel's anchor child.
+                        let null = libc::open(c"/dev/null".as_ptr(), libc::O_RDWR);
+                        if null < 0
+                            || libc::dup2(null, 0) < 0
+                            || libc::dup2(null, 1) < 0
+                            || libc::dup2(null, 2) < 0
+                            || libc::dup2(control[0], 3) < 0
+                            || libc::dup2(ready[1], 4) < 0
+                        {
+                            libc::_exit(125);
+                        }
+                        // The blocked leader already closed every older fd.
+                        // These pipes and /dev/null are its only new ones.
+                        let end = null.max(control[1]).max(ready[1]);
+                        let mut fd = close_from;
+                        while fd <= end {
+                            libc::close(fd);
+                            fd += 1;
+                        }
+                        #[cfg(target_os = "linux")]
+                        if anchor_fd >= 0 {
+                            libc::syscall(
+                                libc::SYS_execveat,
+                                5,
+                                c"".as_ptr(),
+                                anchor_args.as_ptr(),
+                                anchor_env.as_ptr(),
+                                libc::AT_EMPTY_PATH,
+                            );
+                            libc::_exit(125);
+                        }
+                        libc::execve(anchor_args[0], anchor_args.as_ptr(), anchor_env.as_ptr());
+                        libc::_exit(125);
+                    }
+                    if anchor_fd >= 0 {
+                        libc::close(5);
+                    }
+                    libc::close(control[0]);
+                    libc::close(ready[1]);
+                    let mut status = 0;
+                    loop {
+                        if libc::waitpid(middle, &mut status, 0) >= 0 {
+                            break;
+                        }
+                        if last_errno() != libc::EINTR {
+                            libc::_exit(125);
+                        }
+                    }
+                    if status != 0 {
+                        libc::_exit(125);
+                    }
+                    let mut offset = 0;
+                    while offset < anchor_pid.len() {
+                        let n = libc::read(
+                            ready[0],
+                            anchor_pid[offset..].as_mut_ptr().cast(),
+                            anchor_pid.len() - offset,
+                        );
+                        if n > 0 {
+                            offset += n as usize;
+                        } else if n == 0 || last_errno() != libc::EINTR {
+                            libc::_exit(125);
+                        }
+                    }
+                    libc::close(ready[0]);
+                }
                 let ready = [1u8];
                 if libc::write(4, ready.as_ptr().cast(), 1) != 1 {
+                    libc::_exit(125);
+                }
+                if anchored
+                    && libc::write(4, anchor_pid.as_ptr().cast(), anchor_pid.len())
+                        != anchor_pid.len() as isize
+                {
                     libc::_exit(125);
                 }
                 let mut go = [0u8];
@@ -277,6 +407,15 @@ impl Blocked {
                 if go[0] != 1 {
                     libc::_exit(125);
                 }
+                if anchored {
+                    let release = [1u8];
+                    if libc::write(control[1], release.as_ptr().cast(), release.len())
+                        != release.len() as isize
+                    {
+                        libc::_exit(125);
+                    }
+                    libc::close(control[1]);
+                }
                 libc::execve(argv[0].as_ptr(), args.as_ptr(), vars.as_ptr());
                 let failed = [2u8];
                 libc::write(4, failed.as_ptr().cast(), 1);
@@ -290,6 +429,7 @@ impl Blocked {
         drop(input_read);
         let mut child = Self {
             pid: pid as u32,
+            anchor: None,
             barrier: Some(barrier_write),
             status: status_read,
             streams: Some((out_read, err_read, None)),
@@ -301,6 +441,37 @@ impl Blocked {
             nonblock(stderr)?;
         }
         child.await_status(cx, false)?;
+        if anchored {
+            let mut bytes = [0u8; 4];
+            let mut offset = 0;
+            while offset < bytes.len() {
+                cx.check("anchor identity frame")
+                    .map_err(|e| io::Error::other(format!("{e:?}")))?;
+                // SAFETY: nonblocking live status pipe and remaining buffer.
+                let n = unsafe {
+                    libc::read(
+                        child.status.as_raw_fd(),
+                        bytes[offset..].as_mut_ptr().cast(),
+                        bytes.len() - offset,
+                    )
+                };
+                if n > 0 {
+                    offset += n as usize;
+                } else if n == 0 {
+                    return Err(io::Error::other("anchor frame EOF"));
+                } else if !matches!(
+                    io::Error::last_os_error().kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) {
+                    return Err(io::Error::last_os_error());
+                } else {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            }
+            child.anchor = Some(u32::from_ne_bytes(bytes));
+            #[cfg(all(test, feature = "fault-injection"))]
+            crate::fault::note_anchor(u32::from_ne_bytes(bytes));
+        }
         if matches!(spec.terminal, Terminal::Foreground) {
             child.streams.as_mut().expect("streams present").2 =
                 Some(TerminalLease::take(pid as u32)?);
@@ -433,7 +604,7 @@ fn last_errno() -> i32 {
     }
 }
 
-fn descriptor_limit() -> io::Result<i32> {
+pub(crate) fn descriptor_limit() -> io::Result<i32> {
     // SAFETY: sysconf only observes the calling process's descriptor limit.
     let limit = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) };
     if !(5..=1 << 20).contains(&limit) {
