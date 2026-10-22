@@ -304,3 +304,33 @@ revisit of the deployment-data surface is untouched.
 
 Each item lands with its implementing PR, which updates the owning knowledge.
 That includes `vision.md` "Agent operations", which loses graph and docs context.
+
+## Q-010 — Where runtime state lives (no central database)
+
+Status: answered
+Asked: 2026-10-22 (Tom, after the machine-wide `store refused: Busy` outage)
+Answered: 2026-10-22 by Tom: "Yeah that's much cleaner"
+
+Tom: "I don't know how comfortable I am having a central database for effigy..
+it kinda goes against the principle of the project. I _do_ understand the
+benefits, but it's already proved to be a single source of failure and is adding
+_more_ churn to my drive".
+
+On 2026-10-22 one machine-wide `~/.effigy/state/kernel.db` failed every project
+at once: a close-time retention scan held the write lock for minutes. It also
+grew by about 18,700 runs in four days and about 20 MB in 15 minutes. The ruling:
+
+- **Short foreground runs write nothing durable.** A run that lives and ends with
+  the invoking terminal keeps its record in memory. Its process group is the
+  custody boundary, and its exclusive locks are lock files. No database write in
+  the common case.
+- **Runs that outlive the terminal record per checkout.** Detached runs, managed
+  sessions, environments and containers keep a durable journal and custody in
+  that checkout's own `.effigy/state/` (gitignored). A failure or lock affects
+  one project, and removing the checkout removes its state.
+- **A small machine-level store holds only genuinely shared facts:** gateway
+  endpoints and routes, the port registry, and host admission. It's low-traffic.
+- This changes the state format, so it lands in v0.15, with built-in migration
+  from the current machine store. Contract 052 is amended to match, and the
+  kernel's crash-recovery guarantees still hold for every run that outlives its
+  terminal.
