@@ -147,13 +147,27 @@ impl RuntimeDnsOverrideRoutes {
 pub(crate) fn runtime_route_domains(
     dns_routes: &[EffectiveDnsRoute],
     service_aliases: &[EffectiveServiceAlias],
-    base_domain: Option<&str>,
+    declared_base_domain: Option<&str>,
+    effective_base_domain: Option<&str>,
 ) -> RuntimeDnsOverrideRoutes {
     let mut host_gateway_domains = std::collections::BTreeSet::new();
     let mut service_alias_domains = BTreeMap::<String, Vec<String>>::new();
-    let base_domain = base_domain
-        .or_else(|| dns_routes.first().map(|route| route.domain.as_str()))
-        .and_then(base_domain_from_route);
+    let effective_base = effective_base_domain
+        .map(str::to_owned)
+        .or_else(|| dns_routes.first().map(|route| route.domain.clone()))
+        .filter(|domain| base_domain_from_route(domain).is_some());
+    // A scoped checkout keeps the canonical declared alias reachable inside
+    // its own execution target. The Compose project network is per scope, so
+    // the canonical name can only ever name this scope's backing service.
+    let declared_base = declared_base_domain
+        .map(str::to_owned)
+        .or_else(|| {
+            dns_routes
+                .first()
+                .map(|route| route.declared_domain.clone())
+        })
+        .filter(|domain| base_domain_from_route(domain).is_some())
+        .or_else(|| effective_base.clone());
 
     for route in dns_routes {
         let domain = route.domain.trim();
@@ -162,18 +176,22 @@ pub(crate) fn runtime_route_domains(
         }
     }
 
-    if let Some(base_domain) = base_domain {
+    if let (Some(effective_base), Some(declared_base)) = (effective_base, declared_base) {
+        // Only an effective route suppresses a network alias: a route's
+        // declared domain is exactly what the scope rewrote away.
         let explicit_domains = dns_routes
             .iter()
             .map(|route| route.domain.as_str())
             .collect::<std::collections::BTreeSet<_>>();
         for alias in service_aliases {
-            let domain = format!("{}.{}", alias.domain_label, base_domain);
-            if !explicit_domains.contains(domain.as_str()) {
-                service_alias_domains
-                    .entry(alias.service.clone())
-                    .or_default()
-                    .push(domain);
+            let domains = service_alias_domains
+                .entry(alias.service.clone())
+                .or_default();
+            for base in [&effective_base, &declared_base] {
+                let domain = format!("{}.{base}", alias.domain_label);
+                if !explicit_domains.contains(domain.as_str()) && !domains.contains(&domain) {
+                    domains.push(domain);
+                }
             }
         }
     }
@@ -266,7 +284,8 @@ mod tests {
         let routes = [route("s3.acme.test")];
         let aliases = [alias()];
 
-        let runtime_routes = runtime_route_domains(&routes, &aliases, Some("acme.test"));
+        let runtime_routes =
+            runtime_route_domains(&routes, &aliases, Some("acme.test"), Some("acme.test"));
 
         assert_eq!(
             runtime_routes.service_alias_domains.get("postgres"),
@@ -279,7 +298,7 @@ mod tests {
         let routes = [route("s3.acme.test"), route("api.s3.acme.test")];
         let aliases = [alias()];
 
-        let runtime_routes = runtime_route_domains(&routes, &aliases, None);
+        let runtime_routes = runtime_route_domains(&routes, &aliases, None, None);
 
         assert_eq!(
             runtime_routes.service_alias_domains.get("postgres"),
@@ -288,11 +307,58 @@ mod tests {
     }
 
     #[test]
+    fn scoped_runtime_alias_keeps_the_declared_name_for_this_scope_only() {
+        // A linked worktree serves HTTP on its scoped apex. Its container
+        // target still resolves the canonical declared backing-service alias,
+        // because the alias lives on this scope's own Compose network.
+        let routes = [route("s3.acme-wabc.test")];
+        let aliases = [alias()];
+
+        let runtime_routes =
+            runtime_route_domains(&routes, &aliases, Some("acme.test"), Some("acme-wabc.test"));
+
+        assert_eq!(
+            runtime_routes.service_alias_domains.get("postgres"),
+            Some(&vec![
+                "postgres.acme-wabc.test".to_owned(),
+                "postgres.acme.test".to_owned()
+            ])
+        );
+        assert_eq!(
+            runtime_routes.host_gateway_domains,
+            vec!["s3.acme-wabc.test".to_owned()],
+            "the canonical alias must never point a container back at the host gateway"
+        );
+    }
+
+    #[test]
+    fn scoped_runtime_alias_yields_to_an_explicit_route_for_the_canonical_name() {
+        let mut mailbox = route("postgres.acme.test");
+        mailbox.domain = "postgres.acme-wabc.test".to_owned();
+        let routes = [mailbox];
+        let aliases = [alias()];
+
+        let runtime_routes =
+            runtime_route_domains(&routes, &aliases, Some("acme.test"), Some("acme-wabc.test"));
+
+        assert_eq!(
+            runtime_routes.service_alias_domains.get("postgres"),
+            Some(&vec!["postgres.acme.test".to_owned()]),
+            "an explicit scoped route keeps its gateway precedence while the canonical name still resolves locally"
+        );
+    }
+
+    #[test]
     fn runtime_dns_render_is_complete_without_host_configuration() {
         let routes: Vec<_> = (0..300)
             .map(|n| route(&format!("r{n}.teardown.test")))
             .collect();
-        let routes = runtime_route_domains(&routes, &[alias()], Some("teardown.test"));
+        let routes = runtime_route_domains(
+            &routes,
+            &[alias()],
+            Some("teardown.test"),
+            Some("teardown.test"),
+        );
         let rendered = render_runtime_dns_override(
             &["workspace".into(), "postgres".into(), "web".into()],
             &["1.1.1.1".into()],
