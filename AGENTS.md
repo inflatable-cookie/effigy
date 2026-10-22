@@ -31,6 +31,10 @@ The plan (lanes, their documents and their order), leads, papercuts, brief draft
 - File small recurring friction with Queue `papercut.add`; record unplanned ideas and observations with `lead.add`.
 - Add user-facing changes under `CHANGELOG.md` `[Unreleased]`.
 
+## Keep working
+
+Context compaction is automatic. Never stop, block or hand off because your context is long or was compacted (Tom, 2026-10-22). Keep committed, pushed progress and carry on. Block only for a real decision or an external blocker the brief names.
+
 ## Validate
 
 Workers run the changed-code tests, compile the touched targets, and run docs checks when docs changed, once. Briefs name those targeted Effigy selectors. Then open the PR and report; no whole suites or repeat passes. Reviewers read the diff, run the same targeted checks, and exercise the behavior. A re-review checks only the change since the last reviewed head, plus the targeted checks for that change. A base that has moved on is not a content finding. Anyone who starts fixture processes stops them by recorded PID, and removes the fixture, before reporting. Hosted CI is not a task gate (Tom, 2026-10-20). Workers and reviewers don't wait for it or hold a PR for it. A task merges once the targeted checks for its change pass. Hosted failures outside the change are noted in the PR and fixed holistically at milestone QA.
