@@ -28,7 +28,7 @@ files to make a gate pass.
 
 ## 3. Never re-tag a failed release
 
-If `effigy release execute` fails partway, the tag may already exist on the
+If `effigy release run` fails partway through publish, the tag may already exist on the
 remote, or the manifest cache may have recorded the attempt. Re-tagging:
 
 - Confuses consumers who already pulled the broken tag.
@@ -46,8 +46,9 @@ bottle uploads, distribution manifest updates.
 
 Commands that require explicit human instruction:
 
-- `effigy release prepare --yes`
-- `effigy release execute --yes`
+- `effigy release run` (its `publish` stage pushes tags)
+- `effigy release run --to certify` (its `prepare` stage commits)
+- `effigy release resume <run>` after a publish attempt
 - `effigy release verify-install`
 - Anything that pushes tags, creates GitHub releases, or uploads artifacts.
 
@@ -55,8 +56,7 @@ Read-only release commands (safe to run unprompted for inspection):
 
 - `effigy release --plan`
 - `effigy release status --check-gates`
-- `effigy release prepare --plan`
-- `effigy release execute --plan`
+- `effigy release receipt`
 - `effigy release gates`
 - `effigy changelog extract --version X.Y.Z`
 

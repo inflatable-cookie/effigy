@@ -77,7 +77,7 @@ The deployment transaction system does not own:
 - provider account bootstrap
 - provider secret value creation
 - automatic database or media rollback
-- release prepare or release execute
+- the release Run's prepare or publish stage
 - post-go-live legacy sync
 
 ## Existing Surface Boundary
@@ -201,7 +201,7 @@ Failures stop later stages.
 
 ## Release Policy
 
-Deploy consumes release evidence. It must not run release prepare or release
+Deploy consumes release evidence. It must not run the release Run's prepare or publish
 execute.
 
 Policies:

@@ -350,11 +350,16 @@ pub fn render_release_status_text(status: &ReleaseStatus) -> String {
     lines.push(format!(
         "  Run: {}",
         match (&status.run.id, &status.run.stage, &status.run.waiting_on) {
-            (Some(id), Some(stage), Some(waiting_on)) =>
-                format!("{id} at {stage}, waiting on {waiting_on}"),
-            (Some(id), Some(stage), None) => format!("{id} at {stage}"),
+            (Some(id), Some(stage), Some(waiting_on)) => format!(
+                "{id} at {stage} ({}), waiting on {waiting_on}",
+                status.run.status.as_deref().unwrap_or("unknown")
+            ),
+            (Some(id), Some(stage), None) => format!(
+                "{id} at {stage} ({})",
+                status.run.status.as_deref().unwrap_or("unknown")
+            ),
             (Some(id), None, _) => id.clone(),
-            _ => "none (release runs arrive with the Run pipeline)".to_owned(),
+            _ => "none".to_owned(),
         }
     ));
     append_pipeline_lines(&mut lines, &status.plan);

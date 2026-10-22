@@ -2,55 +2,19 @@ use std::path::Path;
 
 use effigy_core::resolver::ResolvedTarget;
 use effigy_release::{
-    build_release_prepare_plan as build_release_prepare_plan_via_release,
-    collect_release_execute_plan as collect_release_execute_plan_via_release,
     collect_release_gate_run, collect_release_status as collect_release_status_via_release,
-    execute_release as execute_release_via_release,
-    execute_release_prepare as execute_release_prepare_via_release,
     git_remote_url as git_remote_url_via_release,
-    load_release_context as load_release_context_via_release,
     plan_release_pipeline as plan_release_pipeline_via_release,
+    read_release_record as read_release_record_via_release,
+    release_home as release_home_via_release,
     resolve_verify_install_tag as resolve_verify_install_tag_via_release,
-    run_release_gates_with_progress,
-    run_release_verify_install as run_release_verify_install_via_release,
-    validate_planned_release_version, GateExecutionReport, ReleaseContext, ReleaseExecutePlan,
-    ReleaseExecuted, ReleaseGateRun, ReleasePipelinePlan, ReleasePreparePlan, ReleasePrepared,
-    ReleaseStatus, ReleaseVerifyInstall, ResolvedGate,
+    run_release as run_release_via_release, run_release_gates_with_progress,
+    run_release_verify_install as run_release_verify_install_via_release, GateExecutionReport,
+    GitEffects, ReleaseAction, ReleaseGateRun, ReleasePipelinePlan, ReleaseRunOutcome,
+    ReleaseRunRequest, ReleaseStage, ReleaseStatus, ReleaseVerifyInstall, ResolvedGate,
 };
 
 use super::*;
-
-pub(super) fn validate_prepare_version_override(
-    context: &ReleaseContext,
-    raw_version: &str,
-) -> Result<semver::Version, String> {
-    let version = semver::Version::parse(raw_version.trim())
-        .map_err(|error| format!("`{}` is not valid semver: {error}", raw_version.trim()))?;
-    validate_planned_release_version(context, &version)?;
-    Ok(version)
-}
-
-pub(super) fn parse_release_version_override(
-    repo_root: &Path,
-    raw_version: Option<&str>,
-    subcommand: &str,
-) -> Result<Option<semver::Version>, RunnerError> {
-    let Some(raw_version) = raw_version else {
-        return Ok(None);
-    };
-    let context = load_release_context_via_release(repo_root)?;
-    context.next_version.as_ref().ok_or_else(|| {
-        RunnerError::task_invocation(format!(
-            "release {subcommand} `--version` requires a changelog-derived suggested version"
-        ))
-    })?;
-    let version = validate_prepare_version_override(&context, raw_version).map_err(|message| {
-        RunnerError::task_invocation(format!(
-            "invalid `release {subcommand} --version`: {message}"
-        ))
-    })?;
-    Ok(Some(version))
-}
 
 pub(super) fn collect_release_status(
     resolved: &ResolvedTarget,
@@ -145,45 +109,56 @@ fn apply_release_plan_version_override(
     Ok(())
 }
 
-pub(super) fn collect_release_prepare_plan(
+/// Run, resume or approve a release Run (contract 054 §3, §5).
+pub(super) fn release_run_action(
     resolved: &ResolvedTarget,
-    check_gates: bool,
-    version_override: Option<semver::Version>,
-) -> Result<ReleasePreparePlan, RunnerError> {
-    let context = load_release_context_via_release(&resolved.resolved_root)?;
-    build_release_prepare_plan(&context, check_gates, version_override)
-}
-
-fn build_release_prepare_plan(
-    context: &ReleaseContext,
-    check_gates: bool,
-    version_override: Option<semver::Version>,
-) -> Result<ReleasePreparePlan, RunnerError> {
-    if check_gates && !context.config.gates.is_empty() {
-        emit_release_progress_line("checking release gates for prepare plan");
-    }
-    let gate_report = if check_gates {
-        run_release_gates(&context.repo_root, &context.config.gates, true)
-    } else {
-        GateExecutionReport::empty()
+    action: ReleaseAction,
+    to: Option<ReleaseStage>,
+) -> Result<ReleaseRunOutcome, RunnerError> {
+    let home = release_home_via_release()?;
+    let request = ReleaseRunRequest {
+        repo_root: resolved.resolved_root.clone(),
+        home,
+        action,
+        to,
     };
-    build_release_prepare_plan_via_release(context, check_gates, gate_report, version_override)
-        .map_err(Into::into)
+    let mut effects = GitEffects::new(&resolved.resolved_root);
+    let outcome = run_release_via_release(&request, &mut effects)?;
+    for message in &outcome.messages {
+        emit_release_progress_line(message);
+    }
+    Ok(outcome)
 }
 
-pub(super) fn execute_release_prepare(
+/// The release receipt for a Run id, or the active Run's receipt.
+pub(super) fn release_receipt(
     resolved: &ResolvedTarget,
-    check_gates: bool,
-    version_override: Option<semver::Version>,
-) -> Result<ReleasePrepared, RunnerError> {
-    execute_release_prepare_via_release(
-        resolved.resolved_root.clone(),
-        RELEASE_PREPARED_STATE_FILE,
-        check_gates,
-        version_override,
-        emit_release_progress_line,
-    )
-    .map_err(Into::into)
+    run: Option<&str>,
+) -> Result<effigy_release::ReleaseReceipt, RunnerError> {
+    let home = release_home_via_release()?;
+    let record =
+        read_release_record_via_release(&home, &resolved.resolved_root)?.ok_or_else(|| {
+            RunnerError::task_invocation(format!(
+                "there is no release Run for {}; `effigy release run` starts one",
+                resolved.resolved_root.display()
+            ))
+        })?;
+    if let Some(run) = run {
+        let run = run.trim();
+        if run != record.release_id && run != record.run_id {
+            return Err(RunnerError::task_invocation(format!(
+                "`{run}` is not this checkout's release Run; the last release Run is {} (stage `{}`, status `{}`)",
+                record.release_id,
+                if record.stage.is_empty() {
+                    "validate"
+                } else {
+                    &record.stage
+                },
+                record.status.label()
+            )));
+        }
+    }
+    Ok(effigy_release::ReleaseReceipt::from_record(&record))
 }
 
 pub(super) fn run_standalone_release_gates(
@@ -220,33 +195,6 @@ pub(super) fn run_release_verify_install(
     let repo_url = resolve_verify_install_repo_url(resolved, repo_url)?;
     run_release_verify_install_via_release(resolved.resolved_root.clone(), tag, repo_url)
         .map_err(Into::into)
-}
-
-pub(super) fn collect_release_execute_plan(
-    resolved: &ResolvedTarget,
-    allow_stale: bool,
-) -> Result<ReleaseExecutePlan, RunnerError> {
-    collect_release_execute_plan_via_release(
-        resolved.resolved_root.clone(),
-        RELEASE_PREPARED_STATE_FILE,
-        RELEASE_STATE_STALE_THRESHOLD_SECS,
-        allow_stale,
-    )
-    .map_err(Into::into)
-}
-
-pub(super) fn execute_release(
-    resolved: &ResolvedTarget,
-    allow_stale: bool,
-) -> Result<ReleaseExecuted, RunnerError> {
-    execute_release_via_release(
-        resolved.resolved_root.clone(),
-        RELEASE_PREPARED_STATE_FILE,
-        RELEASE_STATE_STALE_THRESHOLD_SECS,
-        allow_stale,
-        emit_release_progress_line,
-    )
-    .map_err(Into::into)
 }
 
 fn run_release_gates(root: &Path, gates: &[ResolvedGate], fail_fast: bool) -> GateExecutionReport {

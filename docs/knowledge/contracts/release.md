@@ -68,23 +68,23 @@ publication, binary-workflow dispatch, workflow edits or live operations.
 
 1. Start from clean, pushed `main`. Record `candidate_sha=$(git rev-parse HEAD)`.
 2. Dispatch `gh workflow run ci.yml --ref main`. Select the `workflow_dispatch` run for that exact SHA with `gh run list --workflow ci.yml --branch main --commit "$candidate_sha" --event workflow_dispatch --limit 1 --json databaseId,headSha,status,conclusion,url`, verify `headSha`, and wait with `gh run watch <RUN_ID> --exit-status`. Missing, pending, red, cancelled, or different-commit evidence blocks release.
-3. Run `effigy release status --check-gates`, `effigy release --plan`, and `effigy release prepare --plan`. Confirm the target version with Tom. During `v0.x`, PATCH is for compatible fixes; MINOR may break behavior with explicit migration notes. Removing a public API is a break (a `Removed` changelog entry), so it proposes MINOR under `pre-1-0` rather than PATCH. CI installs should pin exact versions.
-4. Run `effigy release prepare --yes --check-gates`. It updates `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`, and prepared state. Review versioned install examples in `README.md`.
+3. Run `effigy release status --check-gates` and `effigy release --plan`. Confirm the target version with Tom. During `v0.x`, PATCH is for compatible fixes; MINOR may break behavior with explicit migration notes. Removing a public API is a break (a `Removed` changelog entry), so it proposes MINOR under `pre-1-0` rather than PATCH. CI installs should pin exact versions.
+4. Run `effigy release:run -- --to certify` (heavy admission), which runs the release Run's `validate`, `pre-gates`, `prepare` and `certify` stages in place: it updates `Cargo.toml`, `Cargo.lock` and `CHANGELOG.md`, commits the prepared tree, runs the `certify` gates and records the artifact digests, and publishes nothing. Review versioned install examples in `README.md`.
 5. Draft release notes from `effigy changelog extract CHANGELOG.md --version X.Y.Z` for Tom's review. Keep the reviewed notes with the GitHub release; routine release logs are not repository knowledge.
 
 ## Execute
 
 1. Run `effigy release gates`; fix any failure and rerun. The `ci` gate checks the hosted run against the exact candidate source SHA.
-2. Review `effigy release execute --plan`. `effigy release execute --yes` commits the prepared files on `main` as `release: vX.Y.Z`, creates and pushes the annotated `vX.Y.Z` tag, and clears prepared state. Use it only after Tom explicitly authorizes the release.
+2. `effigy release run` continues the Run from its `certify` checkpoint: `publish` pushes the annotated `vX.Y.Z` tag, `verify` runs the target verify tasks, and `closeout` pushes the release commit and writes the receipt. Use it only after Tom explicitly authorizes the release. An interrupted Run continues with `effigy release resume <run>`, and `effigy release receipt <run>` prints what it recorded.
 3. Dispatch `gh workflow run release-binaries.yml -f tag=vX.Y.Z` and watch the run. A pushed tag alone does not publish the binaries.
 
 ## Hosted gate evidence
 
-Release prepare may reuse a hosted CI result for a gate explicitly configured with `reuse-hosted-evidence = true`. The result must come from this repository's own GitHub Actions runs, verified through authenticated `gh`, and match the exact commit SHA being released (`HEAD` at prepare time). Prepare's version, changelog, and lockfile mutations do not change that SHA. An identical tree at another SHA is insufficient. Gates not named for reuse still run under the full configured gate policy, including against the prepared working tree. Missing, pending, failed, ambiguous, wrong-repository, or wrong-SHA evidence fails closed. The release record names every reused gate and links to its run. The configured `ci` proof remains a prerequisite, not blanket permission to skip other gates.
+A `stage = "pre"` release gate may reuse a hosted CI result for a gate explicitly configured with `reuse-hosted-evidence = true`. The result must come from this repository's own GitHub Actions runs, verified through authenticated `gh`, and match the exact commit SHA being released (`HEAD` when the Run validates). The `prepare` stage's version, changelog, and lockfile mutations do not change that SHA, which is why hosted evidence belongs in `pre-gates`, before the release commit exists. An identical tree at another SHA is insufficient. Gates not named for reuse still run under the full configured gate policy, including against the prepared working tree. Missing, pending, failed, ambiguous, wrong-repository, or wrong-SHA evidence fails closed. The release record names every reused gate and links to its run. The configured `ci` proof remains a prerequisite, not blanket permission to skip other gates.
 
 ## Gate checks and an empty Unreleased section
 
-`effigy release status --check-gates` reports the configured gate verdict independently of the optional next-version proposal. An empty `[Unreleased]` section means there is nothing to release, not that the gates failed: passed gates still yield a successful gate check (`gates_passed` / `gate_check_passed`, `Gate check: passed`), while the status keeps `ready: false`, `next_version: null`, and the explicit `unreleased changelog section has no entries` blocker. A failed gate, an invalid changelog, a version mismatch, or an existing tag still fails the check. `release --plan`, `prepare`, and `execute` keep requiring a derivable next version.
+`effigy release status --check-gates` reports the configured gate verdict independently of the optional next-version proposal. An empty `[Unreleased]` section means there is nothing to release, not that the gates failed: passed gates still yield a successful gate check (`gates_passed` / `gate_check_passed`, `Gate check: passed`), while the status keeps `ready: false`, `next_version: null`, and the explicit `unreleased changelog section has no entries` blocker. A failed gate, an invalid changelog, a version mismatch, or an existing tag still fails the check. `release --plan` and `release run` keep requiring a derivable next version.
 
 ## Verify and recover
 
@@ -190,27 +190,21 @@ selector itself must be independently reviewed before use. Preparation
 approval still does not permit tagging, publishing, installing or live
 operations.
 
-The maintained selector is `effigy release:prepare`, declared
+The maintained selector is `effigy release:run`, declared
 `admission = "heavy"` in [`config/tasks.toml`](../../../config/tasks.toml) and
-wired to [`scripts/release-prepare.sh`](../../../scripts/release-prepare.sh).
-The entry point fixes the subcommand to `release prepare`, rejects `--repo`,
-refuses before any effect unless a mutating run names an explicit
-`--version <SEMVER>` or an inner `--plan`/`--dry-run` is requested, always
-enforces `--check-gates` for the mutating run, and never forwards `execute`,
-`resume`, tag or publish. It requires branch `main`, no tracked working-tree
-changes, and `HEAD == origin/main`, then builds and runs the Effigy from the
-invocation checkout (`cargo run --bin effigy`), never an installed or PATH
-binary that may predate the preparation repairs.
+wired to `./target/debug/effigy release run --to certify {args}`. The stage
+boundary is fixed to `certify`, so the selector never tags, pushes or
+publishes, and it forwards no subcommand of its own. The Run's `validate`
+stage refuses a dirty tree, and `prepare` rolls the tree back when a write, a
+lockfile sync or the commit fails, so the selector leaves either a completed
+prepare-and-certify checkpoint or the pre-prepare tree.
 
-`effigy --plan release:prepare` is the runner's no-write task plan: it resolves
-and prints the task command without running the entry point. The inner prepare
-plan is `effigy release:prepare -- --plan`; that path still builds the
-current-source Effigy but performs no mutation. The mutating planner command is
-`effigy release:prepare --yes --version 0.14.0`, which becomes
-`effigy release prepare --yes --check-gates --version 0.14.0` in this
-checkout. The whole operation runs inside one admission; nested heavy gate
-work runs inside it instead of queueing again, and a failed gate or cancelled
-run keeps the built-in's rollback and honest non-zero exit.
+`effigy --plan release:run` is the runner's no-write task plan: it resolves and
+prints the task command without running Effigy. The whole operation runs
+inside one admission; nested heavy gate work runs inside it instead of
+queueing again, and a failed gate or cancelled run keeps the Run's rollback and
+honest non-zero exit. Publishing is a separate, explicitly authorized
+`effigy release run` (or `effigy release resume <run>` from the checkpoint).
 
 ### Admission for isolated release install verification
 
@@ -429,9 +423,9 @@ Tom's later publication ruling applies to decision `0116369e`:
 > "I'll bootstral:local first so we can use it locally - we don't need or really
 > want v0.15.0 actually released until we've proved this all to be fully working".
 
-CI and preparation may finish, but preserve a successful prepared state without
-running release execute, creating the tag, dispatching binary publication or
-publishing. The existing owners supply the Reference, compli-me and songsprout
+CI and preparation may finish, but preserve a successful `certify` checkpoint
+without running the Run's `publish` stage, creating the tag, dispatching binary
+publication or publishing. The existing owners supply the Reference, compli-me and songsprout
 `dev` / `dev:test` proofs and Acowtancy adoption proof on locally bootstrapped
 builds. Those proofs grant no runtime or cleanup authority to the release owner.
 
@@ -456,7 +450,7 @@ The initial conditional hold required a passing Acowtancy adoption proof reporte
 its existing owner, `2f6b92d1`. Once that authentic result passes, the release
 owner may lift the publication hold without another approval request to Tom.
 A failed or unclear result keeps the hold in place and is reported to effigy-a6.
-Until the condition passes, do not execute, tag, dispatch publication workflows
+Until the condition passes, do not publish, tag, dispatch publication workflows
 or publish.
 
 #### Seamless route migration required before the adoption proof
@@ -469,8 +463,8 @@ This requires the reviewed container-to-hybrid gateway route migration fix
 tracked by task `2f66e3c4-7893-4b6f-9933-ddf86bdaf786` in the v0.15.0
 candidate. The hold now requires both that fix's normal reviewed merge and a
 passing Acowtancy adoption proof on a local build containing it. Earlier proofs
-without the fix do not satisfy that condition. No fresh release prepare starts
-until this proof passes; execution, tagging and publication remain held too.
+without the fix do not satisfy that condition. No fresh release Run starts
+until this proof passes; publishing, tagging and publication remain held too.
 The existing consumer owner admits and runs the proof. The ruling grants no
 consumer retry, reset, install or runtime authority to the release owner and
 waives no ownership, independent-review or CI requirement.

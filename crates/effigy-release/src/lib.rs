@@ -6,6 +6,7 @@ mod pipeline;
 mod prepare_helpers;
 mod render_json;
 mod review;
+mod run;
 #[cfg(test)]
 pub mod test_support;
 mod text;
@@ -41,6 +42,18 @@ pub use prepare_helpers::{
 };
 pub use verify_install::{
     normalize_verify_install_repo_url, resolve_verify_install_tag, run_release_verify_install,
+};
+
+pub use run::{
+    new_run_id, read_release_record, read_release_record_for_root, release_home,
+    release_input_value, release_owner, render_release_receipt_json, render_release_receipt_text,
+    render_release_run_json, run_release, sha256_bytes, verify_artifact_digests, GitEffects,
+    RecordApproval, RecordArtifact, RecordArtifactFile, RecordCheckpoint, RecordDestination,
+    RecordGate, RecordIdentity, RecordTarget, RecordTargetState, RecordVerification, ReleaseAction,
+    ReleaseCheckpoint, ReleaseEffects, ReleaseReceipt, ReleaseRecord, ReleaseRunOutcome,
+    ReleaseRunRequest, ReleaseRunStatus, ReleaseSession, ReleaseStage, ReleaseState, TaskRequest,
+    TaskResponse, RELEASE_INPUT_ENV, RELEASE_OUTPUT_ENV, RELEASE_RECEIPT_SCHEMA,
+    RELEASE_RECORD_SCHEMA, RELEASE_TASK_INPUT_SCHEMA,
 };
 
 pub use effigy_changelog::BumpKind;
@@ -871,7 +884,7 @@ pub fn collect_release_status(
     ReleaseStatus {
         repo_root: plan.repo_root.clone(),
         plan: plan.clone(),
-        run: ReleaseRunSummary::none(),
+        run: release_run_summary(plan),
         current_version: primary.and_then(|identity| identity.current_version.clone()),
         version_source: primary.and_then(|identity| identity.version_source.clone()),
         changelog_path: plan.changelog_path.clone(),
@@ -891,6 +904,26 @@ pub fn collect_release_status(
         environment_path: gate_report.environment_path,
         blockers: blockers.clone(),
         ready: blockers.is_empty(),
+    }
+}
+
+/// The active or last release Run, read from Effigy-owned state (a pure read).
+///
+/// A release whose state root is absent, unreadable or belongs to another
+/// Effigy schema reports no Run rather than failing `release status`.
+fn release_run_summary(plan: &ReleasePipelinePlan) -> ReleaseRunSummary {
+    let Ok(Some(record)) = run::read_release_record_for_root(&plan.repo_root) else {
+        return ReleaseRunSummary::none();
+    };
+    ReleaseRunSummary {
+        id: Some(record.release_id),
+        stage: Some(if record.stage.is_empty() {
+            "validate".to_owned()
+        } else {
+            record.stage
+        }),
+        waiting_on: record.waiting_on,
+        status: Some(record.status.label().to_owned()),
     }
 }
 

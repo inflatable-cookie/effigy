@@ -1,20 +1,14 @@
-use super::{
-    load_release_config, parse_prepare_mutation_inspection_request, remediation_hints_for_blockers,
-    resolve_verify_install_repo_url, validate_prepare_version_override, ReleaseBlockedStage,
-};
+use super::{load_release_config, resolve_verify_install_repo_url};
 use effigy_core::resolver::ResolvedTarget;
 #[path = "../../../crates/effigy-release/src/test_support.rs"]
 mod release_test_support;
 use effigy_release::{
     build_diff_preview, detect_cargo_version_path, detect_pyproject_version_path,
-    detect_version_file_kind, format_release_tag, json_value_at_path,
-    normalize_verify_install_repo_url, parse_indexed_review_inspection_request,
-    render_changelog_preview_line as changelog_preview_line, render_execute_review_menu_lines,
-    render_prepare_review_menu_lines, render_prepared_changelog_contents,
+    detect_version_file_kind, json_value_at_path, normalize_verify_install_repo_url,
+    render_changelog_preview_line as changelog_preview_line, render_prepared_changelog_contents,
     render_updated_version_contents, replace_json_string_at_path_preserving_layout,
-    resolve_version_field_path, review_label, suggested_bump, toml_value_at_path, BumpKind,
-    ExecuteReviewState, PrepareReviewState, ReleaseConfig, ReleaseContext, ReleaseExecutePlan,
-    ReleasePreparePlan, ResolvedVersionSource, SyncFileKind, VersionFileKind,
+    resolve_version_field_path, suggested_bump, toml_value_at_path, BumpKind,
+    ResolvedVersionSource, SyncFileKind, VersionFileKind,
 };
 use effigy_tasks::ResolutionMode;
 
@@ -204,58 +198,6 @@ fn suggested_bump_respects_pre_1_0_breaking_policy() {
 }
 
 #[test]
-fn validate_prepare_version_override_rejects_non_incrementing_versions() {
-    let changelog = effigy_changelog::parse(
-        "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Fix release output\n\n## [0.2.4] - 2026-03-10\n\n### Fixed\n- Prior fix\n",
-    )
-    .expect("parse changelog");
-    let mut context = ReleaseContext {
-        repo_root: std::env::temp_dir(),
-        config: ReleaseConfig {
-            version_source: ResolvedVersionSource {
-                path: std::env::temp_dir().join("Cargo.toml"),
-                kind: VersionFileKind::CargoToml,
-                field_path: Some("package.version".to_owned()),
-            },
-            changelog_path: std::env::temp_dir().join("CHANGELOG.md"),
-            pre_1_0: false,
-            initial_tag_current_version: false,
-            sync_files: Vec::new(),
-            gates: Vec::new(),
-            tag_format: "v{version}".to_owned(),
-            hosted_evidence: None,
-        },
-        current_version: semver::Version::new(0, 2, 4),
-        parsed_changelog: changelog,
-        changelog_diagnostics: Vec::new(),
-        unreleased_counts: std::collections::BTreeMap::new(),
-        unreleased_empty: false,
-        suggested_bump: BumpKind::Patch,
-        next_version: Some(semver::Version::new(0, 2, 5)),
-        tag: Some(format_release_tag(
-            "v{version}",
-            &semver::Version::new(0, 2, 5),
-        )),
-        blockers: Vec::new(),
-    };
-
-    let err = validate_prepare_version_override(&context, "0.2.4")
-        .expect_err("current version should be rejected");
-    assert!(err.contains("must be greater than current version"));
-
-    context.config.initial_tag_current_version = true;
-    context.parsed_changelog =
-        effigy_changelog::parse("# Changelog\n\n## [Unreleased]\n\n### Fixed\n- First release\n")
-            .expect("parse initial changelog");
-    context.next_version = Some(semver::Version::new(0, 2, 4));
-    assert_eq!(
-        validate_prepare_version_override(&context, "0.2.4")
-            .expect("initial current version should be accepted"),
-        semver::Version::new(0, 2, 4)
-    );
-}
-
-#[test]
 fn build_diff_preview_limits_to_concise_changed_lines() {
     let before = "alpha\nbeta\ncharlie\ndelta\necho\nfoxtrot\ngolf\n";
     let after =
@@ -275,68 +217,6 @@ fn build_diff_preview_limits_to_concise_changed_lines() {
             "... 1 more changed line(s)".to_owned(),
         ]
     );
-}
-
-#[test]
-fn parse_prepare_mutation_inspection_request_accepts_keyword_and_bare_index() {
-    assert_eq!(
-        parse_prepare_mutation_inspection_request("inspect 2", 3),
-        Some(1)
-    );
-    assert_eq!(parse_prepare_mutation_inspection_request("3", 3), Some(2));
-    assert_eq!(
-        parse_prepare_mutation_inspection_request("inspect 4", 3),
-        None
-    );
-    assert_eq!(
-        parse_prepare_mutation_inspection_request("inspect nope", 3),
-        None
-    );
-}
-
-#[test]
-fn parse_indexed_review_inspection_request_accepts_short_form() {
-    assert_eq!(parse_indexed_review_inspection_request("i 1", 2), Some(0));
-    assert_eq!(parse_indexed_review_inspection_request("2", 2), Some(1));
-    assert_eq!(parse_indexed_review_inspection_request("0", 2), None);
-}
-
-#[test]
-fn review_label_marks_pending_reviewed_and_not_applicable() {
-    assert_eq!(review_label(false, true), "pending");
-    assert_eq!(review_label(true, true), "reviewed");
-    assert_eq!(review_label(false, false), "n/a");
-}
-
-#[test]
-fn remediation_hints_cover_prepare_and_execute_blockers() {
-    let prepare_hints = remediation_hints_for_blockers(
-        &[
-            "unreleased changelog section has no entries".to_owned(),
-            "gate `smoke` failed".to_owned(),
-        ],
-        ReleaseBlockedStage::Prepare,
-    );
-    assert!(prepare_hints
-        .iter()
-        .any(|hint| hint.contains("CHANGELOG.md")));
-    assert!(prepare_hints
-        .iter()
-        .any(|hint| hint.contains("effigy release gates")));
-
-    let execute_hints = remediation_hints_for_blockers(
-        &[
-            "release state is stale; rerun `effigy release prepare` or pass `--allow-stale` to acknowledge and continue".to_owned(),
-            "working tree contains 1 unexpected change(s)".to_owned(),
-        ],
-        ReleaseBlockedStage::Execute,
-    );
-    assert!(execute_hints
-        .iter()
-        .any(|hint| hint.contains("--allow-stale")));
-    assert!(execute_hints
-        .iter()
-        .any(|hint| hint.contains("only prepared release files remain")));
 }
 
 #[test]
@@ -410,93 +290,6 @@ fn resolve_verify_install_repo_url_normalizes_origin_ssh_remote() {
 
     let repo_url = resolve_verify_install_repo_url(&resolved, None).expect("resolve repo remote");
     assert_eq!(repo_url, "ssh://git@github.com/betterthanclay/effigy.git");
-}
-
-#[test]
-fn review_menu_renderers_show_review_markers() {
-    let prepare_lines = render_prepare_review_menu_lines(
-        &ReleasePreparePlan {
-            repo_root: std::env::temp_dir(),
-            current_version: semver::Version::new(0, 2, 4),
-            version_source: ResolvedVersionSource {
-                path: std::env::temp_dir().join("Cargo.toml"),
-                kind: VersionFileKind::CargoToml,
-                field_path: Some("package.version".to_owned()),
-            },
-            suggested_version: Some(semver::Version::new(0, 2, 5)),
-            planned_version: Some(semver::Version::new(0, 2, 5)),
-            suggested_tag: Some("v0.2.5".to_owned()),
-            tag: Some("v0.2.5".to_owned()),
-            version_override_used: false,
-            release_date: "2026-03-11".to_owned(),
-            gates_checked: true,
-            configured_gate_count: 1,
-            gate_results: Vec::new(),
-            environment_path: None,
-            blockers: Vec::new(),
-            mutations: Vec::new(),
-            ready: true,
-        },
-        true,
-        PrepareReviewState {
-            version_reviewed: true,
-            mutations_reviewed: false,
-            gates_reviewed: true,
-            final_reviewed: false,
-        },
-    )
-    .join("\n");
-    assert!(prepare_lines.contains("Reviewed sections: version=reviewed"));
-    assert!(prepare_lines.contains("[2] Mutation Review [pending]"));
-    assert!(prepare_lines.contains("[3] Gate Review [reviewed]"));
-
-    let execute_lines = render_execute_review_menu_lines(
-        &ReleaseExecutePlan {
-            repo_root: std::env::temp_dir(),
-            state_file: std::env::temp_dir().join(".release-prepared.json"),
-            previous_version: Some(semver::Version::new(0, 2, 4)),
-            suggested_version: Some(semver::Version::new(0, 2, 5)),
-            prepared_version: Some(semver::Version::new(0, 2, 5)),
-            suggested_tag: Some("v0.2.5".to_owned()),
-            tag: Some("v0.2.5".to_owned()),
-            version_override_used: false,
-            release_date: Some("2026-03-11".to_owned()),
-            prepared_at: Some("2026-03-11T14:00:00+00:00".to_owned()),
-            state_loaded: true,
-            gates_checked: true,
-            gates_passed: true,
-            stale: true,
-            stale_threshold_seconds: 3600,
-            stale_override_required: true,
-            stale_override_used: false,
-            prepared_branch: Some("main".to_owned()),
-            prepared_head: Some("abc123".to_owned()),
-            branch: Some("main".to_owned()),
-            current_head: Some("abc123".to_owned()),
-            remote: Some("origin".to_owned()),
-            expected_files: vec!["Cargo.toml".to_owned()],
-            modified_files: vec!["Cargo.toml".to_owned()],
-            missing_expected_files: Vec::new(),
-            unexpected_files: vec!["notes.txt".to_owned()],
-            source_fingerprint_available: true,
-            fingerprint_drift: Vec::new(),
-            reused_gates: Vec::new(),
-            warnings: vec!["stale state".to_owned()],
-            blockers: vec!["working tree contains 1 unexpected change(s)".to_owned()],
-            ready: false,
-        },
-        false,
-        ExecuteReviewState {
-            stale_reviewed: true,
-            state_reviewed: true,
-            working_tree_reviewed: false,
-            final_reviewed: false,
-        },
-    )
-    .join("\n");
-    assert!(execute_lines.contains("Reviewed sections: stale=reviewed"));
-    assert!(execute_lines.contains("[1] Stale Warning Review [reviewed]"));
-    assert!(execute_lines.contains("[3] Working Tree Review [pending]"));
 }
 
 #[test]

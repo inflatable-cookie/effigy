@@ -24,18 +24,18 @@ If you only need the shortest operator path, use:
 
 - `--plan`
 - `status --check-gates`
-- `prepare --plan`
-- `prepare --yes --check-gates`
-- `execute --plan`
-- `execute --yes`
+- `run --to certify`
+- `run`
+- `resume <run>`
+- `receipt <run>`
 
 If you are approaching the release flow for the first time, start with:
 
 ```sh
 effigy release --plan
 effigy release status --check-gates
-effigy release prepare --plan
-effigy release gates
+effigy release run --to certify
+effigy release receipt
 ```
 
 Use the commands by intent:
@@ -44,10 +44,14 @@ Use the commands by intent:
   version, the files to change, gates by stage, artifacts, targets and
   approval checkpoints
 - `status --check-gates` for current readiness plus the configured gate verdict, reported independently of the optional next-version proposal
-- `prepare --plan` for the exact file mutations Effigy would make
-- `prepare` / `execute` text mode when a human is actively reviewing the flow
-- `prepare --yes` / `execute --yes` when non-interactive operation is required
-- `resume` when a prepared release needs to be inspected or recovered
+- `run --to <stage>` to stop after a named stage boundary, for example
+  `--to certify` to prepare and certify without publishing
+- `run` for the whole pipeline: validate, gates, prepare, certify, publish,
+  verify and closeout, with a checkpoint after every stage
+- `resume <run>` to continue an interrupted Run from its last checkpoint
+- `approve <run>` to pass an approval checkpoint
+- `receipt <run>` to print what the Run recorded: candidate, digests,
+  destinations and verification results
 - `release gates` when you want the same local release-gate verdict CI should
   reach before you mutate anything
 
@@ -74,38 +78,49 @@ roughly like this:
 
 ## 1) Core Commands
 
+Contract
+[054](../knowledge/contracts/054-release-platform-contract.md) §3 makes a
+release one durable Run through fixed stages:
+
+```
+validate → [pre-gates] → prepare → certify → publish → verify → closeout
+```
+
+Every stage boundary is a checkpoint in Effigy-owned state, so an interrupted
+release resumes from where it stopped with the same source commit, versions
+and artifact digests. It never restarts silently.
+
 Current built-in release commands:
 
 - `effigy release status`
-  - inspect version-file state, changelog validity, suggested bump, and optional
-    gate results
+  - inspect version-file state, changelog validity, suggested bump, optional
+    gate results, and the active or last Run's stage and status
 - `effigy release gates`
   - run configured release gates as a standalone fail-fast timed check
-- `effigy release resume`
-  - recover an existing `.release-prepared.json` state and inspect drift
 - `effigy release --plan`
   - the whole pipeline with no mutation: identities with their current and next
     versions, files to change, gates by stage, artifacts, targets and approval
     checkpoints; accepts `--version <SEMVER>` for a single `semver` identity
-- `effigy release prepare --plan`
-  - preview the exact version-file and changelog mutations; accepts
-    `--version <SEMVER>`; `--dry-run` is an alias
-- `effigy release prepare`
-  - text-mode review before Effigy writes release changes
-- `effigy release prepare --yes`
-  - apply supported mutations and write `.release-prepared.json` without
-    committing, tagging, or pushing; accepts `--version <SEMVER>` for
-    deliberate non-interactive overrides
-- `effigy release execute --plan`
-  - validate prepared state and working tree before any irreversible step;
-    detects stale state and source drift; `--dry-run` is an alias
-- `effigy release execute`
-  - text-mode final review before commit, tag, and push
-- `effigy release execute --yes`
-  - create the release commit and annotated tag, push to `origin`, and clean up
-    the state file only after a full success; the annotation message exactly
-    equals the rendered tag; age-based staleness requires explicit
-    `--allow-stale`
+- `effigy release run [--to <stage>]`
+  - start a release Run, or continue the active one, up to `--to` (default
+    `closeout`). `validate` checks a clean tree, the changelog, the version
+    sources and that no tag already exists; `pre-gates` runs `stage = "pre"`
+    gates; `prepare` writes each identity's version, syncs lockfiles, renders
+    the changelog notes and commits; `certify` runs `stage = "certify"` gates
+    and artifact tasks, copying each artifact into the Run's candidate
+    directory and recording its sha256; `publish` pushes one annotated tag per
+    identity; `verify` runs each target's `verify` task; `closeout` pushes the
+    release commit if no target did and writes the receipt
+- `effigy release resume <run>`
+  - continue an interrupted Run from its last checkpoint. An interrupted tag
+    push is reconciled by looking the tag up on the remote first; a release
+    never re-publishes something it cannot prove was absent
+- `effigy release approve <run>`
+  - pass an approval checkpoint (`approve = ["publish"]` in `[release]`) and
+    continue. The approval records who approved and when
+- `effigy release receipt [<run>] [--json]`
+  - print the receipt: inputs, checkpoints, gate results, artifact digests,
+    approvals, destination IDs and verification results
 - `effigy release verify-install`
   - Effigy self-hosting only: install the tagged `effigy` binary from git into
     a temporary root and validate the installed command against a fixture repo
@@ -113,6 +128,14 @@ Current built-in release commands:
   - when Effigy auto-detects `origin`, scp-style SSH remotes such as
     `git@github.com:owner/repo.git` are normalized for install verification, so
     operators do not need to translate them into `ssh://...` form by hand
+
+Retired in v0.15 (contract 054 §5), each refusing with the replacement above:
+
+- `release prepare` and `release execute` → `release run`
+- `release simulate` → `release --plan`
+- the plain `release resume` prepared-state review → `release resume <run>`
+- the `.release-prepared.json` state file: the Run's checkpoint and record live
+  in Effigy-owned state outside the repo
 
 Related built-ins:
 
@@ -197,7 +220,7 @@ Supported `[release]` fields:
   - supports string shorthand or table form with `command`, `description`, and
     optional `reuse-hosted-evidence`
 
-During `effigy release prepare`, supported structured version files keep their
+During the Run's `prepare` stage, supported structured version files keep their
 existing layout:
 - `Cargo.toml` and `pyproject.toml` preserve comments and table ordering
 - `package.json` preserves existing spacing and object layout around the
@@ -235,7 +258,7 @@ tag-format = "v{version}"
 initial-tag-current-version = true
 ```
 
-In this mode, `release status`, `release --plan`, and `release prepare`
+In this mode, `release status`, `release --plan`, and the Run's `prepare` stage
 select the current version. Prepare promotes `[Unreleased]` without rewriting
 the version file. The exception closes as soon as the changelog contains a
 released version or the matching local tag exists.
@@ -387,9 +410,11 @@ readiness, changelog and gate verdict it always reported. `release --plan`
 replaces the retired `release simulate`, which now refuses with that
 replacement.
 
-`release prepare` and `release execute` still run the single-identity shorthand.
-A release that declares identities, artifacts, targets or `approve` resolves in
-`status` and `--plan` today and will run through `release run`.
+The single-identity shorthand and a release with named identities both run
+through `release run`. A release with several identities gets one version file
+per identity, a `follows` link where they must move together, and its own
+`tag-format` per identity; the Run's `publish` stage pushes one annotated tag
+per identity.
 
 ## 5) Workflow Walkthrough
 
@@ -403,15 +428,9 @@ gh run watch <RUN_ID> --exit-status
 effigy release --plan
 effigy release --plan --version 0.2.8
 effigy release status --check-gates
-effigy release prepare
-effigy release prepare --dry-run
-effigy release prepare --plan
-effigy release prepare --yes --check-gates
-effigy release resume
-effigy release execute
-effigy release execute --dry-run
-effigy release execute --plan
-effigy release execute --yes
+effigy release run --to certify     # prepare and certify, publish nothing
+effigy release run                  # the whole Run, including tags
+effigy release receipt
 # Effigy binary releases only:
 effigy release verify-install --tag vX.Y.Z
 ```
@@ -427,13 +446,12 @@ gh run list --workflow ci.yml --branch main --commit "$candidate_sha" \
 
 Do not accept the latest green run unless its `headSha` is the candidate SHA.
 Effigy's self-hosted `ci` release gate checks the same invariant. Missing,
-pending, red, cancelled, or different-commit evidence blocks release gates,
-simulation, and gate-checked prepare. The other local gates validate the
-deterministic version, changelog, and lockfile mutations after hosted CI has
-proved the source commit.
+pending, red, cancelled, or different-commit evidence blocks the `pre-gates`
+stage. The other local gates validate the deterministic version, changelog, and
+lockfile mutations after hosted CI has proved the source commit.
 
 For Effigy's own binary publication, explicitly dispatch the immutable tag
-after execute succeeds and before install verification:
+after the Run's `publish` stage has pushed it and before install verification:
 
 ```sh
 gh workflow run release-binaries.yml -f tag=vX.Y.Z
@@ -466,54 +484,51 @@ What each step is for:
      that the gates failed: passed gates still exit successfully
      (`Gate check: passed`, `gate_check_passed: true`) while the status keeps
      `ready: false`, `next_version: null`, and the explicit unreleased-entries
-     blocker. `release --plan`, `prepare`, and `execute` still require a
-     derivable next version.
-3. `prepare`
-   - interactive review before writing
-4. `prepare --plan`
-   - exact proposed version-file and changelog mutation preview
-5. `prepare --yes --check-gates`
-   - writes supported release changes and `.release-prepared.json`
-6. `resume`
-   - re-enter a prepared release and inspect drift since prepare time
-7. `execute`
-   - interactive final confirmation before commit, tag, and push
-8. `execute --plan`
-   - confirms the prepared state still matches the working tree
-9. `execute --yes`
-   - commits, creates an annotated tag whose message equals the rendered tag,
-     pushes, and removes prepared state on success
-10. `verify-install` (Effigy binary releases only)
+     blocker. `release --plan` and `release run` still require a derivable next
+     version
+3. `run --to certify`
+   - the whole in-place preparation: version and changelog writes, the release
+     commit, the `certify` gates and the artifact digests, with no publish
+4. `run`
+   - the full Run. `publish` pushes one annotated tag per identity; `verify`
+     runs the target verify tasks; `closeout` pushes the release commit and
+     writes the receipt
+5. `receipt`
+   - the durable record, including which destination received which commit and
+     whether the artifact digests still matched at publish
+6. `verify-install` (Effigy binary releases only)
    - validates Effigy's tagged install path after the manually dispatched
      release workflow publishes its artifacts
    - library and service repos use their own consumer smoke instead
 
-### Effigy's own admitted preparation selector
-
-Effigy's own repository wraps authorized in-place preparation in a maintained
-`admission = "heavy"` task, `effigy release:prepare`. It is the sanctioned
-route for the approved preparation that must keep prepared state in the actual
-clean, pushed `main` checkout; Queue milestone `project.qa.run` uses a
-disposable checkout and cannot transfer prepared fingerprints.
+Interruptions resume; they never restart. A Run that fails at `certify` leaves
+its prepared commit and checkpoints in place:
 
 ```sh
-effigy --plan release:prepare                  # outer, no-write task plan
-effigy release:prepare -- --plan               # inner `release prepare --plan`
-effigy release:prepare --yes --version 0.14.0  # mutating preparation
+effigy release status
+effigy release resume <run>
 ```
 
-The outer `--plan` is the runner's task plan: it resolves and prints the task
-command without running the entry point. Only the `-- --plan` form reaches the
-inner `release prepare --plan`.
+An unknown tag push is reconciled before any retry: the Run looks the tag up
+locally and on the remote, records it if it is already there at the candidate
+commit, and only pushes when it is absent. A published tag is never moved.
 
-The entry point fixes the subcommand to `release prepare`, rejects `--repo`,
-requires branch `main` with no tracked changes and `HEAD == origin/main`,
-always enforces `--check-gates` for a mutating run, and never forwards
-`execute`, `resume`, tag or publish. It builds the Effigy from the invocation
-checkout, so an installed or PATH binary cannot supply stale preparation logic.
-The whole operation is admitted once; nested gate work reuses that run. This
-selector is for approved Effigy preparation only, not worker per-task QA, and
-it does not authorize tagging, publishing, installing or live operations. See
+### Effigy's own admitted release Run selector
+
+Effigy's own repository wraps authorized in-place release work in a maintained
+`admission = "heavy"` task, `effigy release:run`.
+
+```sh
+./target/debug/effigy release:run -- --to certify
+```
+
+The selector runs `./target/debug/effigy release run --to certify {args}` from a
+source-built binary, so an installed or PATH binary cannot supply stale release
+logic. It never forwards a different subcommand: publishing is a separate,
+explicitly authorized `release run` with no `--to`, or the `release:run -- --to
+closeout` form when the operator has decided to publish. The whole operation is
+admitted once; nested gate work reuses that run. This selector is for approved
+Effigy release work only, not worker per-task QA. See
 [the release contract](../knowledge/contracts/release.md).
 
 ### Effigy's admitted install verification selector
@@ -593,10 +608,11 @@ reuse-hosted-evidence = true
 
 - lookup uses authenticated `gh run list --repo <origin-owner/name>`
 - the run must match this repository and the exact `HEAD` SHA
-- prepare mutations do not change `HEAD`; reuse attests the source commit
-- status, prepare, `release --plan`, `release gates`, and execute share that
-  verdict
-- `.release-prepared.json` records each reused gate and its run URL
+- `prepare` changes `HEAD` only when it commits the prepared tree; reuse
+  attests the source commit, so a hosted-evidence gate belongs in the
+  `pre-gates` stage
+- `status`, `release --plan` and `release gates` share that verdict
+- the Run's record keeps each reused gate and its run URL
 - missing, pending, failed, ambiguous, wrong-repository, or wrong-SHA evidence
   fails the named gate; unlisted gates still run locally
 
@@ -604,45 +620,49 @@ Effigy's own manifest includes `ci = "sh scripts/check-release-ci.sh"`. That
 `ci` gate stays a required local command. Hosted reuse is opt-in per gate on
 GitHub-hosted consumers; other providers keep supplying local gates.
 
-Important prepare rule:
+Important gate-stage rule:
 
-- if `[release.gates]` is configured, `effigy release prepare --yes` requires
-  `--check-gates`
+- a gate that reuses hosted evidence belongs in `stage = "pre"`; a
+  `stage = "certify"` gate runs against the prepared commit, where hosted
+  evidence for the source commit no longer applies
 
-## 7) State File and Safety
+## 7) Run State and Safety
 
-Prepare writes:
+A release Run writes Effigy-owned state outside the repo (contract 054 §10
+ruling 2):
 
-- `.release-prepared.json`
+- `~/.effigy/state/kernel.db` — the kernel journal. Each invocation is one
+  journalled Run that holds the release gate, journals every irreversible
+  publish before it happens, and settles whatever an interrupted invocation
+  left behind. The kernel engine record carries the checkpoint pointer: release
+  id, invocation id, stage, status and the record's path
+- `~/.effigy/state/release/<owner>/record.json` — the durable record: source
+  commit, candidate commit, each identity's version and tag, each artifact's
+  path and sha256, gate results, approvals, destinations and errors
+- `~/.effigy/state/release/<owner>/receipt.json` — the receipt `release
+  receipt` prints
+- `~/.effigy/state/release/<owner>/candidate/` — the certified artifact copies
+  publish is allowed to use
 
-That state file records:
+There is no state file in the repository. A project that wants a receipt in its
+tree adds a `closeout` task that reads it.
 
-- previous version
-- suggested version
-- prepared version
-- whether a custom version override was used
-- tag
-- prepared timestamp
-- whether gates were checked and passed
-- modified file list
-- source fingerprints for the prepared branch, prepared HEAD, and each prepared
-  file's content digest
+Safety rules the Run enforces:
 
-Execute safety checks:
-
-- missing state file blocks execute
-- stale state emits a warning using the default one-hour threshold and requires
-  explicit acknowledgement or `--allow-stale` before execute can proceed;
-  this override covers age only
-- unexpected working-tree changes block execute
-- branch drift, HEAD movement, or changed prepared-file contents since prepare
-  are reported as source-drift blockers in `resume` and `execute --plan`;
-  `--allow-stale` cannot override them because the recorded gates apply to the
-  prepared source identity, so regenerate state with `release prepare`
-- JSON `release execute --plan` includes `suggested_actions`; source drift
-  reports the same mandatory reprepare recovery used by `release resume`
-- push failure leaves the prepared state file in place
-- retries do not re-create an already-created local tag
+- `validate` refuses a dirty tree, an invalid changelog, a version mismatch, an
+  existing tag, or a `task` target this version does not publish
+- `prepare` rolls the working tree back when a write, a lockfile sync or the
+  commit fails
+- `certify` re-records every artifact digest, and `publish` re-hashes those
+  exact files first: a task that rebuilt instead of using the certified
+  candidate is refused
+- `publish` journals each tag push as an irreversible effect before it runs;
+  an unknown outcome stops the Run and is reconciled on resume, never retried
+  blind, and a published tag is never moved
+- partial fan-out is normal: targets and identities that already published stay
+  recorded, and a resume continues with the remaining ones
+- a failed verification leaves the release published-but-unverified in the
+  receipt. Effigy never unpublishes
 - release tags are annotated Git objects; signing and configurable annotation
   templates are not implied
 
@@ -668,7 +688,7 @@ Recommended migration direction:
 
 - move release gate definitions into `[release.gates]`
 - keep wrapper scripts only when an external caller still depends on them
-- prefer `effigy release --plan/status/prepare/execute` for operator-driven
+- prefer `effigy release --plan/status/run/resume/receipt` for operator-driven
   runs
 - for Effigy's binary release, use `effigy release verify-install` instead of
   bespoke tag-install helpers
@@ -678,6 +698,8 @@ Recommended migration direction:
 
 Still intentionally not shipped:
 
+- `task` release targets in a Run: v0.15 publishes `tag` targets, and a release
+  that declares a `task` target is refused by `validate` with that reason
 - custom interactive editing flows beyond a single semver override, or full
   inline/unified diffs before apply
 - automatic workflow migration in `.github/workflows/` without explicit human
@@ -690,7 +712,7 @@ Still intentionally not shipped:
 ## Expected Outcome
 
 After applying this guide, a repo can describe release operation in one
-`[release]` section and run readiness, preparation, execution, and
+`[release]` section and run readiness, the checkpointed release Run and
 verification through built-in commands instead of wrapper scripts.
 
 ## Related Guides

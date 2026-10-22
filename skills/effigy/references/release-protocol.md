@@ -19,8 +19,7 @@ Use these for inspection, planning, and reporting:
 |---------|--------------|
 | `effigy release --plan` | Resolve the whole release pipeline with no mutation |
 | `effigy release status --check-gates` | Show current gate states |
-| `effigy release prepare --plan` | Preview prepare step |
-| `effigy release execute --plan` | Preview execute step |
+| `effigy release receipt [<run>]` | Print the last Run's receipt |
 | `effigy release gates` | List release gates |
 | `effigy changelog extract --version X.Y.Z` | Extract changelog section |
 
@@ -30,8 +29,9 @@ Never run these unprompted:
 
 | Command | Side effect |
 |---------|-------------|
-| `effigy release prepare --yes` | Writes prepare artifacts |
-| `effigy release execute --yes` | Commits prepared files and pushes the annotated tag |
+| `effigy release run --to certify` | Prepare stage commits the version and changelog in place |
+| `effigy release run` | `publish` pushes one annotated tag per identity, `closeout` pushes the release commit |
+| `effigy release resume <run>` | Continues an interrupted Run, reconciling an unknown tag push |
 | `gh workflow run release-binaries.yml -f tag=vX.Y.Z` | Starts binary publication for the immutable tag |
 | `effigy release verify-install --tag vX.Y.Z` | Effigy binary network-side verification; not for library or service repos |
 
@@ -46,10 +46,10 @@ When a human explicitly asks for a release:
    then run `gh run watch <RUN_ID> --exit-status`.
 4. `effigy release --plan`
 5. `effigy release status --check-gates`
-6. `effigy release prepare --plan`
-7. `effigy release prepare --yes --check-gates`
-8. `effigy release execute --plan`
-9. `effigy release execute --yes`
+6. `effigy release run --to certify`
+7. `effigy release status` (the `certify` checkpoint and its artifact digests)
+8. `effigy release run`
+9. `effigy release receipt`
 10. Run the target repo's declared publication and consumer verification.
     - Effigy itself: `gh workflow run release-binaries.yml -f tag=vX.Y.Z`
       followed by `effigy release verify-install --tag vX.Y.Z`.
@@ -86,9 +86,12 @@ target library or service tag is broken.
 
 ## Failed release recovery
 
-If `release execute` fails partway through:
+If `release run` fails partway through publish:
 
-1. **Do not re-tag.** The original tag may already be on the remote.
+1. **Do not re-tag and do not re-run publish blind.** `effigy release resume
+   <run>` looks the tag up locally and on the remote first, records a tag that
+   is already there at the candidate commit, and only pushes one that is
+   absent.
 2. Identify the underlying cause from gate output or error envelope.
 3. Add a `Fixed` entry to `CHANGELOG.md` under `[Unreleased]` describing the
    problem.

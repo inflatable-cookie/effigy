@@ -189,7 +189,7 @@ Key integration points:
   - validates changelog structure and checks whether `Unreleased` is empty
 - `effigy release --plan`
   - previews the bump implied by `Unreleased`
-- `effigy release prepare`
+- `effigy release run --to certify` (prepare and certify, publish nothing)
   - promotes `Unreleased` into the selected release version and keeps
     `Unreleased` present for future work
 - `.github/workflows/release-binaries.yml`
@@ -241,7 +241,7 @@ success. Then continue:
 effigy changelog validate CHANGELOG.md
 effigy changelog analyze CHANGELOG.md
 effigy release status --check-gates
-effigy release prepare --plan
+effigy release --plan
 ```
 
 When drafting release notes after a tag is cut:

@@ -20,7 +20,10 @@ where
         "--help" | "-h" => Ok(Command::Help(HelpTopic::Release)),
         "status" => parse_release_status(args),
         "gates" => parse_release_gates(args),
+        "run" => parse_release_run(args),
         "resume" => parse_release_resume(args),
+        "approve" => parse_release_approve(args),
+        "receipt" => parse_release_receipt(args),
         "verify-install" => parse_release_verify_install(args),
         "validate" => parse_release_validate(args),
         "check-binary" => parse_release_check_binary(args),
@@ -31,8 +34,9 @@ where
         "simulate" => Err(CliParseError::InvalidArguments(
             "`effigy release simulate` is retired in v0.15: use `effigy release --plan`, which shows the whole pipeline (next versions, files, gates by stage, artifacts, targets and approval checkpoints) and still mutates nothing. See the v0.15.0 Removed entry in CHANGELOG.md".to_owned(),
         )),
-        "prepare" => parse_release_prepare(args),
-        "execute" => parse_release_execute(args),
+        "prepare" | "execute" => Err(CliParseError::InvalidArguments(format!(
+            "`effigy release {subcmd}` is retired in v0.15: `effigy release run` prepares, certifies and publishes the release as one durable Run with a checkpoint at every stage boundary, and `effigy release resume <run>` continues an interrupted one (contract 054 §5). See the v0.15.0 Removed entry in CHANGELOG.md"
+        ))),
         other => Err(unknown_argument(other)),
     }
 }
@@ -520,6 +524,41 @@ where
     }))
 }
 
+fn parse_release_run<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut to: Option<String> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--to" => {
+                to = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--to".to_owned(),
+                    },
+                )?);
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Release(ReleaseArgs {
+        subcommand: ReleaseSubcommand::Run { to },
+        repo_override,
+        output_json,
+    }))
+}
+
+/// A release Run id is positional. The retired `--allow-stale` prepared-state
+/// resume has no Run to name, so it fails with the replacement instead.
 fn parse_release_resume<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,
@@ -527,20 +566,102 @@ where
     let mut args = args.into_iter();
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
-    let mut allow_stale = false;
+    let mut run: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
             "--json" => output_json = true,
-            "--allow-stale" => allow_stale = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
-            other => return Err(unknown_argument(other)),
+            other if other.starts_with("--") => return Err(unknown_argument(other)),
+            other => {
+                if run.replace(other.to_owned()).is_some() {
+                    return Err(CliParseError::InvalidArguments(
+                        "`effigy release resume` takes one release Run id".to_owned(),
+                    ));
+                }
+            }
+        }
+    }
+
+    let Some(run) = run else {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy release resume` needs the release Run id to continue, for example `effigy release resume <run>`; `effigy release status` shows the active Run. The pre-v0.15 prepared-state resume is retired with `release prepare` (contract 054 §5)".to_owned(),
+        ));
+    };
+
+    Ok(Command::Release(ReleaseArgs {
+        subcommand: ReleaseSubcommand::ResumeRun { run },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_release_approve<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut run: Option<String> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
+            other if other.starts_with("--") => return Err(unknown_argument(other)),
+            other => {
+                if run.replace(other.to_owned()).is_some() {
+                    return Err(CliParseError::InvalidArguments(
+                        "`effigy release approve` takes one release Run id".to_owned(),
+                    ));
+                }
+            }
+        }
+    }
+
+    let Some(run) = run else {
+        return Err(CliParseError::InvalidArguments(
+            "`effigy release approve` needs the release Run id waiting at an approval checkpoint; `effigy release status` shows it".to_owned(),
+        ));
+    };
+
+    Ok(Command::Release(ReleaseArgs {
+        subcommand: ReleaseSubcommand::Approve { run },
+        repo_override,
+        output_json,
+    }))
+}
+
+fn parse_release_receipt<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut repo_override: Option<PathBuf> = None;
+    let mut output_json = false;
+    let mut run: Option<String> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--json" => output_json = true,
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
+            other if other.starts_with("--") => return Err(unknown_argument(other)),
+            other => {
+                if run.replace(other.to_owned()).is_some() {
+                    return Err(CliParseError::InvalidArguments(
+                        "`effigy release receipt` takes one release Run id".to_owned(),
+                    ));
+                }
+            }
         }
     }
 
     Ok(Command::Release(ReleaseArgs {
-        subcommand: ReleaseSubcommand::Resume { allow_stale },
+        subcommand: ReleaseSubcommand::Receipt { run },
         repo_override,
         output_json,
     }))
@@ -616,84 +737,6 @@ where
 
     Ok(Command::Release(ReleaseArgs {
         subcommand: ReleaseSubcommand::VerifyInstall { tag, repo_url },
-        repo_override,
-        output_json,
-    }))
-}
-
-fn parse_release_prepare<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
-    let mut check_gates = false;
-    let mut plan = false;
-    let mut yes = false;
-    let mut version_override: Option<String> = None;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--check-gates" => check_gates = true,
-            "--plan" | "--dry-run" => plan = true,
-            "--yes" => yes = true,
-            "--version" => {
-                version_override = Some(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--version".to_owned(),
-                    },
-                )?);
-            }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
-            other => return Err(unknown_argument(other)),
-        }
-    }
-
-    Ok(Command::Release(ReleaseArgs {
-        subcommand: ReleaseSubcommand::Prepare {
-            plan,
-            check_gates,
-            yes,
-            version_override,
-        },
-        repo_override,
-        output_json,
-    }))
-}
-
-fn parse_release_execute<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_override: Option<PathBuf> = None;
-    let mut output_json = false;
-    let mut plan = false;
-    let mut yes = false;
-    let mut allow_stale = false;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
-            "--json" => output_json = true,
-            "--plan" | "--dry-run" => plan = true,
-            "--yes" => yes = true,
-            "--allow-stale" => allow_stale = true,
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Release)),
-            other => return Err(unknown_argument(other)),
-        }
-    }
-
-    Ok(Command::Release(ReleaseArgs {
-        subcommand: ReleaseSubcommand::Execute {
-            plan,
-            yes,
-            allow_stale,
-        },
         repo_override,
         output_json,
     }))

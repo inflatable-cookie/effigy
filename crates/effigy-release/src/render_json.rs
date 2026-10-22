@@ -739,6 +739,7 @@ struct ReleaseRunPayload {
     id: Option<String>,
     stage: Option<String>,
     waiting_on: Option<String>,
+    status: Option<String>,
 }
 
 impl ReleaseRunPayload {
@@ -748,6 +749,7 @@ impl ReleaseRunPayload {
             id: None,
             stage: None,
             waiting_on: None,
+            status: None,
         }
     }
 
@@ -757,6 +759,7 @@ impl ReleaseRunPayload {
             id: run.id.clone(),
             stage: run.stage.clone(),
             waiting_on: run.waiting_on.clone(),
+            status: run.status.clone(),
         }
     }
 }

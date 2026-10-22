@@ -352,12 +352,14 @@ fn render_bootstrap_help_shows_planning_options() {
 }
 
 #[test]
-fn render_release_help_shows_status_and_gate_options() {
+fn render_release_help_shows_status_and_run_options() {
     let rendered = render_help_text(HelpTopic::Release);
     assert!(rendered.contains("release Help"));
     assert!(rendered.contains("effigy release status"));
     assert!(rendered.contains("effigy release gates"));
-    assert!(rendered.contains("effigy release resume"));
+    assert!(rendered.contains("effigy release run"));
+    assert!(rendered.contains("effigy release resume [--repo <PATH>] <RUN>"));
+    assert!(rendered.contains("effigy release receipt"));
     assert!(rendered.contains("effigy release verify-install"));
     assert!(rendered.contains("Effigy's self-hosting tagged-binary check"));
     assert!(rendered.contains("repo-owned consumer smoke"));
@@ -365,33 +367,18 @@ fn render_release_help_shows_status_and_gate_options() {
     assert!(
         rendered.contains("effigy release --plan [--repo <PATH>] [--version <SEMVER>] [--json]")
     );
-    assert!(rendered.contains("effigy release prepare [--repo <PATH>] [--check-gates]"));
-    assert!(rendered.contains("effigy release prepare (--plan|--dry-run)"));
-    assert!(rendered.contains("effigy release prepare --yes"));
-    assert!(rendered.contains("effigy release resume [--repo <PATH>] [--allow-stale] [--json]"));
-    assert!(rendered.contains("effigy release execute [--repo <PATH>] [--allow-stale]"));
-    assert!(rendered.contains("effigy release execute (--plan|--dry-run)"));
-    assert!(rendered.contains("effigy release execute --yes"));
+    assert!(rendered.contains("effigy release run [--repo <PATH>] [--to <STAGE>] [--json]"));
+    assert!(rendered.contains("--to <STAGE>"));
     assert!(rendered.contains("--plan"));
-    assert!(rendered.contains("--dry-run"));
-    assert!(rendered.contains("--yes"));
-    assert!(rendered.contains("--check-gates"));
     assert!(rendered.contains("--version <SEMVER>"));
-    assert!(rendered.contains("--allow-stale"));
     assert!(rendered.contains("--tag <TAG>"));
     assert!(rendered.contains("--repo-url <URL>"));
     assert!(rendered.contains("--repo <PATH>"));
     assert!(rendered.contains("--json"));
-    assert!(rendered.contains("compact command legend"));
-    assert!(rendered.contains("stale-acknowledgement state"));
-    assert!(rendered.contains("selected version"));
-    assert!(rendered.contains("suggested remediation actions"));
-    assert!(rendered.contains("dedicated prepared-state recovery entrypoint"));
-    assert!(rendered.contains("source fingerprints"));
-    assert!(rendered.contains("branch drift, HEAD movement, and prepared-file content drift"));
-    assert!(rendered.contains("`gates`, `reprepare`, and `discard` shortcuts"));
+    assert!(rendered.contains("checkpoint at every boundary"));
+    assert!(rendered.contains("reconciling an unknown tag push before any retry"));
+    assert!(rendered.contains("Effigy-owned state outside the repo"));
     assert!(rendered.contains(".effigy/reports/release/gates/"));
-    assert!(rendered.contains("last 20 lines"));
     assert!(!rendered.contains("simulate remain roadmap work"));
 }
 

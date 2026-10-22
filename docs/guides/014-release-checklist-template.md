@@ -51,8 +51,8 @@ Owner: `name/team`
 ## 3) Versioning and Notes
 
 - [ ] Version bump matches policy (`PATCH` vs `MINOR`) from the release policy in guide `049`.
-- [ ] Planned version reviewed in built-in prepare preview:
-  - [ ] `effigy release prepare --plan`
+- [ ] Planned version reviewed in the pipeline preview:
+  - [ ] `effigy release --plan`
 - [ ] Changelog entry drafted.
 - [ ] Root `README.md` and other front-door install examples updated when they
   pin a specific release tag/version.
@@ -66,13 +66,16 @@ Owner: `name/team`
 
 - [ ] Operator path chosen explicitly:
   - [ ] built-in commands are the primary path for this release
-- [ ] Prepared-state apply succeeds:
-  - [ ] `effigy release prepare --yes --check-gates`
-- [ ] Execute preflight succeeds:
-  - [ ] `effigy release execute --plan`
-- [ ] Human approval recorded before irreversible step.
-- [ ] Final execute succeeds:
-  - [ ] `effigy release execute --yes`
+- [ ] The Run prepares and certifies in place, with the same candidate it will
+      publish:
+  - [ ] `effigy release:run -- --to certify`
+- [ ] Status shows the `certify` checkpoint and its artifact digests:
+  - [ ] `effigy release status`
+- [ ] Human approval recorded before the irreversible publish step.
+- [ ] The Run publishes and closes out:
+  - [ ] `effigy release run`
+- [ ] The receipt records the destinations and verification results:
+  - [ ] `effigy release receipt`
 
 ## 5) Channel Artifacts
 

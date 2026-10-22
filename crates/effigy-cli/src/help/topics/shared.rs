@@ -72,13 +72,10 @@ pub(super) fn render_bullet_section<R: HelpRenderer + ?Sized>(
 
 #[derive(Clone, Copy)]
 pub(super) enum CommonOption {
-    CheckGates,
-    DryRun,
     Help,
     Json(&'static str),
     Plan,
     Repo,
-    Yes(&'static str),
 }
 
 pub(super) struct StandardTopicHelpSpec {
@@ -94,22 +91,10 @@ pub(super) struct StandardTopicHelpSpec {
 impl CommonOption {
     fn row<'a>(self) -> (&'a str, &'a str) {
         match self {
-            CommonOption::CheckGates => (
-                "--check-gates",
-                "Run configured release gate commands before reporting readiness (interactive prepare auto-checks configured gates by default)",
-            ),
-            CommonOption::DryRun => (
-                "--dry-run",
-                "Alias for `--plan` on `release prepare` and `release execute` preview flows",
-            ),
             CommonOption::Help => ("-h, --help", "Print command help"),
             CommonOption::Json(description) => ("--json", description),
-            CommonOption::Plan => (
-                "--plan",
-                "Preview release preparation or execution checks without prompting or irreversible actions",
-            ),
+            CommonOption::Plan => ("--plan", "Preview the release pipeline with no mutation"),
             CommonOption::Repo => ("--repo <PATH>", "Override target repository path"),
-            CommonOption::Yes(description) => ("--yes", description),
         }
     }
 }
