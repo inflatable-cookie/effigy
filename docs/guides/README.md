@@ -81,16 +81,6 @@ Use when:
 - you run UAT environments from imported legacy baselines
 - you capture and replay changes across environment rebuilds
 
-### Define and operate demos
-
-Read:
-- [`058-demo-system-guide.md`](058-demo-system-guide.md)
-- [`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
-
-Use when:
-- you want manifest-owned proof demos
-- you need receipts, history, artifacts, or the demo browser
-
 ### Manage secrets and credentials
 
 Read:
@@ -226,9 +216,7 @@ This section is inventory, not a recommended reading order.
 - [`054-release-checkpoint-log-template.md`](054-release-checkpoint-log-template.md)
 - [`055-everyday-workflows.md`](055-everyday-workflows.md)
 - [`057-bootstrap-repo-bringup.md`](057-bootstrap-repo-bringup.md)
-- [`058-demo-system-guide.md`](058-demo-system-guide.md)
 - [`059-manifest-composition-guide.md`](059-manifest-composition-guide.md)
-- [`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
 - [`061-rhai-script-steps-guide.md`](061-rhai-script-steps-guide.md)
 - [`062-distribution-system-guide.md`](062-distribution-system-guide.md)
 - [`063-container-system-guide.md`](063-container-system-guide.md)

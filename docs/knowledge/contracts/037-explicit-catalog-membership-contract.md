@@ -21,7 +21,7 @@ root manifest declares it.
 - **ordinary mount**: a string mount or structured source mount not marked as
   a catalog
 - **effective membership**: the normalized catalog set consumed by routing,
-  tasks, test planning, execution, demos, status, and doctor
+  tasks, test planning, execution, status, and doctor
 - **declaration origin**: the manifest location and declaration form that added
   evidence for a member
 
@@ -127,7 +127,7 @@ Before manifest loading, routing must:
 Symlink and physical declarations resolving to one canonical directory are one
 member. Declaration origin remains visible for diagnostics.
 
-No runner, doctor, test, demo, status, or container surface may implement a
+No runner, doctor, test, status, or container surface may implement a
 second membership resolver.
 
 ## Root Resolution Boundary
@@ -146,8 +146,8 @@ After effective membership loads:
 - alias, path, cwd-nearest, and shallowest selector precedence is unchanged
 - unique unprefixed task ownership is unchanged
 - built-in `test` fans out only across effective membership
-- task listings, resolution evidence, execution preflight, demos, task status,
-  and doctor use the same normalized set
+- task listings, resolution evidence, execution preflight, task status, and
+  doctor use the same normalized set
 - a selected catalog's declared runtime target owns execution routing for its
   tasks and builtin test suites; root workspace ownership never replaces it
   (`013` owns the resolution rules and the ancestor runtime fallback)

@@ -6,7 +6,6 @@ minimum_effigy_version = "0.7.0"
 include = [
   "config/tasks.toml",
   "config/containers.toml",
-  "config/demos.toml",
   "docs/effigy.docs.toml",
   "config/scan.toml",
   "config/release.toml",

@@ -69,7 +69,6 @@ Policy:
 | Deploy | `deploy::model`, `deploy::emit`, `deploy::plan`, `deploy::apply`, `deploy::status`, `deploy::history`, `deploy::redeploy`, `deploy::provider_context`, `deploy::provider_context_path`, `deploy::provider_report_path`, `deploy::provider_report` | Exposed; apply/redeploy refuse in v0.15 |
 | Distribution | `distribution::validate_metadata`, `distribution::check_glibc_floor`, `distribution::preflight`, `distribution::first_publish`, `distribution::validate_artifacts`, `distribution::generate_closeout`, `distribution::write_summary` | Exposed |
 | System | `system::status`, `system::logs` | Exposed |
-| Demo | `demo::list`, `demo::inspect`, `demo::history` | Exposed |
 | Changelog | `changelog::validate`, `changelog::extract` | Exposed |
 | Test | `test::plan` | Exposed |
 | Unlock | `unlock::scopes` | Exposed |
@@ -88,7 +87,6 @@ None currently tracked.
 | Distribution publishing | External publishing side effects |
 | Bootstrap | Repo creation and handoff flow |
 | Workspace sessions | Interactive/container session lifecycle |
-| Demo browser/input sessions | Long-running human-facing UI |
 | Attached/following logs | Long-running terminal ownership |
 | Init | Interactive scaffolding with TTY prompts |
 

@@ -28,7 +28,6 @@ main user-facing set:
 - `023` troubleshooting
 - `025` command reference
 - `055` everyday workflows
-- `058` demo system guide
 - `059` manifest composition
 - `061` Rhai script steps
 - `062` distribution system guide

@@ -14,7 +14,6 @@ Use:
   for the mental model behind `system`, `workspace`, and `dev`
 - [`061-rhai-script-steps-guide.md`](061-rhai-script-steps-guide.md) for
   Effigy-native scripting
-- [`058-demo-system-guide.md`](058-demo-system-guide.md) for the demo system
 
 ## Start Here
 
@@ -26,8 +25,8 @@ Pick the first pattern by the friction you want to remove:
   `Compact Tasks and Task Chains` and `Split One Manifest Into Focused Fragments`
 - local dev systems, workspaces, or mounted sibling repos:
   `Managed Dev Stack`, `Mounted Sibling Isolation`, and `System and Workspace Patterns`
-- demos or lightweight Rust-first glue:
-  `Demo Registry Foundation` and `Rhai Script Step For Rust-First Glue`
+- lightweight Rust-first glue:
+  `Rhai Script Step For Rust-First Glue`
 - tests, deferral, or bootstrap interop:
   `Testing and Legacy Interop`
 - repo-health scans without more custom tooling:
@@ -211,114 +210,6 @@ effigy graph explore "checkout totals" --path apps/bovine-desktop/ --json
 The root graph uses one database and per-file transactions. See
 [code graph workflows](076-code-graph-and-agent-workflows.md) for freshness,
 deadlines and migration guidance.
-
-### Demo Registry Foundation
-
-```toml
-[demos.login-smoke]
-title = "Login smoke"
-summary = "Checks that the login flow still produces a working session."
-proof = "Operator-visible smoke proof for login."
-owner = "platform"
-mode = "interactive"
-status = "ready"
-covers = ["auth.login"]
-tags = ["smoke", "ui"]
-task = "demo:login"
-receipt = "demos/receipts/login-smoke.json"
-artifacts = ["demos/artifacts/login-smoke/index.html"]
-prerequisites = ["api.dev", "ui.dev"]
-dependencies = ["seed.auth"]
-```
-
-Use this when proof/demo work should become first-class repo contract instead
-of another flat script directory.
-
-Registry rules:
-- each demo lives at `[demos.<id>]`
-- `title`, `summary`, `proof`, `owner`, `status`, `mode`, and `covers` are required
-- declare exactly one runnable entrypoint with `task = "..."` or `run = "..."`
-- demo `run` also accepts the same run-step array shape as task `run`, so small
-  proof chains can live directly in `[demos.*]` without an extra `demo:*` task
-- `receipt` and `artifacts` are optional, but they let `effigy demo inspect`
-  show the latest known proof state instead of only static metadata
-- if `receipt` is omitted, `effigy demo run` writes a normalized receipt to
-  `.effigy/demo/receipts/<demo-id>.json`
-
-Discovery, inspection, and execution:
-
-```sh
-effigy demo list
-effigy demo browser
-effigy demo list --owner platform --status ready
-effigy demo list --group-by owner --stale-only
-effigy demo inspect login-smoke
-effigy demo history login-smoke --limit 5
-effigy demo history login-smoke --attempt login-smoke-1775944053944
-effigy demo run login-smoke
-effigy demo stop login-smoke
-effigy demo rerun login-smoke
-effigy --json demo inspect login-smoke
-```
-
-Use this when you need a stable proof inventory plus one operator-visible proof
-entrypoint now.
-
-The Effigy repo now self-hosts this surface with two concrete demos:
-- `browser-proof-report` is task-backed and generates a human-checkable HTML
-  artifact plus browser query snapshots
-- `lifecycle-window` is run-backed and stays active until `effigy demo stop
-  lifecycle-window` is used
-
-Lifecycle notes:
-- `demo list` now supports focused browser-style discovery with `--search`,
-  `--owner`, `--tag`, `--mode`, `--cover`, `--status`, `--gap`,
-  `--stale-only`, and `--group-by`.
-- `demo browser` now provides the first live list/detail TUI on top of the
-  shipped registry, query, inspect, run, stop, and rerun surfaces.
-- inside `demo browser`, `Tab`/`Shift+Tab` switches focus between the demo list
-  and the detail pane; when the detail pane is focused, `←`/`→` switches
-  between `Overview`, `History`, `Terminal`, and `Artifacts`; `↑`/`↓` acts
-  inside the focused pane or active tab; `Enter` opens the action sheet from
-  the list, activates the selected detail-side entry, or toggles terminal input
-  capture on the `Terminal` tab when supported; `Esc` closes overlays, leaves
-  terminal input capture, returns non-overview tabs to `Overview`, or quits
-  from the root overview.
-- inside `demo browser`, use `/` for direct search and `f` for the filter
-  sheet, which now owns owner/tag/mode/cover/status/gap/stale/grouping
-  controls.
-- the detail side is now tabbed and intentionally short rather than one long
-  scrolling receipt/log document.
-- `demo inspect` now shows both the latest terminal receipt and any active
-  in-flight attempt, plus explicit action availability, receipt freshness, and
-  a bounded recent-attempt history for older terminal outcomes.
-- `demo inspect` now also exposes a runner-owned active terminal/session
-  handoff for active demos, including stream-vs-pty transport metadata,
-  explicit input-forwarding capability signaling, recent stdout/stderr
-  snapshots, and an explicit `nested_tui = false` boundary for browser
-  consumers.
-- `demo history <id>` gives that retained result history a dedicated query
-  surface, with optional `--limit <N>` trimming, so operators can inspect one
-  demo's recent terminal outcomes without overloading the broader inspect view.
-- `demo history <id> --attempt <ATTEMPT_ID>` drills into one retained
-  historical attempt so the prior receipt, artifacts, and log references are
-  visible without widening `demo list` or the browser.
-- `demo stop <id>` works for directly runner-owned run-backed demos.
-- `demo rerun <id>` starts a fresh attempt and fails fast if the demo is
-  already active.
-- task-backed demos remain runnable, but stop is still an explicit
-  `not supported through the current runtime` boundary.
-- the browser currently focuses on honest navigation, bounded action dispatch,
-  artifact-opening, metadata-query parity, integrated retained-history review,
-  and a live terminal tab for the bounded honest runtime cases. It still must
-  not launch nested TUIs.
-
-Migration note:
-- if a consumer repo already has a `demos/` script pack or one wrapper task per
-  demo, use
-  [`060-consumer-demo-migration-guide.md`](060-consumer-demo-migration-guide.md)
-  for the practical extraction and inline-`run = [ ... ]` path instead of
-  expanding this cookbook section further.
 
 ## Task and Runtime Patterns
 

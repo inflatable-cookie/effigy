@@ -61,8 +61,6 @@ For narrative workflow guidance instead of lookup, start with:
   `effigy bootstrap`.
 - Need to run the configured `[defer]` fallback even when the selector exists
   locally: use `effigy defer`.
-- Need proof/demo discovery, inspection, or one-off proof execution: use
-  `effigy demo`.
 - Need a host-clean local web/service environment or data lifecycle tools: use
   `effigy container`.
 - Need substrate lifecycle (VM + compose + gateway + workspace handoff) for the
@@ -106,7 +104,7 @@ no new top-level built-in name, and leaves manifest selectors named `work`,
 | `effigy help work` | `effigy <task>`, `effigy <catalog>/<task>`, `effigy tasks`, `effigy test`, `effigy doctor`, `effigy init` |
 | `effigy help local` | `effigy container`, `effigy system`, `effigy workspace`, `effigy gateway`, `effigy service`, `effigy exec` |
 | `effigy help repo` | `effigy graph`, `effigy scan`, `effigy docs`, `effigy contracts` |
-| `effigy help deliver` | `effigy artifact`, `effigy state`, `effigy deploy`, `effigy release`, `effigy bundle`, `effigy bootstrap`, `effigy demo` |
+| `effigy help deliver` | `effigy artifact`, `effigy state`, `effigy deploy`, `effigy release`, `effigy bundle`, `effigy bootstrap` |
 | `effigy help extend` | `effigy skill`, `effigy rhai surface` |
 | `effigy help admin` | `effigy config`, `effigy deps`, `effigy secrets`, `effigy defer`, `effigy uninstall`, `effigy version`, `effigy config completion`, `effigy help` |
 
@@ -153,7 +151,6 @@ through the help route.
 | `effigy graph` | Whole-checkout navigation with atomic per-file refresh | `index`, `status`, `search`, `node`, `affected`, `explore`, `--in`, `--out`, `--excerpts-only`, `--stale-index`, `--refresh`, `--repo`, `--json`, `--limit`, `--depth`, `--stdin`, `--max-files`, `--max-bytes`, `--language`, `--path`, `EFFIGY_GRAPH_TIMEOUT_MS` | `effigy.graph.index.v1`, `effigy.graph.status.v1`, `effigy.graph.search.v1`, `effigy.graph.node.v1`, `effigy.graph.affected.v1`, `effigy.graph.explore.v1` | `076-code-graph-and-agent-workflows.md` |
 | `effigy rhai` | Inspect the registered Rhai host API surface available to scripts, including module/function names and side-effect posture | `surface`, `--json` | `effigy.rhai.surface.v1` | `061-rhai-script-steps-guide.md`, `068-rhai-host-surface-audit.md` |
 | `effigy bootstrap` | Clone or update a repo from a git URL, apply its root bootstrap contract, sync optional submodules, bring along child repos, run setup, optionally stage DB seed dumps and run the standard `bootstrap:db-seed` task, optionally prompt for missing bundle DB dumps on a real TTY, optionally isolate generated-compose runtime state with `--fresh`, optionally pin this bootstrap session to `containerd` or `docker` with `--backend`, run `[bootstrap].start` after setup by default (`--no-start` to skip), and expose `bootstrap deps sync`, `bootstrap children status/sync`, and `bootstrap teardown` for typed dependency hydration, child checkout inspection/refresh, and fresh-session cleanup | `<git-url>`, `teardown`, `deps sync`, `children status`, `children sync`, `--path`, `--branch`, `--backend <containerd|docker>`, `--db-seed <FILE|OCI>|<TARGET>=<FILE|OCI>`, `--fresh`, `--no-prompt`, `--reuse-path`, `--no-start`, `--start`, `--plan`, `--yes`, `--js-only`, `--rust-only`, `--refresh-lock`, `--fetch-only`, `--checkout`, `--json` | `effigy.bootstrap.v1`, `effigy.bootstrap.deps.v1`, `effigy.bootstrap.children-status.v1`, `effigy.bootstrap.children-sync.v1`, `effigy.bootstrap-teardown.v1` | `057-bootstrap-repo-bringup.md` |
-| `effigy demo` | Discover repo-owned proof demos, browse them in the demo browser, inspect active/latest state, query retained attempt history, execute new attempts, and control runner-owned lifecycle for active demos | `list`, `browser`, `inspect`, `history`, `run`, `stop`, `input`, `resize`, `rerun`, `--repo`, `--json` | `effigy.demo.list.v1`, `effigy.demo.inspect.v1`, `effigy.demo.history.v1`, `effigy.demo.run.v1`, `effigy.demo.stop.v1`, `effigy.demo.input.v1`, `effigy.demo.resize.v1`, `effigy.demo.rerun.v1` | `058-demo-system-guide.md` |
 | `effigy scan` | Run built-in repo scanners such as oversized code-file detection, graph-aware boundary drift checks, likely dead-code review, validation-gap review, duplicate-block detection, comment-ratio detection, bulky generated-asset detection, generated-in-src detection, attention-marker detection, and stale-suppression detection | `god-files`, `boundary-violations`, `dead-code`, `validation-gaps`, `duplicate-blocks`, `comment-ratio`, `generated-assets`, `generated-in-src`, `attention-markers`, `stale-suppressions`, `--graph-context`, `--path`, `--stdin`, `--threshold/--warn`, `--high`, `--critical`, `--include`, `--exclude`, `--source-root`, marker overrides (`--warning-marker/--high-marker/--critical-marker`), `--show-warnings`, `--no-gitignore`, `--fail-on-findings`, `--markdown`, `--out`, `--json` | `effigy.scan.god-files.v1`, `effigy.scan.boundary-violations.v1`, `effigy.scan.dead-code.v1`, `effigy.scan.validation-gaps.v1`, `effigy.scan.duplicate-blocks.v1`, `effigy.scan.comment-ratio.v1`, `effigy.scan.generated-assets.v1`, `effigy.scan.generated-in-src.v1`, `effigy.scan.attention-markers.v1`, `effigy.scan.stale-suppressions.v1` | `076-code-graph-and-agent-workflows.md`, `022-manifest-cookbook.md` |
 | `effigy test` | Plan or run detected and configured test suites | `--plan`, `--verbose-results`, `--tui`, `--json` | `effigy.test.plan.v1`, `effigy.test.results.v1` | `013-testing-orchestration.md` |
 | `effigy init` | Prepare repo setup through one front door: bounded TTY wizard for plain terminal use, baseline managed setup without a project skill copy, wider setup inventory via checklist mode, explicit optional skill snapshot action, or named starter emission | `--check`, `--apply`, `--repair`, `--checklist`, `--apply-actions`, `<name>`, `--list`, `--dry-run`, `--force`, `--json` | `effigy.init.v1`, `effigy.init.checklist.v1`, `effigy.init.actions.v1`, `effigy.init.list.v1` | `019-init-foundation.md` |
@@ -334,7 +331,7 @@ effigy uninstall --plan [--json]
 effigy uninstall --yes [--json]
 ```
 
-### Bundles, Bootstrap, and Demos
+### Bundles and Bootstrap
 
 ```sh
 effigy bundle inspect [--repo <PATH>] [--json]
@@ -359,7 +356,6 @@ effigy bootstrap teardown [--yes] [--json]
 effigy bootstrap deps sync [<path>...] [--js-only|--rust-only] [--refresh-lock] [--json]
 effigy bootstrap children status [--json]
 effigy bootstrap children sync [--fetch-only] [--checkout] [--json]
-effigy demo <list|browser|inspect|history|run|stop|input|resize|rerun> [ARGS...] [--json]
 ```
 
 ### Testing and Project Workflow
@@ -514,12 +510,6 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
 - `bootstrap` runs `[bootstrap].start` after setup by default; pass `--no-start`
   to skip that phase; it fails fast on dirty existing checkouts or remote
   mismatches
-- demo surfaces are intentionally bounded:
-  - `inspect` reports current declared and retained state
-  - `history` is one-demo retained-history review
-  - `run` starts a new attempt
-  - `stop` only works for runner-owned active attempts
-  - `browser` is interactive but must not launch nested TUIs
 - task execution locks on `task:<name>` by default; `tasks.<name>.lock` opts
   several tasks into a shared lock scope
 - managed `mode = "tui"` tasks also acquire `profile:<task>/<profile>`

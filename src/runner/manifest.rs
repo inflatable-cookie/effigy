@@ -5,8 +5,7 @@ use effigy_manifest::ManifestError;
 
 pub(in crate::runner) use effigy_manifest::config_sections;
 pub(in crate::runner) use effigy_manifest::{
-    LoadedTaskManifest, ManifestDemoConfig, ManifestDemoMode, ManifestDocsPolicyConfig,
-    ManifestManagedRun, ManifestTask, TaskManifest, TASK_MANIFEST_FILE,
+    LoadedTaskManifest, ManifestDocsPolicyConfig, TaskManifest, TASK_MANIFEST_FILE,
 };
 
 pub(super) fn load_task_manifest(manifest_path: &Path) -> Result<TaskManifest, super::RunnerError> {

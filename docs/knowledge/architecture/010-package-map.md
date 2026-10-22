@@ -107,7 +107,6 @@ these callers. `deny.toml` remains the dependency policy authority.
 | `effigy-docs-policy` | docs checks and policy validation helpers; recursive walks skip generated `target/` and `node_modules/` at entry ([030](030-docs-check-source-traversal.md)) |
 | `effigy-doctor` | doctor findings and diagnostics model |
 | `effigy-env` | env-schema integration and env contract helpers |
-| `effigy-demo` | demo model and execution helpers |
 | `effigy-deps` | machine-local dependency-link identities, Cargo/Bun inventory, Cargo and Bun planning/application/verification, observed status, and atomic desired-state stores |
 | `effigy-scan` | repository scans used by doctor/policy surfaces |
 | `effigy-core` | shared low-level primitives: build info, shell helpers, runtime-dir helpers (implicit `.effigy` / overlay ignore uses `$GIT_COMMON_DIR/info/exclude`, never `.gitignore`) |
@@ -119,7 +118,6 @@ these callers. `deny.toml` remains the dependency policy authority.
 | [`src/lib.rs`](../../../src/lib.rs) | library exports for CLI entry, JSON envelope helpers, and rendered version/header surfaces |
 | [`src/cli/`](../../../src/cli) | CLI entrypoint, execution context, help/version dispatch, JSON envelope emission, parse-error rendering |
 | [`src/runner/mod.rs`](../../../src/runner/mod.rs) | runner entry module and command-surface registration |
-| [`src/tui/`](../../../src/tui) | binary-local TUI export shim over `effigy-tui` |
 
 ## Runner Ownership Map
 
@@ -263,7 +261,7 @@ Current retained small-crate rationale:
 | `effigy-process` | Keep. Host process primitives are reused across runner surfaces without importing container/runtime crates. |
 | `effigy-gateway` | Keep. Local gateway registry and route primitives are consumed by runtime/container code without dragging command-shell behavior down. |
 | `effigy-ui` | Keep. Renderer abstraction and output primitives keep domain crates out of top-level CLI rendering details. |
-| `effigy-tui` | Keep. Thin TUI-only composition boundary; intentionally tiny because browser/demo terminal modules stay behind one crate-local seam. |
+| `effigy-tui` | Keep. Thin TUI-only composition boundary; intentionally tiny because the managed-run terminal and projection modules stay behind one crate-local seam. |
 
 Current defer notes after the `g07.056` cleanup pass:
 

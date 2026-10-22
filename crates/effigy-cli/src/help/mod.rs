@@ -157,21 +157,6 @@ mod tests {
     }
 
     #[test]
-    fn demo_help_keeps_repo_and_json_rows() {
-        let rows = option_rows(HelpTopic::Demo);
-        assert!(rows.iter().any(|row| row
-            == &[
-                "--repo <PATH>".to_owned(),
-                "Override target repository path".to_owned()
-            ]));
-        assert!(rows.iter().any(|row| row
-            == &[
-                "--json".to_owned(),
-                "Render machine-readable demo discovery, inspection, or run payloads".to_owned()
-            ]));
-    }
-
-    #[test]
     fn release_help_keeps_plan_and_gate_rows() {
         let rows = option_rows(HelpTopic::Release);
         assert!(rows.iter().any(|row| row
