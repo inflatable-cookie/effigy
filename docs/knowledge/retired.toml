@@ -1,7 +1,7 @@
 [[retired]]
 id = "effigy-demo-surface"
 retired = "2026-10-21"
-replacement = "No replacement (Q-009): the demo registry, receipts, retained history and browser are gone. Record terminal sessions with an external tool. `effigy demo` refuses with this explanation, a `[demos]` table is a manifest error, and `effigy config --target demos` is gone. Historical `.effigy/demo/` state and a consumer's own `demos/` script directory are untouched."
+replacement = "No replacement (Q-009): the demo registry, receipts, retained history and browser are gone. Each `[demos.<name>]` converts to `[tasks.\"demo:<name>\"]` with the same `run`, the `title` and `summary` kept as a TOML comment (tasks have no description field), and optional `group = \"Demos\"`. `effigy demo` refuses with this explanation, a `[demos]` table and `effigy config --target demos` are errors with the conversion recipe, and historical `.effigy/demo/` state and a consumer's own `demos/` script directory are untouched."
 owner = "docs/knowledge/contracts/043-feature-placement-and-surface-migration-contract.md"
 terms = [
   "effigy demo",
@@ -52,7 +52,9 @@ allow = [
   "CHANGELOG.md",
   "crates/effigy-builtin/src/config/request.rs",
   "crates/effigy-cli/src/command_parsing.rs",
+  "crates/effigy-core/src/retirement_text.rs",
   "crates/effigy-manifest/src/lib.rs",
+  "crates/effigy-manifest/src/retired_keys.rs",
   "docs/guides/085-v0.15.0-consumer-migration.md",
   "docs/knowledge/questions.md",
   "tests/cli_output_tests/retirement_tests.rs",
@@ -596,12 +598,12 @@ allow = ["CHANGELOG.md", "docs/guides/063-container-system-guide.md", "docs/know
 [[retired]]
 id = "effigy-vault-policy-keys"
 retired = "2026-10-19"
-replacement = "Delete these lines; they only restated the passphrase default. Existing vault paths, values and runtime unlock behavior are unchanged."
+replacement = "Delete these lines; they only restated the passphrase default. Existing vault paths, values and runtime unlock behavior are unchanged. A retired key inside a bundle export names the export file and line and the remedy: refresh a pinned or cached bundle with `effigy bundle sync`, or delete the line when you own that bundle."
 owner = "docs/knowledge/contracts/032-secret-and-local-config-management-contract.md"
 terms = ["ManifestSecretsVaultIdentity", "ManifestSecretsUnlockPolicy", "vault.identity", "vault.unlock"]
 paths = []
 config_keys = ["secrets.vault.identity", "secrets.vault.unlock", "secrets.vault.external"]
-allow = ["CHANGELOG.md", "docs/knowledge/contracts/032-secret-and-local-config-management-contract.md", "docs/guides/026-json-payload-examples.md", "crates/effigy-manifest/tests/secrets_config.rs"]
+allow = ["CHANGELOG.md", "docs/knowledge/contracts/032-secret-and-local-config-management-contract.md", "docs/guides/026-json-payload-examples.md", "docs/guides/085-v0.15.0-consumer-migration.md", "crates/effigy-manifest/src/bundles.rs", "crates/effigy-manifest/tests/secrets_config.rs"]
 
 [[retired]]
 id = "effigy-host-container-lease-and-reaper"

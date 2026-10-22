@@ -20,6 +20,7 @@ pub mod path_probe;
 pub mod repo;
 pub mod repo_markers;
 pub mod resolver;
+pub mod retirement_text;
 pub mod runtime_dir;
 pub mod shell;
 pub mod task_args;

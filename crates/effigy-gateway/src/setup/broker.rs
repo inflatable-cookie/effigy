@@ -6,7 +6,7 @@ use effigy_kernel::id::Digest;
 #[derive(Debug)]
 struct Image(Vec<u8>);
 impl Record for Image {
-    const MAX_BYTES: u64 = 128 << 20;
+    const MAX_BYTES: u64 = 512 << 20;
     fn decode(bytes: &[u8]) -> Result<Self, String> {
         Ok(Self(bytes.to_vec()))
     }
