@@ -29,6 +29,27 @@ opaque input, stale group, or uncertain dependency returns `needs_planner` with
 the reason. It never instructs a worker to run the full QA board. Full QA stays
 planner-owned through Queue on `main` at milestones and release points.
 
+### Q-010 durability touch-point (proposed)
+
+The storage amendment in [052 §3.1](052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary)
+is awaiting planner and Tom review before implementation. A group execution
+always selects `CheckoutDurable`, including a temporary group or one whose
+members are all local, light and terminal-bound. Retained evidence is part of
+the group workflow: the definition snapshot, head/worktree context, member
+ledger, result and redacted logs remain readable by run ID after completion.
+Members inherit the group's checkout durability before their first effect.
+No extra `--run-id` or detach flag is required to retain this behaviour.
+
+The group kernel run moves to its owning checkout journal; the existing
+run-scoped report/ledger and log paths remain checkout-local reports (052 §7.3
+family 14). This amendment does not retire them or promise zero durable writes
+for a group. It requires zero machine-store writes for a local-only group;
+actual shared endpoint/admission changes retain their own 052 §7.5 budgets.
+`--plan`, inventory, status and log reads stay pure. Existing unavailable stop
+and timeout controls remain unavailable until their supervision prerequisites
+land. Phase 2 proves post-completion status/logs and honest owner-loss evidence
+alongside the group's journal relocation (052 §12.6).
+
 ## Vocabulary and command boundary
 
 - **Maintained group**: a reusable definition reviewed with the repository's

@@ -154,7 +154,8 @@ lifetime belongs to its invoking process/session even when it has no terminal.
 
 | Invocation or obligation | Class and owner |
 | --- | --- |
-| Local foreground task, sequence, test or QA group; all descendants local and terminal-bound | `Foreground`: record, intents, receipts and outcome in memory; checkout resource lock files |
+| Local foreground task, sequence or test; all descendants local and terminal-bound | `Foreground`: record, intents, receipts and outcome in memory; checkout resource lock files |
+| `tasks qa-group run` (maintained or temporary group, with or without heavy members) | `CheckoutDurable`; contract [051](051-bounded-qa-groups-contract.md) requires a retained definition, member ledger, result and run-scoped logs after completion; member runs use the group's checkout journal |
 | `--run-id <key>` on a supported one-shot command | `CheckoutDurable`, even without `--detach`; idempotency, requests and logs need a journal |
 | `--detach`; managed session in TUI, attached text or `--headless`; environment-owned host sidecar | `CheckoutDurable`; detached supervisor and journal-backed sentinel. Existing managed-task refusal of `--run-id` is unchanged |
 | `container up` (attached or detached), down, handover, repair, reset, reap, retire, data mutation or environment import | `CheckoutDurable`; environment authority in its owning checkout |
@@ -166,9 +167,11 @@ lifetime belongs to its invoking process/session even when it has no terminal.
 A run tree has one durability requirement: a durable descendant makes its
 foreground ancestors checkout-durable before the first effect. Local children
 of a durable run use that checkout journal. Late-bound scripts and adapters
-must declare durable capabilities before execution; an undeclared durable
-request is refused before that effect. There is no promotion after workload
-go and no silent fallback to the machine database. A container-free foreground
+must declare durable capabilities before execution. A declared capability
+selects durability for the whole tree before workload go; discovering it after
+go refuses that effect rather than promoting a partially executed tree. There
+is no promotion after workload go and no silent fallback to the machine
+database. A container-free foreground
 build does not open either database, even if one is busy or corrupt.
 
 Foreground admission checks any existing checkout journal for unresolved
@@ -231,6 +234,21 @@ history; `run stop` may signal only a freshly verified live owner via
 `Gate::signal_holder`, otherwise refuses with the residue diagnostic. Repeated
 id or task spelling never attaches to a vanished foreground run. Use
 `--run-id` when durable status, logs, idempotency or recovery is required.
+
+`effigy tasks status <task>` and `tasks status --all` use the same verified
+live-gate evidence even when no checkout token or run row exists. Contract
+[018](018-task-status-query-surface-and-read-model-contract.md) owns their
+projection: a verified live foreground invocation is `running`, unavailable
+phase/outcome fields stay unavailable, and `current` is separate from durable-only
+`latest`/`history`. A held gate without verifiable diagnostics is `unknown`,
+never `never-run`. With no live run or unresolved durable predecessor the view
+reports `not-recorded`; it cannot establish the last invocation's outcome from
+an older durable result, which remains labelled historical. No token, free
+gate or missing row proves the task never ran. Contract
+[017](017-task-status-record-and-active-run-model-contract.md) owns the amended
+identity/token, custody and storage rules. These proposed changes require the
+versioned task-status read model in 018; the current binary's v2 model is not
+silently redefined as implemented.
 
 **Invariant amendments.** K3, I-R1 and I-P2 mean committed in memory before
 go for foreground runs, and durably committed before effect for durable runs.
@@ -2307,7 +2325,7 @@ Task engine adoption (effigy#217, 2026-10-19):
 | Row | State |
 | --- | --- |
 | Lock key, lease lock, `tasks unlock`, hostname as namespace | Done. `TaskId` from the one resolver; `Gate(Task)` per run; shared locks are `Store(task-lock:<name>)` runs; holders are host gates only. `tasks unlock` refuses for one minor. |
-| Status rows | Done. `effigy.tasks-status.v2` projects run rows plus a gate probe ([018](018-task-status-query-surface-and-read-model-contract.md)). The one-minor v0.14 read-only fallback (M6) is retired in v0.15: kernel run rows are the only task status, and `effigy tasks status` no longer reads `.effigy/runtime/tasks/` or `.effigy/reports/tasks/`. |
+| Status rows | Done. `effigy.tasks-status.v2` projects run rows plus a gate probe ([018](018-task-status-query-surface-and-read-model-contract.md)). The one-minor v0.14 read-only fallback (M6) is retired in v0.15: the existing binary uses only kernel rows for task status and no longer reads `.effigy/runtime/tasks/` or `.effigy/reports/tasks/`. Q-010 proposes live foreground gate diagnostics alongside checkout-durable history; contracts [017](017-task-status-record-and-active-run-model-contract.md) and [018](018-task-status-query-surface-and-read-model-contract.md) own that unimplemented change. |
 | Status write failure | Done. Journal failures are warnings; the task's exit code stands (K10). |
 | Process group always; owned-children stop | Local groups retain a recorded anchor before workload go (effigy#252), allowing recovery of nonce-free members after the leader is reaped; lost anchors and old unanchored receipts retain the conservative refusal (§5.7). Done for plain host commands: `Custody::spawn` with `Terminal::Inherit`, a per-run sentinel, the router installed before the first custody spawn. Host sequence steps also use child-run custody (effigy#226). Container task routes, inline workspace tasks, sequence container steps, built-in `exec` steps and named-container managed setup run under remote custody (§5.10, effigy#236). Top-level `effigy exec`, aliases, shells and managed processes keep their current spawners until their owners adopt custody. |
 | Generated sequence script | One typed engine with child Runs for every placement, in text and JSON: host steps (effigy#226) and container steps under remote custody (effigy#236); the `legacy_container_step` seam and the generated named-container setup script are gone. Container setup embedded in a lifecycle-managed process command still runs inside that managed process, so its per-step journals need the run supervisor's custody of managed processes; not done in #236. |
@@ -2706,10 +2724,11 @@ only those identities, remove fixtures and preserve exit codes before reporting.
 | Proof | Required evidence |
 | --- | --- |
 | Classification | Table-driven CLI coverage of every §3.1 row, with text/JSON, TTY/pipe, heavy/no hook, nested scripts and late durable requests; no effect before refusal or durable admission |
-| Write count | Instrument database opens/commits and filesystem writes/fsyncs before/after fresh and warm foreground tasks, sequences, test suites and QA groups: **0 database writes, 0 durable runtime records**, no machine DB dependency. Show transient lock writes separately. Repeat with configured retained scratch/source preparation and prove honest durable classification. Detached runs report commits by admission, spawn, requests, settle, bytes and fsyncs; no per-output, poll or heartbeat journal writes |
+| Write count | Instrument database opens/commits and filesystem writes/fsyncs before/after fresh and warm foreground tasks, sequences and test suites: **0 database writes, 0 durable runtime records**, no machine DB dependency. Show transient lock writes separately. Repeat with configured retained scratch/source preparation and prove honest durable classification. QA-group runs are checkout-durable: retain their definition, member ledger, result and logs across owner exit, with zero machine-store writes for local-only members. Measure their checkout writes separately. Detached runs report commits by admission, spawn, requests, settle, bytes and fsyncs; no per-output, poll or heartbeat journal writes |
 | Isolation/concurrency | At least 20 overlapping short runs across at least 3 independent checkouts, while long detached runs and an environment transition run; zero cross-project lock refusals, including a deliberately stalled local retention writer. Same-resource contention still returns the specified Busy result. Busy/corrupt machine store cannot block local-only foreground work |
 | Foreground custody | macOS/Linux: leader exit with live descendants, HUP/INT/TERM, owner SIGKILL, guard SIGKILL, both dead, cleared tags, escaped session, reused/foreign PGIDs and SIGSTOP; positive cleanup or explicit evidence-limited residue, no numeric recovery signal, no false persisted success, no unlock while the surviving custodian cleans up |
-| Durable crash recovery | Kill/ENOSPC/EPERM/Unknown at every intent, receipt, activation and settle crossing for `--run-id`, detached one-shot, each managed front end, environment transition, sidecar, workspace session, remote/container run, and gateway lifecycle/publication. Preserve O1–O14 with local integrity and cross-store receipts; one authority and no double release |
+| Durable crash recovery | Kill/ENOSPC/EPERM/Unknown at every intent, receipt, activation and settle crossing for QA-group runs, `--run-id`, detached one-shot, each managed front end, environment transition, sidecar, workspace session, remote/container run, and gateway lifecycle/publication. Preserve O1–O14 with local integrity and cross-store receipts; one authority and no double release |
+| Task status read model | `tasks status <task>` and `tasks status --all`, text/JSON: first foreground run with no token/DB is live, not never-run; free/stale gates and foreground exit produce not-recorded; old durable success stays historical; held/unverifiable identity and discovered residue are unknown; interrupted durable runs keep recovery commands. No history row or token is created. Validate the v3 envelopes and durable-only latest/history per 018 |
 | Gates/layout/deletion | Fresh checkout, linked worktree, primary, non-Git root, same-path replacement, explicit retire and external deletion; gate inode continuity while held, token-init races, host-only guest masking, unknown residue/claims protected, no primary journal fallback |
 | Discovery/admission | Configured/unconfigured roots, linked worktrees, duplicate/ambiguous keys, symlink, missing/unreadable/corrupt checkout, depth/count/time limits, empty roots; R2 filesystem diff empty. Nested live/dead/forged admission capabilities and hook death/owner death do not use a central run lookup |
 | Migration scale and faults | Private copy of a large current store (at least the outage scale: 138 MB and 18,700 runs), plus v0.14.1 fixtures; live environments, verified active custody, manual routes, pins, unknown fields and quarantine survive. Kill/ENOSPC at each staging/fsync/manifest/custody-handoff crossing: exactly one authority, byte-identical legacy hashes, no restarts or new identities, completed history dropped safely. Old/unquiesceable writer and missing destination refuse before publication |

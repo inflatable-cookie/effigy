@@ -4,6 +4,12 @@ Owner: Platform (task engine, Queue lane `v015-task-engine`)
 Created: 2026-05-10
 Rebuilt: 2026-10-19 on the runtime kernel ([052](052-runtime-kernel-contract.md) §5.1, §5.4, §5.6, §10.1)
 
+Q-010 touch-points below are **proposed**, awaiting planner and Tom review
+before implementation with [052 §3.1](052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary).
+The existing binary still uses a central journal and the v2 row-based status
+model; [018](018-task-status-query-surface-and-read-model-contract.md) specifies
+the proposed foreground-aware replacement.
+
 ## Purpose
 
 One identity, one exclusion and one status truth for every repository task
@@ -25,25 +31,32 @@ The resolver produces one `TaskTarget` per invocation. Its kernel `TaskId` is:
 
 Every spelling that selects the same declared task (`build` from inside the
 catalog, `api/build`, `./apps/api/build`) gives one `TaskId`, one gate and one
-history. Distinct tasks never collide: `a:b` and `a-b` are two identities.
+durable history when recorded. Distinct tasks never collide: `a:b` and `a-b`
+are two identities.
 Identity never derives from the selector as typed.
 
-`CheckoutId`:
+Durable `CheckoutId` tokens keep the rules in 052 §5.1: linked worktrees and
+ephemeral clones preserve their runtime-scope token, and primary checkouts
+keep their token beside per-checkout Git metadata. First durable Prepare/Mutate
+may mint a missing token. Foreground runs never mint one. Until a token exists,
+they resolve a separate local gate identity from verified root/per-checkout
+Git-directory device/inode identities (root identity alone for non-Git roots),
+not a persisted token derived from path spelling. Token initialization and both
+gate names serialize as specified in 052 §3.1 and §7.1, so first durable use
+cannot admit a second holder beside a foreground run.
 
-- linked worktree or ephemeral clone: its runtime-scope token, so Compose names
-  do not change;
-- primary Git checkout: `.git/effigy-checkout-id`, minted on the first run;
-- a root with no `.git` of its own: derived from its canonical path.
-
-Only a run (Mutate) mints a token; status reads it and reports "no runs yet"
-when it is absent.
+Status resolves those same identities read-only. A missing token means no
+persisted identity yet; it does not mean no live run or that the task never ran.
+See 018 for verified foreground evidence and unrecorded completion.
 
 ## Exclusion (K2)
 
 `Gate(Task)` on the owner, acquired by `Run::begin` before anything else
-happens. It is held exactly while the owning Effigy process lives, and the
-kernel releases it when that process exits for any reason, SIGKILL included.
-A SIGSTOPped holder keeps it. Nothing steals, reclaims or unlocks a gate.
+happens. A live custodian holds the gate: a foreground owner/memory guard
+retains it through cleanup, while a durable owner uses the journal/sentinel
+recovery path (052 §3.1, §5.8). Owner SIGKILL alone does not free a foreground
+gate still held by its guard. A SIGSTOPped holder keeps it. Nothing steals,
+reclaims or unlocks a gate.
 
 - `--lock-wait-ms <MS>` (before the task name) or `EFFIGY_LOCK_WAIT_MS`
   bounds the wait; omitted or `0` fails at once.
@@ -60,7 +73,17 @@ A SIGSTOPped holder keeps it. Nothing steals, reclaims or unlocks a gate.
 
 ## Run record
 
-| Phase | Gate | Status state |
+The phase table below describes durable runs. Foreground runs keep admission,
+intents and receipts in memory, with the same pre-go barrier and verified
+process-group retention; the owner and memory guard acknowledge custody before
+execution (052 §3.1, I-P2/I-P3). They create no journal rows or retained outcomes.
+A lost owner/guard is not a durable `interrupted` record; survivors are
+observational residue and grant no numeric signalling authority. Foreground
+status is defined in 018, including the no-token first-run case. These durable
+run projections populate recorded run fields; 018 defines the top-level task
+state separately so a closed result never masks a later unrecorded invocation.
+
+| Phase | Gate | Recorded run state |
 | --- | --- | --- |
 | `admitted`, `starting`, `active` | held | `running` |
 | `stopping` | held | `stopping` |
@@ -70,25 +93,30 @@ A SIGSTOPped holder keeps it. Nothing steals, reclaims or unlocks a gate.
 | unreadable | any | `unknown` |
 
 - `Admitted` commits before the first effect, including env-schema `exec()`
-  commands (K3). A run refused by a live holder executes none of them.
-- A plain host command runs under kernel custody: its own process group, a
+  commands (K3), durably for durable runs and in memory for foreground runs.
+  A run refused by a live holder executes none of them.
+- A durable host command runs under kernel custody: its own process group, a
   durable custody record before it executes, a per-run sentinel that settles
   the run if the owner is SIGKILLed, and a settle that verifies the group
   closed. INT, TERM and HUP reach the group through the one signal router;
   the owner exits 128 + n with the run recorded `cancelled`.
-- The workload outcome is recorded before settle. A failed journal write is a
-  warning on stderr and never changes the task's exit code (K10).
-- Retention keeps the newest 20 settled runs per task (K15).
-- Runs live in the kernel store, `~/.effigy/state/kernel.db`. Nothing about
-  a task run is written into the checkout.
+- A durable workload outcome is recorded before settle; foreground outcomes
+  exist only in the living run and the invoking stream. A failed journal write
+  is a warning on stderr and never changes the task's exit code (K10).
+- Retention keeps the newest 20 settled durable runs per task (K15).
+  Foreground completion contributes no `latest` or `history` entry.
+- Durable task runs live in `<checkout>/.effigy/state/kernel.db`; foreground
+  runs use checkout-local lock files and memory only. Task runs never use the
+  machine store. Managed and QA-group runs remain checkout-durable even when
+  attached; caller-keyed runs select durability before effects (052 §3.1).
 
 ## Not owned here
 
 - `effigy tasks status` output: [018](018-task-status-query-surface-and-read-model-contract.md).
 - Host sequence steps are child kernel runs with independently gated custody.
-  Parent settlement recovers children before closing. The child rows record step
-  labels and outcomes; JSON and text share execution. Container steps are child
-  runs too, with their workload under remote custody (052 §5.10, effigy#236).
+  Parent settlement closes children first. Durable child rows record step
+  labels and outcomes; foreground child effects remain in memory. JSON and text
+  share execution. Container steps are child runs too, with their workload under remote custody (052 §5.10, effigy#236).
   Container setup embedded in lifecycle-managed process commands retains its
   readiness and startup order; its process exit remains the available outcome
   until the run supervisor takes custody of managed processes.
@@ -101,10 +129,11 @@ A SIGSTOPped holder keeps it. Nothing steals, reclaims or unlocks a gate.
 ## Migration
 
 v0.14 status records (`.effigy/runtime/tasks/`, `.effigy/reports/tasks/`) are
-retired in v0.15: never imported, read or rewritten. Kernel run rows are the
-only task status, so a task with no runs reads `never-run` even when a v0.14
-record exists. Old status history is dropped, not state: nothing restarts,
-unlocks or settles from it. `doctor` lists the v0.14 families still present;
+retired in v0.15: never imported, read or rewritten. Q-010 status uses live
+verified gate evidence plus checkout-durable rows (018); missing rows read
+`not-recorded`, not `never-run`, regardless of old v0.14 status files. Old
+status history is dropped, not state: nothing restarts, unlocks or settles
+from it. `doctor` lists the v0.14 families still present;
 they are left untouched.
 
 ## Drift triggers

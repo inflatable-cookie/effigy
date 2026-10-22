@@ -33,6 +33,9 @@ never task history or a central run index.
   keep their shape; the field is absent.
 - No name implies a class. `qa`, `ci` and `ci:fresh` are ordinary tasks.
 - A QA group with a heavy member is admitted once, for the whole group run.
+  Group execution remains checkout-durable regardless of admission class,
+  preserving contract [051](051-bounded-qa-groups-contract.md)'s retained ledger
+  and post-completion status/logs (052 §3.1); no hook is required for durability.
 
 ## Admission hook
 
