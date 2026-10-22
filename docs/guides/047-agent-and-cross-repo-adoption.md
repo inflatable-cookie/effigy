@@ -387,7 +387,7 @@ test = "npm test"
 Expected behavior:
 - `effigy release status --check-gates` reads `package.json` version
   automatically
-- `effigy release prepare --plan` previews the `package.json` version
+- `effigy release --plan` previews the `package.json` version
   update plus changelog move
 - gate commands can stay native to the project (`npm`, `pnpm`, `bun`, shell)
 
@@ -405,7 +405,7 @@ test = "pytest -q"
 Expected behavior:
 - `effigy release` auto-detects `pyproject.toml`
 - version discovery supports `project.version` and `tool.poetry.version`
-- `effigy release prepare --plan` previews the pyproject version bump
+- `effigy release --plan` previews the pyproject version bump
 
 ### Multi-language / Plain `VERSION`
 
@@ -422,8 +422,8 @@ validate = "sh -lc './scripts/validate-all.sh'"
 Expected behavior:
 - use this when the repo version is intentionally decoupled from language-specific
   manifests
-- `effigy release prepare --yes --check-gates` updates `VERSION`,
-  writes `.release-prepared.json`, and preserves heterogeneous gate commands
+- `effigy release run --to certify` updates `VERSION`, commits it, and
+  preserves heterogeneous gate commands
 - this is the simplest fit for monorepos with multiple language toolchains
 
 Release adoption policy:

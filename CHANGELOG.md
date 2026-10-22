@@ -339,12 +339,52 @@ During v0.x, MINOR bumps may include breaking changes.
   `effigy.bootstrap.deps`, `children-status`, `children-sync` and
   `bootstrap-teardown` payloads are gone; `effigy.bootstrap.v1` keeps plan and
   executed phases with `sources`, `submodules`, `setup` and `start`.
+- `effigy release prepare` and `effigy release execute` (contract 054 §3 and
+  §5). `effigy release run` replaces both as one durable Run through validate,
+  pre-gates, prepare, certify, publish, verify and closeout with a checkpoint at
+  every boundary, and `effigy release resume <run>` continues an interrupted
+  one. The refusal names the replacement.
+- The `.release-prepared.json` prepared-state file and the plain `effigy
+  release resume` review built on it: `release resume` now takes the Run id,
+  and the Run's checkpoint and record live in Effigy-owned state under
+  `$HOME/.effigy/state` (contract 054 §10 ruling 2). A `release resume` without
+  a Run id refuses with the new usage.
+- The `release:prepare` task selector, whose script wrapped the retired
+  `release prepare`. `release:run` runs `effigy release run --to certify` under
+  the same heavy admission and never publishes.
 - `effigy release simulate` (contract 054 §5). Use `effigy release --plan`,
   which shows the whole pipeline instead of only the version, tag and gate
   preview; `release --plan --version <SEMVER>` covers the old
   `simulate --version`. The refusal names the replacement.
 
 ### Added
+- The checkpointed release Run (contract 054 §3, §5, §7). `effigy release run
+  [--to <stage>]` runs one durable kernel Run through validate → [pre-gates] →
+  prepare → certify → publish → verify → closeout, with a checkpoint after
+  every boundary. `prepare` writes each identity's version, syncs the
+  lockfiles, renders the changelog notes and commits, rolling the tree back
+  when a write or the commit fails. `certify` runs the `stage = "certify"`
+  gates against the prepared commit and each artifact task, copying every
+  artifact into the Run's candidate directory in Effigy-owned state and
+  recording its path and sha256. `publish` pushes one annotated tag per
+  identity; each push is an `Irreversible` kernel effect journalled before it
+  runs, and `publish` re-hashes the recorded candidate first and refuses a
+  rebuilt artifact. `closeout` pushes the release commit if no target did and
+  writes the receipt. `effigy release resume <run>` continues from the last
+  checkpoint with the same candidate commit, versions and digests, and
+  reconciles an unknown tag push by looking the tag up locally and on the
+  remote before any retry; a published tag is never moved. Partial fan-out
+  resumes with the remaining identities, and a failed verification leaves the
+  release published-but-unverified in the receipt.
+- `effigy release approve <run>` passes an approval checkpoint
+  (`approve = ["publish"]`), recording who approved and when, and `effigy
+  release receipt [<run>] [--json]` prints the receipt
+  (`effigy.release.receipt.v1`): inputs, checkpoints, gate results, artifact
+  digests, approvals, destination IDs and verification results. `release run`
+  and `release resume` print `effigy.release.run.v1`. `release status` reports
+  the active or last Run's id, stage, status and what it waits on.
+- Release tasks and artifact tasks receive the candidate as
+  `effigy.release.input.v1` at `$EFFIGY_RELEASE_INPUT`.
 - The release platform's configuration and read surfaces (contract 054 §2, §4
   and the `status`/`--plan` half of §5). `[release]` now expresses named
   `[release.identities.<name>]` of kind `semver` (the default), `digest`,

@@ -291,7 +291,7 @@ dispatch `ci.yml` and watch the exact-SHA run to success.
 
 ```sh
 effigy release status --check-gates
-effigy release prepare --plan
+effigy release run --to certify
 effigy release preflight --tag vX.Y.Z
 effigy release evidence validate --artifacts-dir ./artifacts/distribution-vX.Y.Z
 ```

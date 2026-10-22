@@ -597,8 +597,8 @@ effigy state capture uat new-content --yes
 effigy state capture-set legacy-source db media --yes --push
 effigy --json state plan ./state/example-app-uat.toml
 effigy release --plan
-effigy release prepare --plan
-effigy release execute --plan
+effigy release run --to certify
+effigy release receipt --json
 effigy --json release status --check-gates
 ```
 

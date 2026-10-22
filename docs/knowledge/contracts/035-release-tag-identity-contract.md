@@ -6,7 +6,7 @@ Created: 2026-08-06
 ## Purpose
 
 Define the Git object Effigy creates when an operator authorizes
-`release execute --yes`.
+the release Run's `publish` stage.
 
 ## Tag Identity
 
@@ -32,7 +32,7 @@ Effigy does not create:
 
 ## Execution And Push
 
-`release execute --yes` must:
+The release Run's `publish` stage must:
 
 1. create the release commit
 2. create one annotated tag over that commit

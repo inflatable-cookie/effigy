@@ -1,6 +1,6 @@
 # 054 - Release Platform Contract
 
-Status: accepted by Tom on 2026-10-22 ("I'll go with your recommendation … release draft questions"). §2, §4 and the `status`/`--plan` parts of §5 are implemented; the Run, prepare, publish and receipts are not yet.
+Status: accepted by Tom on 2026-10-22 ("I'll go with your recommendation … release draft questions"). §2, §4, §5 and the Run of §3 and §7 are implemented for `tag` targets; `task` targets and native providers are v0.16.
 It supersedes the generic mechanics in guide 051 when implemented. Effigy's own release
 policy stays in [release.md](release.md).
 
@@ -210,8 +210,7 @@ re-hashes the recorded artifacts before publish and refuses if any changed.
 - **Failed verification** leaves the release published-but-unverified in the
   receipt. Effigy never unpublishes. Rollback or fix-forward is the project's
   call, and the receipt records which was chosen.
-- **Prepare** rolls back its tree changes on failure, as `release prepare`
-  does today.
+- **Prepare** rolls back its tree changes on failure.
 
 ## 8. Portfolio fit
 
@@ -270,9 +269,8 @@ Projects with an explicit no-release ruling stay out.
 ## 11. Implementation record: config, status and plan
 
 `effigy release --plan` and `effigy release status` resolve the whole pipeline
-from `[release]` and mutate nothing (R2). This section records what v0.15
-implements and the choices §4 left open. The Run, prepare, publish, approvals,
-receipts and the rest of §5 arrive with the Run pipeline.
+from `[release]` and mutate nothing (R2). This section records the resolution
+surface and the choices §4 left open; §12 records the Run.
 
 **Implemented here**
 
@@ -320,16 +318,81 @@ receipts and the rest of §5 arrive with the Run pipeline.
 - **`working_tree_clean` is tri-state.** `null` means the release root is not a
   git work tree. Status and plan still report; the Run's validate stage is what
   refuses such a release.
-- **`release status` reports no Run yet.** The Run pipeline has not landed, so
-  the `run` object is present and inactive rather than absent; when a release
-  Run exists, status fills in its id, stage and what it waits on.
-- **`release prepare` and `release execute` still run the shorthand only.**
-  They refuse a release that declares identities, artifacts, targets or
-  `approve` instead of bumping one version file of a many-identity release.
-  `release run` replaces them (task B).
+- **`release status` reports the active or last Run.** It fills in the id,
+  stage, status and what it waits on from the record; `active` is true for
+  every unfinished Run, including a failed one that can still resume.
+- **`release prepare`, `release execute` and the prepared-state `release
+  resume` are retired.** `release run` replaces the first two and `release
+  resume <run>` the third; each refuses with that replacement
+  (`retired.toml`, `effigy-release-prepare-execute`). The repo selector
+  `release:prepare` becomes `release:run`, which runs `release run --to
+  certify` under the same heavy admission.
 - **`--plan --version` applies to the single `semver` identity.** It is the
   successor of the retired `simulate --version`, and refuses a release with
   more than one `semver` identity, because one flag cannot say which it means.
+
+## 12. Implementation record: the Run
+
+`effigy release run`, `resume`, `approve` and `receipt` are implemented in
+`crates/effigy-release/src/run/`. This section records the choices §3 and §7 left
+open.
+
+**One kernel Run per invocation; one release across invocations.** Each
+`run`, `resume` or `approve` invocation is a journalled kernel Run for one
+release owner (`ResourceId::store(Machine, "release <canonical root>")`). The
+kernel holds the owner gate, journals each push as an `Irreversible` effect
+before it runs and settles what an interrupted invocation left behind. The
+release's own facts — candidate commit, versions, artifact digests,
+destinations — live in a record file, and the kernel engine record carries the
+checkpoint pointer: release id, invocation id, stage, status and the record's
+path. A release therefore stays one logical Run while each invocation is one
+journalled kernel Run. `Task` identity tasks, artifact tasks and verify tasks
+run as this Effigy binary (`current_exe`), so they inherit the same
+environment, admission and selector resolution as any task.
+
+**Checkpoint stops are the crash state.** `--to <stage>` stops a Run after a
+boundary and closes its kernel Run; the next invocation settles any predecessor
+and continues from the record. That is the same durable state a crash at the
+boundary leaves. A crash *between* an irreversible effect and its journal
+record is the `Unknown` effect state, proven separately by an ambiguous tag
+push that really happened and was not recorded.
+
+**Approvals record who and when.** `approve = [...]` names stage boundaries.
+The Run stops at the first unapproved one with status `awaiting-approval` and
+`waiting_on` naming it; `release approve <run>` records the approver (git
+`user.name`, else `$USER`, else `operator`) and continues at that stage.
+
+**State layout outside the repo** (§10 ruling 2):
+`$HOME/.effigy/state/release/<owner>/record.json` is the durable record,
+`receipt.json` the receipt, `candidate/<artifact>/` the certified artifact
+copies that publish re-hashes. The kernel store is the journal and the
+checkpoint pointer. There is no state file in the repository, so a project that
+wants a receipt in its tree adds a `closeout` task.
+
+**Artifacts.** An artifact `path` is a file, a directory (every file beneath
+it) or a glob matched below its fixed prefix, relative to the release root.
+Certify copies each match into the candidate directory and records path, size
+and sha256; a `digest` identity's value is that file's digest, or the digest of
+the sorted file digests when an artifact holds several. The artifact task runs
+with `EFFIGY_RELEASE_INPUT`, `EFFIGY_RELEASE_OUTPUT`,
+`EFFIGY_RELEASE_CANDIDATE_DIR`, `EFFIGY_RELEASE_RUN` and
+`EFFIGY_RELEASE_STAGE` set, and the input is the `effigy.release.input.v1`
+document of §6. `effigy.release.output.v1` arrives with `task` targets.
+
+**`task` targets stop at validate.** v0.15 publishes `tag` targets in a Run.
+A release that declares a `task` target is refused by `validate` with that
+reason, before anything is written or pushed.
+
+**One changelog and one lockfile version.** One changelog feeds every identity,
+so `prepare` promotes `[Unreleased]` into the first `semver` identity's next
+version. `sync-files` stay release-level (§11), so a release whose `semver`
+identities resolve to different next versions refuses `prepare` when it
+declares sync files: a lockfile carries one version. `follows` is the way to
+keep them equal.
+
+**Publication is not requested by a selector.** `release:run` fixes `--to
+certify`. Publishing stays an explicit `release run` under the operator's
+authority.
 
 **Fixtures.** `tests/fixtures/release_platform/` holds one project per §4 shape
 plus Longhorn's, Poodle's and Underlay's real `[release]` tables, so the
