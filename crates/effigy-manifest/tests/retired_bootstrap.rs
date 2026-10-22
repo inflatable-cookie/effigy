@@ -37,14 +37,14 @@ fn acowtancy_run_steps_become_setup_selectors_and_children_refuse_in_bootstrap()
     assert_eq!(setup(&manifest), vec!["secrets init", "bootstrap:state"]);
     assert!(manifest.tasks.contains_key("bootstrap:state"));
     let message = manifest
-        .retired_bootstrap
+        .retired_config
         .refusal_message()
         .expect("children stay a bootstrap refusal");
     assert!(message.contains("[bootstrap].children"), "{message}");
     assert!(message.contains("[sources.<name>]"), "{message}");
     assert!(message.contains("rev_file"), "{message}");
     let notice = manifest
-        .retired_bootstrap
+        .retired_config
         .notice(&fixture("acowtancy.toml"))
         .expect("one deprecation notice");
     assert!(
@@ -60,7 +60,7 @@ fn longhorn_task_table_setup_entries_are_read_as_selectors() {
     assert_eq!(setup(&manifest), vec!["bootstrap:deps"]);
     let deps = manifest.tasks.get("bootstrap:deps").expect("declared task");
     assert!(deps.run.is_some());
-    assert!(manifest.retired_bootstrap.refusals().is_empty());
+    assert!(manifest.retired_config.refusals().is_empty());
 }
 
 #[test]
@@ -75,8 +75,8 @@ fn contact_patch_children_load_and_only_bootstrap_refuses_them() {
             .and_then(|bootstrap| bootstrap.start.as_deref()),
         None
     );
-    assert_eq!(manifest.retired_bootstrap.refusals().len(), 1);
-    assert!(manifest.retired_bootstrap.refusals()[0].contains("[sources.<name>]"));
+    assert_eq!(manifest.retired_config.refusals().len(), 1);
+    assert!(manifest.retired_config.refusals()[0].contains("[sources.<name>]"));
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn cbs_bundle_run_and_local_children_load_together() {
         .get("bootstrap:run:1")
         .expect("synthesised task");
     assert_eq!(step.visibility, Some(ManifestTaskVisibility::Internal));
-    assert!(manifest.retired_bootstrap.refusals()[0].contains("[bootstrap].children"));
+    assert!(manifest.retired_config.refusals()[0].contains("[bootstrap].children"));
 }
 
 #[test]
@@ -105,14 +105,14 @@ fn jal_accounts_bundle_run_start_and_submodule_policy_load() {
     let bootstrap = manifest.bootstrap.as_ref().expect("bootstrap contract");
     assert_eq!(bootstrap.start.as_deref(), Some("dev"));
     assert!(bootstrap.submodules);
-    assert!(manifest.retired_bootstrap.refusals().is_empty());
+    assert!(manifest.retired_config.refusals().is_empty());
 }
 
 #[test]
 fn figmatic_compact_run_and_required_children_load() {
     let manifest = load("figmatic.toml");
     assert_eq!(setup(&manifest), vec!["setup"]);
-    assert!(manifest.retired_bootstrap.refusals()[0].contains("[bootstrap].children"));
+    assert!(manifest.retired_config.refusals()[0].contains("[bootstrap].children"));
 }
 
 #[test]
@@ -138,7 +138,7 @@ fn underlay_bundle_inline_steps_run_as_tasks_and_deps_sync_refuses_in_bootstrap(
         .expect("synthesised task");
     assert!(command.run.is_some());
     let message = manifest
-        .retired_bootstrap
+        .retired_config
         .refusal_message()
         .expect("deps sync stays a bootstrap refusal");
     assert!(message.contains("bootstrap deps sync"), "{message}");
@@ -198,7 +198,7 @@ branch = "main"
     // Both the bundle's child and the consumer's child reached the composed
     // manifest, and the retired-only surface still refuses only in bootstrap.
     let message = manifest
-        .retired_bootstrap
+        .retired_config
         .refusal_message()
         .expect("children refuse in bootstrap");
     assert!(message.contains("[sources.<name>]"), "{message}");

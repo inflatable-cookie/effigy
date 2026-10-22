@@ -1,10 +1,15 @@
 //! Retired task-manifest keys.
 //!
-//! A retired table is refused with the replacement an operator can act on,
-//! never silently accepted or translated (contract 043, `retired.toml`). The
-//! one exception is the v0.15 `[bootstrap]` retirement, which
-//! [`crate::retired_bootstrap`] reads for one release so a v0.14.1 project
-//! keeps loading.
+//! A v0.14.1 project keeps loading after an update (contract 052 §11), so two
+//! retirements are read for the whole v0.15 line instead of failing the parse:
+//! [`crate::retired_bootstrap`] translates retired `[bootstrap]` spellings, and
+//! [`crate::retired_sections`] ignores sections that configured a feature
+//! v0.15 removed when ignoring them changes nothing else. Both record one
+//! deprecation notice per manifest ([`crate::retired_config`]).
+//!
+//! `[drafts]` and `draft` step references are still refused, with the
+//! replacement an operator can act on (contract 043, `retired.toml`):
+//! ignoring them would silently drop task definitions.
 use serde::Deserialize;
 use toml::Value;
 
@@ -16,12 +21,11 @@ impl<'de> Deserialize<'de> for TaskManifest {
         D: serde::Deserializer<'de>,
     {
         let mut value = Value::deserialize(deserializer)?;
+        let mut retired = crate::retired_sections::strip(&mut value);
         reject_retired_tables(&value).map_err(serde::de::Error::custom)?;
-        // A v0.14.1 project keeps loading: retired `[bootstrap]` keys are read
-        // for one release and only `effigy bootstrap` refuses them.
-        let retired_bootstrap = crate::retired_bootstrap::translate(&mut value);
+        retired.merge(crate::retired_bootstrap::translate(&mut value));
         let mut manifest = TaskManifest::deserialize(value).map_err(serde::de::Error::custom)?;
-        manifest.retired_bootstrap = retired_bootstrap;
+        manifest.retired_config = retired;
         Ok(manifest)
     }
 }
@@ -36,62 +40,9 @@ fn reject_retired_tables(value: &Value) -> Result<(), String> {
                 .to_owned(),
         );
     }
-    if root.contains_key("shell") {
-        return Err(
-            "`[shell]` was removed in v0.15; managed shell tabs use `exec ${SHELL:-/bin/zsh} -i` and there is no manifest override (see CHANGELOG.md)"
-                .to_owned(),
-        );
-    }
-    if let Some(scan) = root.get("scan").and_then(Value::as_table) {
-        reject_retired_scan_sections(scan)?;
-    }
     if let Some(tasks) = root.get("tasks").and_then(Value::as_table) {
         for task in tasks.values() {
             reject_draft_in_task(task)?;
-        }
-    }
-    Ok(())
-}
-
-/// Scan sections that only configured the graph-backed scanners. Each is a
-/// manifest error rather than a silently ignored table.
-fn reject_retired_scan_sections(scan: &toml::value::Table) -> Result<(), String> {
-    for (key, message) in [
-        (
-            "attention_markers",
-            "`[scan.attention_markers]` was removed in v0.15; search markers with `rg -n 'TODO|FIXME' <path>` and delete the table (see CHANGELOG.md)",
-        ),
-        (
-            "comment_ratio",
-            "`[scan.comment_ratio]` was removed in v0.15 and has no replacement; delete the table (see CHANGELOG.md)",
-        ),
-        (
-            "generated_assets",
-            "`[scan.generated_assets]` was removed in v0.15 and has no replacement; keep bulky generated output out of versioned paths with `.gitignore` and delete the table (see CHANGELOG.md)",
-        ),
-        (
-            "generated_in_src",
-            "`[scan.generated_in_src]` was removed in v0.15 and has no replacement; keep generated output outside source trees and delete the table (see CHANGELOG.md)",
-        ),
-        (
-            "stale_suppressions",
-            "`[scan.stale_suppressions]` was removed in v0.15 and has no replacement; let each tool report its own unused suppressions and delete the table (see CHANGELOG.md)",
-        ),
-        (
-            "boundary_violations",
-            "`[scan.boundary_violations]` was removed in v0.15 with the code graph and has no replacement; delete the table and rely on code review (see CHANGELOG.md)",
-        ),
-        (
-            "dead_code",
-            "`[scan.dead_code]` was removed in v0.15 with the code graph and has no replacement; delete the table (see CHANGELOG.md)",
-        ),
-        (
-            "validation_gaps",
-            "`[scan.validation_gaps]` was removed in v0.15 with the code graph; delete the table and use `effigy test --plan` to choose tests for changed files (see CHANGELOG.md)",
-        ),
-    ] {
-        if scan.contains_key(key) {
-            return Err(message.to_owned());
         }
     }
     Ok(())
@@ -156,22 +107,6 @@ mod tests {
     use crate::TaskManifest;
 
     #[test]
-    fn retirement_demos_table_is_refused_with_the_task_conversion_recipe() {
-        let error = toml::from_str::<TaskManifest>(
-            "[demos.checkout]\ntitle = 'Checkout'\nsummary = 'Pay for a cart'\nrun = 'bun run demo'",
-        )
-        .expect_err("retired table");
-        let error = error.to_string();
-        assert!(error.contains("`[demos]` was removed in v0.15"), "{error}");
-        assert!(error.contains("`[tasks.\"demo:<name>\"]`"), "{error}");
-        assert!(error.contains("`[demos.checkout]`"), "{error}");
-        assert!(error.contains("`[tasks.\"demo:checkout\"]`"), "{error}");
-        assert!(error.contains("group = \"Demos\""), "{error}");
-        assert!(error.contains("CHANGELOG.md"), "{error}");
-        assert!(!error.contains("external tool"), "{error}");
-    }
-
-    #[test]
     fn drafts_table_is_refused_with_the_task_namespace_replacement() {
         let error = toml::from_str::<TaskManifest>(
             "[tasks]\nproof = 'echo proof'\n[drafts.proof]\nrun = 'echo draft'",
@@ -182,37 +117,6 @@ mod tests {
         assert!(error.contains("[tasks.<name>]"), "{error}");
         assert!(error.contains("visibility = \"internal\""), "{error}");
         assert!(error.contains("CHANGELOG.md"), "{error}");
-    }
-
-    #[test]
-    fn shell_table_is_refused_with_its_replacement() {
-        let error = toml::from_str::<TaskManifest>("[shell]\nrun = 'exec zsh -i'")
-            .expect_err("retired table");
-        let error = error.to_string();
-        assert!(error.contains("`[shell]` was removed in v0.15"), "{error}");
-        assert!(
-            error.contains("DEFAULT") || error.contains("/bin/zsh"),
-            "{error}"
-        );
-        assert!(error.contains("CHANGELOG.md"), "{error}");
-    }
-
-    #[test]
-    fn retired_scan_sections_are_refused_with_their_replacement() {
-        for (section, expected) in [
-            ("comment_ratio", "no replacement"),
-            ("generated_assets", ".gitignore"),
-            ("generated_in_src", "generated output outside source trees"),
-            ("attention_markers", "rg -n 'TODO|FIXME'"),
-            ("stale_suppressions", "unused suppressions"),
-        ] {
-            let manifest = format!("[scan.{section}]\nwarn = 1");
-            let error = toml::from_str::<TaskManifest>(&manifest).expect_err("retired table");
-            let error = error.to_string();
-            assert!(error.contains("removed in v0.15"), "{section}: {error}");
-            assert!(error.contains(expected), "{section}: {error}");
-            assert!(error.contains("CHANGELOG.md"), "{section}: {error}");
-        }
     }
 
     #[test]
@@ -228,5 +132,14 @@ mod tests {
         );
         assert!(error.contains("task ="), "{error}");
         assert!(error.contains("CHANGELOG.md"), "{error}");
+    }
+
+    #[test]
+    fn a_manifest_with_ignored_sections_and_drafts_still_refuses_drafts() {
+        let error = toml::from_str::<TaskManifest>(
+            "[scan.attention_markers]\nwarn = 1\n\n[drafts.proof]\nrun = 'echo draft'",
+        )
+        .expect_err("drafts stay a manifest error");
+        assert!(error.to_string().contains("`[drafts]`"), "{error}");
     }
 }

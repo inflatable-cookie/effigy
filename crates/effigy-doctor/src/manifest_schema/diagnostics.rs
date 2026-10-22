@@ -38,8 +38,6 @@ impl<'a, 'b> SchemaContext<'a, 'b> {
             remediation::REMOVE_CATALOG_PACK_SUPPORT_POLICY
         } else if key_path == "drafts" || key_path.ends_with(".draft") {
             remediation::REMOVE_DRAFT_TASK_NAMESPACE
-        } else if key_path == "shell" {
-            remediation::REMOVE_MANIFEST_SHELL_TABLE
         } else {
             remediation::SCHEMA_REMOVE_UNSUPPORTED_KEYS
         };

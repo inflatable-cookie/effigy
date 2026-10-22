@@ -73,8 +73,6 @@ pub mod remediation {
         "Remove `release.sync-catalog-pack-support-policy`; the catalog-pack runtime and its support policy are retired in v0.15.";
     pub const REMOVE_DRAFT_TASK_NAMESPACE: &str =
         "Move each `[drafts.<name>]` definition to `[tasks.<name>]` with `visibility = \"internal\"`, replace `draft` step keys with `task = \"<name>\"`, and remove `created`/`expires`/`purpose`; the draft namespace was removed in v0.15 (see CHANGELOG.md).";
-    pub const REMOVE_MANIFEST_SHELL_TABLE: &str =
-        "Remove `[shell]`; managed shell tabs always run `exec ${SHELL:-/bin/zsh} -i` and there is no manifest override in v0.15 (see CHANGELOG.md).";
     pub const RESOLVE_PINNED_SOURCE_DRIFT: &str =
         "Resolve the pinned source by hand: commit or discard its local changes, or check out the pinned commit. Effigy never resets, fetches forward or cleans a working copy; move the pin only by editing `rev` or `rev_file` (see CHANGELOG.md).";
     pub const SCHEMA_TABLE_ROOT_REQUIRED: &str =

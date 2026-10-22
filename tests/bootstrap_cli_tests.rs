@@ -522,7 +522,7 @@ fn v0141_bootstrap_fixtures_load_and_list_tasks() {
         assert!(stdout.contains(listed), "{fixture}: {stdout}");
         let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
         let notices = stderr
-            .matches("retired `[bootstrap]` keys read for v0.15")
+            .matches("retired v0.15 config still loads for one release")
             .count();
         assert_eq!(notices, 1, "{fixture}: one notice per manifest: {stderr}");
     }
@@ -534,12 +534,12 @@ fn the_retired_bootstrap_notice_never_reaches_json_stdout() {
     let output = effigy(&["--json", "tasks"], &root);
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8(output.stdout.clone()).expect("utf8 stdout");
-    assert!(!stdout.contains("retired `[bootstrap]` keys"), "{stdout}");
+    assert!(!stdout.contains("retired v0.15 config"), "{stdout}");
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["schema"], "effigy.command.v1");
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
     assert!(
-        stderr.contains("retired `[bootstrap]` keys read for v0.15"),
+        stderr.contains("retired v0.15 config still loads for one release"),
         "{stderr}"
     );
 }

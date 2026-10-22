@@ -16,13 +16,14 @@
 //!   message this module carries.
 //!
 //! One concise notice per manifest names the translation; it is emitted once
-//! per run by [`emit_notice`]. The translation is removed after v0.15.
+//! per run by [`crate::retired_config::emit_notice`]. The translation is
+//! removed after v0.15.
 
-use std::collections::{BTreeSet, HashSet};
-use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::collections::BTreeSet;
 
 use toml::Value;
+
+use crate::retired_config::RetiredConfigDeclaration;
 
 /// The `[bootstrap].children` migration, shared with `effigy bootstrap`.
 pub const CHILDREN_REFUSAL: &str = "`[bootstrap].children` was removed in v0.15; declare each sibling as a pinned `[sources.<name>]` table with `git`, `rev` (or `rev_file`) and `path`, and let the repo's `setup` selectors prepare it (see CHANGELOG.md)";
@@ -36,86 +37,11 @@ const TEARDOWN_REFUSAL: &str = "`effigy bootstrap teardown` was removed in v0.15
 
 const DB_SEED_TASK: &str = "bootstrap:db-seed";
 
-/// What one manifest's `[bootstrap]` declaration retired and kept loading.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RetiredBootstrapDeclaration {
-    translations: Vec<String>,
-    refusals: Vec<String>,
-}
-
-impl RetiredBootstrapDeclaration {
-    pub fn is_empty(&self) -> bool {
-        self.translations.is_empty() && self.refusals.is_empty()
-    }
-
-    /// Human-readable statements of what was read in place of a retired key.
-    pub fn translations(&self) -> &[String] {
-        &self.translations
-    }
-
-    /// The actionable migration messages `effigy bootstrap` refuses with.
-    pub fn refusals(&self) -> &[String] {
-        &self.refusals
-    }
-
-    /// One concise deprecation notice for this manifest, or `None`.
-    pub fn notice(&self, manifest_path: &Path) -> Option<String> {
-        if self.translations.is_empty() {
-            return None;
-        }
-        Some(format!(
-            "{}: retired `[bootstrap]` keys read for v0.15: {}. The translation is removed after v0.15; update the manifest (see CHANGELOG.md and docs/guides/085-v0.15.0-consumer-migration.md).",
-            manifest_path.display(),
-            self.translations.join("; ")
-        ))
-    }
-
-    /// The one refusal `effigy bootstrap` reports for this manifest, or `None`.
-    pub fn refusal_message(&self) -> Option<String> {
-        if self.refusals.is_empty() {
-            return None;
-        }
-        Some(format!(
-            "`effigy bootstrap` refuses this manifest until its retired bootstrap keys are migrated:\n- {}",
-            self.refusals.join("\n- ")
-        ))
-    }
-
-    fn translate(&mut self, statement: impl Into<String>) {
-        let statement = statement.into();
-        if !self.translations.contains(&statement) {
-            self.translations.push(statement);
-        }
-    }
-
-    fn refuse(&mut self, message: &str) {
-        if !self.refusals.iter().any(|refusal| refusal == message) {
-            self.refusals.push(message.to_owned());
-        }
-    }
-}
-
-/// Print this manifest's deprecation notice at most once per run.
-pub(crate) fn emit_notice(manifest_path: &Path, declaration: &RetiredBootstrapDeclaration) {
-    let Some(notice) = declaration.notice(manifest_path) else {
-        return;
-    };
-    static EMITTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-    let emitted = EMITTED.get_or_init(|| Mutex::new(HashSet::new()));
-    let mut emitted = match emitted.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    if emitted.insert(notice.clone()) {
-        eprintln!("{notice}");
-    }
-}
-
 /// Read every retired `[bootstrap]` key in `root` and rewrite the ones that
 /// still have a faithful mapping. Retired-only surfaces are recorded for
 /// `effigy bootstrap` to refuse.
-pub(crate) fn translate(root: &mut Value) -> RetiredBootstrapDeclaration {
-    let mut declaration = RetiredBootstrapDeclaration::default();
+pub(crate) fn translate(root: &mut Value) -> RetiredConfigDeclaration {
+    let mut declaration = RetiredConfigDeclaration::default();
     let Some(root_table) = root.as_table_mut() else {
         return declaration;
     };
@@ -125,7 +51,7 @@ pub(crate) fn translate(root: &mut Value) -> RetiredBootstrapDeclaration {
         .and_then(Value::as_table)
         .is_some_and(|tasks| tasks.contains_key(DB_SEED_TASK))
     {
-        declaration.translate(
+        declaration.record(
             "the `bootstrap:db-seed` task stays an ordinary task and is no longer a bootstrap callback",
         );
         declaration.refuse(DB_SEED_TASK_REFUSAL);
@@ -151,7 +77,7 @@ pub(crate) fn translate(root: &mut Value) -> RetiredBootstrapDeclaration {
 
     if let Some(run) = bootstrap.remove("run") {
         wrote_setup = true;
-        declaration.translate("`[bootstrap].run` is read as `setup`");
+        declaration.record("`[bootstrap].run` is read as `setup`");
         for (index, entry) in entries(run).into_iter().enumerate() {
             translate_entry(
                 entry,
@@ -189,7 +115,7 @@ pub(crate) fn translate(root: &mut Value) -> RetiredBootstrapDeclaration {
             }
             other => {
                 declaration
-                    .translate("an inline `[bootstrap].setup` definition runs as an internal task");
+                    .record("an inline `[bootstrap].setup` definition runs as an internal task");
                 synthesise_task(
                     other,
                     "bootstrap:setup".to_owned(),
@@ -235,14 +161,14 @@ pub(crate) fn translate(root: &mut Value) -> RetiredBootstrapDeclaration {
         let policy = policy.clone();
         let recursive = !policy.trim().eq_ignore_ascii_case("none");
         bootstrap.insert("submodules".to_owned(), Value::Boolean(recursive));
-        declaration.translate(format!(
+        declaration.record(format!(
             "`[bootstrap].submodules = \"{policy}\"` is read as `submodules = {recursive}`"
         ));
     }
 
     if bootstrap.remove("children").is_some() {
         declaration
-            .translate("`[bootstrap].children` is retired in favour of pinned `[sources.<name>]`");
+            .record("`[bootstrap].children` is retired in favour of pinned `[sources.<name>]`");
         declaration.refuse(CHILDREN_REFUSAL);
     }
 
@@ -267,7 +193,7 @@ struct EntryOutput<'a> {
     setup: &'a mut Vec<Value>,
     synthesised: &'a mut Vec<(String, Value)>,
     taken_names: &'a mut BTreeSet<String>,
-    declaration: &'a mut RetiredBootstrapDeclaration,
+    declaration: &'a mut RetiredConfigDeclaration,
 }
 
 /// A retired definition holds either one entry or an ordered list of them.
@@ -295,7 +221,7 @@ fn translate_entry(
         Value::String(command) => {
             output
                 .declaration
-                .translate("inline `[bootstrap].run` steps run as internal tasks");
+                .record("inline `[bootstrap].run` steps run as internal tasks");
             let mut task = toml::map::Map::new();
             task.insert(
                 "visibility".to_owned(),
@@ -310,7 +236,7 @@ fn translate_entry(
                 if let Some(task) = table.get("task").and_then(Value::as_str) {
                     output
                         .declaration
-                        .translate("`{ task = ... }` bootstrap entries are read as selectors");
+                        .record("`{ task = ... }` bootstrap entries are read as selectors");
                     push_selector(task.to_owned(), output);
                     return;
                 }
@@ -419,13 +345,13 @@ fn translate_start(value: Value, output: &mut EntryOutput<'_>) -> Option<String>
                 if let Some(task) = table.get("task").and_then(Value::as_str) {
                     output
                         .declaration
-                        .translate("a `{ task = ... }` `[bootstrap].start` is read as a selector");
+                        .record("a `{ task = ... }` `[bootstrap].start` is read as a selector");
                     return Some(task.to_owned());
                 }
             }
             output
                 .declaration
-                .translate("an inline `[bootstrap].start` definition runs as an internal task");
+                .record("an inline `[bootstrap].start` definition runs as an internal task");
             synthesise_start_task(vec![Value::Table(table)], output);
             Some(last_synthesised_name(output))
         }
@@ -437,7 +363,7 @@ fn translate_start(value: Value, output: &mut EntryOutput<'_>) -> Option<String>
             match selectors {
                 Some(selectors) if selectors.len() == 1 => selectors.into_iter().next(),
                 Some(selectors) => {
-                    output.declaration.translate(
+                    output.declaration.record(
                         "a multi-selector `[bootstrap].start` chain runs as one internal task",
                     );
                     let steps = selectors
@@ -454,7 +380,7 @@ fn translate_start(value: Value, output: &mut EntryOutput<'_>) -> Option<String>
                 None => {
                     output
                         .declaration
-                        .translate("an inline `[bootstrap].start` chain runs as one internal task");
+                        .record("an inline `[bootstrap].start` chain runs as one internal task");
                     synthesise_start_task(entries, output);
                     Some(last_synthesised_name(output))
                 }
@@ -532,7 +458,7 @@ start = "dev"
             Some("dev")
         );
         assert!(manifest
-            .retired_bootstrap
+            .retired_config
             .notice(Path::new("effigy.toml"))
             .is_some());
     }
@@ -644,11 +570,8 @@ required = true
                 .and_then(|bootstrap| bootstrap.start.as_deref()),
             Some("dev")
         );
-        assert_eq!(manifest.retired_bootstrap.refusals(), [CHILDREN_REFUSAL]);
-        let message = manifest
-            .retired_bootstrap
-            .refusal_message()
-            .expect("refusal");
+        assert_eq!(manifest.retired_config.refusals(), [CHILDREN_REFUSAL]);
+        let message = manifest.retired_config.refusal_message().expect("refusal");
         assert!(message.contains("[sources.<name>]"), "{message}");
         assert!(message.contains("rev_file"), "{message}");
     }
@@ -662,10 +585,7 @@ run = "psql < seed.sql"
 "#,
         );
         assert!(manifest.tasks.contains_key("bootstrap:db-seed"));
-        assert_eq!(
-            manifest.retired_bootstrap.refusals(),
-            [DB_SEED_TASK_REFUSAL]
-        );
+        assert_eq!(manifest.retired_config.refusals(), [DB_SEED_TASK_REFUSAL]);
     }
 
     #[test]
@@ -677,7 +597,7 @@ run = [{ task = "bootstrap deps sync packages/ui" }]
 "#,
         );
         assert_eq!(setup(&manifest), vec!["bootstrap deps sync packages/ui"]);
-        assert_eq!(manifest.retired_bootstrap.refusals(), [DEPS_SYNC_REFUSAL]);
+        assert_eq!(manifest.retired_config.refusals(), [DEPS_SYNC_REFUSAL]);
     }
 
     #[test]
@@ -708,7 +628,7 @@ run = "echo declared"
     fn a_plain_manifest_records_no_retired_bootstrap_declaration() {
         let manifest =
             parse("[bootstrap]\nsetup = [\"prepare\"]\n\n[tasks.prepare]\nrun = \"true\"\n");
-        assert!(manifest.retired_bootstrap.is_empty());
+        assert!(manifest.retired_config.is_empty());
         assert_eq!(setup(&manifest), vec!["prepare"]);
     }
 }
