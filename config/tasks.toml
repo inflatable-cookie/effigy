@@ -767,7 +767,10 @@
 "test:host-process:owned-stop:remaining" = { visibility = "internal", group = "Maintenance", run = [
   { id = "owned-stop-other-native-callers", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset '(test(host_process) | test(managed_host_transitions_)) - test(host_process_owned_) - test(host_process_exit_observation_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "owned-stop-generation-identity", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(identity::tests::) | test(managed_listener_routes_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { id = "owned-stop-public-lifecycle", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'not (test(managed_listener_fixture_child) | test(managed_host_dependent_replacement_))' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  # The 108-cell managed matrix has its own selector, its own nextest profile
+  # and roughly 300s per parameterised test; sweeping it here exceeded this
+  # step's bound before any proof of the change ran.
+  { id = "owned-stop-public-lifecycle", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'not (test(managed_listener_fixture_child) | test(managed_host_dependent_replacement_) | test(managed_matrix_))' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
 "check:host-process:owned-stop:compile" = { visibility = "internal", group = "Maintenance", run = [
   { id = "owned-stop-compile", run = "sh scripts/oxide-selector.sh check -p effigy --all-targets", timeout_ms = 600000 },
