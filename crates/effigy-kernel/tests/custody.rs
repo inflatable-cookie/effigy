@@ -827,6 +827,7 @@ fn sequential_foreground_spawns(tostop: bool) {
         seen.windows(8).any(|window| window == b"first-ok")
     });
     assert_eq!(foreground_group(&master), pid as i32);
+    std::fs::write(home.path().join("first-observed"), b"yes").unwrap();
     master.write_all(b"terminal-input\n").unwrap();
     eventually(|| {
         assert_running(pid);
@@ -834,6 +835,7 @@ fn sequential_foreground_spawns(tostop: bool) {
         home.path().join("second-done").exists()
     });
     assert_eq!(foreground_group(&master), pid as i32);
+    std::fs::write(home.path().join("second-observed"), b"yes").unwrap();
     eventually(|| home.path().join("sequence-done").exists());
     // macOS waits for its PTY peer during session-leader exit.
     drop(master);
@@ -1810,4 +1812,68 @@ fn inheritance_ambient_marker_cannot_export_an_unowned_descriptor() {
     run.settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
         .unwrap();
     assert!(!root.path().join("kernel.db").exists());
+}
+
+#[test]
+fn foreground_retained_git_pointer_refuses_new_workload_go() {
+    let home = home();
+    let cx = context();
+    let one = home.path().join("git-one");
+    let two = home.path().join("git-two");
+    std::fs::create_dir(&one).unwrap();
+    std::fs::create_dir(&two).unwrap();
+    std::fs::write(home.path().join(".git"), "gitdir: git-one\n").unwrap();
+    let location = effigy_kernel::migration::CheckoutLocation {
+        root: home.path().into(),
+        git_directory: Some(one),
+    };
+    let root = StateRoot::foreground_effects(&cx, &location).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    std::fs::write(home.path().join(".git"), "gitdir: git-two\n").unwrap();
+    assert!(
+        Custody::spawn_foreground(&mut run, spec(home.path(), "printf bad > forbidden"), &cx)
+            .is_err()
+    );
+    assert!(run.record().effects().is_empty());
+    assert!(!home.path().join("forbidden").exists());
+    assert!(!root.path().join("kernel.db").exists());
+    run.interrupt(WorkloadOutcome::NotStarted).unwrap();
+    run.settle(&cx.operation().cleanup(Duration::from_secs(5)).unwrap())
+        .unwrap();
+}
+
+#[test]
+fn foreground_filesystem_identity_cannot_be_promoted_into_a_durable_run() {
+    let home = home();
+    let cx = context();
+    let location = effigy_kernel::migration::CheckoutLocation {
+        root: home.path().into(),
+        git_directory: None,
+    };
+    let checkout =
+        StateRoot::filesystem_checkout(&cx.operation().observe().unwrap(), &location).unwrap();
+    let root = StateRoot::foreground_effects(&cx, &location).unwrap();
+    let task = TaskId::new(checkout, "", Surface::Published, "fixture", None).unwrap();
+    let original = invocation();
+    let mut spec = original.spec().clone();
+    spec.owner = task.resource();
+    spec.task = task;
+    let invocation = ResolvedInvocation::new(spec).unwrap();
+    assert!(Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        BeginOpts {
+            id: id(3),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: None
+        },
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict
+    )
+    .is_err());
+    assert!(!root.path().join("kernel.db").exists());
+    assert!(!root.path().join("runs").exists());
 }

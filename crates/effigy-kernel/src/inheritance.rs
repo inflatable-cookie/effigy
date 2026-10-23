@@ -130,8 +130,11 @@ impl InheritedCapability {
     pub fn payload<T: DeserializeOwned>(&self, cx: &OperationContext) -> io::Result<T> {
         serde_json::from_value(self.grant(cx)?.payload).map_err(io::Error::other)
     }
+    pub(crate) fn verify(&self, cx: &OperationContext) -> io::Result<()> {
+        self.grant(cx).map(|_| ())
+    }
     pub(crate) fn custody_fd(&self, cx: &OperationContext) -> io::Result<OwnedFd> {
-        self.grant(cx)?;
+        self.verify(cx)?;
         crate::gate::duplicate_custody(self.stream.as_ref())
     }
     fn grant(&self, cx: &OperationContext) -> io::Result<Grant> {

@@ -323,11 +323,13 @@ fn validate_destination(destination: &ImportedDestination) -> Result<(), String>
             return Err("machine destination has checkout aliases or Git state".into())
         }
         Some(primary) => {
-            if primary.kind() == crate::id::CheckoutKind::Machine
-                || destination
-                    .checkout_aliases
-                    .iter()
-                    .any(|alias| alias.kind() != primary.kind())
+            if matches!(
+                primary.kind(),
+                crate::id::CheckoutKind::Machine | crate::id::CheckoutKind::Filesystem
+            ) || destination
+                .checkout_aliases
+                .iter()
+                .any(|alias| alias.kind() != primary.kind())
             {
                 return Err("checkout alias kind mismatch".into());
             }

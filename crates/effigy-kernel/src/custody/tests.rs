@@ -1080,6 +1080,14 @@ fn nononce_foreground_owner(home: &Path) {
         "the owner did not get its terminal back"
     );
     assert_eq!(output, b"b-read:queued-input");
+    // All terminal assertions are complete. The parent now closes the PTY
+    // to let macOS finish session-leader exit; its HUP must not race libtest's
+    // successful return in this isolated helper process.
+    // SAFETY: changes only this dedicated helper's teardown signal policy,
+    // after its workloads were reaped and terminal restoration was proved.
+    unsafe {
+        libc::signal(libc::SIGHUP, libc::SIG_IGN);
+    }
     std::fs::write(home.join("owner-done"), b"yes").unwrap();
 }
 

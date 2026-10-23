@@ -503,6 +503,7 @@ fn sequence_foreground(run: &mut Run<'_>, cx: &EffectContext, op: &OperationCont
     assert_eq!(child.tail(), b"first-captured");
     // Release-on-exit: the lease ended with the workload, not with settle.
     assert_owner_terminal(home, "first-done");
+    wait_terminal_observation(op, home, "first-observed");
 
     let read = ProcessSpec {
         argv: vec![
@@ -519,6 +520,16 @@ fn sequence_foreground(run: &mut Run<'_>, cx: &EffectContext, op: &OperationCont
     child.complete(run, exit).unwrap();
     assert_eq!(child.tail(), b"second-ok:terminal-input");
     assert_owner_terminal(home, "second-done");
+    wait_terminal_observation(op, home, "second-observed");
+}
+
+// Hold this exact terminal phase until the parent observes it: otherwise
+// the next workload or session exit races tcgetpgrp in the proof process.
+fn wait_terminal_observation(op: &OperationContext, home: &Path, marker: &str) {
+    while !home.join(marker).exists() {
+        op.check("terminal phase observation").unwrap();
+        std::thread::sleep(Duration::from_millis(2));
+    }
 }
 
 /// The engine payload a fixture client hands its supervisor: the home.

@@ -269,6 +269,11 @@ impl<'a> Run<'a> {
         parent: Option<RunId>,
     ) -> Result<Self, RunError> {
         crate::fault_point!(BeginBefore)?;
+        if inv.spec().task.checkout().kind() == crate::id::CheckoutKind::Filesystem {
+            return Err(RunError::Invalid(
+                "filesystem checkout identities cannot own durable runs".into(),
+            ));
+        }
         if cx.operation().placement() != crate::ctx::Placement::Host
             || inv.spec().placement != crate::ctx::Placement::Host
         {
@@ -397,6 +402,10 @@ impl<'a> Run<'a> {
     /// Capture bounds of the run's own effect context.
     pub(crate) fn limits(&self) -> crate::ctx::Limits {
         self.cx.operation().limits().clone()
+    }
+    pub(crate) fn verify_custody(&self) -> Result<(), RunError> {
+        self.root.verify_binding().map_err(StoreError::from)?;
+        Ok(())
     }
     pub(crate) fn has_sentinel(&self) -> bool {
         self.sentinel.is_some()

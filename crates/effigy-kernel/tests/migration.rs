@@ -1217,3 +1217,129 @@ fn runtime_shared_source_cache_gate_is_not_a_legacy_database_writer() {
     assert_eq!(snapshot(machine.path()), before);
     assert!(!cache_root.path().join("machine.db").exists());
 }
+
+#[test]
+fn runtime_filesystem_checkout_identity_is_pure_and_has_its_own_domain() {
+    use effigy_kernel::id::{Surface, TaskId};
+    let checkout = home();
+    let git = checkout.path().join(".git");
+    std::fs::create_dir(&git).unwrap();
+    let location = migration::CheckoutLocation {
+        root: checkout.path().into(),
+        git_directory: Some(git),
+    };
+    let before = snapshot(checkout.path());
+    let id = StateRoot::filesystem_checkout(&observe(), &location).unwrap();
+    assert_eq!(snapshot(checkout.path()), before);
+    assert_eq!(id.kind(), CheckoutKind::Filesystem);
+    let alias = migration::CheckoutLocation {
+        root: checkout.path().join("."),
+        git_directory: location.git_directory.clone(),
+    };
+    assert_eq!(
+        StateRoot::filesystem_checkout(&observe(), &alias).unwrap(),
+        id
+    );
+    let local = TaskId::new(id, "", Surface::Published, "build", None)
+        .unwrap()
+        .resource();
+    let persistent = TaskId::new(
+        CheckoutId::new(CheckoutKind::Primary, *id.token()),
+        "",
+        Surface::Published,
+        "build",
+        None,
+    )
+    .unwrap()
+    .resource();
+    assert_ne!(
+        id.resource(),
+        CheckoutId::new(CheckoutKind::Primary, *id.token()).resource()
+    );
+    assert_eq!(
+        ResourceId::decode_canonical(&id.resource().canonical()).unwrap(),
+        id.resource()
+    );
+    assert_ne!(local, persistent);
+    assert_ne!(local.name(), persistent.name());
+    assert_eq!(
+        effigy_kernel::id::ResourceId::decode_canonical(&local.canonical()).unwrap(),
+        local
+    );
+}
+
+#[test]
+fn runtime_foreground_root_allocates_gates_without_a_token_or_durable_binding() {
+    use effigy_kernel::id::{Surface, TaskId};
+    let checkout = home();
+    let cx = effects(EffectClass::Mutate);
+    let location = location(checkout.path());
+    let id = StateRoot::filesystem_checkout(&observe(), &location).unwrap();
+    let root = StateRoot::foreground_effects(&cx, &location).unwrap();
+    let task = TaskId::new(id, "", Surface::Published, "build", None)
+        .unwrap()
+        .resource();
+    let gate = Gate::acquire(&cx, &root, &[task], Wait::FailFast).unwrap();
+    for file in [
+        "checkout.json",
+        "kernel.db",
+        "machine.db",
+        "runs",
+        "sock",
+        "objects",
+        "staging",
+    ] {
+        assert!(
+            !root.path().join(file).exists(),
+            "unexpected durable state {file}"
+        );
+    }
+    assert!(!checkout
+        .path()
+        .join(".effigy/effigy-runtime-scope")
+        .exists());
+    drop(gate);
+}
+
+#[test]
+fn runtime_retained_linked_git_pointer_refuses_later_reads_gates_and_writes() {
+    let checkout = home();
+    let machine = home();
+    let git = checkout.path().join("git-one");
+    let other = checkout.path().join("git-two");
+    std::fs::create_dir(&git).unwrap();
+    std::fs::create_dir(&other).unwrap();
+    std::fs::write(checkout.path().join(".git"), "gitdir: git-one\n").unwrap();
+    let location = migration::CheckoutLocation {
+        root: checkout.path().into(),
+        git_directory: Some(git),
+    };
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::checkout_effects(&cx, machine.path(), &location).unwrap();
+    drop(Store::open(&cx, &root).unwrap());
+    std::fs::write(checkout.path().join(".git"), "gitdir: git-two\n").unwrap();
+    let before = snapshot(checkout.path());
+    let owner = ResourceId::store(Scope::Machine, "fixture").unwrap();
+    assert!(Gate::acquire(&cx, &root, std::slice::from_ref(&owner), Wait::FailFast).is_err());
+    assert!(matches!(
+        Gate::probe(&observe(), &root, &owner),
+        Observed::Unknown(_)
+    ));
+    assert!(Store::open(&cx, &root).is_err());
+    assert!(matches!(
+        Store::read(&observe(), &root),
+        Observed::Unknown(_)
+    ));
+    assert!(StateRoot::checkout_effects(&cx, machine.path(), &location).is_err());
+    let new_location = migration::CheckoutLocation {
+        root: checkout.path().into(),
+        git_directory: Some(other),
+    };
+    assert!(matches!(
+        StateRoot::checkout_observe(&observe(), &new_location),
+        Observed::Unknown(_)
+    ));
+    assert_eq!(snapshot(checkout.path()), before);
+    // Restore this fixture's pointer before helper-drain observation.
+    std::fs::write(checkout.path().join(".git"), "gitdir: git-one\n").unwrap();
+}

@@ -361,7 +361,8 @@ During v0.x, MINOR bumps may include breaking changes.
 - Task journals live in the owning checkout's `.effigy/state/`. Durable
   initialization refuses an unresolved legacy migration and binds checkout
   and Git directory generations, so same-path replacements cannot adopt old
-  state. Run control reads the local journals without a central run index.
+  state. Retained handles also refuse new effects after a linked worktree's
+  `.git` pointer changes. Run control reads the local journals without a central run index.
   Environment records, holder sessions and render objects use that same
   checkout journal; an unavailable journal refuses backend effects. Source
   preparation also journals per checkout. Gateway lifecycle and endpoint/port

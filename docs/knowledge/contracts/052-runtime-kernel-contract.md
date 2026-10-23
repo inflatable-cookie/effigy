@@ -1,47 +1,40 @@
 # 052 - Runtime Kernel Contract
 
-Q-010 amendment (2026-10-22): **proposed contract, approved by planner and Tom (2026-10-22: "Approve")
-for implementation**. §3.1, §7, §11.1 and §12.6 specify in-memory
-foreground runs, checkout journals and the small machine store. They supersede
-the former single-root assumptions in the API sketches, failure tables and
-implementation/adoption notes below. Those notes describe the existing binary,
-which still uses the central database; this document change does not claim a
-runtime cutover. The amendment's custody limits are explicit in §3.1.
-`run::ForegroundRecord` implements memory-only intents, incarnation tickets,
-phases and completion. `run::ForegroundRun` adds checkout gates, pure durable
-predecessor reads and the pipe-only memory sentinel; local custody shares the
-same spawn barrier and positive closure mechanisms as durable runs. These
-kernel APIs create no database, run logs or control socket. Command admission
-still uses the durable path until whole-tree classification is connected.
-`migration::inspect` performs read-only gate and recorded process-identity
-inspection before destination work. `Store::read_sealed` refuses hot logs and
-uses a checkpointed source without creating SQLite side files; this inspection
-is diagnostic, not a transfer of custody or migration authority. `migration::import`
-now selects relational closures, copies one transaction per destination and
-verified object/run files, preserves original resource/run identities, and
-publishes one commit manifest followed by directory-bound local seals. It
-requires withdrawn legacy launchers and refuses live/unknown source writers;
-existing resource/scope locks fence the source without rewriting its bytes.
-Kill, ENOSPC and EPERM tests cover staging, copying, prepared publication,
-manifest commit and sealing; retries select the committed authority. Production
-callers remain on the legacy route while command admission, local authority
-checks and the acceptance harnesses are connected. These kernel tests do not
-claim the real-store scale or live-backend migration proof. Local opens now
-refuse prepared imports and missing or mismatched sealed databases before
-creation; seals bind the opened checkout directory generation. Supervisor
-configuration carries the journal kind so machine helpers cannot silently
-write the legacy database. Checkout-token aliases retain the same owner
-exclusion through closure. These are kernel guarantees; production routing
-and whole-tree classification remain to be connected. `effigy run migrate`
-now exposes pure planning, explicit launcher-quiescence assertion, bounded
-checkout discovery and exact verified legacy-writer stop receipts, including
-pre-run admission/retention writers. Its JSON payload is
-`effigy.runtime-migration.v1`. This command does not yet switch ordinary engine
-callers away from the legacy route. Distinct legacy task/environment tokens that
-verify the same checkout and Git-directory generation now coalesce into one
-local journal without re-encoding resources or runs. Local seals retain the
-verified aliases and Git-directory facts; replaced directories and path-only
-legacy identities cannot silently adopt that state.
+Q-010 amendment (2026-10-22): **approved by planner and Tom
+(2026-10-22: "Approve") for implementation**. §3.1, §7, §11.1 and §12.6
+specify foreground memory, checkout journals and the small machine store.
+The approved amendment and implementation merge together. Remaining API
+sketches and historical adoption notes are subject to these sections.
+
+Implementation is in progress. `ForegroundRecord`, `ForegroundRun` and the
+pipe-only memory sentinel implement memory intents, incarnation fencing,
+ancestor gate custody and positive child completion without databases, logs
+or sockets. Memory parent capabilities export only an explicitly inherited
+reading descriptor. Whole-tree classification, admission integration and
+foreground live views are not yet connected to command execution.
+
+Production task journals, environment records, holder sessions, render objects
+and source-acquisition custody use the owning checkout journal. Gateway
+lifecycle, endpoint and port callers use checked machine routing after cutover.
+Fresh durable journals bind checkout and Git-directory generations; retained
+handles also check the `.git` locator before new gates or workload release.
+`Filesystem` checkout identities are a separate, memory-only gate domain;
+foreground root preparation creates transient gate state without minting a
+token, writing a checkout binding or consulting machine state.
+
+`effigy run migrate` exposes pure planning, exact blocking-writer reports and
+verified stop receipts, including pre-run admission/retention writers. Explicit
+withdrawal of legacy launchers precedes import. The importer partitions retained
+closures, copies one transaction per destination, preserves identities and
+checkout aliases, and commits one manifest followed by directory-bound seals.
+Kill, ENOSPC and EPERM proofs cover preparation, publication and retry. Distinct
+legacy task/environment tokens for one verified checkout coalesce without
+re-encoding resources or runs. Prepared, missing and mismatched publications
+refuse normal mutation. `Store::read_sealed` requires a checkpointed source and
+creates no source files. These proofs do not claim the required real-store
+scale, busy-machine end-to-end acceptance or live-backend qualification.
+Release routing, machine write-budget enforcement, production foreground
+execution and the remaining acceptance harnesses are still task work.
 
 Status: foundation types are implemented in `crates/effigy-kernel/`: identity
 encoding v1, operation contexts and class capabilities, observation and Probe
@@ -358,7 +351,7 @@ boundary.
 
 ```rust
 pub struct CheckoutId { kind: CheckoutKind, token: [u8; 16] }
-pub enum CheckoutKind { Primary, LinkedWorktree, EphemeralClone, Machine }
+pub enum CheckoutKind { Primary, LinkedWorktree, EphemeralClone, Machine, Filesystem }
 
 pub struct TaskId {
     checkout: CheckoutId,
@@ -425,7 +418,11 @@ name      := base32_lower(SHA-256(canonical)[0..20])
 ephemeral clones reuse the existing runtime-scope token
 (`crates/effigy-core/src/worktree_scope.rs`), so Compose project and volume
 names do not change. Primary checkouts get a token beside it. Only Prepare
-and Mutate classes mint a token; Observe reports "no runtime state yet".
+and Mutate classes mint a token; Observe reports "no runtime state yet". The
+`Filesystem` kind is never persisted as a checkout token or durable run owner.
+Its domain-separated digest uses retained checkout/Git device and inode facts;
+its scope names are separate even if a persisted token has the same raw bytes.
+The existing kind tags 0–3 remain unchanged; tag 4 denotes this local-only kind.
 
 #### Invariants
 

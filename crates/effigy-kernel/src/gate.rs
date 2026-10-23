@@ -247,6 +247,7 @@ impl Gate {
                 reason: "state root opened read-only".into(),
             });
         }
+        root.verify_binding()?;
         let started = Instant::now();
         let mut deadline = match wait {
             Wait::FailFast => started + FAIL_FAST,
@@ -553,6 +554,9 @@ pub(crate) fn probe_names(
         return Observed::Unknown(UnknownReason::TimedOut {
             phase: "gate probe".into(),
         });
+    }
+    if let Err(error) = root.verify_binding() {
+        return Observed::Unknown(crate::root::unknown(&error));
     }
     // No inode: never acquired, so free with `NoGateInode` as its proof.
     let free = |proof| Observed::Absent(proof);

@@ -84,7 +84,12 @@ pub(super) fn partitions(
                     let (kind, path_hint, git_dir_hint) = record.ok_or_else(|| {
                         StoreError::Corrupt(format!("missing legacy checkout {key}"))
                     })?;
-                    if kind != checkout.kind() as u8 || checkout.kind() == CheckoutKind::Machine {
+                    if kind != checkout.kind() as u8
+                        || matches!(
+                            checkout.kind(),
+                            CheckoutKind::Machine | CheckoutKind::Filesystem
+                        )
+                    {
                         return Err(StoreError::Corrupt(format!(
                             "legacy checkout {key} kind mismatch"
                         )));

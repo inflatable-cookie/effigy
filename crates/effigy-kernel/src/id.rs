@@ -34,6 +34,8 @@ pub enum CheckoutKind {
     LinkedWorktree = 1,
     EphemeralClone = 2,
     Machine = 3,
+    /// Memory-only filesystem gate identity, never a persisted checkout token.
+    Filesystem = 4,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckoutId {
@@ -55,7 +57,11 @@ impl CheckoutId {
         ResourceId::new(
             ResourceKind::Checkout,
             Scope::Machine,
-            vec![Some(hex(&self.token))],
+            vec![Some(if self.kind == CheckoutKind::Filesystem {
+                format!("filesystem:{}", hex(&self.token))
+            } else {
+                hex(&self.token)
+            })],
         )
     }
 }
@@ -349,6 +355,7 @@ impl ResourceId {
                     1 => CheckoutKind::LinkedWorktree,
                     2 => CheckoutKind::EphemeralClone,
                     3 => CheckoutKind::Machine,
+                    4 => CheckoutKind::Filesystem,
                     _ => return Err(IdentityError::InvalidInvocation),
                 };
                 let token = take(&mut input, 16)?
@@ -668,12 +675,15 @@ impl ResourceId {
             )?
             .resource()),
             (ResourceKind::Run, Scope::Machine) => Ok(field(0)?.parse::<RunId>()?.resource()),
-            (ResourceKind::Checkout, Scope::Machine)
-                if field(0)?.len() == 32
-                    && field(0)?
+            (ResourceKind::Checkout, Scope::Machine) => {
+                let token = field(0)?.strip_prefix("filesystem:").unwrap_or(field(0)?);
+                if token.len() != 32
+                    || !token
                         .bytes()
-                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) =>
-            {
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                {
+                    return Err(IdentityError::InvalidInvocation);
+                }
                 Ok(self.clone())
             }
             _ => Err(IdentityError::InvalidInvocation),

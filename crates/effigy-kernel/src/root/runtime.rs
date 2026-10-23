@@ -87,11 +87,14 @@ impl StateRoot {
             Ok::<_, StoreError>(())
         })();
         match checked {
-            Ok(()) => Observed::Verified(
-                root,
-                Evidence::new("verified checkout journal location".into(), None)
-                    .expect("fixed source"),
-            ),
+            Ok(()) => match root.retain_checkout(location) {
+                Ok(root) => Observed::Verified(
+                    root,
+                    Evidence::new("verified checkout journal location".into(), None)
+                        .expect("fixed source"),
+                ),
+                Err(error) => Observed::Unknown(crate::root::unknown(&error)),
+            },
             Err(error) => Observed::Unknown(UnknownReason::StoreUnreadable(error.to_string())),
         }
     }
@@ -109,7 +112,7 @@ impl StateRoot {
             .map_err(|_| StoreError::HostAuthorityRequired)?;
         let observe = observation(cx)?;
         require_cutover(&observe, machine_home, Some(&location.root))?;
-        let root = Self::effects(cx, &location.root)?;
+        let root = Self::effects(cx, &location.root)?.retain_checkout(location)?;
         let expected = binding(&root, location)?;
         match authority(&observe, &root) {
             Observed::Verified(Authority::Committed { .. }, _) => {

@@ -1,5 +1,6 @@
 //! Verified checkout and machine state roots (§7.1), with separate database
 //! names. A machine root never implicitly opens the legacy central database.
+mod checkout;
 pub(crate) mod runtime;
 
 use crate::ctx::{Capability, EffectContext, ObserveContext, Placement};
@@ -37,6 +38,7 @@ pub struct StateRoot {
     writable: bool,
     database: Database,
     adoption: bool,
+    checkout: Option<checkout::RetainedCheckout>,
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +75,7 @@ impl StateRoot {
             writable: true,
             database: Database::Checkout,
             adoption: true,
+            checkout: None,
         })
     }
     /// Read-only open. Missing is `Absent`; untrusted or unreadable is
@@ -97,6 +100,7 @@ impl StateRoot {
                     writable: false,
                     database: Database::Checkout,
                     adoption: true,
+                    checkout: None,
                 },
                 Evidence::new("kernel state root".into(), None).expect("fixed source"),
             ),
@@ -167,6 +171,9 @@ impl StateRoot {
                 "state root identity changed",
             ));
         }
+        if let Some(checkout) = &self.checkout {
+            checkout.verify(&self.owner)?;
+        }
         Ok(())
     }
     /// An inert migration staging root inside this verified destination. It
@@ -186,6 +193,7 @@ impl StateRoot {
             writable: true,
             database: self.database.clone(),
             adoption: false,
+            checkout: self.checkout.clone(),
         })
     }
     /// Retained filesystem identity of the actual checkout or machine home.

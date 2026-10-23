@@ -15,6 +15,7 @@ use std::time::Duration;
 /// and memory sentinel hold the same gate descriptions through cleanup.
 #[derive(Debug)]
 pub struct ForegroundRun {
+    root: StateRoot,
     record: ForegroundRecord,
     cx: EffectContext,
     next: Invocation,
@@ -164,6 +165,7 @@ impl ForegroundRun {
             },
         )?;
         Ok(Self {
+            root: root.clone(),
             record: ForegroundRecord::new(opts.id, inv.spec().owner.clone()),
             cx: cx.clone(),
             next: opts.next,
@@ -176,6 +178,10 @@ impl ForegroundRun {
             children: Vec::new(),
             completion: None,
         })
+    }
+    pub(crate) fn verify_custody(&self) -> Result<(), RunError> {
+        self.root.verify_binding().map_err(StoreError::from)?;
+        Ok(())
     }
     pub fn record(&self) -> &ForegroundRecord {
         &self.record
@@ -217,6 +223,7 @@ impl ForegroundRun {
     }
     pub fn finish(&mut self, workload: WorkloadOutcome) -> Result<(), RunError> {
         self.cx.operation().check("foreground finish")?;
+        self.verify_custody()?;
         if workload == WorkloadOutcome::Succeeded
             && self.children.iter().any(|child| {
                 *child
