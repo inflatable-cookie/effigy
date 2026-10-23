@@ -1638,10 +1638,7 @@ mod tests {
                 .to_string()
                 .contains("loopback pool exhausted"));
             assert_eq!(probes, 1, "an exhausted pool probes ownership once");
-            assert_eq!(
-                LoopbackRegistry::load(&path).unwrap().assignments,
-                before
-            );
+            assert_eq!(LoopbackRegistry::load(&path).unwrap().assignments, before);
         });
     }
 
