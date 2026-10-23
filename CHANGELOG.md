@@ -1047,6 +1047,17 @@ During v0.x, MINOR bumps may include breaking changes.
   formatter stays reachable as `effigy fmt-rust <FILE>...`, `--plan` names
   that spelling, `fmt` is in shell completion, and the formatter help says
   relative paths are cwd-relative.
+- Deleted projects no longer hold generated-port ranges for ever (effigy#294).
+  A project path whose parent is gone is now `missing` whenever the nearest
+  existing ancestor is a readable directory, instead of `unknown`; only a real
+  I/O or permission error, a non-directory ancestor or an absent volume root
+  such as an unmounted `/Volumes/...` stays unknown. A stopped Colima profile
+  no longer holds every absent-path entry: it holds only the entries recorded
+  on that profile, says so per entry, and never has to be started to answer a
+  host-port question. A runtime-scope record now holds an entry only while it
+  still retains that project's volumes or routes. `container up` reclaims
+  provably dead ranges by the same reviewed `--apply` rules when fewer than ten
+  free ranges remain, and prints one line saying what it reclaimed.
 - A bounded Colima/nerdctl call that times out on a loaded host no longer reads
   as a service failure (effigy#291, papercut `8064c5b9`). Effigy observes the
   host's own load average: on a saturated host (one runnable task per CPU) an

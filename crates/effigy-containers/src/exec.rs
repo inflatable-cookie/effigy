@@ -6,6 +6,7 @@ mod managed_stop;
 mod mounts;
 mod parse;
 mod participation;
+pub(crate) use colima_runtime::default_runtime_profile;
 pub(crate) use participation::docker_config_current_context;
 mod process;
 mod restart_recovery;
