@@ -128,12 +128,27 @@ impl Drop for GateFile {
         }
     }
 }
+/// Keep inherited gate sources above the helper's 20..84 target range.
+/// Ordinary `try_clone` may allocate inside that range and clobber a later
+/// source during pre-exec dup2. These copies remain CLOEXEC in the owner.
+pub(crate) fn duplicate_custody(
+    file: &impl std::os::fd::AsRawFd,
+) -> std::io::Result<std::os::fd::OwnedFd> {
+    use std::os::fd::FromRawFd;
+    // SAFETY: the borrow keeps the source descriptor live. fcntl duplicates
+    // without consuming it and returns a fresh CLOEXEC fd >=128 or -1.
+    let fd = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 128) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: successful fcntl transfers this fresh descriptor exactly once.
+    Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) })
+}
 impl GateGuard {
     /// Foreground backup custody retains these same open descriptions. Once
     /// shared, closing a custodian must not explicitly unlock the other's
     /// flock. Workload forks still inherit only CLOEXEC copies.
     pub(crate) fn share_custody(&mut self) -> std::io::Result<Vec<std::os::fd::OwnedFd>> {
-        use std::os::fd::{AsRawFd, FromRawFd};
         let mut copies = Vec::new();
         for file in self
             .gates
@@ -141,14 +156,7 @@ impl GateGuard {
             .map(|(_, f)| f)
             .chain(self.scopes.iter().map(|(_, f)| f))
         {
-            // SAFETY: the gate owns this live descriptor; fcntl returns a
-            // fresh CLOEXEC description reference or -1. No fd is consumed.
-            let fd = unsafe { libc::fcntl(file.file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 128) };
-            if fd < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            // SAFETY: successful fcntl transferred this fresh fd exactly once.
-            copies.push(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) });
+            copies.push(duplicate_custody(&file.file)?);
         }
         for file in self
             .gates

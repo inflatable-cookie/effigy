@@ -37,6 +37,7 @@ impl MemoryGuard {
     pub(crate) fn start(
         executable: &Executable,
         gate: &mut GateGuard,
+        ancestors: &[OwnedFd],
         cx: &EffectContext,
         run: RunId,
         fence: Fence,
@@ -55,7 +56,10 @@ impl MemoryGuard {
             .verified()
             .cloned()
             .ok_or_else(|| RunError::Invalid("foreground owner identity unavailable".into()))?;
-        let copies = gate.share_custody()?;
+        let mut copies = gate.share_custody()?;
+        for ancestor in ancestors {
+            copies.push(crate::gate::duplicate_custody(ancestor)?);
+        }
         if copies.len() > GATE_MAX {
             return Err(RunError::Invalid("too many foreground gates".into()));
         }

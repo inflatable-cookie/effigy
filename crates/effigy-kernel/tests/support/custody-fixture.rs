@@ -165,7 +165,7 @@ fn main() {
         drop(guard);
         return;
     }
-    if entry == "foreground-owner" {
+    if matches!(entry, "foreground-owner" | "foreground-tree-owner") {
         let home = Path::new(args.get(1).expect("private fixture root"));
         let cx = op(router.root_cancel()).effects().unwrap();
         let root = StateRoot::effects(&cx, home).unwrap();
@@ -185,11 +185,45 @@ fn main() {
             },
         )
         .unwrap();
+        let mut ancestors = Vec::new();
+        if entry == "foreground-tree-owner" {
+            for n in 2..=3 {
+                let mut child_invocation = invocation().spec().clone();
+                child_invocation.task = TaskId::new(
+                    child_invocation.task.checkout(),
+                    "",
+                    Surface::Published,
+                    &format!("child-{n}"),
+                    None,
+                )
+                .unwrap();
+                child_invocation.owner = child_invocation.task.resource();
+                let child_run = run
+                    .begin_child(
+                        &root,
+                        &ResolvedInvocation::new(child_invocation).unwrap(),
+                        BeginOpts {
+                            id: RunId::new(1, [n; 10]).unwrap(),
+                            wait: Wait::FailFast,
+                            acknowledge: vec![],
+                            next: next(),
+                            custody: Some(LifecyclePlan {
+                                executable: Executable::current().unwrap(),
+                                placement: effigy_kernel::supervise::Placement::Inline,
+                            }),
+                        },
+                    )
+                    .unwrap();
+                ancestors.push(run);
+                run = child_run;
+            }
+        }
         let mut child = Custody::spawn_foreground(&mut run, spec(home), &cx).unwrap();
         std::fs::write(
             home.join("foreground.pending"),
             serde_json::to_vec(&serde_json::json!({
                 "process": child.identity(), "guard": run.guard_identity(),
+                "ancestor_guards": ancestors.iter().map(|run| run.guard_identity()).collect::<Vec<_>>(),
             }))
             .unwrap(),
         )

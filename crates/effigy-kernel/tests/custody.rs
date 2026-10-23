@@ -1434,11 +1434,24 @@ fn foreground_guard_death_refuses_new_go_but_owner_closes_existing_custody() {
 
 #[test]
 fn foreground_owner_kill_retains_gate_until_memory_guard_closes_group() {
+    foreground_owner_kill(false);
+}
+
+#[test]
+fn foreground_tree_owner_kill_retains_ancestor_gates_until_leaf_guard_closes_group() {
+    foreground_owner_kill(true);
+}
+
+fn foreground_owner_kill(tree: bool) {
     let home = home();
     let cx = context();
     let mut owner = ChildGuard(
         Command::new(fixture())
-            .arg("foreground-owner")
+            .arg(if tree {
+                "foreground-tree-owner"
+            } else {
+                "foreground-owner"
+            })
             .arg(home.path())
             .env("HOME", home.path())
             .spawn()
@@ -1474,6 +1487,18 @@ fn foreground_owner_kill_retains_gate_until_memory_guard_closes_group() {
     });
     owner.0.kill().unwrap();
     owner.0.wait().unwrap();
+    if tree {
+        let ancestors: Vec<effigy_kernel::ident::ProcessIdentity> =
+            serde_json::from_value(data["ancestor_guards"].clone()).unwrap();
+        assert_eq!(ancestors.len(), 2);
+        // Let both ancestor guards exit while leaf cleanup is paused. Their
+        // descriptor copies alone must no longer be what holds the root.
+        for ancestor in ancestors {
+            eventually(|| {
+                effigy_kernel::ident::process_identity(ancestor.pid).verified() != Some(&ancestor)
+            });
+        }
+    }
     let observe = cx.operation().observe().unwrap();
     let root = StateRoot::observe(&observe, home.path())
         .verified()
@@ -1702,4 +1727,89 @@ fn custody_machine_journal_routes_supervisor_requests_and_sentinel_recovery_with
             legacy_before
         );
     }
+}
+
+fn foreground_child(
+    parent: &mut ForegroundRun,
+    cx: &EffectContext,
+    root: &StateRoot,
+) -> ForegroundRun {
+    let mut invocation = invocation().spec().clone();
+    invocation.task = TaskId::new(
+        invocation.task.checkout(),
+        "",
+        Surface::Published,
+        "child",
+        None,
+    )
+    .unwrap();
+    invocation.owner = invocation.task.resource();
+    parent
+        .begin_child(
+            root,
+            &ResolvedInvocation::new(invocation).unwrap(),
+            BeginOpts {
+                id: id(2),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: Some(LifecyclePlan {
+                    executable: Executable::capture(&fixture()).unwrap(),
+                    placement: effigy_kernel::supervise::Placement::Inline,
+                }),
+            },
+        )
+        .unwrap_or_else(|error| panic!("child admission: {error}; context: {cx:?}"))
+}
+
+#[test]
+fn foreground_parent_requires_positive_child_completion() {
+    for complete in [false, true] {
+        let home = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let mut parent = foreground_begin(&cx, &root);
+        let mut child = foreground_child(&mut parent, &cx, &root);
+        assert!(parent.finish(WorkloadOutcome::Succeeded).is_err());
+        if complete {
+            let mut process =
+                Custody::spawn_foreground(&mut child, spec(home.path(), "exit 0"), &cx).unwrap();
+            let exit = *process.wait(cx.operation()).verified().unwrap();
+            process.complete_foreground(&mut child, exit).unwrap();
+            child.finish(WorkloadOutcome::Succeeded).unwrap();
+            child
+                .settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+                .unwrap();
+            parent.finish(WorkloadOutcome::Succeeded).unwrap();
+            parent
+                .settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+                .unwrap();
+        } else {
+            drop(child);
+            assert!(parent.finish(WorkloadOutcome::Succeeded).is_err());
+        }
+        assert!(!root.path().join("kernel.db").exists());
+    }
+}
+
+#[test]
+fn foreground_auxiliary_custody_is_not_a_completion_obligation() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    let process =
+        Custody::spawn_auxiliary_foreground(&mut run, spec(home.path(), "exec /bin/sleep 30"), &cx)
+            .unwrap();
+    let identity = process.identity().identity.clone();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    let outcome = run
+        .settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+        .unwrap();
+    assert_eq!(outcome.exit_code(), 0);
+    assert_ne!(
+        effigy_kernel::ident::process_identity(identity.pid).verified(),
+        Some(&identity)
+    );
+    assert!(!root.path().join("kernel.db").exists());
 }

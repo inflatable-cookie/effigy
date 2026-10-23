@@ -396,6 +396,23 @@ impl Custody {
         )
     }
 
+    /// An in-memory admission holder. Its exit is not a workload obligation;
+    /// the same receipt/ack barrier and guard cleanup still apply.
+    pub fn spawn_auxiliary_foreground(
+        run: &mut crate::run::ForegroundRun,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+    ) -> Result<OwnedProcess, SpawnError> {
+        Self::spawn_inner(
+            run,
+            spec,
+            cx,
+            None,
+            crate::ctx::Capability::AdapterEffect,
+            false,
+        )
+    }
+
     pub fn spawn(
         run: &mut Run<'_>,
         spec: ProcessSpec,

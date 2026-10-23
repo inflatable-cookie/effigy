@@ -6,6 +6,7 @@ use crate::ident::ProcessIdentity;
 use crate::observe::Observed;
 use crate::supervise::{memory::MemoryGuard, Executable};
 use std::collections::BTreeMap;
+use std::os::fd::OwnedFd;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -21,6 +22,10 @@ pub struct ForegroundRun {
     guard: Option<MemoryGuard>,
     processes: BTreeMap<i64, Arc<Mutex<crate::custody::ProcessCore>>>,
     _gate: GateGuard,
+    ancestor_gates: Vec<OwnedFd>,
+    ancestor_owners: Vec<ResourceId>,
+    children: Vec<Arc<Mutex<Option<WorkloadOutcome>>>>,
+    completion: Option<Arc<Mutex<Option<WorkloadOutcome>>>>,
 }
 impl ForegroundRun {
     /// The caller classifies the whole tree before any effect, and supplies
@@ -31,6 +36,48 @@ impl ForegroundRun {
         root: &StateRoot,
         inv: &ResolvedInvocation,
         opts: BeginOpts,
+    ) -> Result<Self, RunError> {
+        Self::begin_under(cx, root, inv, opts, Vec::new(), Vec::new())
+    }
+
+    /// Each child's memory guard also holds every ancestor's gates. Owner
+    /// death can therefore never release a parent while a child is cleaning
+    /// up, even if the parent's guard finishes first. No descriptors reach
+    /// the workload. Success requires positive child completion.
+    pub fn begin_child(
+        &mut self,
+        root: &StateRoot,
+        inv: &ResolvedInvocation,
+        opts: BeginOpts,
+    ) -> Result<Self, RunError> {
+        if self.ancestor_owners.contains(&inv.spec().owner)
+            || self.record.incarnation().owner == inv.spec().owner
+            || matches!(self.record.phase(), Phase::Stopping | Phase::Closed)
+        {
+            return Err(RunError::Invalid(
+                "invalid foreground child admission".into(),
+            ));
+        }
+        let mut ancestors = self.ancestor_owners.clone();
+        ancestors.push(self.record.incarnation().owner.clone());
+        let mut gates = self._gate.share_custody()?;
+        for gate in &self.ancestor_gates {
+            gates.push(crate::gate::duplicate_custody(gate)?);
+        }
+        let mut child = Self::begin_under(&self.cx, root, inv, opts, gates, ancestors)?;
+        let completion = Arc::new(Mutex::new(None));
+        child.completion = Some(completion.clone());
+        self.children.push(completion);
+        Ok(child)
+    }
+
+    fn begin_under(
+        cx: &EffectContext,
+        root: &StateRoot,
+        inv: &ResolvedInvocation,
+        opts: BeginOpts,
+        ancestor_gates: Vec<OwnedFd>,
+        ancestor_owners: Vec<ResourceId>,
     ) -> Result<Self, RunError> {
         if cx.operation().placement() != Placement::Host || inv.spec().placement != Placement::Host
         {
@@ -108,6 +155,7 @@ impl ForegroundRun {
         let guard = MemoryGuard::start(
             &plan.executable,
             &mut gate,
+            &ancestor_gates,
             cx,
             opts.id,
             Fence {
@@ -123,6 +171,10 @@ impl ForegroundRun {
             guard: Some(guard),
             processes: BTreeMap::new(),
             _gate: gate,
+            ancestor_gates,
+            ancestor_owners,
+            children: Vec::new(),
+            completion: None,
         })
     }
     pub fn record(&self) -> &ForegroundRecord {
@@ -165,6 +217,18 @@ impl ForegroundRun {
     }
     pub fn finish(&mut self, workload: WorkloadOutcome) -> Result<(), RunError> {
         self.cx.operation().check("foreground finish")?;
+        if workload == WorkloadOutcome::Succeeded
+            && self.children.iter().any(|child| {
+                *child
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    != Some(WorkloadOutcome::Succeeded)
+            })
+        {
+            return Err(RunError::Invalid(
+                "foreground child obligations incomplete".into(),
+            ));
+        }
         self.record.finish(workload)
     }
     pub fn interrupt(&mut self, workload: WorkloadOutcome) -> Result<(), RunError> {
@@ -185,7 +249,7 @@ impl ForegroundRun {
         if let Some(mut guard) = self.guard.take() {
             guard.close(cleanup)?;
         }
-        settle::outcome(
+        let outcome = settle::outcome(
             self.record.incarnation().run,
             &self.next,
             self.record
@@ -193,7 +257,16 @@ impl ForegroundRun {
                 .cloned()
                 .unwrap_or(WorkloadOutcome::Interrupted),
             self.record.effects().to_vec(),
-        )
+        )?;
+        if outcome.cleanup() != crate::outcome::CleanupOutcome::Incomplete {
+            if let Some(completion) = &self.completion {
+                *completion
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    Some(outcome.workload().clone());
+            }
+        }
+        Ok(outcome)
     }
 }
 impl Drop for ForegroundRun {
