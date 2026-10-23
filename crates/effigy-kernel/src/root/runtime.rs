@@ -108,6 +108,13 @@ impl StateRoot {
         machine_home: &Path,
         location: &CheckoutLocation,
     ) -> Result<Self, StoreError> {
+        crate::inheritance::require_durable(cx.operation()).map_err(|error| {
+            StoreError::from(crate::fs::FsError::io(
+                "runtime class",
+                &location.root,
+                &error,
+            ))
+        })?;
         cx.require(Capability::HostAuthority)
             .map_err(|_| StoreError::HostAuthorityRequired)?;
         let observe = observation(cx)?;
@@ -190,6 +197,9 @@ impl StateRoot {
     /// Opens only shared machine facts. An old `kernel.db` is never opened
     /// for writes or silently ignored before explicit migration commits.
     pub fn runtime_machine_effects(cx: &EffectContext, home: &Path) -> Result<Self, StoreError> {
+        crate::inheritance::require_durable(cx.operation()).map_err(|error| {
+            StoreError::from(crate::fs::FsError::io("runtime class", home, &error))
+        })?;
         cx.require(Capability::HostAuthority)
             .map_err(|_| StoreError::HostAuthorityRequired)?;
         let observe = observation(cx)?;

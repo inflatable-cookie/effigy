@@ -10,6 +10,10 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 
+mod runtime;
+pub(crate) use runtime::require_journal_write;
+pub use runtime::{require_durable, RunClass, RunScope, RuntimeParent};
+
 pub const ENV: &str = "EFFIGY_PARENT_CAPABILITY";
 pub(crate) const CHILD_FD: i32 = 9;
 const PREFIX: &str = "memory-v1:9:";
@@ -144,26 +148,55 @@ impl InheritedCapability {
         if socket_option(fd, libc::SOL_SOCKET, libc::SO_TYPE)? != libc::SOCK_STREAM {
             return Err(refused("parent capability is not a stream socket"));
         }
-        live_socket(fd)?;
         let mut bytes = [0; MAX + 4];
-        // SAFETY: live owned socket, exclusively writable initialized buffer
-        // of this exact length. PEEK never consumes another child's grant;
-        // DONTWAIT bounds this read even for a substituted blocking descriptor.
-        let count = unsafe {
-            libc::recv(
-                fd,
-                bytes.as_mut_ptr().cast(),
-                bytes.len(),
-                libc::MSG_PEEK | libc::MSG_DONTWAIT,
-            )
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(25);
+        let length = loop {
+            live_socket(fd)?;
+            cx.check("parent capability peek")
+                .map_err(|error| io::Error::other(format!("{error:?}")))?;
+            // SAFETY: live owned socket and this exclusively writable initialized
+            // allocation of exactly bytes.len(). PEEK preserves sibling grants;
+            // DONTWAIT prevents a substituted blocking descriptor from waiting.
+            // recv(2) may return short data, EAGAIN or EINTR, even for a peek.
+            let count = unsafe {
+                libc::recv(
+                    fd,
+                    bytes.as_mut_ptr().cast(),
+                    bytes.len(),
+                    libc::MSG_PEEK | libc::MSG_DONTWAIT,
+                )
+            };
+            let detail = if count < 0 {
+                let error = io::Error::last_os_error();
+                if !matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) {
+                    return Err(error);
+                }
+                error.to_string()
+            } else if count == 0 {
+                return Err(refused("parent capability peer closed its grant"));
+            } else {
+                if count >= 4 {
+                    let length =
+                        u32::from_be_bytes(bytes[..4].try_into().expect("four bytes")) as usize;
+                    if length > MAX || count as usize > length + 4 {
+                        return Err(refused("parent capability frame invalid"));
+                    }
+                    if count as usize == length + 4 {
+                        break length;
+                    }
+                }
+                format!("short peek ({count} bytes)")
+            };
+            if std::time::Instant::now() >= until {
+                return Err(refused(&format!(
+                    "parent capability frame unavailable after bounded peek: {detail}"
+                )));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
         };
-        if count < 4 {
-            return Err(refused("parent capability frame unavailable"));
-        }
-        let length = u32::from_be_bytes(bytes[..4].try_into().expect("four bytes")) as usize;
-        if length > MAX || count as usize != length + 4 {
-            return Err(refused("parent capability frame incomplete"));
-        }
         let bytes = &bytes[4..length + 4];
         if marker(bytes) != self.marker {
             return Err(refused("parent capability selector disagrees"));

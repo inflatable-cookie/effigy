@@ -1,41 +1,15 @@
 //! Memory-only task admission and explicit parent-class inheritance.
 use super::*;
 use effigy_kernel::custody::{Custody, Exit, OwnedProcess, ProcessSpec, SpawnError};
-use effigy_kernel::inheritance::{InheritedCapability, MemoryLease};
+use effigy_kernel::inheritance::{MemoryLease, RunClass, RuntimeParent};
 use effigy_kernel::migration::CheckoutLocation;
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::ForegroundRun;
-use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(in crate::runner::task_engine) struct ParentGrant {
-    version: u8,
-    pub(in crate::runner::task_engine) run: RunId,
-    foreground: bool,
-    pub(in crate::runner::task_engine) hook: Option<effigy_kernel::ident::ProcessIdentity>,
-}
-
-/// Environment text is only a selector. A lost or forged inherited descriptor
-/// refuses before token creation or any writable journal is opened.
-pub(in crate::runner::task_engine) fn inherited_class() -> Result<Option<ParentGrant>, RunnerError>
+pub(in crate::runner::task_engine) fn inherited_class() -> Result<Option<RuntimeParent>, RunnerError>
 {
-    let Some(marker) = std::env::var_os(effigy_kernel::inheritance::ENV) else {
-        return Ok(None);
-    };
-    let marker = marker
-        .to_str()
-        .ok_or_else(|| class_error("invalid parent selector"))?;
-    let cx = kernel::effects();
-    let capability = InheritedCapability::capture(cx.operation(), marker)
-        .map_err(|error| class_error(&error.to_string()))?;
-    let grant: ParentGrant = capability
-        .payload(cx.operation())
-        .map_err(|error| class_error(&error.to_string()))?;
-    if grant.version != 1 {
-        return Err(class_error("unsupported parent grant"));
-    }
-    Ok(Some(grant))
+    RuntimeParent::inherited(kernel::effects().operation())
+        .map_err(|error| class_error(&error.to_string()))
 }
 fn class_error(reason: &str) -> RunnerError {
     RunnerError::task_invocation(format!(
@@ -45,7 +19,7 @@ fn class_error(reason: &str) -> RunnerError {
 
 pub(super) fn require_durable_parent() -> Result<(), RunnerError> {
     if PARENTS.with(|parents| parents.borrow().last().is_some_and(|p| p.memory.is_some()))
-        || inherited_class()?.is_some_and(|grant| grant.foreground)
+        || inherited_class()?.is_some_and(|grant| grant.class == RunClass::Foreground)
     {
         return Err(class_error(
             "a foreground parent cannot acquire late durable capabilities",
@@ -63,7 +37,7 @@ impl TaskRun {
         let parent = PARENTS.with(|parents| parents.borrow().last().cloned());
         let inherited = inherited_class()?;
         if parent.as_ref().is_some_and(|parent| parent.run.is_some())
-            || inherited.is_some_and(|grant| !grant.foreground)
+            || inherited.is_some_and(|grant| grant.class != RunClass::Foreground)
         {
             return Self::begin(request);
         }
@@ -169,16 +143,18 @@ impl TaskRun {
             self.lease = Some(
                 MemoryLease::new(
                     &cx,
-                    &ParentGrant {
-                        version: 1,
-                        run: self.id(),
-                        foreground: self.memory.is_some(),
-                        hook: self
-                            .admission
+                    &RuntimeParent::new(
+                        self.id(),
+                        if self.memory.is_some() {
+                            RunClass::Foreground
+                        } else {
+                            RunClass::CheckoutDurable
+                        },
+                        self.admission
                             .as_ref()
                             .map(|admission| admission.identity())
                             .or(super::super::admission::current_hook()?),
-                    },
+                    ),
                 )
                 .map_err(|error| class_error(&error.to_string()))?,
             );

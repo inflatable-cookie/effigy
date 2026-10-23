@@ -2,7 +2,7 @@ use super::*;
 use crate::ctx::*;
 use std::time::{Duration, Instant};
 
-fn context(placement: Placement) -> EffectContext {
+pub(super) fn context(placement: Placement) -> EffectContext {
     OperationContext::new(
         Deadline::At(Instant::now() + Duration::from_secs(5)),
         CancelToken::default(),
@@ -114,4 +114,29 @@ fn custody_exports_only_a_verified_cloexec_reading_description() {
     assert_eq!(reader.payload::<u32>(cx.operation()).unwrap(), 42);
     drop(lease);
     assert!(reader.payload::<u32>(cx.operation()).is_err());
+}
+
+#[test]
+fn concurrent_peeks_keep_one_complete_grant_for_every_reader() {
+    let cx = context(Placement::Host);
+    let payload = serde_json::json!({"value": "x".repeat(2500)});
+    let lease = MemoryLease::new(&cx, &payload).unwrap();
+    let capability = lease.capability();
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            let capability = &capability;
+            let payload = &payload;
+            let cx = &cx;
+            scope.spawn(move || {
+                for _ in 0..100 {
+                    assert_eq!(
+                        &capability
+                            .payload::<serde_json::Value>(cx.operation())
+                            .unwrap(),
+                        payload
+                    );
+                }
+            });
+        }
+    });
 }

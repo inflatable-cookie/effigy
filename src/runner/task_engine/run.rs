@@ -159,7 +159,9 @@ struct Parent {
 thread_local! {
     static PARENTS: RefCell<Vec<Parent>> = const { RefCell::new(Vec::new()) };
 }
-pub(in crate::runner) struct ParentScope;
+pub(in crate::runner) struct ParentScope {
+    _runtime: effigy_kernel::inheritance::RunScope,
+}
 impl Drop for ParentScope {
     fn drop(&mut self) {
         PARENTS.with(|parents| {
@@ -566,7 +568,19 @@ impl TaskRun {
     }
 
     /// Lexical nesting carries native handles on this thread.
-    pub(in crate::runner) fn enter(&self) -> ParentScope {
+    pub(in crate::runner) fn enter(&self) -> Result<ParentScope, RunnerError> {
+        let runtime = effigy_kernel::inheritance::RunScope::enter(
+            effigy_kernel::inheritance::RuntimeParent::new(
+                self.id(),
+                if self.memory.is_some() {
+                    effigy_kernel::inheritance::RunClass::Foreground
+                } else {
+                    effigy_kernel::inheritance::RunClass::CheckoutDurable
+                },
+                super::admission::current_hook()?,
+            ),
+        )
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
         let mut ancestors = self.ancestors.clone();
         ancestors.push(self.owner());
         PARENTS.with(|parents| {
@@ -577,7 +591,7 @@ impl TaskRun {
                 shared_owners: self.shared_owners.clone(),
             })
         });
-        ParentScope
+        Ok(ParentScope { _runtime: runtime })
     }
 
     pub(in crate::runner) fn step(&self, index: usize, label: &str) -> Result<Self, RunnerError> {

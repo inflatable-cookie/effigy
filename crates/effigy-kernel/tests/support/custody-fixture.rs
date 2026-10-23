@@ -128,6 +128,25 @@ fn main() {
         }
         return;
     }
+    if entry == "runtime-open" {
+        let cx = op(router.root_cancel()).effects().unwrap();
+        let grant = effigy_kernel::inheritance::RuntimeParent::inherited(cx.operation())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            grant.class,
+            effigy_kernel::inheritance::RunClass::Foreground
+        );
+        let home = Path::new(args.get(1).expect("private nonexistent fixture home"));
+        let location = effigy_kernel::migration::CheckoutLocation {
+            root: home.join("checkout"),
+            git_directory: None,
+        };
+        assert!(StateRoot::checkout_effects(&cx, &home.join("machine"), &location).is_err());
+        assert!(StateRoot::runtime_machine_effects(&cx, &home.join("machine")).is_err());
+        assert!(!home.exists());
+        return;
+    }
     if entry == "migration-writer" {
         let home = Path::new(args.get(1).expect("private fixture home"));
         let cx = op(router.root_cancel()).effects().unwrap();

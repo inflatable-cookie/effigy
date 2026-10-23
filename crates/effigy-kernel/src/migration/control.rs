@@ -141,6 +141,13 @@ fn legacy_control_context(
     cx: &EffectContext,
     source: &StateRoot,
 ) -> Result<ObserveContext, StoreError> {
+    crate::inheritance::require_durable(cx.operation()).map_err(|error| {
+        StoreError::from(crate::fs::FsError::io(
+            "runtime class",
+            source.path(),
+            &error,
+        ))
+    })?;
     cx.require(Capability::HostAuthority)
         .map_err(|_| StoreError::HostAuthorityRequired)?;
     cx.require(Capability::AdapterEffect)

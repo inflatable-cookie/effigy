@@ -1793,6 +1793,37 @@ fn inheritance_custody_exports_one_reader_to_sibling_foreground_children() {
 }
 
 #[test]
+fn inheritance_foreground_class_refuses_durable_factories_in_a_native_child() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    let grant = effigy_kernel::inheritance::RuntimeParent::new(
+        id(1),
+        effigy_kernel::inheritance::RunClass::Foreground,
+        None,
+    );
+    let lease = effigy_kernel::inheritance::MemoryLease::new(&cx, &grant).unwrap();
+    let mut command = spec(home.path(), "unused");
+    command.argv = vec![
+        fixture().into_os_string(),
+        "runtime-open".into(),
+        home.path().join("forbidden").into_os_string(),
+    ];
+    let mut process =
+        Custody::spawn_foreground_with_lease(&mut run, command, &cx, &lease.capability(), true)
+            .unwrap();
+    let exit = process.wait(cx.operation()).verified().copied().unwrap();
+    assert_eq!(exit.code, 0);
+    process.complete_foreground(&mut run, exit).unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(&cx.operation().cleanup(Duration::from_secs(5)).unwrap())
+        .unwrap();
+    assert!(!home.path().join("forbidden").exists());
+    assert!(!root.path().join("kernel.db").exists());
+}
+
+#[test]
 fn inheritance_ambient_marker_cannot_export_an_unowned_descriptor() {
     let home = home();
     let cx = context();

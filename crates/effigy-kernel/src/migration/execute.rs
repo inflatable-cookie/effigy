@@ -83,6 +83,13 @@ pub fn import(
     quiescence: &LegacyQuiescence,
     resolve: &mut CheckoutResolver<'_>,
 ) -> Result<ImportReport, MigrationError> {
+    crate::inheritance::require_durable(cx.operation()).map_err(|error| {
+        StoreError::from(crate::fs::FsError::io(
+            "runtime class",
+            machine_home,
+            &error,
+        ))
+    })?;
     cx.require(crate::ctx::Capability::HostAuthority)
         .map_err(|_| StoreError::HostAuthorityRequired)?;
     if cx.operation().class() != crate::ctx::EffectClass::Mutate {

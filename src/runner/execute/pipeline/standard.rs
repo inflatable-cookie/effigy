@@ -113,7 +113,7 @@ pub(in crate::runner) fn run_standard_task(
     // value is an effect of this run, and a second spelling waits on the
     // gate instead of running them too.
     let result = (|| {
-        let _parent = run.enter();
+        let _parent = run.enter()?;
         let env_schema_resolved = {
             let exec = RunExec::new(&mut run);
             resolve_env_schema_if_present(

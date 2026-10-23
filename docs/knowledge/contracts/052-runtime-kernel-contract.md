@@ -223,12 +223,19 @@ explicit user-requested exports are outside runtime-state accounting.
 The kernel's memory parent capability uses an anonymous Unix socket pair.
 Only Custody explicitly exports its reading end to reserved descriptor 9;
 the writing end never reaches a workload or group anchor. A bounded grant is
-peeked without consumption, checked against its environment selector, native
+peeked without consumption (short/nonblocking contention retries stay within
+25 ms and the caller deadline), checked against its environment selector, native
 peer UID/PID and fresh boot/start identity, with socket closure checked before
 and after. The receiver marks the inherited slot CLOEXEC; forwarding requires
 an explicit capability again. Queued bytes after owner closure grant nothing.
-This supplies the mechanism for admission and run-class inheritance; engines
-own the typed grant and live hook check.
+The typed runtime grant identifies its protocol purpose, run class, run id
+and optional native hook identity. Durable factories, journal open, supervisor
+launch and migration check the inherited grant before work. Lexical engine
+scopes impose the same restriction inside one process; dropping another scope
+cannot lift a live foreground restriction. An existing writable handle cannot
+write from a foreground scope. Already-admitted durable owners retain their
+fenced cleanup authority when a parent lease ends. Engines continue to own
+classification and live hook checks while workloads run.
 
 Bound checkout admission always takes the filesystem owner alias alongside its
 persisted-token spelling and every verified import alias. The sentinel derives
