@@ -32,7 +32,12 @@ creation; seals bind the opened checkout directory generation. Supervisor
 configuration carries the journal kind so machine helpers cannot silently
 write the legacy database. Checkout-token aliases retain the same owner
 exclusion through closure. These are kernel guarantees; production routing
-and whole-tree classification remain to be connected.
+and whole-tree classification remain to be connected. `effigy run migrate`
+now exposes pure planning, explicit launcher-quiescence assertion, bounded
+checkout discovery and exact verified legacy-writer stop receipts, including
+pre-run admission/retention writers. Its JSON payload is
+`effigy.runtime-migration.v1`. This command does not yet switch ordinary engine
+callers away from the legacy route.
 
 Status: foundation types are implemented in `crates/effigy-kernel/`: identity
 encoding v1, operation contexts and class capabilities, observation and Probe

@@ -309,64 +309,13 @@ impl Gate {
         run: &RunId,
         signal: i32,
     ) -> Observed<u32> {
-        if cx.require(Capability::HostAuthority).is_err() {
-            return Observed::Unknown(UnknownReason::HostAuthorityRequired);
-        }
-        let gates = match root.family(Family::Gates) {
-            Ok(Some(gates)) => gates,
-            Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
-            Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
-        };
-        let file = match gates
-            .child(&scope_name(id.scope()), Trust::Private, false)
-            .and_then(|dir| match dir {
-                Some(dir) => open_gate(&dir, &format!("{}.gate", id.name()), false),
-                None => Ok(None),
-            }) {
-            Ok(Some(file)) => file,
-            Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
-            Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
-        };
-        match fs::try_flock(&file, libc::LOCK_SH) {
-            Ok(true) => {
-                fs::unlock(&file);
-                return Observed::Absent(AbsenceProof::NoGateInode);
-            }
-            Ok(false) => {}
-            Err(error) => return Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
-        }
-        let diag = match holder(&file) {
-            Observed::Verified(diag, _) => diag,
-            Observed::Absent(proof) => return Observed::Absent(proof),
-            Observed::Unknown(reason) => return Observed::Unknown(reason),
-        };
-        let run_text = run.to_string();
-        if diag.run.as_deref() != Some(run_text.as_str())
-            || !matches!(diag.state, Observed::Verified(..))
-        {
-            return Observed::Unknown(UnknownReason::Inconsistent(
-                "the gate holder is not this run's verified owner".into(),
-            ));
-        }
-        match ident::process_identity(diag.pid) {
-            Observed::Verified(identity, _)
-                if Some(identity.start.text()) == diag.start
-                    && Some(identity.boot.as_str()) == diag.boot.as_deref() => {}
-            _ => {
-                return Observed::Unknown(UnknownReason::Inconsistent(
-                    "the gate holder changed before the signal".into(),
-                ))
-            }
-        }
-        // SAFETY: kill(2) of one pid whose identity was just re-verified.
-        if unsafe { libc::kill(diag.pid as i32, signal) } != 0 {
-            return Observed::Unknown(UnknownReason::Inconsistent(
-                std::io::Error::last_os_error().to_string(),
-            ));
-        }
-        Observed::Verified(
-            diag.pid,
-            Evidence::new("kernel gate holder signal".into(), None).expect("fixed source"),
+        signal_named_holder(
+            cx,
+            root,
+            &scope_name(id.scope()),
+            &id.name().to_string(),
+            ExpectedHolder::Run(run),
+            signal,
         )
     }
 
@@ -433,6 +382,101 @@ impl Gate {
         drop(file);
         Ok(ScopeRemoval::Removed)
     }
+}
+
+pub(crate) enum ExpectedHolder<'a> {
+    Run(&'a RunId),
+    Writer(&'a ident::ProcessIdentity, Option<&'a str>),
+}
+/// Migration can address a pre-run writer whose legacy gate has no RunId.
+/// Names are validated by that boundary; identity matching is never optional.
+pub(crate) fn signal_named_holder(
+    cx: &EffectContext,
+    root: &StateRoot,
+    scope: &str,
+    resource: &str,
+    target: ExpectedHolder<'_>,
+    signal: i32,
+) -> Observed<u32> {
+    if cx.operation().check("gate holder signal").is_err() {
+        return Observed::Unknown(UnknownReason::TimedOut {
+            phase: "gate holder signal".into(),
+        });
+    }
+    if cx.require(Capability::HostAuthority).is_err() {
+        return Observed::Unknown(UnknownReason::HostAuthorityRequired);
+    }
+    if let Err(error) = root.verify_binding() {
+        return Observed::Unknown(crate::root::unknown(&error));
+    }
+    let gates = match root.family(Family::Gates) {
+        Ok(Some(gates)) => gates,
+        Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
+        Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
+    };
+    let file = match gates
+        .child(scope, Trust::Private, false)
+        .and_then(|dir| match dir {
+            Some(dir) => open_gate(&dir, &format!("{resource}.gate"), false),
+            None => Ok(None),
+        }) {
+        Ok(Some(file)) => file,
+        Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
+        Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
+    };
+    match fs::try_flock(&file, libc::LOCK_SH) {
+        Ok(true) => {
+            fs::unlock(&file);
+            return Observed::Absent(AbsenceProof::NoGateInode);
+        }
+        Ok(false) => {}
+        Err(error) => return Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+    }
+    let diag = match holder(&file) {
+        Observed::Verified(diag, _) => diag,
+        Observed::Absent(proof) => return Observed::Absent(proof),
+        Observed::Unknown(reason) => return Observed::Unknown(reason),
+    };
+    let matches_target = match target {
+        ExpectedHolder::Run(run) => diag.run.as_deref() == Some(run.to_string().as_str()),
+        ExpectedHolder::Writer(identity, run) => {
+            diag.run.as_deref() == run
+                && diag.pid == identity.pid
+                && diag.start.as_deref() == Some(identity.start.text().as_str())
+                && diag.boot.as_deref() == Some(identity.boot.as_str())
+        }
+    };
+    if !matches_target || !matches!(diag.state, Observed::Verified(..)) {
+        return Observed::Unknown(UnknownReason::Inconsistent(
+            "the gate holder is not the expected verified owner".into(),
+        ));
+    }
+    match ident::process_identity(diag.pid) {
+        Observed::Verified(identity, _)
+            if Some(identity.start.text()) == diag.start
+                && Some(identity.boot.as_str()) == diag.boot.as_deref() => {}
+        _ => {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "the gate holder changed before the signal".into(),
+            ))
+        }
+    }
+    let pid = match i32::try_from(diag.pid) {
+        Ok(pid) if pid > 0 => pid,
+        _ => return Observed::Unknown(UnknownReason::Unparsable("invalid holder pid".into())),
+    };
+    // SAFETY: kill takes integer PID/signal values and no memory. The
+    // positive, representable PID selects one process, never a group; its
+    // exact boot/start identity was rechecked immediately above (I-P4).
+    if unsafe { libc::kill(pid, signal) } != 0 {
+        return Observed::Unknown(UnknownReason::Inconsistent(
+            std::io::Error::last_os_error().to_string(),
+        ));
+    }
+    Observed::Verified(
+        diag.pid,
+        Evidence::new("kernel gate holder signal".into(), None).expect("fixed source"),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -9,6 +9,7 @@
 mod admission;
 mod checkout;
 mod control;
+pub(in crate::runner) mod discovery;
 mod holders;
 mod identity;
 mod kernel;

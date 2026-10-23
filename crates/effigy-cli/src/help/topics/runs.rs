@@ -17,6 +17,8 @@ const RUNS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "`run stop` asks the run's owner to stop through the kernel journal; the owner stops the task's whole process group and settles the run."
     ],
     usage: text_lines![
+        "effigy run migrate [--plan | --legacy-launchers-stopped] [--checkout <ROOT>]... [--json]",
+        "effigy run migrate --stop <LEGACY_RUN> [--json]",
         "effigy runs [--limit <N>] [--all] [--json]",
         "effigy run status <run> [--json]",
         "effigy run logs <run> [--follow] [--stdout-offset <N>] [--stderr-offset <N>] [--json]",
@@ -39,6 +41,10 @@ const RUNS_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
 };
 
 const RUNS_OPTIONS: &[(&str, &str)] = option_rows![
+    "--plan" => "Inspect migration without creating or importing state",
+    "--legacy-launchers-stopped" => "Assert old launchers are withdrawn; import only after all writers stop",
+    "--checkout <ROOT>" => "Additional checkout search root for migration (repeatable)",
+    "--stop <LEGACY_RUN>" => "Queue a fenced legacy stop before cutover; never signals an unverified PID",
     "--limit <N>" => "Runs to list, newest first (default 20)",
     "--all" => "List runs from every checkout on this host, not only this one",
     "--follow" => "Keep reading until the run settles, then exit with its result",

@@ -55,6 +55,8 @@ pub const USER_CONFIG_FILE: &str = "config.toml";
 #[serde(deny_unknown_fields)]
 pub struct UserConfig {
     #[serde(default)]
+    pub runtime: UserRuntimeConfig,
+    #[serde(default)]
     pub containers: UserContainersConfig,
     #[serde(default)]
     pub bundle: BTreeMap<String, UserBundleConfig>,
@@ -67,6 +69,15 @@ pub struct UserConfig {
     /// silently ignored setting.
     #[serde(default)]
     pub programs: BTreeMap<String, UserProgramConfig>,
+}
+
+/// Read-only runtime discovery roots. They never register a checkout or grant
+/// mutation authority to a path found beneath them.
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UserRuntimeConfig {
+    #[serde(default)]
+    pub checkout_roots: Vec<PathBuf>,
 }
 
 /// One `[programs.<name>]` block: run `fallback` when `<name>` is unavailable
@@ -615,5 +626,23 @@ library_mounts = ["~/from-override"]
             assert_eq!(mounts.len(), 1);
             assert_eq!(mounts[0].raw, "~/from-override");
         });
+    }
+    #[test]
+    fn runtime_discovery_roots_survive_other_user_config_edits() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[runtime]\ncheckout_roots = ['/work/one', '/work/two']\n",
+        )
+        .unwrap();
+        let mut config = load_user_config_from(&path).unwrap();
+        config.containers.profile = Some("private".into());
+        save_user_config_to(&path, &config).unwrap();
+        assert_eq!(
+            load_user_config_from(&path).unwrap().runtime.checkout_roots,
+            vec![PathBuf::from("/work/one"), PathBuf::from("/work/two")]
+        );
+        assert!(toml::from_str::<UserConfig>("[runtime]\nunknown = true").is_err());
     }
 }

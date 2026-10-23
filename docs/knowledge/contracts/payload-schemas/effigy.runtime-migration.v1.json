@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "effigy.runtime-migration.v1 payload",
+  "description": "Legacy runtime inspection, explicit stop, cutover and resumption. Planning never imports or creates destination state. A stop receipt acknowledges a request or signal, never positive settlement.",
+  "type": "object",
+  "required": [
+    "schema",
+    "state",
+    "schema_version"
+  ],
+  "properties": {
+    "schema": {
+      "const": "effigy.runtime-migration.v1"
+    },
+    "state": {
+      "enum": [
+        "no-legacy-state",
+        "planned",
+        "needs-quiescence",
+        "blocked",
+        "stop-requested",
+        "stop-refused",
+        "committed"
+      ]
+    },
+    "source": {
+      "type": "string"
+    },
+    "staging_started": {
+      "const": false
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "writer",
+          "stop_command",
+          "drain_check"
+        ],
+        "properties": {
+          "writer": {
+            "type": "object"
+          },
+          "stop_command": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "drain_check": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "plan": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "committed": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "report": {
+      "type": "object"
+    },
+    "destinations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "checkout",
+          "root",
+          "unresolved_runs"
+        ]
+      }
+    },
+    "discovery": {
+      "type": "object",
+      "required": [
+        "roots_searched",
+        "checkouts",
+        "omitted"
+      ],
+      "properties": {
+        "roots_searched": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "checkouts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "omitted": {
+          "type": "array"
+        }
+      }
+    },
+    "target": {
+      "type": "object"
+    },
+    "signalled": {
+      "type": "object"
+    },
+    "schema_version": {
+      "const": 1
+    }
+  },
+  "additionalProperties": false
+}

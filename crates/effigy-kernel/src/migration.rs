@@ -1,11 +1,13 @@
 //! Legacy-source inspection. Observation never acquires migration authority,
 //! stages a destination, repairs a source, or signals a recorded process.
 pub(crate) mod adoption;
+mod control;
 mod copy;
 mod execute;
 mod fence;
 mod files;
 pub use adoption::{authority, Authority, ImportReceipt, ImportedDestination};
+pub use control::{request_legacy_stop, stop_legacy_writer, LegacyStop, WriterTarget};
 pub use execute::{committed, import, CheckoutResolver, ImportReport};
 mod plan;
 pub use fence::LegacyQuiescence;
@@ -353,4 +355,16 @@ fn holder_blocker(scope: &str, resource: &str, holder: Observed<HolderDiag>) -> 
 }
 fn inconsistent(reason: UnknownReason) -> StoreError {
     StoreError::Corrupt(format!("legacy inspection: {reason:?}"))
+}
+
+/// Metadata-only presence check for routing. An invalid existing file counts
+/// as present and must be inspected, never silently treated as fresh state.
+pub fn legacy_present(cx: &ObserveContext, root: &StateRoot) -> Result<bool, StoreError> {
+    cx.check("legacy database presence")
+        .map_err(StoreError::Interrupted)?;
+    root.verify_binding()?;
+    Ok(root
+        .dir()
+        .entry(&FileName::new(crate::store::DB_NAME)?)?
+        .is_some())
 }

@@ -358,6 +358,12 @@ During v0.x, MINOR bumps may include breaking changes.
   `simulate --version`. The refusal names the replacement.
 
 ### Added
+- `effigy run migrate --plan` inspects legacy runtime state and reports exact
+  blocking writers with verified stop commands. Withdraw old launchers, then
+  use `--legacy-launchers-stopped` to import retained state into per-checkout
+  journals and the machine store. `--checkout` and user-config
+  `[runtime].checkout_roots` locate existing checkout identities without a
+  central registration index. Interrupted imports resume the same cutover.
 - The checkpointed release Run (contract 054 §3, §5, §7). `effigy release run
   [--to <stage>]` runs one durable kernel Run through validate → [pre-gates] →
   prepare → certify → publish → verify → closeout, with a checkpoint after

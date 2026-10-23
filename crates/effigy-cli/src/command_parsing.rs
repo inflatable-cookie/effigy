@@ -14,6 +14,8 @@ mod deploy;
 mod docs;
 #[path = "command_parsing_release.rs"]
 mod release;
+#[path = "command_parsing_run_migration.rs"]
+mod run_migration;
 #[path = "command_parsing_runtime.rs"]
 mod runtime;
 #[path = "command_parsing_secrets.rs"]
@@ -1604,6 +1606,9 @@ fn parse_runs<I>(action: Option<String>, args: I) -> Result<Command, CliParseErr
 where
     I: IntoIterator<Item = String>,
 {
+    if action.as_deref() == Some("migrate") {
+        return run_migration::parse(args);
+    }
     let mut args = args.into_iter();
     let mut repo_override = None;
     let mut output_json = false;
@@ -1695,7 +1700,7 @@ where
         },
         Some(other) => {
             return Err(CliParseError::InvalidArguments(format!(
-                "`effigy run` supports `status`, `logs` or `stop`, not `{other}`"
+                "`effigy run` supports `status`, `logs`, `stop` or `migrate`, not `{other}`"
             )))
         }
     };

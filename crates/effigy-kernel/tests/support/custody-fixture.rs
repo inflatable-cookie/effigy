@@ -109,6 +109,46 @@ fn main() {
         }
         return;
     }
+    if entry == "migration-writer" {
+        let home = Path::new(args.get(1).expect("private fixture home"));
+        let cx = op(router.root_cancel()).effects().unwrap();
+        let root = StateRoot::effects(&cx, home).unwrap();
+        drop(effigy_kernel::store::Store::open(&cx, &root).unwrap());
+        let owner = ResourceId::store(Scope::Machine, "kernel").unwrap();
+        let guard = effigy_kernel::gate::Gate::acquire(
+            &cx,
+            &root,
+            std::slice::from_ref(&owner),
+            Wait::FailFast,
+        )
+        .unwrap();
+        let conn = rusqlite::Connection::open(root.path().join("kernel.db")).unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE; UPDATE meta SET value=value")
+            .unwrap();
+        let identity = effigy_kernel::ident::process_identity(std::process::id())
+            .verified()
+            .unwrap()
+            .clone();
+        let target = effigy_kernel::migration::WriterTarget {
+            scope: "machine".into(),
+            resource: owner.name().to_string(),
+            run: None,
+            process: identity,
+        };
+        std::fs::write(
+            home.join("writer.pending"),
+            serde_json::to_vec(&target).unwrap(),
+        )
+        .unwrap();
+        std::fs::rename(home.join("writer.pending"), home.join("writer.json")).unwrap();
+        while router.poll().is_empty() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        conn.execute_batch("ROLLBACK").unwrap();
+        drop(conn);
+        drop(guard);
+        return;
+    }
     if entry == "foreground-owner" {
         let home = Path::new(args.get(1).expect("private fixture root"));
         let cx = op(router.root_cancel()).effects().unwrap();

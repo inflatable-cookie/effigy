@@ -127,6 +127,11 @@ impl StateRoot {
         root.database = Database::Checkout;
         root
     }
+    pub(crate) fn legacy_control(&self) -> Self {
+        let mut root = self.legacy_source();
+        root.writable = true;
+        root
+    }
     pub(crate) fn unpublished(&self) -> Self {
         let mut root = self.clone();
         root.writable = false;

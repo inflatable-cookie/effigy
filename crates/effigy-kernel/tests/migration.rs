@@ -748,3 +748,132 @@ fn migration_sealed_missing_database_is_unknown_and_mutation_cannot_recreate_it(
     assert!(!machine.path().join("machine.db").exists());
     assert_eq!(snapshot(source_home.path()), before);
 }
+
+#[test]
+fn runtime_migration_legacy_stop_never_mutates_closed_unknown_or_committed_sources() {
+    use effigy_kernel::id::RunId;
+    let (home, root, owner) = source();
+    let cx = effects(EffectClass::Mutate);
+    let run = RunId::new(1, [1; 10]).unwrap();
+    let request = RunId::new(2, [2; 10]).unwrap();
+    let conn = rusqlite::Connection::open(root.path().join(DB_NAME)).unwrap();
+    conn.execute("INSERT INTO runs(run_id,owner,generation,kind,placement,phase,cleanup_outcome,created_at,updated_at) VALUES (?1,?2,1,'task','host','closed','complete',1,1)", rusqlite::params![run.to_string(), owner.name().to_string()]).unwrap();
+    drop(conn);
+    let before = snapshot(home.path());
+    let result = migration::request_legacy_stop(&cx, &root, run, request).unwrap();
+    assert!(!result.queued);
+    assert!(result.owner_signalled.is_none());
+    assert_eq!(snapshot(home.path()), before);
+    assert!(migration::request_legacy_stop(&cx, &root, request, run).is_err());
+    assert_eq!(snapshot(home.path()), before);
+    migration::import(
+        &cx,
+        &root,
+        home.path(),
+        &migration::LegacyQuiescence::launchers_withdrawn(),
+        &mut |_, _, _| panic!("completed history has no checkout destination"),
+    )
+    .unwrap();
+    let after = snapshot(home.path());
+    assert!(migration::request_legacy_stop(&cx, &root, run, request).is_err());
+    assert_eq!(snapshot(home.path()), after);
+}
+
+#[test]
+fn runtime_migration_exact_writer_receipt_refuses_stale_and_free_gate_without_signals() {
+    let (home, root, owner) = source();
+    let cx = effects(EffectClass::Mutate);
+    let guard = Gate::acquire(&cx, &root, std::slice::from_ref(&owner), Wait::FailFast).unwrap();
+    let report = migration::inspect(&observe(), &root).unwrap();
+    let target = migration::WriterTarget::from_blocker(&report.blockers[0]).unwrap();
+    let mut stale = target.clone();
+    stale.process.start = effigy_kernel::ident::ProcessStartIdentity::LinuxTicks(u64::MAX);
+    let before = snapshot(home.path());
+    assert!(matches!(
+        migration::stop_legacy_writer(&cx, &root, &stale).unwrap(),
+        Observed::Unknown(_)
+    ));
+    assert_eq!(snapshot(home.path()), before);
+    drop(guard);
+    let before = snapshot(home.path());
+    assert!(matches!(
+        migration::stop_legacy_writer(&cx, &root, &target).unwrap(),
+        Observed::Absent(_)
+    ));
+    assert_eq!(snapshot(home.path()), before);
+}
+
+#[test]
+fn runtime_migration_stopped_pre_run_writer_is_reported_before_staging_and_can_be_stopped() {
+    use effigy_test_support::process::FixtureCommandExt;
+    use std::time::{Duration, Instant};
+    let home = home();
+    let fixture = std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
+        .expect("selector supplies the built private fixture binary");
+    let mut child = std::process::Command::new(fixture)
+        .arg("migration-writer")
+        .arg(home.path())
+        .env("HOME", home.path())
+        .spawn_owned()
+        .unwrap();
+    let end = Instant::now() + Duration::from_secs(12);
+    while !home.path().join("writer.json").exists() {
+        assert!(Instant::now() < end, "writer ready deadline");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let target: migration::WriterTarget =
+        serde_json::from_slice(&std::fs::read(home.path().join("writer.json")).unwrap()).unwrap();
+    assert_eq!(target.process.pid, child.id());
+    assert_eq!(
+        ident::process_identity(child.id()).verified(),
+        Some(&target.process)
+    );
+    // SAFETY: SIGSTOP is a valid signal and this positive PID is the exact
+    // unreaped child started above, with its boot/start identity rechecked.
+    assert_eq!(
+        unsafe { libc::kill(i32::try_from(child.id()).unwrap(), libc::SIGSTOP) },
+        0
+    );
+    while !matches!(
+        ident::process_state(child.id()),
+        Observed::Verified(ident::ProcessState::Stopped, _)
+    ) {
+        assert!(Instant::now() < end, "writer stop deadline");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let root = StateRoot::legacy_observe(&observe(), home.path())
+        .verified()
+        .unwrap()
+        .clone();
+    let before = snapshot(home.path());
+    let report = migration::inspect(&observe(), &root).unwrap();
+    assert!(!report.ready());
+    assert!(report.blockers.iter().any(
+        |blocker| blocker.run.is_none() && blocker.process.verified() == Some(&target.process)
+    ));
+    let cx = effects(EffectClass::Mutate);
+    assert!(matches!(
+        migration::import(
+            &cx,
+            &root,
+            home.path(),
+            &migration::LegacyQuiescence::launchers_withdrawn(),
+            &mut |_, _, _| panic!("busy preflight must not resolve destinations")
+        ),
+        Err(migration::MigrationError::Blocked(_))
+    ));
+    assert_eq!(snapshot(home.path()), before);
+    assert!(
+        matches!(migration::stop_legacy_writer(&cx,&root,&target).unwrap(),Observed::Verified(pid,_) if pid==child.id())
+    );
+    while child.try_wait().unwrap().is_none() {
+        assert!(
+            Instant::now() < end,
+            "verified TERM and CONT should drain the writer"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    child.wait().unwrap();
+    assert!(migration::inspect(&observe(), &root).unwrap().ready());
+    assert!(!root.path().join("migration-prepared.json").exists());
+}

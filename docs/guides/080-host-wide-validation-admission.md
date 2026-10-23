@@ -109,3 +109,52 @@ host-wide capacity control, Queue:
 
 Heavy selectors need no scheduler: with no hook set they run directly, on CI
 runners too.
+
+
+## Migrate the legacy runtime store
+
+Inspect an existing `$HOME/.effigy/state/kernel.db` without creating destination
+state:
+
+```sh
+effigy run migrate --plan
+```
+
+The report names each blocking writer by gate, run (when admitted), and verified
+process start/boot identity. Use its exact `effigy run migrate --stop ...`
+command, or let that operation finish, then repeat the plan. A writer receipt
+also covers an admission or retention writer that has no run id yet. Stale,
+free, replaced and unverifiable holders are refused; a stop request is never a
+claim that settlement has finished. A stopped verified writer receives TERM
+and is resumed so it can handle that stop.
+
+Withdraw old Effigy launchers before asserting quiescence. The importer repeats
+writer checks under the source fences and refuses before staging if any writer
+remains:
+
+```sh
+effigy run migrate --legacy-launchers-stopped
+```
+
+Lookup uses the current checkout, Git's linked-worktree metadata and configured
+search roots. For a checkout outside those locations, pass repeatable
+`--checkout /absolute/root` arguments or configure:
+
+```toml
+# ~/.effigy/config.toml
+[runtime]
+checkout_roots = ["/work/projects", "/work/task-checkouts"]
+```
+
+Discovery is bounded and never follows directory symlinks. Omitted roots and
+limits appear in the report. A missing or ambiguous checkout identity refuses
+migration; a path hint never allocates a new identity or redirects a deleted
+checkout. No registration is written at run start.
+
+Migration preserves retained state and unresolved runs in each owning checkout,
+and reports per-destination row counts and elapsed time. Completed history may
+be dropped. The legacy store remains evidence, never a fallback after commit.
+Retry the migration command after interruption: before commit it discards only
+its own tagged staging; after commit it finishes the same local seals. `--plan`
+and `--json` expose the `effigy.runtime-migration.v1` observation without changing
+state.
