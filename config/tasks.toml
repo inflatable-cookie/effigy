@@ -113,6 +113,19 @@
 "test:docs:parity" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test documentation_coverage_tests --filterset 'test(project_local_and_distributed_effigy_skills_have_semantic_parity) | test(public_help_families_and_current_contract_paths_are_documented)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }] }
 
 
+# Loopback dead-owner collection (#295): exhaustion self-healing, the
+# dead/hold/retain proof in a private store, the reviewed-digest apply with its
+# backup, and the gateway repair preview/apply rendering and CLI shape.
+"test:gateway:loopback-dead-owners" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(loopback_recovery::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib -E 'test(loopback::reclaim::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(gateway_repair_preview_) | test(gateway_repair_apply_) | test(parse_gateway_repair_) | test(exhausted_registration_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+] }
+"check:gateway:loopback-dead-owners" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-cli -p effigy-containers -p effigy-gateway --all-targets", timeout_ms = 900000 },
+  { run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-cli -p effigy-containers -p effigy-gateway --all-targets -- -D warnings", timeout_ms = 900000 },
+] }
+
 # Guest execution must never enter host-policy rendering (#218).
 "test:containers:guest-execution" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-containers --lib -E 'test(bounded_exec::) | test(container_exec_working_dir)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }] }
 "check:containers:render" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh check -p effigy-core -p effigy-catalog -p effigy-gateway -p effigy-runtime -p effigy-containers -p effigy --all-targets" }

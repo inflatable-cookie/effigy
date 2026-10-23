@@ -1920,6 +1920,71 @@ Limits: the bound-port probe is a point-in-time check. A backup left by a
 crash between backup and rename is not removed automatically. Recovery does
 not expire entries by age.
 
+## Dead loopback owners
+
+Each isolated project and shared service holds one address in the bounded
+`127.1.0.1`-`127.1.0.50` loopback pool, and its container routes keep that
+address reserved. A project whose checkout, containers, runtime scope and
+listeners are all gone would otherwise hold its address forever, and a new
+stack then fails with `loopback pool exhausted`. Preview what Effigy would
+release, then apply it:
+
+```sh
+effigy gateway repair --json                       # preview, writes nothing
+effigy gateway repair --yes --expect-plan <DIGEST> --json
+```
+
+The preview is read-only. It lists every assignment and container route with
+its decision (`reclaim`, `hold` or `retain`) and a reason, plus a plan digest
+over those decisions. `--yes` releases the entries its locked recomputation
+still proves dead; `--yes --expect-plan <DIGEST>` refuses to write when that
+recomputed plan differs from the digest you reviewed. `--yes` alone applies
+the plan it recomputes and prints the digest it applied.
+
+A loopback assignment or container route is dead only when all of these hold:
+
+- its owner checkout path is definitely missing: the leaf is absent and its
+  parent directory is readable, the same classification `container ports
+  reclaim` uses. Permission and I/O errors, and an absent parent such as an
+  unmounted volume or a vanished intermediate directory, are unknown and hold
+  the entry;
+- no runtime-scope record names the identity, its checkout path or its route;
+- no container in any state carries its project label or working directory,
+  and none publishes on its address;
+- no live assignment or live project route keeps the address;
+- no non-gateway process listens on the route's alias tuple. The gateway
+  binds its aliases from the Store's route table and stops a listener when its
+  route disappears, so its own alias for a dead route is not a hold; a
+  same-user process that is not the recorded gateway, or a probe that cannot
+  answer, is.
+
+Allocation, its automatic collection and this preview prove ownership from the
+same inventory — every container state on every profile, with a stopped profile
+recorded as stopped — so the automatic path can never release what the preview
+would hold.
+
+A shared-service identity is dead only when no consumer project that uses it
+is live and no container carries the shared service's own project name. Incomplete ownership proof holds the whole plan and names the reason;
+a stopped Colima profile does not hold anything, because it binds no host
+address and cannot start a stack whose checkout is gone. Present paths, running
+containers and unknown path states are never touched, so a live project's
+address never changes.
+
+Allocation also self-heals: when `container up`, `dev` or gateway registration
+would fail because the pool is full, Effigy releases the dead entries once
+under the same gate, prints one line naming how many assignments and routes it
+released, and retries once. The endpoint Store keeps a released address out of
+reach for one reuse window (about three minutes: DNS TTL plus drain and the
+store's operation budget) so a cached answer never lands on a new owner, so an
+allocation that needed the release succeeds once that window has passed.
+
+Apply writes under the endpoint Store's owner gate and keeps a pre-edit copy of
+both endpoint documents as
+`~/.effigy/gateway/loopback-dead-reclaim-backup-<nanos>.json`, reporting both
+SHA-256 values. It never touches containers, volumes, data, profiles,
+certificates or live routes. Growing the pool past `127.1.0.50` is not part of
+this surface; the `lo0` aliases come from `gateway setup`.
+
 ## Current Limits
 
 Still intentionally narrow:

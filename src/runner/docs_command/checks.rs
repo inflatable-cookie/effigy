@@ -114,10 +114,7 @@ pub(super) fn run_check_json_examples(
         ok: result.ok,
     });
     dispatch_docs_report(
-        with_resolved_paths(
-            report,
-            explicit_file.as_ref().map_or(&[], std::slice::from_ref),
-        ),
+        with_resolved_paths(report, explicit_file.as_slice()),
         output_json,
     )
 }

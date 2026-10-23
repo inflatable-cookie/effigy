@@ -141,11 +141,51 @@ fn parse_gateway_repair_accepts_yes_and_json() {
     assert_eq!(
         cmd,
         Command::Gateway(GatewayArgs {
-            subcommand: GatewaySubcommand::Repair { yes: true },
+            subcommand: GatewaySubcommand::Repair {
+                yes: true,
+                expect_plan: None,
+            },
             private: None,
             output_json: true,
         })
     );
+}
+
+#[test]
+fn parse_gateway_repair_accepts_a_reviewed_plan_digest() {
+    let cmd = parse_command(vec![
+        "gateway".to_owned(),
+        "repair".to_owned(),
+        "--yes".to_owned(),
+        "--expect-plan".to_owned(),
+        "abc123".to_owned(),
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        cmd,
+        Command::Gateway(GatewayArgs {
+            subcommand: GatewaySubcommand::Repair {
+                yes: true,
+                expect_plan: Some("abc123".to_owned()),
+            },
+            private: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_gateway_repair_refuses_a_plan_digest_without_apply() {
+    let error = parse_command(vec![
+        "gateway".to_owned(),
+        "repair".to_owned(),
+        "--expect-plan".to_owned(),
+        "abc123".to_owned(),
+    ])
+    .expect_err("a digest without --yes must refuse");
+
+    assert!(error.to_string().contains("requires `--yes`"), "{error}");
 }
 
 #[test]

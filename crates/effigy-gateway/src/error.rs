@@ -121,9 +121,27 @@ pub enum GatewayError {
         range_end: Ipv4Addr,
     },
 
+    /// The bounded loopback pool stayed exhausted after dead entries were
+    /// released: the freed addresses are held by the endpoint reuse budget.
+    #[error(
+        "loopback pool exhausted for range {range_start}–{range_end}: released {assignments} dead assignment(s) and {routes} stale container route(s); their addresses leave the endpoint reuse quarantine in about {reuse_seconds} seconds, so rerun to allocate"
+    )]
+    LoopbackPoolExhaustedAfterReclaim {
+        range_start: Ipv4Addr,
+        range_end: Ipv4Addr,
+        assignments: usize,
+        routes: usize,
+        reuse_seconds: u64,
+    },
+
     /// Loopback alias provisioning failed.
     #[error("failed to provision loopback alias {ip}: {reason}")]
     LoopbackAliasProvision { ip: Ipv4Addr, reason: String },
+
+    /// A planned dead-loopback release no longer matches the committed
+    /// endpoint snapshot.
+    #[error("loopback endpoint `{entry}` changed before its release; read and retry")]
+    DeadLoopbackChanged { entry: String },
 
     /// Gateway is not running.
     #[error("gateway is not running")]

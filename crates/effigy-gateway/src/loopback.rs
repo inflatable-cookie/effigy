@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use crate::error::GatewayError;
 use crate::routes::{RouteSource, RouteTable};
 
+pub mod reclaim;
+
 /// Build the stable registry identity for one isolated project checkout.
 pub fn project_loopback_identity(project_name: &str, checkout: &Path) -> String {
     format!("project:{project_name}:{}", checkout.display())

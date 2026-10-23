@@ -1991,3 +1991,102 @@ fn private_status_json_refusal_carries_observation_labels() {
     assert_eq!(refusal["observations"]["record"], "legacy-pid-only");
     assert_eq!(refusal["headless"]["satisfied"], false);
 }
+
+fn dead_loopback_report(
+    assignment_decision: effigy_containers::Decision,
+    route_decision: effigy_containers::Decision,
+    applied: bool,
+) -> effigy_containers::LoopbackReclaimReport {
+    let assignment = effigy_containers::LoopbackRecoveryRow {
+        identity: "project:gone:/gone".to_owned(),
+        ip: "127.1.0.9".parse().expect("address"),
+        scope: "/gone".to_owned(),
+        owner_path: Some("/gone".to_owned()),
+        path_state: effigy_containers::PathState::Missing,
+        decision: assignment_decision,
+        reason: "owner path is missing".to_owned(),
+    };
+    let route = effigy_containers::StaleRouteRow {
+        domain: "gone.test".to_owned(),
+        project: "/gone".to_owned(),
+        dns_ip: Some("127.1.0.9".parse().expect("address")),
+        tcp_port: Some(8109),
+        path_state: effigy_containers::PathState::Missing,
+        decision: route_decision,
+        reason: "project path is missing".to_owned(),
+    };
+    let plan = effigy_containers::LoopbackRecoveryPlan {
+        assignments: vec![assignment],
+        routes: vec![route],
+        global_hold: None,
+        digest: "digest".to_owned(),
+    };
+    let reclaiming = assignment_decision == effigy_containers::Decision::Reclaim;
+    let edit = if applied && reclaiming {
+        effigy_gateway::loopback::reclaim::DeadLoopbackOutcome {
+            released_assignments: vec!["project:gone:/gone".to_owned()],
+            released_routes: vec!["gone.test".to_owned()],
+            released_addresses: vec!["127.1.0.9".parse().expect("address")],
+            backup: Some(std::path::PathBuf::from(
+                "/gateway/loopback-dead-reclaim-backup-1.json",
+            )),
+            sha256_before: Some("before".to_owned()),
+            sha256_after: Some("after".to_owned()),
+        }
+    } else {
+        Default::default()
+    };
+    effigy_containers::LoopbackReclaimReport {
+        mode: if applied { "apply" } else { "preview" },
+        gateway_dir: std::path::PathBuf::from("/gateway"),
+        plan,
+        edit,
+    }
+}
+
+#[test]
+fn gateway_repair_preview_lists_dead_loopback_owners_with_their_reasons() {
+    let report = dead_loopback_report(
+        effigy_containers::Decision::Reclaim,
+        effigy_containers::Decision::Reclaim,
+        false,
+    );
+    let lines = render_dead_loopback_preview(&report).join("\n");
+
+    assert!(lines.contains("dead loopback owners: 2 reclaimable, 0 held, 0 retained"));
+    assert!(lines
+        .contains("repair would release 1 loopback assignment(s) and 1 stale container route(s)"));
+    assert!(lines
+        .contains("- assignment 127.1.0.9 project:gone:/gone (reclaim, owner path is missing)"));
+    assert!(lines.contains("- route gone.test (reclaim, project path is missing)"));
+    assert!(lines.contains("--expect-plan digest"));
+    assert!(!lines.contains("backup"));
+}
+
+#[test]
+fn gateway_repair_apply_reports_released_entries_and_the_backup() {
+    let report = dead_loopback_report(
+        effigy_containers::Decision::Reclaim,
+        effigy_containers::Decision::Reclaim,
+        true,
+    );
+    let lines = render_dead_loopback_apply(&report).join("\n");
+
+    assert!(lines.contains("released 1 dead loopback assignment(s) and 1 stale container route(s)"));
+    assert!(lines.contains("- assignment project:gone:/gone"));
+    assert!(lines.contains("- route gone.test"));
+    assert!(lines.contains("backup /gateway/loopback-dead-reclaim-backup-1.json"));
+}
+
+#[test]
+fn gateway_repair_preview_reports_nothing_reclaimable_when_every_owner_is_live() {
+    let report = dead_loopback_report(
+        effigy_containers::Decision::Retain,
+        effigy_containers::Decision::Retain,
+        false,
+    );
+    let lines = render_dead_loopback_preview(&report).join("\n");
+
+    assert!(lines.contains("dead loopback owners: 0 reclaimable, 0 held, 2 retained"));
+    assert!(lines.contains("no dead loopback owners were identified"));
+}
