@@ -29,6 +29,7 @@ mod script_policy;
 mod secrets;
 mod semver;
 mod storage_retirement;
+mod string_values;
 mod utility;
 
 fn temp_root(name: &str) -> PathBuf {
@@ -371,7 +372,45 @@ fn rhai_surface_feature_names_are_unique() {
 }
 
 #[test]
-#[ignore = "known v0.15 rebuild defect: papercut e86ef33a-8bf9-4360-9a36-d210c3acc054; owner lane v015-rebuild"]
+fn rhai_surface_functions_are_listed_once_with_one_signature() {
+    let mut seen = BTreeSet::new();
+    let mut duplicates = Vec::new();
+    for function in crate::surface::rhai_surface_functions() {
+        let name = format!("{}::{}", function.module, function.name);
+        if !seen.insert(name.clone()) {
+            duplicates.push(name);
+        }
+    }
+
+    assert!(
+        duplicates.is_empty(),
+        "duplicate Rhai surface functions: {}",
+        duplicates.join(", ")
+    );
+}
+
+#[test]
+fn workspace_artifact_build_descriptor_keeps_the_host_signature() {
+    let function = crate::surface::rhai_surface_functions()
+        .into_iter()
+        .find(|function| {
+            function.module == crate::surface::MODULE_CONTAINER
+                && function.name == "workspace_artifact_build"
+        })
+        .expect("container::workspace_artifact_build surface entry");
+    assert_eq!(
+        function.signature, "container::workspace_artifact_build(args)",
+        "the hand-written host signature must win over the generic descriptor projection"
+    );
+
+    let descriptor = crate::surface::rhai_feature_descriptor(
+        crate::surface::FEATURE_CONTAINER_WORKSPACE_ARTIFACT_BUILD,
+    )
+    .expect("workspace artifact build feature descriptor");
+    assert!(matches!(descriptor.dispatch, RhaiFeatureDispatch::Runner));
+}
+
+#[test]
 fn rhai_surface_feature_descriptors_cover_feature_names() {
     let names = FEATURE_NAMES.iter().copied().collect::<BTreeSet<_>>();
     let descriptor_names = rhai_feature_descriptors()

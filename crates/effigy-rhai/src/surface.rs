@@ -281,6 +281,7 @@ pub const FEATURE_DESCRIPTORS: &[RhaiFeatureDescriptor] = &[
     runner_feature(FEATURE_STATE_CAPTURE),
     host_handled_feature(FEATURE_STATE_CAPTURE_SET),
     runner_feature(FEATURE_STATE_HISTORY),
+    runner_feature(FEATURE_CONTAINER_WORKSPACE_ARTIFACT_BUILD),
     runner_feature(FEATURE_CONTAINER_STATUS),
     runner_feature(FEATURE_CONTAINER_LOGS),
     runner_feature(FEATURE_CONTAINER_RESET),
@@ -354,11 +355,20 @@ pub struct RhaiSurfaceFunction {
 
 pub fn rhai_surface_functions() -> Vec<RhaiSurfaceFunction> {
     let mut functions = EXTRA_SURFACE_FUNCTIONS.to_vec();
+    // A feature may have a hand-written surface entry with its exact host
+    // signature (for example `container::workspace_artifact_build(args)`).
+    // That entry wins over the generic descriptor projection so the catalog
+    // never lists one callable twice with two signatures.
     functions.extend(
         FEATURE_DESCRIPTORS
             .iter()
             .copied()
-            .map(feature_surface_function),
+            .map(feature_surface_function)
+            .filter(|function| {
+                !EXTRA_SURFACE_FUNCTIONS
+                    .iter()
+                    .any(|extra| extra.module == function.module && extra.name == function.name)
+            }),
     );
     functions.sort_by(|left, right| {
         left.module
@@ -445,6 +455,13 @@ const EXTRA_SURFACE_FUNCTIONS: &[RhaiSurfaceFunction] = &[
         name: "context",
         signature: "runtime::context()",
         description: "Return the active Effigy runtime context.",
+        safety: "read-only",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_RUNTIME,
+        name: "paths",
+        signature: "runtime::paths()",
+        description: "Return the host paths (`repo_root`, `catalog_root`, `skill_root`, `cwd`, `invocation_cwd`) so script functions can read what the top-level scope constants hold.",
         safety: "read-only",
     },
     RhaiSurfaceFunction {

@@ -760,6 +760,7 @@ pub(super) fn is_runner_dispatch_feature(feature: &str) -> bool {
             | FEATURE_STATE_APPLY
             | FEATURE_STATE_CAPTURE
             | FEATURE_STATE_HISTORY
+            | FEATURE_CONTAINER_WORKSPACE_ARTIFACT_BUILD
             | FEATURE_CONTAINER_STATUS
             | FEATURE_CONTAINER_LOGS
             | FEATURE_CONTAINER_RESET
