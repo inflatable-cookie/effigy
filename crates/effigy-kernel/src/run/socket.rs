@@ -12,15 +12,18 @@ struct Receipt {
     device: u64,
     inode: u64,
 }
+pub(super) fn intent(target: Fence) -> EffectSpec {
+    EffectSpec {
+        target,
+        kind: KIND.into(),
+        payload: Value::Null,
+        settlement: Settlement::Release(Value::Null),
+        required: false,
+    }
+}
 impl Run<'_> {
     pub(crate) fn control_socket(&mut self) -> Result<UnixListener, RunError> {
-        let ticket = self.intend_inner(EffectSpec {
-            target: self.owner.clone(),
-            kind: KIND.into(),
-            payload: Value::Null,
-            settlement: Settlement::Release(Value::Null),
-            required: false,
-        })?;
+        let ticket = self.intend_inner(intent(self.owner.clone()))?;
         let result = (|| {
             crate::fault_point!(SocketBind)?;
             let dir = directory(self.root, &self.owner.resource)
@@ -58,13 +61,9 @@ impl Run<'_> {
         })();
         result
     }
-    pub(super) fn settle_socket(
-        &mut self,
-        effect: &Effect,
-        cx: &EffectContext,
-    ) -> Result<(), RunError> {
-        let name = FileName::new(&format!("{}.sock", self.id)).map_err(StoreError::from)?;
+    pub(super) fn socket_disposition(&self, effect: &Effect) -> (EffectState, Option<String>) {
         let disposition = (|| -> Result<_, RunError> {
+            let name = FileName::new(&format!("{}.sock", self.id)).map_err(StoreError::from)?;
             let Some(dir) = directory(self.root, &self.owner.resource).map_err(StoreError::from)?
             else {
                 return Ok(EffectState::Released);
@@ -89,10 +88,17 @@ impl Run<'_> {
             dir.remove(&name, false).map_err(StoreError::from)?;
             Ok(EffectState::Released)
         })();
-        let (state, reason) = match disposition {
+        match disposition {
             Ok(state) => (state, None),
             Err(error) => (EffectState::Residue, Some(error.to_string())),
-        };
+        }
+    }
+    pub(super) fn settle_socket(
+        &mut self,
+        effect: &Effect,
+        cx: &EffectContext,
+    ) -> Result<(), RunError> {
+        let (state, reason) = self.socket_disposition(effect);
         self.store.transaction(cx, |txn| {
             journal::write_effect(
                 txn,

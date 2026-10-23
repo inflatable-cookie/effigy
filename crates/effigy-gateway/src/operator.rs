@@ -237,7 +237,25 @@ fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Opti
         return Ok(None);
     };
     let Some((id, _)) = observed(reader.latest_run(&owner()))? else {
-        return Ok(None);
+        // A completion read just before a successor's admission is historical.
+        // Its old snapshot cannot declare a freshly held owner stopped.
+        if !matches!(
+            effigy_kernel::gate::Gate::probe(&cx, &root, &owner()),
+            Observed::Verified(effigy_kernel::gate::GateState::Free, _)
+                | Observed::Absent(AbsenceProof::NoGateInode)
+        ) {
+            return Err(error("gateway owner changed during completion observation"));
+        }
+        return match observed(run::machine_completion(&reader, &owner()))? {
+            Some(completion) => Ok(Some(Status {
+                status: "stopped",
+                ready: false,
+                run: Some(completion.run),
+                control_socket: Some(run::control_socket_path(&root, &owner(), completion.run)),
+                reason: completion_reason(&completion.workload, &completion.stderr_tail),
+            })),
+            None => Ok(None),
+        };
     };
     let Some(state) = observed(run::status(&cx, &root, &reader, id, next()))? else {
         return Err(error("missing gateway run"));
@@ -341,6 +359,28 @@ fn closed_reason(
     let process = effects
         .iter()
         .find(|effect| effect.spec.kind == "kernel:process")?;
+    use effigy_kernel::custody::Stream;
+    let Observed::Verified(log, _) =
+        run::read_log(cx, root, id, process.sequence, Stream::Stderr, 0, 0)
+    else {
+        return completion_reason(workload, "");
+    };
+    let tail = if let Observed::Verified(tail, _) = run::read_log(
+        cx,
+        root,
+        id,
+        process.sequence,
+        Stream::Stderr,
+        log.end.saturating_sub(4096),
+        4096,
+    ) {
+        String::from_utf8_lossy(&tail.bytes).into_owned()
+    } else {
+        String::new()
+    };
+    completion_reason(workload, &tail)
+}
+fn completion_reason(workload: &WorkloadOutcome, tail: &str) -> Option<String> {
     let mut reason = match workload {
         WorkloadOutcome::Cancelled {
             cause: StopCause::Requested,
@@ -350,26 +390,9 @@ fn closed_reason(
         WorkloadOutcome::Failed { code } => format!("gateway daemon exited with code {code}"),
         other => format!("gateway daemon stopped: {other:?}"),
     };
-    use effigy_kernel::custody::Stream;
-    let Observed::Verified(log, _) =
-        run::read_log(cx, root, id, process.sequence, Stream::Stderr, 0, 0)
-    else {
-        return Some(reason);
-    };
-    if let Observed::Verified(tail, _) = run::read_log(
-        cx,
-        root,
-        id,
-        process.sequence,
-        Stream::Stderr,
-        log.end.saturating_sub(4096),
-        4096,
-    ) {
-        let tail = String::from_utf8_lossy(&tail.bytes);
-        if !tail.trim().is_empty() {
-            reason.push_str(": ");
-            reason.push_str(tail.trim());
-        }
+    if !tail.trim().is_empty() {
+        reason.push_str(": ");
+        reason.push_str(tail.trim());
     }
     Some(reason)
 }
@@ -696,6 +719,45 @@ mod tests {
         assert!(up(&config).is_err());
         assert!(down(&config).is_err());
         assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), before);
+    }
+    #[test]
+    fn completion_does_not_hide_a_new_owner_before_admission() {
+        let home = tempfile::tempdir().unwrap();
+        let config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+        let op = context(Duration::from_secs(10), EffectClass::Mutate);
+        let cx = op.effects().unwrap();
+        let cleanup = op.cleanup(Duration::from_secs(5)).unwrap();
+        let root = StateRoot::runtime_machine_effects(&cx, home.path()).unwrap();
+        let mut run = run::Run::begin(
+            &cx,
+            &root,
+            &invocation(owner()),
+            run::BeginOpts {
+                id: run_id().unwrap(),
+                wait: effigy_kernel::gate::Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: None,
+            },
+            &cleanup,
+            &mut Adapter,
+        )
+        .unwrap();
+        run.finish(WorkloadOutcome::Succeeded).unwrap();
+        run.settle(&cleanup, &mut Adapter).unwrap();
+        let guard = effigy_kernel::gate::Gate::acquire(
+            &cx,
+            &root,
+            &[owner()],
+            effigy_kernel::gate::Wait::FailFast,
+        )
+        .unwrap();
+        assert!(status_once(&config, &op).is_err());
+        drop(guard);
+        assert_eq!(
+            status_once(&config, &op).unwrap().unwrap().status,
+            "stopped"
+        );
     }
     #[test]
     fn failed_http_self_test_is_bounded() {

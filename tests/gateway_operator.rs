@@ -159,11 +159,17 @@ fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
     let reader = effigy_kernel::store::Store::read(&cx, root);
     let reader = reader.verified().unwrap();
     let id = failed.run.unwrap();
-    let summary = effigy_kernel::run::summary(reader, id);
+    let owner = effigy_kernel::id::ResourceId::gateway("operator").unwrap();
+    let completion = effigy_kernel::run::machine_completion(reader, &owner);
+    assert_eq!(completion.verified().unwrap().run, id);
     assert_eq!(
-        summary.verified().unwrap().workload,
-        Some(effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 })
+        completion.verified().unwrap().workload,
+        effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 }
     );
+    assert!(matches!(
+        effigy_kernel::run::summary(reader, id),
+        effigy_kernel::observe::Observed::Absent(_)
+    ));
     assert!(!config.pid_file_path.exists());
     assert!(!evidence.exists());
     for (key, value) in inherited {

@@ -49,6 +49,11 @@ impl Run<'_> {
             .verified()
             .cloned()
             .ok_or_else(|| RunError::Invalid("owner identity unavailable".into()))?;
+        if let Some(startup) = self.machine_startup.as_mut() {
+            startup.lifecycle = Some((identity, lease.identity.clone(), plan.placement));
+            self.sentinel = Some(lease);
+            return Ok(());
+        }
         let mut lease = Some(lease);
         let result = (|| {
             crate::fault_point!(LifecycleBefore)?;

@@ -771,6 +771,17 @@ fn sentinel(
         .effects()
         .map_err(|_| RunError::Invalid("sentinel context".into()))?;
     let root = helper_root(&cx, &config.home, config.machine, config.machine_gates)?;
+    if root.is_machine() && config.owner.kind() == crate::id::ResourceKind::Gateway {
+        let observe = op
+            .observe()
+            .map_err(|_| RunError::Invalid("sentinel observe".into()))?;
+        if let Observed::Verified(reader, _) = crate::store::Store::read(&observe, &root) {
+            if matches!(run::machine_completion(&reader, &config.owner), Observed::Verified(completion, _) if completion.run == config.run)
+            {
+                return Ok(());
+            }
+        }
+    }
     if matches!(
         crate::run::metadata(
             &op.observe()
@@ -1351,7 +1362,12 @@ impl OwningChannel {
                     control.stop.get_or_insert(StopCause::Requested);
                 }
             }
-            run.resolve_request(&request)?;
+            // Detach changes only this authenticated owning channel. Its
+            // committed request remains the durable fact until close; repeated
+            // observation is idempotent and needs no acknowledgement write.
+            if !run.machine_lifecycle() {
+                run.resolve_request(&request)?;
+            }
         }
         if let Some(listener) = &self.listener {
             // The socket is a doorbell: the journal already holds the request.
@@ -1714,23 +1730,30 @@ fn supervisor(
     let cleanup = op
         .cleanup(Duration::from_secs(30))
         .map_err(|_| RunError::Invalid("cleanup overflow".into()))?;
-    let run = Run::begin(
-        &cx,
-        &root,
-        &inv,
-        BeginOpts {
-            id: run_id,
-            wait: Wait::FailFast,
-            acknowledge: vec![],
-            next,
-            custody: Some(LifecyclePlan {
-                executable,
-                placement: Placement::Detached,
-            }),
-        },
-        &cleanup,
-        adapter,
-    );
+    let specs = processes
+        .into_iter()
+        .map(WireProcess::decode)
+        .collect::<io::Result<Vec<_>>>()?;
+    let options = BeginOpts {
+        id: run_id,
+        wait: Wait::FailFast,
+        acknowledge: vec![],
+        next,
+        custody: Some(LifecyclePlan {
+            executable,
+            placement: Placement::Detached,
+        }),
+    };
+    let run = if root.is_machine() && inv.spec().owner.kind() == crate::id::ResourceKind::Gateway {
+        let [process] = specs.as_slice() else {
+            return Err(RunError::Invalid(
+                "gateway must have one planned process".into(),
+            ));
+        };
+        Run::begin_gateway(&cx, &root, &inv, options, &cleanup, adapter, process)
+    } else {
+        Run::begin(&cx, &root, &inv, options, &cleanup, adapter)
+    };
     let mut run = match run {
         Ok(run) => run,
         Err(error) => {
@@ -1759,10 +1782,6 @@ fn supervisor(
         listener: Some(listener),
         detached: false,
     };
-    let specs = processes
-        .into_iter()
-        .map(WireProcess::decode)
-        .collect::<io::Result<Vec<_>>>()?;
     let mut children = match Custody::spawn_all(&mut run, specs, &cx) {
         Ok(children) => children,
         Err(error) => {

@@ -77,9 +77,20 @@ Pure endpoint/port fact edits now use one atomic publication, with payload,
 claims, quarantine and final disposition together. Measured new pins/releases
 use one transaction; reads, existing-pin lookup, unchanged edit and unchanged
 import use zero. Cold schema initialization contributes one separate commit.
-These edits admit no run and retain no completed history. External-effect
-maintenance and gateway lifecycle still require their remaining budget and
-history work. Release routing and the remaining acceptance harnesses are also
+These edits admit no run and retain no completed history. Gateway process
+startup admits its exact process and control-socket intents in one transaction,
+then publishes both receipts, owner/sentinel identities and Active in a second
+transaction before process go. The committed detach request is the third;
+observing it again is idempotent and needs no acknowledgement write. A separate
+reader verifies this boundary, and ENOSPC/EPERM receipt refusal keeps the child
+blocked. Process output stays bounded in memory. Gateway stop acknowledges its
+control request with the interruption record, then commits all positive custody
+and socket dispositions together at close. Complete machine runs, events and
+requests are removed in that close transaction; incomplete cleanup retains its
+journal for recovery. The gateway keeps one bounded, redacted current control
+diagnostic with its generation and positive closed outcome, so bind failures
+remain readable without log files or run history. External-effect maintenance
+still requires its remaining budget work. Release routing and the remaining acceptance harnesses are also
 still task work. Native Linux qualification now
 passes 135 selected migration, store, inheritance, helper, custody and gate
 tests, including unprivileged permission refusals. Managed supervisor bootstrap
@@ -2116,7 +2127,10 @@ registry (pins/ranges and owning checkout identities), and host admission state
 writer build and import receipts support those facts. Path hints on a claim are
 ownership evidence, not an enumeration of checkouts. No checkout catalogue,
 heartbeat, task history, task journal, environment render, holder, data claim,
-log or global object registry is permitted here.
+log or global object registry is permitted here. Gateway control includes one
+current generation's positively closed outcome and a bounded redacted diagnostic;
+starting a successor invalidates the previous generation. This single current
+control fact is replaced on closure and is never an append-only history.
 
 Gateway lifecycle/publication still needs durable intent. The machine store
 may keep one current operation and unresolved effect receipts per shared owner,

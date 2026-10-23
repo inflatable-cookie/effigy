@@ -49,7 +49,11 @@ impl Run<'_> {
         crate::fault_point!(SettleBefore)?;
         let record = journal::run(self.store.conn(), self.id)?;
         let workload = record.workload.unwrap_or(WorkloadOutcome::Interrupted);
-        if record.phase != Phase::Closed {
+        let machine = self.root.is_machine();
+        let batch = self.machine_lifecycle();
+        let mut dispositions = std::collections::BTreeMap::new();
+        let mut stderr_tail = String::new();
+        if record.phase != Phase::Closed && record.phase != Phase::Stopping && !machine {
             self.store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
                 txn.conn().execute("UPDATE runs SET phase='stopping',workload_outcome=?2,updated_at=?3 WHERE run_id=?1",
                     params![self.id.to_string(),serde_json::to_string(&workload)?,txn.now()])?;
@@ -75,9 +79,14 @@ impl Run<'_> {
             } else if effect.spec.kind == crate::objects::KIND {
                 self.settle_staging(effect, &cx)?;
             } else if effect.spec.kind == socket::KIND {
-                self.settle_socket(effect, &cx)?;
+                if batch {
+                    dispositions.insert(effect.sequence, self.socket_disposition(effect));
+                } else {
+                    self.settle_socket(effect, &cx)?;
+                }
             } else if effect.spec.kind == crate::custody::KIND {
                 let live = self.processes.remove(&effect.sequence);
+                let diagnostic = live.clone();
                 // Stop can be inside its grace wait when a front end sends its
                 // second interrupt. Read the fenced durable mailbox here too;
                 // no transaction or new writer spans process I/O (K4/K14).
@@ -88,17 +97,27 @@ impl Run<'_> {
                             .any(|r| matches!(r.action, RequestAction::Escalate))
                     })
                 });
-                self.store
-                    .transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
-                        journal::write_effect(
-                            txn,
-                            self.id,
-                            effect.sequence,
-                            state,
-                            None,
-                            reason.as_deref(),
-                        )
-                    })?;
+                if let Some(core) = diagnostic {
+                    stderr_tail = crate::custody::diagnostic_tail(&core);
+                }
+                if batch {
+                    dispositions.insert(effect.sequence, (state, reason));
+                } else {
+                    self.store.transaction_within(
+                        &cx,
+                        BusyWait::AtLeast(SETTLE_BUSY_WAIT),
+                        |txn| {
+                            journal::write_effect(
+                                txn,
+                                self.id,
+                                effect.sequence,
+                                state,
+                                None,
+                                reason.as_deref(),
+                            )
+                        },
+                    )?;
+                }
             } else if effect.spec.kind == crate::remote::KIND {
                 let (state, reason) =
                     crate::remote::settle_effect(effect, cleanup, adapter.remote());
@@ -157,7 +176,13 @@ impl Run<'_> {
             }
             crate::fault_point!(SettleEffectAfter)?;
         }
-        let effects = self.effects()?;
+        let mut effects = self.effects()?;
+        for effect in &mut effects {
+            if let Some((state, reason)) = dispositions.get(&effect.sequence) {
+                effect.state = *state;
+                effect.reason = reason.clone();
+            }
+        }
         let complete = effects.iter().all(|e| e.state.terminal());
         // The close write keeps the store's own two-minute window, so a busy
         // store delays it rather than losing the run's outcome. A write that
@@ -170,8 +195,18 @@ impl Run<'_> {
             let result = (|| {
                 crate::fault_point!(SettleCloseBefore)?;
                 self.store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
+                    for (sequence, (state, reason)) in &dispositions {
+                        journal::write_effect(txn, self.id, *sequence, *state, None, reason.as_deref())?;
+                    }
                     txn.conn().execute("UPDATE runs SET phase='closed',cleanup_outcome=?2,updated_at=?3,closed_at=coalesce(closed_at,?3) WHERE run_id=?1",
                         params![self.id.to_string(),if complete { "complete" } else { "incomplete" },txn.now()])?;
+                    if machine && complete {
+                        if self.owner.resource.kind() == crate::id::ResourceKind::Gateway {
+                            let completion = MachineCompletion { run: self.id, generation: self.owner.generation, workload: workload.clone(), stderr_tail: stderr_tail.clone() };
+                            txn.conn().execute("UPDATE resources SET state=?2,updated_at=?3 WHERE name=?1 AND generation=?4", params![self.owner.resource.name().to_string(),serde_json::to_string(&completion)?,txn.now(),self.owner.generation.get() as i64])?;
+                        }
+                        txn.conn().execute("DELETE FROM runs WHERE run_id=?1", [self.id.to_string()])?;
+                    }
                     Ok::<_,RunError>(())
                 })?;
                 crate::fault_point!(SettleCloseAfter)?;
@@ -188,6 +223,9 @@ impl Run<'_> {
                 }
                 Err(error) => return Err(error),
             }
+        }
+        if machine && complete {
+            self.closed_effects = Some(effects.clone());
         }
         // K4: only Run closes the owner-only sentinel writer, after the Closed
         // transaction and while its owner gate is still held.
@@ -378,6 +416,8 @@ pub(crate) fn settle_interrupted_wait(
         poisoned: false,
         completed: Default::default(),
         sentinel: None,
+        closed_effects: None,
+        machine_startup: None,
         processes: Default::default(),
     }
     .settle(cleanup, adapter)

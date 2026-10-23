@@ -1649,11 +1649,23 @@ fn custody_machine_journal_routes_supervisor_requests_and_sentinel_recovery_with
             client.stop(&cx, id(2)).unwrap();
         }
         eventually(|| {
-            matches!(
-                fresh_status(&cx.operation().observe().unwrap(), &machine, id(1)),
-                Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
-            )
+            let observe = cx.operation().observe().unwrap();
+            let Observed::Verified(reader, _) =
+                effigy_kernel::store::Store::read(&observe, &machine)
+            else {
+                return false;
+            };
+            matches!(effigy_kernel::run::machine_completion(&reader, &invocation.spec().owner),
+                Observed::Verified(completion, _) if completion.run == id(1))
         });
+        let read = effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &machine);
+        assert!(
+            matches!(
+                effigy_kernel::run::summary(read.verified().unwrap(), id(1)),
+                Observed::Absent(_)
+            ),
+            "completed machine runs retain no history"
+        );
         let waited = client.wait(cx.operation());
         if killed {
             assert_eq!(

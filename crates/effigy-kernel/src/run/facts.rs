@@ -77,6 +77,8 @@ impl<'a> MachineFacts<'a> {
                 poisoned: false,
                 completed: Default::default(),
                 sentinel: None,
+                closed_effects: None,
+                machine_startup: None,
                 processes: Default::default(),
             };
             previous.settle_inner(cleanup, adapter)?;

@@ -14,8 +14,10 @@ pub use foreground::{ForegroundRun, LegacyForeground};
 mod journal;
 mod lifecycle;
 mod logs;
+mod machine;
 mod memory;
 pub use lifecycle::{metadata, RunMetadata, SentinelStatus};
+pub use machine::{machine_completion, MachineCompletion};
 pub use memory::{ForegroundRecord, Incarnation};
 #[path = "../objects/run.rs"]
 mod objects;
@@ -245,6 +247,8 @@ pub struct Run<'a> {
     // manufactures success; only finish durably records the validated outcome.
     completed: std::collections::BTreeMap<i64, crate::outcome::RequiredObligation>,
     sentinel: Option<crate::supervise::SentinelLease>,
+    machine_startup: Option<machine::Startup>,
+    closed_effects: Option<Vec<Effect>>,
     processes: std::collections::BTreeMap<
         i64,
         std::sync::Arc<std::sync::Mutex<crate::custody::ProcessCore>>,
@@ -259,9 +263,10 @@ impl<'a> Run<'a> {
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Self, RunError> {
-        Self::begin_under(cx, root, inv, opts, cleanup, adapter, None)
+        Self::begin_under(cx, root, inv, opts, cleanup, adapter, None, None)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn begin_under(
         cx: &EffectContext,
         root: &'a StateRoot,
@@ -270,6 +275,7 @@ impl<'a> Run<'a> {
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
         parent: Option<RunId>,
+        planned: Option<EffectSpec>,
     ) -> Result<Self, RunError> {
         crate::fault_point!(BeginBefore)?;
         if inv.spec().task.checkout().kind() == crate::id::CheckoutKind::Filesystem {
@@ -303,7 +309,9 @@ impl<'a> Run<'a> {
         guard.retain_owner(&inv.spec().owner);
         // #275: one bounded admission sweep, never a close-time scan. A
         // refused alias gate creates no journal merely to run maintenance.
-        crate::retention::sweep(cx, root);
+        if !root.is_machine() {
+            crate::retention::sweep(cx, root);
+        }
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         // A refused writer wait names this run, not a nameless process.
         store.set_run(opts.id);
@@ -330,6 +338,8 @@ impl<'a> Run<'a> {
                 poisoned: false,
                 completed: Default::default(),
                 sentinel: None,
+                closed_effects: None,
+                machine_startup: None,
                 processes: Default::default(),
             };
             previous.settle_inner(cleanup, adapter)?;
@@ -368,6 +378,13 @@ impl<'a> Run<'a> {
                 VALUES (?1,?2,?3,?4,'host','admitted',?5,?6,?7,?7,?8,?9)", params![opts.id.to_string(),
                 inv.spec().owner.name().to_string(), generation.get() as i64,
                 if opts.custody.is_some() {"custody"}else{"operation"}, serde_json::to_string(inv)?, inv.digest().0.as_slice(), txn.now(), if opts.custody.is_some() {Some(serde_json::to_string(&WorkloadOutcome::NotStarted)?)}else{None}, parent.map(|id| id.to_string())])?;
+            if let Some(planned) = &planned {
+                let fence = Fence { resource: inv.spec().owner.clone(), generation };
+                journal::insert_effect(txn, opts.id, &socket::intent(fence.clone()))?;
+                let mut planned = planned.clone();
+                planned.target = fence;
+                journal::insert_effect(txn, opts.id, &planned)?;
+            }
             Ok::<_, RunError>(generation)
         })?;
         crate::fault_point!(BeginAdmitted)?;
@@ -386,6 +403,8 @@ impl<'a> Run<'a> {
             poisoned: false,
             completed: Default::default(),
             sentinel: None,
+            closed_effects: None,
+            machine_startup: planned.map(|_| machine::Startup::default()),
             processes: Default::default(),
         };
         if let Some(plan) = opts.custody {
@@ -475,9 +494,15 @@ impl<'a> Run<'a> {
         Ok(state.map(|s| serde_json::from_str(&s)).transpose()?)
     }
     pub fn phase(&self) -> Result<Phase, RunError> {
+        if self.closed_effects.is_some() {
+            return Ok(Phase::Closed);
+        }
         Ok(journal::run(self.store.conn(), self.id)?.phase)
     }
     pub fn effects(&self) -> Result<Vec<Effect>, RunError> {
+        if let Some(effects) = &self.closed_effects {
+            return Ok(effects.clone());
+        }
         journal::effects(self.store.conn(), self.id)
     }
 
@@ -515,6 +540,13 @@ impl<'a> Run<'a> {
     }
     fn intend_inner(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
         self.can_effect()?;
+        if self
+            .machine_startup
+            .as_ref()
+            .is_some_and(|startup| !startup.active)
+        {
+            return self.planned_intent(&spec);
+        }
         let result = (|| {
             crate::fault_point!(IntendBefore)?;
             let sequence = self.store.transaction(
@@ -544,6 +576,13 @@ impl<'a> Run<'a> {
         result
     }
     pub fn applied(&mut self, ticket: &EffectTicket, receipt: Value) -> Result<(), RunError> {
+        if self
+            .machine_startup
+            .as_ref()
+            .is_some_and(|startup| !startup.active)
+        {
+            return self.planned_receipt(ticket, receipt);
+        }
         self.callback(ticket, EffectState::Applied, Some(receipt), None)
     }
     /// Only verified non-occurrence permits Failed; uncertain attempts use unknown.
@@ -629,6 +668,9 @@ impl<'a> Run<'a> {
     pub fn advance(&mut self, phase: Phase) -> Result<(), RunError> {
         self.can_effect()?;
         let previous = self.phase()?;
+        if self.machine_lifecycle() && previous == Phase::Active && phase == Phase::Active {
+            return Ok(());
+        }
         if !matches!(
             (previous, phase),
             (Phase::Starting, Phase::Active) | (_, Phase::Stopping)
@@ -776,9 +818,13 @@ impl<'a> Run<'a> {
             return Err(RunError::Invalid("invalid interruption outcome".into()));
         }
         let cx = settle::cleanup_effects(cleanup)?;
+        let machine_lifecycle = self.machine_lifecycle();
         self.store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
             journal::check_fence(txn.conn(),&self.owner)?;
             txn.conn().execute("UPDATE runs SET phase='stopping',workload_outcome=?2,updated_at=?3 WHERE run_id=?1",params![self.id.to_string(),serde_json::to_string(&workload)?,txn.now()])?;
+            if machine_lifecycle {
+                txn.conn().execute("UPDATE requests SET state='resolved',resolved_at=?2 WHERE run_id=?1 AND state='pending'", params![self.id.to_string(),txn.now()])?;
+            }
             Ok::<_,RunError>(())
         })
     }

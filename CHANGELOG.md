@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Gateway process startup batches its admitted intents and its applied receipts
+  into two commits before process go; the detach request is the third commit.
+  Receipt-commit refusal keeps the workload blocked. Positive close removes
+  completed machine run history and retains one bounded current gateway
+  diagnostic; process output stays in memory.
 - Endpoint and port fact edits publish their complete conflict set in one
   transaction. Unchanged edits and imports write nothing and create no run
   history; cold schema initialization is counted separately.

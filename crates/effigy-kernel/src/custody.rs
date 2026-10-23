@@ -347,6 +347,9 @@ impl ProcessOwner for Run<'_> {
         stream: Stream,
         limits: &crate::ctx::Limits,
     ) -> io::Result<Option<capture::Log>> {
+        if self.machine_lifecycle() {
+            return Ok(None);
+        }
         self.capture_log(sequence, stream, limits).map(Some)
     }
     fn retain_process(&mut self, sequence: i64, core: Arc<Mutex<ProcessCore>>) {
@@ -393,6 +396,40 @@ impl ProcessOwner for crate::run::ForegroundRun {
     fn retain_process(&mut self, sequence: i64, core: Arc<Mutex<ProcessCore>>) {
         self.retain_process(sequence, core);
     }
+}
+
+/// Pure, redacted intent planning. The machine gateway admits this exact
+/// process and its control socket together before either external effect.
+pub(crate) fn process_intent(
+    spec: &ProcessSpec,
+    target: crate::run::Fence,
+    required: bool,
+) -> Result<EffectSpec, SpawnError> {
+    let secrets = spec
+        .validated_secrets()
+        .map_err(|e| SpawnError::Refused(e.to_string()))?;
+    let mut redact = Redactor::new(secrets);
+    let label = String::from_utf8_lossy(&redact.push(spec.label.as_bytes(), true)).into_owned();
+    // Only a digest and a redacted label enter the journal. Never env values.
+    let digest = crate::id::Digest::of(
+        &serde_json::to_vec(&serde_json::json!({
+            "argv":spec.argv.iter().map(|s|s.as_bytes()).collect::<Vec<_>>(),
+            "cwd":spec.cwd.as_os_str().as_bytes(),
+            "env":spec.env.iter().map(|(key,value)| (key.as_bytes(), match value {
+                EnvValue::Plain(v)=>v.as_bytes(), EnvValue::Secret(v)=>v.bytes()
+            })).collect::<Vec<_>>(),
+            "grace_ns":spec.grace.as_nanos().to_string(),
+            "lifetime":format!("{:?}",spec.lifetime),"terminal":spec.terminal
+        }))
+        .map_err(|_| SpawnError::Refused("spec encoding".into()))?,
+    );
+    Ok(EffectSpec {
+        target,
+        kind: KIND.into(),
+        payload: serde_json::json!({"digest":digest,"label":label}),
+        settlement: Settlement::Release(Value::Null),
+        required,
+    })
 }
 
 impl Custody {
@@ -556,28 +593,7 @@ impl Custody {
         let secrets = spec
             .validated_secrets()
             .map_err(|e| SpawnError::Refused(e.to_string()))?;
-        let mut redact = Redactor::new(secrets.clone());
-        let label = String::from_utf8_lossy(&redact.push(spec.label.as_bytes(), true)).into_owned();
-        // Only a digest and a redacted label enter the journal. Never env values.
-        let digest = crate::id::Digest::of(
-            &serde_json::to_vec(&serde_json::json!({
-                "argv":spec.argv.iter().map(|s|s.as_bytes()).collect::<Vec<_>>(),
-                "cwd":spec.cwd.as_os_str().as_bytes(),
-                "env":spec.env.iter().map(|(key,value)| (key.as_bytes(), match value {
-                    EnvValue::Plain(v)=>v.as_bytes(), EnvValue::Secret(v)=>v.bytes()
-                })).collect::<Vec<_>>(),
-                "grace_ns":spec.grace.as_nanos().to_string(),
-                "lifetime":format!("{:?}",spec.lifetime),"terminal":spec.terminal
-            }))
-            .map_err(|_| SpawnError::Refused("spec encoding".into()))?,
-        );
-        let ticket = run.intend_process(EffectSpec {
-            target: run.fence().clone(),
-            kind: KIND.into(),
-            payload: serde_json::json!({"digest":digest,"label":label}),
-            settlement: Settlement::Release(Value::Null),
-            required,
-        })?;
+        let ticket = run.intend_process(process_intent(&spec, run.fence().clone(), required)?)?;
         let nonce = format!("{}:{}", run.id(), ticket.sequence());
         let image = run.anchor_image()?;
         let closure = run.closure_pin()?;
@@ -1092,6 +1108,19 @@ pub(crate) fn verify_foreground_receipt(
         ));
     }
     Ok(())
+}
+
+/// The current operation's bounded, already redacted diagnostic. It is not a
+/// log stream or historical record, and does not expose the process core.
+pub(crate) fn diagnostic_tail(core: &Arc<Mutex<ProcessCore>>) -> String {
+    let core = lock(core);
+    let stderr = &core.streams[1];
+    let bytes = stderr
+        .iter()
+        .skip(stderr.len().saturating_sub(4096))
+        .copied()
+        .collect::<Vec<_>>();
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 pub(crate) fn settle_effect(

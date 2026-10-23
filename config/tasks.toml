@@ -239,6 +239,10 @@
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test custody --lib -E 'test(/^custody::tests::/) | test(/^signal::tests::/) | test(/^run::lifecycle::tests::/) | binary(custody)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
+"test:kernel:gateway-budget" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^run::machine::tests::/)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+] }
 "test:kernel:helpers" = { visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^supervise::tests::/)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
