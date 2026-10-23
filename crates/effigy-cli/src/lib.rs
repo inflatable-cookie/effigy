@@ -744,6 +744,11 @@ pub enum ContainerProfileSubcommand {
         disk_gib: Option<u64>,
         yes: bool,
     },
+    /// Delete only the stale nerdctl health-check pid files the VM's `/run`
+    /// accumulated, and report the counts around it (effigy#291).
+    PruneHealthPidFiles {
+        profile: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

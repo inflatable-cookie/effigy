@@ -1677,6 +1677,100 @@ id/status/project/service and the exact `colima ssh --profile <profile>`
 `effigy container status` shows the live `Exited` row rather than an empty
 or assumed-running service list.
 
+Under host saturation Effigy distinguishes the machine from the service: an
+owned inspect that times out is retried with the same bound (at most twice)
+and a saturated host opens the first exec-readiness window from two to fifteen
+seconds once before any restart, so a healthy service the host never let
+answer is not restarted. When a bounded call still cannot answer, the error
+names the observed host load (`load average 40.00 over 18 CPU(s)`) and says the
+service's state is unproven instead of blaming it. `Exited (141)` is reported
+as SIGPIPE — a closed stdout/stderr pipe — not as a health verdict; read the
+service log for the writer that closed. Let the host quiesce and retry once
+rather than widening timeouts or recreating the stack.
+
+## Troubleshooting: host `docker` cannot see a Colima container
+
+Symptom: the stack is up (`effigy container status` lists every service
+`Up`), but on the host
+
+```
+$ docker inspect <container>
+Error: No such object: <container>
+```
+
+Cause: the Docker CLI talks to whatever context it is pointed at. A host with
+Docker Desktop installed usually has `context = desktop-linux`, which is a
+different engine from the Colima profile Effigy manages (`effigy` by default).
+`docker ps`, `docker inspect` and `docker compose` therefore see Docker
+Desktop's containers, never the ones running in the Colima VM. Effigy's own
+commands select the profile and backend from the manifest, not from the host
+Docker context, so they see the real stack.
+
+This is a context boundary, not a missing or failed container. Do not restart,
+recreate or reset the environment because host `docker` cannot see it.
+
+Use the supported per-service route instead:
+
+```bash
+effigy container status                 # every service, with its live status
+effigy container logs --service db      # one service's log
+effigy container logs --service db --follow
+effigy container shell --service db --command "psql -U postgres"
+effigy container hosts                  # this checkout's HTTP/TCP host map
+```
+
+`effigy doctor` prints the host's `docker-context` and warns when it differs
+from the backend Effigy will use for the declared Colima containers. To inspect
+the VM directly, address the profile explicitly:
+`colima nerdctl --profile effigy -- inspect <container>`. Do not point the host
+`docker` context at Colima while other projects rely on Docker Desktop.
+
+## Troubleshooting: `/run` inodes exhausted by nerdctl health-check pid files
+
+Symptom: every `exec` and container create in the profile starts failing with
+
+```
+no space left on device
+```
+
+even though the disk has room, and `colima ssh --profile <profile> -- df -i /run`
+shows `IUse%` at or near 100%.
+
+Cause: nerdctl 2.3.1 starts each health check as a containerd exec process and
+never deletes it, so the VM keeps one pid file per check under
+`/run/containerd/io.containerd.runtime.v2.task/<namespace>/<container>/`. A
+busy stack leaks tens of thousands of `health-check-<id>.pid` files per
+container per day, and `/run` is a tmpfs with a finite inode count. It is a
+runtime defect, not an Effigy or application failure. nerdctl **2.4.1** deletes
+the exec process (`process.Delete` in a `defer`, added after 2.3.1), which
+stops the leak at the source. The VM's nerdctl is whatever the Colima image
+ships: Colima 0.10.3 ships nerdctl 2.3.1, so check it with
+`colima ssh --profile <profile> -- nerdctl --version` and upgrade Colima (or
+the VM's nerdctl) for the fix.
+
+Effigy reports and repairs it:
+
+```bash
+effigy doctor                            # /run inode use and pid-file counts per running profile
+effigy container profile prune-health-pid-files --profile effigy
+```
+
+`effigy doctor` prints an evidence line for every running profile
+(`colima-profile `effigy` /run: 270087/819200 inodes used (32%), 269082
+health-check pid file(s) (268182 older than 10m)`) and warns once inode use
+reaches 80% or 10,000 stale files accumulate. `container up` runs the same
+bounded prune automatically. The prune removes only files whose name matches
+exactly `health-check-*.pid`, that sit directly inside a containerd runtime-v2
+task directory, and that are older than ten minutes; a younger file may belong
+to a check still in flight, so it is kept. Nothing else under `/run` is read or
+removed. The command reports the counts and `/run` inode use before and after,
+and `--json` emits `effigy.container.profile-prune-health-pid-files.v1`.
+
+Do not delete other files under `/run/containerd/io.containerd.runtime.v2.task`
+or remove a container's task directory: those belong to the runtime, not to
+Effigy. Pruning keeps a profile usable until its nerdctl is upgraded to 2.4.1
+or later inside the VM.
+
 ## Troubleshooting: Colima VM DNS proxy timeouts during image pulls
 
 Symptom: a `nerdctl build` of a catalog image (for example

@@ -260,11 +260,13 @@ fn container_runtime_exec_not_ready_constructor_preserves_runtime_shape() {
             service,
             profile,
             working_dir,
+            host_load,
         } => {
             assert_eq!(container, "web");
             assert_eq!(service, "app");
             assert_eq!(profile, "effigy");
             assert_eq!(working_dir, Path::new("/workspace-root/demo"));
+            assert!(host_load.is_none(), "an idle host is not reported");
         }
         other => panic!("unexpected error variant: {other}"),
     }
@@ -273,6 +275,18 @@ fn container_runtime_exec_not_ready_constructor_preserves_runtime_shape() {
     assert!(rendered.contains("-w /workspace-root/demo"));
     assert!(rendered.contains("restarting service `app`"));
     assert!(rendered.contains("--profile effigy"));
+    assert!(!rendered.contains("the host was overloaded"));
+
+    let saturated = RunnerError::container_runtime_exec_not_ready_with_load(
+        &policy,
+        Path::new("/workspace-root/demo"),
+        Some("the host was overloaded (load average 40.00 over 18 CPU(s))".into()),
+    )
+    .to_string();
+    assert!(saturated.contains("container `web` is not exec-ready"));
+    assert!(saturated.contains("the host was overloaded (load average 40.00 over 18 CPU(s))"));
+    assert!(saturated.contains("no bounded probe answered"));
+    assert!(saturated.contains("health is unproven"));
 }
 
 #[test]

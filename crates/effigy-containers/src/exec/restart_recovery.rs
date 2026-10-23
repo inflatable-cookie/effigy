@@ -31,12 +31,18 @@ use super::parse::{
     looks_like_stale_healthcheck_timer, parse_inspect_container_state, InspectedContainerState,
     RunningComposeContainer,
 };
-use super::process::run_command_capture_allow_failure_with_timeout;
+use super::process::{error_is_timeout, run_command_capture_allow_failure_with_timeout};
 use crate::compose::{resolve_compose_backend_for_repo, ComposeBackend};
+use crate::host_load::HostLoad;
 use crate::EffectiveContainerPolicy;
 
 const OWNED_SERVICE_START_TIMEOUT: Duration = Duration::from_secs(30);
 const OWNED_INSPECT_TIMEOUT: Duration = Duration::from_secs(15);
+/// Repeated bounded inspections a saturated host is granted before Effigy
+/// reports the observation as unavailable. A saturated host is why a bounded
+/// `inspect` can miss; retrying the same bound costs time, never correctness
+/// (effigy#291).
+const OWNED_INSPECT_RETRIES_UNDER_LOAD: u32 = 2;
 const HEALTHCHECK_UNIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -302,18 +308,27 @@ pub(crate) fn recover_exited_owned_services_with_stale_timer(
 
 /// One owned container's own observation, immediately before a recovery start.
 /// `None` means the backend no longer has a container by that name.
+///
+/// The inspect is bounded. When it times out while the host was saturated, the
+/// timeout says nothing about the container, so the same bounded inspect is
+/// retried up to [`OWNED_INSPECT_RETRIES_UNDER_LOAD`] times before the failure
+/// is reported with the observed host load and an explicit "state unproven"
+/// (effigy#291).
 fn observe_owned_container_state(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     container_name: &str,
 ) -> Result<Option<InspectedContainerState>, ContainerExecError> {
-    let output = run_runtime_command_capture_for_policy_allow_failure_with_timeout(
-        repo_root,
-        policy,
-        &[OsString::from("inspect"), OsString::from(container_name)],
-        &format!("inspect owned container `{container_name}` before start"),
-        OWNED_INSPECT_TIMEOUT,
-    )?;
+    let load = HostLoad::observe();
+    let output = owned_container_inspect(container_name, load, || {
+        run_runtime_command_capture_for_policy_allow_failure_with_timeout(
+            repo_root,
+            policy,
+            &[OsString::from("inspect"), OsString::from(container_name)],
+            &format!("inspect owned container `{container_name}` before start"),
+            OWNED_INSPECT_TIMEOUT,
+        )
+    })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         let lowered = stderr.to_ascii_lowercase();
@@ -328,6 +343,69 @@ fn observe_owned_container_state(
         });
     }
     parse_inspect_container_state(&String::from_utf8_lossy(&output.stdout)).map(Some)
+}
+
+/// Supervise one bounded owned inspect with the host-load retry rule, and
+/// attribute a final timeout to the host instead of the service.
+fn owned_container_inspect(
+    container_name: &str,
+    load: Option<HostLoad>,
+    mut inspect: impl FnMut() -> Result<std::process::Output, ContainerExecError>,
+) -> Result<std::process::Output, ContainerExecError> {
+    let mut retries = 0;
+    loop {
+        match inspect() {
+            Ok(output) => return Ok(output),
+            Err(error) => {
+                let saturated = load.is_some_and(|load| load.saturated());
+                if saturated
+                    && error_is_timeout(&error)
+                    && retries < OWNED_INSPECT_RETRIES_UNDER_LOAD
+                {
+                    retries += 1;
+                    if let Some(load) = load {
+                        eprintln!(
+                            "[warn] `inspect {container_name}` timed out while {}; retrying the same {}-second bounded inspect ({retries}/{OWNED_INSPECT_RETRIES_UNDER_LOAD})",
+                            load.describe(),
+                            OWNED_INSPECT_TIMEOUT.as_secs(),
+                        );
+                    }
+                    continue;
+                }
+                return Err(attribute_owned_inspect_failure(container_name, error, load));
+            }
+        }
+    }
+}
+
+/// Name the host when it was overloaded, and say what the failed inspect does
+/// not prove. Without an overload observation the error is left exactly as the
+/// backend reported it.
+fn attribute_owned_inspect_failure(
+    container_name: &str,
+    error: ContainerExecError,
+    load: Option<HostLoad>,
+) -> ContainerExecError {
+    let note = match (load.and_then(|load| load.overload_note()), &error) {
+        (Some(note), ContainerExecError::Failure { .. }) => note,
+        _ => return error,
+    };
+    match error {
+        ContainerExecError::Failure {
+            command,
+            code,
+            stdout,
+            stderr,
+        } => ContainerExecError::Failure {
+            command,
+            code,
+            stdout,
+            stderr: format!(
+                "{stderr}\n{note}\n[effigy] `inspect {container_name}` did not return, so Effigy did not start, stop or recreate that container."
+            ),
+        },
+        other => other,
+    }
 }
 
 fn live_recover_stale_healthcheck_units(
@@ -592,6 +670,11 @@ fn persistent_exited_service_error(
             "\nservice-only recreation is unavailable: the recovery interface has no immutable declaration-to-mount association, exclusive volume/data ownership proof, or supported backend preservation plan. Inspect mount references alone cannot prove preservation. No service was recreated. `effigy container retire --yes` removes owned mutable volumes and is not restart recovery.",
         );
     }
+    if status.contains("(141)") {
+        stderr.push_str(&format!(
+            "\n`Exited (141)` is SIGPIPE: the container's leader wrote to a pipe whose reader had closed. That is a pipe-closure observation, not a health verdict on the service. Effigy's detached `container up` writes backend output to a retained file, so no Effigy-owned reader lifetime exists; read the service's own log for the writer that closed with `effigy container logs --service {service}` before retrying."
+        ));
+    }
     if !backend_text.is_empty() {
         stderr.push_str("\nbackend:\n");
         stderr.push_str(backend_text);
@@ -824,6 +907,55 @@ mod tests {
         );
         assert!(!detail.contains("systemctl"), "got: {detail}");
         assert!(!detail.contains("rm -f"), "got: {detail}");
+    }
+
+    #[test]
+    fn a_sigpipe_exit_is_reported_as_a_closed_pipe_not_a_health_verdict() {
+        let exited = vec![row(
+            "demo-web",
+            "postgres",
+            "demo-postgres-1",
+            "Exited (141) 3 minutes ago",
+        )];
+        let mut inspect_calls = 0;
+        let error = recover_exited_owned_services_with(
+            "demo-web",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            &["postgres"],
+            || {
+                inspect_calls += 1;
+                Ok(exited.clone())
+            },
+            |_| {
+                Ok(RuntimeStartResult {
+                    success: true,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            },
+        )
+        .expect_err("a service that stays exited is still a bounded failure");
+
+        let detail = error.to_string();
+        assert!(detail.contains("Exited (141)"), "got: {detail}");
+        assert!(detail.contains("is SIGPIPE"), "got: {detail}");
+        assert!(
+            detail.contains("pipe whose reader had closed"),
+            "got: {detail}"
+        );
+        assert!(
+            detail.contains("not a health verdict on the service"),
+            "got: {detail}"
+        );
+        assert!(
+            detail.contains("effigy container logs --service postgres"),
+            "got: {detail}"
+        );
+        assert!(
+            !detail.contains("is SIGPIPE") || !detail.contains("unhealthy"),
+            "got: {detail}"
+        );
     }
 
     #[test]
@@ -1907,5 +2039,81 @@ mod tests {
         .expect("running owned service is left alone");
         assert_eq!(recoveries, 0);
         assert!(recovery.started.is_empty());
+    }
+
+    fn timed_out_inspect(attempt: usize) -> Result<std::process::Output, ContainerExecError> {
+        Err(ContainerExecError::Failure {
+            command: "inspect owned container `demo-db-1` before start".to_owned(),
+            code: None,
+            stdout: String::new(),
+            stderr: format!("[effigy] command timed out after 15s: attempt {attempt}"),
+        })
+    }
+
+    #[test]
+    fn a_saturated_host_retries_the_same_bounded_inspect_then_names_the_host() {
+        let load = HostLoad::measured(40.0, 18).expect("saturated observation");
+        let mut attempts = 0;
+        let error = owned_container_inspect("demo-db-1", Some(load), || {
+            attempts += 1;
+            timed_out_inspect(attempts)
+        })
+        .expect_err("a host that never answers still fails, bounded");
+
+        assert_eq!(attempts, 1 + OWNED_INSPECT_RETRIES_UNDER_LOAD as usize);
+        let text = error.to_string();
+        assert!(text.contains("timed out after 15s"));
+        assert!(text.contains("the host was overloaded (load average 40.00 over 18 CPU(s))"));
+        assert!(text.contains("not a service failure"));
+        assert!(text.contains("`inspect demo-db-1` did not return"));
+        assert!(!text.contains("is Exited"));
+    }
+
+    #[test]
+    fn an_unloaded_host_keeps_exactly_one_inspect_attempt() {
+        let load = HostLoad::measured(2.0, 18).expect("idle observation");
+        let mut attempts = 0;
+        let error = owned_container_inspect("demo-db-1", Some(load), || {
+            attempts += 1;
+            timed_out_inspect(attempts)
+        })
+        .expect_err("the timeout is still a failure");
+
+        assert_eq!(attempts, 1);
+        assert!(!error.to_string().contains("the host was overloaded"));
+    }
+
+    #[test]
+    fn a_retried_inspect_that_answers_succeeds() {
+        let load = HostLoad::measured(40.0, 18).expect("saturated observation");
+        let mut attempts = 0;
+        let output = owned_container_inspect("demo-db-1", Some(load), || {
+            attempts += 1;
+            if attempts == 1 {
+                return timed_out_inspect(attempts);
+            }
+            use std::os::unix::process::ExitStatusExt;
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: b"exited".to_vec(),
+                stderr: Vec::new(),
+            })
+        })
+        .expect("the second bounded inspect answers");
+
+        assert_eq!(attempts, 2);
+        assert!(output.status.success());
+    }
+
+    #[test]
+    fn an_unavailable_load_observation_never_invents_overload() {
+        let mut attempts = 0;
+        let error = owned_container_inspect("demo-db-1", None, || {
+            attempts += 1;
+            timed_out_inspect(attempts)
+        })
+        .expect_err("unknown load keeps the plain timeout");
+        assert_eq!(attempts, 1);
+        assert!(!error.to_string().contains("the host was overloaded"));
     }
 }
