@@ -977,11 +977,14 @@ During v0.x, MINOR bumps may include breaking changes.
   domain, WebAuthn RP ID and TCP alias suffix are inferred from the longest
   common domain suffix of the HTTP routes (managed host listeners included)
   instead of the first route, so a bundle whose first route was
-  `s3.acowtancy.test` no longer advertises that subdomain as its apex. When the
-  inferred base is not a suffix of every HTTP route, `container hosts` warns,
-  and its JSON `base_domain` object reports `inferred` and the warning. A
-  declared `base_domain` is never inferred or rewritten, and bundles should
-  declare it.
+  `s3.acowtancy.test` no longer advertises that subdomain as its apex. Policy
+  load resolves that one apex in the checkout's scope and uses it for the
+  generated TCP aliases, the Compose route-parity `extra_hosts` and gateway
+  service-alias registration, so `container hosts`, the gateway and the
+  container's own aliases agree. When the inferred base is not a suffix of
+  every HTTP route, `container hosts` warns, and its JSON `base_domain` object
+  reports `inferred` and the warning. A declared `base_domain` is never
+  inferred or rewritten, and bundles should declare it.
 - `container logs` and `container status` say plainly when Compose created no
   container for the project, instead of reporting "expected one container for
   service …, found 0" (papercut `890e2912`). They name the last activation

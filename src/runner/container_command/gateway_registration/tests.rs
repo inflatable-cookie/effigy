@@ -28,6 +28,17 @@ fn with_test_home<T>(name: &str, op: impl FnOnce() -> T) -> T {
     result
 }
 
+fn dns_route(domain: &str) -> effigy_containers::EffectiveDnsRoute {
+    effigy_containers::EffectiveDnsRoute {
+        domain: domain.to_owned(),
+        declared_domain: domain.to_owned(),
+        tls: true,
+        port: None,
+        service: None,
+        target_host: None,
+    }
+}
+
 fn test_policy() -> EffectiveContainerPolicy {
     EffectiveContainerPolicy {
         render: None,
@@ -848,6 +859,7 @@ fn shared_service_aliases_reuse_one_loopback_ip_across_project_domains() {
 
         let mut first = test_policy();
         first.dns_domain = Some("app1.test".to_owned());
+        first.dns_routes = vec![dns_route("app1.test")];
         first.service_aliases.clear();
         first.shared_services = vec![shared_service(
             "postgres",
@@ -869,6 +881,7 @@ fn shared_service_aliases_reuse_one_loopback_ip_across_project_domains() {
 
         let mut second = test_policy();
         second.dns_domain = Some("app2.test".to_owned());
+        second.dns_routes = vec![dns_route("app2.test")];
         second.project_name = "demo-api-dev".to_owned();
         second.service_aliases.clear();
         second.shared_services = vec![shared_service(
@@ -908,6 +921,7 @@ fn service_aliases_keep_full_multi_label_project_domain() {
     with_test_home("service-alias-multi-label-domain", || {
         let mut policy = test_policy();
         policy.dns_domain = Some("contact-patch.legacy.test".to_owned());
+        policy.dns_routes = vec![dns_route("contact-patch.legacy.test")];
 
         let routes =
             resolve_gateway_service_alias_routes(Path::new("/tmp/repo"), &policy, true, None)
@@ -2240,4 +2254,71 @@ else:sys.exit('unexpected private backend operation')
         assert!(!commands.contains(forbidden), "{commands}");
     }
     println!("actual production probe receipts:\n{commands}");
+}
+
+#[test]
+fn service_alias_claims_use_the_inferred_apex_not_the_front_route() {
+    let mut policy = test_policy();
+    policy.dns_domain = Some("s3.acme.test".to_owned());
+    policy.dns_routes = vec![
+        effigy_containers::EffectiveDnsRoute {
+            domain: "s3.acme.test".to_owned(),
+            declared_domain: "s3.acme.test".to_owned(),
+            tls: true,
+            port: None,
+            service: None,
+            target_host: None,
+        },
+        effigy_containers::EffectiveDnsRoute {
+            domain: "admin.acme.test".to_owned(),
+            declared_domain: "admin.acme.test".to_owned(),
+            tls: true,
+            port: None,
+            service: None,
+            target_host: None,
+        },
+    ];
+
+    let claims = declared_route_claims(&policy);
+    assert!(
+        claims
+            .iter()
+            .any(|claim| claim.domain == "postgres.acme.test"),
+        "the alias claim uses the routes' common apex: {claims:?}"
+    );
+    assert!(
+        !claims
+            .iter()
+            .any(|claim| claim.domain == "postgres.s3.acme.test"),
+        "the front route is not the apex: {claims:?}"
+    );
+}
+
+#[test]
+fn a_declared_base_domain_wins_for_service_alias_claims() {
+    let mut policy = test_policy();
+    policy.dns_domain = Some("s3.acme.test".to_owned());
+    policy.dns_base_domain = Some("acme.test".to_owned());
+    policy.dns_routes = vec![effigy_containers::EffectiveDnsRoute {
+        domain: "s3.acme.test".to_owned(),
+        declared_domain: "s3.acme.test".to_owned(),
+        tls: true,
+        port: None,
+        service: None,
+        target_host: None,
+    }];
+
+    let claims = declared_route_claims(&policy);
+    assert!(
+        claims
+            .iter()
+            .any(|claim| claim.domain == "postgres.acme.test"),
+        "a declared apex is never inferred over: {claims:?}"
+    );
+    assert!(
+        !claims
+            .iter()
+            .any(|claim| claim.domain == "postgres.s3.acme.test"),
+        "{claims:?}"
+    );
 }

@@ -749,6 +749,11 @@ catalog = "postgres"
                 .expect("scoped route keeps the declared label")
                 .to_owned();
             let generated = policy.read_compose(&policy.compose_files[0]).unwrap();
+            assert_eq!(
+                policy.dns_effective_base_domain().as_deref(),
+                Some(effective_base.as_str()),
+                "gateway and Compose aliases share the scoped declared apex"
+            );
             assert!(
                 generated.contains("networks:") && generated.contains("com.effigy.scope"),
                 "the scope owns its Compose network: {generated}"
@@ -2146,6 +2151,55 @@ catalog = "mailpit"
     assert!(
         !dns_override.contains("smtp.acme.test:192.168.5.2"),
         "TCP service aliases must not point back at the host gateway: {dns_override}"
+    );
+}
+
+#[test]
+fn generated_compose_infers_an_undeclared_alias_base_domain() {
+    let _lock = crate::test_env_lock();
+    let root = temp_repo("generated-compose-inferred-apex");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "stack"
+
+[containers.stack]
+primary_service = "workspace"
+
+[containers.stack.dns]
+routes = [
+  { domain = "s3.acme.test", tls = false, service = "workspace" },
+  { domain = "admin.acme.test", tls = false, service = "workspace" },
+]
+
+[containers.stack.services.workspace]
+catalog = "workspace-rust-bun"
+working_subdir = "generated-compose-inferred-apex"
+
+[containers.stack.services.postgres]
+catalog = "postgres"
+"#,
+    )
+    .expect("write manifest");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+
+    assert_eq!(
+        policy.dns_effective_base_domain().as_deref(),
+        Some("acme.test"),
+        "the common suffix of the HTTP routes is the alias apex"
+    );
+    let dns_override = policy
+        .read_compose(&policy.compose_files[1])
+        .expect("read dns override");
+    assert!(
+        dns_override.contains("postgres.acme.test"),
+        "Compose aliases use the inferred apex: {dns_override}"
+    );
+    assert!(
+        !dns_override.contains("postgres.s3.acme.test"),
+        "the front route does not become the alias apex: {dns_override}"
     );
 }
 

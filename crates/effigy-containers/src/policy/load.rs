@@ -549,7 +549,21 @@ fn build_effective_policy(
         apply_scope_to_routes(&mut dns_routes, key);
     }
     let service_aliases = effective_service_aliases(repo_root, config)?;
-    let runtime_dns_base_domain = dns_base_domain.as_deref().map(|base_domain| {
+    // One apex for generated TCP aliases, Compose extra_hosts and gateway
+    // registration: the declared `base_domain`, else the common suffix of the
+    // HTTP routes (managed listeners included).
+    let listener_declared_domains = config
+        .host_processes
+        .iter()
+        .filter_map(|entry| entry.listener.as_ref())
+        .map(|listener| listener.route.domain.clone())
+        .collect::<Vec<_>>();
+    let resolved_declared_base = super::hosts::resolve_base_domain(
+        &dns_routes,
+        &listener_declared_domains,
+        dns_base_domain.as_deref(),
+    );
+    let resolved_effective_base = resolved_declared_base.as_deref().map(|base_domain| {
         runtime_host_key.map_or_else(
             || base_domain.to_owned(),
             |key| rewrite_declared_host(base_domain, key),
@@ -559,8 +573,8 @@ fn build_effective_policy(
         let runtime_routes = runtime_route_domains(
             &dns_routes,
             &service_aliases,
-            dns_base_domain.as_deref(),
-            runtime_dns_base_domain.as_deref(),
+            resolved_declared_base.as_deref(),
+            resolved_effective_base.as_deref(),
         );
         materialize_runtime_dns_override(
             repo_root,

@@ -1233,11 +1233,7 @@ fn managed_dns_route_lines(policy: Option<&EffectiveContainerPolicy>) -> Vec<Str
         }
     }
 
-    let Some(base_domain) = policy
-        .dns_routes
-        .first()
-        .and_then(|route| base_domain_from_dns_route(&route.domain))
-    else {
+    let Some(base_domain) = policy.dns_effective_base_domain() else {
         return routes;
     };
 
@@ -1258,17 +1254,6 @@ fn managed_dns_route_lines(policy: Option<&EffectiveContainerPolicy>) -> Vec<Str
     }
 
     routes
-}
-
-fn base_domain_from_dns_route(domain: &str) -> Option<&str> {
-    let domain = domain.trim();
-    if domain.is_empty() {
-        return None;
-    }
-    let mut labels = domain.split('.').filter(|part| !part.is_empty());
-    labels.next()?;
-    labels.next()?;
-    Some(domain)
 }
 
 fn render_handoff_managed_standard_command(setup_command: Option<&str>, run: &str) -> String {

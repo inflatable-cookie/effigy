@@ -32,8 +32,9 @@ pub use policy::data_from::{
 };
 pub use policy::hosts::{
     add_managed_listener_routes, build_host_map, build_host_map_including_listeners,
-    domain_has_suffix, infer_base_domain, uses_shared_runtime_identity, EffectiveHostMap,
-    EffectiveHostRoute, HostRouteKind, HostScopeKind, InferredBaseDomain,
+    domain_has_suffix, infer_base_domain, resolve_base_domain, route_scope_host_key,
+    uses_shared_runtime_identity, EffectiveHostMap, EffectiveHostRoute, HostRouteKind,
+    HostScopeKind, InferredBaseDomain,
 };
 pub use policy::inline_workspace::{
     load_inline_workspace_container_policy, resolve_inline_workspace_exec_working_dir,

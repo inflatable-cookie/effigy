@@ -1000,7 +1000,11 @@ aliases and the reported cookie domain and RP ID; the same checkout-scoping
 rule applies to that configured apex. Without a declaration Effigy infers the
 base from the longest common domain suffix of the HTTP routes (the front route
 or a managed host-listener route breaks a tie), so a bundle whose first route
-is a subdomain no longer names that subdomain as the apex. When an inferred
+is a subdomain no longer names that subdomain as the apex. Policy load resolves
+that one apex (declared or inferred, in the checkout's scope) and passes it to
+the generated TCP aliases, the Compose route-parity `extra_hosts` and gateway
+service-alias registration, so `container hosts` never advertises a different
+apex than the gateway or the container's own aliases. When an inferred
 base is not a suffix of every HTTP route, `container hosts` warns and its JSON
 `base_domain` object carries `"inferred": true` and the `warning`. A bundle
 should declare `base_domain` explicitly. A declared value is never inferred or
