@@ -52,7 +52,19 @@ fn key(root: &Path, name: &str) -> RunKey {
         .and_then(|name| name.to_str())
         .unwrap_or("root")
         .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
-    RunKey::parse(&format!("{name}-{unique}")).expect("key")
+    let token =
+        effigy_core::worktree_scope::prepare_checkout_token(root).expect("private fixture token");
+    let mut bytes = [0; 16];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&token[index * 2..index * 2 + 2], 16).expect("token byte");
+    }
+    RunKey::parse(&format!("{name}-{unique}"))
+        .expect("key")
+        .scoped(effigy_kernel::id::CheckoutId::new(
+            effigy_kernel::id::CheckoutKind::Primary,
+            bytes,
+        ))
+        .expect("checkout key")
 }
 
 /// Starts `command` as a keyed custody run on another thread; joins to its
@@ -467,6 +479,10 @@ fn a_run_key_names_one_run_under_racing_invocations_and_repeats() {
 
 #[test]
 fn run_keys_are_bounded_and_derive_one_stable_id() {
+    let checkout =
+        effigy_kernel::id::CheckoutId::new(effigy_kernel::id::CheckoutKind::Primary, [1; 16]);
+    let other =
+        effigy_kernel::id::CheckoutId::new(effigy_kernel::id::CheckoutKind::Primary, [2; 16]);
     assert_eq!(
         RunKey::parse("ci-1234").expect("key").id(),
         RunKey::parse("ci-1234").expect("key").id()
@@ -478,6 +494,17 @@ fn run_keys_are_bounded_and_derive_one_stable_id() {
     for bad in ["", "has space", "slash/key", &"k".repeat(RunKey::MAX + 1)] {
         assert!(RunKey::parse(bad).is_err(), "{bad:?} is refused");
     }
+    let key = RunKey::parse("same").expect("key");
+    assert_eq!(key.scoped(checkout).unwrap(), key.scoped(checkout).unwrap());
+    assert_ne!(
+        key.scoped(checkout).unwrap().id(),
+        key.scoped(other).unwrap().id()
+    );
+    assert_ne!(
+        key.id(),
+        key.scoped(checkout).unwrap().id(),
+        "legacy ids have a separate domain"
+    );
 }
 
 #[test]

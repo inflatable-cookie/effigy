@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Binary cutover proof. All state and owned children live in one fresh fixture."""
 import base64
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -61,7 +62,7 @@ with tempfile.TemporaryDirectory(prefix="q010-cli-") as temporary:
     project = root / "project"
     home.mkdir()
     project.mkdir()
-    (project / "effigy.toml").write_text("[tasks.noop]\nrun = 'true'\n")
+    (project / "effigy.toml").write_text("[tasks.noop]\nrun = 'touch noop-ran'\n")
     git = project / ".git"
     git.mkdir()
     (git / "effigy-checkout-id").write_text("07" * 16)
@@ -128,6 +129,12 @@ with tempfile.TemporaryDirectory(prefix="q010-cli-") as temporary:
         stop_args = shlex.split(blocker["stop_command"])[1:]
         assert command(*stop_args, "--json")["state"] == "stop-requested"
         assert child.wait(timeout=12) == 0, "verified stop did not drain the stopped writer"
+        seeded = subprocess.run([str(fixture_binary), "migration-key", str(home)],
+                                cwd=project, env=env, text=True, capture_output=True, timeout=30)
+        assert seeded.returncode == 0, (seeded.stdout, seeded.stderr)
+        legacy_id = seeded.stdout.strip()
+        with closing(sqlite3.connect(home / ".effigy/state/kernel.db")) as connection:
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         before = snapshot(home)
         assert command(*stop_args, "--json", succeeds=False)["state"] == "stop-refused"
         assert snapshot(home) == before, "free gate granted stale stop authority"
@@ -154,11 +161,18 @@ with tempfile.TemporaryDirectory(prefix="q010-cli-") as temporary:
         def resources(database):
             with sqlite3.connect("file:" + str(database) + "?mode=ro&immutable=1", uri=True) as connection:
                 return connection.execute("SELECT name, hex(canonical) FROM resources ORDER BY name").fetchall()
-        assert resources(source) == resources(local) and len(resources(local)) == 2
+        assert resources(source) == resources(local) and len(resources(local)) == 3
         retry = command("run", "migrate", "--legacy-launchers-stopped", "--json")
         assert retry["report"]["resumed"] is True
         assert digest(source) == source_digest and digest(machine) == machine_digest
         assert digest(local) == local_digest
+        # The old key survives only in this sealed checkout. A repeat attaches
+        # to the imported interrupted run rather than executing a new command.
+        status = command("run", "status", "imported-key", "--json", migration=False)
+        assert legacy_id in status.stdout and "interrupted" in status.stdout, status.stdout
+        command("--run-id", "imported-key", "noop", succeeds=False, migration=False)
+        assert not (project / "noop-ran").exists(), "legacy key started a replacement workload"
+        assert digest(local) == local_digest and digest(source) == source_digest
         # Archived writer controls may never regain authority after cutover.
         command(*stop_args, "--json", succeeds=False, migration=False)
         assert digest(source) == source_digest and digest(machine) == machine_digest

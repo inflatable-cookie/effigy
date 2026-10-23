@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Named run keys now derive their run IDs from the owning checkout token.
+  Equal keys in different checkouts are independent; peer queries refuse
+  ambiguous keys. Imported legacy IDs remain local aliases after cutover.
 - Generic run views include live foreground holders with explicit evidence
   provenance and bounded discovery coverage. Foreground logs report that no
   log is retained; stop signals only the verified owner, waits for custody

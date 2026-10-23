@@ -616,8 +616,7 @@ impl StreamJson {
 }
 
 fn find(selector: &str) -> Result<RunRecord, RunnerError> {
-    let id = resolve_run(selector)?;
-    match lookup_run(id) {
+    match resolve_run(selector)? {
         Lookup::Found(record) => Ok(*record),
         Lookup::NotFound => Err(not_found(selector)),
         Lookup::Unknown(reason) => Err(unknown(selector, &reason)),

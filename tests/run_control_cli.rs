@@ -601,3 +601,61 @@ fn runs_lists_this_checkouts_runs_and_retired_surfaces_refuse() {
     assert_eq!(retired.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&retired.stderr).contains("effigy run status <key>"));
 }
+
+#[test]
+fn equal_keys_are_checkout_scoped_and_peer_discovery_refuses_ambiguity() {
+    let first = Fixture::new();
+    // Both checkouts and discovery configuration live under this fixture's
+    // fresh HOME. They share neither a token nor a journal.
+    let second = first.home.join("second");
+    let observer = first.home.join("observer");
+    fs::create_dir(&second).unwrap();
+    fs::create_dir(&observer).unwrap();
+    fs::write(second.join("effigy.toml"), MANIFEST).unwrap();
+    fs::write(observer.join("effigy.toml"), "").unwrap();
+    for checkout in [&first.repo, &second] {
+        let result = first
+            .effigy(&["--run-id", "equal-key", "light"])
+            .current_dir(checkout)
+            .output_owned()
+            .unwrap();
+        assert!(result.status.success(), "{}", text(&result));
+    }
+    let current = first.status_json("equal-key");
+    let result = first
+        .effigy(&["--json", "run", "status", "equal-key"])
+        .current_dir(&second)
+        .output_owned()
+        .unwrap();
+    assert!(result.status.success(), "{}", text(&result));
+    let peer: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_ne!(current["run_id"], peer["result"]["run"]["run_id"]);
+    assert!(first.repo.join(".effigy/state/kernel.db").is_file());
+    assert!(second.join(".effigy/state/kernel.db").is_file());
+    assert!(!first.home.join(".effigy/state/kernel.db").exists());
+    fs::create_dir_all(first.home.join(".effigy")).unwrap();
+    fs::write(
+        first.home.join(".effigy/config.toml"),
+        format!(
+            "[runtime]\ncheckout_roots = [{:?}, {:?}]\n",
+            first.repo, second
+        ),
+    )
+    .unwrap();
+    let result = first
+        .effigy(&["--json", "run", "status", "equal-key"])
+        .current_dir(&observer)
+        .output_owned()
+        .unwrap();
+    assert!(
+        !result.status.success(),
+        "a peer key must not select the first match"
+    );
+    let message = text(&result);
+    assert!(
+        message.contains("ambiguous")
+            && message.contains(first.repo.to_str().unwrap())
+            && message.contains(second.to_str().unwrap()),
+        "{message}"
+    );
+}

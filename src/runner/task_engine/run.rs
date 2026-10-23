@@ -82,14 +82,18 @@ pub(in crate::runner) struct TaskRunRequest<'a> {
     pub(in crate::runner) cwd: Option<&'a std::path::Path>,
 }
 
-/// A caller-chosen `--run-id` key and the one run id it derives. Equal keys
-/// derive equal ids on every host, so the journal's unique run id makes a
-/// repeat or a racing second invocation find the first run instead of
-/// starting another.
+/// A validated caller key. Admission binds it to the checkout before using
+/// its id. The unbound digest is retained solely to locate imported old runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct RunKey {
     key: String,
     id: RunId,
+}
+
+#[derive(Debug)]
+pub(super) struct KeyNamespace {
+    pub ids: Vec<RunId>,
+    pub aliases: Vec<effigy_kernel::id::CheckoutId>,
 }
 
 impl RunKey {
@@ -125,6 +129,73 @@ impl RunKey {
 
     pub(in crate::runner) fn id(&self) -> RunId {
         self.id
+    }
+
+    pub(in crate::runner) fn scoped(
+        &self,
+        checkout: effigy_kernel::id::CheckoutId,
+    ) -> Result<Self, RunnerError> {
+        let mut bytes = b"effigy-checkout-run-key-v1\0".to_vec();
+        bytes.push(checkout.kind() as u8);
+        bytes.extend_from_slice(checkout.token());
+        bytes.extend_from_slice(self.key.as_bytes());
+        let digest = Digest::of(&bytes);
+        let mut random = [0; 10];
+        random.copy_from_slice(&digest.0[..10]);
+        let id = RunId::new(0, random)
+            .map_err(|error| RunnerError::task_invocation(format!("run id: {error}")))?;
+        Ok(Self {
+            key: self.key.clone(),
+            id,
+        })
+    }
+
+    pub(super) fn namespace(
+        &self,
+        cx: &effigy_kernel::ctx::ObserveContext,
+        root: &effigy_kernel::root::StateRoot,
+    ) -> Result<KeyNamespace, RunnerError> {
+        if root.is_machine() {
+            return Ok(KeyNamespace {
+                ids: Vec::new(),
+                aliases: Vec::new(),
+            });
+        }
+        let mut checkouts = checkout::identities(cx, root.owning_directory().path())
+            .map_err(|error| unverifiable_key(self, &error.to_string()))?;
+        let aliases = match effigy_kernel::migration::authority(cx, root) {
+            Observed::Verified(
+                effigy_kernel::migration::Authority::Committed {
+                    checkout,
+                    checkout_aliases,
+                    ..
+                },
+                _,
+            ) => checkout
+                .into_iter()
+                .chain(checkout_aliases)
+                .collect::<Vec<_>>(),
+            Observed::Verified(effigy_kernel::migration::Authority::Fresh, _) => Vec::new(),
+            other => {
+                return Err(unverifiable_key(
+                    self,
+                    &format!("import authority: {other:?}"),
+                ))
+            }
+        };
+        for alias in &aliases {
+            if !checkouts.contains(alias) {
+                checkouts.push(*alias);
+            }
+        }
+        let mut ids = checkouts
+            .into_iter()
+            .map(|checkout| self.scoped(checkout).map(|key| key.id()))
+            .collect::<Result<Vec<_>, _>>()?;
+        if !aliases.is_empty() {
+            ids.push(Self::parse(&self.key)?.id());
+        }
+        Ok(KeyNamespace { ids, aliases })
     }
 }
 
@@ -305,6 +376,11 @@ impl TaskRun {
         let parent = PARENTS.with(|parents| parents.borrow().last().cloned());
         let root = kernel::effects_root(&request.target.root)?;
         let checkout = checkout::mint(&request.target.root)?;
+        let key = request.key.map(|key| key.scoped(checkout)).transpose()?;
+        let request = TaskRunRequest {
+            key: key.as_ref(),
+            ..request
+        };
         let owner = request.target.owner(checkout)?;
         let task_id = request.target.task_id(checkout)?;
         let ancestors = parent
@@ -972,13 +1048,36 @@ fn refuse_bound_key(
         Observed::Absent(_) => return Ok(()),
         Observed::Unknown(reason) => return Err(unverifiable_key(key, &format!("{reason:?}"))),
     };
-    match effigy_kernel::run::summary(&reader, key.id()) {
+    let namespace = key.namespace(&cx, &root)?;
+    for id in namespace.ids {
+        let candidate = RunKey {
+            key: key.key.clone(),
+            id,
+        };
+        check_bound_key(&candidate, task, &reader, &namespace.aliases)?;
+    }
+    Ok(())
+}
+
+fn check_bound_key(
+    key: &RunKey,
+    task: &TaskId,
+    reader: &effigy_kernel::store::StoreReader,
+    aliases: &[effigy_kernel::id::CheckoutId],
+) -> Result<(), RunnerError> {
+    match effigy_kernel::run::summary(reader, key.id()) {
         Observed::Absent(_) => Ok(()),
         Observed::Verified(existing, _) => {
-            let same = existing
-                .invocation
-                .as_ref()
-                .is_some_and(|invocation| invocation.spec().task.resource() == task.resource());
+            let same = existing.invocation.as_ref().is_some_and(|invocation| {
+                let old = &invocation.spec().task;
+                old.resource() == task.resource()
+                    || aliases.contains(&old.checkout())
+                        && aliases.contains(&task.checkout())
+                        && old.catalog() == task.catalog()
+                        && old.task() == task.task()
+                        && old.surface() == task.surface()
+                        && old.profile() == task.profile()
+            });
             if same {
                 Err(RunnerError::RunKeyExists {
                     run: key.id().to_string(),

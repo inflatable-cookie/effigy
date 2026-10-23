@@ -147,6 +147,48 @@ fn main() {
         assert!(!home.exists());
         return;
     }
+    if entry == "migration-key" {
+        // Emit an old host-global keyed id and leave its journal open when
+        // this disposable process exits. Import must preserve its alias.
+        let home = Path::new(args.get(1).expect("private fixture home"));
+        let cx = op(router.root_cancel()).effects().unwrap();
+        let root = StateRoot::effects(&cx, home).unwrap();
+        let digest = Digest::of(b"effigy-run-key\0imported-key");
+        let mut random = [0; 10];
+        random.copy_from_slice(&digest.0[..10]);
+        let id = RunId::new(0, random).unwrap();
+        let task = TaskId::new(
+            CheckoutId::new(CheckoutKind::Primary, [7; 16]),
+            "",
+            Surface::Published,
+            "noop",
+            None,
+        )
+        .unwrap();
+        let mut spec = invocation().spec().clone();
+        spec.owner = task.resource();
+        spec.task = task;
+        spec.argv = vec!["noop".into()];
+        let invocation = ResolvedInvocation::new(spec).unwrap();
+        let run = Run::begin(
+            &cx,
+            &root,
+            &invocation,
+            BeginOpts {
+                id,
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: None,
+            },
+            &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+            &mut Strict,
+        )
+        .unwrap();
+        std::mem::forget(run);
+        println!("{id}");
+        return;
+    }
     if entry == "migration-writer" {
         let home = Path::new(args.get(1).expect("private fixture home"));
         let cx = op(router.root_cancel()).effects().unwrap();

@@ -19,6 +19,10 @@ views now distinguish live foreground holders from journal records and expose
 bounded discovery coverage and omissions. Foreground stop signals only the
 freshly verified owner and waits for gate release without retaining an outcome;
 foreground logs explicitly report that no log was retained.
+Named task run IDs are scoped by the persisted checkout identity. Verified
+import seals retain old host-global key IDs as local lookup aliases; they do
+not reserve keys in other checkouts. Peer key discovery refuses ambiguity or
+omitted authority instead of selecting the first match.
 
 Production task journals, environment records, holder sessions, render objects
 and source-acquisition custody use the owning checkout journal. Gateway

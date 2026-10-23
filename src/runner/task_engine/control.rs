@@ -118,18 +118,104 @@ pub(in crate::runner) enum Lookup {
 
 /// A run id, else a `--run-id` key. A string that is a valid run id is read
 /// as one; a key is read through the id it derives.
-pub(in crate::runner) fn resolve(selector: &str) -> Result<RunId, RunnerError> {
+pub(in crate::runner) fn resolve(selector: &str) -> Result<Lookup, RunnerError> {
     if let Ok(id) = selector.parse::<RunId>() {
-        if !matches!(lookup(id), Lookup::NotFound) {
-            return Ok(id);
+        match lookup(id) {
+            Lookup::NotFound => {}
+            result => return Ok(result),
         }
     }
     match RunKey::parse(selector) {
-        Ok(key) => Ok(key.id()),
-        Err(_) => selector.parse::<RunId>().map_err(|_| {
-            RunnerError::task_invocation(format!("`{selector}` is neither a run id nor a run key"))
-        }),
+        Ok(key) => Ok(lookup_key(&key)),
+        Err(_) => selector
+            .parse::<RunId>()
+            .map(|_| Lookup::NotFound)
+            .map_err(|_| {
+                RunnerError::task_invocation(format!(
+                    "`{selector}` is neither a run id nor a run key"
+                ))
+            }),
     }
+}
+
+fn lookup_key_at(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    root: &effigy_kernel::root::StateRoot,
+    key: &RunKey,
+) -> Lookup {
+    let namespace = match key.namespace(cx, root) {
+        Ok(namespace) => namespace,
+        Err(error) => return Lookup::Unknown(error.to_string()),
+    };
+    let mut found = None;
+    for id in namespace.ids {
+        match lookup_journal(cx, root, id) {
+            Lookup::Found(row) => {
+                if found.is_some() {
+                    return Lookup::Unknown(format!(
+                        "key `{}` names multiple retained runs in {}",
+                        key.key(),
+                        root.owning_directory().path().display()
+                    ));
+                }
+                found = Some(row);
+            }
+            Lookup::NotFound => {}
+            other => return other,
+        }
+    }
+    found.map_or(Lookup::NotFound, Lookup::Found)
+}
+
+fn lookup_key(key: &RunKey) -> Lookup {
+    let cx = kernel::observe();
+    let cwd = match std::env::current_dir() {
+        Ok(cwd) => cwd,
+        Err(error) => return Lookup::Unknown(error.to_string()),
+    };
+    let current = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
+        .map(|resolved| resolved.resolved_root)
+        .unwrap_or(cwd);
+    match kernel::observe_root(&cx, &current) {
+        Observed::Verified(root, _) => match lookup_key_at(&cx, &root, key) {
+            Lookup::NotFound => {}
+            result => return result,
+        },
+        Observed::Absent(_) => {}
+        Observed::Unknown(reason) => {
+            return Lookup::Unknown(format!("{}: {reason:?}", current.display()))
+        }
+    }
+    let view = match kernel::known_roots_view(&cx) {
+        Ok(view) => view,
+        Err(error) => return Lookup::Unknown(error.to_string()),
+    };
+    let mut found: Option<Box<RunRecord>> = None;
+    let mut omitted = view.omitted;
+    for root in view.roots {
+        match lookup_key_at(&cx, &root, key) {
+            Lookup::Found(row) => {
+                if let Some(previous) = found {
+                    return Lookup::Unknown(format!(
+                        "key `{}` is ambiguous between {} and {}; query it in its owning checkout",
+                        key.key(),
+                        previous.root.owning_directory().path().display(),
+                        root.owning_directory().path().display()
+                    ));
+                }
+                found = Some(row);
+            }
+            Lookup::NotFound => {}
+            Lookup::Unknown(reason) => omitted.push(reason),
+        }
+    }
+    if !omitted.is_empty() {
+        return Lookup::Unknown(format!(
+            "key discovery is incomplete: {}",
+            omitted.join("; ")
+        ));
+    }
+    found.map_or(Lookup::NotFound, Lookup::Found)
 }
 
 /// A caller already resolved the owning checkout. Absence or uncertainty
