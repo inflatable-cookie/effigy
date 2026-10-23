@@ -224,6 +224,22 @@ pub(crate) fn validate_database(conn: &Connection, access: &Access) -> Result<()
     }
 }
 
+pub(crate) fn checkout_filesystem_facts(
+    cx: &ObserveContext,
+    root: &StateRoot,
+) -> Result<Option<(DirectoryIdentity, Option<DirectoryIdentity>)>, StoreError> {
+    let Some(seal) = optional::<Seal>(cx, root, SEALED)? else {
+        return Ok(None);
+    };
+    verify_seal(root, &seal)?;
+    Ok(seal.destination.checkout.map(|_| {
+        (
+            seal.destination.directory_identity,
+            seal.destination.git_directory_identity,
+        )
+    }))
+}
+
 pub(crate) fn check_invocation(
     cx: &ObserveContext,
     root: &StateRoot,

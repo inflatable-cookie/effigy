@@ -209,6 +209,12 @@ impl ResourceId {
     }
     /// Equal coordinates under a persistent token and its filesystem-derived
     /// checkout alias are the same logical owner, not auxiliary resources.
+    pub(crate) fn with_checkout(&self, checkout: CheckoutId) -> Result<Self, IdentityError> {
+        if !matches!(self.scope, Scope::Checkout(_)) {
+            return Err(IdentityError::InvalidInvocation);
+        }
+        Self::new(self.kind, Scope::Checkout(checkout), self.key.clone()).validate_record()
+    }
     pub(crate) fn checkout_alias_of(&self, other: &Self) -> bool {
         self.kind == other.kind
             && self.key == other.key

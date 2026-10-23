@@ -200,7 +200,8 @@ selects durability for the whole tree before workload go; discovering it after
 go refuses that effect rather than promoting a partially executed tree. There
 is no promotion after workload go and no silent fallback to the machine
 database. A container-free foreground
-build does not open either database, even if one is busy or corrupt.
+build never opens either database for writing. Machine-store failure is not a
+foreground dependency; existing local predecessor evidence stays read-only.
 
 Foreground admission checks any existing checkout journal for unresolved
 predecessors read-only. Missing journal means none; unreadable evidence is
@@ -225,6 +226,15 @@ and after. The receiver marks the inherited slot CLOEXEC; forwarding requires
 an explicit capability again. Queued bytes after owner closure grant nothing.
 This supplies the mechanism for admission and run-class inheritance; engines
 own the typed grant and live hook check.
+
+Bound checkout admission always takes the filesystem owner alias alongside its
+persisted-token spelling and every verified import alias. The sentinel derives
+the same filesystem alias from the checkout binding or import seal when it
+reopens the journal. Durable recovery checks predecessors under every held owner
+alias before admitting a successor. First durable initialization therefore cannot
+split exclusion from an already running token-free foreground invocation. The
+bounded admission retention sweep runs after those gates; a refused alias gate
+does not create a database for maintenance.
 
 **Foreground custody (I-P2/I-P3).** Before workload go, the owner and its
 in-memory guard acknowledge the complete custody receipt, nonce and ready

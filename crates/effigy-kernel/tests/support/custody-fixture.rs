@@ -299,7 +299,21 @@ fn main() {
     let op = op(router.root_cancel());
     let cx = op.effects().unwrap();
     let cleanup = op.cleanup(Duration::from_secs(10)).unwrap();
-    let root = StateRoot::effects(&cx, home).unwrap();
+    let root = if entry == "inline-alias" {
+        let machine = home.join("machine");
+        std::fs::create_dir(&machine).unwrap();
+        StateRoot::checkout_effects(
+            &cx,
+            &machine,
+            &effigy_kernel::migration::CheckoutLocation {
+                root: home.into(),
+                git_directory: None,
+            },
+        )
+        .unwrap()
+    } else {
+        StateRoot::effects(&cx, home).unwrap()
+    };
     let id = RunId::new(1, [9; 10]).unwrap();
     let inv = invocation();
     if entry == "engine-client" {

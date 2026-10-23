@@ -124,6 +124,7 @@ impl ForegroundRun {
                 "foreground gates must belong to the owning checkout".into(),
             ));
         }
+        let ids = aliases::gates(&publication, root, &inv.spec().owner, &ids)?;
         let mut gate = Gate::acquire(cx, root, &ids, opts.wait)?;
         // Declared shared exclusion gates remain held too; adapter gates
         // cannot reach this local-only path.

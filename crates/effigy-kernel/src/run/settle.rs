@@ -352,7 +352,13 @@ pub(crate) fn settle_interrupted_wait(
     wait: Wait,
 ) -> Result<Outcome<Settled>, RunError> {
     let (owner, id) = target;
-    let guard = Gate::acquire(cx, root, std::slice::from_ref(owner), wait)?;
+    let observe = cx
+        .child(Duration::from_secs(10))
+        .operation()
+        .observe()
+        .map_err(|_| RunError::Invalid("recovery alias observation context".into()))?;
+    let ids = super::aliases::gates(&observe, root, owner, std::slice::from_ref(owner))?;
+    let guard = Gate::acquire(cx, root, &ids, wait)?;
     let store = Store::open(&cleanup_effects(cleanup)?, root)?;
     let record = journal::run(store.conn(), id)?;
     if record.owner != owner.name().to_string() {

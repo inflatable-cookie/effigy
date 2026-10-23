@@ -1877,3 +1877,208 @@ fn foreground_filesystem_identity_cannot_be_promoted_into_a_durable_run() {
     assert!(!root.path().join("kernel.db").exists());
     assert!(!root.path().join("runs").exists());
 }
+
+fn invocation_at_checkout(checkout: CheckoutId) -> ResolvedInvocation {
+    let mut spec = invocation().spec().clone();
+    spec.task = TaskId::new(checkout, "", Surface::Published, "fixture", None).unwrap();
+    spec.owner = spec.task.resource();
+    ResolvedInvocation::new(spec).unwrap()
+}
+
+#[test]
+fn foreground_and_durable_exclusion_survives_first_token_creation() {
+    let home = home();
+    let cx = context();
+    let location = effigy_kernel::migration::CheckoutLocation {
+        root: home.path().into(),
+        git_directory: None,
+    };
+    let local =
+        StateRoot::filesystem_checkout(&cx.operation().observe().unwrap(), &location).unwrap();
+    let transient = StateRoot::foreground_effects(&cx, &location).unwrap();
+    let foreground_invocation = invocation_at_checkout(local);
+    let mut foreground = ForegroundRun::begin(
+        &cx,
+        &transient,
+        &foreground_invocation,
+        BeginOpts {
+            id: id(11),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: Some(LifecyclePlan {
+                executable: Executable::capture(&fixture()).unwrap(),
+                placement: effigy_kernel::supervise::Placement::Inline,
+            }),
+        },
+    )
+    .unwrap();
+    let machine = home.path().join("machine");
+    std::fs::create_dir(&machine).unwrap();
+    let durable_root = StateRoot::checkout_effects(&cx, &machine, &location).unwrap();
+    let token = CheckoutId::new(CheckoutKind::Primary, [17; 16]);
+    std::fs::write(
+        home.path().join(".effigy/effigy-runtime-scope"),
+        "11111111111111111111111111111111\n",
+    )
+    .unwrap();
+    let durable_invocation = invocation_at_checkout(token);
+    let opts = || BeginOpts {
+        id: id(12),
+        wait: Wait::FailFast,
+        acknowledge: vec![],
+        next: next(),
+        custody: None,
+    };
+    let cleanup = cx.operation().cleanup(Duration::from_secs(5)).unwrap();
+    assert!(matches!(
+        Run::begin(
+            &cx,
+            &durable_root,
+            &durable_invocation,
+            opts(),
+            &cleanup,
+            &mut Strict
+        ),
+        Err(RunError::Gate(_))
+    ));
+    assert!(!durable_root.path().join("kernel.db").exists());
+    foreground.finish(WorkloadOutcome::Succeeded).unwrap();
+    foreground.settle(&cleanup).unwrap();
+    let mut durable = Run::begin(
+        &cx,
+        &durable_root,
+        &durable_invocation,
+        opts(),
+        &cleanup,
+        &mut Strict,
+    )
+    .unwrap();
+    assert!(matches!(
+        effigy_kernel::gate::Gate::probe(
+            &cx.operation().observe().unwrap(),
+            &transient,
+            &foreground_invocation.spec().owner
+        ),
+        Observed::Verified(effigy_kernel::gate::GateState::Held(_), _)
+    ));
+    assert!(matches!(
+        ForegroundRun::begin(
+            &cx,
+            &transient,
+            &durable_invocation,
+            BeginOpts {
+                id: id(13),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: Some(LifecyclePlan {
+                    executable: Executable::capture(&fixture()).unwrap(),
+                    placement: effigy_kernel::supervise::Placement::Inline
+                })
+            }
+        ),
+        Err(RunError::Gate(_))
+    ));
+    durable.finish(WorkloadOutcome::Succeeded).unwrap();
+    durable.settle(&cleanup, &mut Strict).unwrap();
+}
+
+#[test]
+fn custody_sentinel_recovery_meets_the_filesystem_gate_alias() {
+    use effigy_kernel::{
+        gate::{Gate, GateState},
+        ident,
+    };
+    let home = home();
+    let mut owner = ChildGuard(
+        Command::new(fixture())
+            .arg("inline-alias")
+            .arg(home.path())
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    eventually(|| home.path().join("ready").exists());
+    let cx = context();
+    let observe = cx.operation().observe().unwrap();
+    let root = StateRoot::observe(&observe, home.path())
+        .verified()
+        .unwrap()
+        .clone();
+    let location = effigy_kernel::migration::CheckoutLocation {
+        root: home.path().into(),
+        git_directory: None,
+    };
+    let local = StateRoot::filesystem_checkout(&observe, &location).unwrap();
+    let alias = invocation_at_checkout(local).spec().owner.clone();
+    assert!(matches!(
+        Gate::probe(&observe, &root, &alias),
+        Observed::Verified(GateState::Held(_), _)
+    ));
+    let metadata = metadata(&observe, &root, RunId::new(1, [9; 10]).unwrap());
+    let sentinel = metadata.verified().unwrap().sentinel.clone().unwrap();
+    let process: ProcessReceipt =
+        serde_json::from_slice(&std::fs::read(home.path().join("receipt")).unwrap()).unwrap();
+    struct Resume(ident::ProcessIdentity);
+    impl Drop for Resume {
+        fn drop(&mut self) {
+            if ident::process_identity(self.0.pid).verified() == Some(&self.0) {
+                // SAFETY: exact identity of the sentinel this test started.
+                unsafe {
+                    libc::kill(self.0.pid as i32, libc::SIGCONT);
+                }
+            }
+        }
+    }
+    assert_eq!(
+        ident::process_identity(sentinel.pid).verified(),
+        Some(&sentinel)
+    );
+    // SAFETY: this fixture owns this freshly verified sentinel.
+    assert_eq!(unsafe { libc::kill(sentinel.pid as i32, libc::SIGSTOP) }, 0);
+    let resume = Resume(sentinel.clone());
+    eventually(|| {
+        matches!(
+            ident::process_state(sentinel.pid),
+            Observed::Verified(ident::ProcessState::Stopped, _)
+        )
+    });
+    owner.0.kill().unwrap();
+    owner.0.wait().unwrap();
+    let effects_root = StateRoot::effects(&cx, home.path()).unwrap();
+    let blocker = Gate::acquire(&cx, &effects_root, &[alias], Wait::FailFast).unwrap();
+    drop(resume);
+    // The multi-gate acquire writes diagnostics only after every lock is
+    // held. While blocked on our alias, the owner gate can still name the
+    // dead predecessor; observe the lock and the exact live sentinel itself.
+    eventually(|| {
+        matches!(
+            Gate::probe(&observe, &root, &invocation().spec().owner),
+            Observed::Verified(GateState::Held(_), _)
+        )
+    });
+    assert_eq!(
+        ident::process_identity(sentinel.pid).verified(),
+        Some(&sentinel)
+    );
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        ident::process_identity(process.identity.pid).verified(),
+        Some(&process.identity)
+    );
+    assert!(!matches!(
+        fresh_status(&observe, &root, RunId::new(1, [9; 10]).unwrap()),
+        Observed::Verified(RunStatus::Closed { .. }, _)
+    ));
+    drop(blocker);
+    eventually(|| {
+        matches!(
+            fresh_status(&observe, &root, RunId::new(1, [9; 10]).unwrap()),
+            Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
+        )
+    });
+    eventually(|| {
+        ident::process_identity(process.identity.pid).verified() != Some(&process.identity)
+    });
+}

@@ -2,7 +2,7 @@
 use super::*;
 use crate::fs::{DirectoryIdentity, FileName};
 use crate::gate::{Gate, Wait};
-use crate::id::{CheckoutId, CheckoutKind, Digest, ResourceId, Scope};
+use crate::id::{CheckoutId, ResourceId, Scope};
 use crate::migration::{authority, Authority, CheckoutLocation};
 use crate::record::{atomic_replace, read_record, Record, ReplaceOpts};
 use crate::store::StoreError;
@@ -132,15 +132,13 @@ impl StateRoot {
                 )))
             }
         }
-        // All token-init spellings meet this filesystem-generation gate.
-        let digest = Digest::of(
-            &serde_json::to_vec(&expected.checkout)
-                .map_err(|error| unreadable(error.to_string()))?,
-        );
-        let mut token = [0; 16];
-        token.copy_from_slice(&digest.0[..16]);
+        // All first durable initializers meet the same filesystem scope,
+        // independently of whether a persisted token exists yet.
         let id = ResourceId::store(
-            Scope::Checkout(CheckoutId::new(CheckoutKind::Primary, token)),
+            Scope::Checkout(
+                root.local_gate_identity(&observe)?
+                    .ok_or_else(|| unreadable("checkout filesystem identity unavailable"))?,
+            ),
             "checkout-binding",
         )?;
         let guard = Gate::acquire(cx, &root, &[id], Wait::FailFast)?;
@@ -237,6 +235,24 @@ fn machine_format(cx: &ObserveContext, root: &StateRoot) -> Result<bool, StoreEr
         Observed::Verified(record, _) if record.home == root.owner.identity()? => Ok(true),
         Observed::Absent(_) => Ok(false),
         other => Err(unreadable(format!("machine format binding: {other:?}"))),
+    }
+}
+
+pub(super) fn binding_identity(
+    cx: &ObserveContext,
+    root: &StateRoot,
+) -> Result<Option<CheckoutId>, StoreError> {
+    match read_record::<Binding>(cx, root.dir(), &FileName::new(BINDING)?) {
+        Observed::Verified(binding, _) => {
+            verify(cx, root)?;
+            super::checkout::filesystem_identity(
+                binding.checkout,
+                binding.git.map(|(_, identity)| identity),
+            )
+            .map(Some)
+        }
+        Observed::Absent(_) => Ok(None),
+        other => Err(unreadable(format!("checkout binding: {other:?}"))),
     }
 }
 

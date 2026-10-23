@@ -64,22 +64,48 @@ impl RetainedCheckout {
         Ok(())
     }
     fn identity(&self, owner: &DirFd) -> Result<CheckoutId, StoreError> {
-        let mut bytes = b"effigy-filesystem-checkout-v1\0".to_vec();
-        bytes.extend(
-            serde_json::to_vec(&(
-                owner.identity()?,
-                self.git.as_ref().map(DirFd::identity).transpose()?,
-            ))
-            .map_err(|error| StoreError::Corrupt(error.to_string()))?,
-        );
-        let digest = Digest::of(&bytes);
-        let mut token = [0; 16];
-        token.copy_from_slice(&digest.0[..16]);
-        Ok(CheckoutId::new(CheckoutKind::Filesystem, token))
+        filesystem_identity(
+            owner.identity()?,
+            self.git.as_ref().map(DirFd::identity).transpose()?,
+        )
     }
 }
 
+pub(super) fn filesystem_identity(
+    checkout: DirectoryIdentity,
+    git: Option<DirectoryIdentity>,
+) -> Result<CheckoutId, StoreError> {
+    let mut bytes = b"effigy-filesystem-checkout-v1\0".to_vec();
+    bytes.extend(
+        serde_json::to_vec(&(checkout, git))
+            .map_err(|error| StoreError::Corrupt(error.to_string()))?,
+    );
+    let digest = Digest::of(&bytes);
+    let mut token = [0; 16];
+    token.copy_from_slice(&digest.0[..16]);
+    Ok(CheckoutId::new(CheckoutKind::Filesystem, token))
+}
+
 impl StateRoot {
+    /// Sentinels reopen a typed checkout journal without a core/Git resolver.
+    /// Use its verified publication facts, never the machine home's identity.
+    pub(crate) fn local_gate_identity(
+        &self,
+        cx: &ObserveContext,
+    ) -> Result<Option<CheckoutId>, StoreError> {
+        if self.is_machine() || !self.requires_adoption() {
+            return Ok(None);
+        }
+        if let Some(checkout) = &self.checkout {
+            return checkout.identity(&self.owner).map(Some);
+        }
+        if let Some(identity) = super::runtime::binding_identity(cx, self)? {
+            return Ok(Some(identity));
+        }
+        crate::migration::adoption::checkout_filesystem_facts(cx, self)?
+            .map(|(checkout, git)| filesystem_identity(checkout, git))
+            .transpose()
+    }
     /// Pure local gate identity; no token, state directory or machine lookup.
     /// The Filesystem kind keeps these names separate from persisted tokens.
     pub fn filesystem_checkout(

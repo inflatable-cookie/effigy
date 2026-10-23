@@ -2,6 +2,7 @@
 //!
 //! Engines supply effect observations and idempotent undo. A `Run` is the only
 //! writer of its journal; dropping it releases liveness, never claims cleanup.
+mod aliases;
 mod attachments;
 mod children;
 mod claims;
@@ -291,21 +292,28 @@ impl<'a> Run<'a> {
             .observe()
             .map_err(|_| RunError::Invalid("run publication observation context".into()))?;
         crate::migration::adoption::check_invocation(&observe, root, inv)?;
-        // #275: one bounded admission sweep, never a close-time scan. Import
-        // authority and placement are verified before maintenance can write.
-        crate::retention::sweep(cx, root);
-
         let mut ids = inv.spec().gates.clone();
         ids.push(inv.spec().owner.clone());
+        let ids = aliases::gates(&observe, root, &inv.spec().owner, &ids)?;
         let mut guard = Gate::acquire(cx, root, &ids, opts.wait)?;
         crate::fault_point!(BeginGated)?;
         // Only an owner gate may span recovery callbacks or later effects (K14).
         guard.retain_owner(&inv.spec().owner);
+        // #275: one bounded admission sweep, never a close-time scan. A
+        // refused alias gate creates no journal merely to run maintenance.
+        crate::retention::sweep(cx, root);
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         // A refused writer wait names this run, not a nameless process.
         store.set_run(opts.id);
-        let predecessors = journal::predecessors(store.conn(), &inv.spec().owner)?;
-        for predecessor in predecessors {
+        let mut predecessors = Vec::new();
+        for owner in guard.ids() {
+            predecessors.extend(
+                journal::predecessors(store.conn(), owner)?
+                    .into_iter()
+                    .map(|record| (owner.clone(), record)),
+            );
+        }
+        for (owner, predecessor) in predecessors {
             let mut previous = Self {
                 root,
                 store,
@@ -313,7 +321,7 @@ impl<'a> Run<'a> {
                 cx: cx.clone(),
                 id: predecessor.id,
                 owner: Fence {
-                    resource: inv.spec().owner.clone(),
+                    resource: owner,
                     generation: predecessor.generation,
                 },
                 next: opts.next.clone(),
