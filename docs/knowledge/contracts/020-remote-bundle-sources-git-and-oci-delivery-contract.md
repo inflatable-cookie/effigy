@@ -112,6 +112,13 @@ ref = "main"
 `resolve_catalog_source` exposes these pinned directories to the catalog
 resolver. Service lookup precedence belongs to the catalog owner (Q-005).
 
+**Ruling (Tom, 2026-10-23):** "I shouldn't need to do that - effigy needs to
+handle this stuff gracefully." Stale sources must update themselves on the
+Prepare paths (`dev`, `bootstrap`, `container up`), not wait for a manual
+`bundle sync`. The rule below is the current behaviour; it is being replaced
+by automatic update on Prepare, with pinned sources never moving and a
+`manual` opt-out.
+
 Only `effigy bundle sync` updates selected bytes, including path sources.
 Bootstrap and the first `dev` prepare missing pins; subsequent runs retain the
 pins even if the declaration or upstream source changes. `--plan`, inventory,
