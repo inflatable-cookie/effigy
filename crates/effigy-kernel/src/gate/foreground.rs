@@ -13,6 +13,37 @@ pub struct ForegroundDiag {
 pub struct ForegroundHolder {
     pub coordinates: ForegroundDiag,
     pub holder: HolderDiag,
+    // An independent, read-only description of the observed inode. Waiting
+    // for release must not mistake a missing or replaced pathname for closure.
+    gate: std::sync::Arc<File>,
+}
+
+impl ForegroundHolder {
+    /// Observe release of this exact gate inode, without acquiring custody.
+    /// Missing or replaced checkout authority remains Unknown.
+    pub fn released(&self, cx: &ObserveContext, root: &StateRoot) -> Observed<bool> {
+        if cx.check("foreground custody release").is_err() {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "foreground custody release".into(),
+            });
+        }
+        if let Err(error) = root.verify_binding() {
+            return Observed::Unknown(crate::root::unknown(&error));
+        }
+        match fs::try_flock(&self.gate, libc::LOCK_SH) {
+            Ok(free) => {
+                if free {
+                    fs::unlock(&self.gate);
+                }
+                Observed::Verified(
+                    free,
+                    Evidence::new("retained foreground gate inode".into(), None)
+                        .expect("fixed source"),
+                )
+            }
+            Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+        }
+    }
 }
 
 impl GateGuard {
@@ -71,23 +102,23 @@ impl Gate {
                     else {
                         continue;
                     };
-                    let state = probe_names(cx, root, scope, name);
-                    let diag = match state {
-                        Observed::Verified(GateState::Held(diag), _) => match *diag {
-                            Observed::Verified(diag, _) => diag,
-                            Observed::Unknown(reason) => {
-                                return Err(format!(
-                                    "held gate diagnostics unavailable: {reason:?}"
-                                ))
-                            }
-                            Observed::Absent(_) => {
-                                return Err("held gate has no diagnostics".into())
-                            }
-                        },
+                    cx.check("foreground gate inventory")
+                        .map_err(|error| format!("{error:?}"))?;
+                    let Some(file) = open_gate(&dir, &format!("{name}.gate"), false)
+                        .map_err(|error| error.to_string())?
+                    else {
+                        continue;
+                    };
+                    if fs::try_flock(&file, libc::LOCK_SH).map_err(|error| error.to_string())? {
+                        fs::unlock(&file);
+                        continue;
+                    }
+                    let diag = match holder(&file) {
+                        Observed::Verified(diag, _) => diag,
                         Observed::Unknown(reason) => {
-                            return Err(format!("gate observation unavailable: {reason:?}"))
+                            return Err(format!("held gate diagnostics unavailable: {reason:?}"))
                         }
-                        _ => continue,
+                        Observed::Absent(_) => return Err("held gate has no diagnostics".into()),
                     };
                     let Some(coordinates) = diag.foreground.clone() else {
                         continue;
@@ -99,9 +130,23 @@ impl Gate {
                             "foreground gate coordinates do not match its inode name".into()
                         );
                     }
+                    if let Scope::Checkout(owner) = coordinates.owner.scope() {
+                        if owner.kind() == crate::id::CheckoutKind::Filesystem
+                            && root
+                                .local_gate_identity(cx)
+                                .map_err(|error| error.to_string())?
+                                != Some(owner)
+                        {
+                            return Err(
+                                "foreground holder belongs to a replaced checkout generation"
+                                    .into(),
+                            );
+                        }
+                    }
                     rows.push(ForegroundHolder {
                         coordinates,
                         holder: diag,
+                        gate: std::sync::Arc::new(file),
                     });
                 }
             }

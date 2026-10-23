@@ -908,8 +908,8 @@ fn checkout_journals_are_independent_while_another_checkout_writer_is_busy() {
                     .join(".effigy/state/kernel.db")
                     .exists());
                 let runs = super::control::list(Some(second.path()), 20).unwrap();
-                assert_eq!(runs.len(), 1);
-                assert_eq!(runs[0].id, run_b.id());
+                assert_eq!(runs.runs.len(), 1);
+                assert_eq!(runs.runs[0].id, run_b.id());
                 assert!(run_b.close(WorkloadOutcome::Succeeded).is_empty());
             })
             .join()

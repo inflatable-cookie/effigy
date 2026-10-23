@@ -13,8 +13,12 @@ durable trees use checkout journals. Memory parent grants carry the run class
 and verified hook identity; unknown journal liveness cannot bypass admission.
 The binary proof covers 24 short runs across three checkouts, nested heavy
 admission, live status, hook loss and late named-run refusal. Full workflow
-classification, generic cross-checkout views, migration scale and the remaining
-acceptance proofs are still required before this amendment ships.
+classification, migration scale and the remaining
+acceptance proofs are still required before this amendment ships. Generic run
+views now distinguish live foreground holders from journal records and expose
+bounded discovery coverage and omissions. Foreground stop signals only the
+freshly verified owner and waits for gate release without retaining an outcome;
+foreground logs explicitly report that no log was retained.
 
 Production task journals, environment records, holder sessions, render objects
 and source-acquisition custody use the owning checkout journal. Gateway

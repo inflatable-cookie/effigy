@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Generic run views include live foreground holders with explicit evidence
+  provenance and bounded discovery coverage. Foreground logs report that no
+  log is retained; stop signals only the verified owner, waits for custody
+  release, and leaves the outcome unrecorded.
+
 - Local custody receipts add a process-group anchor. Recovery can stop
   descendants that cleared their environment after their leader was reaped.
   Each group retains one extra process until settle; a killed anchor or an

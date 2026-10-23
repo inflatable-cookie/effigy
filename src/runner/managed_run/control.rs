@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use effigy_kernel::custody::Stream;
 use effigy_kernel::id::RunId;
 use effigy_kernel::observe::Observed;
-use effigy_kernel::run::{Effect, EffectState, Phase};
+use effigy_kernel::run::{Effect, EffectState};
 use effigy_kernel::supervise::OUTPUT_SEQUENCE;
 use serde::Serialize;
 
@@ -404,7 +404,7 @@ pub(in crate::runner) fn logs(
         if !follow {
             return Ok(text);
         }
-        let closed = matches!(record.refresh(), Lookup::Found(record) if record.summary.phase == Phase::Closed || record.view.state == "interrupted");
+        let closed = matches!(record.refresh(), Lookup::Found(record) if record.closed() || record.view.state == "interrupted");
         if closed && !moved {
             return Ok(String::new());
         }
@@ -446,7 +446,7 @@ pub(in crate::runner) fn stop(addressed: &Addressed<'_>) -> Result<String, Runne
     let deadline = SETTLE_BUDGET + Duration::from_secs(30);
     let settled = loop {
         match record.refresh() {
-            Lookup::Found(now) if now.summary.phase == Phase::Closed => break *now,
+            Lookup::Found(now) if now.closed() => break *now,
             Lookup::Found(now) if now.view.state == "interrupted" => {
                 // The supervisor died with the stop in flight; settle here.
                 let _ = request_stop(&now);
@@ -521,7 +521,7 @@ pub(in crate::runner) fn stop_run(
     let deadline = Instant::now() + budget;
     loop {
         match record.refresh() {
-            Lookup::Found(now) if now.summary.phase == Phase::Closed => {
+            Lookup::Found(now) if now.closed() => {
                 if now.view.cleanup == Some("incomplete") {
                     return Err(RunnerError::task_invocation(format!(
                         "run {id} settled ({}) with cleanup incomplete; its residue is listed by its status",

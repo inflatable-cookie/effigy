@@ -451,7 +451,7 @@ fn supervisor_lost(run: RunId, addressed: &Addressed<'_>, detail: &str) -> Close
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         if let task_engine::Lookup::Found(record) = task_engine::lookup_run(run) {
-            if record.summary.phase == effigy_kernel::run::Phase::Closed {
+            if record.closed() {
                 return Closed {
                     error: Some(format!(
                         "the supervisor of run {run} exited before reporting ({detail}); its \

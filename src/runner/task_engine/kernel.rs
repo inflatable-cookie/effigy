@@ -158,6 +158,20 @@ static CHECKOUT_ROOTS: OnceLock<Mutex<std::collections::BTreeMap<PathBuf, &'stat
 /// In-process handles plus bounded, explicit filesystem discovery. Nothing is
 /// registered durably. Observation of one checkout never opens its peers.
 pub(super) fn known_roots(cx: &ObserveContext) -> Result<Vec<StateRoot>, RunnerError> {
+    let view = known_roots_view(cx)?;
+    for reason in view.omitted {
+        eprintln!("warning: runtime view omitted {reason}");
+    }
+    Ok(view.roots)
+}
+
+#[derive(Debug)]
+pub(super) struct RootsView {
+    pub roots: Vec<StateRoot>,
+    pub omitted: Vec<String>,
+}
+
+pub(super) fn known_roots_view(cx: &ObserveContext) -> Result<RootsView, RunnerError> {
     let mut paths = CHECKOUT_ROOTS
         .get_or_init(Default::default)
         .lock()
@@ -175,33 +189,28 @@ pub(super) fn known_roots(cx: &ObserveContext) -> Result<Vec<StateRoot>, RunnerE
     let config = effigy_manifest::load_user_config_from(&home.join(".effigy/config.toml"))
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let found = super::discovery::collect(cx, &current, &config.runtime.checkout_roots);
-    for omitted in &found.omitted {
-        eprintln!(
-            "warning: runtime view omitted {}: {}",
-            omitted.path.display(),
-            omitted.reason
-        );
-    }
+    let mut omitted = found
+        .omitted
+        .iter()
+        .map(|entry| format!("{}: {}", entry.path.display(), entry.reason))
+        .collect::<Vec<_>>();
     paths.extend(found.checkouts);
     let mut roots = Vec::new();
     for path in paths {
         match observe_root(cx, &path) {
             Observed::Verified(root, _) => roots.push(root),
             Observed::Absent(_) => {}
-            Observed::Unknown(reason) => eprintln!(
-                "warning: runtime view omitted {}: {reason:?}",
-                path.display()
-            ),
+            Observed::Unknown(reason) => omitted.push(format!("{}: {reason:?}", path.display())),
         }
     }
     match StateRoot::runtime_machine_observe(cx, &home) {
         Observed::Verified(root, _) => roots.push(root),
         Observed::Absent(_) => {}
         Observed::Unknown(reason) => {
-            eprintln!("warning: runtime view omitted machine facts: {reason:?}")
+            omitted.push(format!("machine facts: {reason:?}"));
         }
     }
-    Ok(roots)
+    Ok(RootsView { roots, omitted })
 }
 
 /// Checkout journals are opened independently; the actual user HOME is only

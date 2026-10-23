@@ -1,20 +1,20 @@
-//! Generic run control over the kernel run journal (Q-006, contract 052
-//! §5.6): every run, heavy or not, is found by its run id or `--run-id` key,
-//! read from its row and owner gate, followed through its logs and stopped
-//! through a fenced kernel request. Reads are pure (R2); only `stop` writes.
+//! Generic run control over checkout journals and live foreground gates.
+//! Durable runs retain outcomes and logs; foreground diagnostics exist only
+//! while custody holds a gate. Reads are pure (R2). Foreground stop never
+//! opens a journal or reconstructs signalling authority from old gate bytes.
 
 use std::path::Path;
 use std::time::Duration;
 
 use effigy_kernel::custody::Stream;
-use effigy_kernel::gate::Gate;
+use effigy_kernel::gate::{ForegroundHolder, Gate};
 use effigy_kernel::id::{ResourceKind, RunId};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::run::{Fence, LogRead, Phase, Request, RequestAction, RunSummary};
 use effigy_kernel::store::Store;
 
 use super::kernel::{self, TaskSettlement};
-use super::status::{project_run, RunView};
+use super::status::{project_foreground, project_run, RunView};
 use super::RunKey;
 use crate::runner::error::RunnerError;
 
@@ -28,13 +28,43 @@ pub(in crate::runner) struct RunRecord {
     pub(in crate::runner) id: RunId,
     /// Bound once by lookup; stop and logs retain this checkout generation.
     pub(super) root: effigy_kernel::root::StateRoot,
-    pub(in crate::runner) summary: RunSummary,
+    source: RunSource,
     pub(in crate::runner) view: RunView,
     /// The selector the run was admitted for.
     pub(in crate::runner) task: String,
 }
 
+#[derive(Debug, Clone)]
+enum RunSource {
+    Journal(RunSummary),
+    Foreground(ForegroundHolder),
+}
+
 impl RunRecord {
+    pub(in crate::runner) fn summary(&self) -> Option<&RunSummary> {
+        match &self.source {
+            RunSource::Journal(summary) => Some(summary),
+            RunSource::Foreground(_) => None,
+        }
+    }
+    pub(in crate::runner) fn foreground(&self) -> bool {
+        matches!(self.source, RunSource::Foreground(_))
+    }
+    pub(in crate::runner) fn closed(&self) -> bool {
+        self.summary()
+            .is_some_and(|summary| summary.phase == Phase::Closed)
+    }
+    /// This observation says only that custody released its gate, never
+    /// that the foreground workload succeeded or produced a retained result.
+    pub(in crate::runner) fn foreground_released(&self) -> bool {
+        let RunSource::Foreground(holder) = &self.source else {
+            return false;
+        };
+        matches!(
+            holder.released(&kernel::observe(), &self.root),
+            Observed::Verified(true, _)
+        )
+    }
     pub(in crate::runner) fn refresh(&self) -> Lookup {
         lookup_at(&kernel::observe(), &self.root, self.id)
     }
@@ -66,13 +96,13 @@ impl RunRecord {
     /// Closed, or open with a free owner gate: either way it will make no
     /// more progress by itself.
     pub(in crate::runner) fn terminal(&self) -> bool {
-        matches!(self.view.state.as_str(), "interrupted") || self.summary.phase == Phase::Closed
+        matches!(self.view.state.as_str(), "interrupted") || self.closed()
     }
 
     /// The run's own result as a process exit code.
     pub(in crate::runner) fn exit_code(&self) -> i32 {
         match self.view.exit_code {
-            Some(code) if self.summary.phase == Phase::Closed => code,
+            Some(code) if self.closed() => code,
             _ => 1,
         }
     }
@@ -165,6 +195,79 @@ fn lookup_at(
     root: &effigy_kernel::root::StateRoot,
     id: RunId,
 ) -> Lookup {
+    let foreground = match foreground_records(cx, root) {
+        Ok(rows) => rows.into_iter().find(|row| row.id == id),
+        Err(reason) => return Lookup::Unknown(reason),
+    };
+    let durable = lookup_journal(cx, root, id);
+    match (foreground, durable) {
+        (Some(_), Lookup::Found(_)) => Lookup::Unknown(format!(
+            "run {id} has conflicting foreground and journal evidence"
+        )),
+        (Some(row), _) => Lookup::Found(Box::new(row)),
+        (None, result) => result,
+    }
+}
+
+fn foreground_records(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    root: &effigy_kernel::root::StateRoot,
+) -> Result<Vec<RunRecord>, String> {
+    let rows = match Gate::foreground_holders(cx, root) {
+        Observed::Verified(rows, _) => rows,
+        Observed::Absent(_) => return Ok(Vec::new()),
+        Observed::Unknown(reason) => {
+            return Err(format!(
+                "{}: foreground custody unavailable: {reason:?}",
+                root.path().display()
+            ))
+        }
+    };
+    let mut unique = std::collections::BTreeMap::new();
+    for row in rows {
+        if row.coordinates.owner.kind() != ResourceKind::Task {
+            continue;
+        }
+        let Some(id) = row
+            .holder
+            .run
+            .as_ref()
+            .and_then(|run| run.parse::<RunId>().ok())
+        else {
+            return Err("foreground holder has no readable run id".into());
+        };
+        if let Some(previous) = unique.get(&id.to_string()) {
+            let previous: &RunRecord = previous;
+            if let RunSource::Foreground(old) = &previous.source {
+                if old.coordinates.owner != row.coordinates.owner
+                    || old.holder.pid != row.holder.pid
+                    || old.holder.start != row.holder.start
+                    || old.holder.boot != row.holder.boot
+                {
+                    return Err(format!("run {id} has conflicting foreground holders"));
+                }
+            }
+            continue;
+        }
+        unique.insert(
+            id.to_string(),
+            RunRecord {
+                id,
+                root: root.clone(),
+                view: project_foreground(&row, id.to_string()),
+                task: row.coordinates.task.task().to_owned(),
+                source: RunSource::Foreground(row),
+            },
+        );
+    }
+    Ok(unique.into_values().collect())
+}
+
+fn lookup_journal(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    root: &effigy_kernel::root::StateRoot,
+    id: RunId,
+) -> Lookup {
     let reader = match Store::read(cx, root) {
         Observed::Verified(reader, _) => reader,
         Observed::Absent(_) => return Lookup::NotFound,
@@ -205,7 +308,7 @@ fn record(
     RunRecord {
         id: summary.id,
         root: root.clone(),
-        summary,
+        source: RunSource::Journal(summary),
         view,
         task,
     }
@@ -213,45 +316,68 @@ fn record(
 
 /// The newest runs of tasks and QA groups, in the checkout at `root`, or on
 /// the whole host when `root` is `None`. Internal lock sections are hidden.
+#[derive(Debug)]
+pub(in crate::runner) struct RunListing {
+    pub runs: Vec<RunRecord>,
+    pub omitted: Vec<String>,
+    pub observed_roots: usize,
+}
+
 pub(in crate::runner) fn list(
     root: Option<&Path>,
     limit: usize,
-) -> Result<Vec<RunRecord>, RunnerError> {
+) -> Result<RunListing, RunnerError> {
     let cx = kernel::observe();
+    let mut omitted = Vec::new();
     let roots = match root {
         Some(path) => match kernel::observe_root(&cx, path) {
             Observed::Verified(root, _) => vec![root],
-            Observed::Absent(_) => return Ok(Vec::new()),
+            Observed::Absent(_) => Vec::new(),
             Observed::Unknown(reason) => return Err(unreadable(&format!("{reason:?}"))),
         },
-        None => kernel::known_roots(&cx)?,
+        None => {
+            let view = kernel::known_roots_view(&cx)?;
+            omitted = view.omitted;
+            view.roots
+        }
     };
+    let observed_roots = roots.len();
     let mut records = Vec::new();
     for state in roots {
+        match foreground_records(&cx, &state) {
+            Ok(rows) => records.extend(rows),
+            Err(reason) => omitted.push(reason),
+        }
         let reader = match Store::read(&cx, &state) {
             Observed::Verified(reader, _) => reader,
             Observed::Absent(_) => continue,
             Observed::Unknown(reason) => {
-                return Err(unreadable(&format!(
-                    "{}: {reason:?}",
+                omitted.push(format!(
+                    "{}: journal unavailable: {reason:?}",
                     state.path().display()
-                )))
+                ));
+                continue;
             }
         };
         let rows = match effigy_kernel::run::recent(&reader, None, limit.saturating_mul(4).max(64))
         {
             Observed::Verified(rows, _) => rows,
             Observed::Absent(_) => Vec::new(),
-            Observed::Unknown(reason) => return Err(unreadable(&format!("{reason:?}"))),
+            Observed::Unknown(reason) => {
+                omitted.push(format!(
+                    "{}: journal unavailable: {reason:?}",
+                    state.path().display()
+                ));
+                continue;
+            }
         };
         records.extend(
             rows.into_iter()
                 .map(|summary| record(&cx, &state, summary))
                 .filter(|record| {
                     record
-                        .summary
-                        .invocation
-                        .as_ref()
+                        .summary()
+                        .and_then(|summary| summary.invocation.as_ref())
                         .is_some_and(|invocation| {
                             invocation.spec().owner.kind() == ResourceKind::Task
                         })
@@ -260,10 +386,19 @@ pub(in crate::runner) fn list(
         );
     }
     records.sort_by_key(|record| {
-        std::cmp::Reverse((record.summary.created_at_ms, record.id.to_string()))
+        std::cmp::Reverse((
+            record
+                .summary()
+                .map_or(i64::MAX, |summary| summary.created_at_ms),
+            record.id.to_string(),
+        ))
     });
     records.truncate(limit);
-    Ok(records)
+    Ok(RunListing {
+        runs: records,
+        omitted,
+        observed_roots,
+    })
 }
 
 fn root_for_run(id: RunId) -> Observed<effigy_kernel::root::StateRoot> {
@@ -386,10 +521,13 @@ fn effects_for_record(record: &RunRecord) -> Result<effigy_kernel::root::StateRo
 /// The kernel stop path: a generation-fenced `Stop` request the live owner
 /// acts on, or, when the owner is gone, the one settle under its gate.
 pub(in crate::runner) fn request_stop(record: &RunRecord) -> Result<StopStarted, RunnerError> {
-    if record.summary.phase == Phase::Closed {
+    let summary = record.summary().ok_or_else(|| {
+        RunnerError::task_invocation("foreground runs accept only a verified live-owner signal")
+    })?;
+    if record.closed() {
         return Ok(StopStarted::AlreadyClosed);
     }
-    let invocation = record.summary.invocation.as_ref().ok_or_else(|| {
+    let invocation = summary.invocation.as_ref().ok_or_else(|| {
         RunnerError::task_invocation(format!(
             "run {} has no readable invocation; it cannot be addressed",
             record.id
@@ -420,7 +558,7 @@ pub(in crate::runner) fn request_stop(record: &RunRecord) -> Result<StopStarted,
         run: record.id,
         expected: Fence {
             resource: owner,
-            generation: record.summary.generation,
+            generation: summary.generation,
         },
         action: RequestAction::Stop,
     };
@@ -439,7 +577,30 @@ pub(in crate::runner) fn request_stop(record: &RunRecord) -> Result<StopStarted,
 /// start identity the gate probe verified. Its signal router forwards the
 /// stop to its own process groups. Never a pattern kill.
 pub(in crate::runner) fn signal_owner(record: &RunRecord) -> bool {
-    let Some(invocation) = record.summary.invocation.as_ref() else {
+    if let RunSource::Foreground(holder) = &record.source {
+        // Revalidate the checkout generation and holder before signalling.
+        // The gate operation checks the run, native start and boot again.
+        let Lookup::Found(now) = record.refresh() else {
+            return false;
+        };
+        if !now.foreground() || now.view.state != "running" {
+            return false;
+        }
+        return matches!(
+            Gate::signal_holder(
+                &kernel::effects(),
+                &record.root,
+                &holder.coordinates.gate,
+                &record.id,
+                libc::SIGTERM
+            ),
+            Observed::Verified(..)
+        );
+    }
+    let Some(invocation) = record
+        .summary()
+        .and_then(|summary| summary.invocation.as_ref())
+    else {
         return false;
     };
     let Ok(root) = effects_for_record(record) else {

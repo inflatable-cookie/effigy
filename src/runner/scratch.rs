@@ -1247,13 +1247,12 @@ fn sweep(root: &Path) {
             return RunState::Unknown;
         };
         match crate::runner::task_engine::lookup_run(id) {
-            crate::runner::task_engine::Lookup::Found(record) => match record.summary.phase {
-                effigy_kernel::run::Phase::Closed => RunState::Closed {
-                    at_ms: record
-                        .summary
-                        .closed_at_ms
-                        .or(Some(record.summary.updated_at_ms)),
-                },
+            crate::runner::task_engine::Lookup::Found(record) => match record.summary() {
+                Some(summary) if summary.phase == effigy_kernel::run::Phase::Closed => {
+                    RunState::Closed {
+                        at_ms: summary.closed_at_ms.or(Some(summary.updated_at_ms)),
+                    }
+                }
                 _ => RunState::Open,
             },
             // Absence in a bounded view cannot establish closure of a run

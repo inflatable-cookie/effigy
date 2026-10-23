@@ -3,7 +3,7 @@
 //! held gate is a live run, a free gate under a non-closed row is an
 //! interrupted run, and history never stands in for current state.
 
-use effigy_kernel::gate::{Gate, GateState};
+use effigy_kernel::gate::{ForegroundHolder, Gate, GateState};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::WorkloadOutcome;
 use effigy_kernel::run::{history, Phase, RunSummary};
@@ -107,25 +107,37 @@ pub(in crate::runner) fn task_status(target: &TaskTarget, limit: usize) -> TaskS
         if !verified {
             view.warnings.push("foreground gate remains held but its invoking owner is unavailable; cleanup or residue cannot be reconstructed".into());
         }
-        view.current = Some(RunView {
-            evidence_source: "live-foreground",
-            run_id: run,
-            step: None,
-            steps: Vec::new(),
-            state: view.state.clone(),
-            phase: None,
-            profile: None,
-            exit_code: None,
-            signal: None,
-            cleanup: None,
-            pid: verified.then_some(row.holder.pid),
-            started_at_epoch_ms: None,
-            finished_at_epoch_ms: None,
-            duration_ms: None,
-        });
+        view.current = Some(project_foreground(&row, run));
         view.next = None;
     }
     view
+}
+
+pub(super) fn project_foreground(row: &ForegroundHolder, run: String) -> RunView {
+    let live = matches!(
+        row.holder.state,
+        Observed::Verified(
+            effigy_kernel::ident::ProcessState::Active
+                | effigy_kernel::ident::ProcessState::Stopped,
+            _
+        )
+    );
+    RunView {
+        evidence_source: "live-foreground",
+        run_id: run,
+        step: None,
+        steps: Vec::new(),
+        state: if live { "running" } else { "unknown" }.into(),
+        phase: None,
+        profile: None,
+        exit_code: None,
+        signal: None,
+        cleanup: None,
+        pid: live.then_some(row.holder.pid),
+        started_at_epoch_ms: None,
+        finished_at_epoch_ms: None,
+        duration_ms: None,
+    }
 }
 
 /// Pure read (R2): opens nothing for writing and mints no checkout token.

@@ -108,6 +108,70 @@ fn found(id: RunId) -> Option<RunRecord> {
     }
 }
 
+#[test]
+fn unreadable_history_does_not_hide_verified_foreground_custody() {
+    let directory = tempfile::tempdir().expect("checkout");
+    let target = target(directory.path(), "live");
+    let request = || TaskRunRequest {
+        target: &target,
+        lock_wait_ms: 0,
+        custody: false,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: None,
+        cwd: None,
+    };
+    let durable = TaskRun::begin(request()).expect("initialize durable layout");
+    assert!(durable
+        .close(effigy_kernel::outcome::WorkloadOutcome::Succeeded)
+        .is_empty());
+    let memory = TaskRun::begin_foreground(request()).expect("foreground admitted");
+    let id = memory.id();
+    // No journal handle remains open: this damages only this fixture's
+    // completed history while independently held foreground gates stay valid.
+    std::fs::write(
+        directory.path().join(".effigy/state/kernel.db"),
+        b"unreadable history",
+    )
+    .expect("fixture history damaged");
+    let listing = list_runs(Some(directory.path()), 20).expect("partial view");
+    assert_eq!(listing.runs.len(), 1);
+    assert_eq!(listing.runs[0].id, id);
+    assert_eq!(listing.runs[0].view.evidence_source, "live-foreground");
+    assert_eq!(listing.runs[0].view.state, "running");
+    assert!(listing
+        .omitted
+        .iter()
+        .any(|reason| reason.contains("journal unavailable")));
+    let observed = listing.runs[0].clone();
+    let state = directory.path().join(".effigy/state");
+    std::fs::rename(state.join("gates"), state.join("retired-gates"))
+        .expect("replace fixture gates");
+    std::fs::create_dir(state.join("gates")).expect("new fixture gates");
+    assert!(
+        !observed.foreground_released(),
+        "a replacement path is not release of the observed inode"
+    );
+    assert!(matches!(
+        memory
+            .close(effigy_kernel::outcome::WorkloadOutcome::Succeeded)
+            .as_slice(),
+        []
+    ));
+    assert!(
+        observed.foreground_released(),
+        "the retained gate inode is now free"
+    );
+    let listing = list_runs(Some(directory.path()), 20).expect("partial history");
+    assert!(
+        listing.runs.is_empty(),
+        "free diagnostic bodies cannot resurrect a run"
+    );
+    assert!(!listing.omitted.is_empty());
+}
+
 /// Collects a follower's output, asserting each chunk starts exactly where
 /// the previous one ended: a gap or a duplicate fails here.
 #[derive(Default)]
@@ -216,7 +280,7 @@ fn assert_single_settled_run(root: &Path, id: RunId, ending: &Ending, collected:
         "stderr: no gap, no duplicate"
     );
     let runs = list_runs(Some(root), 50).expect("runs");
-    assert_eq!(runs.len(), 1, "the run was never resubmitted");
+    assert_eq!(runs.runs.len(), 1, "the run was never resubmitted");
 }
 
 #[cfg(feature = "fault-injection")]
@@ -395,7 +459,10 @@ fn a_run_key_names_one_run_under_racing_invocations_and_repeats() {
     })
     .expect_err("a key never binds a second task");
     assert!(other.to_string().contains("already names run"), "{other}");
-    assert_eq!(list_runs(Some(root.path()), 50).expect("runs").len(), 1);
+    assert_eq!(
+        list_runs(Some(root.path()), 50).expect("runs").runs.len(),
+        1
+    );
 }
 
 #[test]

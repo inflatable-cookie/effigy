@@ -118,6 +118,19 @@ exec sleep 300
         assert current["pid"] == child.pid
         assert current["phase"] is None and current["started_at_epoch_ms"] is None
         assert current["profile"] is None and view["history"] == [] and view["latest"] is None
+        run_id = current["run_id"]
+        result = run(project, "runs", "--json")
+        listing = frame(json.loads(result.stdout), "effigy.runs.v1")
+        assert listing["coverage"]["complete"] and not listing["coverage"]["omitted"], listing
+        live = [row for row in listing["runs"] if row["run_id"] == run_id]
+        assert len(live) == 1 and live[0]["pid"] == child.pid, listing
+        assert live[0]["evidence_source"] == "live-foreground" and live[0]["exit_code"] is None
+        result = run(project, "run", "status", run_id, "--json")
+        generic = frame(json.loads(result.stdout), "effigy.run.v1")["run"]
+        assert generic["state"] == "running" and generic["pid"] == child.pid, generic
+        result = run(project, "run", "logs", run_id, "--follow", "--json")
+        logs = frame(json.loads(result.stdout), "effigy.run.logs.v1")
+        assert not logs["logs_available"] and logs["reason"] == "foreground-no-retained-log", logs
         assert_memory_only()
         hook_pid = int((project / "hook-pids").read_text().splitlines()[-1])
         # This is the exact hook spawned by our owned fixture invocation.
@@ -131,8 +144,33 @@ exec sleep 300
     result = run(project, "tasks", "status", "hold", "--json")
     view = frame(json.loads(result.stdout), "effigy.tasks-status.v3")
     assert view["state"] == "not-recorded" and view["current"] is None, view
+    result = run(project, "run", "status", run_id, "--json", success=False)
+    assert "not-recorded" in result.stdout or "not recorded" in result.stderr, result
     run(project, "late", success=False)
     assert_memory_only()
+    # Stop a separate foreground owner through its fresh gate identity. No
+    # stop request, result, checkout token or database is retained.
+    (project / "ready").unlink()
+    child = subprocess.Popen([str(binary), "hold"], cwd=project, env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.monotonic() + 10
+        while not (project / "ready").exists():
+            assert child.poll() is None, child.communicate()
+            assert time.monotonic() < deadline, "stop workload did not start"
+            time.sleep(0.02)
+        result = run(project, "tasks", "status", "hold", "--json")
+        run_id = frame(json.loads(result.stdout), "effigy.tasks-status.v3")["current"]["run_id"]
+        result = run(project, "run", "stop", run_id, "--wait-ms", "10000", "--json")
+        stopped = frame(json.loads(result.stdout), "effigy.run.v1")
+        assert stopped["stop"] == "signalled-owner" and stopped["custody"] == "released", stopped
+        assert stopped["outcome"] == "not-recorded" and stopped["run"]["exit_code"] is None, stopped
+        child.communicate(timeout=15)
+        assert_memory_only()
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            child.communicate(timeout=30)
     # Replacing Git metadata changes the checkout generation while its owner
     # is waiting. It must stop native custody before a successor can proceed.
     project = projects[2]
