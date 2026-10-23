@@ -395,6 +395,10 @@ During v0.x, MINOR bumps may include breaking changes.
   Colima profile, warning at 80% inode use or 10,000 stale files (effigy#291,
   papercut `03f4e93a`). nerdctl 2.3.1 never deletes the health-check exec
   process; nerdctl 2.4.1 does, so the warning names the fixed version.
+- `runtime::paths()` exposes `repo_root`, `catalog_root`, `skill_root`,
+  `invocation_cwd` and `cwd` to Rhai script functions. The top-level scope
+  constants stay as they were, but a function no longer fails with
+  `Variable not found` when it needs a host path (papercut `d8e1d7b0`).
 - The checkpointed release Run (contract 054 §3, §5, §7). `effigy release run
   [--to <stage>]` runs one durable kernel Run through validate → [pre-gates] →
   prepare → certify → publish → verify → closeout, with a checkpoint after
@@ -843,6 +847,11 @@ During v0.x, MINOR bumps may include breaking changes.
   gate; the one missing capability (`loopback-privileged-listener-handoff`)
   is a design boundary, not a supported start path. No operator defaults,
   endpoints, or trust behavior change.
+- `effigy fmt rust <FILE>... [--check]` formats an explicit Rust file set with
+  rustfmt and each file's nearest `rustfmt.toml`, so a format pass never
+  follows a path-linked workspace into unrelated crates (papercut `d988bc52`).
+  Every path must be an existing `.rs` file inside the target repository;
+  `--check` reports without writing.
 
 ### Changed
 - A stale bundle or catalog source updates itself on the next `effigy dev`,
@@ -996,6 +1005,18 @@ During v0.x, MINOR bumps may include breaking changes.
   1.1.2 or earlier reject 0.15: run `effigy service pack update` to move to
   1.2.0.
 
+- `effigy release gates` prints its configured gate inventory — each gate's
+  name, stage and command — before the first gate starts, then one progress
+  line per gate start and finish with the duration, so a slow gate no longer
+  looks like a hung command (papercut `029ac746`). The JSON payload carries the
+  same inventory as `gates[]`.
+- `release.sync-files` may name a nested `Cargo.lock`, such as a
+  workspace-excluded consumer's `prototypes/*/Cargo.lock`, and `prepare`
+  refreshes it with `cargo update -p <package>` in its own workspace
+  (papercut `a3f1f9f7`). Entries must be repo-relative and stay inside the
+  release root, and a lockfile whose owning workspace is anchored elsewhere is
+  refused instead of writing an undeclared lockfile.
+
 ### Fixed
 - A bounded Colima/nerdctl call that times out on a loaded host no longer reads
   as a service failure (effigy#291, papercut `8064c5b9`). Effigy observes the
@@ -1009,6 +1030,19 @@ During v0.x, MINOR bumps may include breaking changes.
   SIGPIPE — a closed stdout/stderr pipe whose reader went away — instead of as
   a health verdict; detached `container up` keeps backend output in a retained
   file, so Effigy owns no reader lifetime there.
+- Rhai steps receive the same task `args` as a run step's `{args}` template:
+  Effigy drops the single leading `--` boundary flag it consumed and keeps
+  later `--` tokens, so a direct task and `skill run <task> -- <args>` agree
+  (papercut `19d7b6fe`).
+- Rhai's `Expression exceeds maximum complexity` now names Effigy's configured
+  expression depths and suggests splitting the expression into smaller
+  functions or statements (papercut `1a140ffe`). The Rhai guide also documents
+  the mutating-method/`()` boundary and the value-returning `str::*` pattern
+  (papercut `eb53ef2b`).
+- The Rhai surface catalog lists `container.workspace_artifact_build` once with
+  its host signature, and the workspace artifact streaming policy regression
+  runs against the current typed helper again (papercuts `e86ef33a`,
+  `38acb0f4`).
 - A first `effigy dev` on a fresh Colima VM no longer fails when a nerdctl
   health-check timer collides. nerdctl runs each container health check from
   the transient systemd unit `{full_id}.timer` and leaves it loaded when the
@@ -1709,6 +1743,11 @@ During v0.x, MINOR bumps may include breaking changes.
   and the `effigy release:preflight` repo task it became. It pointed at
   `certify`, but contract 054 makes preflight a pre-prepare gate (papercut
   dc4b15af).
+- The changelog parser accepts a CommonMark lazy continuation line as part of
+  the entry it follows, so a hard-wrapped list entry parses instead of being
+  read as release prose. Effigy 0.14.1 refused that shape (papercut
+  `f5d597db`); an unindented paragraph after a blank line is still release
+  prose.
 
 ## [0.14.1] - 2026-10-08
 

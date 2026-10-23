@@ -217,6 +217,15 @@ Supported `[release]` fields:
         changes, including a third-party move to a workspace member's target
         version. Mixed-version workspaces retain each member's own
         metadata-reported package version
+      - may name a nested lockfile, such as
+        `sync-files = ["Cargo.lock", "prototypes/fixture/Cargo.lock"]`, to
+        refresh a workspace-excluded Cargo consumer. The nested lockfile must
+        sit beside its own `Cargo.toml`; Effigy runs `cargo update -p <package>`
+        in that directory and refuses a lockfile whose owning workspace is
+        anchored somewhere else, so an undeclared lockfile is never rewritten
+      - every entry is repo-relative: an absolute path, a `..` component or a
+        path that resolves outside the repository (through a symlink included)
+        is refused
     - `package.json`
       - updates the root `version` field to the selected release version while
         preserving file layout

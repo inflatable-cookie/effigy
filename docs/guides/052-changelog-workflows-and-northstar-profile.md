@@ -95,10 +95,21 @@ Key rules:
 - categories use fixed headings such as `Breaking`, `Added`, `Changed`,
   `Deprecated`, `Removed`, `Fixed`, `Security`
 - entries are bullet items
+- an entry may continue across lines. An indented continuation line, or a
+  CommonMark lazy continuation line (an unindented line that directly follows
+  the entry with no blank line between them), belongs to that entry; `format`
+  rewraps it as an indented continuation and `extract` keeps the full entry text
+- a blank line ends an entry. An unindented paragraph after a blank line is
+  release prose, not an entry continuation
 - a release section may carry free prose paragraphs directly under the version
   heading or between category headings; `format` and `extract` keep them, and
   they do not change the suggested bump
 - empty or malformed sections are treated as diagnostics, not ignored silently
+
+The lazy-continuation rule is deliberate: a hard-wrapped entry is the shape a
+hand-edited changelog takes. Effigy 0.14.1 refused it; v0.15 parses it as part
+of the entry, and [`085-v0.15.0-consumer-migration.md`](085-v0.15.0-consumer-migration.md)
+records the difference.
 
 ## 3) Command Workflows
 

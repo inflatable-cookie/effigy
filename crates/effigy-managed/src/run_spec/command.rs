@@ -37,7 +37,9 @@ pub fn render_rhai_step_invocation(
     script_path: &str,
 ) -> Result<String, ManagedError> {
     let executable = resolve_internal_effigy_invocation_prefix(context.repo_root)?;
-    let args_json = serde_json::to_string(context.args_raw)
+    // Rhai `args` matches a run step's `{args}`: Effigy consumes one leading
+    // `--` boundary flag of its own, and later `--` tokens stay the task's.
+    let args_json = serde_json::to_string(effigy_tasks::command_passthrough_args(context.args_raw))
         .map_err(|error| ManagedError::task_invocation(error.to_string()))?;
     let env_pairs = vec![
         ("EFFIGY_INTERNAL_SUPPRESS_HEADER", shell_quote("1")),

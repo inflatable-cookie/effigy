@@ -342,18 +342,7 @@ impl From<&ReleasePipelinePlan> for ReleasePlanSummaryPayload {
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect(),
-            gates: plan
-                .gates
-                .iter()
-                .map(|gate| PlanGatePayload {
-                    name: gate.name.clone(),
-                    stage: gate.stage.stage_name(),
-                    command: gate.command.clone(),
-                    task: gate.task.clone(),
-                    description: gate.description.clone(),
-                    reuse_hosted_evidence: gate.reuse_hosted_evidence,
-                })
-                .collect(),
+            gates: plan.gates.iter().map(PlanGatePayload::from).collect(),
             artifacts: plan
                 .artifacts
                 .iter()
@@ -388,6 +377,7 @@ struct ReleaseGateRunPayload {
     executed_gate_count: usize,
     stopped_early: bool,
     total_duration_ms: u128,
+    gates: Vec<PlanGatePayload>,
     results: Vec<GateResultPayload>,
     #[serde(skip_serializing_if = "Option::is_none")]
     environment_path: Option<String>,
@@ -405,6 +395,9 @@ impl From<&ReleaseGateRun> for ReleaseGateRunPayload {
             executed_gate_count: run.executed_gate_count,
             stopped_early: run.stopped_early,
             total_duration_ms: run.total_duration_ms,
+            // The configured inventory the progress lines streamed, so a JSON
+            // reader sees the same gates, stages and commands.
+            gates: run.gates.iter().map(PlanGatePayload::from).collect(),
             results: run
                 .gate_results
                 .iter()
@@ -530,18 +523,7 @@ impl From<&ReleasePipelinePlan> for ReleasePipelinePlanPayload {
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect(),
-            gates: plan
-                .gates
-                .iter()
-                .map(|gate| PlanGatePayload {
-                    name: gate.name.clone(),
-                    stage: gate.stage.stage_name(),
-                    command: gate.command.clone(),
-                    task: gate.task.clone(),
-                    description: gate.description.clone(),
-                    reuse_hosted_evidence: gate.reuse_hosted_evidence,
-                })
-                .collect(),
+            gates: plan.gates.iter().map(PlanGatePayload::from).collect(),
             artifacts: plan
                 .artifacts
                 .iter()
@@ -617,6 +599,19 @@ struct PlanGatePayload {
     task: Option<String>,
     description: Option<String>,
     reuse_hosted_evidence: bool,
+}
+
+impl From<&crate::ResolvedGate> for PlanGatePayload {
+    fn from(gate: &crate::ResolvedGate) -> Self {
+        Self {
+            name: gate.name.clone(),
+            stage: gate.stage.stage_name(),
+            command: gate.command.clone(),
+            task: gate.task.clone(),
+            description: gate.description.clone(),
+            reuse_hosted_evidence: gate.reuse_hosted_evidence,
+        }
+    }
 }
 
 #[derive(Serialize)]

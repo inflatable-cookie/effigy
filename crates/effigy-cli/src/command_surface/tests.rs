@@ -10,6 +10,7 @@ const CURRENT_HELP_TOPICS: &[HelpTopic] = &[
     HelpTopic::General,
     HelpTopic::Bundle,
     HelpTopic::Changelog,
+    HelpTopic::Fmt,
     HelpTopic::Deploy,
     HelpTopic::Deps,
     HelpTopic::Secrets,
@@ -38,6 +39,7 @@ const CURRENT_TOP_LEVEL_HELP_ROUTES: &[(&str, HelpTopic)] = &[
     ("version", HelpTopic::General),
     ("bundle", HelpTopic::Bundle),
     ("changelog", HelpTopic::Changelog),
+    ("fmt", HelpTopic::Fmt),
     ("deploy", HelpTopic::Deploy),
     ("deps", HelpTopic::Deps),
     ("secrets", HelpTopic::Secrets),
@@ -94,7 +96,12 @@ const CONTRACT_GROUP_INVENTORIES: &[(HelpGroup, &[&str])] = &[
     ),
     (
         HelpGroup::Repo,
-        &["effigy scan", "effigy docs", "effigy contracts"],
+        &[
+            "effigy scan",
+            "effigy docs",
+            "effigy contracts",
+            "effigy fmt rust <FILE>...",
+        ],
     ),
     (
         HelpGroup::Deliver,

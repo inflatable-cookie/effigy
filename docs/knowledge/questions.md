@@ -200,6 +200,12 @@ container mode. We shouldn't need a `*:tui` selector at all."
   Rhai.
 - **Object storage** in the Underlay bundle is Silo, not MinIO. That's a
   bundle change, owned by the Underlay side.
+- **Secrets before the TUI** (Tom, 2026-10-23, relayed by the Underlay owner
+  after `effigy dev` in underlay-reference asked for the Vault passphrase
+  inside the services tab): a locked vault prompts once, before the TUI
+  renders. The session resolves secret access once and shares it with
+  everything it starts (environment `up`, host processes, nested Effigy
+  work), with no tab or child prompts and no persisted sealed credential.
 
 Implementation is planned in the v0.15 environment lane (the
 environment-owned host-process and unified-session work after effigy#235).

@@ -13,6 +13,13 @@ run_in = "host"
 run = "printf 'arg=%s\\n' {args}"
 run_in = "host"
 
+[tasks.args-parity]
+run = [
+  { run = "printf 'run-arg=%s\\n' {args}" },
+  { rhai = "scripts/args.rhai" },
+]
+run_in = "host"
+
 [tasks.child]
 run = "printf 'nested-repo=%s\\nnested-skill=%s\\nnested-cwd=%s\\n' {repo} {skill} \"$PWD\""
 run_in = "host"

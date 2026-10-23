@@ -73,6 +73,8 @@ Current v1 helpers:
   - `catalog_root`
   - `invocation_cwd`
   - `task_name`
+  - `runtime::paths()` — the same host paths, readable from inside script
+    functions
 - env and path helpers:
   - `env(name)`
   - `time::now_utc()`
@@ -219,6 +221,7 @@ Current v1 helpers:
   - `state::artifact_capture(source, destination[, options_map])`
 - runtime context:
   - `runtime::context()` — returns the current `EffigyRuntimeContext` map
+  - `runtime::paths()` — returns the host paths for use inside script functions
 - execution helpers:
   - `exec::run(options_map)` — routed execution through Effigy's execution helpers
   - `time::stop_requested()`
@@ -351,6 +354,28 @@ that do not yet have a typed helper. First-party scripts should use the typed
 helper when one exists. First-party shipped Rhai scripts currently use neither
 escape hatch; a regression test keeps that true. The maintained coverage matrix is in
 [`068-rhai-host-surface-audit.md`](068-rhai-host-surface-audit.md).
+
+### Host paths inside script functions
+
+`args`, `cwd`, `repo_root`, `catalog_root` and `invocation_cwd` are script-
+scope constants. Rhai does not capture that scope in a script function, so
+`fn helper() { repo_root }` fails with `Variable not found`. Read the host
+paths through the module instead:
+
+```rhai
+fn catalog_file(relative_path) {
+    path::join(runtime::paths()["catalog_root"], relative_path)
+}
+
+let contents = fs::read_file(catalog_file("scripts/tasks/shared.rhai"));
+log(`cwd=${cwd} catalog=${catalog_root}`);
+```
+
+`runtime::paths()` returns `repo_root`, `catalog_root`, `skill_root`,
+`invocation_cwd` and `cwd` as strings. `skill_root` stays an alias of
+`catalog_root` for scripts written against the older name. Top-level scope
+constants keep working; use them there and `runtime::paths()` in functions,
+including functions imported from another script file.
 
 ### File publication and `fs::move_path` limits
 
@@ -651,6 +676,47 @@ that parses under an installed release binary also parses under the documented
 `cargo run --bin effigy -- <task>` source-build fallback. Finite bounds stay
 mandatory: Effigy does not disable either guard, and this envelope is not a
 public config knob.
+
+A script over either bound fails at parse time with Rhai's
+`Expression exceeds maximum complexity`. Effigy annotates that error with the
+configured limits and the next step, for example:
+
+```text
+Expression exceeds maximum complexity
+hint: Effigy's Rhai host allows expression depth 64 and function-body expression depth 32; split the expression into smaller functions or statements and pass intermediate values through variables
+```
+
+Decompose rather than flatten. A long `&&` chain, a many-argument call, or one
+large nested map literal in a function body counts against the function-body
+budget (32), which is half the top-level budget. Move related clauses into
+named predicate functions, build large maps in statements, and append to
+arrays or strings in a loop instead of one giant expression.
+
+### String values across helper boundaries
+
+Rhai's built-in string methods are *mutating*: `text.replace(needle, "_")`,
+`text.trim()`, `text.make_upper()` and friends change the receiver in place and
+return `()`. That is true for literal and variable needles alike, inside and
+outside loops, in statement and expression position, and at every optimizer
+level. Assigning or returning such a call therefore stores `()`, and the next
+string operation fails with a confusing `Function not found: contains ((), ...)`
+because `"x" + ()` silently concatenates to `"x"`.
+
+Use the value-returning host helpers whenever a string must flow onward:
+
+```rhai
+let needle = "-";
+let cleaned = str::replace(raw, needle, "_");
+if str::contains(cleaned, "__") {
+    throw(`double separator in ${cleaned}`);
+}
+```
+
+`str::trim`, `str::contains`, `str::starts_with`, `str::ends_with`,
+`str::replace` and `str::split_lines` all return values, so they are safe in a
+function's last expression, in a loop that collects results, and in a
+statement where the return value is then used. Keep the mutating forms for a
+variable whose new value you read again, and never return them from a helper.
 
 ## Expected Outcome
 

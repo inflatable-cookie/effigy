@@ -8,10 +8,11 @@ use super::{
     normalized_expected_files, render_release_execute_plan_text, render_release_gate_run_json,
     render_release_gate_run_text, render_release_prepare_plan_text, render_release_prepared_text,
     render_release_status_json, render_release_status_text, restore_mutation_snapshots,
-    run_release_gates, run_release_gates_with_lookup, snapshot_mutation_paths, test_support,
-    validate_planned_release_version, write_release_prepared_state, FileMutationApply,
-    FileMutationPlan, GateExecutionReport, GateResult, HostedEvidenceLookup, HostedEvidenceSpec,
-    HostedRun, ReleasePreparedFileFingerprint, ReleasePreparedSourceFingerprints, ResolvedGate,
+    run_release_gates, run_release_gates_with_lookup, run_release_gates_with_progress,
+    snapshot_mutation_paths, test_support, validate_planned_release_version,
+    write_release_prepared_state, FileMutationApply, FileMutationPlan, GateExecutionReport,
+    GateResult, HostedEvidenceLookup, HostedEvidenceSpec, HostedRun,
+    ReleasePreparedFileFingerprint, ReleasePreparedSourceFingerprints, ResolvedGate,
     ResolvedVersionSource, VersionFileKind,
 };
 use std::collections::BTreeMap;
@@ -927,8 +928,11 @@ fn failing_and_passing_gates_persist_logs_and_redacted_environment() {
     assert!(environment.contains("\"shell\""), "{environment}");
     assert!(environment.contains("\"cwd\""), "{environment}");
 
-    let passed_text =
-        render_release_gate_run_text(&collect_release_gate_run(root.clone(), 1, passed_report));
+    let passed_text = render_release_gate_run_text(&collect_release_gate_run(
+        root.clone(),
+        Vec::new(),
+        passed_report,
+    ));
     assert_eq!(
         passed_text
             .lines()
@@ -1044,14 +1048,78 @@ fn prepare_text_shows_failed_gate_tail_and_log_path() {
 #[test]
 fn gate_json_adds_optional_paths_without_changing_schema_id() {
     let root = temp_repo("gate-json");
-    let report = run_release_gates(&root, &[shell_gate("smoke", "printf smoke-ok")], true);
-    let json = render_release_gate_run_json(&collect_release_gate_run(root.clone(), 1, report));
+    let gate = shell_gate("smoke", "printf smoke-ok");
+    let report = run_release_gates(&root, std::slice::from_ref(&gate), true);
+    let json =
+        render_release_gate_run_json(&collect_release_gate_run(root.clone(), vec![gate], report));
     let parsed: serde_json::Value = serde_json::from_str(&json).expect("json");
     assert_eq!(parsed["schema"], "effigy.release.gates.v1");
     assert_eq!(parsed["schema_version"], 1);
     assert!(parsed["environment_path"].as_str().is_some());
     assert!(parsed["results"][0]["log_path"].as_str().is_some());
     assert_eq!(parsed["results"][0]["passed"], true);
+}
+
+/// The configured inventory and per-gate progress are what an operator needs
+/// while a slow gate runs, so both are reported before and during the run and
+/// mirrored in the JSON envelope.
+#[test]
+fn gate_run_reports_the_inventory_and_per_gate_progress() {
+    let root = temp_repo("gate-inventory");
+    let gates = vec![
+        shell_gate("format", "printf check-ok"),
+        shell_gate("smoke", "printf smoke-ok"),
+    ];
+    let mut progress = Vec::new();
+    let report = run_release_gates_with_progress(&root, &gates, true, |line| {
+        progress.push(line.to_owned());
+    });
+    assert!(report.results.iter().all(|result| result.passed));
+
+    let start = progress
+        .iter()
+        .position(|line| line.contains("gate 1/2 `format`"))
+        .expect("first gate start line");
+    assert!(
+        progress[start].contains("(certify) starting: printf check-ok"),
+        "{}",
+        progress[start]
+    );
+    let finish = progress
+        .iter()
+        .position(|line| line.contains("gate 1/2 `format` passed"))
+        .expect("first gate finish line");
+    assert!(finish > start);
+    assert!(
+        progress[finish].contains("ms)") || progress[finish].contains("s)"),
+        "the finish line carries a duration: {}",
+        progress[finish]
+    );
+    assert!(progress
+        .iter()
+        .any(|line| line.contains("gate 2/2 `smoke` (certify) starting")));
+
+    let run = collect_release_gate_run(root.clone(), gates, report);
+    let json = render_release_gate_run_json(&run);
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("json");
+    assert_eq!(parsed["gates"][0]["name"], "format");
+    assert_eq!(parsed["gates"][0]["stage"], "certify");
+    assert_eq!(parsed["gates"][0]["command"], "printf check-ok");
+    assert_eq!(parsed["gates"][1]["name"], "smoke");
+    assert_eq!(parsed["configured_gate_count"], 2);
+    assert_eq!(parsed["executed_gate_count"], 2);
+    assert!(parsed["results"][0]["duration_ms"].is_number());
+
+    let text = render_release_gate_run_text(&run);
+    assert!(text.contains("Configured Gates"), "{text}");
+    assert!(
+        text.contains("[1/2] format (certify) - printf check-ok"),
+        "{text}"
+    );
+    assert!(
+        text.contains("[2/2] smoke (certify) - printf smoke-ok"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -1217,8 +1285,11 @@ fn named_hosted_reuse_skips_local_command_and_keeps_unlisted_gate() {
         Some("https://github.com/acme/demo/actions/runs/11")
     );
     assert!(!root.join("reused-local.txt").exists());
-    let json =
-        render_release_gate_run_json(&collect_release_gate_run(root.clone(), 2, report.clone()));
+    let json = render_release_gate_run_json(&collect_release_gate_run(
+        root.clone(),
+        Vec::new(),
+        report.clone(),
+    ));
     let parsed: serde_json::Value = serde_json::from_str(&json).expect("json");
     assert_eq!(parsed["results"][1]["reused"], true);
     assert_eq!(
@@ -1673,5 +1744,285 @@ fn proposed_bump_normal_1_x_release_is_unchanged() {
     assert_eq!(
         suggested_bump_for(removed, "1.4.2", true),
         super::BumpKind::Major
+    );
+}
+
+fn write_nested_lockfile_release_repo(name: &str, sync_files: &str) -> PathBuf {
+    let root = temp_repo(name);
+    fs::write(
+        root.join("effigy.toml"),
+        format!(
+            "[release]\nversion-file = \"Cargo.toml\"\nversion-path = \
+             \"workspace.package.version\"\nchangelog = \"CHANGELOG.md\"\nsync-files = \
+             [{sync_files}]\n"
+        ),
+    )
+    .expect("manifest");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/*\"]\nexclude = [\"prototypes/fixture\"]\n\
+         resolver = \"2\"\n\n[workspace.package]\nversion = \"0.3.1\"\nedition = \"2021\"\n",
+    )
+    .expect("cargo manifest");
+    fs::create_dir_all(root.join("crates/core/src")).expect("member dir");
+    fs::write(root.join("crates/core/src/lib.rs"), "pub fn core() {}\n").expect("member source");
+    fs::write(
+        root.join("crates/core/Cargo.toml"),
+        "[package]\nname = \"fixture-core\"\nversion.workspace = true\nedition = \"2021\"\n",
+    )
+    .expect("member manifest");
+    fs::create_dir_all(root.join("prototypes/fixture/src")).expect("prototype dir");
+    fs::write(
+        root.join("prototypes/fixture/src/main.rs"),
+        "fn main() {}\n",
+    )
+    .expect("prototype source");
+    fs::write(
+        root.join("prototypes/fixture/Cargo.toml"),
+        "[package]\nname = \"fixture-proto\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+         [workspace]\n\n[dependencies]\nfixture-core = { path = \"../../crates/core\", version = \
+         \"0.3.1\" }\n",
+    )
+    .expect("prototype manifest");
+    fs::write(
+        root.join("CHANGELOG.md"),
+        "# Changelog\n\n## [Unreleased]\n\n### Fixed\n- Refresh the excluded lockfile\n",
+    )
+    .expect("changelog");
+    root
+}
+
+#[test]
+fn release_config_accepts_a_declared_nested_workspace_excluded_lockfile() {
+    let root = write_nested_lockfile_release_repo(
+        "nested-lock-accepted",
+        "\"prototypes/fixture/Cargo.lock\"",
+    );
+    fs::write(
+        root.join("prototypes/fixture/Cargo.lock"),
+        "version = 4\n\n[[package]]\nname = \"fixture-core\"\nversion = \"0.3.1\"\n",
+    )
+    .expect("lockfile");
+
+    let config = load_release_config(&root).expect("nested lockfile should be a sync target");
+    assert_eq!(
+        config
+            .sync_files
+            .iter()
+            .map(|sync| (sync.path.clone(), sync.kind))
+            .collect::<Vec<_>>(),
+        vec![(
+            root.join("prototypes/fixture/Cargo.lock"),
+            super::SyncFileKind::CargoLock
+        )]
+    );
+
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn release_config_refuses_sync_files_that_leave_the_release_root() {
+    let root = write_nested_lockfile_release_repo("nested-lock-escape", "\"../Cargo.lock\"");
+    let error = load_release_config(&root).expect_err("`..` must be refused");
+    assert!(
+        error.to_string().contains("must not contain `..`"),
+        "{error}"
+    );
+
+    let probe = temp_repo("nested-lock-absolute-probe");
+    let absolute = format!("\"{}\"", probe.join("Cargo.lock").display());
+    let root = write_nested_lockfile_release_repo("nested-lock-absolute", &absolute);
+    let error = load_release_config(&root).expect_err("an absolute path must be refused");
+    assert!(
+        error
+            .to_string()
+            .contains("must be relative to the release root"),
+        "{error}"
+    );
+
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn release_config_refuses_a_symlinked_sync_directory_outside_the_root() {
+    let root = write_nested_lockfile_release_repo("nested-lock-symlink", "\"linked/Cargo.lock\"");
+    let outside = temp_repo("nested-lock-symlink-outside");
+    fs::write(outside.join("Cargo.toml"), "[workspace]\n").expect("outside manifest");
+    fs::write(outside.join("Cargo.lock"), "version = 4\n").expect("outside lockfile");
+    std::os::unix::fs::symlink(&outside, root.join("linked")).expect("symlink");
+
+    let error = load_release_config(&root).expect_err("a symlinked directory must be refused");
+    assert!(
+        error.to_string().contains("outside the release root"),
+        "{error}"
+    );
+
+    fs::remove_dir_all(&root).ok();
+    fs::remove_dir_all(&outside).ok();
+}
+
+#[test]
+fn release_config_refuses_a_nested_lockfile_without_a_sibling_manifest() {
+    let error = load_release_config(&write_nested_lockfile_release_repo(
+        "nested-lock-no-manifest",
+        "\"prototypes/fixture/nested/Cargo.lock\"",
+    ))
+    .expect_err("an unowned lockfile must be refused");
+    assert!(
+        error.to_string().contains("has no Cargo.toml beside it"),
+        "{error}"
+    );
+}
+
+#[test]
+fn prepare_plan_reports_the_nested_sync_workspace() {
+    let root = write_nested_lockfile_release_repo(
+        "nested-lock-prepare-plan",
+        "\"prototypes/fixture/Cargo.lock\"",
+    );
+    fs::write(
+        root.join("prototypes/fixture/Cargo.lock"),
+        "version = 4\n\n[[package]]\nname = \"fixture-core\"\nversion = \"0.3.1\"\n",
+    )
+    .expect("lockfile");
+
+    let context = load_release_context(&root).expect("release context");
+    let plan = build_release_prepare_plan(&context, false, GateExecutionReport::empty(), None)
+        .expect("prepare plan");
+    let mutation = plan
+        .mutations
+        .iter()
+        .find(|mutation| mutation.path == root.join("prototypes/fixture/Cargo.lock"))
+        .expect("nested lockfile mutation");
+    assert!(
+        mutation.summary.contains("prototypes/fixture/Cargo.lock"),
+        "{}",
+        mutation.summary
+    );
+    assert!(mutation
+        .detail_lines
+        .contains(&"sync workspace: prototypes/fixture".to_owned()));
+    assert!(mutation
+        .detail_lines
+        .iter()
+        .any(|line| line.contains("cargo update --quiet -p <release package>")));
+
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn sync_refuses_a_lockfile_owned_by_another_workspace() {
+    let root = write_nested_lockfile_release_repo("nested-lock-foreign-owner", "\"Cargo.lock\"");
+    fs::write(
+        root.join("crates/core/Cargo.lock"),
+        "version = 4\n\n[[package]]\nname = \"fixture-core\"\nversion = \"0.3.1\"\n",
+    )
+    .expect("member lockfile");
+    let mutation = FileMutationPlan {
+        path: root.join("crates/core/Cargo.lock"),
+        kind: "sync-file",
+        summary: String::new(),
+        before_preview: String::new(),
+        after_preview: String::new(),
+        detail_lines: Vec::new(),
+        diff_preview: Vec::new(),
+        apply: FileMutationApply::SyncCargoLock {
+            workspace_version: "0.3.2".to_owned(),
+        },
+    };
+
+    let error = apply_release_mutations(&root, &[mutation]).expect_err("foreign lockfile");
+    assert!(error.to_string().contains("owns that lockfile"), "{error}");
+    assert_eq!(
+        fs::read_to_string(root.join("crates/core/Cargo.lock")).expect("lockfile"),
+        "version = 4\n\n[[package]]\nname = \"fixture-core\"\nversion = \"0.3.1\"\n"
+    );
+
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn sync_moves_release_packages_in_a_workspace_excluded_lockfile() {
+    let root =
+        write_nested_lockfile_release_repo("nested-lock-sync", "\"prototypes/fixture/Cargo.lock\"");
+    let lockfile_before = "# This file is automatically @generated by Cargo.\n\
+                          # It is not intended for manual editing.\nversion = 4\n\n\
+                          [[package]]\nname = \"fixture-core\"\n\
+                          version = \"0.3.1\"\n\n[[package]]\nname = \"fixture-proto\"\n\
+                          version = \"0.1.0\"\ndependencies = [\n \"fixture-core\",\n]\n";
+    fs::write(root.join("prototypes/fixture/Cargo.lock"), lockfile_before).expect("lockfile");
+    // The version bump runs before the sync in the prepare stage.
+    fs::write(
+        root.join("crates/core/Cargo.toml"),
+        "[package]\nname = \"fixture-core\"\nversion = \"0.3.2\"\nedition = \"2021\"\n",
+    )
+    .expect("bumped member manifest");
+    let root_lock_before =
+        fs::read_to_string(root.join("Cargo.lock")).unwrap_or_else(|_| "<absent>".to_owned());
+    let mutation = FileMutationPlan {
+        path: root.join("prototypes/fixture/Cargo.lock"),
+        kind: "sync-file",
+        summary: String::new(),
+        before_preview: String::new(),
+        after_preview: String::new(),
+        detail_lines: Vec::new(),
+        diff_preview: Vec::new(),
+        apply: FileMutationApply::SyncCargoLock {
+            workspace_version: "0.3.2".to_owned(),
+        },
+    };
+
+    apply_release_mutations(&root, &[mutation]).expect("nested lockfile sync");
+    let lockfile =
+        fs::read_to_string(root.join("prototypes/fixture/Cargo.lock")).expect("nested lockfile");
+    assert!(
+        lockfile.contains("name = \"fixture-core\"\nversion = \"0.3.2\""),
+        "{lockfile}"
+    );
+    assert!(
+        lockfile.contains("name = \"fixture-proto\"\nversion = \"0.1.0\""),
+        "an unrelated package version must not move: {lockfile}"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("Cargo.lock")).unwrap_or_else(|_| "<absent>".to_owned()),
+        root_lock_before,
+        "the release root's own lockfile must stay untouched"
+    );
+
+    fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn nested_lockfile_change_allows_a_partial_workspace_record() {
+    let release_members = BTreeMap::from([("fixture-core".to_owned(), "0.3.2".to_owned())]);
+    let before = "[[package]]\nname = \"fixture-core\"\nversion = \"0.3.1\"\n\n\
+                  [[package]]\nname = \"fixture-proto\"\nversion = \"0.1.0\"\n\n\
+                  [[package]]\nname = \"serde\"\nversion = \"1.0.0\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n";
+    let after = before.replacen("version = \"0.3.1\"", "version = \"0.3.2\"", 1);
+
+    // Only the recorded release package may move, and only to its metadata
+    // version; the excluded consumer's own package stays where it is.
+    assert_eq!(
+        super::prepare_helpers::unexpected_lockfile_change_with(
+            before,
+            &after,
+            &release_members,
+            false,
+        ),
+        None
+    );
+    let refused = super::prepare_helpers::unexpected_lockfile_change_with(
+        before,
+        &after.replace(
+            "name = \"fixture-proto\"\nversion = \"0.1.0\"",
+            "name = \"fixture-proto\"\nversion = \"0.2.0\"",
+        ),
+        &release_members,
+        false,
+    )
+    .expect("an unrelated package move must still be refused");
+    assert!(
+        refused.contains("outside actual workspace member"),
+        "{refused}"
     );
 }

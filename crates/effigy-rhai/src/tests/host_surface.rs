@@ -179,3 +179,41 @@ if result["feature"] != "container.workspace_artifact_build" || result["options"
     context.task_name = "workspace:linux:artifact".to_owned();
     execute_rhai_script(&context, script, &[], &callbacks()).unwrap();
 }
+
+#[test]
+fn script_functions_read_host_paths_from_the_runtime_module() {
+    let root = temp_root("runtime-paths-in-function");
+    let cwd = root.join("cwd");
+    fs::create_dir_all(&cwd).expect("cwd");
+    let task_source = root.join("task-source");
+    fs::create_dir_all(&task_source).expect("task source");
+    let _env = ScopedTestEnv::set_many(&[(
+        crate::EFFIGY_RHAI_CATALOG_ROOT,
+        task_source.display().to_string(),
+    )]);
+    let context = ScriptContext {
+        cwd,
+        repo_root: root.clone(),
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+fn emit_paths() {
+    let paths = runtime::paths();
+    return [
+        paths["repo_root"],
+        paths["catalog_root"],
+        paths["skill_root"],
+        paths["cwd"],
+        paths["invocation_cwd"],
+    ];
+}
+let paths = emit_paths();
+if paths[0] != repo_root { throw("function repo_root differs from the scope constant"); }
+if paths[1] != catalog_root || paths[2] != skill_root { throw("catalog_root and skill_root must alias"); }
+if paths[3] != cwd { throw("cwd differs"); }
+if paths[4] != invocation_cwd { throw("invocation_cwd differs"); }
+"#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
+}
