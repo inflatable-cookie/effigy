@@ -131,7 +131,7 @@ Read:
 - [`051-release-orchestration.md`](051-release-orchestration.md) for the
   release cut workflow
 - [`062-distribution-system-guide.md`](062-distribution-system-guide.md) for
-  distribution commands and evidence flows
+  the retired distribution surface and where each part went
 - [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
   for maintainer policy and CI install rules
 - [`052-changelog-workflows-and-northstar-profile.md`](052-changelog-workflows-and-northstar-profile.md)

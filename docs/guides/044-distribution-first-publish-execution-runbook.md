@@ -1,6 +1,11 @@
 > Status: Deprecated
 > Superseded by: [`062-distribution-system-guide.md`](062-distribution-system-guide.md) and [`051-release-orchestration.md`](051-release-orchestration.md)
-> Kept for: historical first-publish execution detail
+> Kept for: historical first-publish execution detail. The built-in commands it
+> names retired in v0.15 (contract 054 §4.4) and now run as Effigy repo tasks:
+> `release:metadata`, `release:preflight`, `release:proof`,
+> `release:check-binary`, `release:verify:install` and
+> `release:evidence:validate|closeout`. `effigy release receipt <run>` replaces
+> the summary file. The command names below are the repo-task forms.
 > 
 > Note: This runbook originally included crates.io publish validation. Effigy
 > does not publish to crates.io because its workspace contains app-specific
@@ -27,11 +32,11 @@ Required inputs:
 Recommended preflight before opening publish window:
 
 ```bash
-effigy release preflight --tag vX.Y.Z --output ./artifacts/distribution-preflight-vX.Y.Z.env
+effigy release:preflight --tag vX.Y.Z --output ./artifacts/distribution-preflight-vX.Y.Z.env
 ```
 
-Use `effigy release proof` as the side-effecting built-in for the
-real publish/install cycle.
+Use `effigy release:proof` and the Run's `binaries` target for the real
+publish/install cycle.
 
 ## 2) Execution Order
 
@@ -44,10 +49,10 @@ Run this sequence in one release window:
 Optional one-command execution helper:
 
 ```bash
-effigy release proof --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
-effigy release evidence closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
+effigy release:proof --artifacts-dir ./artifacts/distribution-vX.Y.Z
+effigy release:evidence:closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z
 # use --expect-homebrew when Homebrew checks are expected in this release window
-# effigy release evidence closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z --expect-homebrew
+# effigy release:evidence:closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z --expect-homebrew
 ```
 
 The built-in owns the Homebrew execution steps plus per-step log capture.
@@ -59,7 +64,7 @@ remain native Effigy subcommands inside the same workflow.
 ### Tag Install Validation
 
 ```bash
-effigy release verify-install --tag vX.Y.Z
+effigy release:verify:install --tag vX.Y.Z
 ```
 
 ### Source Install Validation
@@ -112,10 +117,11 @@ effigy --json help
 - one reviewed release summary attached to the GitHub release
 
 When using the built-in, attach per-step logs from `--artifacts-dir` to the GitHub release evidence.
-A closeout summary can be generated from those logs using `effigy release evidence closeout`.
-Artifact completeness can be checked directly with `effigy release evidence validate`.
-The first-publish built-in uses `effigy release verify-install`, writes `distribution-summary.env` through `effigy release evidence summary`, and performs final artifact completeness checks through `effigy release evidence validate` before returning success.
-Local tooling sanity for this pipeline can be checked with `cargo test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture`, which exercises the built-in distribution commands directly.
+A closeout summary can be generated from those logs using `effigy release:evidence:closeout`.
+Artifact completeness can be checked directly with `effigy release:evidence:validate`.
+The `release:verify:binaries` task runs `effigy release:verify:install`, checks the
+GitHub Release assets and the Homebrew formula, and the Run's receipt records
+the result. Nothing writes a sidecar summary file any more.
 
 ## 5) Acceptance Criteria Mapping
 

@@ -12,7 +12,6 @@ pub(super) struct RepoSetupContext {
     pub(super) has_containers: bool,
     pub(super) has_state: bool,
     pub(super) has_deploy: bool,
-    pub(super) has_distribution: bool,
     pub(super) has_release: bool,
     pub(super) has_qa_task: bool,
     pub(super) has_validate_task: bool,
@@ -30,7 +29,6 @@ pub(super) fn inspect_repo_setup_context(target_root: &Path) -> RepoSetupContext
             || manifest_declares(&manifest_snippets, "workspace"),
         has_state: manifest_declares(&manifest_snippets, "state"),
         has_deploy: manifest_declares(&manifest_snippets, "deploy"),
-        has_distribution: manifest_declares(&manifest_snippets, "distribution"),
         has_release: manifest_declares(&manifest_snippets, "release"),
         has_qa_task: manifest_snippets.contains("[tasks.qa]")
             || manifest_snippets.contains("\"qa\""),

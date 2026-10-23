@@ -1,212 +1,99 @@
-# 062 - Distribution Commands
+# 062 - Distribution System Guide
 
-Use this guide when you want Effigy to help with release and distribution work
-without hardwiring your repo to Effigy's exact release process.
-
-This is the public front door for the distribution surface.
-
-If you only want one page first, use this one. Reach for the deeper release
-policy and orchestration guides only after you know you need them.
+Status: **retired in v0.15**. The distribution command family and the
+`[distribution]` table became Effigy repository tasks and `[release]` settings
+under contract [054](../knowledge/contracts/054-release-platform-contract.md).
+This guide records what the surface was, where each part went, and what a
+distribution project should do now.
 
 Use:
-- this guide for `effigy release ...`
-- [`051-release-orchestration.md`](051-release-orchestration.md) for the
-  release cut workflow
+- [`051-release-orchestration.md`](051-release-orchestration.md) for the release
+  Run and `[release]` configuration that replaced this surface
 - [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
   for maintainer policy and binary channel rules
-- [`052-changelog-workflows-and-northstar-profile.md`](052-changelog-workflows-and-northstar-profile.md)
-  for changelog work
+- [`release.md`](../knowledge/contracts/release.md) for Effigy's own release
 
-This surface is built to be optional. A repo can use one command, or adopt a
-larger evidence flow, without taking Effigy's whole release process.
+## What Retired
 
-## Start Here
+Q-009 (2026-10-21) cut the distribution surface and Tom accepted the release
+platform contract the next day. v0.15 retired:
 
-If you are deciding where to start:
+| Retired | Replacement |
+| --- | --- |
+| `effigy release validate` | The repo task `effigy release:metadata` (a `certify` gate for Effigy) |
+| `effigy release preflight` | The repo task `effigy release:preflight` (a `pre` gate for Effigy) |
+| `effigy release proof` | The repo task `effigy release:proof`, plus the Run's certified artifacts and receipt |
+| `effigy release check-binary` | The repo task `effigy release:check-binary` (`sh scripts/release/checks.sh check-binary`) |
+| `effigy release verify-install` | The repo task `effigy release:verify:install`, wired as the `binaries` target's `verify` |
+| `effigy release evidence validate` | The repo task `effigy release:evidence:validate` |
+| `effigy release evidence closeout` | The repo task `effigy release:evidence:closeout` |
+| `effigy release evidence summary` | `effigy release receipt <run>` |
+| `[distribution]` | `[release]` identities, gates, artifacts and targets, plus repo tasks |
+| the `distribution::` Rhai module | Repo tasks and ordinary process calls |
 
-- cutting a normal release: read `051`
-- validating or rehearsing publish/distribution evidence: read this guide
-- setting CI install policy or binary channel rules: read `049`
-- extracting or validating release notes: read `052`
+Each retired command refuses with the replacement above, and each is recorded
+in [retired.toml](../knowledge/retired.toml). A manifest that still declares
+`[distribution]` loads and is ignored with one deprecation notice per manifest,
+because dropping the table changes nothing else about a v0.14.1 project.
 
-For Effigy's own repo, the normal sequence is:
+## Why It Retired
 
-1. push the clean candidate commit to `main`
-2. dispatch `ci.yml` and watch the exact candidate SHA to success
-3. `effigy release gates`
-4. `effigy release --plan`
-5. `effigy release preflight --tag vX.Y.Z`
-6. the remaining distribution evidence commands after the release mutation path
-   is ready
+The distribution surface was Effigy's own release machinery generalized too
+early. It hardcoded Effigy's Cargo package, its docs and smoke tasks, its
+GitHub workflow and its Homebrew tap, and it grew an evidence file format
+(`distribution-summary.env`) that only Effigy read. Contract 054 replaced it:
 
-## Start With The Right Level
+- one `[release]` declaration per project: identities, gates, artifacts and
+  targets;
+- one durable Run with a checkpoint at every stage boundary, so a release
+  resumes instead of restarting;
+- `task` targets for any destination a project already has, with the candidate
+  handed over as `effigy.release.input.v1` and the outcome returned as
+  `effigy.release.output.v1`;
+- the receipt as the durable record, instead of a sidecar summary file.
 
-- Need one focused check or report: use the matching `release` subcommand.
-- Need evidence capture around an existing release flow: use
-  `evidence validate`, `evidence summary`, and `evidence closeout`.
-- Need the release cut itself: use [`051-release-orchestration.md`](051-release-orchestration.md).
-- Need channel rules or CI install policy: use
-  [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md).
+Effigy's own checks kept working; they simply moved into this repository as
+tasks, where they can name Effigy's workflow, artifacts and tap directly.
 
-## What Exists Today
+## What A Project Does Now
 
-Effigy already ships these distribution commands:
+1. Declare `[release]`: one identity per versioned thing, `[release.gates]` for
+   the checks, `[release.artifacts]` for what must be published, and
+   `[release.targets]` for the destinations. The single-identity shorthand still
+   covers a project whose shape matches the old `[release]` table exactly.
+2. Move any distribution-specific check into a `[tasks]` entry, and wire it as
+   a gate (with `stage = "pre"` or `"certify"`) or as a target's `verify`.
+3. Keep publishing in the project's own workflow behind a `task` target. v0.15
+   ships no native publish providers; v0.16 adds them behind the same target
+   interface.
+4. Read `effigy release receipt <run>` for the durable record; add a `closeout`
+   task if a project wants a receipt copy in its tree.
 
-- `effigy release validate`
-- `effigy release check-binary`
-- `effigy release preflight`
-- `effigy release proof`
-- `effigy release evidence validate`
-- `effigy release evidence closeout`
-- `effigy release evidence summary`
+Effigy's own mapping is in [`config/release.toml`](../../../config/release.toml)
+and [`config/tasks.toml`](../../../config/tasks.toml) under the `release:`
+namespace, and
+[`release.md`](../knowledge/contracts/release.md#repo-tasks-that-replaced-the-retired-commands)
+describes each task.
 
-The reusable core today is validation and evidence. The fuller
-`proof` path still carries more Effigy and Cargo assumptions.
+## Historical Notes Kept
 
-### Subcommand Matrix
-
-| Subcommand | Purpose | Key Flags | JSON Schema |
-| --- | --- | --- | --- |
-| `preflight` | Run pre-publish checks (docs, smoke, metadata) and write a `.env`-style preflight report for downstream tooling | `--tag`, `--skip-docs`, `--skip-smoke`, `--output`, `--json` | `effigy.distribution.preflight.v1` |
-| `validate` | Validate declared `[distribution.metadata]` file expectations for the release tag | `--tag`, `--json` | `effigy.distribution.metadata.v1` |
-| `check-binary` | Check a compiled Linux binary's required GLIBC floor against a policy max | `<BIN>`, `--glibc-floor`, `--json` | (command envelope; no dedicated payload schema) |
-| `proof` | Side-effecting publish evidence orchestration: verify-install, optional Homebrew tap update, summary write, artifact validation | `--tag`, `--repo-url`, `--brew-formula`, `--skip-homebrew`, `--artifacts-dir`, `--json` | (emits command-envelope JSON with per-step logs) |
-| `evidence validate` | Check that the `--artifacts-dir` contains the expected per-channel logs and a distribution summary | `--artifacts-dir`, `--expect-homebrew`, `--json` | `effigy.distribution.artifacts.v1` |
-| `evidence closeout` | Generate the dated release closeout log from captured per-channel logs | `--tag`, `--artifacts-dir`, `--output`, `--owner`, `--expect-homebrew`, `--json` | `effigy.distribution.closeout.v1` |
-| `evidence summary` | Write `distribution-summary.env` into `--artifacts-dir` from the given tag/channel evidence | `--tag`, `--artifacts-dir`, `--crate-version`, `--repo-url`, `--brew-formula`, `--homebrew-executed`, `--log-file`, `--json` | `effigy.distribution.summary.v1` |
-
-Typical full distribution cycle:
-
-1. `effigy release preflight --tag vX.Y.Z --output ./artifacts/distribution-preflight-vX.Y.Z.env`
-2. `effigy release proof --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
-3. `effigy release evidence validate --artifacts-dir ./artifacts/distribution-vX.Y.Z`
-4. `effigy release evidence closeout --tag vX.Y.Z --artifacts-dir ./artifacts/distribution-vX.Y.Z`
-
-`proof` already runs `effigy release verify-install`, writes
-`distribution-summary.env`, and validates captured artifacts before succeeding.
-The later validate/closeout steps are for evidence and sign-off.
-
-If you only need a quick readiness proof before a cut, start smaller:
-
-```sh
-effigy release preflight --tag vX.Y.Z
-```
-
-## Minimal Manifest Contract
-
-Repos can now start shaping distribution policy in `effigy.toml` with an
-optional `[distribution]` section.
-
-```toml
-[distribution.package]
-name = "my-tool"
-repo-url = "https://github.com/example/my-tool.git"
-brew-formula = "example/tap/my-tool"
-
-[distribution.publish]
-binary-name = "my-tool"
-registry-label = "registry"
-verify-tag-install = true
-verify-binary-json-tasks = true
-
-[distribution.preflight]
-docs-task = "qa:docs"
-smoke-task = "dist:preflight:smoke"
-
-[distribution.metadata]
-required-docs = ["docs/guides/installation.md", "docs/guides/release.md"]
-required-files = [".github/workflows/release-binaries.yml"]
-
-[distribution.closeout]
-owner = "release"
-related = "docs/plans/distribution.md"
-next-step = "Review the captured evidence and publish release sign-off notes."
-```
-
-This contract is intentionally small. It gives repos enough control over
-identity, preflight tasks, metadata expectations, and closeout defaults without
-forcing a full Effigy-shaped release model.
-
-When a repo adopts `[distribution]`, `validate` no longer assumes
-Effigy's default workflow/docs package-quality gate unless the repo explicitly
-opts into that metadata policy.
-
-## Recommended Adoption Path
-
-### 1. Use One Primitive First
-
-If you only need one check or one report, use that command directly.
-
-Examples:
-
-```sh
-effigy release check-binary ./target/release/my-tool --glibc-floor 2.35
-effigy release evidence validate --artifacts-dir ./artifacts/distribution
-effigy release evidence closeout --tag v1.2.3 --artifacts-dir ./artifacts/distribution
-```
-
-### 2. Add Validation and Evidence
-
-If your repo already has a release process but lacks consistent evidence
-capture, use:
-
-- `evidence validate`
-- `evidence summary`
-- `evidence closeout`
-
-This gives you a stable validation and reporting layer without replacing your
-publish flow.
-
-### 3. Add The Manifest Contract
-
-Add `[distribution]` when your package identity, preflight tasks, artifact
-expectations, or closeout defaults differ from Effigy's self-hosting defaults.
-
-### 4. Use `proof` Only When It Fits
-
-Use `proof` when your repo fits the current built-in publish and
-verification model. If your release path is materially different, keep that
-part repo-owned and use the validation and evidence commands around it.
-
-## Current Boundary
-
-### Strongly Reusable Today
-
-- `release check-binary`
-- `release validate` when package identity and file expectations
-  are declared through the manifest instead of inherited from Effigy's
-  self-hosting defaults
-- `release evidence validate`
-- `release evidence closeout`
-- `release evidence summary`
-- bounded `release proof` when package, publish, and closeout
-  policy fit your repo and any Effigy-specific install probes are either
-  supported or disabled through `[distribution.publish]`
-
-### Still Bounded Or Effigy-Biased Today
-
-- `release preflight`
-- `release proof` for repos that need a non-Cargo install source
-  or a broader publish-orchestration model than the current built-in matrix
-
-Those commands still assume more about docs checks, smoke shape, publish flow,
-and verification. Treat them as bounded tooling, not a universal release
-framework.
+The channel matrix, CI pinning policy and Windows/GLIBC baselines never lived
+in this guide; they are in
+[`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md),
+which still governs them. The macOS checksum sidecars and the annotated-tag
+publication rules in
+[`release.md`](../knowledge/contracts/release.md) are unchanged by this
+retirement.
 
 ## Related Guides
 
 - [049-ci-binary-distribution-and-release-protocol.md](049-ci-binary-distribution-and-release-protocol.md)
 - [051-release-orchestration.md](051-release-orchestration.md)
 - [052-changelog-workflows-and-northstar-profile.md](052-changelog-workflows-and-northstar-profile.md)
-- [059-manifest-composition-guide.md](059-manifest-composition-guide.md)
-
-## Expected Outcome
-
-You should know which commands are broadly reusable, where the current
-manifest contract helps, and where repo-owned release policy should still stay
-outside this surface.
+- [085-v0.15.0-consumer-migration.md](085-v0.15.0-consumer-migration.md)
 
 ## Next Step
 
-Start with `evidence validate`, `evidence summary`, and `evidence closeout`.
-Add `[distribution]` when identity or closeout policy differs from the default.
+For a new project, start at [`051-release-orchestration.md`](051-release-orchestration.md)
+with `effigy release --plan`, and declare a `task` target for the destination
+you already publish to.

@@ -786,7 +786,6 @@ dependencies = [
  "effigy-core",
  "effigy-data",
  "effigy-deps",
- "effigy-distribution",
  "effigy-docs-policy",
  "effigy-doctor",
  "effigy-env",
@@ -967,19 +966,6 @@ dependencies = [
  "tempfile",
  "toml",
  "walkdir",
-]
-
-[[package]]
-name = "effigy-distribution"
-version = "0.14.1"
-dependencies = [
- "anstyle",
- "chrono",
- "effigy-manifest",
- "effigy-ui",
- "regex",
- "serde_json",
- "toml",
 ]
 
 [[package]]

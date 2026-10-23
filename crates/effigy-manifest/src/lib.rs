@@ -55,19 +55,18 @@ pub use config_sections::{
     ManifestContainerSecretDelivery, ManifestContainerSecretsConfig,
     ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
     ManifestContainersConfig, ManifestContractsConfig, ManifestDataConfig,
-    ManifestDataTargetConfig, ManifestDistributionConfig, ManifestDistributionMetadataConfig,
-    ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig,
-    ManifestDocsPolicyConfig, ManifestDocsPolicyGraphCardinality, ManifestDocsPolicyGraphConfig,
-    ManifestDocsPolicyGraphCurrentnessClass, ManifestDocsPolicyGraphCurrentnessConfig,
-    ManifestDocsPolicyGraphFieldConfig, ManifestDocsPolicyGraphKindConfig,
-    ManifestDocsPolicyGraphRelationConfig, ManifestDocsPolicySourcesConfig,
-    ManifestEnvSchemaConfig, ManifestInlineWorkspaceContainerConfig, ManifestIsolationAdoption,
-    ManifestIsolationConfig, ManifestJsPackageManager, ManifestPackageManagerConfig,
-    ManifestPinnedSourceConfig, ManifestReleaseConfig, ManifestScanConfig, ManifestSecretKeyConfig,
-    ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig,
-    ManifestSecretsExternalConfig, ManifestSecretsVaultConfig, ManifestSystemConfig,
-    ManifestSystemMount, ManifestSystemMountTable, ManifestSystemsConfig,
-    ManifestTaskDefaultsConfig, ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
+    ManifestDataTargetConfig, ManifestDocsPolicyConfig, ManifestDocsPolicyGraphCardinality,
+    ManifestDocsPolicyGraphConfig, ManifestDocsPolicyGraphCurrentnessClass,
+    ManifestDocsPolicyGraphCurrentnessConfig, ManifestDocsPolicyGraphFieldConfig,
+    ManifestDocsPolicyGraphKindConfig, ManifestDocsPolicyGraphRelationConfig,
+    ManifestDocsPolicySourcesConfig, ManifestEnvSchemaConfig,
+    ManifestInlineWorkspaceContainerConfig, ManifestIsolationAdoption, ManifestIsolationConfig,
+    ManifestJsPackageManager, ManifestPackageManagerConfig, ManifestPinnedSourceConfig,
+    ManifestReleaseConfig, ManifestScanConfig, ManifestSecretKeyConfig, ManifestSecretTarget,
+    ManifestSecretsBackend, ManifestSecretsConfig, ManifestSecretsExternalConfig,
+    ManifestSecretsVaultConfig, ManifestSystemConfig, ManifestSystemMount,
+    ManifestSystemMountTable, ManifestSystemsConfig, ManifestTaskDefaultsConfig,
+    ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
 };
 pub use execution_binding::{
     resolve_task_execution_binding, resolve_task_execution_binding_from_parts,
@@ -187,7 +186,7 @@ pub const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &[
 /// Top-level tables retired in v0.15 that still load for one release. They are
 /// accepted document keys but not [`TaskManifest`] fields: the manifest drops
 /// them and names each in its one deprecation notice (effigy#274).
-pub const RETIRED_MANIFEST_TOP_LEVEL_KEYS: &[&str] = &["shell", "demos"];
+pub const RETIRED_MANIFEST_TOP_LEVEL_KEYS: &[&str] = &["shell", "demos", "distribution"];
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(remote = "Self", deny_unknown_fields)]
@@ -243,8 +242,6 @@ pub struct TaskManifest {
     pub containers: Option<ManifestContainersConfig>,
     #[serde(default)]
     pub systems: Option<ManifestSystemsConfig>,
-    #[serde(default)]
-    pub distribution: Option<ManifestDistributionConfig>,
     #[serde(default)]
     pub release: Option<ManifestReleaseConfig>,
     #[serde(default)]

@@ -16,7 +16,6 @@ pub(super) fn render_builtin_config_schema() -> String {
         &mut doc,
         docs::docs_policy_graph_lines(ConfigDocProfile::Schema),
     );
-    append_doc_lines(&mut doc, docs::distribution_lines(ConfigDocProfile::Schema));
     append_doc_lines(&mut doc, docs::containers_lines(ConfigDocProfile::Schema));
     append_doc_lines(
         &mut doc,
@@ -43,7 +42,6 @@ pub(super) fn render_builtin_config_schema_minimal() -> String {
     doc.line(HEADER_MINIMAL);
     doc.blank();
     append_doc_lines(&mut doc, docs::manifest_lines(ConfigDocProfile::Schema));
-    append_doc_lines(&mut doc, docs::distribution_lines(ConfigDocProfile::Schema));
     append_doc_lines(&mut doc, docs::containers_lines(ConfigDocProfile::Schema));
     append_doc_lines(
         &mut doc,

@@ -20,7 +20,6 @@ pub const MODULE_CONTAINER: &str = "container";
 pub const MODULE_SCAN: &str = "scan";
 pub const MODULE_DOCS: &str = "docs";
 pub const MODULE_DEPLOY: &str = "deploy";
-pub const MODULE_DISTRIBUTION: &str = "distribution";
 pub const MODULE_CHANGELOG: &str = "changelog";
 pub const MODULE_CACHE: &str = "cache";
 pub const MODULE_GATEWAY: &str = "gateway";
@@ -61,7 +60,6 @@ pub const MODULE_NAMES: &[&str] = &[
     MODULE_SCAN,
     MODULE_DOCS,
     MODULE_DEPLOY,
-    MODULE_DISTRIBUTION,
     MODULE_CHANGELOG,
     MODULE_CACHE,
     MODULE_GATEWAY,
@@ -143,13 +141,6 @@ pub const FEATURE_DEPLOY_APPLY: &str = "deploy.apply";
 pub const FEATURE_DEPLOY_STATUS: &str = "deploy.status";
 pub const FEATURE_DEPLOY_HISTORY: &str = "deploy.history";
 pub const FEATURE_DEPLOY_REDEPLOY: &str = "deploy.redeploy";
-pub const FEATURE_DISTRIBUTION_VALIDATE_METADATA: &str = "distribution.validate_metadata";
-pub const FEATURE_DISTRIBUTION_CHECK_GLIBC_FLOOR: &str = "distribution.check_glibc_floor";
-pub const FEATURE_DISTRIBUTION_PREFLIGHT: &str = "distribution.preflight";
-pub const FEATURE_DISTRIBUTION_FIRST_PUBLISH: &str = "distribution.first_publish";
-pub const FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS: &str = "distribution.validate_artifacts";
-pub const FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT: &str = "distribution.generate_closeout";
-pub const FEATURE_DISTRIBUTION_WRITE_SUMMARY: &str = "distribution.write_summary";
 pub const FEATURE_CHANGELOG_VALIDATE: &str = "changelog.validate";
 pub const FEATURE_CHANGELOG_EXTRACT: &str = "changelog.extract";
 pub const FEATURE_UNLOCK_SCOPES: &str = "unlock.scopes";
@@ -219,13 +210,6 @@ pub const FEATURE_NAMES: &[&str] = &[
     FEATURE_DEPLOY_STATUS,
     FEATURE_DEPLOY_HISTORY,
     FEATURE_DEPLOY_REDEPLOY,
-    FEATURE_DISTRIBUTION_VALIDATE_METADATA,
-    FEATURE_DISTRIBUTION_CHECK_GLIBC_FLOOR,
-    FEATURE_DISTRIBUTION_PREFLIGHT,
-    FEATURE_DISTRIBUTION_FIRST_PUBLISH,
-    FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS,
-    FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT,
-    FEATURE_DISTRIBUTION_WRITE_SUMMARY,
     FEATURE_CHANGELOG_VALIDATE,
     FEATURE_CHANGELOG_EXTRACT,
     FEATURE_UNLOCK_SCOPES,
@@ -343,13 +327,6 @@ pub const FEATURE_DESCRIPTORS: &[RhaiFeatureDescriptor] = &[
     runner_feature(FEATURE_DEPLOY_STATUS),
     runner_feature(FEATURE_DEPLOY_HISTORY),
     runner_feature(FEATURE_DEPLOY_REDEPLOY),
-    runner_feature(FEATURE_DISTRIBUTION_VALIDATE_METADATA),
-    runner_feature(FEATURE_DISTRIBUTION_CHECK_GLIBC_FLOOR),
-    runner_feature(FEATURE_DISTRIBUTION_PREFLIGHT),
-    runner_feature(FEATURE_DISTRIBUTION_FIRST_PUBLISH),
-    runner_feature(FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS),
-    runner_feature(FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT),
-    runner_feature(FEATURE_DISTRIBUTION_WRITE_SUMMARY),
     runner_feature(FEATURE_CHANGELOG_VALIDATE),
     runner_feature(FEATURE_CHANGELOG_EXTRACT),
     runner_feature(FEATURE_UNLOCK_SCOPES),

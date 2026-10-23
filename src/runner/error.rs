@@ -537,29 +537,6 @@ impl From<ManagedError> for RunnerError {
     }
 }
 
-impl From<effigy_distribution::DistributionPolicyError> for RunnerError {
-    fn from(value: effigy_distribution::DistributionPolicyError) -> Self {
-        match value {
-            effigy_distribution::DistributionPolicyError::Manifest(error) => {
-                Self::task_invocation(error.to_string())
-            }
-        }
-    }
-}
-
-impl From<effigy_distribution::DistributionExecutionError> for RunnerError {
-    fn from(value: effigy_distribution::DistributionExecutionError) -> Self {
-        match value {
-            effigy_distribution::DistributionExecutionError::Io { path, error } => {
-                Self::task_invocation_failed_write(&path, error)
-            }
-            effigy_distribution::DistributionExecutionError::Message(message) => {
-                Self::task_invocation(message)
-            }
-        }
-    }
-}
-
 impl From<effigy_containers::ContainerPolicyError> for RunnerError {
     fn from(value: effigy_containers::ContainerPolicyError) -> Self {
         match value {

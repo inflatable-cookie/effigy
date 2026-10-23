@@ -69,9 +69,12 @@ with QEMU for the smoke test.
 Linux GNU compatibility policy:
 - Linux release binaries are built on `ubuntu-22.04` to keep the glibc floor
   stable at `GLIBC_2.35`
-- `effigy release check-binary` runs in the release build job and
-  fails the workflow if a Linux artifact starts requiring a newer glibc symbol
-  version
+- Effigy's `release:check-binary` repo task (`sh scripts/release/checks.sh
+  check-binary`) runs in the release build job and fails the workflow if a
+  Linux artifact starts requiring a newer glibc symbol version. The workflow
+  still calls the retired `effigy release check-binary` command until an
+  approved workflow edit replaces that step, so a publication needs that edit
+  first (see the release contract).
 - Effigy now also has one local rehearsal path for this on developer machines:
   `cargo run --bin effigy -- release:linux:rehearse`
 
@@ -251,8 +254,8 @@ Supported-boundary rule for `v0.3` messaging:
 
 - describe Effigy's release/distribution story as strong native self-hosting
   plus reusable validation/evidence primitives
-- do not describe the fuller `release proof` path as universally
-  generic while it still carries bounded Cargo-centric assumptions
+- do not describe `release:proof` as universally generic: it proves Effigy's
+  own release asset directory and keeps Effigy-specific assumptions
 
 ### 6d) Support Window (Early v0.x)
 
@@ -298,10 +301,10 @@ and resolve the failure before continuing.
    - Use `effigy release run --to certify` to prepare and certify in place,
      publishing nothing.
    - Use `effigy release run` only for the irreversible publish and closeout.
-   - Explicitly dispatch `release-binaries.yml` with the pushed tag and wait
-     for publication.
-   - Run `effigy release verify-install --tag <TAG> [--repo-url <URL>]` after
-     the release artifacts exist.
+   - The Run's `binaries` task target dispatches `release-binaries.yml` with
+     the pushed tag; its `verify` task (`release:verify:binaries`) checks the
+     GitHub Release, the Homebrew tap and the tagged-source install after the
+     artifacts exist.
    - Treat the built-in release previews as the source of truth for version
      selection:
      - `effigy release status --check-gates`

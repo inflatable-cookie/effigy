@@ -24,8 +24,8 @@ Owner: `name/team`
 - [ ] Manually dispatched `ci.yml` run for that exact SHA completes green:
   - [ ] `gh workflow run ci.yml --ref main`
   - [ ] matching run watched with `gh run watch <RUN_ID> --exit-status`
-- [ ] Distribution preflight passes:
-  - [ ] `effigy release preflight --tag v0.__.__`
+- [ ] Release preflight passes:
+  - [ ] `effigy release:preflight --tag v0.__.__` (Effigy repo task)
 - [ ] Safe release simulation passes:
   - [ ] `effigy release --plan`
 - [ ] Release readiness check passes:
@@ -81,16 +81,16 @@ Owner: `name/team`
 
 ### GitHub Releases and Source Install
 - [ ] Package metadata verified.
-- [ ] Distribution metadata validation passes:
-  - [ ] `effigy release validate --tag v0.__.__`
+- [ ] Release metadata validation passes:
+  - [ ] `effigy release:metadata --tag v0.__.__` (Effigy repo task; the `metadata` certify gate)
 - [ ] Tag points to intended commit.
 - [ ] Install validated from git tag:
-  - [ ] `effigy release verify-install --tag v0.__.__`
+  - [ ] `effigy release:verify:install --tag v0.__.__` (Effigy repo task; the `binaries` target's `verify`)
 - [ ] Source-install path validated:
   - [ ] `cargo install --locked --git https://github.com/inflatable-cookie/effigy.git --tag v0.__.__ effigy --force`
 - [ ] First-publish artifact bundle captured:
-  - [ ] `effigy release proof --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__`
-  - [ ] `effigy release evidence validate --artifacts-dir ./artifacts/distribution-v0.__.__`
+  - [ ] `effigy release:proof --artifacts-dir ./artifacts/distribution-v0.__.__`
+  - [ ] `effigy release:evidence:validate --artifacts-dir ./artifacts/distribution-v0.__.__`
 
 ### Homebrew
 - [ ] Formula updated to new version.
@@ -111,7 +111,8 @@ Owner: `name/team`
 - [ ] Validate prefixed built-ins still route correctly.
 - [ ] Validate `test` summary output in compact mode.
 - [ ] Review the release procedure and candidate evidence.
-  - [ ] `effigy release evidence closeout --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__ [--expect-homebrew]`
+  - [ ] `effigy release:evidence:closeout --tag v0.__.__ --artifacts-dir ./artifacts/distribution-v0.__.__ [--expect-homebrew]`
+  - [ ] `effigy release receipt <run>`
 
 ## 8) Sign-off
 

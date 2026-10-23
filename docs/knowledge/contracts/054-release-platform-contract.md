@@ -1,6 +1,6 @@
 # 054 - Release Platform Contract
 
-Status: accepted by Tom on 2026-10-22 ("I'll go with your recommendation … release draft questions"). §2, §4 and §5, and the Run of §3, §6 and §7, are implemented for `tag` and `task` targets, including `check`, `verify`, approval and decision checkpoints and hosted waits; native providers are v0.16.
+Status: accepted by Tom on 2026-10-22 ("I'll go with your recommendation … release draft questions"). §2, §4 and §5, and the Run of §3, §6 and §7, are implemented for `tag` and `task` targets, including `check`, `verify`, approval and decision checkpoints and hosted waits; §4.4's Effigy release is implemented (§13); native providers are v0.16.
 It supersedes the generic mechanics in guide 051 when implemented. Effigy's own release
 policy stays in [release.md](release.md).
 
@@ -468,3 +468,72 @@ authority.
 plus Longhorn's, Poodle's and Underlay's real `[release]` tables, so the
 shorthand compatibility claim is proven on consumer configuration rather than on
 an invented one. Nothing in those fixtures pushes, tags or publishes.
+
+## 13. Implementation record: Effigy's own release (§4.4)
+
+`config/release.toml` is one declaration for Effigy: the `effigy` identity, a
+`preflight` pre gate and the `ci`, `format`, `test`, `qa`, `build`, `smoke` and
+`metadata` certify gates, the `binary` artifact, and the `tag` and `binaries`
+targets. §13 records the choices §4.4 left open.
+
+**The Effigy-only commands are repo tasks, and two of them are gates.** The
+retired `release validate|preflight|proof|check-binary|verify-install|evidence`
+commands became `release:metadata`, `release:preflight`, `release:proof`,
+`release:check-binary`, `release:verify:install`,
+`release:evidence:validate|closeout` and the `release:verify:binaries`
+composition in `config/tasks.toml`; `evidence summary` has no task because the
+Run's receipt is the record. Their code is a repo script,
+[`scripts/release/checks.sh`](../../../scripts/release/checks.sh), so it can
+name Effigy's own artifacts, workflow and tap without becoming product surface.
+`metadata` is a `certify` gate declared as `task = "release:metadata"`, because
+it reads the prepared version, changelog and lockfile and needs no arguments —
+which also keeps the task-gate form (§11) exercised by Effigy's own release.
+`preflight` is a **`pre` gate** whose docs slice runs before any version edit;
+it runs the repo script with `--skip-smoke` because the `smoke` certify gate
+already proves the prepared binary, so no check runs twice. The manual
+`effigy release:preflight` task still runs all three slices. `proof` and `evidence closeout` stay manual tasks: both need a human to
+name an artifact directory, and neither is part of a Run's stages.
+
+**The artifact is the release binary the build gate produced.** `release:artifact`
+composes the existing `build:release` task, and the artifact pattern is
+`target/release/effigy`. Certify copies it into the candidate directory and
+records its sha256; publish re-hashes that copy, so a task that rebuilt the
+binary instead of using the candidate is refused as §6 requires.
+
+**The task target dispatches, then verification inspects the result.**
+`release:publish:binaries` reads the candidate at `$EFFIGY_RELEASE_INPUT` and
+runs `gh workflow run release-binaries.yml -f tag=<tag>`; it reports
+`committed: true` with the workflow run URL and the GitHub Release as
+destinations, and never waits for the workflow. `release:check:binaries` answers
+§7's idempotency question from `gh release view`. `release:verify:binaries` runs
+after the workflow and checks the four binary assets and the two macOS checksum
+sidecars on the GitHub Release, the Homebrew formula's version, and the
+tagged-source install through `release:verify:install`. A workflow that has not
+finished therefore leaves the release published but unverified, which §7
+already covers: Effigy never unpublishes, and the receipt records the failure.
+
+**`[distribution]` retires as an ignored section, not a manifest error.** The
+table only configured the retired Effigy-only commands, so dropping it changes
+nothing else about a v0.14.1 project (052 §11): the manifest removes it and
+records one deprecation notice per manifest, naming `[release]` and `[tasks]` as
+the replacements. Each retired command still refuses with its repo task, and
+`crates/effigy-distribution`, `src/runner/distribution_command` and the
+`distribution::` Rhai module were deleted with it.
+
+**The workflow's GLIBC step is a disclosed follow-up.** The release binary
+workflow still calls `effigy-<target> release check-binary`. The retirement
+makes that step fail, and this change does not edit `.github/workflows/`: the
+`metadata` gate warns with the exact replacement
+(`./scripts/release/checks.sh check-binary …`) instead of failing closed,
+because the workflow is outside the Run. A release owner lands that approved
+workflow edit before the next publication; `release:metadata` starts failing if
+the guard disappears entirely.
+
+**The proof is a fixture, not a publication.** `tests/cli_output_tests/
+release_platform_tests.rs` copies this repository's `config/release.toml` byte
+for byte and stubs only what a temporary workspace cannot reproduce: the hosted
+CI probe, the fixture's own `build:release` leaf, and the `task` target's
+dispatch. The tests run `release --plan`, then `run --to certify` on a local bare
+remote, assert nothing was dispatched or tagged, continue to the approval stop,
+approve, and complete the Run through the fake dispatch — so the whole
+declaration is exercised without publishing anything.

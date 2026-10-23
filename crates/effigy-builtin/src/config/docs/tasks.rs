@@ -219,47 +219,6 @@ pub(super) fn package_manager_lines(profile: ConfigDocProfile) -> Vec<&'static s
     ]
 }
 
-fn distribution_section_comment(profile: ConfigDocProfile) -> &'static str {
-    match profile {
-        ConfigDocProfile::Reference => {
-            "# Optional distribution policy for repos that want to harness Effigy's built-in distribution commands."
-        }
-        ConfigDocProfile::Schema => {
-            "# Optional distribution policy for repos that want to harness Effigy's built-in distribution commands."
-        }
-    }
-}
-
-pub(super) fn distribution_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
-    vec![
-        "[distribution.package]",
-        distribution_section_comment(profile),
-        "name = \"my-tool\"",
-        "repo-url = \"https://github.com/example/my-tool.git\"",
-        "brew-formula = \"example/tap/my-tool\"",
-        "",
-        "[distribution.publish]",
-        "binary-name = \"my-tool\"",
-        "registry-label = \"registry\"",
-        "verify-tag-install = true",
-        "verify-binary-json-tasks = true",
-        "",
-        "[distribution.preflight]",
-        "docs-task = \"qa:docs\"",
-        "smoke-task = \"dist:preflight:smoke\"",
-        "",
-        "[distribution.metadata]",
-        "required-docs = [\"docs/guides/installation.md\", \"docs/guides/release.md\"]",
-        "required-files = [\".github/workflows/release-binaries.yml\"]",
-        "",
-        "[distribution.closeout]",
-        "owner = \"release\"",
-        "related = \"docs/plans/distribution.md\"",
-        "next-step = \"Review the captured evidence and publish your repo's release sign-off notes.\"",
-        "",
-    ]
-}
-
 fn containers_section_comment(profile: ConfigDocProfile) -> &'static str {
     match profile {
         ConfigDocProfile::Reference => {

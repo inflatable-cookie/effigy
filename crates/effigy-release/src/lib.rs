@@ -10,7 +10,6 @@ mod run;
 #[cfg(test)]
 pub mod test_support;
 mod text;
-mod verify_install;
 mod version;
 
 pub use hosted_evidence::{
@@ -22,8 +21,7 @@ pub use model::{
     FileMutationApply, FileMutationPlan, GateExecutionReport, GateResult, ReleaseConfig,
     ReleaseContext, ReleaseError, ReleaseExecutePlan, ReleaseExecuted, ReleaseGateRun,
     ReleasePreparePlan, ReleasePrepared, ReleasePreparedFileFingerprint,
-    ReleasePreparedSourceFingerprints, ReleasePreparedState, ReleaseStatus, ReleaseVerifyInstall,
-    ReusedGateRecord, VerificationStepResult,
+    ReleasePreparedSourceFingerprints, ReleasePreparedState, ReleaseStatus, ReusedGateRecord,
 };
 pub use pipeline::{
     plan_release_pipeline, resolve_release_pipeline, GateStage, IdentityKind, ReleaseArtifactPlan,
@@ -40,10 +38,6 @@ pub use prepare_helpers::{
     restore_mutation_snapshots, snapshot_mutation_paths, suggested_bump,
     write_release_prepared_state,
 };
-pub use verify_install::{
-    normalize_verify_install_repo_url, resolve_verify_install_tag, run_release_verify_install,
-};
-
 pub use run::{
     new_run_id, parse_release_task_output, read_release_record, read_release_record_for_root,
     read_release_task_output, release_home, release_input_value, release_owner,
@@ -66,7 +60,7 @@ pub use git::{
 pub use render_json::{
     render_release_execute_plan_json, render_release_executed_json, render_release_gate_run_json,
     render_release_plan_json, render_release_prepare_plan_json, render_release_prepared_json,
-    render_release_resume_json, render_release_status_json, render_release_verify_install_json,
+    render_release_resume_json, render_release_status_json,
 };
 pub use review::{
     append_indexed_review_hint, build_execute_stale_review_items,
@@ -88,8 +82,8 @@ pub use text::{
     format_counts, remediation_hints_for_blockers, render_release_execute_plan_text,
     render_release_executed_text, render_release_gate_run_text, render_release_pipeline_plan_text,
     render_release_prepare_plan_text, render_release_prepared_text, render_release_resume_text,
-    render_release_state_discarded_text, render_release_status_text,
-    render_release_verify_install_text, review_label, ReleaseBlockedStage,
+    render_release_state_discarded_text, render_release_status_text, review_label,
+    ReleaseBlockedStage,
 };
 pub use version::{
     build_changelog_mutation_detail_lines, build_diff_preview, build_version_mutation_detail_lines,

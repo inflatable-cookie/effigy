@@ -304,8 +304,8 @@
 # Task engine on the kernel (contract 052 §10.1): compile, strict lint and the
 # engine's own proofs. The kill matrix uses the stripped shipping-style
 # profile so macOS pre-main loading does not consume custody deadlines.
-"check:task-engine" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-kernel -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context -p effigy-containers -p effigy-distribution -p effigy-doctor --all-targets", timeout_ms = 900000 }] }
-"lint:task-engine" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-kernel -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context -p effigy-containers -p effigy-distribution -p effigy-doctor --all-targets -- -D warnings", timeout_ms = 900000 }] }
+"check:task-engine" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-kernel -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context -p effigy-containers -p effigy-doctor --all-targets", timeout_ms = 900000 }] }
+"lint:task-engine" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-kernel -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context -p effigy-containers -p effigy-doctor --all-targets -- -D warnings", timeout_ms = 900000 }] }
 "test:task-engine" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(/^runner::task_engine::/) | test(managed_and_locking_tests::locking_tests::) | test(direct_task_dispatch_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
 # Q-006 run control: lost-follow fault points (engine hooks, fault-injection
 # builds only), expiry, key races and stop; the CLI proofs drive the binary.
@@ -441,7 +441,6 @@
 "smoke:release" = { visibility = "internal", group = "Maintenance", run = { rhai = "scripts/check-release-smoke.rhai" } }
 "release:linux:rehearse" = { visibility = "internal", group = "Maintenance", run = { rhai = "scripts/rehearse-linux-release-container.rhai" } }
 "workspace:linux:artifact" = { visibility = "internal", group = "Maintenance", run = { rhai = "scripts/build-linux-workspace-artifact.rhai" } }
-"dist:preflight:smoke" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test --test cli_output_tests cli_distribution_artifact_pipeline_smoke_fixture_passes -- --nocapture" }
 "test:release:macos-checksums" = { visibility = "internal", group = "Maintenance", run = "bash tests/scripts/release-macos-checksums.sh" }
 
 # Authorized in-place release Run. Heavy admission wraps the WHOLE operation
@@ -454,11 +453,23 @@
 "release:run".description = "Run this checkout's release in place up to certify: prepare, gate and certify, publish nothing."
 "release:run".admission = "heavy"
 "release:run".run = "./target/debug/effigy release run --to certify {args}"
-# The self-hosting install verifier runs from a compatible source build; keep
-# its subcommand fixed and admit the complete tagged-source install proof.
-"release:verify-install".description = "Prove the tagged-source install from a compatible source build."
-"release:verify-install".admission = "heavy"
-"release:verify-install".run = "./target/debug/effigy release verify-install {args}"
+
+# Effigy's own release checks (contract 054 §4.4). They were the retired
+# `effigy release validate|preflight|check-binary|proof|verify-install|evidence`
+# commands; `config/release.toml` wires them as gates and as the binary
+# target's `verify`. Nothing here publishes except `release:publish:binaries`,
+# which only dispatches the existing release-binaries workflow.
+"release:metadata" = { visibility = "internal", group = "Release", description = "Check Effigy's release metadata: version, changelog, lockfile and release records.", run = "sh scripts/release/checks.sh metadata {args}" }
+"release:preflight" = { visibility = "public", group = "Release", description = "Run Effigy's release preflight: metadata, docs and a release smoke.", run = "sh scripts/release/checks.sh preflight {args}" }
+"release:check-binary" = { visibility = "internal", group = "Release", description = "Check one release binary against the Linux GLIBC floor.", run = "sh scripts/release/checks.sh check-binary {args}" }
+"release:proof" = { visibility = "public", group = "Release", description = "Prove a release artifact directory: assets, checksums and GLIBC floors.", run = "sh scripts/release/checks.sh proof {args}" }
+"release:artifact" = { visibility = "internal", group = "Release", description = "Build the release binary that certify records as the artifact.", run = [{ task = "build:release" }] }
+"release:verify:install" = { visibility = "public", group = "Release", description = "Prove the tagged-source install of a released binary.", admission = "heavy", run = "sh scripts/release/checks.sh verify-install {args}" }
+"release:verify:binaries" = { visibility = "internal", group = "Release", description = "Verify the published GitHub Release, Homebrew tap and tagged-source install.", admission = "heavy", run = "sh scripts/release/checks.sh verify-binaries {args}" }
+"release:publish:binaries" = { visibility = "internal", group = "Release", description = "Dispatch release-binaries.yml for the release tag and record the run.", run = "sh scripts/release/checks.sh publish-binaries" }
+"release:check:binaries" = { visibility = "internal", group = "Release", description = "Report whether this release tag already publishes its binary assets.", run = "sh scripts/release/checks.sh check-binaries" }
+"release:evidence:validate" = { visibility = "public", group = "Release", description = "Validate captured release artifact evidence.", run = "sh scripts/release/checks.sh evidence-validate {args}" }
+"release:evidence:closeout" = { visibility = "public", group = "Release", description = "Write the release closeout record from captured artifacts.", run = "sh scripts/release/checks.sh evidence-closeout {args}" }
 
 # Container/runtime profiling
 "perf:container-shell-matrix" = { visibility = "internal", group = "Maintenance", run = { rhai = "scripts/profile-container-shell-matrix.rhai" } }
@@ -1477,9 +1488,6 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 "release:run".visibility = "public"
 "release:run".group = "Release"
 
-"release:verify-install".visibility = "public"
-"release:verify-install".group = "Release"
-
 "qa:ci:fast".visibility = "public"
 "qa:ci:fast".group = "Validation"
 
@@ -1869,7 +1877,7 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
   { run = "cargo check -p effigy --lib --tests --profile test", timeout_ms = 600000 },
   { run = "cargo clippy -p effigy --lib --tests -- -D warnings", timeout_ms = 600000 },
 ] }
-"check:task-engine:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo check -p effigy -p effigy-kernel -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context -p effigy-containers -p effigy-distribution -p effigy-doctor --all-targets", timeout_ms = 900000 }] }
+"check:task-engine:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo check -p effigy -p effigy-kernel -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context -p effigy-containers -p effigy-doctor --all-targets", timeout_ms = 900000 }] }
 "check:task-status:publication:cargo" = { visibility = "internal", group = "Maintenance", run = [
   "cargo check -p effigy -p effigy-runtime --lib --tests --profile test",
   "cargo clippy -p effigy -p effigy-runtime --all-targets -- -D warnings",
@@ -1944,7 +1952,7 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 "lint:retirements:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy -p effigy-core -p effigy-cli -p effigy-builtin -p effigy-manifest -p effigy-managed -p effigy-catalog -p effigy-gateway -p effigy-containers --all-targets -- -D warnings", timeout_ms = 900000 }] }
 "lint:secrets:policy:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy -p effigy-builtin -p effigy-manifest -p effigy-rhai -p effigy-cli -p effigy-doctor --all-targets -- -D warnings", timeout_ms = 900000 }] }
 "lint:secrets:vault:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy -p effigy-rhai -p effigy-secrets --all-targets --features effigy-secrets/fault-injection -- -D warnings", timeout_ms = 900000 }] }
-"lint:task-engine:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy -p effigy-kernel -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context -p effigy-containers -p effigy-distribution -p effigy-doctor --all-targets -- -D warnings", timeout_ms = 900000 }] }
+"lint:task-engine:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy -p effigy-kernel -p effigy-builtin -p effigy-cli -p effigy-tasks -p effigy-routing -p effigy-core -p effigy-env -p effigy-execution -p effigy-runtime -p effigy-managed -p effigy-context -p effigy-containers -p effigy-doctor --all-targets -- -D warnings", timeout_ms = 900000 }] }
 "lint:tasks:visibility:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-builtin -p effigy-doctor -p effigy-managed -p effigy-routing -p effigy-core --all-targets -- -D warnings", timeout_ms = 900000 }] }
 "prepush:ci:cargo" = { visibility = "internal", group = "Validation", run = [
   { task = "qa:json:ci:cargo" },
