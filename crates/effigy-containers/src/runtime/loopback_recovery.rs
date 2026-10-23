@@ -24,9 +24,7 @@ use effigy_gateway::routes::{Route, RouteSource, RouteTable};
 use effigy_gateway::socket_ownership::{listening_process_ids, GatewayEndpoint, GatewayTransport};
 use serde_json::{json, Value};
 
-use crate::exec::{
-    discover_compose_containers_all_states_in_running_profiles, RunningComposeContainerInventory,
-};
+use crate::exec::{discover_compose_containers_all_states, RunningComposeContainerInventory};
 use crate::policy_support::effigy_home_dir;
 use crate::runtime::port_recovery::{probe_project_path, Decision, PathState};
 use crate::runtime::scope::{self, ScopeRecord};
@@ -48,14 +46,16 @@ pub struct LoopbackRecoveryFacts {
 }
 
 /// The one container inventory every loopback collection proves ownership
-/// from: every state on every profile that is running.
+/// from: every container state on every profile, with a profile whose VM is
+/// stopped recorded as a stopped profile rather than as a broken one.
 ///
 /// `gateway repair` and both allocation seams call this, so no path can release
 /// what another holds. A created or stopped container on a running profile
-/// holds its owner everywhere; a stopped profile binds no host address and
-/// cannot start a stack whose checkout is gone, so it holds nothing.
+/// holds its owner everywhere. A stopped profile binds no host address and
+/// cannot start a stack whose checkout is gone, so it holds nothing: only a
+/// failure that is not a stopped profile makes the inventory incomplete.
 pub fn loopback_ownership_inventory() -> RunningComposeContainerInventory {
-    discover_compose_containers_all_states_in_running_profiles()
+    discover_compose_containers_all_states()
 }
 
 impl LoopbackRecoveryFacts {
@@ -240,7 +240,10 @@ fn is_pool_address(ip: Ipv4Addr) -> bool {
 
 fn global_hold_reason(facts: &LoopbackRecoveryFacts) -> Option<String> {
     let mut reasons = Vec::new();
-    if let Some(summary) = facts.inventory.failure_summary() {
+    // A stopped Colima profile is recorded but holds nothing: its VM binds no
+    // host address and cannot start a stack whose checkout is gone. Any other
+    // failure makes absence unprovable for every owner.
+    if let Some(summary) = facts.inventory.incomplete_failure_summary() {
         reasons.push(format!(
             "container runtime inventory is incomplete: {summary}"
         ));

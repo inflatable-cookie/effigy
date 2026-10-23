@@ -34,16 +34,36 @@ pub struct StdReadOnlyProcess;
 /// Every child runs in its own process group; when the deadline expires the
 /// whole owned tree is terminated and reaped, then a [`DepsError::ProcessTimeout`]
 /// is returned so the caller can record a truthful partial report instead of
-/// hanging. A `None` deadline preserves the unbounded [`StdReadOnlyProcess`]
-/// behavior for non-doctor callers.
+/// hanging.
+///
+/// A deadline is mandatory: a new dependency-inspection subprocess call site
+/// reaches the doctor budget through this type, so it cannot silently run
+/// unbounded. The one explicit opt-out is [`Self::deadline_disabled`], which
+/// only the doctor uses when the operator disables its deadline with
+/// `EFFIGY_DOCTOR_TIMEOUT_MS=0`. Non-doctor callers name
+/// [`StdReadOnlyProcess`] instead, which is unbounded by construction.
 #[derive(Debug, Clone, Copy)]
 pub struct BoundedReadOnlyProcess {
     deadline: Option<Instant>,
 }
 
 impl BoundedReadOnlyProcess {
-    pub fn with_deadline(deadline: Option<Instant>) -> Self {
-        Self { deadline }
+    /// Run every child under the doctor's remaining deadline.
+    pub fn new(deadline: Instant) -> Self {
+        Self {
+            deadline: Some(deadline),
+        }
+    }
+
+    /// The explicit unbounded opt-out for a doctor run whose deadline the
+    /// operator disabled (`EFFIGY_DOCTOR_TIMEOUT_MS=0`).
+    pub fn deadline_disabled() -> Self {
+        Self { deadline: None }
+    }
+
+    /// The deadline this service runs children under, when it has one.
+    pub fn deadline(&self) -> Option<Instant> {
+        self.deadline
     }
 }
 
@@ -253,8 +273,10 @@ mod tests {
 
     #[test]
     fn expired_deadline_times_out_without_spawning() {
-        let process = BoundedReadOnlyProcess::with_deadline(
-            Instant::now().checked_sub(Duration::from_secs(1)),
+        let process = BoundedReadOnlyProcess::new(
+            Instant::now()
+                .checked_sub(Duration::from_secs(1))
+                .expect("past instant"),
         );
         let request = request(
             "definitely-not-a-real-program",
@@ -273,8 +295,9 @@ mod tests {
     }
 
     #[test]
-    fn unbounded_deadline_preserves_std_behavior() {
-        let process = BoundedReadOnlyProcess::with_deadline(None);
+    fn explicit_deadline_disabled_opt_out_is_unbounded() {
+        let process = BoundedReadOnlyProcess::deadline_disabled();
+        assert!(process.deadline().is_none());
         let request = request("true", Vec::new(), std::env::temp_dir());
 
         let output = process.run(&request).expect("true must succeed");
@@ -283,9 +306,20 @@ mod tests {
     }
 
     #[test]
+    fn bounded_service_reports_the_deadline_it_owns() {
+        let deadline = Instant::now()
+            .checked_add(Duration::from_secs(30))
+            .expect("future instant");
+        let process = BoundedReadOnlyProcess::new(deadline);
+        assert_eq!(process.deadline(), Some(deadline));
+    }
+
+    #[test]
     fn failing_child_reports_process_failure_not_timeout() {
-        let process = BoundedReadOnlyProcess::with_deadline(
-            Instant::now().checked_add(Duration::from_secs(30)),
+        let process = BoundedReadOnlyProcess::new(
+            Instant::now()
+                .checked_add(Duration::from_secs(30))
+                .expect("future instant"),
         );
         let request = request("false", Vec::new(), std::env::temp_dir());
 
@@ -307,8 +341,10 @@ mod tests {
         // child alive for thirty: returning proves the direct child was
         // reaped, and the absent marker proves the tree died with it.
         let script = format!("(sleep 3; printf leaked > {}) & sleep 30", marker.display());
-        let process = BoundedReadOnlyProcess::with_deadline(
-            Instant::now().checked_add(Duration::from_millis(300)),
+        let process = BoundedReadOnlyProcess::new(
+            Instant::now()
+                .checked_add(Duration::from_millis(300))
+                .expect("future instant"),
         );
         let request = request("sh", vec!["-lc", &script], dir.path().to_path_buf());
 

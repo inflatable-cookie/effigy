@@ -1502,14 +1502,40 @@ environment, but they must not invent a separate activation model.
 `effigy container ports` is the only supported way to release generated-port
 allocations outside `container retire`. `status` and `reclaim` without
 `--apply` are read-only. `reclaim --apply --expect-plan <DIGEST>` removes only
-entries whose project path is definitely missing and that no scope record,
-gateway route, container in any state, published port or bound host port still
-references. Its locked recomputation must reproduce the reviewed digest. Any
-incomplete inventory or unreadable ownership store holds every absent-path
-entry, and the report names the reason. Reclaim never removes runtime
-resources, data, volumes, routes, certificates, profiles, scheduler settings or
-loopback assignments. Writes use the registry's `ports.lock`, the same lock
-generated-compose allocation takes, and preserve unknown registry fields.
+entries whose project path is definitely missing and that no scope record that
+retains project volumes or routes, gateway route, container in any state,
+published port or bound host port still references. A path is definitely
+missing when its leaf is absent and its nearest existing ancestor is a readable
+directory; a missing parent under a readable root proves absence, while a real
+I/O or permission error, a non-directory ancestor and an absent volume root
+(such as an unmounted `/Volumes/...`) stay unknown and hold. Its locked
+recomputation must reproduce the reviewed digest. Reclaim never removes
+runtime resources, data, volumes, routes, certificates, profiles, scheduler
+settings or loopback assignments. Writes use the registry's `ports.lock`, the
+same lock generated-compose allocation takes, and preserve unknown registry
+fields.
+
+A runtime-scope record no longer holds an entry on its own. It holds while it
+retains volumes or routes of its own for the project; an observable profile's
+complete all-states inventory, the route table and the bound-port probe decide
+the rest.
+
+A stopped Colima profile is scoped to the entries it can own rather than
+failing the whole proof (effigy#294). It publishes no host port while stopped,
+so clearing a host-port question never requires starting it. It holds an entry
+when a runtime-scope record names that entry on the stopped profile. An entry
+with no recorded profile is attributed to the configured Effigy profile — the
+profile Prepare would allocate it on — because the registry stores no profile
+and environment records are not enumerable from this seam. That inference
+fails closed where it matters: a stopped configured profile holds every entry
+attributed to it. An inventory failure for a running runtime, an unreadable
+scope store and an unreadable route table still hold every absent-path entry.
+
+Allocation reclaims under pressure. When a Prepare that needs a new range
+finds fewer than ten free ranges, it applies the same rules as
+`reclaim --apply` — same evidence, digest recomputed under the lock, backup
+first — then allocates, and reports one line with the reclaimed count. No read
+path reclaims.
 
 ## Loopback dead-owner collection
 
@@ -1537,12 +1563,14 @@ when its route disappears, so its own alias for a dead route is not a hold; a
 same-user process that is not the recorded gateway daemon, or a listener probe
 that cannot answer, is. Allocation, its one automatic collection and `gateway
 repair` prove ownership from the same inventory — every container state on every
-profile that is running — so no path can release what another holds. A
-shared-service identity is dead only when no consumer project that uses it is
-live and no container carries the shared service's own project name. Incomplete inventory or an unreadable scope store
+profile, with a profile whose VM is stopped recorded as stopped rather than
+broken — so no path can release what another holds. A shared-service identity is
+dead only when no consumer project that uses it is live and no container carries
+the shared service's own project name. Incomplete inventory or an unreadable scope store
 holds the whole plan and names the reason. A stopped Colima profile does not
 hold a loopback entry: it binds no host address and cannot start a stack whose
-checkout is gone. Present paths, running containers and unknown path states are
+checkout is gone, so only a failure that is not a stopped profile makes the
+inventory incomplete. Present paths, running containers and unknown path states are
 never released, so a live project's address never changes.
 
 The endpoint Store quarantines a released address for one reuse window (the DNS

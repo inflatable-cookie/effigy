@@ -230,10 +230,13 @@ A bounded host-side `sources-known.json` hint records the source bytes each
 checkout selected, written by any Prepare. A read may emit one
 `<source> behind: locked <rev>, available <rev>; the next `effigy dev` or
 `effigy container up` will update` notice per process when a declaration changed
-or a known version differs from the pin. It performs no network request and
-never changes the selection. A missing or unreadable hint grants no update
-authority, and a missing or unreadable update record grants no TTL: the next
-Prepare checks again.
+or a known version differs from the pin. The locked side is the pinned Git
+revision when the pin has one; the hint records a content digest, not a
+revision, so a mixed pair is labelled by kind (`locked revision <rev>,
+available digest <digest>`), and only a pair of revisions is printed bare. It
+performs no network request and never changes the selection. A missing or
+unreadable hint grants no update authority, and a missing or unreadable update
+record grants no TTL: the next Prepare checks again.
 
 ## v0.14.1 import
 

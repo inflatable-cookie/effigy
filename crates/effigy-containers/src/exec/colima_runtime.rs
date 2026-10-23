@@ -483,31 +483,30 @@ pub fn running_colima_profiles(repo_root: &Path) -> Result<Vec<String>, Containe
         .collect())
 }
 
-/// Profile names for a complete all-states inventory. Any profile that is not
-/// running is a hard failure: its containers cannot be listed without starting
-/// it, so the inventory cannot prove absence.
-pub(super) fn colima_profiles_for_complete_inventory() -> Result<Vec<String>, ContainerExecError> {
+/// Profile names for an all-states inventory: the profiles that are running,
+/// and the ones whose VM is stopped.
+///
+/// A stopped profile is reported separately instead of failing the whole
+/// inventory. Its created or stopped containers cannot be listed without
+/// starting it, so absence is unprovable for an owner recorded on that
+/// profile; every other owner is unaffected, because a stopped VM publishes no
+/// host port (effigy#294).
+pub(super) fn colima_profiles_for_all_states_inventory(
+) -> Result<(Vec<String>, Vec<String>), ContainerExecError> {
     let entries = list_colima_profiles(Path::new("."))?;
-    let stopped = entries
-        .iter()
-        .filter(|entry| !entry.status.eq_ignore_ascii_case("running"))
-        .map(|entry| entry.name.as_str())
-        .collect::<Vec<_>>();
-    if !stopped.is_empty() {
-        return Err(ContainerExecError::Failure {
-            command: "colima list".to_owned(),
-            code: None,
-            stdout: String::new(),
-            stderr: format!(
-                "stopped colima profile(s) {} cannot be inspected for created or stopped containers without starting them",
-                stopped.join(", ")
-            ),
-        });
+    let mut running = Vec::new();
+    let mut stopped = Vec::new();
+    for entry in entries {
+        if entry.status.eq_ignore_ascii_case("running") {
+            running.push(entry.name);
+        } else {
+            stopped.push(entry.name);
+        }
     }
-    Ok(entries.into_iter().map(|entry| entry.name).collect())
+    Ok((running, stopped))
 }
 
-pub(super) fn default_runtime_profile() -> String {
+pub(crate) fn default_runtime_profile() -> String {
     user_global_colima_profile().unwrap_or_else(|| DEFAULT_COLIMA_PROFILE.to_owned())
 }
 

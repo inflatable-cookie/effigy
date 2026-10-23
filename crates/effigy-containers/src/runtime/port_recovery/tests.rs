@@ -8,8 +8,9 @@ use effigy_gateway::routes::RouteTable;
 use serde_json::json;
 
 use super::{
-    plan_recovery, port_reclaim_apply_at, probe_project_path, published_host_ports, report_at,
-    Decision, PathState, PortRecoveryFacts,
+    plan_recovery, port_reclaim_apply_at, probe_project_path, published_host_ports,
+    reclaim_under_pressure_at, report_at, Decision, PathState, PortRecoveryFacts,
+    AUTO_RECLAIM_FREE_RANGES,
 };
 use crate::exec::{
     RunningComposeContainer, RunningComposeContainerInventory, RunningComposeContainerProfiled,
@@ -39,6 +40,17 @@ fn clean_facts() -> PortRecoveryFacts {
         scopes: Ok(Vec::new()),
         routes: Ok(RouteTable::new()),
         inventory: RunningComposeContainerInventory::default(),
+        running_profile: "effigy".to_owned(),
+    }
+}
+
+/// A stopped Colima profile failure as the all-states inventory records it.
+fn stopped_profile(profile: &str) -> crate::exec::RuntimeInventoryFailure {
+    crate::exec::RuntimeInventoryFailure {
+        backend: "colima".to_owned(),
+        profile: profile.to_owned(),
+        error: "stopped colima profile cannot be inspected for created or stopped containers without starting it".to_owned(),
+        stopped_profile: true,
     }
 }
 
@@ -100,6 +112,18 @@ fn scope_record(token: &str, checkout: &str, projects: &[&str]) -> ScopeRecord {
         loopback_identities: Vec::new(),
         retain_loopback_identities: Vec::new(),
         pending_tls_certs: Vec::new(),
+    }
+}
+
+trait ScopeRecordProfile {
+    fn with_profile(self, profile: &str) -> Self;
+}
+
+impl ScopeRecordProfile for ScopeRecord {
+    fn with_profile(mut self, profile: &str) -> Self {
+        self.profile = profile.to_owned();
+        self.profiles = vec![profile.to_owned()];
+        self
     }
 }
 
@@ -169,11 +193,22 @@ fn present_path_is_retained_and_unknown_path_is_held() {
     assert!(plan.reclaim_names().is_empty());
 }
 
+/// A scope record that still retains project volumes.
+fn scope_record_with_volumes(token: &str, checkout: &str, projects: &[&str]) -> ScopeRecord {
+    let mut record = scope_record(token, checkout, projects);
+    record.owned_volumes = vec![format!("{token}-data")];
+    record
+}
+
 #[test]
-fn runtime_scope_record_holds_missing_allocation() {
+fn runtime_scope_record_retaining_volumes_holds_missing_allocation() {
     let registry = registry_with(&[("owned", 8100, MISSING)]);
     let facts = PortRecoveryFacts {
-        scopes: Ok(vec![scope_record("tok1", "/elsewhere", &["owned"])]),
+        scopes: Ok(vec![scope_record_with_volumes(
+            "tok1",
+            "/elsewhere",
+            &["owned"],
+        )]),
         ..clean_facts()
     };
     let plan = plan_recovery(&registry, &facts, missing_everywhere, no_bound_ports);
@@ -181,18 +216,90 @@ fn runtime_scope_record_holds_missing_allocation() {
     let (decision, reason) = decision_for(&plan, "owned");
     assert_eq!(decision, Decision::Hold);
     assert!(reason.contains("tok1"));
+    assert!(reason.contains("volumes or routes"));
 }
 
 #[test]
-fn scope_checkout_match_holds_even_without_project_name() {
+fn scope_checkout_match_retaining_volumes_holds_without_project_name() {
     let registry = registry_with(&[("renamed", 8100, MISSING)]);
     let facts = PortRecoveryFacts {
-        scopes: Ok(vec![scope_record("tok2", MISSING, &[])]),
+        scopes: Ok(vec![scope_record_with_volumes("tok2", MISSING, &[])]),
         ..clean_facts()
     };
     let plan = plan_recovery(&registry, &facts, missing_everywhere, no_bound_ports);
 
     assert_eq!(decision_for(&plan, "renamed").0, Decision::Hold);
+}
+
+#[test]
+fn scope_record_on_an_observed_profile_with_nothing_left_is_reclaimed() {
+    // effigy#294: a record does not hold on its own any more. When its profile
+    // is observable and it retains no volume or route, the profile's own
+    // inventory decides, and a missing project with no container there is
+    // reclaimable.
+    let registry = registry_with(&[("bare", 8100, MISSING)]);
+    let facts = PortRecoveryFacts {
+        scopes: Ok(vec![scope_record("tok3", MISSING, &["bare"])]),
+        ..clean_facts()
+    };
+    let plan = plan_recovery(&registry, &facts, missing_everywhere, no_bound_ports);
+
+    let (decision, reason) = decision_for(&plan, "bare");
+    assert_eq!(decision, Decision::Reclaim);
+    assert!(
+        reason.contains("effigy"),
+        "names the observed profile: {reason}"
+    );
+}
+
+#[test]
+fn scope_record_naming_a_stopped_profile_holds_its_own_entry() {
+    let registry = registry_with(&[
+        ("release-proof", 8100, MISSING),
+        ("gone", 8200, "/effigy-test/elsewhere/gone"),
+    ]);
+    let facts = PortRecoveryFacts {
+        scopes: Ok(vec![
+            scope_record("tok4", MISSING, &["release-proof"]).with_profile("effigy-release")
+        ]),
+        inventory: RunningComposeContainerInventory {
+            rows: Vec::new(),
+            failures: vec![stopped_profile("effigy-release")],
+        },
+        ..clean_facts()
+    };
+    let plan = plan_recovery(&registry, &facts, missing_everywhere, no_bound_ports);
+
+    assert_eq!(plan.global_hold, None, "a stopped profile is not global");
+    let (decision, reason) = decision_for(&plan, "release-proof");
+    assert_eq!(decision, Decision::Hold);
+    assert!(reason.contains("effigy-release"), "{reason}");
+    assert!(reason.contains("stopped"), "{reason}");
+    // An unrelated entry attributed to the running profile is unaffected.
+    assert_eq!(decision_for(&plan, "gone").0, Decision::Reclaim);
+    assert_eq!(plan.reclaim_names(), vec!["gone".to_owned()]);
+}
+
+#[test]
+fn unrecorded_entry_holds_when_the_configured_profile_is_stopped() {
+    let registry = registry_with(&[("gone", 8100, MISSING)]);
+    let facts = PortRecoveryFacts {
+        inventory: RunningComposeContainerInventory {
+            rows: Vec::new(),
+            failures: vec![stopped_profile("effigy")],
+        },
+        ..clean_facts()
+    };
+    let plan = plan_recovery(&registry, &facts, missing_everywhere, no_bound_ports);
+
+    assert_eq!(plan.global_hold, None);
+    let (decision, reason) = decision_for(&plan, "gone");
+    assert_eq!(decision, Decision::Hold);
+    assert!(
+        reason.contains("configured Effigy profile `effigy`"),
+        "{reason}"
+    );
+    assert!(plan.reclaim_names().is_empty());
 }
 
 #[test]
@@ -242,9 +349,10 @@ fn incomplete_inventory_holds_every_missing_entry_but_retains_present_ones() {
         inventory: RunningComposeContainerInventory {
             rows: Vec::new(),
             failures: vec![crate::exec::RuntimeInventoryFailure {
-                backend: "colima".to_owned(),
-                profile: "dev".to_owned(),
-                error: "stopped colima profile(s) dev".to_owned(),
+                backend: "docker".to_owned(),
+                profile: "default".to_owned(),
+                error: "cannot connect to the Docker daemon".to_owned(),
+                stopped_profile: false,
             }],
         },
         ..clean_facts()
@@ -260,7 +368,7 @@ fn incomplete_inventory_holds_every_missing_entry_but_retains_present_ones() {
 
     let (decision, reason) = decision_for(&plan, "gone");
     assert_eq!(decision, Decision::Hold);
-    assert!(reason.contains("colima profile(s) dev"));
+    assert!(reason.contains("cannot connect to the Docker daemon"));
     assert_eq!(decision_for(&plan, "here").0, Decision::Retain);
     assert!(plan.global_hold.is_some());
     assert!(plan.reclaim_names().is_empty());
@@ -341,6 +449,7 @@ fn capacity_reports_free_ranges_before_and_after_reclaim() {
             scopes: Ok(Vec::new()),
             routes: Ok(RouteTable::new()),
             inventory: RunningComposeContainerInventory::default(),
+            running_profile: "effigy".to_owned(),
         },
         |path: &Path| {
             if path.to_string_lossy().starts_with("/tmp/p") {
@@ -368,7 +477,7 @@ fn plan_digest_changes_when_a_decision_changes() {
     let held = plan_recovery(
         &registry,
         &PortRecoveryFacts {
-            scopes: Ok(vec![scope_record("tok", "/x", &["gone"])]),
+            scopes: Ok(vec![scope_record_with_volumes("tok", "/x", &["gone"])]),
             ..clean_facts()
         },
         missing_everywhere,
@@ -406,8 +515,72 @@ fn path_probe_distinguishes_present_missing_and_unknown() {
         probe_project_path(&root.path().join("absent")),
         PathState::Missing
     );
-    let orphan = root.path().join("no-such-parent").join("checkout");
-    assert!(matches!(probe_project_path(&orphan), PathState::Unknown(_)));
+    // effigy#294: an absent parent under a readable ancestor proves absence
+    // just as well. This is the shape of every deleted Queue workspace and
+    // temp proof clone.
+    assert_eq!(
+        probe_project_path(&root.path().join("no-such-parent").join("checkout")),
+        PathState::Missing
+    );
+    assert_eq!(
+        probe_project_path(
+            &root
+                .path()
+                .join("no-such-parent")
+                .join("deeper")
+                .join("checkout")
+        ),
+        PathState::Missing
+    );
+    assert_eq!(
+        probe_project_path(&root.path().join("no-such-parent").join("file.json")),
+        PathState::Missing
+    );
+}
+
+#[test]
+fn absent_volume_mount_stays_unknown() {
+    // The nearest existing ancestor here is the volume root itself, so the
+    // walk-up would read as missing. An unmounted volume is not proof that the
+    // project is gone, so the volume root is checked first.
+    let unmounted = Path::new("/Volumes/effigy-294-no-such-volume/checkout");
+    assert!(
+        matches!(probe_project_path(unmounted), PathState::Unknown(reason)
+        if reason.contains("is not mounted"))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn permission_denied_ancestor_stays_unknown() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().expect("fixture root");
+    let locked = root.path().join("locked");
+    std::fs::create_dir(&locked).expect("locked dir");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))
+        .expect("remove permissions");
+    let probe = probe_project_path(&locked.join("checkout"));
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755))
+        .expect("restore permissions");
+
+    assert!(
+        matches!(probe, PathState::Unknown(_)),
+        "permission denied must stay unknown: {probe:?}"
+    );
+}
+
+#[test]
+fn non_directory_ancestor_stays_unknown() {
+    let root = tempfile::tempdir().expect("fixture root");
+    let file = root.path().join("a-file");
+    std::fs::write(&file, "not a directory").expect("write file");
+
+    let probe = probe_project_path(&file.join("checkout"));
+    assert!(
+        matches!(probe, PathState::Unknown(_)),
+        "a non-directory ancestor must stay unknown: {probe:?}"
+    );
 }
 
 #[test]
@@ -736,4 +909,148 @@ fn capacity_note_absent_when_registry_is_unreadable() {
         note.is_none(),
         "an unreadable registry gets no capacity claim"
     );
+}
+
+/// A registry with one live project and two dead ones, packed so only a few
+/// 100-port ranges stay free.
+///
+/// The filler allocation owns most of the space, so the reclaim can be
+/// exercised without filling 574 real entries (each removal drops a claim per
+/// port in the endpoint store). Returns the free-range count the fixture lands
+/// on: the filler leaves room for thirteen, and the two dead allocations take
+/// two.
+fn nearly_exhausted_registry(root: &Path) -> (PortRegistry, usize) {
+    let live = root.join("live");
+    std::fs::create_dir(&live).expect("live checkout fixture");
+    let mut registry = PortRegistry::new();
+    registry.allocations.insert(
+        "live".to_owned(),
+        PortAllocation {
+            base: 8100,
+            range: 56_100,
+            project: live.display().to_string(),
+            assigned_ports: HashMap::new(),
+        },
+    );
+    for (name, base) in [("dead-a", 64_200u16), ("dead-b", 64_300u16)] {
+        registry.allocations.insert(
+            name.to_owned(),
+            PortAllocation {
+                base,
+                range: 100,
+                project: root.join(name).display().to_string(),
+                assigned_ports: HashMap::new(),
+            },
+        );
+    }
+    let free = registry.capacity().allocatable_ranges;
+    assert_eq!(free, 11, "fixture lands on a near-exhausted registry");
+    (registry, free)
+}
+
+fn backups_in(root: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(root)
+        .expect("fixture root readable")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains("reclaim-backup"))
+        })
+        .collect()
+}
+
+#[test]
+fn pressure_reclaim_removes_dead_ranges_at_the_threshold() {
+    // The production threshold is ten free ranges; the comparison is the same
+    // one these parameterized tests exercise.
+    assert_eq!(AUTO_RECLAIM_FREE_RANGES, 10);
+
+    let root = tempfile::tempdir().expect("fixture root");
+    let path = root.path().join("ports.json");
+    let (registry, free) = nearly_exhausted_registry(root.path());
+    registry
+        .save(&path)
+        .expect("persist near-exhausted registry");
+
+    let reclaim =
+        reclaim_under_pressure_at(&path, free, clean_facts, probe_project_path, no_bound_ports)
+            .expect("pressure reclaim runs")
+            .expect("capacity at the threshold reclaims");
+
+    assert_eq!(reclaim.reclaimed, 2);
+    assert_eq!(reclaim.free_ranges_before, free);
+    assert_eq!(reclaim.free_ranges_after, 13);
+    assert_eq!(reclaim.range, 100);
+    assert_eq!(
+        reclaim.note().lines().count(),
+        1,
+        "one line is logged: {}",
+        reclaim.note()
+    );
+    assert!(reclaim
+        .note()
+        .starts_with("[note] reclaimed 2 provably dead"));
+    assert!(reclaim.note().contains("13 free 100-port range(s) remain"));
+
+    let after = PortRegistry::load(&path).expect("registry after pressure reclaim");
+    assert!(after.get("live").is_some(), "a present path is retained");
+    assert!(after.get("dead-a").is_none());
+    assert!(after.get("dead-b").is_none());
+    assert_eq!(after.len(), 1);
+    assert_eq!(
+        backups_in(root.path()).len(),
+        1,
+        "apply backs the registry up first"
+    );
+}
+
+#[test]
+fn pressure_reclaim_is_skipped_when_capacity_is_comfortable() {
+    let root = tempfile::tempdir().expect("fixture root");
+    let path = root.path().join("ports.json");
+    let (registry, free) = nearly_exhausted_registry(root.path());
+    registry.save(&path).expect("persist registry");
+    let before = std::fs::read(&path).expect("registry bytes");
+
+    let reclaim = reclaim_under_pressure_at(
+        &path,
+        free - 1,
+        clean_facts,
+        probe_project_path,
+        no_bound_ports,
+    )
+    .expect("pressure check runs");
+
+    assert_eq!(reclaim, None, "no reclaim above the threshold");
+    assert_eq!(std::fs::read(&path).unwrap(), before, "nothing was written");
+    assert!(backups_in(root.path()).is_empty());
+}
+
+#[test]
+fn pressure_reclaim_keeps_a_range_whose_port_is_in_use() {
+    let root = tempfile::tempdir().expect("fixture root");
+    let path = root.path().join("ports.json");
+    let (registry, free) = nearly_exhausted_registry(root.path());
+    let busy = registry.get("dead-a").expect("dead allocation").base + 7;
+    registry
+        .save(&path)
+        .expect("persist near-exhausted registry");
+    let held_port = |port: u16| {
+        (port == busy)
+            .then(|| format!("host port {busy} is in use on this machine; its owner is unknown"))
+    };
+
+    let reclaim =
+        reclaim_under_pressure_at(&path, free, clean_facts, probe_project_path, held_port)
+            .expect("pressure reclaim runs")
+            .expect("capacity at the threshold reclaims");
+
+    assert_eq!(reclaim.reclaimed, 1);
+    assert_eq!(reclaim.free_ranges_after, 12);
+    let after = PortRegistry::load(&path).expect("registry after pressure reclaim");
+    assert!(after.get("dead-a").is_some(), "the in-use range is held");
+    assert!(after.get("dead-b").is_none());
+    assert!(after.get("live").is_some());
+    assert_eq!(after.len(), 2);
 }

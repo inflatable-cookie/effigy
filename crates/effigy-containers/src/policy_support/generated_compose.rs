@@ -1735,6 +1735,7 @@ mod tests {
                         backend: "colima".to_owned(),
                         profile: "broken".to_owned(),
                         error: "runtime ps failed".to_owned(),
+                        stopped_profile: false,
                     }],
                 },
             )

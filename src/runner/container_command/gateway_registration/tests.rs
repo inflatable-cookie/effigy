@@ -1705,6 +1705,7 @@ fn incomplete_inventory_preserves_all_assignments_and_reports_failed_profile() {
             backend: "colima".to_owned(),
             profile: "broken-profile".to_owned(),
             error: "runtime ps failed to parse output".to_owned(),
+            stopped_profile: false,
         }],
     };
 
@@ -1927,6 +1928,7 @@ fn load_or_allocate_project_loopback_ip_migrates_legacy_identity_for_same_repo()
                     backend: "colima".to_owned(),
                     profile: "temporary-failure".to_owned(),
                     error: "test inventory failure".to_owned(),
+                    stopped_profile: false,
                 }],
             },
         )

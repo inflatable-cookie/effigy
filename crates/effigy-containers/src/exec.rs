@@ -6,6 +6,7 @@ mod managed_stop;
 mod mounts;
 mod parse;
 mod participation;
+pub(crate) use colima_runtime::default_runtime_profile;
 pub(crate) use participation::docker_config_current_context;
 mod process;
 mod restart_recovery;
@@ -26,10 +27,8 @@ pub use healthcheck_pidfiles::{
 pub use implementation::{
     capture_compose_ps, capture_running_container_stats,
     capture_running_container_stats_for_profile, compose_stack_is_running,
-    discover_compose_containers_all_states,
-    discover_compose_containers_all_states_in_running_profiles,
-    discover_running_compose_containers, infer_host_working_dir_for_container,
-    list_compose_containers_for_policy_including_stopped,
+    discover_compose_containers_all_states, discover_running_compose_containers,
+    infer_host_working_dir_for_container, list_compose_containers_for_policy_including_stopped,
     list_compose_containers_for_policy_including_stopped_with_deadline,
     list_compose_containers_for_policy_including_stopped_with_timeout,
     list_compose_containers_for_project_including_stopped, list_running_compose_containers,

@@ -1869,22 +1869,42 @@ unchanged.
 
 An entry is reclaimed only when all of these hold:
 
-- its project path is definitely missing: the leaf is absent and its parent
-  directory is readable. Permission and I/O errors, and an absent parent such
-  as an unmounted volume, are unknown and hold the entry;
-- no runtime-scope record names the project or its checkout;
+- its project path is definitely missing: the leaf is absent and the nearest
+  existing ancestor is a readable directory, so a missing parent under a
+  readable root proves absence just as well as a missing leaf. A real I/O or
+  permission error, a non-directory ancestor, and an absent volume root such
+  as an unmounted `/Volumes/...` are unknown and hold the entry;
+- no runtime-scope record that still retains that project's volumes or routes
+  names the project or its checkout. A record whose profile is observable and
+  that retains nothing is decided by that profile's own inventory instead:
+  no container there means reclaimable;
 - no gateway route names the project or path;
 - no container in any state (running, Created, exited) carries the project
   label or working directory, and none publishes a host port in the range;
 - no host port in the range is in use on this machine (a wildcard bind probe
   fails, or cannot be attempted);
-- no other allocation records the same project path.
+- no other allocation records the same project path;
+- no stopped Colima profile can own it. A stopped profile publishes no host
+  port, so it never has to be started to answer the bound-port question, and
+  it holds only the entries it is recorded on: those whose runtime-scope
+  record names that profile. An entry with no recorded profile is attributed
+  to the configured Effigy profile. When that profile itself is stopped, every
+  entry attributed to it is held rather than reclaimed.
+
+Present paths are always retained.
 
 Incomplete proof holds the whole registry. An unreadable scope store or route
-table, or an incomplete container inventory, holds every absent-path entry.
-A stopped Colima profile is incomplete, because its created or stopped
-containers cannot be listed without starting it. Present paths are always
-retained.
+table, or a container inventory that failed for a running runtime, holds every
+absent-path entry. A stopped Colima profile is not one of those: it is reported
+per profile and scoped to the entries that profile can own, with a reason on
+each held entry.
+
+Under capacity pressure — fewer than ten free 100-port ranges — a `container
+up` that needs a new range first reclaims provably dead entries by exactly the
+rules above, then allocates, and prints one line saying how many ranges it
+reclaimed and how many remain. It reads the same evidence, backs the registry
+up first and recomputes the plan under the registry lock. Reading capacity and
+planning a reclaim never apply it, so `status` and a dry-run stay read-only.
 
 Apply removes only the reclaim rows. It saves the pre-edit endpoint document as
 `ports.json.reclaim-backup-<nanos>` and reports both document SHA-256 values.
@@ -1939,8 +1959,9 @@ A loopback assignment or container route is dead only when all of these hold:
   answer, is.
 
 Allocation, its automatic collection and this preview prove ownership from the
-same inventory — every container state on every profile that is running — so
-the automatic path can never release what the preview would hold.
+same inventory — every container state on every profile, with a stopped profile
+recorded as stopped — so the automatic path can never release what the preview
+would hold.
 
 A shared-service identity is dead only when no consumer project that uses it
 is live and no container carries the shared service's own project name. Incomplete ownership proof holds the whole plan and names the reason;

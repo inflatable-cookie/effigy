@@ -5917,3 +5917,125 @@ fn cli_container_rejects_mounts_that_escape_repo_root() {
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
     assert!(stderr.contains("escapes the repo root"), "got: {stderr}");
 }
+
+fn run_cli_command_in_dir(cwd: &std::path::Path, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .current_dir(cwd)
+        .args(args)
+        .env("NO_COLOR", "1")
+        .output_owned()
+        .expect("run effigy")
+}
+
+/// A checkout whose nested `docs/` catalog is a declared member, matching the
+/// underlay-reference shape: the docs check runs with cwd `docs/` while its
+/// arguments may still be spelled from the repository root.
+fn write_nested_docs_catalog_fixture() -> PathBuf {
+    let root = temp_workspace("docs-check-nested-catalog-cwd");
+    fs::create_dir_all(root.join("docs/knowledge")).expect("mkdir docs catalog");
+    fs::write(
+        root.join("effigy.toml"),
+        "[catalog]\nalias = \"root\"\n\n[catalog.members]\nrefdocs = \"docs\"\n",
+    )
+    .expect("write root manifest");
+    fs::write(root.join("README.md"), "[Broken](./gone.md)\n").expect("write root readme");
+    fs::write(
+        root.join("docs/README.md"),
+        "[Knowledge](./knowledge/README.md)\n",
+    )
+    .expect("write docs readme");
+    fs::write(root.join("docs/knowledge/README.md"), "# Knowledge\n")
+        .expect("write knowledge readme");
+    fs::write(
+        root.join("docs/effigy.toml"),
+        r#"[catalog]
+alias = "refdocs"
+
+[tasks.cwd-relative]
+run = [{ task = "docs check links README.md knowledge/README.md" }]
+
+[tasks.root-relative]
+run = [{ task = "docs check links docs/README.md docs/knowledge/README.md" }]
+
+[tasks.repo-placeholder]
+run = [{ task = "docs check links {repo}/README.md {repo}/knowledge/README.md" }]
+
+[tasks.default-scope]
+run = [{ task = "docs check links" }]
+"#,
+    )
+    .expect("write docs catalog manifest");
+    root
+}
+
+#[test]
+fn cli_docs_check_explicit_paths_resolve_from_the_invoking_task_cwd() {
+    let root = write_nested_docs_catalog_fixture();
+    let docs = root.join("docs");
+
+    let output = run_cli_command_in_dir(&docs, &["refdocs/cwd-relative"]);
+    assert!(
+        output.status.success(),
+        "cwd-relative docs paths should resolve under the task cwd: {output:?}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("resolved paths: docs/README.md, docs/knowledge/README.md"),
+        "the resolved set should be printed: {stdout}"
+    );
+}
+
+#[test]
+fn cli_docs_check_accepts_root_relative_arguments_with_a_transition_warning() {
+    let root = write_nested_docs_catalog_fixture();
+    let docs = root.join("docs");
+
+    let output = run_cli_command_in_dir(&docs, &["refdocs/root-relative"]);
+    assert!(
+        output.status.success(),
+        "root-relative arguments from a nested cwd keep passing: {output:?}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("`{repo}/README.md`"),
+        "the transition warning should name the cwd-proof spelling: {stderr}"
+    );
+}
+
+#[test]
+fn cli_docs_check_task_reference_expands_repo_placeholder() {
+    let root = write_nested_docs_catalog_fixture();
+    let docs = root.join("docs");
+
+    let output = run_cli_command_in_dir(&docs, &["refdocs/repo-placeholder"]);
+    assert!(
+        output.status.success(),
+        "{{repo}} should expand inside a docs check task reference: {output:?}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("resolved paths: docs/README.md, docs/knowledge/README.md"),
+        "the expanded set should be printed: {stdout}"
+    );
+    assert!(
+        !output.stderr.windows(6).any(|window| window == b"{repo}"),
+        "the expansion must leave no literal placeholder"
+    );
+}
+
+#[test]
+fn cli_docs_check_without_paths_keeps_the_repository_root_default_scope() {
+    let root = write_nested_docs_catalog_fixture();
+    let docs = root.join("docs");
+
+    let output = run_cli_command_in_dir(&docs, &["refdocs/default-scope"]);
+    assert!(
+        !output.status.success(),
+        "the no-argument default scope stays repository-root relative: {output:?}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("README.md") && stderr.contains("./gone.md"),
+        "the default scan should read the repository-root README: {stderr}"
+    );
+}

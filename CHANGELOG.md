@@ -384,6 +384,11 @@ During v0.x, MINOR bumps may include breaking changes.
   `simulate --version`. The refusal names the replacement.
 
 ### Added
+- `effigy skill run ... --repo <DIR>` accepts a bare target directory with no
+  repository marker, so an isolated fixture can be the consumer target of an
+  installed skill task. The JSON evidence reports canonical root paths, and a
+  symlinked target spelling (`/var` against `/private/var`) compares equal
+  (papercut `ec7a47f5`).
 - `effigy container profile prune-health-pid-files [--profile <NAME>]` deletes
   only the stale nerdctl health-check pid files a running Colima profile leaks
   into the VM's `/run` (exact `health-check-*.pid` name, directly inside a
@@ -854,6 +859,21 @@ During v0.x, MINOR bumps may include breaking changes.
   `--check` reports without writing.
 
 ### Changed
+- Explicit `docs check` path arguments resolve against the invoking task's cwd,
+  so a nested catalog's check reads its own files, and every report prints the
+  resolved set. The no-argument default scope stays repository-root relative.
+  For one release a root-relative spelling from a nested cwd still passes with
+  a warning naming the cwd-proof spelling, and `{repo}`/`{cwd}` now expand
+  inside `{ task = "docs check ..." }` references (papercut `27a40ad8`).
+- The `bundle behind` notice labels each short id with its kind (`locked
+  revision <rev>, available digest <digest>`), so a Git revision is no longer
+  presented as comparable to a content digest; a pair of revisions stays bare
+  (papercut `1ef87556`).
+- The doctor's dependency-inspection process service requires a deadline:
+  every child shares the remaining doctor budget, and unbounded execution needs
+  the explicit `EFFIGY_DOCTOR_TIMEOUT_MS=0` opt-out. One timeout helper
+  (`is_process_timeout`) still propagates budget exhaustion instead of
+  recording a diagnosis (papercut `d3007fd6`).
 - A stale bundle or catalog source updates itself on the next `effigy dev`,
   `effigy bootstrap` or `effigy container up`, so `effigy bundle sync` is no
   longer needed in normal work (Tom, 2026-10-23). A changed declaration
@@ -1044,6 +1064,17 @@ During v0.x, MINOR bumps may include breaking changes.
   formatter stays reachable as `effigy fmt-rust <FILE>...`, `--plan` names
   that spelling, `fmt` is in shell completion, and the formatter help says
   relative paths are cwd-relative.
+- Deleted projects no longer hold generated-port ranges for ever (effigy#294).
+  A project path whose parent is gone is now `missing` whenever the nearest
+  existing ancestor is a readable directory, instead of `unknown`; only a real
+  I/O or permission error, a non-directory ancestor or an absent volume root
+  such as an unmounted `/Volumes/...` stays unknown. A stopped Colima profile
+  no longer holds every absent-path entry: it holds only the entries recorded
+  on that profile, says so per entry, and never has to be started to answer a
+  host-port question. A runtime-scope record now holds an entry only while it
+  still retains that project's volumes or routes. `container up` reclaims
+  provably dead ranges by the same reviewed `--apply` rules when fewer than ten
+  free ranges remain, and prints one line saying what it reclaimed.
 - A bounded Colima/nerdctl call that times out on a loaded host no longer reads
   as a service failure (effigy#291, papercut `8064c5b9`). Effigy observes the
   host's own load average: on a saturated host (one runnable task per CPU) an

@@ -315,6 +315,7 @@ fn incomplete_inventory_holds_every_absent_path_entry() {
         backend: "colima".to_owned(),
         profile: "effigy".to_owned(),
         error: "runtime ps --all failed".to_owned(),
+        stopped_profile: false,
     });
 
     let plan = plan_recovery(&registry, &routes, &facts, missing, no_listener);
@@ -325,6 +326,30 @@ fn incomplete_inventory_holds_every_absent_path_entry() {
     assert!(assignment_row(&plan, "127.1.0.4")
         .reason
         .contains("global hold"));
+}
+
+#[test]
+fn a_stopped_profile_never_holds_an_absent_owner() {
+    let registry = registry_with(&[("project:gone:/gone", "127.1.0.4", MISSING)]);
+    let routes = route_table_with(vec![alias_route("gone.test", MISSING, "127.1.0.4", 8104)]);
+    let mut facts = clean_facts();
+    // A stopped VM publishes no host address and cannot start a stack whose
+    // checkout is gone, so it is not an incomplete proof for a loopback owner.
+    facts.inventory.failures.push(RuntimeInventoryFailure {
+        backend: "colima".to_owned(),
+        profile: "effigy-release".to_owned(),
+        error: "stopped colima profile cannot be inspected for created or stopped containers without starting it".to_owned(),
+        stopped_profile: true,
+    });
+
+    let plan = plan_recovery(&registry, &routes, &facts, missing, no_listener);
+
+    assert_eq!(plan.global_hold, None);
+    assert_eq!(
+        assignment_row(&plan, "127.1.0.4").decision,
+        Decision::Reclaim
+    );
+    assert_eq!(route_row(&plan, "gone.test").decision, Decision::Reclaim);
 }
 
 #[test]
