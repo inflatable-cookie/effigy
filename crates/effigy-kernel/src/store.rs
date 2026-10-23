@@ -110,6 +110,8 @@ pub enum StoreError {
     Gate(Box<GateError>),
     /// `atomic_replace` needs a held store gate.
     WrongGuard,
+    /// A checkout or payload resource was offered to the shared-fact store.
+    MachineContentsRefused(String),
     TooLarge {
         limit: u64,
     },
@@ -477,6 +479,7 @@ impl Store {
         let value = f(&mut Txn {
             conn: &self.conn,
             now: wall_ms(),
+            machine: self.root.is_machine(),
         });
         let value = match value {
             Ok(value) => match crate::fault_point!(StoreCommitBefore) {
@@ -788,6 +791,7 @@ pub struct MaintainReport {
 pub struct Txn<'a> {
     conn: &'a Connection,
     now: i64,
+    machine: bool,
 }
 impl std::fmt::Debug for Txn<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -840,6 +844,9 @@ impl Txn<'_> {
         id: &ResourceId,
         authority: &str,
     ) -> Result<ResourceRecord, StoreError> {
+        if self.machine && !id.is_machine_fact() {
+            return Err(StoreError::MachineContentsRefused(id.label()));
+        }
         let name = id.name().to_string();
         let existing: Option<Vec<u8>> = self
             .conn
@@ -906,6 +913,11 @@ impl Txn<'_> {
         path_hint: Option<&str>,
         git_dir_hint: Option<&str>,
     ) -> Result<(), StoreError> {
+        if self.machine {
+            return Err(StoreError::MachineContentsRefused(
+                "checkout catalog".into(),
+            ));
+        }
         self.conn.execute(
             "INSERT INTO checkouts(token, kind, path_hint, git_dir_hint, state, first_seen, last_seen) \
              VALUES (?1, ?2, ?3, ?4, 'live', ?5, ?5) \

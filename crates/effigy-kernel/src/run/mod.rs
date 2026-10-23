@@ -278,6 +278,14 @@ impl<'a> Run<'a> {
         planned: Option<EffectSpec>,
     ) -> Result<Self, RunError> {
         crate::fault_point!(BeginBefore)?;
+        if root.is_machine()
+            && (inv.spec().task.checkout().kind() != crate::id::CheckoutKind::Machine
+                || !inv.spec().owner.is_machine_fact()
+                || inv.spec().gates.iter().any(|id| !id.is_machine_fact())
+                || !inv.spec().attachments.is_empty())
+        {
+            return Err(RunError::Invalid("machine runs require shared-fact owners and machine identity; checkout work belongs in its own journal".into()));
+        }
         if inv.spec().task.checkout().kind() == crate::id::CheckoutKind::Filesystem {
             return Err(RunError::Invalid(
                 "filesystem checkout identities cannot own durable runs".into(),
@@ -425,8 +433,11 @@ impl<'a> Run<'a> {
         sequence: i64,
         stream: crate::custody::Stream,
         limits: &crate::ctx::Limits,
-    ) -> std::io::Result<crate::custody::capture::Log> {
-        crate::custody::capture::Log::open(self.root, self.id, sequence, stream, limits)
+    ) -> std::io::Result<Option<crate::custody::capture::Log>> {
+        if self.root.is_machine() {
+            return Ok(None);
+        }
+        crate::custody::capture::Log::open(self.root, self.id, sequence, stream, limits).map(Some)
     }
     pub(crate) fn operation(&self) -> &crate::ctx::OperationContext {
         self.cx.operation()

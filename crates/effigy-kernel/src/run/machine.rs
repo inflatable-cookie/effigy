@@ -202,7 +202,19 @@ mod tests {
     use super::*;
     use crate::custody::{Custody, EnvValue, Lifetime, ProcessSpec, Terminal};
     use crate::fault::{self, Fault, Point};
-    use crate::run::tests::{cleanup, context, id, inv, next, Fake};
+    use crate::run::tests::{cleanup, context, id, next, Fake};
+    fn inv(owner: ResourceId) -> ResolvedInvocation {
+        let mut spec = crate::run::tests::inv(owner).spec().clone();
+        spec.task = crate::id::TaskId::new(
+            crate::id::CheckoutId::new(crate::id::CheckoutKind::Machine, [0; 16]),
+            "",
+            crate::id::Surface::Published,
+            "gateway",
+            None,
+        )
+        .unwrap();
+        ResolvedInvocation::new(spec).unwrap()
+    }
     use crate::supervise::{Executable, LifecyclePlan};
     use std::sync::{
         atomic::{AtomicUsize, Ordering},

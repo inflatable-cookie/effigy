@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- The machine store rejects checkout owners, data claims, checkout catalogs
+  and immutable payloads. Machine process output remains in memory for every
+  lifecycle path.
 - Resumable release runs keep their journal, checkpoints, receipts and certified
   candidates in the checkout's gitignored `.effigy/state/`. Checkpoint files
   use journalled atomic replacement; status never recreates missing records.

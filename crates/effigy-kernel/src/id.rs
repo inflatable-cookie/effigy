@@ -303,6 +303,23 @@ impl ResourceId {
     pub fn key(&self) -> &[Option<String>] {
         &self.key
     }
+    /// The closed shared-fact model. Checkout journals may also contain these
+    /// canonical resources during import, but the machine store admits only these.
+    pub(crate) fn is_machine_fact(&self) -> bool {
+        self.scope == Scope::Machine
+            && (matches!(self.kind, ResourceKind::Endpoint | ResourceKind::Gateway)
+                || (self.kind == ResourceKind::Store
+                    && self
+                        .key
+                        .first()
+                        .and_then(Option::as_deref)
+                        .is_some_and(|key| {
+                            matches!(
+                                key,
+                                "gateway-endpoints" | "gateway-setup" | "ports" | "admission"
+                            )
+                        })))
+    }
     pub fn canonical(&self) -> Vec<u8> {
         let mut out = b"effigy.rid\0\x01".to_vec();
         out.push(self.kind as u8);

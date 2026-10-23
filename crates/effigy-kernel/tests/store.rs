@@ -1448,3 +1448,49 @@ fn store_observations_preserve_unicode_and_reserved_path_bytes() {
         .is_some());
     assert_eq!(snapshot(&home), before);
 }
+
+#[test]
+fn store_machine_contents_refuse_checkout_data_and_catalog_rows_atomically() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::machine_effects(&cx, home.path()).unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    for forbidden in [
+        task("foreground"),
+        ResourceId::environment(checkout(), "dev").unwrap(),
+        ResourceId::data("docker", "private", "volume").unwrap(),
+        ResourceId::store(Scope::Machine, "bundles").unwrap(),
+        ResourceId::store(Scope::Checkout(checkout()), "ports").unwrap(),
+    ] {
+        let result: Result<(), StoreError> = store.txn(&cx, |txn| {
+            txn.resource(&ResourceId::gateway("rolled-back").unwrap(), "gateway")?;
+            txn.resource(&forbidden, "refused").map(|_| ())
+        });
+        assert!(matches!(result, Err(StoreError::MachineContentsRefused(_))));
+    }
+    assert!(matches!(
+        store.txn(&cx, |txn| txn.checkout_seen(&checkout(), None, None)),
+        Err(StoreError::MachineContentsRefused(_))
+    ));
+    drop(store);
+    let conn = rusqlite::Connection::open_with_flags(
+        root.path().join("machine.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    for table in [
+        "resources",
+        "checkouts",
+        "objects",
+        "runs",
+        "events",
+        "claims",
+    ] {
+        let count: i64 = conn
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0, "{table}");
+    }
+}

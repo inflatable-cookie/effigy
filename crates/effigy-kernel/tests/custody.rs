@@ -1626,12 +1626,28 @@ fn custody_machine_journal_routes_supervisor_requests_and_sentinel_recovery_with
             &invocation,
             id(1),
             &next(),
-            vec![spec(home.path(), "/bin/sleep 30")],
+            vec![spec(
+                home.path(),
+                "printf machine-output; printf machine-error >&2; exec /bin/sleep 30",
+            )],
             &Executable::capture(&fixture()).unwrap(),
             ClientMode::Owning,
         )
         .unwrap();
         while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
+        if let Ok(entries) = std::fs::read_dir(machine.path().join("runs").join(id(1).to_string()))
+        {
+            for entry in entries {
+                assert!(
+                    !entry
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .ends_with(".log"),
+                    "machine output must remain in memory"
+                );
+            }
+        }
         if killed {
             let metadata = metadata(&cx.operation().observe().unwrap(), &machine, id(1));
             let supervisor = metadata.verified().unwrap().supervisor.as_ref().unwrap();

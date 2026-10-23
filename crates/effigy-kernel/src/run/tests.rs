@@ -1872,3 +1872,96 @@ fn run_checkout_aliases_remain_exclusive_until_the_logical_owner_closes() {
         Observed::Verified(crate::gate::GateState::Free, _)
     ));
 }
+
+#[test]
+fn run_machine_owner_refusal_precedes_database_creation_and_shared_runs_reject_payloads() {
+    let home = effigy_test_support::Fixture::new("kernel-machine-model-").unwrap();
+    let cx = context();
+    let root = StateRoot::machine_effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut spec = inv(owner()).spec().clone();
+    for (resource, machine_task) in [
+        (owner(), false),
+        (env(), true),
+        (
+            ResourceId::store(Scope::Machine, "release arbitrary").unwrap(),
+            true,
+        ),
+        (ResourceId::gateway("fixture").unwrap(), false),
+    ] {
+        spec.owner = resource;
+        if machine_task {
+            spec.task = TaskId::new(
+                CheckoutId::new(CheckoutKind::Machine, [0; 16]),
+                "",
+                Surface::Published,
+                "gateway",
+                None,
+            )
+            .unwrap();
+        } else {
+            spec.task = inv(owner()).spec().task.clone();
+        }
+        let invocation = ResolvedInvocation::new(spec.clone()).unwrap();
+        let result = Run::begin(
+            &cx,
+            &root,
+            &invocation,
+            BeginOpts {
+                id: id(1),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: None,
+            },
+            &cleanup(&cx),
+            &mut fake,
+        );
+        assert!(matches!(result, Err(RunError::Invalid(_))));
+        assert!(!root.path().join("machine.db").exists());
+    }
+    spec.owner = ResourceId::gateway("fixture").unwrap();
+    spec.task = TaskId::new(
+        CheckoutId::new(CheckoutKind::Machine, [0; 16]),
+        "",
+        Surface::Published,
+        "gateway",
+        None,
+    )
+    .unwrap();
+    let invocation = ResolvedInvocation::new(spec).unwrap();
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        BeginOpts {
+            id: id(2),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: None,
+        },
+        &cleanup(&cx),
+        &mut fake,
+    )
+    .unwrap();
+    let before = run.effects().unwrap().len();
+    let closure = crate::objects::Closure::new(BTreeMap::from([(
+        "payload".into(),
+        b"checkout only".to_vec(),
+    )]))
+    .unwrap();
+    assert!(crate::objects::Objects::publish_desired(&mut run, &closure).is_err());
+    assert!(crate::objects::Objects::promote(&mut run, closure.digest()).is_err());
+    assert!(crate::objects::Objects::reset(&mut run).is_err());
+    assert_eq!(run.effects().unwrap().len(), before);
+    assert!(run
+        .capture_log(1, crate::custody::Stream::Stdout, cx.operation().limits())
+        .unwrap()
+        .is_none());
+    for family in ["objects", "staging", "runs"] {
+        assert!(!root.path().join(family).exists());
+    }
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+}

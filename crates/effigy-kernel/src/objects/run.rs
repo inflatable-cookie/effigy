@@ -15,6 +15,11 @@ impl Objects {
     /// closure. Settle removes abandoned staging and unreferenced publications.
     pub fn publish_desired(run: &mut Run<'_>, closure: &Closure) -> Result<String, RunError> {
         run.can_effect()?;
+        if run.root.is_machine() {
+            return Err(RunError::Invalid(
+                "immutable objects belong in a checkout journal".into(),
+            ));
+        }
         run.cx
             .require(Capability::SourceStore)
             .map_err(|_| RunError::Invalid("object publication needs Prepare or Mutate".into()))?;
@@ -116,6 +121,11 @@ impl Objects {
     /// and generation fence serialize promotions; an outdated digest refuses.
     pub fn promote(run: &mut Run<'_>, expected: &str) -> Result<(), RunError> {
         run.can_effect()?;
+        if run.root.is_machine() {
+            return Err(RunError::Invalid(
+                "immutable objects belong in a checkout journal".into(),
+            ));
+        }
         if run.cx.operation().class() != crate::ctx::EffectClass::Mutate {
             return Err(RunError::Invalid("object promotion needs Mutate".into()));
         }
@@ -147,6 +157,11 @@ impl Objects {
     /// reclamation remains bounded retention; shared references stay protected.
     pub fn reset(run: &mut Run<'_>) -> Result<(), RunError> {
         run.can_effect()?;
+        if run.root.is_machine() {
+            return Err(RunError::Invalid(
+                "immutable objects belong in a checkout journal".into(),
+            ));
+        }
         if run.cx.operation().class() != crate::ctx::EffectClass::Mutate {
             return Err(RunError::Invalid("object reset needs Mutate".into()));
         }

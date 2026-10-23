@@ -228,6 +228,12 @@ impl StateRoot {
         self.dir.child(family.dir_name(), Trust::Private, false)
     }
     pub(crate) fn family(&self, family: Family) -> Result<Option<DirFd>, FsError> {
+        if self.is_machine() && matches!(family, Family::Objects | Family::Staging) {
+            return Err(FsError::untrusted(
+                self.path(),
+                "payload families belong in a checkout journal",
+            ));
+        }
         self.dir
             .child(family.dir_name(), Trust::Private, self.writable)
     }

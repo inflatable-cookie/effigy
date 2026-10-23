@@ -1585,7 +1585,11 @@ impl OutputCapture {
             crate::custody::Stream::Stdout,
             crate::custody::Stream::Stderr,
         ]
-        .map(|stream| run.capture_log(OUTPUT_SEQUENCE, stream, &limits).ok());
+        .map(|stream| {
+            run.capture_log(OUTPUT_SEQUENCE, stream, &limits)
+                .ok()
+                .flatten()
+        });
         let mut readers = Vec::new();
         for target in [libc::STDOUT_FILENO, libc::STDERR_FILENO] {
             let (read, write) = crate::custody::spawn::pipe()?;

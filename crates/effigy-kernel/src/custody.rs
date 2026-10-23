@@ -347,10 +347,7 @@ impl ProcessOwner for Run<'_> {
         stream: Stream,
         limits: &crate::ctx::Limits,
     ) -> io::Result<Option<capture::Log>> {
-        if self.machine_lifecycle() {
-            return Ok(None);
-        }
-        self.capture_log(sequence, stream, limits).map(Some)
+        self.capture_log(sequence, stream, limits)
     }
     fn retain_process(&mut self, sequence: i64, core: Arc<Mutex<ProcessCore>>) {
         self.retain_process(sequence, core);

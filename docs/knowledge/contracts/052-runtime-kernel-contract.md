@@ -2131,6 +2131,12 @@ log or global object registry is permitted here. Gateway control includes one
 current generation's positively closed outcome and a bounded redacted diagnostic;
 starting a successor invalidates the previous generation. This single current
 control fact is replaced on closure and is never an append-only history.
+The kernel enforces this boundary at admission and typed resource writes:
+machine invocations require machine identity and shared-fact owners, checkout
+catalog writes and data claims refuse atomically, and immutable object
+publication refuses before an intent or payload directory is created. Both
+workload and supervisor output capture use memory on every machine lifecycle
+path, including recovery and setup.
 
 Gateway lifecycle/publication still needs durable intent. The machine store
 may keep one current operation and unresolved effect receipts per shared owner,

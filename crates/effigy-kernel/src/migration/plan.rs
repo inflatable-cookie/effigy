@@ -62,12 +62,6 @@ pub(super) fn partitions(
     let resources = inspect_resources(cx, conn)?;
     let mut owners: BTreeMap<String, String> = BTreeMap::new();
     let mut partitions: BTreeMap<String, Partition> = BTreeMap::new();
-    let machine = |id: &ResourceId| {
-        matches!(id.kind(), ResourceKind::Endpoint | ResourceKind::Gateway)
-            || ["gateway-endpoints", "gateway-setup", "ports", "admission"]
-                .into_iter()
-                .any(|key| ResourceId::store(Scope::Machine, key).ok().as_ref() == Some(id))
-    };
     // Checkout coordinates are authoritative; path hints only help the engine
     // locate and verify that identity. No deleted checkout is redirected.
     for (name, id) in &resources {
@@ -112,7 +106,7 @@ pub(super) fn partitions(
                 }
                 key
             }
-            Scope::Machine if machine(id) => {
+            Scope::Machine if id.is_machine_fact() => {
                 partitions
                     .entry("machine".into())
                     .or_insert_with(|| Partition {
