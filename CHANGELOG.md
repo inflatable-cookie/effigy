@@ -935,6 +935,19 @@ During v0.x, MINOR bumps may include breaking changes.
   `--check` reports without writing.
 
 ### Changed
+- `effigy install:local` builds this checkout through `oxide build --bin effigy`
+  and installs `target/debug/effigy`, so the local binary comes from Oxide's
+  shared slot instead of a private `target/bootstrap-local/` directory. The
+  plain-Cargo escape is `effigy install:local:cargo`, and a machine without
+  Oxide needs `oxide` on `PATH` (or that escape) to install this checkout.
+- Every Effigy route that runs Cargo is now either routed through `oxide` or
+  recorded with its rule and reason in
+  [cargo routes](docs/knowledge/cargo-routes.md): the fixture-hygiene and
+  vault-validation wrappers run as `oxide exec -- <tool>`, custom profiles
+  reach Cargo through nextest or `oxide exec -- cargo`, and `cargo deny check`
+  becomes `oxide deny check`. `effigy qa:docs:cargo-routes` (part of
+  `qa:docs`) fails on a plain-`cargo` route that is not recorded, or on a
+  recorded route that no longer runs plain Cargo.
 - Explicit `docs check` path arguments resolve against the invoking task's cwd,
   so a nested catalog's check reads its own files, and every report prints the
   resolved set. The no-argument default scope stays repository-root relative.

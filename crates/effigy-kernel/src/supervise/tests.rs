@@ -192,16 +192,7 @@ impl World {
     }
 }
 fn fixture() -> PathBuf {
-    std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let exe = std::env::current_exe().unwrap();
-            exe.parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .join("kernel-custody-fixture")
-        })
+    crate::fixture::custody_fixture()
 }
 
 fn helper_exited(error: RunError) -> (String, HelperExit, String) {

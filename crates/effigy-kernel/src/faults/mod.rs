@@ -100,16 +100,7 @@ pub(super) fn fixture() -> Executable {
 /// from other processes, so lingering workloads exec the fixture, whose
 /// custody nonce stays readable to the oracles.
 pub(super) fn fixture_path() -> PathBuf {
-    std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::current_exe()
-                .expect("test binary")
-                .parent()
-                .and_then(Path::parent)
-                .expect("target dir")
-                .join("kernel-custody-fixture")
-        })
+    crate::fixture::custody_fixture()
 }
 pub(super) fn verified<T: std::fmt::Debug>(observed: Observed<T>) -> T {
     match observed {

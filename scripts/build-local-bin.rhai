@@ -1,4 +1,4 @@
-let source = path::join(repo_root, "target/bootstrap-local/debug/effigy");
+let source = path::join(repo_root, "target/debug/effigy");
 let install_dir = path::join(repo_root, ".local-install/bin");
 let target = path::join(install_dir, "effigy");
 let staged_target = path::join(install_dir, "effigy.new");
@@ -123,10 +123,9 @@ fn activate_local_install(source, staged_target, target, active_version_file, ve
 }
 
 run_check_stream(
-    "cargo build --bin effigy",
-    "cargo",
-    ["build", "--bin", "effigy"],
-    #{ env: #{ CARGO_TARGET_DIR: "target/bootstrap-local" } },
+    "build --bin effigy through Oxide",
+    "sh",
+    ["scripts/oxide-selector.sh", "build", "--bin", "effigy"],
 );
 
 if !fs::exists(source) || !fs::is_file(source) {

@@ -148,19 +148,8 @@ mod tests {
         let root = Arc::new(StateRoot::effects(&cx, home.path()).unwrap());
         let mut options = super::super::tests::opts(1);
         options.custody = Some(LifecyclePlan {
-            executable: crate::supervise::Executable::capture(std::path::Path::new(
-                &std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE").unwrap_or_else(|| {
-                    std::env::current_exe()
-                        .unwrap()
-                        .parent()
-                        .unwrap()
-                        .parent()
-                        .unwrap()
-                        .join("kernel-custody-fixture")
-                        .into_os_string()
-                }),
-            ))
-            .unwrap(),
+            executable: crate::supervise::Executable::capture(&crate::fixture::custody_fixture())
+                .unwrap(),
             placement: crate::supervise::Placement::Inline,
         });
         let mut fake = super::super::tests::Fake::new(home.path());

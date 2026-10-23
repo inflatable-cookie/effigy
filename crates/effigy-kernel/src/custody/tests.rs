@@ -77,17 +77,7 @@ fn home() -> tempfile::TempDir {
         .unwrap()
 }
 fn executable_path() -> PathBuf {
-    std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::current_exe()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .join("kernel-custody-fixture")
-        })
+    crate::fixture::custody_fixture()
 }
 fn executable() -> Executable {
     Executable::capture(&executable_path()).unwrap()

@@ -5,8 +5,6 @@ let bin_path = if !args.is_empty() {
     args[0].to_string()
 } else if fs::exists(path::join(repo_root, ".local-install/bin/effigy")) {
     path::join(repo_root, ".local-install/bin/effigy")
-} else if fs::exists(path::join(repo_root, "target/bootstrap-local/debug/effigy")) {
-    path::join(repo_root, "target/bootstrap-local/debug/effigy")
 } else if fs::exists(path::join(repo_root, "target/debug/effigy")) {
     path::join(repo_root, "target/debug/effigy")
 } else {
