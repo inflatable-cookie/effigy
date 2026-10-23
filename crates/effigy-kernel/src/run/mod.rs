@@ -411,7 +411,8 @@ impl<'a> Run<'a> {
     pub(crate) fn limits(&self) -> crate::ctx::Limits {
         self.cx.operation().limits().clone()
     }
-    pub(crate) fn verify_custody(&self) -> Result<(), RunError> {
+    /// Recheck the filesystem generations retained by this run before continuing work.
+    pub fn verify_custody(&self) -> Result<(), RunError> {
         self.root.verify_binding().map_err(StoreError::from)?;
         Ok(())
     }

@@ -139,9 +139,7 @@ impl TaskRun {
                 .begin_child(&root, &invocation, opts),
             None => ForegroundRun::begin(&cx, &root, &invocation, opts),
         }
-        .map_err(|error| {
-            begin_error(error, request.target, request.lock_wait_ms, started)
-        })?;
+        .map_err(|error| begin_error(error, request.target, request.lock_wait_ms, started))?;
         let mut run = Self {
             run: None,
             memory: Some(Arc::new(Mutex::new(memory))),
@@ -210,6 +208,16 @@ impl TaskRun {
     }
 
     pub(in crate::runner) fn verify_admission(&mut self) -> Result<(), RunnerError> {
+        let binding = match &self.memory {
+            Some(memory) => memory
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .verify_custody(),
+            None => self.run_mut()?.verify_custody(),
+        };
+        binding.map_err(|error| {
+            RunnerError::task_invocation(format!("run filesystem authority changed: {error}"))
+        })?;
         super::super::admission::verify_held()?;
         if let Some(admission) = &mut self.admission {
             admission.verify()?;

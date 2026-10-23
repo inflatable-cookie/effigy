@@ -1843,6 +1843,52 @@ fn foreground_retained_git_pointer_refuses_new_workload_go() {
 }
 
 #[test]
+fn foreground_git_replacement_keeps_directory_exclusion_until_old_custody_closes() {
+    let home = home();
+    let cx = context();
+    let git = home.path().join(".git");
+    std::fs::create_dir(&git).unwrap();
+    let location = || effigy_kernel::migration::CheckoutLocation {
+        root: home.path().into(),
+        git_directory: Some(git.clone()),
+    };
+    let observe = cx.operation().observe().unwrap();
+    let old_id = StateRoot::filesystem_checkout(&observe, &location()).unwrap();
+    let old_root = StateRoot::foreground_effects(&cx, &location()).unwrap();
+    let opts = |n| BeginOpts {
+        id: id(n),
+        wait: Wait::FailFast,
+        acknowledge: vec![],
+        next: next(),
+        custody: Some(LifecyclePlan {
+            executable: Executable::capture(&fixture()).unwrap(),
+            placement: effigy_kernel::supervise::Placement::Inline,
+        }),
+    };
+    let mut old =
+        ForegroundRun::begin(&cx, &old_root, &invocation_at_checkout(old_id), opts(18)).unwrap();
+    std::fs::rename(&git, home.path().join("git-retired")).unwrap();
+    std::fs::create_dir(&git).unwrap();
+    assert!(old.verify_custody().is_err());
+    let new_id = StateRoot::filesystem_checkout(&observe, &location()).unwrap();
+    assert_ne!(old_id, new_id);
+    let new_root = StateRoot::foreground_effects(&cx, &location()).unwrap();
+    assert!(matches!(
+        ForegroundRun::begin(&cx, &new_root, &invocation_at_checkout(new_id), opts(19)),
+        Err(RunError::Gate(effigy_kernel::gate::GateError::Busy { .. }))
+    ));
+    old.interrupt(WorkloadOutcome::NotStarted).unwrap();
+    old.settle(&cx.operation().cleanup(Duration::from_secs(5)).unwrap())
+        .unwrap();
+    let mut new =
+        ForegroundRun::begin(&cx, &new_root, &invocation_at_checkout(new_id), opts(19)).unwrap();
+    new.finish(WorkloadOutcome::Succeeded).unwrap();
+    new.settle(&cx.operation().cleanup(Duration::from_secs(5)).unwrap())
+        .unwrap();
+    assert!(!new_root.path().join("kernel.db").exists());
+}
+
+#[test]
 fn foreground_filesystem_identity_cannot_be_promoted_into_a_durable_run() {
     let home = home();
     let cx = context();

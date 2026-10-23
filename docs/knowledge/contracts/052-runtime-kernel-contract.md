@@ -237,7 +237,10 @@ reopens the journal. Durable recovery checks predecessors under every held owner
 alias before admitting a successor. First durable initialization therefore cannot
 split exclusion from an already running token-free foreground invocation. The
 bounded admission retention sweep runs after those gates; a refused alias gate
-does not create a database for maintenance.
+does not create a database for maintenance. A directory-only filesystem alias also stays held across Git locator
+replacement: the old custodian must finish cleanup before a new Git generation
+can start the same logical resource. Engines recheck their retained filesystem
+bindings while waiting and stop current custody when those bindings change.
 
 **Foreground custody (I-P2/I-P3).** Before workload go, the owner and its
 in-memory guard acknowledge the complete custody receipt, nonce and ready

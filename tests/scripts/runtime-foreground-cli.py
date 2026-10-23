@@ -133,8 +133,29 @@ exec sleep 300
     assert view["state"] == "not-recorded" and view["current"] is None, view
     run(project, "late", success=False)
     assert_memory_only()
+    # Replacing Git metadata changes the checkout generation while its owner
+    # is waiting. It must stop native custody before a successor can proceed.
+    project = projects[2]
+    child = subprocess.Popen([str(binary), "hold"], cwd=project, env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.monotonic() + 10
+        while not (project / "ready").exists():
+            assert child.poll() is None, child.communicate()
+            assert time.monotonic() < deadline, "replacement workload did not start"
+            time.sleep(0.02)
+        (project / ".git").rename(project / "git-retired")
+        (project / ".git").mkdir()
+        out, err = child.communicate(timeout=15)
+        assert child.returncode != 0 and "filesystem authority changed" in err, (out, err)
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            child.communicate(timeout=30)
+    run(project, "short0")
+    assert_memory_only()
     print(json.dumps({"schema": "q010.foreground-proof.v1", "short_runs": 24,
                       "checkouts": 3, "seconds": concurrent_seconds,
                       "database_files_created": 0, "retained_run_records": 0,
                       "sequence": "passed", "nested_hook_count": 1,
-                      "hook_loss": "stopped", "late_durable_effect": "refused"}, sort_keys=True))
+                      "hook_loss": "stopped", "checkout_replacement": "stopped", "late_durable_effect": "refused"}, sort_keys=True))

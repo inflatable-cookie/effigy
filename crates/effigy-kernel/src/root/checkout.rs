@@ -106,6 +106,13 @@ impl StateRoot {
             .map(|(checkout, git)| filesystem_identity(checkout, git))
             .transpose()
     }
+    /// Exclusion also follows the owning directory across a Git locator
+    /// replacement. A running old generation keeps this alias until cleanup.
+    pub(crate) fn directory_gate_identity(&self) -> Result<CheckoutId, StoreError> {
+        self.verify_binding()?;
+        filesystem_identity(self.owner.identity()?, None)
+    }
+
     /// Pure local gate identity; no token, state directory or machine lookup.
     /// The Filesystem kind keeps these names separate from persisted tokens.
     pub fn filesystem_checkout(

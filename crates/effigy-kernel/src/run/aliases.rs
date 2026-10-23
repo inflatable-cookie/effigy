@@ -15,7 +15,7 @@ pub(super) fn gates(
     let Some(local) = root.local_gate_identity(cx)? else {
         return Ok(gates);
     };
-    let mut checkouts = vec![local];
+    let mut checkouts = vec![local, root.directory_gate_identity()?];
     if let crate::migration::adoption::Access::Committed {
         checkout: Some(checkout),
         checkout_aliases,
