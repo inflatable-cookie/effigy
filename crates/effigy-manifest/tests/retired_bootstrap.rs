@@ -161,32 +161,75 @@ fn a_synthesised_inline_step_keeps_its_run_in() {
     assert_eq!(task.run_in, Some(ManifestTaskRunIn::Host));
 }
 
-#[test]
-fn bundle_defaults_compose_run_children_and_the_extend_path() {
-    let fixture_root = tempdir("bundle");
+/// A consumer checkout whose bundle defaults are the retired-bootstrap
+/// fixture (retired `run`, `start`, `children` and a `bootstrap.children`
+/// extend path).
+fn bundle_consumer(name: &str, body: &str) -> (tempfile::TempDir, PathBuf) {
+    let fixture_root = tempdir(name);
     let root = fixture_root.path();
-    let bundle = root.join("bundles/retired-bootstrap");
     copy_dir(
         &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/retired-bootstrap-bundle"),
-        &bundle,
+        &root.join("bundles/retired-bootstrap"),
     );
     let manifest_path = root.join("effigy.toml");
     std::fs::write(
         &manifest_path,
-        r#"
-[bundle]
-base = { type = "path", dir = "bundles/retired-bootstrap" }
-
-[[bootstrap.children]]
-path = "../poodle"
-repo = "git@example.test:poodle.git"
-branch = "main"
-
-[tasks]
-"bootstrap:deps" = "bun install --frozen-lockfile"
-"#,
+        format!(
+            "[bundle]\nbase = {{ type = \"path\", dir = \"bundles/retired-bootstrap\" }}\n{body}"
+        ),
     )
     .expect("write consumer manifest");
+    (fixture_root, manifest_path)
+}
+
+#[test]
+fn a_consumer_setup_replaces_a_bundles_retired_run() {
+    let (_root, manifest_path) = bundle_consumer(
+        "consumer-setup",
+        r#"
+[bootstrap]
+setup = ["dev"]
+
+[tasks.dev]
+run = "printf consumer-dev"
+"#,
+    );
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("composed manifest");
+    let manifest = loaded.manifest;
+    let bootstrap = manifest.bootstrap.as_ref().expect("bootstrap contract");
+    // The bundle's `run` is read as `setup` before the merge, and the
+    // consumer's declared `setup` then replaces it (the v0.15 setup rule).
+    assert_eq!(bootstrap.setup, vec!["dev"]);
+    assert!(
+        !bootstrap
+            .setup
+            .iter()
+            .any(|selector| selector.starts_with("bootstrap:run")),
+        "the replaced bundle run must not run: {bootstrap:?}"
+    );
+    assert_eq!(
+        bootstrap.start.as_deref(),
+        Some("dev"),
+        "start still inherits from the bundle"
+    );
+    let notice = manifest
+        .retired_config
+        .notice(&manifest_path)
+        .expect("the bundle's retired run is still named");
+    assert!(
+        notice.contains("`[bootstrap].run` is read as `setup`"),
+        "{notice}"
+    );
+    assert!(
+        notice.starts_with(&manifest_path.display().to_string()),
+        "{notice}"
+    );
+}
+
+#[test]
+fn a_bundles_retired_run_reaches_an_unmigrated_consumer_as_setup() {
+    let (_root, manifest_path) = bundle_consumer("translated-run", "");
 
     let loaded = load_task_manifest_with_inspection(&manifest_path).expect("composed manifest");
     let manifest = loaded.manifest;
@@ -195,15 +238,72 @@ branch = "main"
     assert_eq!(bootstrap.start.as_deref(), Some("dev"));
     assert!(manifest.tasks.contains_key("bootstrap:run:1"));
     assert!(manifest.tasks.contains_key("dev"));
-    // Both the bundle's child and the consumer's child reached the composed
-    // manifest, and the retired-only surface still refuses only in bootstrap.
+    let notice = manifest
+        .retired_config
+        .notice(&manifest_path)
+        .expect("the bundle's retired run is named for the consumer");
+    assert!(
+        notice.contains("`[bootstrap].run` is read as `setup`"),
+        "{notice}"
+    );
+    assert!(notice.contains("CHANGELOG.md"), "{notice}");
+}
+
+#[test]
+fn a_bundles_retired_children_are_ignored_with_their_notice() {
+    let (_root, manifest_path) = bundle_consumer("ignored-children", "");
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("composed manifest");
+    let manifest = loaded.manifest;
+    assert!(!loaded.effective_manifest.contains("book.git"));
+    let notice = manifest
+        .retired_config
+        .notice(&manifest_path)
+        .expect("the bundle's children are named");
+    assert!(
+        notice.contains("`[bootstrap].children` is retired in favour of pinned `[sources.<name>]`"),
+        "{notice}"
+    );
+    let message = manifest
+        .retired_config
+        .refusal_message()
+        .expect("only `effigy bootstrap` refuses the children");
+    assert!(message.contains("[sources.<name>]"), "{message}");
+}
+
+#[test]
+fn bundle_defaults_compose_run_and_ignore_retired_children() {
+    let (_root, manifest_path) = bundle_consumer(
+        "bundle",
+        r#"
+[[bootstrap.children]]
+path = "../poodle"
+repo = "git@example.test:poodle.git"
+branch = "main"
+
+[tasks]
+"bootstrap:deps" = "bun install --frozen-lockfile"
+"#,
+    );
+
+    let loaded = load_task_manifest_with_inspection(&manifest_path).expect("composed manifest");
+    let manifest = loaded.manifest;
+    let bootstrap = manifest.bootstrap.as_ref().expect("bootstrap contract");
+    assert_eq!(bootstrap.setup, vec!["bootstrap:run:1"]);
+    assert_eq!(bootstrap.start.as_deref(), Some("dev"));
+    assert!(manifest.tasks.contains_key("bootstrap:run:1"));
+    assert!(manifest.tasks.contains_key("dev"));
+    // Retired children on either side are ignored before the merge, so the
+    // `bootstrap.children` extend path finds nothing and both sides' children
+    // stay out of the effective plan. The retired-only surface still refuses
+    // them in `effigy bootstrap`.
     let message = manifest
         .retired_config
         .refusal_message()
         .expect("children refuse in bootstrap");
     assert!(message.contains("[sources.<name>]"), "{message}");
-    assert!(loaded.effective_manifest.contains("book.git"));
-    assert!(loaded.effective_manifest.contains("poodle.git"));
+    assert!(!loaded.effective_manifest.contains("book.git"));
+    assert!(!loaded.effective_manifest.contains("poodle.git"));
 }
 
 fn tempdir(name: &str) -> tempfile::TempDir {

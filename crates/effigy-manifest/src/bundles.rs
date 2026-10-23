@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use toml::Value;
 
 use crate::manifest_section::{validate_minimum_effigy_version, ManifestSectionConfig};
+use crate::retired_config::RetiredConfigDeclaration;
 use crate::ManifestError;
 use crate::TASK_MANIFEST_FILE;
 
@@ -91,6 +92,15 @@ pub(crate) fn apply_bundle_defaults(
         &normalized_inputs,
     )?;
     let bundle_extend_paths = take_bundle_extend_paths(manifest_path, &mut defaults)?;
+    // Retired `[bootstrap]` spelling is normalised on both sides before the
+    // merge. A bundle that still writes `run` (or `children`) must be read as
+    // the consumer-facing `setup` shape first, or the merge fills the bundle's
+    // retired `run` in beside a consumer's declared `setup` and both run.
+    // Translating the consumer side too keeps one shape for the merge: a
+    // consumer `setup` (or a retired `run` read as one) replaces the bundle's,
+    // while `start` still inherits from the bundle when unset.
+    let mut retired_config = crate::retired_bootstrap::translate(current);
+    retired_config.merge(crate::retired_bootstrap::translate(&mut defaults));
     let existing_extend_paths = combined_bundle_extend_paths(extend_paths, &bundle_extend_paths);
     let existing_bundle_values = existing_extend_paths
         .iter()
@@ -107,6 +117,7 @@ pub(crate) fn apply_bundle_defaults(
     Ok(Some(AppliedBundleDefaults {
         source_path,
         bundle_root: resolved_source.local_path,
+        retired_config,
     }))
 }
 
@@ -114,6 +125,9 @@ pub(crate) fn apply_bundle_defaults(
 pub(crate) struct AppliedBundleDefaults {
     pub source_path: PathBuf,
     pub bundle_root: PathBuf,
+    /// What retired v0.15 spelling the bundle defaults and the consumer
+    /// manifest used. It reaches the manifest's one deprecation notice.
+    pub retired_config: RetiredConfigDeclaration,
 }
 
 #[derive(Debug, serde::Deserialize)]

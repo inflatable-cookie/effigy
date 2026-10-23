@@ -1018,7 +1018,9 @@ During v0.x, MINOR bumps may include breaking changes.
   `[bootstrap]` spellings are read for the whole v0.15 line instead of failing
   the parse, so `effigy tasks`, selectors, `container`, `test` and every other
   non-bootstrap command work unchanged. One deprecation notice per manifest is
-  printed on stderr (and by `effigy doctor`) and never in `--json` stdout:
+  printed on stderr (once per checkout per manifest digest, and on every
+  `effigy doctor` run) and never in `--json` stderr (the envelope's `warnings`
+  carry it):
   `run` is read as `setup` (`{ task = ... }` entries become selectors, inline
   `run`/`rhai`/command steps become internal tasks that `setup` selects in
   order), `submodules = "none"|"init"|"recursive"` becomes a boolean, a
@@ -1029,10 +1031,25 @@ During v0.x, MINOR bumps may include breaking changes.
   for `bootstrap:db-seed`, and a repo-owned dependency task for
   `bootstrap deps sync`. Bundles and `[manifest].extend = ["bootstrap.children"]`
   follow the same rules. The translation is removed after v0.15.
+- A bundle's retired `[bootstrap]` spelling is normalised before its defaults
+  merge (effigy#282). A bundle that still writes `run` is read as `setup`
+  first, so a consumer that declares its own `setup` replaces it instead of
+  inheriting a second list beside it, and a consumer that declares nothing
+  inherits the translated `setup`; a retired `start` keeps inheriting and
+  `[bootstrap].children` is ignored with its notice. Previously the merge ran
+  before the retired translation, so a consumer's `setup` and a bundle's `run`
+  both reached the effective plan.
+- The retired v0.15 config notice stops repeating on every command and every
+  nested selector (effigy#282). It reaches stderr once per checkout per
+  manifest digest (a marker under `.effigy/`), `effigy doctor` names it on
+  every run, a nested Effigy invocation stays quiet because its parent already
+  said it, and `--json` never writes it to stderr: the command envelope carries
+  it in a new `warnings` array. Notice content is unchanged.
 - A project that still declares config for a feature v0.15 removed also keeps
   loading (effigy#274). When ignoring the section changes nothing else, Effigy
-  ignores it and names it in the same one-notice-per-manifest deprecation on
-  stderr (and in `effigy doctor`), never in `--json` stdout: every removed
+  ignores it and names it in the same one-notice deprecation on stderr (once
+  per checkout per manifest digest, and on every `effigy doctor` run) and in
+  the `--json` envelope's `warnings`: every removed
   scanner's `[scan.<name>]` table (`attention_markers`, `comment_ratio`,
   `generated_assets`, `generated_in_src`, `stale_suppressions`, and the
   graph-backed `boundary_violations`, `dead_code`, `validation_gaps`),

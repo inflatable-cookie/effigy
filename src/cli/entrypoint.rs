@@ -39,6 +39,14 @@ pub fn run_cli(raw_args: Vec<String>) {
         }
     };
     let global_json_mode = global_options.json_mode;
+    // `--json` never writes the retired-config notice to stderr; the envelope
+    // carries it. Set before any manifest load so parse-time routing cannot
+    // print it early.
+    effigy_manifest::set_retired_notice_delivery(if global_json_mode {
+        effigy_manifest::RetiredNoticeDelivery::JsonEnvelope
+    } else {
+        effigy_manifest::RetiredNoticeDelivery::OncePerCheckout
+    });
     let output_mode = OutputMode::from_env();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let parsed = match parse_command_with_builtin_deferral(args, &cwd, &global_options) {
@@ -97,6 +105,15 @@ pub fn run_cli(raw_args: Vec<String>) {
         internal_suppress_header || command_requests_json(&cmd, global_json_mode) || local_qa_json;
     let emit_json_envelope =
         !internal_suppress_header && command_requests_json(&cmd, global_json_mode);
+    effigy_manifest::set_retired_notice_delivery(if emit_json_envelope {
+        effigy_manifest::RetiredNoticeDelivery::JsonEnvelope
+    } else if matches!(cmd, Command::Doctor(_)) {
+        // A doctor report is where an operator looks for config drift, so it
+        // names retired config every time it runs.
+        effigy_manifest::RetiredNoticeDelivery::Always
+    } else {
+        effigy_manifest::RetiredNoticeDelivery::OncePerCheckout
+    });
     let (command_kind, command_name) = command_kind_and_name(&cmd);
     let runtime_context = match EffigyRuntimeContext::capture_lossy(
         Some(cwd.clone()),

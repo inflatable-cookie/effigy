@@ -9,14 +9,12 @@
 //!   v0.15 removed, when ignoring it changes nothing else.
 //!
 //! Both record what they read in one [`RetiredConfigDeclaration`] per
-//! manifest. `emit_notice` prints its notice once per run on stderr; the
-//! declaration also lists the migration messages a removed command still
-//! refuses with, and neither ever reaches `--json` stdout. The compatibility
-//! path is removed after v0.15.
+//! manifest. [`crate::retired_notice`] delivers its notice on the invocation's
+//! channel; the declaration also lists the migration messages a removed
+//! command still refuses with, and neither ever reaches `--json` stdout. The
+//! compatibility path is removed after v0.15.
 
-use std::collections::HashSet;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
 
 /// What one manifest's retired v0.15 config read, ignored or refused.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -84,22 +82,6 @@ impl RetiredConfigDeclaration {
         for refusal in other.refusals {
             self.refuse(&refusal);
         }
-    }
-}
-
-/// Print this manifest's deprecation notice at most once per run.
-pub(crate) fn emit_notice(manifest_path: &Path, declaration: &RetiredConfigDeclaration) {
-    let Some(notice) = declaration.notice(manifest_path) else {
-        return;
-    };
-    static EMITTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-    let emitted = EMITTED.get_or_init(|| Mutex::new(HashSet::new()));
-    let mut emitted = match emitted.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    if emitted.insert(notice.clone()) {
-        eprintln!("{notice}");
     }
 }
 

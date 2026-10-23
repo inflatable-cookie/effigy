@@ -205,15 +205,28 @@ run = "printf built"
     assert_eq!(stderr.matches(" is ignored").count(), 4, "{stderr}");
 }
 
+const RETIRED_MARKER_MANIFEST: &str =
+    "[scan.attention_markers]\nwarn = 1\n\n[tasks.build]\nrun = \"printf built\"\n";
+
+fn retired_notice_fixture(name: &str) -> effigy_test_support::Fixture {
+    let fixture = effigy_test_support::Fixture::new("effigy-cli-private-").expect(name);
+    fs::write(fixture.path().join("effigy.toml"), RETIRED_MARKER_MANIFEST).unwrap();
+    fixture
+}
+
+fn retired_notice_stderr(fixture: &effigy_test_support::Fixture, args: &[&str]) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .current_dir(fixture.path())
+        .args(args)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("effigy command");
+    String::from_utf8(output.stderr).expect("utf8 stderr")
+}
+
 #[test]
-fn the_retired_sections_notice_never_reaches_json_stdout() {
-    let fixture =
-        effigy_test_support::Fixture::new("effigy-cli-private-").expect("private fixture");
-    fs::write(
-        fixture.path().join("effigy.toml"),
-        "[scan.attention_markers]\nwarn = 1\n\n[tasks.build]\nrun = \"printf built\"\n",
-    )
-    .unwrap();
+fn the_retired_sections_notice_moves_to_the_json_envelope_warnings() {
+    let fixture = retired_notice_fixture("retired-notice-json");
     let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .current_dir(fixture.path())
         .args(["--json", "tasks"])
@@ -222,11 +235,88 @@ fn the_retired_sections_notice_never_reaches_json_stdout() {
         .expect("tasks inventory");
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8(output.stdout).expect("utf8 stdout");
-    assert!(!stdout.contains("is ignored"), "{stdout}");
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
     assert!(
-        stderr.contains("`[scan.attention_markers]` is ignored"),
-        "{stderr}"
+        !stderr.contains("retired v0.15 config"),
+        "--json stderr stays quiet: {stderr}"
+    );
+    // stdout is one parseable document; the notice is inside it, not around it.
+    let packet: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON envelope");
+    let warnings = packet["warnings"]
+        .as_array()
+        .expect("warnings array in every envelope");
+    assert_eq!(warnings.len(), 1, "{packet}");
+    let warning = warnings[0].as_str().expect("warning text");
+    assert!(
+        warning.contains("retired v0.15 config still loads for one release"),
+        "{warning}"
+    );
+    assert!(
+        warning.contains("`[scan.attention_markers]` is ignored"),
+        "{warning}"
+    );
+    assert!(warning.contains("CHANGELOG.md"), "{warning}");
+}
+
+#[test]
+fn the_retired_sections_notice_prints_once_per_checkout_and_always_in_doctor() {
+    let fixture = retired_notice_fixture("retired-notice-once");
+    let first = retired_notice_stderr(&fixture, &["tasks"]);
+    assert_eq!(
+        first
+            .matches("retired v0.15 config still loads for one release")
+            .count(),
+        1,
+        "{first}"
+    );
+    let second = retired_notice_stderr(&fixture, &["tasks"]);
+    assert!(
+        !second.contains("retired v0.15 config"),
+        "the checkout already named this manifest: {second}"
+    );
+    // Doctor always names retired config, even now that the checkout has seen it.
+    let doctor = retired_notice_stderr(&fixture, &["doctor"]);
+    assert_eq!(
+        doctor
+            .matches("retired v0.15 config still loads for one release")
+            .count(),
+        1,
+        "{doctor}"
+    );
+    // Editing the manifest makes a new digest, so it is named again.
+    fs::write(
+        fixture.path().join("effigy.toml"),
+        "[shell]\nrun = \"exec zsh -i\"\n\n[tasks.build]\nrun = \"printf built\"\n",
+    )
+    .unwrap();
+    let edited = retired_notice_stderr(&fixture, &["tasks"]);
+    assert!(
+        edited.contains("`[shell]` is ignored"),
+        "an edited manifest is named again: {edited}"
+    );
+}
+
+#[test]
+fn a_nested_effigy_invocation_keeps_the_retired_notice_quiet() {
+    let fixture = retired_notice_fixture("retired-notice-nested");
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .current_dir(fixture.path())
+        .args(["tasks"])
+        .env("EFFIGY_INTERNAL_SUPPRESS_HEADER", "1")
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("nested tasks inventory");
+    assert!(output.status.success(), "{output:?}");
+    let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
+    assert!(
+        !stderr.contains("retired v0.15 config"),
+        "a nested invocation stays quiet: {stderr}"
+    );
+    // The parent's own invocation still names it for this checkout.
+    let parent = retired_notice_stderr(&fixture, &["tasks"]);
+    assert!(
+        parent.contains("retired v0.15 config still loads for one release"),
+        "{parent}"
     );
 }
 
