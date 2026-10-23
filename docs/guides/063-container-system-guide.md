@@ -849,13 +849,16 @@ Use this with `effigy.local.toml` for per-machine mounts.
 6. either return immediately or attach, based on startup mode
 
 These waits are bounded. A timeout names the runtime or gateway readiness
-stage; a stopped Compose service is reported with its exit status. After a
-Colima VM restart, a successful owned-container start that reports a stale
-nerdctl health-check timer records a warning. If start fails with that collision
-but inspect reports the container running, Effigy fails immediately as stale
-backend state: running state does not prove health-check readiness. The error
-names the selected Colima profile and exact inspect/start recovery commands;
-Effigy does not continue readiness or gateway setup. If the container stays
+stage; a stopped Compose service is reported with its exit status. Effigy
+never starts a container that is already running or that the backend is
+still acting on: immediately before each recovery start it inspects that one
+container and starts it only when the observation proves a stopped
+`created`, `exited` or `dead` container. After a Colima VM restart, a
+successful owned-container start that reports a nerdctl health-check timer
+collision records a warning. If start reports that collision but the
+container ends up running, Effigy records the collision line and continues
+to the normal readiness and health wait, which proves or fails health
+itself; it is not reported as stale backend state. If the container stays
 Exited with that collision, Effigy inspects the full container ID and, when
 the unit pair is an exact-owned transient health-check timer/service in the selected
 profile, stops `{id}.timer`, `reset-failed` `{id}.service`/`{id}.timer`,
@@ -1632,19 +1635,24 @@ Effigy owns those units.
 Fix: re-run `effigy container up`. Effigy starts only currently declared
 Exited/Created services (Compose project label match), skips one-off
 `compose run` containers and undeclared orphans, keeps volumes, and does
-not delete systemd units. When a stopped owned Colima container hits that
-collision, Effigy inspects the full hexadecimal ID and recovers only an
-exact-owned transient unit pair in the selected profile (`systemctl stop`
-of `{id}.timer`, then `reset-failed` of `{id}.service`/`{id}.timer`). After
-that stop/reset it verifies with short bounded re-probes that both units
-actually unloaded; a stopped-but-still-loaded pair fails with its
-load/fragment state rather than claiming recovery, and a start that reports
-the collision while inspect shows the container running is reported as an
-unresolved health check with the exact inspect/start commands instead of a
-clean recovery. It then retries start once. It does not recover running,
-foreign, one-off, undeclared, persistent, or unverified units, and it does
-not change Docker start. Inspect and start are bounded; a hung nerdctl
-command still names
+not delete systemd units. Before each start it inspects that one container
+and starts it only when the observation proves it is stopped; a running or
+in-flight container is left to the readiness wait, so a container Compose
+already started is never started again. When a stopped owned Colima
+container hits that collision, Effigy inspects the full hexadecimal ID and
+recovers only an exact-owned transient unit pair in the selected profile
+(`systemctl stop` of `{id}.timer`, then `reset-failed` of
+`{id}.service`/`{id}.timer`). After that stop/reset it verifies with short
+bounded re-probes that both units actually unloaded; a
+stopped-but-still-loaded pair fails with its load/fragment state rather
+than claiming recovery. A start that reports the collision while the
+container ends up running is recorded as a warning and the service goes on
+to the normal readiness and health wait, which proves or fails its health
+check; the warning names the exact inspect command. A service that stays
+stopped gets one retry after that exact-owned unit recovery. Effigy does
+not recover running, foreign, one-off, undeclared, persistent, or
+unverified units, and it does not change Docker start. Inspect and start
+are bounded; a hung nerdctl command still names
 the last observed status. Start exit 0 is not readiness: if the service
 stays stopped, the error keeps the start backend text (including a
 stale-timer warning or the refusal diagnostic) and names:

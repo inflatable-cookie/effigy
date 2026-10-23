@@ -563,9 +563,10 @@
 # Restart-safe proof for the exact-owned health-check unload: a stop/reset that
 # exits 0 while the transient pair stays loaded must fail bounded with an exact
 # diagnostic, a late unload recovers once, and a running container is never
-# mutated or reported as a clean health-check recovery.
+# mutated or reported as an unresolved health check: the collision warning hands
+# the service to readiness and health instead.
 "test:containers:healthcheck-unload" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "healthcheck-unload-private", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(unload_proof_) | test(restart_recovery::tests::pathological_start_fatal)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "healthcheck-unload-private", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(unload_proof_) | test(restart_recovery::tests::failed_start_with_a_timer_collision_on_a_running_container_hands_off_to_readiness)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   "sh scripts/oxide-selector.sh check -p effigy-containers --lib --tests",
 ] }
 "test:gateway:registration-loopback" = { visibility = "internal", group = "Maintenance", run = [
@@ -2158,7 +2159,7 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
   "cargo check -p effigy-containers --lib --tests",
 ] }
 "test:containers:healthcheck-unload:cargo" = { visibility = "internal", group = "Maintenance", run = [
-  { id = "healthcheck-unload-private", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(unload_proof_) | test(restart_recovery::tests::pathological_start_fatal)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
+  { id = "healthcheck-unload-private", run = "cargo nextest run --config-file tests/config/deadline-marker-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(unload_proof_) | test(restart_recovery::tests::failed_start_with_a_timer_collision_on_a_running_container_hands_off_to_readiness)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   "cargo check -p effigy-containers --lib --tests",
 ] }
 "test:containers:isolated-dirs:cargo" = { visibility = "internal", group = "Maintenance", run = [
