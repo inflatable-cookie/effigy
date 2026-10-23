@@ -528,7 +528,14 @@ fn resolve_task_step(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
 ) -> Result<StepAction, RunnerError> {
-    let (mut selector, mut args) = parse_task_reference_invocation(task_ref).map_err(|error| {
+    // The same `{repo}`/`{cwd}` spellings a run command supports work inside a
+    // task reference, so a nested catalog has a cwd-proof argument spelling.
+    let task_ref = effigy_managed::references::expand_reference_placeholders(
+        task_ref,
+        preflight.task_execution_root(&selection.catalog.catalog_root),
+        &selection.catalog.catalog_root,
+    );
+    let (mut selector, mut args) = parse_task_reference_invocation(&task_ref).map_err(|error| {
         RunnerError::task_invocation(format!("run step task ref `{task_ref}`: {error}"))
     })?;
     args.extend(preflight.runtime_args_exec.passthrough.clone());

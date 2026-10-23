@@ -44,7 +44,14 @@ pub(super) fn run_dependency_health_check(
         return false;
     }
     let started = Instant::now();
-    let process = BoundedReadOnlyProcess::with_deadline(deadline);
+    // A doctor deadline is mandatory for the bounded service; only an operator
+    // who disabled it (`EFFIGY_DOCTOR_TIMEOUT_MS=0`) takes the explicit
+    // unbounded opt-out. A new inspection subprocess cannot bypass the budget
+    // by default.
+    let process = match deadline {
+        Some(deadline) => BoundedReadOnlyProcess::new(deadline),
+        None => BoundedReadOnlyProcess::deadline_disabled(),
+    };
     match inspect_with(repo_root, &process) {
         Ok(report) => {
             for finding in dependency_health_findings(repo_root, &report) {

@@ -77,16 +77,10 @@ release gates then validate deterministic release file mutations; they do not
 replace hosted CI on the candidate source.
 
 A gate may opt in with `reuse-hosted-evidence = true` when
-`[release.hosted-evidence].workflow` is set. It is a hosted wait: reuse accepts
-only this repository's GitHub Actions run for the exact commit, verified
-through authenticated `gh`. While the evidence is missing or still running the
-Run stops at `awaiting-hosted-evidence` and holds no process open; `effigy
-release resume <run>` re-checks it. Unlisted gates still run locally. Bad
-evidence fails closed. The receipt records each reused gate and its run URL.
-A `task` target publishes through its project task with `$EFFIGY_RELEASE_INPUT`
-and `$EFFIGY_RELEASE_OUTPUT` (contract 054 §6); an unknown outcome is
-reconciled by its `check` task, or by `effigy release decide <run>
---published|--not-published` when it declares none.
+`[release.hosted-evidence].workflow` is set. Reuse accepts only this
+repository's GitHub Actions run for the exact `HEAD` SHA, verified through
+authenticated `gh`. Unlisted gates still run locally. Bad evidence fails
+closed. Prepare records each reused gate and its run URL.
 
 If any step fails, **stop**. Surface the failure to the human. Do not retry
 with bypass flags.
@@ -103,9 +97,7 @@ If `release run` fails partway through publish:
 1. **Do not re-tag and do not re-run publish blind.** `effigy release resume
    <run>` looks the tag up locally and on the remote first, records a tag that
    is already there at the candidate commit, and only pushes one that is
-   absent. A `task` target is reconciled by its `check` task first, and one
-   with no `check` waits for `effigy release decide <run>
-   --published|--not-published`.
+   absent.
 2. Identify the underlying cause from gate output or error envelope.
 3. Add a `Fixed` entry to `CHANGELOG.md` under `[Unreleased]` describing the
    problem.

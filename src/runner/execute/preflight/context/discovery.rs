@@ -4,7 +4,7 @@ use effigy_context::TaskSourceContext;
 use effigy_core::resolver::ResolvedTarget;
 use effigy_execution::{ExecutionDiscoveryInput, ExecutionDiscoveryPlan};
 
-use crate::runner::command_context::resolve_command_context_from_cwd;
+use crate::runner::command_context::resolve_execution_context;
 use crate::runner::error::RunnerError;
 use effigy_manifest::LoadedCatalog;
 use effigy_routing::{load_effective_catalogs_allow_missing, load_isolated_catalog};
@@ -21,7 +21,7 @@ pub(in crate::runner) fn discover_execution_preflight(
     repo_override: Option<PathBuf>,
     task_source: Option<&TaskSourceContext>,
 ) -> Result<ExecutionPreflightDiscovery, RunnerError> {
-    let context = resolve_command_context_from_cwd(cwd, repo_override.clone())?;
+    let context = resolve_execution_context(cwd, repo_override.clone())?;
     let plan =
         ExecutionDiscoveryInput::new(task_name, context.invocation_cwd.clone(), repo_override)
             .resolve(

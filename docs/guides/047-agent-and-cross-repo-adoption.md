@@ -195,6 +195,11 @@ The skill is the recommended cross-repo entry point. The `AGENTS.md` snippet
 in section 3 still serves repos that want Effigy-first execution baked into
 their own project instructions; the two are complementary.
 
+`effigy skill run ... --repo <DIR>` names the consumer target explicitly. The
+target only has to be a directory: it needs no repository marker, so an
+isolated fixture can be the target of an installed skill task. The run and its
+JSON evidence use canonical root paths, so symlinked spellings compare equal.
+
 Effigy named task lookup supports installed roots under `~/.agents/skills`,
 `~/.codex/skills`, `~/.claude/skills`, and `~/.cursor/skills`. Resolve each
 candidate through symlinks before comparing paths: aliases to the same
