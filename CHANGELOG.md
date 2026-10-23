@@ -972,6 +972,22 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- A first `effigy dev` on a fresh Colima VM no longer fails when a nerdctl
+  health-check timer collides. nerdctl runs each container health check from
+  the transient systemd unit `{full_id}.timer` and leaves it loaded when the
+  container's process exits on its own, so the next `start` of that container
+  reports `Unit <id>.timer was already loaded or has a fragment file` and
+  exits non-zero while the container does start (effigy#287, papercut
+  `93f4d687`). Effigy now re-inspects each recovery candidate on its own
+  immediately before starting it and starts only a container the backend
+  proves stopped (`created`, `exited` or `dead`), so a container Compose
+  already started or is still starting is never started a second time; an
+  observation that cannot prove the state fails closed instead of starting
+  blind. When a start does report the collision and the container ends up
+  running, Effigy records the collision line and hands the service to the
+  normal readiness and health wait instead of failing it as stale backend
+  state; a container that stays stopped keeps the bounded failure and the
+  exact-owned transient-unit recovery. Systemd units are still never deleted.
 - Container host diagnostics tell the truth about an undeclared apex (papercut
   `dbb81698`). Without `[containers.<name>.dns] base_domain`, the cookie
   domain, WebAuthn RP ID and TCP alias suffix are inferred from the HTTP

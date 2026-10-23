@@ -118,7 +118,7 @@ fn recurring_health_collision_refuses_recreation_through_production_adapters() {
 }
 
 #[test]
-fn reboot_timer_collision_fails_fast_even_when_inspect_reports_running() {
+fn reboot_timer_collision_with_a_running_container_hands_off_to_readiness() {
     let fixture = tempfile::tempdir().expect("fresh reboot fixture");
     let root = fixture.path();
     let bin = root.join("bin");
@@ -145,6 +145,7 @@ fn reboot_timer_collision_fails_fast_even_when_inspect_reports_running() {
         .env("PATH", &bin)
         .env("PRIVATE_HEALTH_FIXTURE", root)
         .env("PRIVATE_HEALTH_RUNNING", "1")
+        .env("PRIVATE_HEALTH_EXPECT", "recovered")
         .env("EFFIGY_COMPOSE_BACKEND", "containerd")
         .output()
         .expect("run private reboot proof");
@@ -155,42 +156,43 @@ fn reboot_timer_collision_fails_fast_even_when_inspect_reports_running() {
     );
     assert!(
         started.elapsed() < std::time::Duration::from_secs(10),
-        "no readiness wait"
+        "recovery itself never waits for readiness"
     );
-    let receipt = fs::read_to_string(root.join("refusal.txt")).expect("refusal receipt");
+    let receipt = fs::read_to_string(root.join("warnings.txt")).expect("recovery receipt");
     assert!(
-        receipt.contains("stale backend state in Colima profile `private-health`"),
+        receipt.contains("health-check timer collision"),
         "{receipt}"
     );
+    assert!(receipt.contains("the container is running"), "{receipt}");
     assert!(
-        receipt.contains("did not prove health-check readiness"),
+        receipt.contains("readiness and its health check decide"),
+        "{receipt}"
+    );
+    assert!(!receipt.contains("stale backend state"), "{receipt}");
+    assert!(
+        !receipt.contains("did not prove health-check readiness"),
         "{receipt}"
     );
     assert!(
         receipt.contains(&format!("Unit {FULL_ID}.timer")),
         "{receipt}"
     );
-    for action in ["inspect", "start"] {
-        assert!(
-            receipt.contains(&format!(
-                "colima nerdctl --profile private-health -- {action} fixture-db"
-            )),
-            "{receipt}"
-        );
-    }
+    assert!(
+        receipt.contains("colima nerdctl --profile private-health -- inspect fixture-db"),
+        "{receipt}"
+    );
     let commands = fs::read_to_string(root.join("commands")).expect("strict call log");
     let commands: Vec<_> = commands.lines().collect();
     assert_eq!(
-        commands.len(),
-        3,
-        "only inventory/start/inventory: {commands:?}"
+        commands,
+        vec![
+            "nerdctl --profile private-health -- ps --all --filter label=com.docker.compose.project=private-health-project --format {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}\t{{.Label \"com.docker.compose.oneoff\"}}",
+            "nerdctl --profile private-health -- inspect fixture-db",
+            "nerdctl --profile private-health -- start fixture-db",
+            "nerdctl --profile private-health -- ps --all --filter label=com.docker.compose.project=private-health-project --format {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Label \"com.docker.compose.project\"}}\t{{.Label \"com.docker.compose.project.working_dir\"}}\t{{.Label \"com.docker.compose.service\"}}\t{{.Label \"com.docker.compose.oneoff\"}}",
+        ],
+        "one container inspect before the start, no retry, no unit mutation: {commands:?}"
     );
-    assert!(commands[0].starts_with("nerdctl --profile private-health -- ps --all "));
-    assert_eq!(
-        commands[1],
-        "nerdctl --profile private-health -- start fixture-db"
-    );
-    assert_eq!(commands[0], commands[2]);
 }
 
 #[test]
@@ -202,6 +204,17 @@ fn private_health_recovery_child() {
             let mut policy = crate::load_container_policy(&root, Some("web"))
                 .expect("load private declared policy");
             policy.project_name = "private-health-project".to_owned();
+            if std::env::var("PRIVATE_HEALTH_EXPECT").as_deref() == Ok("recovered") {
+                let recovery = recover_exited_owned_compose_services_for_project(
+                    &root,
+                    &policy,
+                    &policy.project_name,
+                )
+                .expect("a running container after a timer collision hands off to readiness");
+                fs::write(root.join("warnings.txt"), recovery.warnings.join("\n"))
+                    .expect("private recovery receipt");
+                return;
+            }
             let error = recover_exited_owned_compose_services_for_project(
                 &root,
                 &policy,
