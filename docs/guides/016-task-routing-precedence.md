@@ -49,6 +49,33 @@ after the task name are still read as Effigy's, with a note naming the leading
 spelling. Built-in commands routed by name (`test`, `tasks`, ...)
 keep their own flag positions.
 
+## Built-in Names And Repository Tasks
+
+A repository task owns a word a built-in also uses: `effigy <name>` runs the
+task, and everything after the task name goes to it. That is why a repository
+with `fmt = "cargo fmt {args}"` keeps `effigy fmt`, `effigy fmt --check` and
+`effigy fmt rust <FILE>` as its own task invocations even though Effigy ships a
+built-in Rust formatter under that word.
+
+The exceptions are deliberate: `test` is Effigy's orchestration front door
+(contract [038](../knowledge/contracts/038-unified-test-orchestration-contract.md)),
+and `help` and `version` answer questions about Effigy itself. A task cannot
+shadow those three.
+
+A built-in that a task shadows may keep an explicit spelling of its own. When
+that exists, `effigy --plan <name>` says so:
+
+```bash
+effigy --plan fmt
+# … Built-in shadowed: `fmt` runs this repository's task; `effigy fmt-rust`
+# reaches the built-in with the same arguments
+```
+
+`effigy fmt-rust <FILE>...` is the built-in Rust formatter's explicit spelling,
+with the same `--check`, `--repo` and `--json` flags. Every shadowable built-in
+is classified in `effigy-cli`'s `builtin_names` table, so a new built-in cannot
+quietly take a consumer task name.
+
 ## Root And Membership
 
 Catalog membership is explicit ([037](../knowledge/contracts/037-explicit-catalog-membership-contract.md)):

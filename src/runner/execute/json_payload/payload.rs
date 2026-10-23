@@ -104,5 +104,17 @@ pub(super) fn task_plan_payload(
         }
     }
 
+    // A shadowed built-in names the spelling that still reaches it, so the
+    // JSON plan answers the same question as the text plan. Absent otherwise,
+    // so an unshadowed plan stays byte-compatible.
+    if let Some(escape) = super::shadowed_builtin_escape(selector) {
+        if let Some(object) = payload.as_object_mut() {
+            object.insert(
+                "shadowed_builtin".to_owned(),
+                json!({ "name": selector.task_name, "escape": escape }),
+            );
+        }
+    }
+
     payload
 }

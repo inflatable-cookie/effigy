@@ -6,6 +6,7 @@ use effigy_ui::encode_json;
 pub(in crate::runner) use payload::PlannedRuntimeTarget;
 
 use crate::runner::error::RunnerError;
+use effigy_cli::builtin_names::builtin_escape_spelling;
 use effigy_manifest::TaskSelection;
 use effigy_tasks::TaskSelector;
 
@@ -75,10 +76,35 @@ fn render_task_plan_text(
         Some(payload::PlannedRuntimeTarget::Host) | None => String::new(),
     };
     format!(
-        "Selector: {rendered_selector}\nTask: {}\nCatalog: {catalog}\nCommand: {command}\nCwd: {}\n{runtime_line}",
+        "Selector: {rendered_selector}\nTask: {}\nCatalog: {catalog}\nCommand: {command}\nCwd: {}\n{runtime_line}{}",
         selector.task_name,
-        cwd.display()
+        cwd.display(),
+        shadowed_builtin_notice(selector)
     )
+}
+
+/// Name the explicit spelling that still reaches a built-in whose word a
+/// repository task owns.
+///
+/// Only an unqualified selector can shadow: `effigy <catalog>/fmt` names the
+/// catalog's task directly and leaves `effigy fmt` alone.
+fn shadowed_builtin_notice(selector: &TaskSelector) -> String {
+    let Some(escape) = shadowed_builtin_escape(selector) else {
+        return String::new();
+    };
+    format!(
+        "Built-in shadowed: `{}` runs this repository's task; `effigy {escape}` reaches the built-in with the same arguments\n",
+        selector.task_name
+    )
+}
+
+/// The explicit spelling that still reaches the built-in a repository task
+/// shadows.
+fn shadowed_builtin_escape(selector: &TaskSelector) -> Option<&'static str> {
+    if selector.prefix.is_some() {
+        return None;
+    }
+    builtin_escape_spelling(&selector.task_name)
 }
 
 fn encode_task_run_json(payload: &serde_json::Value) -> Result<String, RunnerError> {

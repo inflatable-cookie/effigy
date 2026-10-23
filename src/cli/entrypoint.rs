@@ -369,7 +369,16 @@ fn parse_command_with_builtin_deferral(
     };
     let deferred_builtins = crate::runner::deferred_builtins_for_root(&root);
     if first == "help" {
-        return reject_help_for_deferred_builtin(parse_command(args)?, &deferred_builtins, &root);
+        // The word after `help` is what names the built-in to defer, and it is
+        // not always the topic's first built-in (`fmt` and `fmt-rust` share
+        // the formatter panel but defer independently).
+        let requested = args.get(1).cloned();
+        return reject_help_for_deferred_builtin(
+            parse_command(args)?,
+            requested.as_deref(),
+            &deferred_builtins,
+            &root,
+        );
     }
     if !deferred_builtins.contains(first) {
         return parse_command(args);
@@ -388,15 +397,15 @@ fn parse_command_with_builtin_deferral(
 /// through the help topic either.
 fn reject_help_for_deferred_builtin(
     command: Command,
+    requested: Option<&str>,
     deferred_builtins: &std::collections::BTreeSet<String>,
     root: &Path,
 ) -> Result<Command, effigy_cli::CliParseError> {
     let owned_name = match &command {
-        Command::Help(topic) => {
-            effigy_cli::command_surface::deferred_builtin_for_help_topic(*topic)
-                .filter(|name| deferred_builtins.contains(*name))
-                .map(str::to_owned)
-        }
+        Command::Help(_) => requested
+            .and_then(effigy_cli::command_surface::deferred_builtin_for_help_argument)
+            .filter(|name| deferred_builtins.contains(*name))
+            .map(str::to_owned),
         // `effigy help config` and `effigy help scan` resolve to the built-in's
         // own `--help` invocation. A repository selector of the same name owns
         // that word, and help must never run repository work, so refuse instead.
@@ -498,6 +507,74 @@ mod tests {
             parsed,
             Command::Task(task) if task.name == "deploy" && task.args == vec!["uat".to_owned()]
         ));
+    }
+
+    /// The #290 regression: a repository `fmt` task receives `fmt` and every
+    /// following word, including the built-in's own `rust` subcommand.
+    #[test]
+    fn parse_command_with_builtin_deferral_routes_fmt_to_the_repository_task() {
+        let root = temp_root("builtin-collision-fmt");
+        fs::write(
+            root.join("effigy.toml"),
+            "[tasks.fmt]\nrun = \"cargo fmt {args}\"\n",
+        )
+        .expect("write manifest");
+
+        let bare = parse_command_with_builtin_deferral(
+            vec!["fmt".to_owned()],
+            &root,
+            &GlobalCliOptions::default(),
+        )
+        .expect("parse");
+        assert!(matches!(
+            bare,
+            Command::Task(task) if task.name == "fmt" && task.args.is_empty()
+        ));
+
+        let built_in_shape = parse_command_with_builtin_deferral(
+            vec![
+                "fmt".to_owned(),
+                "rust".to_owned(),
+                "src/main.rs".to_owned(),
+            ],
+            &root,
+            &GlobalCliOptions::default(),
+        )
+        .expect("parse");
+        assert!(matches!(
+            built_in_shape,
+            Command::Task(task)
+                if task.name == "fmt"
+                    && task.args == vec!["rust".to_owned(), "src/main.rs".to_owned()]
+        ));
+    }
+
+    /// Without the task the built-in keeps both spellings.
+    #[test]
+    fn parse_command_with_builtin_deferral_keeps_the_fmt_builtin_without_a_task() {
+        let root = temp_root("builtin-no-collision-fmt");
+        fs::write(root.join("effigy.toml"), "[tasks.build]\nrun = \"true\"\n")
+            .expect("write manifest");
+
+        let nested = parse_command_with_builtin_deferral(
+            vec![
+                "fmt".to_owned(),
+                "rust".to_owned(),
+                "src/main.rs".to_owned(),
+            ],
+            &root,
+            &GlobalCliOptions::default(),
+        )
+        .expect("parse");
+        assert!(matches!(nested, Command::Fmt(_)));
+
+        let escape = parse_command_with_builtin_deferral(
+            vec!["fmt-rust".to_owned(), "src/main.rs".to_owned()],
+            &root,
+            &GlobalCliOptions::default(),
+        )
+        .expect("parse");
+        assert!(matches!(escape, Command::Fmt(_)));
     }
 
     #[test]
@@ -616,6 +693,42 @@ mod help_deferral_tests {
             parse(&root, &["help", "service"]).expect("parse"),
             Command::Help(HelpTopic::Service)
         );
+    }
+
+    /// `fmt` and its escape `fmt-rust` share one help panel but defer on their
+    /// own names, so shadowing one never hides the other's help.
+    #[test]
+    fn help_command_topic_defers_on_the_requested_builtin_not_the_shared_topic() {
+        let shadowing_fmt = temp_root("help-fmt-only");
+        fs::write(
+            shadowing_fmt.join("effigy.toml"),
+            "[tasks.fmt]\nrun = \"cargo fmt\"\n",
+        )
+        .expect("write manifest");
+
+        let message = parse(&shadowing_fmt, &["help", "fmt"])
+            .expect_err("a shadowed `fmt` has no built-in help panel")
+            .to_string();
+        assert!(message.contains("`fmt` is deferred"), "{message}");
+        assert_eq!(
+            parse(&shadowing_fmt, &["help", "fmt-rust"]).expect("parse"),
+            Command::Help(HelpTopic::Fmt)
+        );
+
+        let shadowing_escape = temp_root("help-fmt-rust-only");
+        fs::write(
+            shadowing_escape.join("effigy.toml"),
+            "[tasks.fmt-rust]\nrun = \"printf escape\"\n",
+        )
+        .expect("write manifest");
+        assert_eq!(
+            parse(&shadowing_escape, &["help", "fmt"]).expect("parse"),
+            Command::Help(HelpTopic::Fmt)
+        );
+        let message = parse(&shadowing_escape, &["help", "fmt-rust"])
+            .expect_err("a shadowed escape spelling has no built-in help panel")
+            .to_string();
+        assert!(message.contains("`fmt-rust` is deferred"), "{message}");
     }
 
     #[test]

@@ -9,6 +9,7 @@
 
 use std::path::PathBuf;
 
+pub mod builtin_names;
 mod command_parsing;
 pub mod command_surface;
 mod global_json;

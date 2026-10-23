@@ -173,7 +173,9 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.completion.v2`
 - `effigy.completion.candidates.v1`
 - `effigy.task.run.v1`
-- `effigy.task.plan.v1`
+- `effigy.task.plan.v1` (adds `shadowed_builtin: {name, escape}` when a
+  repository task owns a built-in's word, so a plan can name the built-in's
+  explicit spelling)
 - `effigy.service.list.v2` (`sources` in precedence order; each fragment has `name`, `qualified`, `source`, `layer`, `path` and `shadows`)
 - `effigy.service.extract.v1`
 - `effigy.artifact.inspect.v1` (`state artifact inspect --json`)

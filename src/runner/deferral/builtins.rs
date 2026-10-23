@@ -48,29 +48,10 @@ pub(crate) fn deferred_builtins_from_catalogs(
 }
 
 fn is_top_level_builtin_command(name: &str) -> bool {
-    matches!(
-        name,
-        "bootstrap"
-            | "bundle"
-            | "changelog"
-            | "container"
-            | "contracts"
-            | "defer"
-            | "demo"
-            | "deploy"
-            | "deps"
-            | "distribution"
-            | "docs"
-            | "doctor"
-            | "exec"
-            | "gateway"
-            | "release"
-            | "run"
-            | "runs"
-            | "service"
-            | "tasks"
-            | "workspace"
-    )
+    // One classification owns which built-ins a repository task may shadow
+    // (contract 043), so a new built-in cannot quietly take a consumer's task
+    // name. Only words the parser claims need deferring here.
+    effigy_cli::builtin_names::is_deferred_builtin_command(name)
 }
 
 #[cfg(test)]
@@ -125,6 +106,39 @@ mod tests {
 
         let builtins = deferred_builtins_for_root(&root);
         assert!(builtins.contains("deploy"), "got: {builtins:?}");
+    }
+
+    /// `fmt` is a built-in formatter, so a repository `fmt` task must win
+    /// again (#290 regression).
+    #[test]
+    fn deferred_builtins_include_fmt_task_collisions() {
+        let root = temp_workspace("fmt-collision");
+        fs::write(
+            root.join("effigy.toml"),
+            "[tasks.fmt]\nrun = \"cargo fmt\"\n[tasks.fmt-rust]\nrun = \"printf escape\"\n",
+        )
+        .expect("write manifest");
+
+        let builtins = deferred_builtins_for_root(&root);
+        assert!(builtins.contains("fmt"), "got: {builtins:?}");
+        assert!(builtins.contains("fmt-rust"), "got: {builtins:?}");
+    }
+
+    /// The reserved `test` built-in is never deferred, even if a manifest could
+    /// declare it.
+    #[test]
+    fn deferred_builtins_never_include_reserved_names() {
+        let root = temp_workspace("reserved");
+        fs::write(
+            root.join("effigy.toml"),
+            "[tasks.deploy]\nrun = \"printf deploy\"\n",
+        )
+        .expect("write manifest");
+
+        let builtins = deferred_builtins_for_root(&root);
+        assert!(!builtins.contains("test"), "got: {builtins:?}");
+        assert!(!builtins.contains("help"), "got: {builtins:?}");
+        assert!(!builtins.contains("version"), "got: {builtins:?}");
     }
 
     #[test]
