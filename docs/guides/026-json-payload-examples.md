@@ -962,6 +962,14 @@ A run whose owner exited without a result reads `"state": "interrupted"` with
   "provider": "railway",
   "plan": true,
   "path": "/workspace/app/infra/railway",
+  "provider_provenance": {
+    "kind": "git",
+    "url": "git@github.com:inflatable-cookie/effigy-provider-railway.git",
+    "requested_ref": "main",
+    "requested_rev": "0f3c9a4c1b7d2e8f5a6b3c9d0e1f2a3b4c5d6e7f",
+    "commit": "0f3c9a4c1b7d2e8f5a6b3c9d0e1f2a3b4c5d6e7f",
+    "resolution": "cached"
+  },
   "files": [
     "services/front/railway.toml",
     "services/admin/railway.toml",
@@ -982,6 +990,14 @@ A run whose owner exited without a result reads `"state": "interrupted"` with
   "schema_version": 1,
   "env": "uat",
   "provider": "railway",
+  "provider_provenance": {
+    "kind": "git",
+    "url": "git@github.com:inflatable-cookie/effigy-provider-railway.git",
+    "requested_ref": "main",
+    "requested_rev": "0f3c9a4c1b7d2e8f5a6b3c9d0e1f2a3b4c5d6e7f",
+    "commit": "0f3c9a4c1b7d2e8f5a6b3c9d0e1f2a3b4c5d6e7f",
+    "resolution": "cached"
+  },
   "app": {
     "name": "example-app",
     "project_name": "example-app-uat"
