@@ -504,10 +504,26 @@ pub(super) fn run_command_capture_with_timeout(
     label: &str,
     timeout: Duration,
 ) -> Result<Output, ContainerExecError> {
+    run_command_capture_with_timeout_and_env(repo_root, program, args, label, timeout, &[])
+}
+
+/// [`run_command_capture_with_timeout`] carrying values the child cannot
+/// inherit from a VM-hosted Compose backend. A teardown supplies its
+/// interpolation values this way (effigy#286).
+pub(super) fn run_command_capture_with_timeout_and_env(
+    repo_root: &Path,
+    program: &str,
+    args: &[&str],
+    label: &str,
+    timeout: Duration,
+    env: &[(String, OsString)],
+) -> Result<Output, ContainerExecError> {
     // The timeout origin is fixed before the spawn, so a slow fork/exec cannot
     // extend the budget the caller asked for.
     let deadline = Instant::now() + timeout;
-    let output = spawn_and_supervise_capture(repo_root, program, args, label, deadline, timeout)?;
+    let output = spawn_and_supervise_capture_with_env(
+        repo_root, program, args, label, deadline, timeout, env,
+    )?;
     require_success(label, output)
 }
 
@@ -611,12 +627,34 @@ fn spawn_and_supervise_capture(
     deadline: Instant,
     reported_timeout: Duration,
 ) -> Result<Output, ContainerExecError> {
-    let child = spawn_capture_child(repo_root, program, args, false).map_err(|error| {
-        ContainerExecError::Launch {
-            command: format!("{program} {}", args.join(" ")),
-            error,
-        }
-    })?;
+    spawn_and_supervise_capture_with_env(
+        repo_root,
+        program,
+        args,
+        label,
+        deadline,
+        reported_timeout,
+        &[],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_and_supervise_capture_with_env(
+    repo_root: &Path,
+    program: &str,
+    args: &[&str],
+    label: &str,
+    deadline: Instant,
+    reported_timeout: Duration,
+    env: &[(String, OsString)],
+) -> Result<Output, ContainerExecError> {
+    let child =
+        spawn_capture_child_with_env(repo_root, program, args, false, env).map_err(|error| {
+            ContainerExecError::Launch {
+                command: format!("{program} {}", args.join(" ")),
+                error,
+            }
+        })?;
     supervise_capture_child(child, program, args, label, deadline, reported_timeout)
 }
 
@@ -807,6 +845,16 @@ fn spawn_capture_child(
     args: &[impl AsRef<std::ffi::OsStr>],
     input: bool,
 ) -> Result<std::process::Child, std::io::Error> {
+    spawn_capture_child_with_env(repo_root, program, args, input, &[])
+}
+
+fn spawn_capture_child_with_env(
+    repo_root: &Path,
+    program: &str,
+    args: &[impl AsRef<std::ffi::OsStr>],
+    input: bool,
+    env: &[(String, OsString)],
+) -> Result<std::process::Child, std::io::Error> {
     // Private timing seam: simulates a slow fork/exec at the spawn boundary so
     // a test can prove the supervision deadline is not rebased after spawn.
     // Always zero in production and unset in every other test thread.
@@ -815,9 +863,12 @@ fn spawn_capture_child(
         thread::sleep(delay);
     }
     let resolved_program = resolve_host_cli_program(program);
-    let args = compose_invocation_args(&resolved_program, args, &[])
+    let args = compose_invocation_args(&resolved_program, args, env)
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     let mut command = Command::new(&resolved_program);
+    for (key, value) in env {
+        command.env(key, value);
+    }
     crate::policy::render::apply_environment(&mut command, &args);
     command
         .current_dir(repo_root)

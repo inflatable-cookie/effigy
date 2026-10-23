@@ -8,7 +8,7 @@ use effigy_kernel::observe::{Observed, UnknownReason};
 use effigy_kernel::run::Liveness;
 use serde_json::{json, Value};
 
-use super::backend::{effective, BackendSelection};
+use super::backend::{effective, project_resources, BackendSelection};
 use super::reconcile::EnvRef;
 use super::record::{EnvRecord, EnvState, Retention};
 use crate::{ContainerCommandReport, EffectiveContainerPolicy};
@@ -163,5 +163,37 @@ fn liveness(liveness: &Observed<Liveness>) -> &'static str {
         Observed::Verified(Liveness::Live, _) => "live",
         Observed::Verified(Liveness::Interrupted, _) => "interrupted",
         _ => "unknown",
+    }
+}
+
+/// Why a stop of `policy` provably has nothing to stop, or `None` when the
+/// stop must run.
+///
+/// An environment this checkout never prepared — no applied generation and no
+/// partial one on its record — whose backend project owns no container,
+/// network or volume has nothing to tear down, and its never-assigned ports
+/// must never reach Compose: a never-prepared render carries the deliberate
+/// [`crate::policy::ports::UNASSIGNED_PORT_EXPRESSION`] refusal (effigy#286).
+/// Anything unproven is a stop: an unreadable record, a holding run, a backend
+/// that cannot answer the emptiness probe.
+pub fn nothing_to_stop(repo_root: &Path, policy: &EffectiveContainerPolicy) -> Option<String> {
+    let view = EnvironmentView::read(repo_root, policy);
+    let never_prepared = match &view.record {
+        // No checkout identity or no record row: nothing was ever recorded.
+        Observed::Absent(_) => true,
+        Observed::Verified(record, _) => {
+            record.last_applied.is_none() && record.partial().is_none() && !record.protected()
+        }
+        Observed::Unknown(_) => false,
+    };
+    if !never_prepared {
+        return None;
+    }
+    match project_resources(&view.backend, repo_root, &policy.project_name) {
+        Observed::Verified(resources, _) if resources.empty() => Some(format!(
+            "the environment was never prepared and Compose project `{}` owns no container, network or volume",
+            policy.project_name
+        )),
+        _ => None,
     }
 }

@@ -24,7 +24,7 @@ use super::participation::{
 };
 use super::process::{
     error_is_timeout, run_command_capture_os, run_command_capture_os_with_env,
-    run_command_capture_with_timeout, run_detached_command_with_env,
+    run_command_capture_with_timeout_and_env, run_detached_command_with_env,
 };
 
 use crate::{
@@ -151,13 +151,18 @@ pub fn shutdown_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), ContainerExecError> {
+    // Teardown never publishes a port, but Compose interpolates the whole
+    // render before it reads the project. A render whose ports were never
+    // assigned (a failed first start) therefore stops with the teardown value
+    // instead of failing on its deliberate unassigned-port refusal (#286).
+    let teardown_env = crate::policy::ports::teardown_interpolation_env();
     for (args, label) in shutdown_compose_commands(policy) {
         let (program, invocation_args) = compose_invocation_for_repo(repo_root, policy, &args);
         let rendered_args = invocation_args
             .iter()
             .map(|value| value.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        run_command_capture_with_timeout(
+        run_command_capture_with_timeout_and_env(
             repo_root,
             program,
             &rendered_args
@@ -166,6 +171,7 @@ pub fn shutdown_container(
                 .collect::<Vec<_>>(),
             label,
             CONTAINER_SHUTDOWN_TIMEOUT,
+            &teardown_env,
         )?;
     }
     Ok(())

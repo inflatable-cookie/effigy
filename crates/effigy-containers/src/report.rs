@@ -309,6 +309,30 @@ pub fn down_report(
     ContainerCommandReport { json, success_text }
 }
 
+/// Build the `container down` report for an environment this checkout never
+/// prepared whose backend project owns no containers, networks or volumes
+/// (effigy#286). Nothing was running, so the stop renders nothing and calls no
+/// Compose: a never-prepared render deliberately fails closed on its
+/// unassigned ports. `colima_running` is true because the backend answered the
+/// emptiness probe.
+pub fn down_noop_report(policy: &EffectiveContainerPolicy, reason: &str) -> ContainerCommandReport {
+    let json = json!({
+        "schema": "effigy.container.down.v1",
+        "schema_version": 1,
+        "ok": true,
+        "container": policy.name,
+        "profile": policy.profile,
+        "shared_services": shared_services_json(policy),
+        "colima_running": true,
+        "shutdown": shutdown_label(policy.shutdown),
+        "noop": reason,
+    });
+    ContainerCommandReport {
+        json,
+        success_text: format!("[ok] nothing to stop for `{}`: {reason}", policy.name),
+    }
+}
+
 /// Build the `container reset` report.
 pub fn reset_report(
     policy: &EffectiveContainerPolicy,

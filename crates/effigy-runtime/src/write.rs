@@ -5,9 +5,9 @@ use std::path::Path;
 
 use effigy_catalog::volumes::classify_for_reset;
 use effigy_containers::{
-    down_report, exec::runtime_backend_is_running, load_container_policy, reset_report,
-    validate_compose_backend_runtime, validate_container_policy, EffectiveComposeSource,
-    EffectiveContainerPolicy,
+    down_noop_report, down_report, exec::runtime_backend_is_running, load_container_policy,
+    reset_report, validate_compose_backend_runtime, validate_container_policy,
+    EffectiveComposeSource, EffectiveContainerPolicy,
 };
 use effigy_containers::{ContainerAction, ContainerCleanupResult, ContainerRuntimeState};
 
@@ -46,6 +46,14 @@ where
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     validate_compose_backend_runtime(repo_root, &policy)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
+    // A never-prepared environment with no project resources has nothing to
+    // stop, and its unassigned ports must not reach Compose (effigy#286).
+    if let Some(reason) = effigy_containers::environment::nothing_to_stop(repo_root, &policy) {
+        return Ok(render_container_report(
+            down_noop_report(&policy, &reason),
+            output_json,
+        ));
+    }
     let runtime_running = runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let prepared = runtime_running && prepare_shutdown(repo_root, &policy)?;
