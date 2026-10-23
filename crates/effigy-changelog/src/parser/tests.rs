@@ -673,3 +673,113 @@ fn long_non_ascii_headers_do_not_panic_when_truncated() {
         _ => panic!("expected Parse error"),
     }
 }
+
+#[test]
+fn parse_lazy_continuation_line_belongs_to_the_entry() {
+    // A hard-wrapped entry whose second line starts at column zero. CommonMark
+    // keeps it in the list item's paragraph, so v0.15 accepts it as the same
+    // entry rather than as release prose (or, as 0.14.1 did, refusing it).
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+### Fixed
+- Release prepare now refreshes the workspace-excluded prototype lockfiles
+and refuses a declared lockfile owned by another Cargo workspace.
+";
+    let changelog = parse_changelog(input).expect("a lazy continuation line must parse");
+
+    let release = &changelog.releases[0];
+    assert!(release.prose.is_empty(), "{:?}", release.prose);
+    assert_eq!(release.categories.len(), 1);
+    let entry = &release.categories[0].entries[0];
+    assert!(entry
+        .description
+        .starts_with("Release prepare now refreshes the workspace-excluded"));
+    assert_eq!(
+        entry.continuation_lines,
+        vec!["and refuses a declared lockfile owned by another Cargo workspace.".to_owned()]
+    );
+}
+
+#[test]
+fn parse_lazy_continuation_keeps_the_longhorn_entry_shape() {
+    let input = "\
+# Changelog
+
+## [0.2.0] - 2026-09-18
+
+### Changed
+- `release:bump` now refreshes the eight `prototypes/*/Cargo.lock` files before the
+`prototypes` gate, so a version bump no longer fails its own locked check; see
+[`prototypes/README.md`](prototypes/README.md).
+- Unrelated second entry
+";
+    let changelog = parse_changelog(input).expect("Longhorn's entry shape must parse");
+
+    let release = changelog.find_version("0.2.0").expect("released version");
+    assert!(release.prose.is_empty(), "{:?}", release.prose);
+    let entries = &release.categories[0].entries;
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].continuation_lines.len(), 2);
+    assert_eq!(
+        entries[0].continuation_lines[0],
+        "`prototypes` gate, so a version bump no longer fails its own locked check; see"
+    );
+    assert_eq!(
+        entries[0].continuation_lines[1],
+        "[`prototypes/README.md`](prototypes/README.md)."
+    );
+    assert_eq!(entries[1].description, "Unrelated second entry");
+    assert!(entries[1].continuation_lines.is_empty());
+}
+
+#[test]
+fn prose_after_a_blank_line_does_not_join_the_entry() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+### Added
+- First entry
+
+A paragraph after a blank line still belongs to the release.
+";
+    let changelog = parse_changelog(input).expect("prose after a blank line must parse");
+
+    let release = &changelog.releases[0];
+    assert_eq!(
+        release.prose,
+        vec!["A paragraph after a blank line still belongs to the release."]
+    );
+    assert!(release.categories[0].entries[0]
+        .continuation_lines
+        .is_empty());
+}
+
+#[test]
+fn unsupported_markers_stay_errors_next_to_a_lazy_continuation() {
+    let input = "\
+# Changelog
+
+## [Unreleased]
+
+### Added
+- Supported entry
++ Unsupported nested bullet item.
+";
+    let err = parse_changelog(input).unwrap_err();
+    match err {
+        ChangelogError::Parse { errors } => {
+            assert_eq!(errors[0].line, 7);
+            assert!(
+                errors[0].message.contains("unsupported entry marker"),
+                "{}",
+                errors[0].message
+            );
+        }
+        _ => panic!("expected Parse error"),
+    }
+}

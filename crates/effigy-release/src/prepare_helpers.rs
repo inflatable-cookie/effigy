@@ -59,6 +59,7 @@ struct RawReusedGateRecord {
 struct CargoMetadata {
     packages: Vec<CargoMetadataPackage>,
     workspace_members: BTreeSet<String>,
+    workspace_root: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -179,42 +180,81 @@ pub(super) fn apply_bump(version: &semver::Version, bump: BumpKind) -> Option<se
 }
 
 pub(crate) fn build_sync_mutations(
+    root: &Path,
     sync_files: &[ResolvedSyncFile],
     selected_version: &semver::Version,
 ) -> Result<Vec<FileMutationPlan>, ReleaseError> {
     let mut mutations = Vec::new();
     for sync in sync_files {
         let mutation = match sync.kind {
-            SyncFileKind::CargoLock => Some(FileMutationPlan {
-                path: sync.path.clone(),
-                kind: "sync-file",
-                summary: format!(
-                    "sync Cargo.lock to workspace version {selected_version} via \
-                     `cargo update --workspace --quiet`"
-                ),
-                before_preview: if sync.path.exists() {
-                    "Cargo.lock exists and its workspace member versions will be refreshed"
-                        .to_owned()
-                } else {
-                    "Cargo.lock is missing and will be created".to_owned()
-                },
-                after_preview: format!(
-                    "Cargo.lock workspace members refreshed after selecting {selected_version}"
-                ),
-                detail_lines: vec![
-                    "sync command: cargo update --workspace --quiet".to_owned(),
-                    "third-party dependencies are not re-resolved; only workspace member \
+            SyncFileKind::CargoLock => {
+                let lockfile = normalize_repo_relative_path(root, &sync.path);
+                // Contract 054 §4.1 also syncs the lockfile of a
+                // workspace-excluded Cargo consumer, which owns its own
+                // workspace below the release root.
+                let nested_workspace = sync.path.parent().map(|directory| {
+                    !directory
+                        .canonicalize()
+                        .ok()
+                        .zip(root.canonicalize().ok())
+                        .is_some_and(|(directory, root)| directory == root)
+                });
+                let detail_lines = if nested_workspace == Some(true) {
+                    let workspace = sync
+                        .path
+                        .parent()
+                        .map(|directory| normalize_repo_relative_path(root, directory))
+                        .unwrap_or_else(|| ".".to_owned());
+                    vec![
+                        format!("sync workspace: {workspace}"),
+                        "sync command: cargo update --quiet -p <release package>, once per \
+                         release package this lockfile records"
+                            .to_owned(),
+                        "third-party dependencies are not re-resolved; only release package \
                          versions move"
-                        .to_owned(),
-                    "refuses to apply unless Cargo metadata identifies each changed package as \
-                     a workspace member recorded at that member's own package version"
-                        .to_owned(),
-                ],
-                diff_preview: Vec::new(),
-                apply: FileMutationApply::SyncCargoLock {
-                    workspace_version: selected_version.to_string(),
-                },
-            }),
+                            .to_owned(),
+                        "refuses to apply unless Cargo metadata roots a workspace at the \
+                         lockfile's own directory and every recorded release package lands at its \
+                         own package version"
+                            .to_owned(),
+                    ]
+                } else {
+                    vec![
+                        "sync workspace: .".to_owned(),
+                        "sync command: cargo update --workspace --quiet".to_owned(),
+                        "third-party dependencies are not re-resolved; only workspace member \
+                         versions move"
+                            .to_owned(),
+                        "refuses to apply unless Cargo metadata identifies each changed package \
+                         as a workspace member recorded at that member's own package version"
+                            .to_owned(),
+                    ]
+                };
+                Some(FileMutationPlan {
+                    path: sync.path.clone(),
+                    kind: "sync-file",
+                    summary: format!(
+                        "sync {lockfile} to version {selected_version} in its own Cargo workspace"
+                    ),
+                    before_preview: if sync.path.exists() {
+                        format!(
+                            "{lockfile} exists and the release package versions it records will be \
+                             refreshed"
+                        )
+                    } else {
+                        format!("{lockfile} is missing and will be created")
+                    },
+                    after_preview: format!(
+                        "{lockfile} release package versions refreshed after selecting \
+                         {selected_version}"
+                    ),
+                    detail_lines,
+                    diff_preview: Vec::new(),
+                    apply: FileMutationApply::SyncCargoLock {
+                        workspace_version: selected_version.to_string(),
+                    },
+                })
+            }
             SyncFileKind::PackageJson => {
                 let source = ResolvedVersionSource {
                     path: sync.path.clone(),
@@ -717,46 +757,79 @@ fn sync_cargo_lock(root: &Path, lockfile: &Path) -> Result<(), ReleaseError> {
         }
     };
 
-    // Nothing to preserve when the lockfile does not exist yet, so a full
-    // resolve is the only option there and is not a regression.
-    let workspace_members = if before.is_some() {
-        Some(cargo_workspace_member_versions(root)?)
-    } else {
-        None
-    };
-    let (args, label): (&[&str], &str) = if before.is_some() {
+    // A synced lockfile belongs to the Cargo workspace rooted at its own
+    // directory. A declared lockfile inside a member directory belongs to the
+    // enclosing workspace instead, so `cargo` there would rewrite a lockfile
+    // the release did not declare.
+    let workspace_dir = lockfile.parent().ok_or_else(|| {
+        ReleaseError::TaskInvocation(format!(
+            "release sync file {} has no directory to run cargo in",
+            lockfile.display()
+        ))
+    })?;
+    let workspace = cargo_workspace_root(workspace_dir)?;
+    if !same_directory(&workspace, workspace_dir) {
+        return Err(ReleaseError::TaskInvocation(format!(
+            "refused to sync {}: the Cargo workspace rooted at {} owns that lockfile, so syncing \
+             it would rewrite an undeclared lockfile",
+            lockfile.display(),
+            workspace.display()
+        )));
+    }
+
+    let is_primary = same_directory(workspace_dir, root);
+    let (release_members, lockfile_packages) = if before.is_some() {
         (
-            &["update", "--workspace", "--quiet"],
-            "cargo update --workspace --quiet",
+            Some(cargo_workspace_member_versions(root)?),
+            source_less_package_names(before.as_deref().unwrap_or_default()),
         )
     } else {
-        (
-            &["generate-lockfile", "--quiet"],
-            "cargo generate-lockfile --quiet",
-        )
+        (None, BTreeSet::new())
     };
 
-    let output = ProcessCommand::new("cargo")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .map_err(|error| {
-            ReleaseError::TaskInvocation(format!("failed to sync {}: {error}", lockfile.display()))
-        })?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        let detail = if !stderr.is_empty() {
-            stderr
-        } else if !stdout.is_empty() {
-            stdout
+    if is_primary {
+        // Nothing to preserve when the lockfile does not exist yet, so a full
+        // resolve is the only option there and is not a regression.
+        let (args, label): (&[&str], &str) = if before.is_some() {
+            (
+                &["update", "--workspace", "--quiet"],
+                "cargo update --workspace --quiet",
+            )
         } else {
-            format!("{label} exited unsuccessfully")
+            (
+                &["generate-lockfile", "--quiet"],
+                "cargo generate-lockfile --quiet",
+            )
         };
-        return Err(ReleaseError::TaskInvocation(format!(
-            "failed to sync {}: {detail}",
-            lockfile.display()
-        )));
+        run_cargo_for_lockfile(workspace_dir, args, label, lockfile)?;
+    } else if before.is_some() {
+        // A workspace-excluded consumer records the release's own packages as
+        // path dependencies, so `--workspace` would not move them. Name each
+        // recorded release package explicitly and let cargo re-read its
+        // manifest version.
+        let Some(release_members) = release_members.as_ref() else {
+            return Err(ReleaseError::TaskInvocation(
+                "existing Cargo.lock sync lost its release workspace package identities".to_owned(),
+            ));
+        };
+        for name in lockfile_packages {
+            if !release_members.contains_key(&name) {
+                continue;
+            }
+            run_cargo_for_lockfile(
+                workspace_dir,
+                &["update", "--quiet", "-p", name.as_str()],
+                &format!("cargo update --quiet -p {name}"),
+                lockfile,
+            )?;
+        }
+    } else {
+        run_cargo_for_lockfile(
+            workspace_dir,
+            &["generate-lockfile", "--quiet"],
+            "cargo generate-lockfile --quiet",
+            lockfile,
+        )?;
     }
 
     let Some(before) = before else {
@@ -768,12 +841,14 @@ fn sync_cargo_lock(root: &Path, lockfile: &Path) -> Result<(), ReleaseError> {
             lockfile.display()
         ))
     })?;
-    let Some(workspace_members) = workspace_members.as_ref() else {
+    let Some(release_members) = release_members.as_ref() else {
         return Err(ReleaseError::TaskInvocation(
-            "existing Cargo.lock sync lost its workspace package identities".to_owned(),
+            "existing Cargo.lock sync lost its release workspace package identities".to_owned(),
         ));
     };
-    if let Some(reason) = unexpected_lockfile_change(&before, &after, workspace_members) {
+    if let Some(reason) =
+        unexpected_lockfile_change_with(&before, &after, release_members, is_primary)
+    {
         // Put the lockfile back before failing: the caller's rollback covers
         // planned mutations, and leaving a surprise resolve on disk would
         // outlive this error.
@@ -792,32 +867,80 @@ fn sync_cargo_lock(root: &Path, lockfile: &Path) -> Result<(), ReleaseError> {
     Ok(())
 }
 
-fn cargo_workspace_member_versions(root: &Path) -> Result<BTreeMap<String, String>, ReleaseError> {
+/// Whether two paths name the same directory, resolving symlinks where both
+/// exist.
+fn same_directory(left: &Path, right: &Path) -> bool {
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
+}
+
+fn run_cargo_for_lockfile(
+    directory: &Path,
+    args: &[&str],
+    label: &str,
+    lockfile: &Path,
+) -> Result<(), ReleaseError> {
     let output = ProcessCommand::new("cargo")
-        .args(["metadata", "--no-deps", "--format-version", "1"])
-        .current_dir(root)
+        .args(args)
+        .current_dir(directory)
         .output()
         .map_err(|error| {
-            ReleaseError::TaskInvocation(format!(
-                "failed to inspect Cargo workspace members before lockfile sync: {error}"
-            ))
+            ReleaseError::TaskInvocation(format!("failed to sync {}: {error}", lockfile.display()))
         })?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        let detail = if stderr.is_empty() {
-            "cargo metadata exited unsuccessfully".to_owned()
-        } else {
-            stderr
-        };
-        return Err(ReleaseError::TaskInvocation(format!(
-            "failed to inspect Cargo workspace members before lockfile sync: {detail}"
-        )));
+    if output.status.success() {
+        return Ok(());
     }
-    let metadata: CargoMetadata = serde_json::from_slice(&output.stdout).map_err(|error| {
-        ReleaseError::TaskInvocation(format!(
-            "failed to parse cargo metadata before lockfile sync: {error}"
-        ))
-    })?;
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let detail = if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        format!("{label} exited unsuccessfully")
+    };
+    Err(ReleaseError::TaskInvocation(format!(
+        "failed to sync {}: {detail}",
+        lockfile.display()
+    )))
+}
+
+/// Names of the source-less (path or workspace) package entries a lockfile
+/// records.
+fn source_less_package_names(lockfile: &str) -> BTreeSet<String> {
+    let Ok(document) = lockfile.parse::<toml_edit::DocumentMut>() else {
+        return BTreeSet::new();
+    };
+    let Some(packages) = document
+        .get("package")
+        .and_then(toml_edit::Item::as_array_of_tables)
+    else {
+        return BTreeSet::new();
+    };
+    packages
+        .iter()
+        .filter(|package| package.get("source").is_none())
+        .filter_map(|package| {
+            package
+                .get("name")
+                .and_then(toml_edit::Item::as_str)
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
+fn cargo_workspace_root(directory: &Path) -> Result<PathBuf, ReleaseError> {
+    let metadata = cargo_metadata_no_deps(directory)?;
+    let root = PathBuf::from(&metadata.workspace_root);
+    Ok(root)
+}
+
+fn cargo_workspace_member_versions(
+    directory: &Path,
+) -> Result<BTreeMap<String, String>, ReleaseError> {
+    let metadata = cargo_metadata_no_deps(directory)?;
     let mut package_versions = BTreeMap::new();
     for package in metadata
         .packages
@@ -843,21 +966,75 @@ fn cargo_workspace_member_versions(root: &Path) -> Result<BTreeMap<String, Strin
     Ok(package_versions)
 }
 
+fn cargo_metadata_no_deps(directory: &Path) -> Result<CargoMetadata, ReleaseError> {
+    let output = ProcessCommand::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .current_dir(directory)
+        .output()
+        .map_err(|error| {
+            ReleaseError::TaskInvocation(format!(
+                "failed to inspect Cargo workspace members before lockfile sync: {error}"
+            ))
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let detail = if stderr.is_empty() {
+            "cargo metadata exited unsuccessfully".to_owned()
+        } else {
+            stderr
+        };
+        return Err(ReleaseError::TaskInvocation(format!(
+            "failed to inspect Cargo workspace members before lockfile sync: {detail}"
+        )));
+    }
+    serde_json::from_slice(&output.stdout).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to parse cargo metadata before lockfile sync: {error}"
+        ))
+    })
+}
+
 /// Describe every change that is not a workspace version move, if any.
 ///
 /// Reports every changed line rather than the first. Actual workspace-member
 /// version fields are normalized by package identity before comparison, so
 /// third-party changes cannot hide behind the selected workspace version.
+#[cfg(test)]
 pub(crate) fn unexpected_lockfile_change(
     before: &str,
     after: &str,
     workspace_members: &BTreeMap<String, String>,
 ) -> Option<String> {
-    let before = match normalize_workspace_lock_versions(before, workspace_members, false) {
+    unexpected_lockfile_change_with(before, after, workspace_members, true)
+}
+/// As [`unexpected_lockfile_change`], for a lockfile that records only the
+/// workspace packages it depends on.
+///
+/// A workspace-excluded consumer's lockfile carries the release's path
+/// dependencies but not every workspace member, so `require_all_members`
+/// false keeps each recorded package checked against its metadata version
+/// without demanding the rest.
+pub(crate) fn unexpected_lockfile_change_with(
+    before: &str,
+    after: &str,
+    workspace_members: &BTreeMap<String, String>,
+    require_all_members: bool,
+) -> Option<String> {
+    let before = match normalize_workspace_lock_versions(
+        before,
+        workspace_members,
+        false,
+        require_all_members,
+    ) {
         Ok(before) => before,
         Err(reason) => return Some(reason),
     };
-    let after = match normalize_workspace_lock_versions(after, workspace_members, true) {
+    let after = match normalize_workspace_lock_versions(
+        after,
+        workspace_members,
+        true,
+        require_all_members,
+    ) {
         Ok(after) => after,
         Err(reason) => return Some(reason),
     };
@@ -910,6 +1087,7 @@ fn normalize_workspace_lock_versions(
     lockfile: &str,
     workspace_members: &BTreeMap<String, String>,
     require_expected_versions: bool,
+    require_all_members: bool,
 ) -> Result<NormalizedCargoLock, String> {
     let mut document = lockfile
         .parse::<toml_edit::DocumentMut>()
@@ -958,7 +1136,7 @@ fn normalize_workspace_lock_versions(
         .filter(|name| !found.contains(*name))
         .cloned()
         .collect::<Vec<_>>();
-    if !missing.is_empty() {
+    if require_all_members && !missing.is_empty() {
         return Err(format!(
             "Cargo.lock is missing workspace package entries: {}",
             missing.join(", ")

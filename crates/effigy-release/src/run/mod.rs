@@ -963,7 +963,11 @@ impl<'a, 's> Runner<'a, 's> {
                     )));
                 }
             }
-            mutations.extend(build_sync_mutations(&sync_files, &primary)?);
+            mutations.extend(build_sync_mutations(
+                &self.plan.repo_root,
+                &sync_files,
+                &primary,
+            )?);
         }
         Ok(mutations)
     }

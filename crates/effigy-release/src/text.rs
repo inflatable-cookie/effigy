@@ -1000,6 +1000,24 @@ pub fn render_release_gate_run_text(run: &ReleaseGateRun) -> String {
         format!("  Passed: {}", if run.passed { "yes" } else { "no" }),
     ];
 
+    if !run.gates.is_empty() {
+        lines.push(String::new());
+        lines.push("Configured Gates".to_owned());
+        for (index, gate) in run.gates.iter().enumerate() {
+            lines.push(format!(
+                "  [{}/{}] {} ({}) - {}",
+                index + 1,
+                run.gates.len(),
+                gate.name,
+                gate.stage.stage_name(),
+                gate.command
+            ));
+            if let Some(description) = &gate.description {
+                lines.push(format!("    {description}"));
+            }
+        }
+    }
+
     if !run.gate_results.is_empty() {
         lines.push(String::new());
         lines.push("Gate Results".to_owned());

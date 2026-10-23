@@ -162,25 +162,38 @@ pub(super) fn run_standalone_release_gates(
     resolved: &ResolvedTarget,
 ) -> Result<ReleaseGateRun, RunnerError> {
     let config = load_release_config(&resolved.resolved_root)?;
-    let names = config
-        .gates
-        .iter()
-        .map(|gate| gate.name.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
-    emit_release_progress_line(&format!(
-        "configured gates ({}): {names}",
-        config.gates.len()
-    ));
+    // The inventory is printed before the first gate starts, so an operator can
+    // tell a slow gate from a hung command. Each line names the gate's stage
+    // and command, not only its name.
+    emit_release_gate_inventory(&config.gates);
     if !config.gates.is_empty() {
         emit_release_progress_line("running standalone release gates");
     }
     let report = run_release_gates(&resolved.resolved_root, &config.gates, true);
     Ok(collect_release_gate_run(
         resolved.resolved_root.clone(),
-        config.gates.len(),
+        config.gates,
         report,
     ))
+}
+
+/// Print the configured gate inventory, one line per gate.
+fn emit_release_gate_inventory(gates: &[ResolvedGate]) {
+    if gates.is_empty() {
+        emit_release_progress_line("no gates configured");
+        return;
+    }
+    emit_release_progress_line(&format!("configured gates ({}):", gates.len()));
+    for (index, gate) in gates.iter().enumerate() {
+        emit_release_progress_line(&format!(
+            "  {}/{} `{}` ({}) - {}",
+            index + 1,
+            gates.len(),
+            gate.name,
+            gate.stage.stage_name(),
+            gate.command
+        ));
+    }
 }
 
 fn run_release_gates(root: &Path, gates: &[ResolvedGate], fail_fast: bool) -> GateExecutionReport {

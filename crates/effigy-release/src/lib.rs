@@ -94,7 +94,7 @@ pub use version::{
 };
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::time::Instant;
 
@@ -410,12 +410,13 @@ pub fn resolve_sync_files(
     let mut seen = BTreeSet::new();
     for configured in &config.sync_files {
         let trimmed = configured.trim();
-        let path = root.join(trimmed);
+        let path = resolve_sync_file_path(root, trimmed)?;
         if !seen.insert(path.clone()) {
             continue;
         }
         match path.file_name().and_then(|name| name.to_str()) {
             Some("Cargo.lock") if matches!(version_source.kind, VersionFileKind::CargoToml) => {
+                require_cargo_workspace_root(&path)?;
                 resolved.push(ResolvedSyncFile {
                     path,
                     kind: SyncFileKind::CargoLock,
@@ -458,6 +459,111 @@ pub fn resolve_sync_files(
     }
 
     Ok(resolved)
+}
+
+/// Resolve one declared `release.sync-files` entry inside the release root.
+///
+/// A sync file is a repo-relative, declared path. Absolute paths, `..`
+/// components and any path whose resolved location leaves the release root are
+/// refused, so the prepare stage can only rewrite files the release root owns.
+/// A nested entry stays allowed: contract 054 §4.1 syncs the lockfile of a
+/// workspace-excluded Cargo consumer, which sits below the root on purpose.
+fn resolve_sync_file_path(root: &Path, configured: &str) -> Result<PathBuf, ReleaseError> {
+    let raw = Path::new(configured);
+    if raw.is_absolute() {
+        return Err(ReleaseError::TaskInvocation(format!(
+            "release.sync-files entry `{configured}` must be relative to the release root, not an absolute path"
+        )));
+    }
+    let mut relative = PathBuf::new();
+    for component in raw.components() {
+        match component {
+            Component::Normal(part) => relative.push(part),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                return Err(ReleaseError::TaskInvocation(format!(
+                    "release.sync-files entry `{configured}` must not contain `..`; a sync file stays inside the release root"
+                )));
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(ReleaseError::TaskInvocation(format!(
+                    "release.sync-files entry `{configured}` must be relative to the release root"
+                )));
+            }
+        }
+    }
+    if relative.as_os_str().is_empty() {
+        return Err(ReleaseError::TaskInvocation(
+            "release.sync-files entries must name a file".to_owned(),
+        ));
+    }
+    let path = root.join(&relative);
+    ensure_sync_path_inside_root(root, &path, configured)?;
+    Ok(path)
+}
+
+/// Refuse a sync path whose resolved location leaves the release root.
+///
+/// Canonicalising the nearest existing ancestor catches a symlinked directory
+/// that points outside the checkout, so a declared path cannot reach another
+/// workspace by alias.
+fn ensure_sync_path_inside_root(
+    root: &Path,
+    path: &Path,
+    configured: &str,
+) -> Result<(), ReleaseError> {
+    let canonical_root = std::fs::canonicalize(root).map_err(|error| {
+        ReleaseError::TaskInvocation(format!(
+            "failed to resolve the release root {} for release.sync-files: {error}",
+            root.display()
+        ))
+    })?;
+    let mut probe = path.to_path_buf();
+    loop {
+        match std::fs::canonicalize(&probe) {
+            Ok(resolved) => {
+                if resolved.starts_with(&canonical_root) {
+                    return Ok(());
+                }
+                return Err(ReleaseError::TaskInvocation(format!(
+                    "release.sync-files entry `{configured}` resolves to {} outside the release root {}",
+                    resolved.display(),
+                    canonical_root.display()
+                )));
+            }
+            Err(_) => match probe.parent() {
+                Some(parent) if parent != probe => probe = parent.to_path_buf(),
+                _ => {
+                    return Err(ReleaseError::TaskInvocation(format!(
+                        "release.sync-files entry `{configured}` could not be resolved inside the release root"
+                    )));
+                }
+            },
+        }
+    }
+}
+
+/// A synced `Cargo.lock` must be the lockfile of a Cargo workspace rooted at
+/// its own directory.
+///
+/// A lockfile under a plain member directory belongs to the enclosing
+/// workspace, so syncing it would rewrite a lockfile the release did not
+/// declare. Requiring a sibling `Cargo.toml` states that ownership up front.
+fn require_cargo_workspace_root(lockfile: &Path) -> Result<(), ReleaseError> {
+    let Some(directory) = lockfile.parent() else {
+        return Err(ReleaseError::TaskInvocation(format!(
+            "release.sync-files entry `{}` must name a Cargo.lock file inside the release root",
+            lockfile.display()
+        )));
+    };
+    if !directory.join("Cargo.toml").is_file() {
+        return Err(ReleaseError::TaskInvocation(format!(
+            "release.sync-files entry `{}` has no Cargo.toml beside it; declare the Cargo.lock of a workspace rooted at its own directory"
+,
+            lockfile.display()
+        )));
+    }
+    Ok(())
 }
 
 fn format_duration_ms(duration_ms: u128) -> String {
@@ -508,16 +614,29 @@ where
     let mut stopped_early = false;
     let hosted = resolve_run_hosted_evidence(root, gates, lookup, &mut progress);
 
-    for gate in gates {
+    for (index, gate) in gates.iter().enumerate() {
+        let position = index + 1;
         let result = if gate.reuse_hosted_evidence {
-            progress(&format!("reusing hosted evidence for gate `{}`", gate.name));
+            progress(&format!(
+                "gate {position}/{} `{}` ({}) reusing hosted evidence",
+                gates.len(),
+                gate.name,
+                gate.stage.stage_name()
+            ));
             gate_result_from_hosted_evidence(root, gate, hosted.as_ref())
         } else {
-            progress(&format!("running gate `{}`", gate.name));
+            progress(&format!(
+                "gate {position}/{} `{}` ({}) starting: {}",
+                gates.len(),
+                gate.name,
+                gate.stage.stage_name(),
+                gate.command
+            ));
             run_release_gate(root, gate)
         };
         progress(&format!(
-            "gate `{}` {} ({})",
+            "gate {position}/{} `{}` {} ({})",
+            gates.len(),
             result.name,
             if result.reused {
                 "reused"
@@ -655,13 +774,14 @@ pub fn reused_gate_records(results: &[GateResult]) -> Vec<ReusedGateRecord> {
 
 pub fn collect_release_gate_run(
     repo_root: PathBuf,
-    configured_gate_count: usize,
+    gates: Vec<ResolvedGate>,
     report: GateExecutionReport,
 ) -> ReleaseGateRun {
     let blockers = gate_blockers(&report.results);
     ReleaseGateRun {
         repo_root,
-        configured_gate_count,
+        configured_gate_count: gates.len(),
+        gates,
         executed_gate_count: report.results.len(),
         stopped_early: report.stopped_early,
         total_duration_ms: report.total_duration_ms,
@@ -1055,6 +1175,7 @@ pub fn build_release_prepare_plan(
             },
         });
         mutations.extend(build_sync_mutations(
+            &context.repo_root,
             &context.config.sync_files,
             &next_version,
         )?);

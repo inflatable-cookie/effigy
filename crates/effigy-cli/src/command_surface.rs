@@ -199,6 +199,10 @@ pub const COMMAND_DESCRIPTORS: &[CommandDescriptor] = &[
         topic: HelpTopic::Changelog,
         command_name: None,
     },
+    CommandDescriptor {
+        topic: HelpTopic::Fmt,
+        command_name: Some("fmt"),
+    },
 ];
 
 /// General-help inventory, ordered by primary group.
@@ -319,6 +323,13 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
         description: "Validate reusable JSON contract artifacts such as selection payloads",
         deferred_builtin: Some("contracts"),
         help_argument: Some("contracts"),
+    },
+    GeneralHelpEntry {
+        group: HelpGroup::Repo,
+        command: "effigy fmt rust <FILE>...",
+        description: "Format only the named Rust files with their nearest rustfmt config",
+        deferred_builtin: None,
+        help_argument: Some("fmt"),
     },
     // ---- deliver ------------------------------------------------------------
     GeneralHelpEntry {
@@ -446,6 +457,7 @@ pub const HELP_COMMAND_TOPICS: &[(&str, HelpTopic)] = &[
     ("docs", HelpTopic::Docs),
     ("doctor", HelpTopic::Doctor),
     ("exec", HelpTopic::Exec),
+    ("fmt", HelpTopic::Fmt),
     ("gateway", HelpTopic::Gateway),
     ("help", HelpTopic::General),
     ("init", HelpTopic::Init),

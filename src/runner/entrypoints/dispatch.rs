@@ -5,7 +5,6 @@ use std::path::Path;
 
 use super::super::doctor_ports::RunnerDoctorPorts;
 use super::super::run_bundle;
-use super::super::run_changelog;
 use super::super::run_container_command;
 use super::super::run_contracts;
 use super::super::run_defer;
@@ -29,6 +28,7 @@ use super::super::run_state;
 use super::super::run_tasks;
 use super::super::run_uninstall;
 use super::super::run_workspace;
+use super::super::{run_changelog, run_fmt};
 use crate::runner::error::RunnerError;
 
 pub(super) fn run_command(cmd: Command) -> Result<String, RunnerError> {
@@ -82,6 +82,7 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::Bundle(args) => run_bundle(args),
         Command::Help(_) | Command::HelpGroup(_) => Ok(String::new()),
         Command::Changelog(args) => run_changelog(args),
+        Command::Fmt(args) => run_fmt(args),
         Command::Deploy(args) => run_deploy(args),
         Command::Deps(args) => run_deps(args),
         Command::Secrets(args) => run_secrets(args),
