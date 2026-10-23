@@ -14,6 +14,7 @@ pub mod fs;
 pub mod gate;
 pub mod id;
 pub mod ident;
+pub mod inheritance;
 pub mod migration;
 pub mod objects;
 pub mod observe;

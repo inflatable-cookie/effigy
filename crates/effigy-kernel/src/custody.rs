@@ -393,6 +393,7 @@ impl Custody {
             None,
             crate::ctx::Capability::AdapterEffect,
             true,
+            None,
         )
     }
 
@@ -410,6 +411,7 @@ impl Custody {
             None,
             crate::ctx::Capability::AdapterEffect,
             false,
+            None,
         )
     }
 
@@ -425,6 +427,7 @@ impl Custody {
             None,
             crate::ctx::Capability::AdapterEffect,
             true,
+            None,
         )
     }
     /// A process the run keeps in custody without making its exit a workload
@@ -442,6 +445,7 @@ impl Custody {
             None,
             crate::ctx::Capability::AdapterEffect,
             false,
+            None,
         )
     }
     /// Acquire executable source under a Prepare run. This uses the same
@@ -459,6 +463,7 @@ impl Custody {
             None,
             crate::ctx::Capability::AcquireSource,
             true,
+            None,
         )
     }
     pub(crate) fn spawn_remote(
@@ -474,6 +479,43 @@ impl Custody {
             Some(registration),
             crate::ctx::Capability::AdapterEffect,
             true,
+            None,
+        )
+    }
+    /// The caller owns this memory lease; only its reading descriptor reaches
+    /// the workload. `required` distinguishes workload and auxiliary custody.
+    pub fn spawn_with_lease(
+        run: &mut Run<'_>,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+        lease: &crate::inheritance::InheritedCapability,
+        required: bool,
+    ) -> Result<OwnedProcess, SpawnError> {
+        Self::spawn_inner(
+            run,
+            spec,
+            cx,
+            None,
+            crate::ctx::Capability::AdapterEffect,
+            required,
+            Some(lease),
+        )
+    }
+    pub fn spawn_foreground_with_lease(
+        run: &mut crate::run::ForegroundRun,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+        lease: &crate::inheritance::InheritedCapability,
+        required: bool,
+    ) -> Result<OwnedProcess, SpawnError> {
+        Self::spawn_inner(
+            run,
+            spec,
+            cx,
+            None,
+            crate::ctx::Capability::AdapterEffect,
+            required,
+            Some(lease),
         )
     }
     fn spawn_inner(
@@ -483,6 +525,7 @@ impl Custody {
         registration: Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>>,
         capability: crate::ctx::Capability,
         required: bool,
+        lease: Option<&crate::inheritance::InheritedCapability>,
     ) -> Result<OwnedProcess, SpawnError> {
         cx.require(capability)
             .map_err(|_| SpawnError::Refused(format!("spawn needs {capability:?}")))?;
@@ -522,7 +565,7 @@ impl Custody {
         })?;
         let nonce = format!("{}:{}", run.id(), ticket.sequence());
         let image = run.anchor_image()?;
-        let mut pending = spawn::Blocked::fork(&spec, &nonce, cx.operation(), &image)?;
+        let mut pending = spawn::Blocked::fork(&spec, &nonce, cx.operation(), &image, lease)?;
         drop(image); // helper verified the image before acknowledging the barrier
         let result = (|| {
             crate::fault_point!(SpawnFork)?;

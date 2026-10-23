@@ -223,6 +223,16 @@ or fsyncs run metadata. Lock-file creation and best-effort diagnostic bytes
 are transient exclusion machinery, not durable run records. Task outputs and
 explicit user-requested exports are outside runtime-state accounting.
 
+The kernel's memory parent capability uses an anonymous Unix socket pair.
+Only Custody explicitly exports its reading end to reserved descriptor 9;
+the writing end never reaches a workload or group anchor. A bounded grant is
+peeked without consumption, checked against its environment selector, native
+peer UID/PID and fresh boot/start identity, with socket closure checked before
+and after. The receiver marks the inherited slot CLOEXEC; forwarding requires
+an explicit capability again. Queued bytes after owner closure grant nothing.
+This supplies the mechanism for admission and run-class inheritance; engines
+own the typed grant and live hook check.
+
 **Foreground custody (I-P2/I-P3).** Before workload go, the owner and its
 in-memory guard acknowledge the complete custody receipt, nonce and ready
 group anchor. The existing spawn barrier still applies. The guard uses the

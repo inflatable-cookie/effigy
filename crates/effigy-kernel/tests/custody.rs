@@ -119,6 +119,14 @@ fn spec(home: &Path, script: &str) -> ProcessSpec {
         label: "fixture".into(),
     }
 }
+/// A poll is a new observation: StoreReader intentionally owns a snapshot.
+fn fresh_status(cx: &ObserveContext, root: &StateRoot, id: RunId) -> Observed<RunStatus> {
+    match effigy_kernel::store::Store::read(cx, root) {
+        Observed::Verified(reader, _) => status(cx, root, &reader, id, next()),
+        Observed::Absent(proof) => Observed::Absent(proof),
+        Observed::Unknown(reason) => Observed::Unknown(reason),
+    }
+}
 fn eventually(mut predicate: impl FnMut() -> bool) {
     let end = Instant::now() + Duration::from_secs(12);
     while !predicate() {
@@ -405,22 +413,9 @@ fn custody_signal_and_owner_kill_matrix_settles_without_survivors() {
             eventually(|| owner.0.try_wait().unwrap().is_some());
             let cx = context();
             let root = StateRoot::effects(&cx, home.path()).unwrap();
-            let reader = match effigy_kernel::store::Store::read(
-                &cx.operation().observe().unwrap(),
-                &root,
-            ) {
-                Observed::Verified(r, _) => r,
-                other => panic!("{other:?}"),
-            };
             let runid = RunId::new(1, [9; 10]).unwrap();
-            eventually(|| {
-                match status(
-                    &cx.operation().observe().unwrap(),
-                    &root,
-                    &reader,
-                    runid,
-                    next(),
-                ) {
+            eventually(
+                || match fresh_status(&cx.operation().observe().unwrap(), &root, runid) {
                     Observed::Verified(RunStatus::Closed { complete: true, .. }, _) => true,
                     Observed::Verified(
                         RunStatus::Closed {
@@ -431,15 +426,9 @@ fn custody_signal_and_owner_kill_matrix_settles_without_survivors() {
                         _,
                     ) => panic!("{placement}/{signal}: incomplete {effects:?}"),
                     _ => false,
-                }
-            });
-            let status = status(
-                &cx.operation().observe().unwrap(),
-                &root,
-                &reader,
-                runid,
-                next(),
+                },
             );
+            let status = fresh_status(&cx.operation().observe().unwrap(), &root, runid);
             if let Observed::Verified(RunStatus::Closed { effects, .. }, _) = status {
                 for effect in effects {
                     if effect.spec.kind != "kernel:process" {
@@ -487,16 +476,8 @@ fn custody_detach_secondary_client_death_and_explicit_stop() {
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let socket = root.path().join("sock").join(format!("{}.sock", id(1)));
     drop(std::os::unix::net::UnixStream::connect(&socket).unwrap());
-    let reader = effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &root);
-    let reader = reader.verified().unwrap();
     assert!(matches!(
-        status(
-            &cx.operation().observe().unwrap(),
-            &root,
-            reader,
-            id(1),
-            next()
-        ),
+        fresh_status(&cx.operation().observe().unwrap(), &root, id(1)),
         Observed::Verified(RunStatus::Live(_), _)
     ));
     let fence = client.fence.clone();
@@ -514,13 +495,7 @@ fn custody_detach_secondary_client_death_and_explicit_stop() {
     .unwrap();
     eventually(|| {
         matches!(
-            status(
-                &cx.operation().observe().unwrap(),
-                &root,
-                reader,
-                id(1),
-                next()
-            ),
+            fresh_status(&cx.operation().observe().unwrap(), &root, id(1)),
             Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
         )
     });
@@ -586,16 +561,8 @@ fn custody_sentinel_recovers_nonce_descendant_after_leader_and_owner_die() {
     let cx = context();
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let observed = cx.operation().observe().unwrap();
-    let reader = effigy_kernel::store::Store::read(&observed, &root);
-    let reader = reader.verified().unwrap();
-    eventually(|| {
-        match status(
-            &observed,
-            &root,
-            reader,
-            RunId::new(1, [9; 10]).unwrap(),
-            next(),
-        ) {
+    eventually(
+        || match fresh_status(&observed, &root, RunId::new(1, [9; 10]).unwrap()) {
             Observed::Verified(RunStatus::Closed { complete: true, .. }, _) => true,
             Observed::Verified(
                 RunStatus::Closed {
@@ -606,8 +573,8 @@ fn custody_sentinel_recovers_nonce_descendant_after_leader_and_owner_die() {
                 _,
             ) => panic!("{effects:?}"),
             _ => false,
-        }
-    });
+        },
+    );
     assert_ne!(
         effigy_kernel::ident::process_identity(descendant).verified(),
         Some(&identity)
@@ -665,10 +632,9 @@ fn custody_supervisor_kill_is_settled_and_stopped_owner_does_not_trigger_sentine
             Observed::Verified(effigy_kernel::ident::ProcessState::Stopped, _)
         )
     });
-    let reader = effigy_kernel::store::Store::read(&observe, &root1);
     std::thread::sleep(Duration::from_millis(100));
     assert!(matches!(
-        status(&observe, &root1, reader.verified().unwrap(), runid, next()),
+        fresh_status(&observe, &root1, runid),
         Observed::Verified(RunStatus::Live(_), _)
     ));
     assert_eq!(
@@ -708,10 +674,9 @@ fn custody_supervisor_kill_is_settled_and_stopped_owner_does_not_trigger_sentine
         unsafe { libc::kill(supervisor.pid as i32, libc::SIGKILL) },
         0
     );
-    let reader = effigy_kernel::store::Store::read(&observe, &root2);
     eventually(|| {
         matches!(
-            status(&observe, &root2, reader.verified().unwrap(), id(1), next()),
+            fresh_status(&observe, &root2, id(1)),
             Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
         )
     });
@@ -933,10 +898,9 @@ fn custody_detached_escalation_interrupts_an_in_progress_settle_grace() {
     client.stop(&cx, id(2)).unwrap();
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let observe = cx.operation().observe().unwrap();
-    let reader = effigy_kernel::store::Store::read(&observe, &root);
     eventually(|| {
         matches!(
-            status(&observe, &root, reader.verified().unwrap(), id(1), next()),
+            fresh_status(&observe, &root, id(1)),
             Observed::Verified(RunStatus::Live(Phase::Stopping), _)
         )
     });
@@ -944,7 +908,7 @@ fn custody_detached_escalation_interrupts_an_in_progress_settle_grace() {
     client.escalate(&cx, id(3)).unwrap();
     eventually(|| {
         matches!(
-            status(&observe, &root, reader.verified().unwrap(), id(1), next()),
+            fresh_status(&observe, &root, id(1)),
             Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
         )
     });
@@ -1004,16 +968,9 @@ fn custody_terminal_close_stops_detached_owning_client() {
     let cx = context();
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let observe = cx.operation().observe().unwrap();
-    let reader = effigy_kernel::store::Store::read(&observe, &root);
     eventually(|| {
         matches!(
-            status(
-                &observe,
-                &root,
-                reader.verified().unwrap(),
-                RunId::new(1, [9; 10]).unwrap(),
-                next()
-            ),
+            fresh_status(&observe, &root, RunId::new(1, [9; 10]).unwrap()),
             Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
         )
     });
@@ -1054,9 +1011,8 @@ fn custody_both_owner_and_sentinel_die_successor_is_the_only_settle_writer() {
     });
     assert_eq!(unsafe { libc::kill(owner.0.id() as i32, libc::SIGKILL) }, 0);
     eventually(|| owner.0.try_wait().unwrap().is_some());
-    let reader = effigy_kernel::store::Store::read(&observe, &root);
     assert!(matches!(
-        status(&observe, &root, reader.verified().unwrap(), runid, next()),
+        fresh_status(&observe, &root, runid),
         Observed::Verified(RunStatus::Interrupted { .. }, _)
     ));
     let outcome = settle_interrupted(
@@ -1128,14 +1084,7 @@ fn engine_status(home: &Path) -> Observed<RunStatus> {
     let cx = context();
     let root = StateRoot::effects(&cx, home).unwrap();
     let observe = cx.operation().observe().unwrap();
-    let reader = effigy_kernel::store::Store::read(&observe, &root);
-    status(
-        &observe,
-        &root,
-        reader.verified().unwrap(),
-        RunId::new(1, [9; 10]).unwrap(),
-        next(),
-    )
+    fresh_status(&observe, &root, RunId::new(1, [9; 10]).unwrap())
 }
 fn workload_gone(home: &Path) -> bool {
     let pid: i32 = std::fs::read_to_string(home.join("engine-workload.pid"))
@@ -1698,20 +1647,10 @@ fn custody_machine_journal_routes_supervisor_requests_and_sentinel_recovery_with
             client.stop(&cx, id(2)).unwrap();
         }
         eventually(|| {
-            let reader =
-                effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &machine);
-            reader.verified().is_some_and(|reader| {
-                matches!(
-                    status(
-                        &cx.operation().observe().unwrap(),
-                        &machine,
-                        reader,
-                        id(1),
-                        next()
-                    ),
-                    Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
-                )
-            })
+            matches!(
+                fresh_status(&cx.operation().observe().unwrap(), &machine, id(1)),
+                Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
+            )
         });
         let waited = client.wait(cx.operation());
         if killed {
@@ -1811,5 +1750,64 @@ fn foreground_auxiliary_custody_is_not_a_completion_obligation() {
         effigy_kernel::ident::process_identity(identity.pid).verified(),
         Some(&identity)
     );
+    assert!(!root.path().join("kernel.db").exists());
+}
+
+#[test]
+fn inheritance_custody_exports_one_reader_to_sibling_foreground_children() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    let lease = effigy_kernel::inheritance::MemoryLease::new(
+        &cx,
+        &serde_json::json!({"admitted": true, "class": "foreground"}),
+    )
+    .unwrap();
+    let reader = lease.capability();
+    let mut children = Vec::new();
+    for _ in 0..2 {
+        let mut spec = spec(home.path(), "unused");
+        spec.argv = vec![fixture().into_os_string(), "inheritance-check".into()];
+        children.push(
+            Custody::spawn_foreground_with_lease(&mut run, spec, &cx, &reader, true).unwrap(),
+        );
+    }
+    for child in &mut children {
+        let exit = child.wait(cx.operation()).verified().copied().unwrap();
+        assert_eq!(exit.code, 0);
+        child.complete_foreground(&mut run, exit).unwrap();
+    }
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    assert_eq!(
+        run.settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+            .unwrap()
+            .cleanup(),
+        CleanupOutcome::Complete
+    );
+    assert!(!root.path().join("kernel.db").exists());
+    assert!(!root.path().join("runs").exists());
+    assert!(!root.path().join("sock").exists());
+}
+
+#[test]
+fn inheritance_ambient_marker_cannot_export_an_unowned_descriptor() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    let mut spec = spec(home.path(), "unused");
+    spec.argv = vec![fixture().into_os_string(), "inheritance-check".into()];
+    spec.env.insert(
+        effigy_kernel::inheritance::ENV.into(),
+        EnvValue::Plain("forged parent grant".into()),
+    );
+    let mut child = Custody::spawn_foreground(&mut run, spec, &cx).unwrap();
+    let exit = child.wait(cx.operation()).verified().copied().unwrap();
+    assert_eq!(exit.code, 41);
+    child.complete_foreground(&mut run, exit).unwrap();
+    run.finish(WorkloadOutcome::Failed { code: 41 }).unwrap();
+    run.settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+        .unwrap();
     assert!(!root.path().join("kernel.db").exists());
 }

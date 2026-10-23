@@ -109,6 +109,25 @@ fn main() {
         }
         return;
     }
+    if entry == "inheritance-check" {
+        let cx = op(router.root_cancel());
+        let captured = std::env::var(effigy_kernel::inheritance::ENV)
+            .ok()
+            .and_then(|marker| {
+                effigy_kernel::inheritance::InheritedCapability::capture(&cx, &marker).ok()
+            });
+        let Some(capability) = captured else {
+            std::process::exit(41);
+        };
+        for _ in 0..3 {
+            if capability.payload::<serde_json::Value>(&cx).ok()
+                != Some(serde_json::json!({"admitted": true, "class": "foreground"}))
+            {
+                std::process::exit(42);
+            }
+        }
+        return;
+    }
     if entry == "migration-writer" {
         let home = Path::new(args.get(1).expect("private fixture home"));
         let cx = op(router.root_cancel()).effects().unwrap();
