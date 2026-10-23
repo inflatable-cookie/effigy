@@ -36,7 +36,11 @@ fn fmt_rust_formats_only_the_named_files() {
         "pub fn named( )->u32{1}\nmod child;\n",
     );
     let child = write(&root, "src/child.rs", "pub fn child( )->u32{2}\n");
-    let unrelated = write(&root, "crates/other/src/lib.rs", "pub fn other( )->u32{3}\n");
+    let unrelated = write(
+        &root,
+        "crates/other/src/lib.rs",
+        "pub fn other( )->u32{3}\n",
+    );
 
     let report = format_files(&root, std::slice::from_ref(&named), false).expect("format");
     assert!(report.contains("src/named.rs"), "{report}");
