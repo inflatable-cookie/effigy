@@ -16,7 +16,10 @@ use effigy_cli::TaskInvocation;
 use effigy_containers::{
     colima::parse_colima_running,
     compose::{resolve_compose_backend_for_repo, ComposeBackend},
-    exec::{inspect_colima_ssh_agent_socket_for_profile_with_deadline, SshAgentSocketHealth},
+    exec::{
+        inspect_colima_ssh_agent_socket_for_profile_with_deadline, inspect_run_inode_pressure,
+        SshAgentSocketHealth,
+    },
     load_all_container_policies, user_global_backend_preference, user_global_colima_profile,
     ContainerAction,
 };
@@ -41,6 +44,11 @@ use crate::runner::workspace_command::permissions::{
 
 #[derive(Debug, Default)]
 pub(in crate::runner) struct RunnerDoctorPorts;
+
+/// Bound for the doctor's read-only `/run` inode and leaked-pid-file probe on a
+/// running Colima profile. A profile that holds the leak has hundreds of
+/// thousands of files to walk; a clean one answers in well under a second.
+const RUN_INODE_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
 impl RunnerDoctorPorts {
     pub(in crate::runner) fn new() -> Self {
@@ -225,6 +233,12 @@ fn collect_runtime_diagnostics(
                     ));
                     if running {
                         append_ssh_agent_socket_warning(
+                            profile,
+                            resolved_root,
+                            deadline,
+                            &mut diagnostics,
+                        );
+                        append_run_inode_pressure_diagnostics(
                             profile,
                             resolved_root,
                             deadline,
@@ -564,6 +578,35 @@ fn append_ssh_agent_socket_warning(
          up` can fail with `mkdir /run/host-services/ssh-auth.sock: file exists`. \
          Fix: `colima restart {profile}`."
     ));
+}
+
+/// Report `/run` inode pressure and the nerdctl health-check pid files a
+/// running profile has leaked (effigy#291). nerdctl 2.3.1 never deletes the
+/// exec process behind each health check, so the VM accumulates one
+/// `health-check-<id>.pid` per check until `/run`'s inodes are gone and every
+/// exec/create in the profile fails. The probe is read-only and bounded; the
+/// warning names the prune and the runtime version that fixes the leak.
+fn append_run_inode_pressure_diagnostics(
+    profile: &str,
+    repo_root: &Path,
+    deadline: Option<Instant>,
+    diagnostics: &mut DoctorRuntimeDiagnostics,
+) {
+    let deadline = deadline.unwrap_or_else(|| Instant::now() + RUN_INODE_PROBE_TIMEOUT);
+    match inspect_run_inode_pressure(profile, repo_root, deadline) {
+        Ok(pressure) => {
+            diagnostics.evidence.push(format!(
+                "colima-profile `{profile}` /run: {}",
+                pressure.summary()
+            ));
+            if let Some(warning) = pressure.warning(profile) {
+                diagnostics.warnings.push(warning);
+            }
+        }
+        Err(error) => diagnostics.warnings.push(format!(
+            "colima profile `{profile}` nerdctl health-check pid-file probe unavailable: {error}"
+        )),
+    }
 }
 
 fn docker_context_mismatch_warning(
