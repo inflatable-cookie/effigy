@@ -1525,9 +1525,10 @@ preserve unknown fields and keep a pre-edit copy of both endpoint documents with
 SHA-256 evidence.
 
 A loopback assignment or container route is dead only when its owner checkout
-path is definitely missing (absent with a readable nearest ancestor; an I/O or
-permission error, or an absent parent such as an unmounted volume, is unknown
-and holds it), no runtime-scope record names the identity, checkout path or
+path is definitely missing (absent with its immediate parent directory readable,
+the classification `container ports reclaim` uses; an I/O or permission error,
+or an absent parent such as an unmounted volume or a vanished intermediate
+directory, is unknown and holds it), no runtime-scope record names the identity, checkout path or
 route, no container in any state carries its project label or working directory
 or publishes on its address, no live assignment or live project route keeps the
 address, and no non-gateway process listens on the route's alias tuple. The
@@ -1535,7 +1536,8 @@ gateway binds its TCP aliases from the Store's route table and stops a listener
 when its route disappears, so its own alias for a dead route is not a hold; a
 same-user process that is not the recorded gateway daemon, or a listener probe
 that cannot answer, is. A shared-service identity is dead only when no consumer
-project that uses it is live. Incomplete inventory or an unreadable scope store
+project that uses it is live and no container carries the shared service's own
+project name. Incomplete inventory or an unreadable scope store
 holds the whole plan and names the reason. A stopped Colima profile does not
 hold a loopback entry: it binds no host address and cannot start a stack whose
 checkout is gone. Present paths, running containers and unknown path states are

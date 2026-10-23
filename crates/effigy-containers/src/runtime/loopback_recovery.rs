@@ -328,7 +328,9 @@ fn decide_missing_assignment(
         .filter(|route| route.dns_ip == Some(assignment.ip))
         .collect::<Vec<_>>();
 
-    // A shared service is dead only when no consumer project still uses it.
+    // A shared service is dead only when no consumer project still uses it and
+    // no container carries the shared service's own project name (checked
+    // below for every identity).
     if identity.starts_with("shared:") {
         if let Some(route) = routes_on_ip
             .iter()
@@ -756,6 +758,15 @@ pub fn loopback_reclaim_json(report: &LoopbackReclaimReport) -> Value {
         "gateway_dir": report.gateway_dir.display().to_string(),
         "global_hold": report.plan.global_hold,
         "plan_digest": report.plan.digest,
+        "planned_release_assignments": report.plan.release_assignments(),
+        "planned_release_routes": report.plan.release_routes(),
+        "planned_release_addresses": report
+            .plan
+            .assignments
+            .iter()
+            .filter(|row| row.decision == Decision::Reclaim)
+            .map(|row| row.ip.to_string())
+            .collect::<Vec<_>>(),
         "released_assignments": report.edit.released_assignments,
         "released_routes": report.edit.released_routes,
         "released_addresses": report

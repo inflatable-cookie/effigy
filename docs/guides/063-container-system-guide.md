@@ -1924,8 +1924,10 @@ the plan it recomputes and prints the digest it applied.
 A loopback assignment or container route is dead only when all of these hold:
 
 - its owner checkout path is definitely missing: the leaf is absent and its
-  parent directory is readable. Permission and I/O errors, and an absent
-  parent such as an unmounted volume, are unknown and hold the entry;
+  parent directory is readable, the same classification `container ports
+  reclaim` uses. Permission and I/O errors, and an absent parent such as an
+  unmounted volume or a vanished intermediate directory, are unknown and hold
+  the entry;
 - no runtime-scope record names the identity, its checkout path or its route;
 - no container in any state carries its project label or working directory,
   and none publishes on its address;
@@ -1937,7 +1939,7 @@ A loopback assignment or container route is dead only when all of these hold:
   answer, is.
 
 A shared-service identity is dead only when no consumer project that uses it
-is live. Incomplete ownership proof holds the whole plan and names the reason;
+is live and no container carries the shared service's own project name. Incomplete ownership proof holds the whole plan and names the reason;
 a stopped Colima profile does not hold anything, because it binds no host
 address and cannot start a stack whose checkout is gone. Present paths, running
 containers and unknown path states are never touched, so a live project's
