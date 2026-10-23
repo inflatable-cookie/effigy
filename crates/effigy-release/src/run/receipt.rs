@@ -193,9 +193,10 @@ pub fn render_release_receipt_text(receipt: &ReleaseReceipt) -> String {
                 gate.stage,
                 gate.name,
                 if gate.passed { "passed" } else { "failed" },
-                match &gate.hosted_run {
-                    Some(url) => format!(" (hosted evidence {url})"),
-                    None => String::new(),
+                match (&gate.hosted_run, gate.hosted_run_id) {
+                    (Some(url), Some(id)) => format!(" (hosted evidence run #{id} {url})"),
+                    (Some(url), None) => format!(" (hosted evidence {url})"),
+                    (None, _) => String::new(),
                 }
             ));
         }

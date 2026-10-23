@@ -64,14 +64,17 @@ Use this query to select the run; never substitute a merely recent green run:
 
 ```sh
 gh run list --workflow ci.yml --branch main --commit "$candidate_sha" \
-  --event workflow_dispatch --limit 1 \
+  --event workflow_dispatch --limit 20 \
   --json databaseId,headSha,status,conclusion,url
 ```
 
-Effigy's configured `ci` release gate checks the same exact-SHA invariant.
-Missing, pending, red, or different-commit evidence blocks every gate-checked
-preview and prepare. Local release gates then validate deterministic release
-file mutations; they do not replace hosted CI on the candidate source.
+Exactly one run must match: zero or several refuse and name the candidates.
+Effigy's configured `ci` release gate checks the same exact-SHA invariant, and
+a hosted-evidence release gate binds the one run it dispatched and records its
+id, so a resume never re-binds a sibling. Missing, pending, red, or
+different-commit evidence blocks every gate-checked preview and prepare. Local
+release gates then validate deterministic release file mutations; they do not
+replace hosted CI on the candidate source.
 
 A gate may opt in with `reuse-hosted-evidence = true` when
 `[release.hosted-evidence].workflow` is set. Reuse accepts only this

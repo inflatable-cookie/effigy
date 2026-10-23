@@ -65,6 +65,19 @@ exact-commit CI evidence on GitHub. A Run waiting on it is resumable and
 doesn't hold a process open. The current `reuse-hosted-evidence` gate option
 becomes this mechanism.
 
+**A hosted wait binds one run, never a sibling.** The wait opens a dispatch
+window the first time the gate needs evidence ("no run created before this
+instant is this release's") and records it in the Run's record. Exactly one run
+of the configured workflow and event, for the exact commit and repository, may
+be created inside that window: that run becomes the **bound run**, and its id
+is journalled on the gate and in the wait entry. From then on the wait
+re-checks the bound run only, so a newer dispatch — another release, an
+operator's re-dispatch, a re-run — can never substitute for it. Zero matches
+wait (`awaiting-hosted-evidence`), and several matches inside one window fail
+the gate closed with the candidates named. A one-shot `effigy release gates`
+check has no record to open a window in, so it accepts only a commit's single
+matching run and refuses the same way.
+
 ## 4. Configuration
 
 The current single-identity `[release]` keys stay valid as a shorthand for a
@@ -490,7 +503,8 @@ it reads the prepared version, changelog and lockfile and needs no arguments —
 which also keeps the task-gate form (§11) exercised by Effigy's own release.
 `preflight` is a **`pre` gate** whose docs slice runs before any version edit;
 it runs the repo script with `--skip-smoke` because the `smoke` certify gate
-already proves the prepared binary, so no check runs twice. The manual
+already proves the prepared binary, so no check runs twice. The retired
+`release preflight` command's refusal names that `pre-gates` stage. The manual
 `effigy release:preflight` task still runs all three slices. `proof` and `evidence closeout` stay manual tasks: both need a human to
 name an artifact directory, and neither is part of a Run's stages.
 

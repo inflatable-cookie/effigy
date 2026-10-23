@@ -264,9 +264,18 @@ candidate commit once `prepare` committed it, and the source commit before
 that — verified through authenticated `gh`. While that evidence is missing or
 still running, the Run stops with status `awaiting-hosted-evidence`, holds no
 process open and runs no later work in that stage (no artifact task runs before
-the evidence exists); `effigy release resume <run>` re-checks it and continues. A failed run, the
-wrong commit, the wrong repository or an ambiguous answer fails the gate closed
-instead of running the local command. Gates without that flag run locally.
+the evidence exists); `effigy release resume <run>` re-checks it and continues.
+A failed run, the wrong commit, the wrong repository or an ambiguous answer
+fails the gate closed instead of running the local command. Gates without that
+flag run locally.
+
+The wait binds one run, never a sibling. It opens a dispatch window the first
+time the gate needs evidence, and accepts only a run of the configured workflow
+and event for the exact commit that was created after that instant; that run's
+id is recorded on the gate and re-checked by every resume, so a newer dispatch
+cannot be substituted for it. Zero matches keeps waiting; several matches
+inside the window fail closed with the candidates named. Dispatch the workflow
+once for the commit this Run is waiting on, then `effigy release resume <run>`.
 
 A release with a `task` target can publish to any destination without Effigy
 knowing its protocol. The task runs as an ordinary Effigy task and reads the
@@ -491,12 +500,15 @@ run with:
 
 ```sh
 gh run list --workflow ci.yml --branch main --commit "$candidate_sha" \
-  --event workflow_dispatch --limit 1 \
-  --json databaseId,headSha,status,conclusion,url
+  --event workflow_dispatch --limit 20 \
+  --json databaseId,headSha,status,conclusion,url,createdAt
 ```
 
-Do not accept the latest green run unless its `headSha` is the candidate SHA.
-Effigy's self-hosted `ci` release gate checks the same invariant. Missing,
+There must be exactly one `workflow_dispatch` run for the candidate SHA.
+Never take the newest run: a sibling dispatch of the same commit is a
+different run, so zero matches or several matches refuse and name the
+candidates instead of choosing one. Effigy's self-hosted `ci` release gate
+(`scripts/check-release-ci.sh`) applies the same rule. Missing,
 pending, red, cancelled, or different-commit evidence blocks the `pre-gates`
 stage. The other local gates validate the deterministic version, changelog, and
 lockfile mutations after hosted CI has proved the source commit.
@@ -672,11 +684,16 @@ reuse-hosted-evidence = true
 
 - lookup uses authenticated `gh run list --repo <origin-owner/name>`
 - the run must match this repository and the exact `HEAD` SHA
+- the wait binds the one run created inside its dispatch window and records
+  the run id; a resume re-checks that run and never a newer sibling
+- exactly one match is required: zero keeps waiting, several fail closed and
+  name the candidate runs
 - `prepare` changes `HEAD` only when it commits the prepared tree; reuse
   attests the source commit, so a hosted-evidence gate belongs in the
   `pre-gates` stage
 - `status`, `release --plan` and `release gates` share that verdict
-- the Run's record keeps each reused gate and its run URL
+- the Run's record keeps each hosted gate, its dispatch window and its bound
+  run id and URL
 - missing, pending, failed, ambiguous, wrong-repository, or wrong-SHA evidence
   fails the named gate; unlisted gates still run locally
 

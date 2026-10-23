@@ -287,8 +287,11 @@ and resolve the failure before continuing.
    - Start from a clean `main` checkout whose `HEAD` is already pushed.
    - Record `candidate_sha=$(git rev-parse HEAD)`.
    - Dispatch `gh workflow run ci.yml --ref main`.
-   - Select the `workflow_dispatch` run for the exact commit:
-     `gh run list --workflow ci.yml --branch main --commit "$candidate_sha" --event workflow_dispatch --limit 1 --json databaseId,headSha,status,conclusion,url`.
+   - Select the one `workflow_dispatch` run for the exact commit:
+     `gh run list --workflow ci.yml --branch main --commit "$candidate_sha" --event workflow_dispatch --limit 20 --json databaseId,headSha,status,conclusion,url`.
+   - Exactly one run must match. Never take the newest one: a sibling dispatch
+     of the same commit is a different run, so zero or several matches refuse
+     and name the candidates.
    - Verify `headSha` equals `$candidate_sha`, then run
      `gh run watch <RUN_ID> --exit-status`.
    - Stop on a missing, pending, red, cancelled, or different-commit run.
