@@ -62,16 +62,18 @@ with tempfile.TemporaryDirectory(prefix="q010-cli-") as temporary:
     project = root / "project"
     home.mkdir()
     project.mkdir()
-    (project / "effigy.toml").write_text("[tasks.noop]\nrun = 'touch noop-ran'\n")
+    (project / "effigy.toml").write_text("[tasks.noop]\nrun = 'touch noop-ran'\n[tasks.foreground]\nrun = 'touch foreground-ready; sleep 300'\n[tasks.short]\nrun = 'touch foreground-short'\n")
     git = project / ".git"
     git.mkdir()
     (git / "effigy-checkout-id").write_text("07" * 16)
     (git / "effigy-runtime-scope").write_text("08" * 16)
     env = dict(os.environ, HOME=str(home), NO_COLOR="1")
     # A proof never inherits another run's admission/custody capabilities.
-    for key in ["EFFIGY_ADMITTED", "EFFIGY_CUSTODY_NONCE", "EFFIGY_PROBE_NONCE"]:
+    for key in ["EFFIGY_ADMITTED", "EFFIGY_CUSTODY_NONCE", "EFFIGY_PROBE_NONCE",
+                "EFFIGY_PARENT_CAPABILITY", "EFFIGY_ADMISSION_HOOK", "EFFIGY_MANAGED_RUN_TOKEN"]:
         env.pop(key, None)
     child = None
+    foreground = None
 
     def command(*args, succeeds=True, migration=True):
         result = subprocess.run([str(binary), *args], cwd=project, env=env,
@@ -88,6 +90,13 @@ with tempfile.TemporaryDirectory(prefix="q010-cli-") as temporary:
         before = snapshot(root)
         assert command("run", "migrate", "--plan", "--json")["state"] == "no-legacy-state"
         assert snapshot(root) == before, "absent planning created state"
+        foreground = subprocess.Popen([str(binary), "foreground"], cwd=project, env=env,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        deadline = time.monotonic() + 12
+        while not (project / "foreground-ready").exists():
+            assert foreground.poll() is None, foreground.communicate()
+            assert time.monotonic() < deadline, "foreground ready deadline"
+            time.sleep(.01)
         child = subprocess.Popen([str(fixture_binary), "migration-writer", str(home), "seed-aliases"],
                                  cwd=project, env=env, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -106,6 +115,10 @@ with tempfile.TemporaryDirectory(prefix="q010-cli-") as temporary:
         blocked = command("run", "migrate", "--plan", "--json", succeeds=False)
         assert blocked["state"] == "blocked" and blocked["staging_started"] is False
         assert snapshot(root) == before, "busy planning changed a source or staged a destination"
+        assert foreground.poll() is None, "legacy busy refusal interrupted foreground work"
+        command("short", migration=False)
+        assert (project / "foreground-short").exists()
+        assert not (project / ".effigy/state/kernel.db").exists(), "short run opened a destination journal"
         blocker = next(row for row in blocked["blockers"]
                        if row["writer"]["role"] == "gate holder" and row["writer"]["run"] is None)
         assert blocker["stop_command"].startswith("effigy run migrate --stop writer:")
@@ -138,6 +151,18 @@ with tempfile.TemporaryDirectory(prefix="q010-cli-") as temporary:
         before = snapshot(home)
         assert command(*stop_args, "--json", succeeds=False)["state"] == "stop-refused"
         assert snapshot(home) == before, "free gate granted stale stop authority"
+        before = snapshot(root)
+        destination_busy = command("run", "migrate", "--plan", "--json", succeeds=False)
+        assert destination_busy["state"] == "blocked" and snapshot(root) == before
+        holder = next(row for row in destination_busy["blockers"]
+                      if row["writer"].get("holder", {}).get("pid") == foreground.pid)
+        assert holder["stop_cwd"] == str(project) and holder["stop_command"].startswith("effigy run stop ")
+        command("run", "migrate", "--legacy-launchers-stopped", "--json", succeeds=False)
+        assert snapshot(root) == before and foreground.poll() is None, "busy destination staged work or stopped foreground"
+        command(*shlex.split(holder["stop_command"])[1:], "--json", migration=False)
+        foreground.communicate(timeout=15)
+        assert not (project / ".effigy/state/kernel.db").exists()
+        assert not (project / ".effigy/state/migration-prepared.json").exists()
         planned = command("run", "migrate", "--plan", "--json")
         assert planned["state"] == "planned"
         assert len(planned["destinations"]) == 1
@@ -186,6 +211,7 @@ with tempfile.TemporaryDirectory(prefix="q010-cli-") as temporary:
         print(json.dumps({"schema": "q010.cli-proof.v1", "physical_aliases_coalesced": True,
             "canonical_resource_ids_preserved": True, "replacement_git_generation_refused": True, "busy_before_staging": True,
             "writer_without_run_id": True, "verified_stop_and_resume": True,
+            "foreground_continues_while_busy": True, "destination_busy_before_staging": True,
             "stale_and_free_refused": True, "json_schema_and_isolated_home": True,
             "source_unchanged": True, "retry_without_reimport": True,
             "elapsed_ms": imported["report"]["elapsed_ms"],
@@ -195,3 +221,7 @@ with tempfile.TemporaryDirectory(prefix="q010-cli-") as temporary:
             if child.poll() is None:
                 child.kill()  # exact owned child; SIGKILL also ends a stopped child
             child.wait(timeout=12)
+        if foreground is not None:
+            if foreground.poll() is None:
+                foreground.terminate()
+            foreground.communicate(timeout=20)

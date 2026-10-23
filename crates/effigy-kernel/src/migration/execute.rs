@@ -1,6 +1,6 @@
 //! Cross-filesystem publication has one commit record, followed by local seals.
 use super::adoption::{Seal, FORMAT, MANIFEST, PREPARED, SEALED};
-use super::fence::LegacyFence;
+use super::fence::{DestinationFence, LegacyFence};
 use super::*;
 use crate::ctx::EffectContext;
 use crate::fs::DirFd;
@@ -209,6 +209,27 @@ pub fn import(
             resumed: true,
         });
     }
+    // Fence every destination before writing any prepared record or staging
+    // database. Foreground custodians hold this same directory scope shared.
+    // Their existing work continues when this fail-fast acquisition refuses.
+    let mut destination_roots = Vec::new();
+    let mut destination_fences = Vec::new();
+    for part in &plan.partitions {
+        if let Some(checkout) = part.checkout {
+            let location = &locations
+                .iter()
+                .find(|(id, _)| *id == checkout)
+                .expect("all checkout locations resolved")
+                .1;
+            let root = StateRoot::effects(cx, location.root.path()).map_err(StoreError::from)?;
+            let path = CheckoutLocation {
+                root: location.root.path().into(),
+                git_directory: location.git.as_ref().map(|git| git.path().into()),
+            };
+            destination_fences.push(DestinationFence::acquire(cx, &root, &path)?);
+            destination_roots.push((checkout, root));
+        }
+    }
     let mut destinations = Vec::new();
     for part in plan.partitions {
         let (root, checkout_root) = match part.checkout {
@@ -219,7 +240,12 @@ pub fn import(
                     .expect("all checkout locations resolved")
                     .1;
                 (
-                    StateRoot::effects(cx, dir.root.path()).map_err(StoreError::from)?,
+                    destination_roots
+                        .iter()
+                        .find(|(id, _)| *id == checkout)
+                        .expect("all checkout roots fenced")
+                        .1
+                        .clone(),
                     dir.root.path().to_path_buf(),
                 )
             }

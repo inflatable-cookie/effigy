@@ -35,8 +35,12 @@ token, writing a checkout binding or consulting machine state.
 
 `effigy run migrate` exposes pure planning, exact blocking-writer reports and
 verified stop receipts, including pre-run admission/retention writers. Explicit
-withdrawal of legacy launchers precedes import. The importer partitions retained
-closures, copies one transaction per destination, preserves identities and
+withdrawal of legacy launchers precedes import. The importer checks destination
+custody before staging. It fences every checkout's
+directory scope before any prepared record or staging database; foreground
+custodians hold that same scope shared. A busy target reports its verified owner
+and checkout-scoped stop or drain commands while its workload continues.
+The importer copies the planned closures in one transaction per destination, preserves identities and
 checkout aliases, and commits one manifest followed by directory-bound seals.
 Kill, ENOSPC and EPERM proofs cover preparation, publication and retry. Distinct
 legacy task/environment tokens for one verified checkout coalesce without

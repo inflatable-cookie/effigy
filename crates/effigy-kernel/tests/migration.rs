@@ -1302,6 +1302,122 @@ fn runtime_foreground_root_allocates_gates_without_a_token_or_durable_binding() 
 }
 
 #[test]
+fn migration_fences_all_destinations_before_staging_against_foreground_custody() {
+    use effigy_kernel::id::{
+        ExecutionTarget, InvocationSpec, ResolvedInvocation, Route, RunId, Surface, TaskId,
+    };
+    use effigy_kernel::outcome::{Invocation, WorkloadOutcome};
+    use effigy_kernel::run::{BeginOpts, ForegroundRun};
+    use effigy_kernel::supervise::{Executable, LifecyclePlan};
+    let (source_home, source, _) = source();
+    let target = home();
+    let cx = effects(EffectClass::Mutate);
+    let environment = ResourceId::environment(
+        CheckoutId::new(CheckoutKind::LinkedWorktree, [7; 16]),
+        "dev",
+    )
+    .unwrap();
+    let mut store = Store::open(&cx, &source).unwrap();
+    store
+        .txn(&cx, |txn| {
+            txn.resource(&environment, "retained environment")
+                .map(|_| ())
+        })
+        .unwrap();
+    drop(store);
+    let location = location(target.path());
+    let checkout = StateRoot::filesystem_checkout(&observe(), &location).unwrap();
+    let root = StateRoot::foreground_effects(&cx, &location).unwrap();
+    let task = TaskId::new(checkout, "", Surface::Published, "busy", None).unwrap();
+    let invocation = ResolvedInvocation::new(InvocationSpec {
+        owner: task.resource(),
+        task,
+        route: Route::Task,
+        argv: vec!["busy".into()],
+        cwd: "".into(),
+        target: ExecutionTarget::Host,
+        env: Default::default(),
+        gates: vec![],
+        attachments: vec![],
+        class: EffectClass::Mutate,
+        placement: effigy_kernel::ctx::Placement::Host,
+        provenance: Default::default(),
+    })
+    .unwrap();
+    let mut run = ForegroundRun::begin(
+        &cx,
+        &root,
+        &invocation,
+        BeginOpts {
+            id: RunId::new(123, [9; 10]).unwrap(),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: Invocation::validated(vec!["recover".into()], |_| true).unwrap(),
+            custody: Some(LifecyclePlan {
+                executable: Executable::capture(std::path::Path::new(
+                    &std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE").unwrap(),
+                ))
+                .unwrap(),
+                placement: effigy_kernel::supervise::Placement::Inline,
+            }),
+        },
+    )
+    .unwrap();
+    let before = std::fs::read(source.path().join(DB_NAME)).unwrap();
+    let report = migration::destination_blocker(&observe(), &location)
+        .unwrap()
+        .unwrap();
+    assert_eq!(report.writers.len(), 1);
+    assert_eq!(
+        report.writers[0].run,
+        Some(run.record().incarnation().run.to_string())
+    );
+    let result = migration::import(
+        &cx,
+        &source,
+        source_home.path(),
+        &migration::LegacyQuiescence::launchers_withdrawn(),
+        &mut |_, _, _| Ok(location.clone()),
+    );
+    assert!(
+        matches!(
+            result,
+            Err(migration::MigrationError::DestinationBlocked(_))
+        ),
+        "{result:?}"
+    );
+    for name in [
+        DB_NAME,
+        "migration-prepared.json",
+        "migration-committed.json",
+    ] {
+        assert!(
+            !root.path().join(name).exists(),
+            "partial destination {name}"
+        );
+    }
+    assert_eq!(std::fs::read(source.path().join(DB_NAME)).unwrap(), before);
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(
+        &cx.operation()
+            .cleanup(std::time::Duration::from_secs(10))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(migration::destination_blocker(&observe(), &location)
+        .unwrap()
+        .is_none());
+    migration::import(
+        &cx,
+        &source,
+        source_home.path(),
+        &migration::LegacyQuiescence::launchers_withdrawn(),
+        &mut |_, _, _| Ok(location.clone()),
+    )
+    .unwrap();
+}
+
+#[test]
 fn runtime_retained_linked_git_pointer_refuses_later_reads_gates_and_writes() {
     let checkout = home();
     let machine = home();

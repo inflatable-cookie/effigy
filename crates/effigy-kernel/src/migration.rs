@@ -11,6 +11,7 @@ pub use control::{request_legacy_stop, stop_legacy_writer, LegacyStop, WriterTar
 pub use execute::{committed, import, CheckoutLocation, CheckoutResolver, ImportReport};
 mod plan;
 pub use fence::LegacyQuiescence;
+pub use fence::{destination_blocker, DestinationBlocker};
 pub use plan::{plan, ImportPlan, Partition};
 
 use crate::ctx::ObserveContext;
@@ -31,6 +32,7 @@ const ENTRY_LIMIT: usize = 100_000;
 pub enum MigrationError {
     Store(StoreError),
     Blocked(Preflight),
+    DestinationBlocked(DestinationBlocker),
 }
 impl From<StoreError> for MigrationError {
     fn from(error: StoreError) -> Self {
@@ -60,6 +62,12 @@ impl std::fmt::Display for MigrationError {
                 f,
                 "legacy migration blocked by {} writer observations",
                 report.blockers.len()
+            ),
+            Self::DestinationBlocked(report) => write!(
+                f,
+                "migration destination {} is busy: {}",
+                report.checkout_root.display(),
+                report.reason
             ),
         }
     }

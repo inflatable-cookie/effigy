@@ -161,6 +161,24 @@ pub(super) fn run(
             }
         }
     }
+    if committed.is_none() {
+        let mut busy = Vec::new();
+        for row in destinations.values() {
+            let location = migration::CheckoutLocation {
+                root: row.root.clone(),
+                git_directory: effigy_core::worktree_scope::git_directory(&row.root)
+                    .map_err(error)?,
+            };
+            if let Some(blocker) =
+                migration::destination_blocker(&observe, &location).map_err(error)?
+            {
+                busy.push(blocker);
+            }
+        }
+        if !busy.is_empty() {
+            return blocked_destinations(&busy, json);
+        }
+    }
     if plan_only || (!launchers_stopped && committed.is_none()) {
         let state = if committed.is_some() {
             "committed"
@@ -199,6 +217,9 @@ pub(super) fn run(
     let report = match result {
         Ok(report) => report,
         Err(MigrationError::Blocked(report)) => return blocked(&report, json),
+        Err(MigrationError::DestinationBlocked(report)) => {
+            return blocked_destinations(&[report], json)
+        }
         Err(failure) => return Err(error(failure)),
     };
     let mut text = format!("Runtime migration committed in {} ms.\n", report.elapsed_ms);
@@ -218,6 +239,67 @@ pub(super) fn run(
 }
 
 const SCHEMA: &str = "effigy.runtime-migration.v1";
+fn blocked_destinations<T>(
+    reports: &[migration::DestinationBlocker],
+    json: bool,
+) -> Result<T, RunnerError> {
+    let mut blockers = Vec::new();
+    let mut text = String::from("Runtime migration blocked before staging by checkout custody:\n");
+    for report in reports {
+        text.push_str(&format!(
+            "  {}: {}\n",
+            report.checkout_root.display(),
+            report.reason
+        ));
+        if report.writers.is_empty() {
+            blockers.push(serde_json::json!({"writer": {"checkout_root": report.checkout_root, "role": "unverified checkout scope holder", "reason": report.reason},
+                "stop_command": null, "drain_check": ["effigy", "run", "migrate", "--plan"]}));
+        }
+        for writer in &report.writers {
+            let live = matches!(
+                writer.state,
+                Observed::Verified(
+                    effigy_kernel::ident::ProcessState::Active
+                        | effigy_kernel::ident::ProcessState::Stopped,
+                    _
+                )
+            );
+            let stop = live
+                .then(|| {
+                    writer
+                        .run
+                        .as_deref()?
+                        .parse::<effigy_kernel::id::RunId>()
+                        .ok()
+                })
+                .flatten()
+                .map(|id| format!("effigy run stop {id}"));
+            text.push_str(&format!(
+                "    run {:?}; pid {}; start {:?}; boot {:?}; state {:?}\n",
+                writer.run, writer.pid, writer.start, writer.boot, writer.state
+            ));
+            if let Some(stop) = &stop {
+                text.push_str(&format!(
+                    "    stop in {}: {stop}\n",
+                    report.checkout_root.display()
+                ));
+            }
+            blockers.push(serde_json::json!({"writer": {"checkout_root": report.checkout_root, "role": "foreground checkout owner", "holder": writer},
+                "stop_command": stop, "stop_cwd": report.checkout_root, "drain_check": ["effigy", "run", "migrate", "--plan"]}));
+        }
+        text.push_str(
+            "    drain: let this checkout's work finish; retry `effigy run migrate --plan`\n",
+        );
+    }
+    refuse(
+        render(
+            serde_json::json!({"schema":SCHEMA,"state":"blocked","staging_started":false,"blockers":blockers}),
+            &text,
+            json,
+        ),
+        json,
+    )
+}
 fn error(reason: impl std::fmt::Display) -> RunnerError {
     RunnerError::task_invocation(reason.to_string())
 }

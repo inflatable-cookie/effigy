@@ -7,6 +7,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Runtime migration reports busy destination checkout owners before staging
+  and holds checkout directory fences through publication. Existing foreground
+  work continues when migration refuses; the report includes stop and drain
+  commands for its verified owner.
 - Named run keys now derive their run IDs from the owning checkout token.
   Equal keys in different checkouts are independent; peer queries refuse
   ambiguous keys. Imported legacy IDs remain local aliases after cutover.
