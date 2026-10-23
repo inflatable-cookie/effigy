@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Resumable release runs keep their journal, checkpoints, receipts and certified
+  candidates in the checkout's gitignored `.effigy/state/`. Checkpoint files
+  use journalled atomic replacement; status never recreates missing records.
 - Gateway process startup batches its admitted intents and its applied receipts
   into two commits before process go; the detach request is the third commit.
   Receipt-commit refusal keeps the workload blocked. Positive close removes

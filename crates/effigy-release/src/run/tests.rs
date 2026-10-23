@@ -393,6 +393,10 @@ fn a_full_run_prepares_certifies_publishes_and_writes_a_receipt() {
 
     let outcome = run(&fixture, &mut effects, ReleaseAction::Run, None);
 
+    assert!(fixture.root.join(".effigy/state/kernel.db").is_file());
+    assert!(!fixture.home.join(".effigy/state/kernel.db").exists());
+    assert!(!fixture.home.join(".effigy/state/machine.db").exists());
+
     assert!(
         outcome.succeeded(),
         "run failed: {:?}",
@@ -476,6 +480,34 @@ fn a_full_run_prepares_certifies_publishes_and_writes_a_receipt() {
         receipt["candidate"]["artifacts"][0]["files"][0]["sha256"],
         sha256_bytes(b"certified artifact").as_str()
     );
+}
+
+#[test]
+fn a_missing_release_record_is_unknown_and_status_recreates_no_directory() {
+    let fixture = fixture("missing-record");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    let outcome = run(
+        &fixture,
+        &mut effects,
+        ReleaseAction::Run,
+        Some(ReleaseStage::PreGates),
+    );
+    let directory = outcome.receipt_path.parent().unwrap();
+    assert!(directory.starts_with(
+        fixture
+            .root
+            .canonicalize()
+            .unwrap()
+            .join(".effigy/state/release")
+    ));
+    std::fs::remove_dir_all(directory).unwrap();
+    assert!(read_release_record(&fixture.home, &fixture.root)
+        .unwrap_err()
+        .to_string()
+        .contains("record is missing"));
+    assert!(!directory.exists());
+    assert!(!fixture.home.join(".effigy").exists());
 }
 
 #[test]
@@ -1020,4 +1052,115 @@ fn copy_tree(source: &Path, target: &Path) {
             std::fs::copy(&path, &destination).expect("copy fixture file");
         }
     }
+}
+
+#[test]
+fn checkout_release_resumes_while_another_checkout_writer_is_stalled() {
+    use effigy_kernel::ctx::*;
+    use effigy_kernel::id::{ResourceId, Scope};
+    use effigy_kernel::migration::CheckoutLocation;
+    use effigy_kernel::{root::StateRoot, store::Store};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    };
+    use std::time::{Duration, Instant};
+    let first = fixture("writer-stall");
+    let mut second = fixture("independent-resume");
+    second.home = first.home.clone();
+    single_identity_project(&first);
+    single_identity_project(&second);
+    let mut first_effects = TestEffects::new(&first.root);
+    let mut second_effects = TestEffects::new(&second.root);
+    run(
+        &first,
+        &mut first_effects,
+        ReleaseAction::Run,
+        Some(ReleaseStage::Validate),
+    );
+    let paused = run(
+        &second,
+        &mut second_effects,
+        ReleaseAction::Run,
+        Some(ReleaseStage::Validate),
+    );
+    let op = OperationContext::new(
+        Deadline::At(Instant::now() + Duration::from_secs(60)),
+        CancelToken::default(),
+        Limits {
+            capture_tail: 4096,
+            log_rotate: 4096,
+            log_keep: 1,
+            line_max: 4096,
+            queue_bytes: 4096,
+            probe_concurrency: 1,
+        },
+        EffectClass::Mutate,
+        Placement::Host,
+    );
+    let cx = op.effects().unwrap();
+    let location = CheckoutLocation {
+        root: first.root.clone(),
+        git_directory: effigy_core::worktree_scope::git_directory(&first.root).unwrap(),
+    };
+    let root = StateRoot::checkout_effects(&cx, &first.home, &location).unwrap();
+    let owner = ReleaseSession::open(&first.home, &first.root)
+        .unwrap()
+        .owner;
+    let Scope::Checkout(checkout) = owner.scope() else {
+        panic!("local release owner");
+    };
+    let stalled = ResourceId::store(Scope::Checkout(checkout), "stalled-writer-proof").unwrap();
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let active = Arc::new(AtomicBool::new(false));
+    let writer_active = active.clone();
+    let writer = std::thread::spawn(move || {
+        let mut store = Store::open(&cx, &root).unwrap();
+        store
+            .txn(&cx, |txn| {
+                txn.resource(&stalled, "private fixture")?;
+                txn.next_generation(&stalled)?;
+                writer_active.store(true, Ordering::SeqCst);
+                ready_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+                writer_active.store(false, Ordering::SeqCst);
+                Ok::<_, effigy_kernel::store::StoreError>(())
+            })
+            .unwrap();
+    });
+    struct ReleaseWriter(
+        Option<mpsc::Sender<()>>,
+        Option<std::thread::JoinHandle<()>>,
+    );
+    impl Drop for ReleaseWriter {
+        fn drop(&mut self) {
+            if let Some(sender) = self.0.take() {
+                let _ = sender.send(());
+            }
+            if let Some(writer) = self.1.take() {
+                writer.join().unwrap();
+            }
+        }
+    }
+    let _release = ReleaseWriter(Some(release_tx), Some(writer));
+    ready_rx.recv_timeout(Duration::from_secs(30)).unwrap();
+    let resumed = run(
+        &second,
+        &mut second_effects,
+        ReleaseAction::Resume {
+            run: paused.record.release_id.clone(),
+        },
+        Some(ReleaseStage::PreGates),
+    );
+    assert_eq!(resumed.record.release_id, paused.record.release_id);
+    assert_eq!(resumed.record.stage, "pre-gates");
+    assert!(
+        active.load(Ordering::SeqCst),
+        "the other checkout's write transaction remains held"
+    );
+    assert!(
+        !first.home.join(".effigy").exists(),
+        "neither release initializes machine runtime state"
+    );
 }

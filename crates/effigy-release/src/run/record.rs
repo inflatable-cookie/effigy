@@ -1,8 +1,8 @@
 //! The durable release record: one checkpoint after every stage boundary.
 //!
 //! Contract 054 §3 keeps one Run's progress as a checkpoint at each stage
-//! boundary. The kernel journal holds the checkpoint pointer (§10 ruling 2:
-//! state lives outside the repo); this record holds the facts a resume needs:
+//! boundary. The checkout journal holds the checkpoint pointer (Q-010 and
+//! 054 §10 ruling 2); this record holds the facts a resume needs:
 //! the candidate commit, each identity's version, each artifact's digest and
 //! each destination already published. Every field is restored from here, so a
 //! resumed Run never re-derives a version or rebuilds an artifact.

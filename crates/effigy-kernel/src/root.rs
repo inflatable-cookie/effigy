@@ -164,7 +164,9 @@ impl StateRoot {
             Database::Machine => "machine.db",
         }
     }
-    pub(crate) fn verify_binding(&self) -> Result<(), FsError> {
+    /// Recheck the retained checkout, state and Git generations before an
+    /// engine continues file work through this handle.
+    pub fn verify_binding(&self) -> Result<(), FsError> {
         if DirFd::walk(self.owner.path(), Trust::Operator)?.identity()? != self.owner.identity()? {
             return Err(FsError::untrusted(
                 self.owner.path(),

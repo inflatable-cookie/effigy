@@ -45,7 +45,7 @@ use chrono::Utc;
 use effigy_changelog as changelog;
 use effigy_kernel::observe::UnknownReason;
 use effigy_kernel::outcome::WorkloadOutcome;
-use effigy_kernel::run::{EffectTicket, Run, Settlement};
+use effigy_kernel::run::{EffectSpec, EffectTicket, Run, Settlement};
 
 use crate::model::{FileMutationApply, FileMutationPlan};
 use crate::pipeline::{
@@ -76,7 +76,7 @@ pub enum ReleaseAction {
 #[derive(Debug, Clone)]
 pub struct ReleaseRunRequest {
     pub repo_root: PathBuf,
-    /// The user's home. Effigy-owned state lives at `<home>/.effigy/state`.
+    /// Machine home for explicit migration checks; release state is checkout-local.
     pub home: PathBuf,
     pub action: ReleaseAction,
     /// The stage boundary to stop after. Defaults to `closeout`.
@@ -114,16 +114,45 @@ pub fn run_release(
     request: &ReleaseRunRequest,
     effects: &mut dyn ReleaseEffects,
 ) -> Result<ReleaseRunOutcome, ReleaseError> {
-    let plan = plan_release_pipeline(&request.repo_root)?;
     let session = ReleaseSession::open(&request.home, &request.repo_root)?;
     let state = session.state()?;
-    let checkpoint = session.read_checkpoint()?;
-    let existing = state.read_record()?;
     let receipt_path = state.record_path.with_file_name(RELEASE_RECEIPT_FILE);
-
-    let continuation = continue_record(request, existing, checkpoint.as_ref(), &state, effects)?;
+    let run_id = new_run_id()?;
+    let mut adapter = ReportsOnly;
+    let mut run = session.begin(run_id, &mut adapter)?;
+    // Read the resumable state and resolve versions under the same owner gate
+    // that will perform the work. A waiter never acts on a predecessor's
+    // checkpoint or clears its candidate before admission.
+    let prepared = (|| {
+        let plan = plan_release_pipeline(&request.repo_root)?;
+        let checkpoint = session.read_checkpoint()?;
+        let mut existing = state.read_record()?;
+        if let Some(record) = &mut existing {
+            session.project_record(record)?;
+        }
+        let continuation =
+            continue_record(request, existing, checkpoint.as_ref(), &state, effects)?;
+        Ok::<_, ReleaseError>((plan, continuation))
+    })();
+    let (plan, continuation) = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            let finished = run.finish(WorkloadOutcome::Failed { code: 1 });
+            let settled = run.settle(session.cleanup(), &mut adapter);
+            if let Err(cleanup) = finished.and(settled.map(|_| ())) {
+                return Err(ReleaseError::TaskInvocation(format!(
+                    "{error}; release preparation cleanup: {cleanup}"
+                )));
+            }
+            return Err(error);
+        }
+    };
     let (mut record, start) = match continuation {
         Continuation::Nothing(record) => {
+            run.finish(WorkloadOutcome::Succeeded)
+                .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
+            run.settle(session.cleanup(), &mut adapter)
+                .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
             return Ok(ReleaseRunOutcome {
                 messages: vec![format!(
                     "release Run {} is already complete; nothing to resume",
@@ -131,16 +160,10 @@ pub fn run_release(
                 )],
                 record,
                 receipt_path,
-            })
+            });
         }
         Continuation::RunFrom(record, stage) => (record, stage),
     };
-    if record.stage.is_empty() {
-        // A fresh release: its candidate directory belongs to this Run alone.
-        clear_directory(&state.candidate_dir)?;
-    }
-
-    let run_id = new_run_id()?;
     let run_id_text = run_id.to_string();
     record.run_id = run_id_text.clone();
     record.release_id = if record.stage.is_empty() {
@@ -151,8 +174,6 @@ pub fn run_release(
     record.updated_at = now();
 
     let to = request.to.unwrap_or(ReleaseStage::Closeout);
-    let mut adapter = ReportsOnly;
-    let mut run = session.begin(run_id, &mut adapter)?;
     let mut runner = Runner {
         plan: &plan,
         record: &mut record,
@@ -193,7 +214,6 @@ pub fn run_release(
             record.run_id, record.release_id
         ));
         record.status = ReleaseRunStatus::Failed;
-        state.write_record(&record)?;
     }
 
     Ok(ReleaseRunOutcome {
@@ -430,7 +450,7 @@ impl<'a, 's> Runner<'a, 's> {
     /// Write the record and its kernel checkpoint pointer.
     fn persist(&mut self) -> Result<(), ReleaseError> {
         self.record.updated_at = now();
-        self.state.write_record(self.record)?;
+        self.state.write_record(self.record, self.run)?;
         let checkpoint = self.record.checkpoint(&self.state.record_path);
         let value = serde_json::to_value(&checkpoint).map_err(|error| {
             ReleaseError::TaskInvocation(format!(
@@ -458,6 +478,22 @@ impl<'a, 's> Runner<'a, 's> {
     }
 
     fn validate(&mut self) -> Result<(), ReleaseError> {
+        if self.record.stage.is_empty() {
+            let ticket = self
+                .run
+                .intend(EffectSpec {
+                    target: self.run.fence().clone(),
+                    kind: "release:candidate-reset".into(),
+                    payload: serde_json::json!({"directory":self.candidate_dir}),
+                    settlement: Settlement::Irreversible,
+                    required: false,
+                })
+                .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
+            clear_directory(self.candidate_dir)?;
+            self.run
+                .applied(&ticket, serde_json::Value::Null)
+                .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
+        }
         if !self.plan.ready {
             return Err(ReleaseError::TaskInvocation(format!(
                 "release validate refused the release: {}",
