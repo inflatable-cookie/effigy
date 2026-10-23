@@ -2171,6 +2171,7 @@ primary_service = "workspace"
 routes = [
   { domain = "s3.acme.test", tls = false, service = "workspace" },
   { domain = "admin.acme.test", tls = false, service = "workspace" },
+  { domain = "acme.test", tls = false, service = "workspace" },
 ]
 
 [containers.stack.services.workspace]
@@ -2188,7 +2189,7 @@ catalog = "postgres"
     assert_eq!(
         policy.dns_effective_base_domain().as_deref(),
         Some("acme.test"),
-        "the common suffix of the HTTP routes is the alias apex"
+        "the shallowest host the primary service serves is the alias apex"
     );
     let dns_override = policy
         .read_compose(&policy.compose_files[1])

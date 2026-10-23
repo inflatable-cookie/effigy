@@ -998,17 +998,22 @@ effective names on the gateway. It does not rewrite application configuration.
 For a container manifest, `dns.base_domain` declares the apex for generated TCP
 aliases and the reported cookie domain and RP ID; the same checkout-scoping
 rule applies to that configured apex. Without a declaration Effigy infers the
-base from the longest common domain suffix of the HTTP routes (the front route
-or a managed host-listener route breaks a tie), so a bundle whose first route
-is a subdomain no longer names that subdomain as the apex. Policy load resolves
-that one apex (declared or inferred, in the checkout's scope) and passes it to
-the generated TCP aliases, the Compose route-parity `extra_hosts` and gateway
+base from the HTTP routes: the shallowest route host served by the primary
+service (the service of the front route) or by a managed host listener wins,
+route order breaks a depth tie, and only when neither serves a usable host
+does the shallowest route host of any service stand in. A wildcard route never
+becomes the apex, and an inferred base is one of the declared route hosts,
+never a parent domain the routes share. So a bundle whose first route is a
+subdomain no longer names that subdomain as the apex, while a project whose
+services already use a deeper name keeps it. Policy load resolves that one
+apex (declared or inferred, in the checkout's scope) and passes it to the
+generated TCP aliases, the Compose route-parity `extra_hosts` and gateway
 service-alias registration, so `container hosts` never advertises a different
-apex than the gateway or the container's own aliases. When an inferred
-base is not a suffix of every HTTP route, `container hosts` warns and its JSON
-`base_domain` object carries `"inferred": true` and the `warning`. A bundle
-should declare `base_domain` explicitly. A declared value is never inferred or
-rewritten.
+apex than the gateway or the container's own aliases. When an inferred base is
+not a suffix of every HTTP route, `container hosts` warns and its JSON
+`base_domain` object carries `"inferred": true` and the `warning`. An
+undeclared base is inferred; a manifest that needs a different apex declares
+`base_domain` explicitly. A declared value is never inferred or rewritten.
 
 Owned mutable resources for that generation carry `com.effigy.scope`,
 `com.effigy.project`, or the exact Compose project label. `effigy container

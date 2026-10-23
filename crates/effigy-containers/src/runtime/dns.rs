@@ -153,8 +153,8 @@ pub(crate) fn runtime_route_domains(
     let mut host_gateway_domains = std::collections::BTreeSet::new();
     let mut service_alias_domains = BTreeMap::<String, Vec<String>>::new();
     // Callers that resolved the apex (policy load, `container hosts`) pass it;
-    // otherwise infer the common suffix of the routes rather than letting the
-    // front route's full domain stand in for an undeclared apex.
+    // otherwise infer the shallowest route host rather than letting the front
+    // route's full domain stand in for an undeclared apex.
     let effective_base = effective_base_domain
         .map(str::to_owned)
         .or_else(|| {
@@ -309,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_alias_infers_the_common_route_apex() {
+    fn runtime_alias_infers_the_shallowest_route_host() {
         let routes = [route("s3.acme.test"), route("admin.acme.test")];
         let aliases = [alias()];
 
@@ -317,8 +317,8 @@ mod tests {
 
         assert_eq!(
             runtime_routes.service_alias_domains.get("postgres"),
-            Some(&vec!["postgres.acme.test".to_owned()]),
-            "an undeclared apex is the routes' common suffix, not the front route"
+            Some(&vec!["postgres.s3.acme.test".to_owned()]),
+            "routes at the same depth keep the front route, never a shared parent"
         );
     }
 

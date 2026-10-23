@@ -2277,6 +2277,14 @@ fn service_alias_claims_use_the_inferred_apex_not_the_front_route() {
             service: None,
             target_host: None,
         },
+        effigy_containers::EffectiveDnsRoute {
+            domain: "acme.test".to_owned(),
+            declared_domain: "acme.test".to_owned(),
+            tls: true,
+            port: None,
+            service: None,
+            target_host: None,
+        },
     ];
 
     let claims = declared_route_claims(&policy);
@@ -2284,7 +2292,7 @@ fn service_alias_claims_use_the_inferred_apex_not_the_front_route() {
         claims
             .iter()
             .any(|claim| claim.domain == "postgres.acme.test"),
-        "the alias claim uses the routes' common apex: {claims:?}"
+        "the alias claim uses the shallowest route host: {claims:?}"
     );
     assert!(
         !claims
