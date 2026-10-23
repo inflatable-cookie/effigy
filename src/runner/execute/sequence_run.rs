@@ -176,7 +176,8 @@ fn classify_tree(
             "task tree is cyclic or exceeds 64 declared levels",
         ));
     }
-    if selection.task.mode.as_deref() == Some("tui")
+    if selection.task.durable
+        || selection.task.mode.as_deref() == Some("tui")
         || !selection.task.concurrent.is_empty()
         || !super::pipeline::standard::checked_host_binding(preflight, selection, task_name)?
         || selection.task.uses_scratch() && crate::runner::scratch::wanted()
@@ -860,6 +861,17 @@ mod tests {
         )
         .unwrap();
         super::foreground_tree(&preflight, &selection).unwrap()
+    }
+
+    #[test]
+    fn opaque_durable_descendants_are_declared_before_tree_admission() {
+        assert!(classify_manifest(
+            "[tasks.start]\nscratch = false\nrun = 'true'\n"
+        ));
+        assert!(!classify_manifest(
+            "[tasks.start]\nscratch = false\ndurable = true\nrun = 'effigy --run-id child inner'\n"
+        ));
+        assert!(!classify_manifest("[tasks.start]\nscratch = false\nrun = [{task = 'inner'}]\n[tasks.inner]\ndurable = true\nrun = 'true'\n"));
     }
 
     #[test]

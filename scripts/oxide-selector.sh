@@ -27,6 +27,14 @@ if [ ! -f "$root/Cargo.toml" ]; then
   root=$(git rev-parse --show-toplevel)
 fi
 
+# Tests model independent invocations in private roots, including foreground
+# admission and fault traces. Keep host admission, but do not make those roots
+# descendants of this selector's runtime grant. Normal task children still
+# inherit their capabilities; opaque durable tasks must declare that intent.
+case "${1:-}" in
+  test | nextest) unset EFFIGY_PARENT_CAPABILITY ;;
+esac
+
 tool=${EFFIGY_OXIDE_ESCAPE:-oxide}
 case $tool in
   oxide | cargo) ;;

@@ -103,6 +103,7 @@ pub enum StoreError {
     /// Store waits need a finite deadline (K8, I-CX2).
     Unbounded,
     MigrationPending(String),
+    LegacyMigrationRequired,
     /// Retention, repair and scope removal run only in Mutate (K15).
     ClassRefused(EffectClass),
     InTransaction,
@@ -125,6 +126,7 @@ pub enum StoreError {
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::LegacyMigrationRequired => write!(f, "legacy runtime exists; run `effigy run migrate --plan`, stop or drain its exact writers, then `effigy run migrate --legacy-launchers-stopped`"),
             Self::MigrationPending(id) => write!(f, "runtime import {id} is prepared but not sealed; finish migration before using this journal"),
             Self::Corrupt(reason) => write!(
                 f,

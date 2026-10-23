@@ -881,14 +881,54 @@ pub fn verify_workspace_artifact_builder(
         .and_then(|record| record.pointer("/NetworkSettings/Ports"))
         .and_then(|value| value.as_object())
         .is_some_and(|ports| ports.is_empty());
-    if !ownership.owns(checkout, binding.scope.as_deref()) || !bind_matches || !no_ports {
+    // Scoped checkout labels locate the owner, while Compose may name its
+    // immutable render directory. A supplied working directory must still
+    // belong to this checkout or one of its retained render generations.
+    let working_dir_matches = builder_working_directory_is_owned(
+        &ownership.canonical,
+        record.and_then(|record| {
+            record.pointer("/Config/Labels/com.docker.compose.project.working_dir")
+        }),
+    );
+    if !ownership.owns(checkout, binding.scope.as_deref())
+        || !bind_matches
+        || !no_ports
+        || !working_dir_matches
+    {
         return Err(ContainerExecError::Failure {
             command: "inspect workspace builder".to_owned(), code: None, stdout: String::new(),
-            stderr: "workspace builder explicit checkout/scope labels or writable /workspace source bind are unverified".to_owned(),
+            stderr: "workspace builder checkout/scope/working-directory labels or writable /workspace source bind are unverified".to_owned(),
         });
     }
     binding.workspace_builder_deadline = Some(deadline);
     Ok(binding)
+}
+
+fn builder_working_directory_is_owned(checkout: &Path, label: Option<&serde_json::Value>) -> bool {
+    let Some(label) = label else { return true };
+    let Some(path) = label
+        .as_str()
+        .and_then(|value| Path::new(value).canonicalize().ok())
+    else {
+        return false;
+    };
+    if path == checkout {
+        return true;
+    }
+    if !path.is_dir() {
+        return false;
+    }
+    let Ok(relative) = path.strip_prefix(checkout.join(".effigy/state/objects")) else {
+        return false;
+    };
+    let Some(digest) = relative
+        .components()
+        .next()
+        .and_then(|part| part.as_os_str().to_str())
+    else {
+        return false;
+    };
+    digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 pub fn verify_owned_running_compose_rows(

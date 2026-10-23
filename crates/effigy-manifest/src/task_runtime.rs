@@ -17,6 +17,10 @@ pub struct ManifestTask {
     pub run_in: Option<ManifestTaskRunIn>,
     #[serde(default)]
     pub admission: Option<ManifestTaskAdmission>,
+    /// Declare opaque script/adapter descendants which need retained Effigy
+    /// authority. The whole declared tree is admitted durably before go.
+    #[serde(default)]
+    pub durable: bool,
     #[serde(default)]
     pub system: Option<String>,
     #[serde(default)]
@@ -395,6 +399,15 @@ run = { task = "docs check headings README.md --require-heading '# Hello'" }
             [ManifestManagedRunStep::Step(step)]
                 if step.task.as_deref() == Some("docs check headings README.md --require-heading '# Hello'")
         ));
+    }
+
+    #[test]
+    fn opaque_scripts_can_declare_durable_descendants() {
+        let ordinary: ManifestTask = toml::from_str("run = 'true'").unwrap();
+        assert!(!ordinary.durable);
+        let durable: ManifestTask = toml::from_str("durable = true\nrun = 'true'").unwrap();
+        assert!(durable.durable);
+        assert!(toml::from_str::<ManifestTask>("durable = 'yes'\nrun = 'true'").is_err());
     }
 
     #[test]

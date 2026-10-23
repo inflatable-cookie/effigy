@@ -245,9 +245,26 @@ exec sleep 300
             child.terminate()
             child.communicate(timeout=30)
     assert_memory_only()
+    # A declared script may launch a retained child. Its static ancestor is
+    # durable before go, while all undeclared late-effect refusals above stay.
+    declared = base / "declared-durable"
+    declared.mkdir()
+    (declared / "effigy.toml").write_text('''
+[tasks.start]
+run = [{task = "opaque"}]
+[tasks.opaque]
+durable = true
+run = '"$EFFIGY_TEST_BIN" --run-id declared-child inner'
+[tasks.inner]
+run = 'touch completed'
+''')
+    run(declared, "start")
+    assert (declared / "completed").exists()
+    assert (declared / ".effigy/state/kernel.db").exists()
+    assert not (home / ".effigy/state").exists()
     print(json.dumps({"schema": "q010.foreground-proof.v1", "short_runs": 24,
                       "checkouts": 3, "seconds": concurrent_seconds,
                       "database_files_created": 0, "retained_run_records": 0,
                       "sequence": "passed", "nested_hook_count": 1,
                       "builtin_suites": "passed", "suite_stop": "released", "suite_hook_count": 1,
-                      "hook_loss": "stopped", "checkout_replacement": "stopped", "late_durable_effect": "refused"}, sort_keys=True))
+                      "hook_loss": "stopped", "checkout_replacement": "stopped", "late_durable_effect": "refused", "declared_durable_descendant": "passed"}, sort_keys=True))

@@ -116,6 +116,40 @@ impl StateRoot {
         Ok(ResourceId::store(scope, name)?)
     }
 
+    /// Checkout lifetime leases are lock files, outside machine journal state.
+    /// They must survive checkout deletion without bootstrapping machine.db or
+    /// its layout marker. Primitive roots retain their explicit test namespace.
+    pub(crate) fn checkout_lease_gates(&self, create: bool) -> Result<Option<DirFd>, FsError> {
+        let home = if let Some(domain) = &self.machine_gates {
+            domain.verify_home()?;
+            &domain.address.home
+        } else if self.is_machine() {
+            self.owner.path()
+        } else if self.checkout.is_none() {
+            return if create {
+                self.family(Family::Gates)
+            } else {
+                self.read_family(Family::Gates)
+            };
+        } else {
+            return Err(FsError::untrusted(
+                self.path(),
+                "checkout lease requires an explicit machine domain",
+            ));
+        };
+        let home = DirFd::walk(home, Trust::Operator)?;
+        let Some(effigy) = home.child(".effigy", Trust::Operator, create)? else {
+            return Ok(None);
+        };
+        let gates = effigy.child("gates", Trust::Private, create)?;
+        if create {
+            if let Some(gates) = &gates {
+                gates.require_local()?;
+            }
+        }
+        Ok(gates)
+    }
+
     pub(crate) fn machine_gate_effects(&self, cx: &EffectContext) -> Result<Option<Self>, FsError> {
         let Some(domain) = &self.machine_gates else {
             return if self.is_machine() || self.checkout.is_none() {

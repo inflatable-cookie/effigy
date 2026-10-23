@@ -82,29 +82,20 @@ impl Gate {
         root: &StateRoot,
         token: &str,
     ) -> Observed<CheckoutFenceIdentity> {
+        if cx.placement() == crate::ctx::Placement::Guest {
+            return Observed::Unknown(UnknownReason::HostAuthorityRequired);
+        }
         let read = || -> Result<Option<CheckoutFenceIdentity>, GateError> {
             let name = name(token)?;
             cx.check("checkout fence observation")
                 .map_err(GateError::Interrupted)?;
-            let machine = match root.machine_gate_observe(cx) {
-                Observed::Verified(root, _) => root,
-                Observed::Absent(_) => return Ok(None),
-                Observed::Unknown(reason) => {
-                    return Err(GateError::Untrusted {
-                        path: root.path().into(),
-                        reason: format!("{reason:?}"),
-                    })
-                }
-            };
-            let domain = machine.as_ref().unwrap_or(root);
-            let Some(gates) = domain.read_family(Family::Gates)? else {
+            let Some(gates) = root.checkout_lease_gates(false)? else {
                 return Ok(None);
             };
             let Some(file) = open_gate(&gates, &name, false)? else {
                 return Ok(None);
             };
             root.verify_binding()?;
-            domain.verify_binding()?;
             identity(&file).map(Some)
         };
         match read() {
@@ -161,18 +152,14 @@ fn checkout_fence(
     }
     let name = name(token)?;
     root.verify_binding()?;
-    let machine = root.machine_gate_effects(cx)?;
-    let domain = machine.as_ref().unwrap_or(root);
-    let gates = if exclusive {
-        domain
-            .read_family(Family::Gates)?
-            .ok_or_else(|| GateError::Untrusted {
-                path: domain.path().into(),
-                reason: "checkout fence namespace missing".into(),
-            })?
-    } else {
-        domain.family(Family::Gates)?.expect("created gates")
-    };
+    crate::inheritance::require_durable(cx.operation())
+        .map_err(|error| FsError::io("checkout lease authority", root.path(), &error))?;
+    let gates = root
+        .checkout_lease_gates(!exclusive)?
+        .ok_or_else(|| GateError::Untrusted {
+            path: root.path().into(),
+            reason: "checkout fence namespace missing".into(),
+        })?;
     let file = open_gate(&gates, &name, !exclusive)?.ok_or_else(|| GateError::Untrusted {
         path: gates.path().into(),
         reason: "checkout fence missing; ownership remains unknown".into(),
@@ -226,7 +213,6 @@ fn checkout_fence(
         gates.sync()?;
     }
     root.verify_binding()?;
-    domain.verify_binding()?;
     Ok(CheckoutFenceGuard {
         guard: GateGuard {
             gates: Vec::new(),

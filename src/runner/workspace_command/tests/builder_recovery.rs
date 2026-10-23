@@ -627,6 +627,23 @@ fn unchanged_partial_completed_and_absent_builders_use_supported_task() {
     }
 }
 
+#[test]
+fn retained_builder_accepts_its_immutable_compose_working_directory() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::new(true, true, "docker");
+    let prepared = effigy_containers::policy::render::prepare_resolved(&fixture.policy).unwrap();
+    let working_dir = prepared.compose_files.first().unwrap().parent().unwrap();
+    assert!(working_dir.is_dir());
+    fixture.mutate(|row| {
+        row["Config"]["Labels"]["com.docker.compose.project.working_dir"] = json!(working_dir)
+    });
+    fixture
+        .task()
+        .expect("owned immutable render working directory");
+    assert!(fixture.root.join("state/build-effect").exists());
+    fixture.assert_preserved();
+}
+
 fn assert_invalid_builder_refuses_before_build(case: &str) {
     let _lock = crate::contract_test_support::lock_test();
     let fixture = Fixture::new(true, true, "docker");

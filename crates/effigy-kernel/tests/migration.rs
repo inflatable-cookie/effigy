@@ -1068,8 +1068,13 @@ fn runtime_checkout_routing_refuses_legacy_before_creating_any_destination() {
     let before = snapshot(machine.path());
     assert!(matches!(
         StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path())),
-        Err(StoreError::MigrationPending(_))
+        Err(StoreError::LegacyMigrationRequired)
     ));
+    let message = StoreError::LegacyMigrationRequired.to_string();
+    assert!(message.starts_with("legacy runtime exists;"));
+    assert!(message.contains("effigy run migrate --plan"));
+    assert!(message.contains("effigy run migrate --legacy-launchers-stopped"));
+    assert!(!message.contains("prepared but not sealed"));
     assert!(!checkout.path().join(".effigy").exists());
     assert!(matches!(
         StateRoot::runtime_machine_observe(&observe(), machine.path()),
@@ -1077,7 +1082,7 @@ fn runtime_checkout_routing_refuses_legacy_before_creating_any_destination() {
     ));
     assert!(matches!(
         StateRoot::runtime_machine_effects(&cx, machine.path()),
-        Err(StoreError::MigrationPending(_))
+        Err(StoreError::LegacyMigrationRequired)
     ));
     assert_eq!(snapshot(machine.path()), before);
 }
@@ -1825,7 +1830,7 @@ fn runtime_checkout_retirement_requires_the_original_free_lease_inode_without_a_
     let held = Gate::checkout_custody(&cx, &root, token, Wait::FailFast).unwrap();
     let path = machine
         .path()
-        .join(format!(".effigy/state/gates/checkout-{token}.retirement"));
+        .join(format!(".effigy/gates/checkout-{token}.retirement"));
     std::fs::remove_file(&path).unwrap();
     let before = snapshot(machine.path());
     assert!(Gate::checkout_retirement(&cx, &root, token, expected, Wait::FailFast).is_err());
@@ -1841,4 +1846,5 @@ fn runtime_checkout_retirement_requires_the_original_free_lease_inode_without_a_
     assert!(!machine.path().join(".effigy/state/machine.db").exists());
     assert!(!machine.path().join(".effigy/state/kernel.db").exists());
     assert!(!root.path().join("kernel.db").exists());
+    assert!(!machine.path().join(".effigy/state").exists());
 }

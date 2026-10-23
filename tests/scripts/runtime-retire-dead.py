@@ -151,20 +151,12 @@ Path(str(source) + '-shm').unlink(missing_ok=True)
 # Only private proof files are replaced; preserve the exact retirement gates.
 for name in ['machine.db', 'machine.db-wal', 'machine.db-shm', 'machine-format.json']:
     (state / name).unlink(missing_ok=True)
-# Current-main did not have native retirement leases. Temporarily withdraw
-# only this fixture's newer files from the reconstructed legacy gate shape,
-# retaining their inodes for the later independent deletion proof.
-leases = list((state / 'gates').glob('checkout-*.retirement'))
-for lease in leases:
-    lease.rename(base / lease.name)
 os.chmod(source, 0o400)
 source_digest = hashlib.sha256(source.read_bytes()).hexdigest()
 cli(primary, 'run', 'migrate', '--plan', '--json')
 started = time.monotonic()
 migrated = cli(primary, 'run', 'migrate', '--legacy-launchers-stopped', '--json')
 (base / 'migration.json').write_text(migrated.stdout)
-for lease in leases:
-    (base / lease.name).rename(lease)
 migration_seconds = round(time.monotonic() - started, 3)
 assert hashlib.sha256(source.read_bytes()).hexdigest() == source_digest
 with read_db(state / 'machine.db') as machine:
@@ -207,7 +199,7 @@ foreign_id = docker('create', '--label', 'com.effigy.managed=true', 'redis:7-alp
 mutable_tree(dead)
 shutil.rmtree(dead)
 assert not dead.exists()
-fence = home / '.effigy/state/gates' / f'checkout-{token}.retirement'
+fence = home / '.effigy/gates' / f'checkout-{token}.retirement'
 assert fence.exists(), list(home.rglob('*retirement'))
 with fence.open('r+b') as lease:
     fcntl.flock(lease, fcntl.LOCK_SH)

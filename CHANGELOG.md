@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Tasks whose scripts launch durable Effigy operations declare `durable = true`;
+  the runner journals their tree before starting children. Checkout custody
+  leases use machine lock files without initializing machine journal state.
 - Read-only process probes verify closure on a separate finite cleanup budget;
   signal grace and workload deadlines remain unchanged.
 - QA-group members retain their parent checkout journal, so completed member

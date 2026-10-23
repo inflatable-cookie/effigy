@@ -69,6 +69,10 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     verify_workspace_artifact_builder_declaration(&policy)?;
     effigy_containers::validate_container_policy(repo_root, &policy)?;
     effigy_containers::validate_compose_backend_runtime(repo_root, &policy)?;
+    // Checkout identity and the external custody lease participate in render
+    // labels. Establish them before taking the execution-only source snapshot;
+    // this does not publish or replace the retained environment generation.
+    policy = effigy_containers::policy::render::prepare_inputs(&policy)?;
     let mut context = AdmissionContext::workspace_builder(&policy)?;
     // Preserve the existing runtime drift guard; this operation grants no
     // authority to change backend or profile, start a VM, or repair runtime.

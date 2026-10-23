@@ -209,7 +209,14 @@ lifetime belongs to its invoking process/session even when it has no terminal.
 A run tree has one durability requirement: a durable descendant makes its
 foreground ancestors checkout-durable before the first effect. Local children
 of a durable run use that checkout journal. Late-bound scripts and adapters
-must declare durable capabilities before execution. A declared capability
+must declare durable capabilities before execution with `durable = true` on
+their task table. This includes test harnesses which exercise durable kernel
+operations or launch named/detached Effigy children from shell code. The default
+`false` permits foreground admission only when the remaining tree is local.
+A referenced durable task makes its ancestors durable too. Repository test launchers remove the selector’s parent
+capability before entering independent private fixture runtimes, preserving host
+admission. They do not change ordinary workload-child inheritance; tests of
+parent inheritance install their own native capabilities. A declared capability
 selects durability for the whole tree before workload go; discovering it after
 go refuses that effect rather than promoting a partially executed tree. There
 is no promotion after workload go and no silent fallback to the machine
@@ -1986,7 +1993,8 @@ recorded checkout token/path generation and exact container/network/volume
 identity before retirement; inaccessible/ambiguous ownership remains Unknown.
 Only positively dead scopes enter the ordinary fenced retirement path. Backend
 inventory supplies lost-checkout provenance; names or PID/PGID values do not.
-A checkout custody lease is a shared lock file in the machine gate namespace,
+A checkout custody lease is a shared lock file in `$HOME/.effigy/gates/`,
+separate from machine journal initialization and its `.effigy/state/` layout,
 not a journal or checkout index. Environment owners and holders retain it through
 positive process cleanup. Generated backend labels carry its device/inode and the
 checkout directory generation. Dead retirement requires the exact existing lease

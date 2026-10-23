@@ -407,9 +407,7 @@ fn require_cutover(
                             || (blocker.resource != initializer && blocker.resource != source_hints)
                     });
             if database || pre_run_writer {
-                return Err(StoreError::MigrationPending(
-                    "legacy runtime exists; run `effigy run migrate --plan`, stop or drain its exact writers, then `effigy run migrate --legacy-launchers-stopped`".into(),
-                ));
+                return Err(StoreError::LegacyMigrationRequired);
             }
         }
         Observed::Absent(_) => {}
