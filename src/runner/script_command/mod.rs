@@ -6,9 +6,9 @@ use effigy_containers::ContainerCapturedExecOperation;
 use effigy_context::TaskSourceContext;
 use effigy_execution::ExecutionSurface;
 use effigy_rhai::{
-    execute_rhai_script_with_runtime_context_and_secret_targets, install_stop_requested_flag,
+    execute_rhai_script_with_runtime_context_and_secret_policy, install_stop_requested_flag,
     load_script, load_script_args_from_env, required_env, EffigyCommandError, HostCallbacks,
-    HostCommandOutput, RhaiSecretTarget, ScriptContext, EFFIGY_RHAI_REPO_ROOT,
+    HostCommandOutput, RhaiSecretPolicy, RhaiSecretTarget, ScriptContext, EFFIGY_RHAI_REPO_ROOT,
     EFFIGY_RHAI_TASK_NAME,
 };
 
@@ -60,6 +60,24 @@ pub(in crate::runner) fn execute_repo_rhai_script_with_secret_targets(
     args: &[String],
     secret_targets: &[RhaiSecretTarget],
 ) -> Result<(), RunnerError> {
+    execute_repo_rhai_script_with_secret_policy(
+        repo_root,
+        task_name,
+        file,
+        args,
+        RhaiSecretPolicy::Targets(secret_targets),
+    )
+}
+
+/// Execute a repo script under an explicit secret policy. `Refuse` runs it with
+/// no secret access and names the requested secret in the failure.
+pub(in crate::runner) fn execute_repo_rhai_script_with_secret_policy(
+    repo_root: &Path,
+    task_name: &str,
+    file: &Path,
+    args: &[String],
+    policy: RhaiSecretPolicy<'_>,
+) -> Result<(), RunnerError> {
     let context = ScriptContext {
         cwd: repo_root.to_path_buf(),
         repo_root: repo_root.to_path_buf(),
@@ -68,13 +86,13 @@ pub(in crate::runner) fn execute_repo_rhai_script_with_secret_targets(
     };
     let script = load_script(file, &context.cwd).map_err(map_rhai_error)?;
     let runtime_context = active_runtime_context().map(attach_internal_task_source);
-    execute_rhai_script_with_runtime_context_and_secret_targets(
+    execute_rhai_script_with_runtime_context_and_secret_policy(
         &context,
         runtime_context.as_ref(),
         &script,
         args,
         &host_callbacks(),
-        secret_targets,
+        policy,
     )
     .map_err(map_rhai_error)
 }

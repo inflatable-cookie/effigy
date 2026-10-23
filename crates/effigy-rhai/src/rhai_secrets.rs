@@ -237,9 +237,37 @@ fn isolated_secret_access_message(name: &str) -> String {
     )
 }
 
+/// An empty store that refuses every secret operation with the caller's reason.
+///
+/// `vault_loaded` and `isolated` are pre-set so neither the lazy loader nor the
+/// isolation check can reach the consumer manifest or vault first. Plan-mode
+/// deploy phases use this to stay secret-free while still naming the secret a
+/// provider asked for.
+pub(crate) fn refused_rhai_secret_store(reason: &str) -> RhaiSecretStore {
+    RhaiSecretStore {
+        isolated: true,
+        refusal: Some(reason.to_owned()),
+        vault_loaded: true,
+        ..RhaiSecretStore::default()
+    }
+}
+
+fn refused_secret_access_message(reason: &str, name: &str) -> String {
+    format!("secret `{name}` is unavailable: {reason}")
+}
+
 fn active_rhai_secret_store_is_isolated() -> bool {
     super::ACTIVE_RHAI_SECRETS
         .with(|active| active.borrow().as_ref().is_some_and(|store| store.isolated))
+}
+
+fn active_rhai_refusal_reason() -> Option<String> {
+    super::ACTIVE_RHAI_SECRETS.with(|active| {
+        active
+            .borrow()
+            .as_ref()
+            .and_then(|store| store.refusal.clone())
+    })
 }
 
 fn resolve_rhai_secret_vault_path(
@@ -407,6 +435,11 @@ fn active_rhai_validate_secret_name(name: &str) -> Result<(), Box<EvalAltResult>
         let store = store
             .as_ref()
             .ok_or_else(|| crate::rhai_runtime_error("Rhai secret store is not active"))?;
+        if let Some(reason) = store.refusal.as_deref() {
+            return Err(crate::rhai_runtime_error(refused_secret_access_message(
+                reason, name,
+            )));
+        }
         if store.isolated {
             return Err(crate::rhai_runtime_error(isolated_secret_access_message(
                 name,
@@ -537,6 +570,12 @@ fn active_rhai_set_secret_records(
     let records = records.into_iter().collect::<Vec<_>>();
     if records.is_empty() {
         return Ok(());
+    }
+    if let Some(reason) = active_rhai_refusal_reason() {
+        let (name, _) = &records[0];
+        return Err(crate::rhai_runtime_error(refused_secret_access_message(
+            &reason, name,
+        )));
     }
     if active_rhai_secret_store_is_isolated() {
         let (name, _) = &records[0];

@@ -13,7 +13,8 @@ use super::provider_context::{
 };
 use super::provider_package::{
     resolve_provider_package, run_provider_preflight, run_provider_status,
-    DeployProviderCheckStatus, DeployProviderPackage, ManifestDeployProviderConfig,
+    DeployProviderCheckStatus, DeployProviderFetch, DeployProviderPackage,
+    DeployProviderProvenance, ManifestDeployProviderConfig,
 };
 use super::report::*;
 use super::text::{render_deploy_history_text, render_deploy_plan_text, render_deploy_status_text};
@@ -93,7 +94,8 @@ pub(super) fn run_deploy_status(
     let latest_path = deploy_latest_path(repo_root, env);
     let active = read_optional_json(&active_path)?;
     let latest = read_optional_json(&latest_path)?;
-    let (provider_status, warnings) = deploy_status_provider_report(repo_root, env)?;
+    let (provider_status, provider_provenance, warnings) =
+        deploy_status_provider_report(repo_root, env)?;
     let report = DeployStatusReport {
         schema: STATUS_SCHEMA.to_owned(),
         schema_version: 1,
@@ -107,6 +109,7 @@ pub(super) fn run_deploy_status(
         active,
         latest,
         provider_status,
+        provider_provenance,
         warnings,
     };
     let text = render_deploy_status_text(&report);
@@ -180,10 +183,16 @@ pub(super) fn run_deploy_history(
 }
 
 fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, RunnerError> {
-    let (env_config, model, provider_package) = deploy_execution_inputs(repo_root, env)?;
+    // A plan is a preview: it resolves the provider package offline, from the
+    // cache alone, and refuses rather than fetching when the cache is missing.
+    let (env_config, model, provider_package) =
+        deploy_execution_inputs(repo_root, env, DeployProviderFetch::Offline)?;
     let code = resolve_code_ref(repo_root, &env_config.code_ref)?;
     let mut blockers = Vec::new();
-    let mut warnings = Vec::new();
+    let mut warnings = provider_package
+        .as_ref()
+        .map(|package| package.warnings.clone())
+        .unwrap_or_default();
     if env_config.release_policy == ReleasePolicy::Required && code.kind != "tag" {
         blockers.push(
             "release_policy `required` requires `code_ref = \"release-tag\"` or a tag ref"
@@ -255,6 +264,9 @@ fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, Ru
         deployment_id,
         env: env.to_owned(),
         provider: env_config.provider.adapter().to_owned(),
+        provider_provenance: provider_package
+            .as_ref()
+            .map(|package| package.provenance.clone()),
         app: DeployPlanApp {
             name: model.app.name,
             project_name: env_config
@@ -290,6 +302,7 @@ fn build_deploy_plan(repo_root: &Path, env: &str) -> Result<DeployPlanReport, Ru
 fn deploy_execution_inputs(
     repo_root: &Path,
     env: &str,
+    fetch: DeployProviderFetch,
 ) -> Result<
     (
         ManifestDeployEnvConfig,
@@ -306,8 +319,12 @@ fn deploy_execution_inputs(
         ))
     })?;
     let model = derive_deploy_model(repo_root)?;
-    let provider_package =
-        resolve_provider_package(repo_root, env_config.provider.adapter(), &config.providers)?;
+    let provider_package = resolve_provider_package(
+        repo_root,
+        env_config.provider.adapter(),
+        &config.providers,
+        fetch,
+    )?;
     Ok((env_config, model, provider_package))
 }
 
@@ -366,6 +383,16 @@ fn provider_preflight_report(
             package.descriptor.provider.display_name, package.descriptor.provider.version
         )),
     }];
+    checks.push(DeployProviderCheck {
+        name: "provider-source".to_owned(),
+        status: DeployProviderCheckStatus::Planned.as_str().to_owned(),
+        target: package.provenance.commit.clone(),
+        message: Some(format!(
+            "{} ({} source)",
+            package.provenance.describe(),
+            package.provenance.kind
+        )),
+    });
     let policy_blockers = provider_package_policy_blockers(&provider, &package.descriptor.policy);
     if !policy_blockers.is_empty() {
         return Ok(DeployProviderPreflightReport {
@@ -475,8 +502,9 @@ fn deploy_provider_context(
 fn deploy_status_provider_report(
     repo_root: &Path,
     env: &str,
-) -> Result<(Option<Value>, Vec<String>), RunnerError> {
-    match deploy_execution_inputs(repo_root, env) {
+) -> Result<(Option<Value>, Option<DeployProviderProvenance>, Vec<String>), RunnerError> {
+    // Status observes a live provider, so it may refresh the cached checkout.
+    match deploy_execution_inputs(repo_root, env, DeployProviderFetch::Online) {
         Ok((env_config, model, Some(provider_package))) => {
             let report = run_provider_status(
                 repo_root,
@@ -486,17 +514,23 @@ fn deploy_status_provider_report(
             )?;
             Ok((
                 report.map(|report| json_value(&report)).transpose()?,
-                Vec::new(),
+                Some(provider_package.provenance.clone()),
+                provider_package.warnings.clone(),
             ))
         }
         Ok((env_config, _model, None)) => Ok((
+            None,
             None,
             vec![format!(
                 "deploy provider `{}` has no configured provider package; provider status skipped",
                 env_config.provider.adapter()
             )],
         )),
-        Err(error) => Ok((None, vec![format!("provider status skipped: {error}")])),
+        Err(error) => Ok((
+            None,
+            None,
+            vec![format!("provider status skipped: {error}")],
+        )),
     }
 }
 
