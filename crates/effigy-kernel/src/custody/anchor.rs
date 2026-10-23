@@ -3,7 +3,7 @@
 use super::*;
 use crate::ident::{self, ProcessState};
 
-fn verified(r: &ProcessReceipt, anchor: &ProcessIdentity) -> bool {
+pub(super) fn verified(r: &ProcessReceipt, anchor: &ProcessIdentity) -> bool {
     platform::generation(anchor).verified().is_some()
         && matches!(ident::process_state(anchor.pid), Observed::Verified(ProcessState::Active | ProcessState::Stopped, _))
         && platform::read_nonce(anchor.pid).verified() == Some(&r.nonce)

@@ -24,6 +24,8 @@ const SECTION_TASKS_CANONICAL_PREFIX: &[&str] = &[
     "fail_on_non_zero = true",
     "# Optional: keep this task out of the user-configured per-run scratch directory (`[scratch]`).",
     "scratch = false",
+    "# Declare opaque script descendants that open journals or launch retained Effigy work before workload start.",
+    "durable = true",
     "# First bounded dev-front-door contract: let one managed task own container lifecycle.",
     "container_lifecycle = true",
     "# Optional: auto-start the shipped gateway when the task-owned container session declares DNS.",

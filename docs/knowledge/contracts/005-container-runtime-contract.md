@@ -1034,11 +1034,12 @@ application data is not. Same-named resources in another profile stay.
 Shared services, persistent and external volumes, and foreign-owned
 resources stay. Shared-identity routes and loopbacks stay even when the
 same worktree also has isolated stacks. Compose networks are part of the
-owned inventory. A durable record under `~/.effigy/runtime-scopes/` survives
-checkout deletion so cleanup can retry; one record per generation token
-aggregates every container environment and every runtime profile in that
-worktree. Record writes take a lock and replace the file atomically; a
-corrupt record is an error, not an empty scope. Backend discovery failures,
+owned inventory. A journalled record under `<checkout>/.effigy/state/runtime-scopes/` aggregates
+the checkout’s environments and runtime profiles. Edits are atomic, and corrupt
+records refuse work. External deletion removes that inventory. Dead-checkout
+retirement uses backend labels and the native custody lease instead, with retry
+progress retained in the invoking live checkout (052 §7.1).
+Backend discovery failures,
 including malformed inspect or listing JSON, keep the record and do not
 report success. A recorded profile whose runtime is stopped is probed first,
 never skipped silently and never started: retire still clears host-side
@@ -1054,8 +1055,9 @@ Retirement does not accept a container environment name. `container <NAME>
 retire` fails before checkout or token record lookup, runtime inventory,
 confirmation, or mutation, including when `--scope` or `--yes` is supplied.
 `container retire` selects the recorded generation for the current checkout;
-`container retire --scope <TOKEN>` selects only that exact record after the
-checkout is gone. A record aggregates all environments and runtime profiles
+`container retire --scope <TOKEN>` selects only that exact local record while
+the checkout exists. After deletion, use `container retire --dead` from a live
+checkout; the selected backend supplies surviving ownership evidence. A record aggregates all environments and runtime profiles
 for its generation, so named partial retirement is not supported.
 
 Resolving, discovering, planning, or reporting container policy does not

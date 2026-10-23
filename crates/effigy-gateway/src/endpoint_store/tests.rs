@@ -451,3 +451,72 @@ fn reading_a_committed_loopback_assignment_does_not_admit_writer_runs() {
 }
 
 mod downgrade;
+
+#[cfg(feature = "endpoint-store-faults")]
+#[test]
+#[ignore = "explicit machine-store write-budget measurement"]
+fn machine_store_write_budget() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (directory, store) = fixture();
+    let owner = directory.path().join("checkout").display().to_string();
+    let mut results = Vec::new();
+    let mut measure = |label: &str, expected: usize, work: &mut dyn FnMut()| {
+        let commits = Arc::new(AtomicUsize::new(0));
+        let captured = commits.clone();
+        effigy_kernel::fault_injection::with_hook(
+            move |point| {
+                if point == "StoreCommitAfter" {
+                    captured.fetch_add(1, Ordering::Relaxed);
+                }
+                Ok(())
+            },
+            &mut *work,
+        );
+        results.push(
+            json!({"operation":label,"commits":commits.load(Ordering::Relaxed),"budget":expected}),
+        );
+    };
+    measure("cold-reserve", 2, &mut || {
+        store.reserve_loopback("first", &owner).unwrap();
+    });
+    measure("read", 0, &mut || {
+        store.read_compatible().unwrap();
+    });
+    measure("existing-pin", 0, &mut || {
+        store.reserve_loopback("first", &owner).unwrap();
+    });
+    measure("unchanged-edit", 0, &mut || {
+        store.edit(None, |_| Ok(())).unwrap();
+    });
+    measure("unchanged-import", 0, &mut || {
+        store.import().unwrap();
+    });
+    measure("new-pin", 1, &mut || {
+        store.reserve_loopback("second", &owner).unwrap();
+    });
+    measure("release-pin", 1, &mut || {
+        assert!(store.release_loopback("first", &owner).unwrap());
+    });
+    let operation = operator::context(Duration::from_secs(10), EffectClass::Observe);
+    let root = StateRoot::machine_observe(&operation.observe().unwrap(), directory.path())
+        .verified()
+        .unwrap()
+        .clone();
+    let read = Store::read(&operation.observe().unwrap(), &root);
+    let reader = read.verified().unwrap();
+    let history = effigy_kernel::run::history(reader, &super::owner(), 1000)
+        .verified()
+        .unwrap()
+        .len();
+    println!(
+        "MACHINE-WRITES {}",
+        json!({"operations":results,"completed_history_rows":history,
+        "measurement":"StoreCommitAfter; cold-reserve includes one schema initialization commit, steady-state rows exclude initialization"})
+    );
+    if std::env::var_os("EFFIGY_MEASURE_BASELINE_ONLY").is_none() {
+        for row in results {
+            assert_eq!(row["commits"], row["budget"], "{row}");
+        }
+        assert_eq!(history, 0, "machine facts retained completed run history");
+    }
+}

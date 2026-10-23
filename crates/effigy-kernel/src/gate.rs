@@ -1,5 +1,10 @@
 //! Gates (§5.4): a never-unlinked `flock` on a stable inode. Holding it is
 //! the holder's liveness (K2); there are no heartbeats, staleness or unlinks.
+mod checkout_fence;
+mod foreground;
+pub use checkout_fence::{CheckoutFenceGuard, CheckoutFenceIdentity};
+pub use foreground::{ForegroundDiag, ForegroundHolder};
+
 use crate::ctx::{Capability, EffectClass, EffectContext, Interrupt, ObserveContext};
 use crate::fs::{self, FileName, FsError, IoError, Trust, FILE_MODE};
 use crate::id::{ResourceId, ResourceKind, RunId, Scope};
@@ -35,6 +40,7 @@ pub enum GateState {
 /// observation of the named process after its start identity matched.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HolderDiag {
+    pub foreground: Option<ForegroundDiag>,
     pub run: Option<String>,
     pub pid: u32,
     pub start: Option<String>,
@@ -45,6 +51,8 @@ pub struct HolderDiag {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Body {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    foreground: Option<ForegroundDiag>,
     v: u8,
     run: Option<String>,
     pid: u32,
@@ -117,21 +125,77 @@ pub struct GateGuard {
 /// A lock belongs to the open description, including copies in a concurrent
 /// fork. Explicit unlock makes release independent of the child's close/exec.
 #[derive(Debug)]
-struct GateFile(File);
+struct GateFile {
+    file: File,
+    unlock_on_drop: bool,
+}
 impl Drop for GateFile {
     fn drop(&mut self) {
-        fs::unlock(&self.0);
+        if self.unlock_on_drop {
+            fs::unlock(&self.file);
+        }
     }
 }
+/// Keep inherited gate sources above the helper's 20..84 target range.
+/// Ordinary `try_clone` may allocate inside that range and clobber a later
+/// source during pre-exec dup2. These copies remain CLOEXEC in the owner.
+pub(crate) fn duplicate_custody(
+    file: &impl std::os::fd::AsRawFd,
+) -> std::io::Result<std::os::fd::OwnedFd> {
+    use std::os::fd::FromRawFd;
+    // SAFETY: the borrow keeps the source descriptor live. fcntl duplicates
+    // without consuming it and returns a fresh CLOEXEC fd >=128 or -1.
+    let fd = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 128) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: successful fcntl transfers this fresh descriptor exactly once.
+    Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) })
+}
 impl GateGuard {
+    /// Memory custody may span local gates and pre-cutover compatibility
+    /// gates. Every description then reaches the same death guard and children.
+    pub(crate) fn extend_custody(&mut self, mut other: Self) {
+        self.gates.append(&mut other.gates);
+        self.scopes.append(&mut other.scopes);
+    }
+    /// Foreground backup custody retains these same open descriptions. Once
+    /// shared, closing a custodian must not explicitly unlock the other's
+    /// flock. Workload forks still inherit only CLOEXEC copies.
+    pub(crate) fn share_custody(&mut self) -> std::io::Result<Vec<std::os::fd::OwnedFd>> {
+        let mut copies = Vec::new();
+        for file in self
+            .gates
+            .iter()
+            .map(|(_, f)| f)
+            .chain(self.scopes.iter().map(|(_, f)| f))
+        {
+            copies.push(duplicate_custody(&file.file)?);
+        }
+        for file in self
+            .gates
+            .iter_mut()
+            .map(|(_, f)| f)
+            .chain(self.scopes.iter_mut().map(|(_, f)| f))
+        {
+            file.unlock_on_drop = false;
+        }
+        Ok(copies)
+    }
+
     pub fn ids(&self) -> impl Iterator<Item = &ResourceId> {
         self.gates.iter().map(|(id, _)| id)
     }
-    /// Admission releases auxiliary resource gates before any adapter call (K14).
+    /// Admission releases auxiliary resources before adapters (K14), retaining
+    /// every checkout alias of the same logical owner across token creation.
     pub(crate) fn retain_owner(&mut self, owner: &ResourceId) {
-        self.gates.retain(|(id, _)| id == owner);
-        self.scopes
-            .retain(|(scope, _)| *scope == scope_name(owner.scope()));
+        self.gates
+            .retain(|(id, _)| id == owner || id.checkout_alias_of(owner));
+        self.scopes.retain(|(scope, _)| {
+            self.gates
+                .iter()
+                .any(|(id, _)| *scope == scope_name(id.scope()))
+        });
     }
     pub fn covers(&self, id: &ResourceId) -> bool {
         self.gates.iter().any(|(held, _)| held == id)
@@ -141,7 +205,7 @@ impl GateGuard {
     pub fn set_run(&self, run: &RunId) {
         let body = body(Some(run.to_string()));
         for (_, file) in &self.gates {
-            let _ = fs::rewrite(&file.0, &body);
+            let _ = fs::rewrite(&file.file, &body);
         }
     }
 }
@@ -159,6 +223,24 @@ impl std::fmt::Debug for Gate {
     }
 }
 impl Gate {
+    /// A named mutex for derived private files, colocated with their directory.
+    /// Uses the same stable inode, identity diagnostics and bounded waits as
+    /// journal gates, without opening or creating a runtime state root.
+    pub fn files(
+        cx: &EffectContext,
+        directory: &crate::fs::DirFd,
+        name: &str,
+        wait: Wait,
+    ) -> Result<GateGuard, GateError> {
+        let root = StateRoot::file_gate_root(cx, directory)?;
+        let resource =
+            ResourceId::store(Scope::Machine, name).map_err(|error| GateError::Untrusted {
+                path: directory.path().into(),
+                reason: error.to_string(),
+            })?;
+        Self::acquire(cx, &root, &[resource], wait)
+    }
+
     /// Canonical-order, all-or-nothing acquisition (K14). Guest placement is
     /// refused before the state root is touched (R1).
     pub fn acquire(
@@ -197,6 +279,7 @@ impl Gate {
                 reason: "state root opened read-only".into(),
             });
         }
+        root.verify_binding()?;
         let started = Instant::now();
         let mut deadline = match wait {
             Wait::FailFast => started + FAIL_FAST,
@@ -208,7 +291,11 @@ impl Gate {
         let mut ids = ids.to_vec();
         ids.sort_by_key(ResourceId::canonical);
         ids.dedup();
-        let gates = root.family(Family::Gates)?.expect("created directory");
+        let machine = if ids.iter().any(|id| id.scope() == Scope::Machine) {
+            root.machine_gate_effects(cx)?
+        } else {
+            None
+        };
         let mut scope_names: Vec<String> = ids.iter().map(|id| scope_name(id.scope())).collect();
         scope_names.sort();
         scope_names.dedup();
@@ -219,13 +306,30 @@ impl Gate {
         };
         let mut scope_dirs = Vec::new();
         for name in &scope_names {
+            let domain = if name == "machine" {
+                machine.as_ref().unwrap_or(root)
+            } else {
+                root
+            };
+            let gates = domain.family(Family::Gates)?.expect("created directory");
             let file =
                 open_gate(&gates, &format!("{name}.scope"), true)?.expect("created gate file");
             let first = ids
                 .iter()
                 .find(|id| &scope_name(id.scope()) == name)
                 .expect("scope of an id");
-            let file = lock(cx, file, libc::LOCK_SH, deadline, started, wait, first)?;
+            let borrowed = if name == "machine" {
+                crate::migration::borrow_source_scope(&file, &ids)?
+            } else {
+                None
+            };
+            let file = match borrowed {
+                Some(file) => GateFile {
+                    file,
+                    unlock_on_drop: false,
+                },
+                None => lock(cx, file, libc::LOCK_SH, deadline, started, wait, first)?,
+            };
             guard.scopes.push((name.clone(), file));
             // Recreated after a removal; removal cannot run while we hold SH.
             let dir = gates.child(name, Trust::Private, true)?.expect("created");
@@ -242,11 +346,15 @@ impl Gate {
             let file = lock(cx, file, libc::LOCK_EX, deadline, started, wait, id)?;
             guard.gates.push((id.clone(), file));
         }
+        root.verify_binding()?;
+        if let Some(machine) = &machine {
+            machine.verify_binding()?;
+        }
         crate::fault_point!(GateAcquire)
             .map_err(|e| GateError::Io(IoError::new("gate acquire", root.path(), &e)))?;
         let body = body(None);
         for (_, file) in &guard.gates {
-            let _ = fs::rewrite(&file.0, &body);
+            let _ = fs::rewrite(&file.file, &body);
         }
         Ok(guard)
     }
@@ -267,64 +375,13 @@ impl Gate {
         run: &RunId,
         signal: i32,
     ) -> Observed<u32> {
-        if cx.require(Capability::HostAuthority).is_err() {
-            return Observed::Unknown(UnknownReason::HostAuthorityRequired);
-        }
-        let gates = match root.family(Family::Gates) {
-            Ok(Some(gates)) => gates,
-            Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
-            Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
-        };
-        let file = match gates
-            .child(&scope_name(id.scope()), Trust::Private, false)
-            .and_then(|dir| match dir {
-                Some(dir) => open_gate(&dir, &format!("{}.gate", id.name()), false),
-                None => Ok(None),
-            }) {
-            Ok(Some(file)) => file,
-            Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
-            Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
-        };
-        match fs::try_flock(&file, libc::LOCK_SH) {
-            Ok(true) => {
-                fs::unlock(&file);
-                return Observed::Absent(AbsenceProof::NoGateInode);
-            }
-            Ok(false) => {}
-            Err(error) => return Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
-        }
-        let diag = match holder(&file) {
-            Observed::Verified(diag, _) => diag,
-            Observed::Absent(proof) => return Observed::Absent(proof),
-            Observed::Unknown(reason) => return Observed::Unknown(reason),
-        };
-        let run_text = run.to_string();
-        if diag.run.as_deref() != Some(run_text.as_str())
-            || !matches!(diag.state, Observed::Verified(..))
-        {
-            return Observed::Unknown(UnknownReason::Inconsistent(
-                "the gate holder is not this run's verified owner".into(),
-            ));
-        }
-        match ident::process_identity(diag.pid) {
-            Observed::Verified(identity, _)
-                if Some(identity.start.text()) == diag.start
-                    && Some(identity.boot.as_str()) == diag.boot.as_deref() => {}
-            _ => {
-                return Observed::Unknown(UnknownReason::Inconsistent(
-                    "the gate holder changed before the signal".into(),
-                ))
-            }
-        }
-        // SAFETY: kill(2) of one pid whose identity was just re-verified.
-        if unsafe { libc::kill(diag.pid as i32, signal) } != 0 {
-            return Observed::Unknown(UnknownReason::Inconsistent(
-                std::io::Error::last_os_error().to_string(),
-            ));
-        }
-        Observed::Verified(
-            diag.pid,
-            Evidence::new("kernel gate holder signal".into(), None).expect("fixed source"),
+        signal_named_holder(
+            cx,
+            root,
+            &scope_name(id.scope()),
+            &id.name().to_string(),
+            ExpectedHolder::Run(run),
+            signal,
         )
     }
 
@@ -368,7 +425,10 @@ impl Gate {
             return Ok(ScopeRemoval::Busy);
         }
         // Also release on every early return or filesystem error below.
-        let file = GateFile(file);
+        let file = GateFile {
+            file,
+            unlock_on_drop: true,
+        };
         let Some(dir) = gates.child(&name, Trust::Private, false)? else {
             return Ok(ScopeRemoval::Absent);
         };
@@ -388,6 +448,124 @@ impl Gate {
         drop(file);
         Ok(ScopeRemoval::Removed)
     }
+}
+
+pub(crate) enum ExpectedHolder<'a> {
+    Run(&'a RunId),
+    Writer(&'a ident::ProcessIdentity, Option<&'a str>),
+}
+/// Migration can address a pre-run writer whose legacy gate has no RunId.
+/// Names are validated by that boundary; identity matching is never optional.
+pub(crate) fn signal_named_holder(
+    cx: &EffectContext,
+    root: &StateRoot,
+    scope: &str,
+    resource: &str,
+    target: ExpectedHolder<'_>,
+    signal: i32,
+) -> Observed<u32> {
+    if cx.operation().check("gate holder signal").is_err() {
+        return Observed::Unknown(UnknownReason::TimedOut {
+            phase: "gate holder signal".into(),
+        });
+    }
+    if cx.require(Capability::HostAuthority).is_err() {
+        return Observed::Unknown(UnknownReason::HostAuthorityRequired);
+    }
+    let observe = match cx.child(Duration::from_secs(10)).operation().observe() {
+        Ok(observe) => observe,
+        Err(_) => {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "machine gate holder signal".into(),
+            })
+        }
+    };
+    if let Err(error) = root.verify_binding() {
+        return Observed::Unknown(crate::root::unknown(&error));
+    }
+    let machine = if scope == "machine" {
+        match root.machine_gate_observe(&observe) {
+            Observed::Verified(root, _) => root,
+            Observed::Absent(proof) => return Observed::Absent(proof),
+            Observed::Unknown(reason) => return Observed::Unknown(reason),
+        }
+    } else {
+        None
+    };
+    if let Some(machine) = &machine {
+        if let Err(error) = machine.verify_binding() {
+            return Observed::Unknown(crate::root::unknown(&error));
+        }
+    }
+    let root = machine.as_ref().unwrap_or(root);
+    let gates = match root.family(Family::Gates) {
+        Ok(Some(gates)) => gates,
+        Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
+        Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
+    };
+    let file = match gates
+        .child(scope, Trust::Private, false)
+        .and_then(|dir| match dir {
+            Some(dir) => open_gate(&dir, &format!("{resource}.gate"), false),
+            None => Ok(None),
+        }) {
+        Ok(Some(file)) => file,
+        Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
+        Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
+    };
+    match fs::try_flock(&file, libc::LOCK_SH) {
+        Ok(true) => {
+            fs::unlock(&file);
+            return Observed::Absent(AbsenceProof::NoGateInode);
+        }
+        Ok(false) => {}
+        Err(error) => return Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
+    }
+    let diag = match holder(&file) {
+        Observed::Verified(diag, _) => diag,
+        Observed::Absent(proof) => return Observed::Absent(proof),
+        Observed::Unknown(reason) => return Observed::Unknown(reason),
+    };
+    let matches_target = match target {
+        ExpectedHolder::Run(run) => diag.run.as_deref() == Some(run.to_string().as_str()),
+        ExpectedHolder::Writer(identity, run) => {
+            diag.run.as_deref() == run
+                && diag.pid == identity.pid
+                && diag.start.as_deref() == Some(identity.start.text().as_str())
+                && diag.boot.as_deref() == Some(identity.boot.as_str())
+        }
+    };
+    if !matches_target || !matches!(diag.state, Observed::Verified(..)) {
+        return Observed::Unknown(UnknownReason::Inconsistent(
+            "the gate holder is not the expected verified owner".into(),
+        ));
+    }
+    match ident::process_identity(diag.pid) {
+        Observed::Verified(identity, _)
+            if Some(identity.start.text()) == diag.start
+                && Some(identity.boot.as_str()) == diag.boot.as_deref() => {}
+        _ => {
+            return Observed::Unknown(UnknownReason::Inconsistent(
+                "the gate holder changed before the signal".into(),
+            ))
+        }
+    }
+    let pid = match i32::try_from(diag.pid) {
+        Ok(pid) if pid > 0 => pid,
+        _ => return Observed::Unknown(UnknownReason::Unparsable("invalid holder pid".into())),
+    };
+    // SAFETY: kill takes integer PID/signal values and no memory. The
+    // positive, representable PID selects one process, never a group; its
+    // exact boot/start identity was rechecked immediately above (I-P4).
+    if unsafe { libc::kill(pid, signal) } != 0 {
+        return Observed::Unknown(UnknownReason::Inconsistent(
+            std::io::Error::last_os_error().to_string(),
+        ));
+    }
+    Observed::Verified(
+        diag.pid,
+        Evidence::new("kernel gate holder signal".into(), None).expect("fixed source"),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -457,21 +635,40 @@ pub(crate) fn probe_names(
             phase: "gate probe".into(),
         });
     }
-    // No inode: never acquired, so free with `NoGateInode` as its proof.
-    let free = |proof| Observed::Absent(proof);
+    if cx.placement() == crate::ctx::Placement::Guest {
+        return Observed::Unknown(UnknownReason::HostAuthorityRequired);
+    }
+    if let Err(error) = root.verify_binding() {
+        return Observed::Unknown(crate::root::unknown(&error));
+    }
+    let machine = if scope == "machine" {
+        match root.machine_gate_observe(cx) {
+            Observed::Verified(root, _) => root,
+            Observed::Absent(proof) => return Observed::Absent(proof),
+            Observed::Unknown(reason) => return Observed::Unknown(reason),
+        }
+    } else {
+        None
+    };
+    if let Some(machine) = &machine {
+        if let Err(error) = machine.verify_binding() {
+            return Observed::Unknown(crate::root::unknown(&error));
+        }
+    }
+    let root = machine.as_ref().unwrap_or(root);
     let gates = match root.family(Family::Gates) {
         Ok(Some(gates)) => gates,
-        Ok(None) => return free(AbsenceProof::NoGateInode),
+        Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
         Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
     };
     let dir = match gates.child(scope, Trust::Private, false) {
         Ok(Some(dir)) => dir,
-        Ok(None) => return free(AbsenceProof::NoGateInode),
+        Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
         Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
     };
     let file = match open_gate(&dir, &format!("{rid}.gate"), false) {
         Ok(Some(file)) => file,
-        Ok(None) => return free(AbsenceProof::NoGateInode),
+        Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
         Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
     };
     let evidence = Evidence::new("kernel gate probe".into(), None).expect("fixed source");
@@ -504,7 +701,12 @@ fn lock(
     let mut pause = POLL_MIN;
     loop {
         match fs::try_flock(&file, op) {
-            Ok(true) => return Ok(GateFile(file)),
+            Ok(true) => {
+                return Ok(GateFile {
+                    file,
+                    unlock_on_drop: true,
+                })
+            }
             Ok(false) => {}
             Err(error) => {
                 return Err(GateError::Io(IoError::new(
@@ -538,6 +740,9 @@ fn lock(
 }
 
 fn body(run: Option<String>) -> Vec<u8> {
+    serde_json::to_vec(&current_body(run)).expect("serializable body")
+}
+fn current_body(run: Option<String>) -> Body {
     let pid = std::process::id();
     let start = ident::process_identity(pid)
         .verified()
@@ -548,15 +753,15 @@ fn body(run: Option<String>) -> Vec<u8> {
     let argv0 = std::env::args_os()
         .next()
         .map(|arg| arg.to_string_lossy().chars().take(512).collect());
-    serde_json::to_vec(&Body {
+    Body {
+        foreground: None,
         v: 1,
         run,
         pid,
         start,
         boot,
         argv0,
-    })
-    .expect("serializable body")
+    }
 }
 
 /// Reads the diagnostic body. Torn, missing or mismatched: `Unknown`.
@@ -589,6 +794,7 @@ fn holder(file: &File) -> Observed<HolderDiag> {
     };
     Observed::Verified(
         HolderDiag {
+            foreground: body.foreground,
             run: body.run,
             pid: body.pid,
             start: body.start,

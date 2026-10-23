@@ -3,15 +3,14 @@
 //! Linked worktrees and ephemeral clones reuse their runtime-scope token, so
 //! Compose names never change. A primary Git checkout keeps its own token
 //! beside it in its `.git` directory. A root with no `.git` of its own has
-//! no per-checkout Git state, so its identity derives from its canonical
-//! path. Only Mutate mints a token; Observe reads and reports "no runtime
+//! no per-checkout Git state, so it persists its identity in `.effigy`. Only Mutate mints a token; Observe reads and reports "no runtime
 //! state yet".
 
 use std::io;
 use std::path::Path;
 
 use effigy_core::worktree_scope::{self, ScopeKind};
-use effigy_kernel::id::{CheckoutId, CheckoutKind, Digest};
+use effigy_kernel::id::{CheckoutId, CheckoutKind};
 
 use crate::runner::error::RunnerError;
 
@@ -26,10 +25,14 @@ pub(in crate::runner) fn mint(root: &Path) -> Result<CheckoutId, RunnerError> {
     if let Some((kind, token)) = worktree_scope::load_or_create_scoped(root).map_err(io_error)? {
         return parse(scoped_kind(kind), &token).map_err(io_error);
     }
-    match worktree_scope::load_or_create_checkout_token(root).map_err(io_error)? {
-        Some(token) => parse(CheckoutKind::Primary, &token).map_err(io_error),
-        None => Ok(path_identity(root)),
+    if let Some(token) = worktree_scope::load_checkout_token(root)
+        .map_err(io_error)?
+        .or(worktree_scope::checkout_token(root).map_err(io_error)?)
+    {
+        return parse(CheckoutKind::Primary, &token).map_err(io_error);
     }
+    let token = worktree_scope::prepare_checkout_token(root).map_err(io_error)?;
+    parse(CheckoutKind::Primary, &token).map_err(io_error)
 }
 
 /// The root's checkout identity without creating anything (R2). `None`
@@ -42,10 +45,13 @@ pub(in crate::runner) fn read(root: &Path) -> io::Result<Option<CheckoutId>> {
     }
     if root.join(".git").is_dir() {
         return worktree_scope::load_checkout_token(root)?
+            .or(worktree_scope::checkout_token(root)?)
             .map(|token| parse(CheckoutKind::Primary, &token))
             .transpose();
     }
-    Ok(Some(path_identity(root)))
+    worktree_scope::checkout_token(root)?
+        .map(|token| parse(CheckoutKind::Primary, &token))
+        .transpose()
 }
 
 fn scoped_kind(kind: ScopeKind) -> CheckoutKind {
@@ -53,16 +59,6 @@ fn scoped_kind(kind: ScopeKind) -> CheckoutKind {
         ScopeKind::LinkedWorktree => CheckoutKind::LinkedWorktree,
         ScopeKind::EphemeralClone => CheckoutKind::EphemeralClone,
     }
-}
-
-fn path_identity(root: &Path) -> CheckoutId {
-    let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let mut bytes = b"effigy.checkout.path\0".to_vec();
-    bytes.extend_from_slice(canonical.as_os_str().as_encoded_bytes());
-    let digest = Digest::of(&bytes);
-    let mut token = [0u8; 16];
-    token.copy_from_slice(&digest.0[..16]);
-    CheckoutId::new(CheckoutKind::Primary, token)
 }
 
 fn parse(kind: CheckoutKind, value: &str) -> io::Result<CheckoutId> {
@@ -87,10 +83,7 @@ mod tests {
         let root = tempfile::tempdir().expect("root");
         std::fs::create_dir(root.path().join(".git")).expect("git dir");
         assert_eq!(read(root.path()).expect("read"), None);
-        let token = root
-            .path()
-            .join(".git")
-            .join(worktree_scope::CHECKOUT_TOKEN_FILE);
+        let token = root.path().join(".git").join(worktree_scope::SCOPE_FILE);
         assert!(!token.exists(), "observe writes nothing");
         let minted = mint(root.path()).expect("mint");
         assert!(token.is_file());
@@ -100,16 +93,96 @@ mod tests {
     }
 
     #[test]
-    fn root_without_git_state_has_a_path_identity_and_writes_nothing() {
+    fn root_without_git_state_mints_a_persistent_identity_only_on_mutate() {
         let root = tempfile::tempdir().expect("root");
+        assert_eq!(read(root.path()).expect("read"), None);
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
         let minted = mint(root.path()).expect("mint");
         assert_eq!(read(root.path()).expect("read"), Some(minted));
-        assert_eq!(
-            std::fs::read_dir(root.path()).expect("list").count(),
-            0,
-            "no file is written into the checkout"
-        );
+        assert!(root
+            .path()
+            .join(".effigy")
+            .join(worktree_scope::SCOPE_FILE)
+            .is_file());
         let other = tempfile::tempdir().expect("other");
         assert_ne!(mint(other.path()).expect("mint other"), minted);
+    }
+}
+
+/// Every persisted identity this checkout actually carries. Older primary task
+/// and environment engines used different token files; their coordinates must
+/// survive migration as aliases. A path hash never verifies a generation.
+pub(super) fn identities(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    root: &Path,
+) -> io::Result<Vec<CheckoutId>> {
+    if let Some(scope) = worktree_scope::resolve(root)? {
+        return Ok(
+            read_token(cx, &scope.token_dir, worktree_scope::SCOPE_FILE)?
+                .map(|token| parse(scoped_kind(scope.kind), &token))
+                .transpose()?
+                .into_iter()
+                .collect(),
+        );
+    }
+    let git = root.join(".git");
+    let mut ids = Vec::new();
+    if git.is_dir() {
+        for name in [
+            worktree_scope::CHECKOUT_TOKEN_FILE,
+            worktree_scope::SCOPE_FILE,
+        ] {
+            if let Some(token) = read_token(cx, &git, name)? {
+                let id = parse(CheckoutKind::Primary, &token)?;
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
+    } else {
+        let dir = root.join(".effigy");
+        match std::fs::symlink_metadata(&dir) {
+            Ok(meta) if meta.is_dir() => {
+                if let Some(token) = read_token(cx, &dir, worktree_scope::SCOPE_FILE)? {
+                    ids.push(parse(CheckoutKind::Primary, &token)?);
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "checkout identity directory is not a real directory",
+                ))
+            }
+        }
+    }
+    Ok(ids)
+}
+#[derive(Debug)]
+struct Token(String);
+impl effigy_kernel::record::Record for Token {
+    const MAX_BYTES: u64 = 128;
+    fn decode(bytes: &[u8]) -> Result<Self, String> {
+        let value = std::str::from_utf8(bytes)
+            .map_err(|error| error.to_string())?
+            .trim();
+        parse(CheckoutKind::Primary, value).map_err(|error| error.to_string())?;
+        Ok(Self(value.into()))
+    }
+}
+fn read_token(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    dir: &Path,
+    name: &str,
+) -> io::Result<Option<String>> {
+    let dir = effigy_kernel::fs::DirFd::open(dir).map_err(io::Error::other)?;
+    let name = effigy_kernel::fs::FileName::new(name).map_err(io::Error::other)?;
+    match effigy_kernel::record::read_record::<Token>(cx, &dir, &name) {
+        effigy_kernel::observe::Observed::Verified(Token(value), _) => Ok(Some(value)),
+        effigy_kernel::observe::Observed::Absent(_) => Ok(None),
+        effigy_kernel::observe::Observed::Unknown(reason) => Err(io::Error::other(format!(
+            "checkout token is unknown: {reason:?}"
+        ))),
     }
 }

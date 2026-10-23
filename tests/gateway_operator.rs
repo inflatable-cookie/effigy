@@ -154,16 +154,22 @@ fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
         effigy_kernel::ctx::EffectClass::Observe,
     );
     let cx = op.observe().unwrap();
-    let root = effigy_kernel::root::StateRoot::observe(&cx, home.path());
+    let root = effigy_kernel::root::StateRoot::runtime_machine_observe(&cx, home.path());
     let root = root.verified().unwrap();
     let reader = effigy_kernel::store::Store::read(&cx, root);
     let reader = reader.verified().unwrap();
     let id = failed.run.unwrap();
-    let summary = effigy_kernel::run::summary(reader, id);
+    let owner = effigy_kernel::id::ResourceId::gateway("operator").unwrap();
+    let completion = effigy_kernel::run::machine_completion(reader, &owner);
+    assert_eq!(completion.verified().unwrap().run, id);
     assert_eq!(
-        summary.verified().unwrap().workload,
-        Some(effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 })
+        completion.verified().unwrap().workload,
+        effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 }
     );
+    assert!(matches!(
+        effigy_kernel::run::summary(reader, id),
+        effigy_kernel::observe::Observed::Absent(_)
+    ));
     assert!(!config.pid_file_path.exists());
     assert!(!evidence.exists());
     for (key, value) in inherited {
@@ -221,4 +227,167 @@ fn operator_startup_bounds_admission_and_readiness_separately() {
     let settled = settled_status(&unready);
     assert!(!settled.ready);
     assert!(!unready.pid_file_path.exists());
+}
+
+/// A quiesced gateway migrates its central input without changing route/pin
+/// facts, then serves the same upstream again from the machine fact store.
+#[test]
+fn operator_gateway_preserves_live_proxy_routes_and_port_pins_through_runtime_migration() {
+    use effigy_gateway::endpoint_store::EndpointStore;
+    use effigy_gateway::routes::{Route, RouteSource, RouteTable};
+    use effigy_kernel::{ctx::EffectClass, migration, root::StateRoot};
+    use std::io::{Read, Write};
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    let (home, config) = operator_fixture("q276-gateway-");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let upstream = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    struct Peer {
+        stop: Arc<AtomicBool>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+    impl Drop for Peer {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Release);
+            self.thread.take().unwrap().join().unwrap();
+        }
+    }
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    let _peer = Peer {
+        stop,
+        thread: Some(std::thread::spawn(move || {
+            while !flag.load(Ordering::Acquire) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(1)))
+                            .unwrap();
+                        let mut request = [0; 8192];
+                        let _ = stream.read(&mut request);
+                        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\nConnection: close\r\n\r\nmigration-works");
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5))
+                    }
+                    Err(error) => panic!("private upstream: {error}"),
+                }
+            }
+        })),
+    };
+    let mut routes = RouteTable::new();
+    routes.upsert(Route {
+        domain: "migration.test".into(),
+        target: Some(upstream.to_string()),
+        dns_ip: None,
+        tcp_port: None,
+        tcp_target: None,
+        source: RouteSource::Manual,
+        project: home.path().display().to_string(),
+        scope: None,
+        managed_listener: None,
+        tls: false,
+        registered: chrono::Utc::now(),
+    });
+    routes.save(&config.route_table_path).unwrap();
+    let mut raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&config.route_table_path).unwrap()).unwrap();
+    raw["future_router_fact"] = serde_json::json!({"preserve": true});
+    std::fs::write(&config.route_table_path, serde_json::to_vec(&raw).unwrap()).unwrap();
+    let endpoints = EndpointStore::new(home.path());
+    endpoints.import().unwrap();
+    let pin = endpoints
+        .transaction(
+            None,
+            |snapshot| -> Result<_, effigy_gateway::GatewayError> {
+                let mut ports = snapshot.ports()?;
+                let pin = ports
+                    .allocate("migration-app", home.path().to_str().unwrap())?
+                    .clone();
+                snapshot.set_ports(&ports)?;
+                Ok(pin)
+            },
+        )
+        .unwrap();
+    let expected = endpoints.read().verified().unwrap().clone();
+    struct Stop<'a>(&'a GatewayConfig);
+    impl Drop for Stop<'_> {
+        fn drop(&mut self) {
+            let _ = operator::down(self.0);
+        }
+    }
+    let _daemon = Stop(&config);
+    let executable = std::path::Path::new(env!("CARGO_BIN_EXE_effigy"));
+    let request = || {
+        let mut stream = std::net::TcpStream::connect(config.proxy.bind_addr).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: migration.test\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        let mut reply = String::new();
+        stream.read_to_string(&mut reply).unwrap();
+        assert!(reply.contains("migration-works"), "{reply}");
+    };
+    assert!(
+        operator::up_with_executable(&config, executable)
+            .unwrap()
+            .ready
+    );
+    request();
+    assert_eq!(operator::down(&config).unwrap().status, "stopped");
+    // Model a current-main upgrade using the exact private machine payload.
+    // Preserve gate inodes; there are no live writers after positive down.
+    let directory = home.path().join(".effigy/state");
+    let legacy = directory.join("kernel.db");
+    for suffix in ["", "-wal", "-shm"] {
+        let source = directory.join(format!("machine.db{suffix}"));
+        if source.exists() {
+            std::fs::copy(&source, directory.join(format!("kernel.db{suffix}"))).unwrap();
+            std::fs::remove_file(source).unwrap();
+        }
+    }
+    std::fs::remove_file(directory.join("machine-format.json")).unwrap();
+    std::fs::set_permissions(&legacy, std::fs::Permissions::from_mode(0o400)).unwrap();
+    let before = std::fs::read(&legacy).unwrap();
+    let op = operator::context(Duration::from_secs(120), EffectClass::Mutate);
+    let observe = op.observe().unwrap();
+    let source = StateRoot::legacy_observe(&observe, home.path())
+        .verified()
+        .unwrap()
+        .clone();
+    let imported = migration::import(
+        &op.effects().unwrap(),
+        &source,
+        home.path(),
+        &migration::LegacyQuiescence::launchers_withdrawn(),
+        &mut |_, _, _| panic!("machine-only migration must not discover a checkout"),
+    )
+    .unwrap();
+    assert_eq!(endpoints.read().verified().unwrap(), &expected);
+    assert_eq!(
+        endpoints
+            .read()
+            .verified()
+            .unwrap()
+            .ports()
+            .unwrap()
+            .get("migration-app")
+            .unwrap(),
+        &pin
+    );
+    assert!(
+        operator::up_with_executable(&config, executable)
+            .unwrap()
+            .ready
+    );
+    request();
+    assert_eq!(operator::down(&config).unwrap().status, "stopped");
+    assert_eq!(std::fs::read(&legacy).unwrap(), before);
+    println!("runtime migration gateway: elapsed_ms={}, route_and_pin_preserved=true, proxy_before_and_after=true, readonly_source_unchanged=true", imported.elapsed_ms);
 }

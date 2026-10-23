@@ -1,12 +1,7 @@
-//! Durable runtime-scope inventory stored outside the worktree.
-//!
-//! Git's private worktree directory is removed when a checkout is retired.
-//! This record keeps the generation token and owned-resource inventory under
-//! `~/.effigy/runtime-scopes/` so cleanup can retry after a crash or a
-//! deleted tree.
+//! Checkout-local scope inventory. Backend labels provide discovery after a
+//! checkout is deleted; an inventory record alone never grants cleanup authority.
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -15,9 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::policy::hosts::EffectiveHostMap;
 use crate::policy::model::{EffectiveComposeSource, EffectiveContainerPolicy};
-use crate::policy_support::effigy_home_dir;
 use effigy_gateway::loopback::project_loopback_identity;
-use effigy_gateway::routes::RouteTableLock;
 
 pub const SCOPE_LABEL: &str = "com.effigy.scope";
 pub const MANAGED_LABEL: &str = "com.effigy.managed";
@@ -31,6 +24,8 @@ pub const REPO_ROOT_LABEL: &str = "com.effigy.repo-root";
 /// compose omits Docker's `com.docker.compose.project.working_dir`, so owned
 /// binding checks fall back to this label.
 pub const CHECKOUT_LABEL: &str = "com.effigy.checkout";
+pub const CHECKOUT_FENCE_LABEL: &str = "com.effigy.checkout-fence";
+pub const CHECKOUT_GENERATION_LABEL: &str = "com.effigy.checkout-generation";
 pub const COMPOSE_PROJECT_LABEL: &str = "com.docker.compose.project";
 
 const RECORD_SCHEMA: &str = "effigy.runtime-scope.v1";
@@ -69,6 +64,10 @@ pub struct ScopeRecord {
     pub retain_loopback_identities: Vec<String>,
     #[serde(default)]
     pub pending_tls_certs: Vec<String>,
+    #[serde(default)]
+    pub checkout_fence: Option<effigy_kernel::gate::CheckoutFenceIdentity>,
+    #[serde(default)]
+    pub checkout_generation: Option<effigy_kernel::fs::DirectoryIdentity>,
 }
 
 impl ScopeRecord {
@@ -157,6 +156,8 @@ impl ScopeRecord {
             loopback_identities,
             retain_loopback_identities,
             pending_tls_certs: Vec::new(),
+            checkout_fence: None,
+            checkout_generation: None,
         }
     }
 
@@ -205,6 +206,12 @@ impl ScopeRecord {
         union_sorted(&mut merged.pending_tls_certs, &other.pending_tls_certs);
         union_sorted(&mut merged.profiles, &other.profiles);
         merged.compose_kind = merge_compose_kind(merged.compose_kind, other.compose_kind);
+        if other.checkout_fence.is_some() {
+            merged.checkout_fence = other.checkout_fence;
+        }
+        if other.checkout_generation.is_some() {
+            merged.checkout_generation = other.checkout_generation;
+        }
         merged.host_key = other.host_key.clone();
         merged.profile = other.profile.clone();
         merged.updated_unix = unix_now();
@@ -218,83 +225,11 @@ pub fn volume_has_ownership_proof(labels: &BTreeMap<String, String>) -> bool {
         || labels.contains_key(COMPOSE_PROJECT_LABEL)
 }
 
-pub fn records_dir() -> io::Result<PathBuf> {
-    let home = effigy_home_dir().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            "cannot resolve Effigy home for runtime-scope records",
-        )
-    })?;
-    Ok(home.join("runtime-scopes"))
-}
-
-pub fn record_path(token: &str) -> io::Result<PathBuf> {
-    Ok(records_dir()?.join(format!("{token}.json")))
-}
-
-pub fn upsert(record: &ScopeRecord) -> io::Result<PathBuf> {
-    let dir = records_dir()?;
-    fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("{}.json", record.token));
-    let _lock = lock_record(&path)?;
-    let merged = match read_record_file(&path)? {
-        Some(existing) if existing.checkout == record.checkout => existing.merged_with(record),
-        Some(_) => record.clone(),
-        None => record.clone(),
-    };
-    let payload = serde_json::to_vec_pretty(&merged).map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("cannot serialize runtime-scope record: {error}"),
-        )
-    })?;
-    atomic_write(&path, &payload)?;
-    Ok(path)
-}
-
-fn lock_record(path: &Path) -> io::Result<RouteTableLock> {
-    RouteTableLock::acquire(path).map_err(|error| {
-        io::Error::other(format!(
-            "cannot lock runtime-scope record {}: {error}",
-            path.display()
-        ))
-    })
-}
-
-fn atomic_write(path: &Path, payload: &[u8]) -> io::Result<()> {
-    let tmp = path.with_file_name(format!(
-        ".{}.{}.{}.tmp",
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("scope.json"),
-        std::process::id(),
-        unix_now()
-    ));
-    fs::write(&tmp, payload)?;
-    fs::rename(&tmp, path).inspect_err(|_| {
-        let _ = fs::remove_file(&tmp);
-    })?;
-    Ok(())
-}
-
-fn read_record_file(path: &Path) -> io::Result<Option<ScopeRecord>> {
-    match fs::read_to_string(path) {
-        Ok(source) => {
-            let record = serde_json::from_str::<ScopeRecord>(&source).map_err(|error| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "invalid runtime-scope record at {}: {error}",
-                        path.display()
-                    ),
-                )
-            })?;
-            Ok(Some(record))
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
+mod journal;
+pub use journal::{
+    load, load_for_checkout, load_local_records, remove, upsert, upsert_at, with_retirement,
+    ScopeJournalError,
+};
 
 fn union_sorted(target: &mut Vec<String>, extra: &[String]) {
     for value in extra {
@@ -320,64 +255,6 @@ fn merge_compose_kind(left: ScopeComposeKind, right: ScopeComposeKind) -> ScopeC
     }
 }
 
-pub fn load(token: &str) -> io::Result<Option<ScopeRecord>> {
-    read_record_file(&record_path(token)?)
-}
-
-pub fn load_for_checkout(checkout: &Path) -> io::Result<Vec<ScopeRecord>> {
-    let dir = records_dir()?;
-    if !dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    let wanted = checkout.display().to_string();
-    let mut records = Vec::new();
-    for entry in fs::read_dir(&dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
-        }
-        if let Some(record) = read_record_file(&path)? {
-            if record.checkout == wanted {
-                records.push(record);
-            }
-        }
-    }
-    records.sort_by(|left, right| left.token.cmp(&right.token));
-    Ok(records)
-}
-
-/// Every readable record in the runtime-scope store, for ownership proofs that
-/// must not be limited to one checkout. Any unreadable record is an error, so
-/// callers cannot mistake a damaged store for an empty one.
-pub fn load_all() -> io::Result<Vec<ScopeRecord>> {
-    let dir = records_dir()?;
-    if !dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut records = Vec::new();
-    for entry in fs::read_dir(&dir)? {
-        let path = entry?.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
-        }
-        if let Some(record) = read_record_file(&path)? {
-            records.push(record);
-        }
-    }
-    records.sort_by(|left, right| left.token.cmp(&right.token));
-    Ok(records)
-}
-
-pub fn remove(token: &str) -> io::Result<()> {
-    let path = record_path(token)?;
-    match fs::remove_file(&path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
-}
-
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -394,11 +271,43 @@ mod tests {
     use crate::EffectiveContainerPolicy;
 
     fn policy(root: &Path) -> EffectiveContainerPolicy {
+        std::fs::create_dir_all(root).unwrap();
         test_policy(root)
     }
 
     #[test]
-    fn record_survives_missing_checkout() {
+    fn legacy_scope_is_named_read_only_input_and_tombstone_prevents_resurrection() {
+        let home = tempfile::tempdir().unwrap();
+        with_test_effigy_home(home.path(), || {
+            let checkout = home.path().join("checkout");
+            let policy = policy(&checkout);
+            let token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            let record = ScopeRecord::from_policy(
+                &policy,
+                token,
+                "host",
+                &build_host_map(&policy.dns_routes, &[], &[], Some(token), false, None),
+                false,
+            );
+            let legacy = home.path().join("runtime-scopes");
+            std::fs::create_dir_all(&legacy).unwrap();
+            let file = legacy.join(format!("{token}.json"));
+            let bytes = serde_json::to_vec(&record).unwrap();
+            std::fs::write(&file, &bytes).unwrap();
+            assert_eq!(load(&checkout, token).unwrap(), Some(record.clone()));
+            assert!(!checkout.join(".effigy").exists());
+            remove(&checkout, token).unwrap();
+            assert!(load(&checkout, token).unwrap().is_none());
+            assert_eq!(std::fs::read(&file).unwrap(), bytes);
+            let other = home.path().join("other");
+            std::fs::create_dir(&other).unwrap();
+            assert!(load(&other, token).is_err());
+            assert!(load(&checkout, "../escape").is_err());
+        });
+    }
+
+    #[test]
+    fn deleted_checkout_loses_inventory_and_is_never_recreated() {
         let home = tempfile::tempdir().unwrap();
         with_test_effigy_home(home.path(), || {
             let checkout = home.path().join("worker");
@@ -420,13 +329,12 @@ mod tests {
             );
             upsert(&record).unwrap();
             std::fs::remove_dir_all(&checkout).ok();
-            let loaded = load("abcdef0123456789abcdef0123456789")
+            assert!(load(&checkout, "abcdef0123456789abcdef0123456789")
                 .unwrap()
-                .expect("record");
-            assert_eq!(loaded.checkout, checkout.display().to_string());
-            assert_eq!(loaded.project_names, vec!["app-dev-wt-abcdef012345"]);
-            let by_path = load_for_checkout(&checkout).unwrap();
-            assert_eq!(by_path.len(), 1);
+                .is_none());
+            assert!(load_for_checkout(&checkout).unwrap().is_empty());
+            assert!(!checkout.exists());
+            assert!(!home.path().join("runtime-scopes").exists());
         });
     }
 
@@ -458,7 +366,7 @@ mod tests {
                 false,
             ))
             .unwrap();
-            let loaded = load(token).unwrap().expect("record");
+            let loaded = load(&checkout, token).unwrap().expect("record");
             assert_eq!(
                 loaded.project_names,
                 vec![
@@ -559,7 +467,7 @@ mod tests {
                     with_test_effigy_home(home.path(), || upsert(&jobs_record).unwrap());
                 });
             });
-            let loaded = load(token).unwrap().expect("record");
+            let loaded = load(&checkout, token).unwrap().expect("record");
             assert_eq!(
                 loaded.project_names,
                 vec![
@@ -580,16 +488,16 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         with_test_effigy_home(home.path(), || {
             let checkout = home.path().join("worker");
-            std::fs::create_dir_all(records_dir().unwrap()).unwrap();
+            std::fs::create_dir_all(checkout.join(".effigy/state/runtime-scopes")).unwrap();
             std::fs::write(
-                record_path("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+                checkout.join(".effigy/state/runtime-scopes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json"),
                 "{not-json",
             )
             .unwrap();
             let error = load_for_checkout(&checkout).expect_err("corrupt");
-            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-            let error = load("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").expect_err("corrupt");
-            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+            assert!(error.to_string().contains("scope"));
+            let error = load(&checkout, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").expect_err("corrupt");
+            assert!(error.to_string().contains("scope"));
         });
     }
 

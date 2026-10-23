@@ -293,7 +293,180 @@ fn lock(core: &Mutex<ProcessCore>) -> std::sync::MutexGuard<'_, ProcessCore> {
     core.lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
+/// The two intent stores share the same spawn barrier and process mechanics.
+/// This private seam cannot grant an engine raw spawn or signal authority.
+trait ProcessOwner {
+    fn id(&self) -> crate::id::RunId;
+    fn fence(&self) -> &crate::run::Fence;
+    fn has_sentinel(&self) -> bool;
+    fn closure_pin(&self) -> Result<Option<crate::inheritance::ClosurePin>, RunError> {
+        Ok(None)
+    }
+    fn verify_custody(&self) -> Result<(), RunError>;
+    fn intend_process(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError>;
+    fn applied(&mut self, ticket: &EffectTicket, receipt: Value) -> Result<(), RunError>;
+    fn ack_process(&mut self, ticket: &EffectTicket) -> Result<(), RunError>;
+    fn anchor_image(&self) -> Result<crate::supervise::anchor::Image<'_>, RunError>;
+    fn capture_log(
+        &self,
+        sequence: i64,
+        stream: Stream,
+        limits: &crate::ctx::Limits,
+    ) -> io::Result<Option<capture::Log>>;
+    fn retain_process(&mut self, sequence: i64, core: Arc<Mutex<ProcessCore>>);
+}
+impl ProcessOwner for Run<'_> {
+    fn closure_pin(&self) -> Result<Option<crate::inheritance::ClosurePin>, RunError> {
+        self.checkout_closure_pin()
+    }
+    fn id(&self) -> crate::id::RunId {
+        self.id()
+    }
+    fn fence(&self) -> &crate::run::Fence {
+        self.fence()
+    }
+    fn has_sentinel(&self) -> bool {
+        self.has_sentinel()
+    }
+    fn verify_custody(&self) -> Result<(), RunError> {
+        self.verify_custody()
+    }
+    fn intend_process(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
+        self.verify_custody()?;
+        self.intend_process(spec)
+    }
+    fn applied(&mut self, ticket: &EffectTicket, receipt: Value) -> Result<(), RunError> {
+        self.applied(ticket, receipt)
+    }
+    fn ack_process(&mut self, ticket: &EffectTicket) -> Result<(), RunError> {
+        self.acknowledge_checkout_process(ticket)
+    }
+    fn anchor_image(&self) -> Result<crate::supervise::anchor::Image<'_>, RunError> {
+        self.anchor_image()
+    }
+    fn capture_log(
+        &self,
+        sequence: i64,
+        stream: Stream,
+        limits: &crate::ctx::Limits,
+    ) -> io::Result<Option<capture::Log>> {
+        self.capture_log(sequence, stream, limits)
+    }
+    fn retain_process(&mut self, sequence: i64, core: Arc<Mutex<ProcessCore>>) {
+        self.retain_process(sequence, core);
+    }
+}
+impl ProcessOwner for crate::run::ForegroundRun {
+    fn closure_pin(&self) -> Result<Option<crate::inheritance::ClosurePin>, RunError> {
+        self.closure_pin().map(Some)
+    }
+    fn id(&self) -> crate::id::RunId {
+        self.record().incarnation().run
+    }
+    fn fence(&self) -> &crate::run::Fence {
+        self.record().fence()
+    }
+    fn has_sentinel(&self) -> bool {
+        self.has_guard()
+    }
+    fn verify_custody(&self) -> Result<(), RunError> {
+        self.verify_custody()
+    }
+    fn intend_process(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
+        self.verify_custody()?;
+        self.record_mut().intend_process(spec)
+    }
+    fn applied(&mut self, ticket: &EffectTicket, receipt: Value) -> Result<(), RunError> {
+        self.record_mut().applied(ticket, receipt)
+    }
+    fn ack_process(&mut self, ticket: &EffectTicket) -> Result<(), RunError> {
+        self.ack_process(ticket)
+    }
+    fn anchor_image(&self) -> Result<crate::supervise::anchor::Image<'_>, RunError> {
+        self.anchor_image()
+    }
+    fn capture_log(
+        &self,
+        _: i64,
+        _: Stream,
+        _: &crate::ctx::Limits,
+    ) -> io::Result<Option<capture::Log>> {
+        Ok(None)
+    }
+    fn retain_process(&mut self, sequence: i64, core: Arc<Mutex<ProcessCore>>) {
+        self.retain_process(sequence, core);
+    }
+}
+
+/// Pure, redacted intent planning. The machine gateway admits this exact
+/// process and its control socket together before either external effect.
+pub(crate) fn process_intent(
+    spec: &ProcessSpec,
+    target: crate::run::Fence,
+    required: bool,
+) -> Result<EffectSpec, SpawnError> {
+    let secrets = spec
+        .validated_secrets()
+        .map_err(|e| SpawnError::Refused(e.to_string()))?;
+    let mut redact = Redactor::new(secrets);
+    let label = String::from_utf8_lossy(&redact.push(spec.label.as_bytes(), true)).into_owned();
+    // Only a digest and a redacted label enter the journal. Never env values.
+    let digest = crate::id::Digest::of(
+        &serde_json::to_vec(&serde_json::json!({
+            "argv":spec.argv.iter().map(|s|s.as_bytes()).collect::<Vec<_>>(),
+            "cwd":spec.cwd.as_os_str().as_bytes(),
+            "env":spec.env.iter().map(|(key,value)| (key.as_bytes(), match value {
+                EnvValue::Plain(v)=>v.as_bytes(), EnvValue::Secret(v)=>v.bytes()
+            })).collect::<Vec<_>>(),
+            "grace_ns":spec.grace.as_nanos().to_string(),
+            "lifetime":format!("{:?}",spec.lifetime),"terminal":spec.terminal
+        }))
+        .map_err(|_| SpawnError::Refused("spec encoding".into()))?,
+    );
+    Ok(EffectSpec {
+        target,
+        kind: KIND.into(),
+        payload: serde_json::json!({"digest":digest,"label":label}),
+        settlement: Settlement::Release(Value::Null),
+        required,
+    })
+}
+
 impl Custody {
+    pub fn spawn_foreground(
+        run: &mut crate::run::ForegroundRun,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+    ) -> Result<OwnedProcess, SpawnError> {
+        Self::spawn_inner(
+            run,
+            spec,
+            cx,
+            None,
+            crate::ctx::Capability::AdapterEffect,
+            true,
+            None,
+        )
+    }
+
+    /// An in-memory admission holder. Its exit is not a workload obligation;
+    /// the same receipt/ack barrier and guard cleanup still apply.
+    pub fn spawn_auxiliary_foreground(
+        run: &mut crate::run::ForegroundRun,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+    ) -> Result<OwnedProcess, SpawnError> {
+        Self::spawn_inner(
+            run,
+            spec,
+            cx,
+            None,
+            crate::ctx::Capability::AdapterEffect,
+            false,
+            None,
+        )
+    }
+
     pub fn spawn(
         run: &mut Run<'_>,
         spec: ProcessSpec,
@@ -306,6 +479,7 @@ impl Custody {
             None,
             crate::ctx::Capability::AdapterEffect,
             true,
+            None,
         )
     }
     /// A process the run keeps in custody without making its exit a workload
@@ -323,6 +497,7 @@ impl Custody {
             None,
             crate::ctx::Capability::AdapterEffect,
             false,
+            None,
         )
     }
     /// Acquire executable source under a Prepare run. This uses the same
@@ -340,6 +515,7 @@ impl Custody {
             None,
             crate::ctx::Capability::AcquireSource,
             true,
+            None,
         )
     }
     pub(crate) fn spawn_remote(
@@ -355,15 +531,53 @@ impl Custody {
             Some(registration),
             crate::ctx::Capability::AdapterEffect,
             true,
+            None,
+        )
+    }
+    /// The caller owns this memory lease; only its reading descriptor reaches
+    /// the workload. `required` distinguishes workload and auxiliary custody.
+    pub fn spawn_with_lease(
+        run: &mut Run<'_>,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+        lease: &crate::inheritance::InheritedCapability,
+        required: bool,
+    ) -> Result<OwnedProcess, SpawnError> {
+        Self::spawn_inner(
+            run,
+            spec,
+            cx,
+            None,
+            crate::ctx::Capability::AdapterEffect,
+            required,
+            Some(lease),
+        )
+    }
+    pub fn spawn_foreground_with_lease(
+        run: &mut crate::run::ForegroundRun,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+        lease: &crate::inheritance::InheritedCapability,
+        required: bool,
+    ) -> Result<OwnedProcess, SpawnError> {
+        Self::spawn_inner(
+            run,
+            spec,
+            cx,
+            None,
+            crate::ctx::Capability::AdapterEffect,
+            required,
+            Some(lease),
         )
     }
     fn spawn_inner(
-        run: &mut Run<'_>,
+        run: &mut impl ProcessOwner,
         spec: ProcessSpec,
         cx: &EffectContext,
         registration: Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>>,
         capability: crate::ctx::Capability,
         required: bool,
+        lease: Option<&crate::inheritance::InheritedCapability>,
     ) -> Result<OwnedProcess, SpawnError> {
         cx.require(capability)
             .map_err(|_| SpawnError::Refused(format!("spawn needs {capability:?}")))?;
@@ -379,31 +593,19 @@ impl Custody {
         let secrets = spec
             .validated_secrets()
             .map_err(|e| SpawnError::Refused(e.to_string()))?;
-        let mut redact = Redactor::new(secrets.clone());
-        let label = String::from_utf8_lossy(&redact.push(spec.label.as_bytes(), true)).into_owned();
-        // Only a digest and a redacted label enter the journal. Never env values.
-        let digest = crate::id::Digest::of(
-            &serde_json::to_vec(&serde_json::json!({
-                "argv":spec.argv.iter().map(|s|s.as_bytes()).collect::<Vec<_>>(),
-                "cwd":spec.cwd.as_os_str().as_bytes(),
-                "env":spec.env.iter().map(|(key,value)| (key.as_bytes(), match value {
-                    EnvValue::Plain(v)=>v.as_bytes(), EnvValue::Secret(v)=>v.bytes()
-                })).collect::<Vec<_>>(),
-                "grace_ns":spec.grace.as_nanos().to_string(),
-                "lifetime":format!("{:?}",spec.lifetime),"terminal":spec.terminal
-            }))
-            .map_err(|_| SpawnError::Refused("spec encoding".into()))?,
-        );
-        let ticket = run.intend_process(EffectSpec {
-            target: run.fence().clone(),
-            kind: KIND.into(),
-            payload: serde_json::json!({"digest":digest,"label":label}),
-            settlement: Settlement::Release(Value::Null),
-            required,
-        })?;
+        let ticket = run.intend_process(process_intent(&spec, run.fence().clone(), required)?)?;
         let nonce = format!("{}:{}", run.id(), ticket.sequence());
         let image = run.anchor_image()?;
-        let mut pending = spawn::Blocked::fork(&spec, &nonce, cx.operation(), &image)?;
+        let closure = run.closure_pin()?;
+        let mut pending = spawn::Blocked::fork(
+            &spec,
+            &nonce,
+            cx.operation(),
+            &image,
+            lease,
+            closure.as_ref(),
+        )?;
+        drop(closure);
         drop(image); // helper verified the image before acknowledging the barrier
         let result = (|| {
             crate::fault_point!(SpawnFork)?;
@@ -438,6 +640,7 @@ impl Custody {
             )
             .map_err(SpawnError::Unrecorded)?;
             crate::fault_point!(AnchorRecord)?;
+            run.ack_process(&ticket)?; // memory backup retains the receipt before go
             let (stdout, stderr, terminal) = pending.take_streams();
             let logs = [Stream::Stdout, Stream::Stderr]
                 .map(|stream| run.capture_log(ticket.sequence(), stream, cx.operation().limits()));
@@ -450,7 +653,7 @@ impl Custody {
             let core = Arc::new(Mutex::new(ProcessCore {
                 receipt,
                 anchor,
-                logs: [stdout_log.ok(), stderr_log.ok()],
+                logs: [stdout_log.ok().flatten(), stderr_log.ok().flatten()],
                 output: VecDeque::new(),
                 streams: [VecDeque::new(), VecDeque::new()],
                 queue_max: cx.operation().limits().queue_bytes,
@@ -471,6 +674,10 @@ impl Custody {
                 registration,
             }));
             run.retain_process(ticket.sequence(), core.clone());
+            run.verify_custody()?;
+            if let Some(lease) = lease {
+                lease.verify(cx.operation())?;
+            }
             pending.transfer();
             crate::fault_point!(SpawnBeforeGo)?;
             pending.go()?;
@@ -546,6 +753,23 @@ impl OwnedProcess {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+    pub fn complete_foreground(
+        &self,
+        run: &mut crate::run::ForegroundRun,
+        exit: Exit,
+    ) -> Result<(), RunError> {
+        let core = lock(&self.core);
+        if core.exit != Some(exit) {
+            return Err(RunError::Invalid(
+                "unverified foreground process exit".into(),
+            ));
+        }
+        run.record_mut().completed(
+            &self.ticket,
+            crate::outcome::RequiredObligation::ProcessExit(exit.code),
+        )
+    }
+
     pub fn complete(&self, run: &mut Run<'_>, exit: Exit) -> Result<(), RunError> {
         let core = lock(&self.core);
         if core.exit != Some(exit) {
@@ -857,6 +1081,48 @@ impl ProcessCore {
         }
     }
 }
+/// The memory backup independently validates the complete pre-go receipt.
+/// Only a ready, tagged anchor and the exact run/sequence nonce can be acked.
+pub(crate) fn verify_foreground_receipt(
+    effect: &Effect,
+    run: crate::id::RunId,
+) -> Result<(), RunError> {
+    let record: ProcessRecord = serde_json::from_value(
+        effect
+            .receipt
+            .clone()
+            .ok_or_else(|| RunError::Invalid("missing foreground receipt".into()))?,
+    )?;
+    if record.process.nonce != format!("{}:{}", run, effect.sequence)
+        || record.process.pgid != record.process.identity.pid
+        || platform::generation(&record.process.identity)
+            .verified()
+            .is_none()
+        || !record
+            .anchor
+            .as_ref()
+            .is_some_and(|a| anchor::verified(&record.process, a))
+    {
+        return Err(RunError::Invalid(
+            "foreground receipt identity or anchor unavailable".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// The current operation's bounded, already redacted diagnostic. It is not a
+/// log stream or historical record, and does not expose the process core.
+pub(crate) fn diagnostic_tail(core: &Arc<Mutex<ProcessCore>>) -> String {
+    let core = lock(core);
+    let stderr = &core.streams[1];
+    let bytes = stderr
+        .iter()
+        .skip(stderr.len().saturating_sub(4096))
+        .copied()
+        .collect::<Vec<_>>();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 pub(crate) fn settle_effect(
     effect: &Effect,
     live: Option<Arc<Mutex<ProcessCore>>>,

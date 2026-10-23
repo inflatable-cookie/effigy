@@ -34,6 +34,8 @@ pub enum CheckoutKind {
     LinkedWorktree = 1,
     EphemeralClone = 2,
     Machine = 3,
+    /// Memory-only filesystem gate identity, never a persisted checkout token.
+    Filesystem = 4,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckoutId {
@@ -55,7 +57,11 @@ impl CheckoutId {
         ResourceId::new(
             ResourceKind::Checkout,
             Scope::Machine,
-            vec![Some(hex(&self.token))],
+            vec![Some(if self.kind == CheckoutKind::Filesystem {
+                format!("filesystem:{}", hex(&self.token))
+            } else {
+                hex(&self.token)
+            })],
         )
     }
 }
@@ -201,6 +207,20 @@ impl ResourceId {
     fn new(kind: ResourceKind, scope: Scope, key: Vec<Option<String>>) -> Self {
         Self { kind, scope, key }
     }
+    /// Equal coordinates under a persistent token and its filesystem-derived
+    /// checkout alias are the same logical owner, not auxiliary resources.
+    pub(crate) fn with_checkout(&self, checkout: CheckoutId) -> Result<Self, IdentityError> {
+        if !matches!(self.scope, Scope::Checkout(_)) {
+            return Err(IdentityError::InvalidInvocation);
+        }
+        Self::new(self.kind, Scope::Checkout(checkout), self.key.clone()).validate_record()
+    }
+    pub(crate) fn checkout_alias_of(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.key == other.key
+            && matches!(self.scope, Scope::Checkout(_))
+            && matches!(other.scope, Scope::Checkout(_))
+    }
     pub fn environment(checkout: CheckoutId, name: &str) -> Result<Self, IdentityError> {
         Ok(Self::new(
             ResourceKind::Env,
@@ -283,6 +303,23 @@ impl ResourceId {
     pub fn key(&self) -> &[Option<String>] {
         &self.key
     }
+    /// The closed shared-fact model. Checkout journals may also contain these
+    /// canonical resources during import, but the machine store admits only these.
+    pub(crate) fn is_machine_fact(&self) -> bool {
+        self.scope == Scope::Machine
+            && (matches!(self.kind, ResourceKind::Endpoint | ResourceKind::Gateway)
+                || (self.kind == ResourceKind::Store
+                    && self
+                        .key
+                        .first()
+                        .and_then(Option::as_deref)
+                        .is_some_and(|key| {
+                            matches!(
+                                key,
+                                "gateway-endpoints" | "gateway-setup" | "ports" | "admission"
+                            )
+                        })))
+    }
     pub fn canonical(&self) -> Vec<u8> {
         let mut out = b"effigy.rid\0\x01".to_vec();
         out.push(self.kind as u8);
@@ -302,6 +339,91 @@ impl ResourceId {
         }
         out
     }
+    /// Decode the stored encoding v1 without trusting its hashed filename or
+    /// descriptive columns. Migration and gate discovery re-encode the result
+    /// and require byte equality before using it as a resource identity.
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, IdentityError> {
+        fn take<'a>(input: &mut &'a [u8], n: usize) -> Result<&'a [u8], IdentityError> {
+            let head = input.get(..n).ok_or(IdentityError::InvalidInvocation)?;
+            *input = input.get(n..).ok_or(IdentityError::InvalidInvocation)?;
+            Ok(head)
+        }
+        fn byte(input: &mut &[u8]) -> Result<u8, IdentityError> {
+            let (head, tail) = input
+                .split_first()
+                .ok_or(IdentityError::InvalidInvocation)?;
+            *input = tail;
+            Ok(*head)
+        }
+        let mut input = bytes;
+        if take(&mut input, 12)? != b"effigy.rid\0\x01" {
+            return Err(IdentityError::InvalidInvocation);
+        }
+        let kind = match byte(&mut input)? {
+            0 => ResourceKind::Checkout,
+            1 => ResourceKind::Task,
+            2 => ResourceKind::Run,
+            3 => ResourceKind::Env,
+            4 => ResourceKind::Data,
+            5 => ResourceKind::Endpoint,
+            6 => ResourceKind::Store,
+            7 => ResourceKind::Gateway,
+            _ => return Err(IdentityError::InvalidInvocation),
+        };
+        let scope = match byte(&mut input)? {
+            0 => Scope::Machine,
+            1 => {
+                let kind = match byte(&mut input)? {
+                    0 => CheckoutKind::Primary,
+                    1 => CheckoutKind::LinkedWorktree,
+                    2 => CheckoutKind::EphemeralClone,
+                    3 => CheckoutKind::Machine,
+                    4 => CheckoutKind::Filesystem,
+                    _ => return Err(IdentityError::InvalidInvocation),
+                };
+                let token = take(&mut input, 16)?
+                    .try_into()
+                    .map_err(|_| IdentityError::InvalidInvocation)?;
+                Scope::Checkout(CheckoutId::new(kind, token))
+            }
+            _ => return Err(IdentityError::InvalidInvocation),
+        };
+        let count = match kind {
+            ResourceKind::Task => 4,
+            ResourceKind::Data => 3,
+            ResourceKind::Endpoint => 2,
+            _ => 1,
+        };
+        let mut key = Vec::with_capacity(count);
+        for _ in 0..count {
+            let present = byte(&mut input)?;
+            let length = u32::from_be_bytes(
+                take(&mut input, 4)?
+                    .try_into()
+                    .map_err(|_| IdentityError::InvalidInvocation)?,
+            ) as usize;
+            let field = take(&mut input, length)?;
+            key.push(match present {
+                0 if field.is_empty() => None,
+                1 => Some(
+                    std::str::from_utf8(field)
+                        .map_err(|_| IdentityError::InvalidInvocation)?
+                        .to_owned(),
+                ),
+                _ => return Err(IdentityError::InvalidInvocation),
+            });
+        }
+        if !input.is_empty() {
+            return Err(IdentityError::InvalidInvocation);
+        }
+        let id = Self::new(kind, scope, key);
+        let normalized = id.validate_record()?;
+        if id != normalized || id.canonical() != bytes {
+            return Err(IdentityError::InvalidInvocation);
+        }
+        Ok(id)
+    }
+
     pub fn name(&self) -> GateName {
         GateName(base32(&Sha256::digest(self.canonical())[..20]))
     }
@@ -576,12 +698,15 @@ impl ResourceId {
             )?
             .resource()),
             (ResourceKind::Run, Scope::Machine) => Ok(field(0)?.parse::<RunId>()?.resource()),
-            (ResourceKind::Checkout, Scope::Machine)
-                if field(0)?.len() == 32
-                    && field(0)?
+            (ResourceKind::Checkout, Scope::Machine) => {
+                let token = field(0)?.strip_prefix("filesystem:").unwrap_or(field(0)?);
+                if token.len() != 32
+                    || !token
                         .bytes()
-                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) =>
-            {
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                {
+                    return Err(IdentityError::InvalidInvocation);
+                }
                 Ok(self.clone())
             }
             _ => Err(IdentityError::InvalidInvocation),

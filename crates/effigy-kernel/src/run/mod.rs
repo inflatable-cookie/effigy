@@ -2,19 +2,29 @@
 //!
 //! Engines supply effect observations and idempotent undo. A `Run` is the only
 //! writer of its journal; dropping it releases liveness, never claims cleanup.
+mod aliases;
 mod attachments;
 mod children;
 mod claims;
+mod facts;
+mod foreground;
+pub use facts::{FactOptions, MachineFacts};
 mod history;
+pub use foreground::{ForegroundRun, LegacyForeground};
+mod checkout_custody;
 mod journal;
 mod lifecycle;
 mod logs;
+mod machine;
+mod memory;
 pub use lifecycle::{metadata, RunMetadata, SentinelStatus};
+pub use machine::{machine_completion, MachineCompletion};
+pub use memory::{ForegroundRecord, Incarnation};
 #[path = "../objects/run.rs"]
 mod objects;
 mod settle;
 mod socket;
-pub use socket::control_socket_path;
+pub use socket::{connect_control_socket, control_socket_path};
 
 pub use attachments::{
     AttachMode, AttachmentTicket, Attachments, Holder, Liveness, TransitionPermit,
@@ -238,6 +248,10 @@ pub struct Run<'a> {
     // manufactures success; only finish durably records the validated outcome.
     completed: std::collections::BTreeMap<i64, crate::outcome::RequiredObligation>,
     sentinel: Option<crate::supervise::SentinelLease>,
+    machine_startup: Option<machine::Startup>,
+    checkout_custody: Option<checkout_custody::CheckoutCustody>,
+    ancestor_closure: Option<crate::inheritance::ClosurePin>,
+    closed_effects: Option<Vec<Effect>>,
     processes: std::collections::BTreeMap<
         i64,
         std::sync::Arc<std::sync::Mutex<crate::custody::ProcessCore>>,
@@ -252,9 +266,10 @@ impl<'a> Run<'a> {
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Self, RunError> {
-        Self::begin_under(cx, root, inv, opts, cleanup, adapter, None)
+        Self::begin_under(cx, root, inv, opts, cleanup, adapter, None, None)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn begin_under(
         cx: &EffectContext,
         root: &'a StateRoot,
@@ -263,12 +278,22 @@ impl<'a> Run<'a> {
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
         parent: Option<RunId>,
+        planned: Option<EffectSpec>,
     ) -> Result<Self, RunError> {
         crate::fault_point!(BeginBefore)?;
-        // Retention is a bounded, rate-limited pass at admission, never on the
-        // close path: every engine admits runs, and no close holds the store
-        // (K15, §7.4). It takes no gate, so the run's own acquisition is next.
-        crate::retention::sweep(cx, root);
+        if root.is_machine()
+            && (inv.spec().task.checkout().kind() != crate::id::CheckoutKind::Machine
+                || !inv.spec().owner.is_machine_fact()
+                || inv.spec().gates.iter().any(|id| !id.is_machine_fact())
+                || !inv.spec().attachments.is_empty())
+        {
+            return Err(RunError::Invalid("machine runs require shared-fact owners and machine identity; checkout work belongs in its own journal".into()));
+        }
+        if inv.spec().task.checkout().kind() == crate::id::CheckoutKind::Filesystem {
+            return Err(RunError::Invalid(
+                "filesystem checkout identities cannot own durable runs".into(),
+            ));
+        }
         if cx.operation().placement() != crate::ctx::Placement::Host
             || inv.spec().placement != crate::ctx::Placement::Host
         {
@@ -280,17 +305,36 @@ impl<'a> Run<'a> {
             ));
         }
         cx.operation().check("begin")?;
+        let observe = cx
+            .child(std::time::Duration::from_secs(10))
+            .operation()
+            .observe()
+            .map_err(|_| RunError::Invalid("run publication observation context".into()))?;
+        crate::migration::adoption::check_invocation(&observe, root, inv)?;
         let mut ids = inv.spec().gates.clone();
         ids.push(inv.spec().owner.clone());
+        let ids = aliases::gates(&observe, root, &inv.spec().owner, &ids)?;
         let mut guard = Gate::acquire(cx, root, &ids, opts.wait)?;
         crate::fault_point!(BeginGated)?;
         // Only an owner gate may span recovery callbacks or later effects (K14).
         guard.retain_owner(&inv.spec().owner);
+        // #275: one bounded admission sweep, never a close-time scan. A
+        // refused alias gate creates no journal merely to run maintenance.
+        if !root.is_machine() {
+            crate::retention::sweep(cx, root);
+        }
         let mut store = Store::open(&cx.child(std::time::Duration::from_secs(30)), root)?;
         // A refused writer wait names this run, not a nameless process.
         store.set_run(opts.id);
-        let predecessors = journal::predecessors(store.conn(), &inv.spec().owner)?;
-        for predecessor in predecessors {
+        let mut predecessors = Vec::new();
+        for owner in guard.ids() {
+            predecessors.extend(
+                journal::predecessors(store.conn(), owner)?
+                    .into_iter()
+                    .map(|record| (owner.clone(), record)),
+            );
+        }
+        for (owner, predecessor) in predecessors {
             let mut previous = Self {
                 root,
                 store,
@@ -298,13 +342,17 @@ impl<'a> Run<'a> {
                 cx: cx.clone(),
                 id: predecessor.id,
                 owner: Fence {
-                    resource: inv.spec().owner.clone(),
+                    resource: owner,
                     generation: predecessor.generation,
                 },
                 next: opts.next.clone(),
                 poisoned: false,
                 completed: Default::default(),
                 sentinel: None,
+                closed_effects: None,
+                machine_startup: None,
+                checkout_custody: None,
+                ancestor_closure: None,
                 processes: Default::default(),
             };
             previous.settle_inner(cleanup, adapter)?;
@@ -343,6 +391,13 @@ impl<'a> Run<'a> {
                 VALUES (?1,?2,?3,?4,'host','admitted',?5,?6,?7,?7,?8,?9)", params![opts.id.to_string(),
                 inv.spec().owner.name().to_string(), generation.get() as i64,
                 if opts.custody.is_some() {"custody"}else{"operation"}, serde_json::to_string(inv)?, inv.digest().0.as_slice(), txn.now(), if opts.custody.is_some() {Some(serde_json::to_string(&WorkloadOutcome::NotStarted)?)}else{None}, parent.map(|id| id.to_string())])?;
+            if let Some(planned) = &planned {
+                let fence = Fence { resource: inv.spec().owner.clone(), generation };
+                journal::insert_effect(txn, opts.id, &socket::intent(fence.clone()))?;
+                let mut planned = planned.clone();
+                planned.target = fence;
+                journal::insert_effect(txn, opts.id, &planned)?;
+            }
             Ok::<_, RunError>(generation)
         })?;
         crate::fault_point!(BeginAdmitted)?;
@@ -361,8 +416,26 @@ impl<'a> Run<'a> {
             poisoned: false,
             completed: Default::default(),
             sentinel: None,
+            closed_effects: None,
+            machine_startup: planned.map(|_| machine::Startup::default()),
+            checkout_custody: None,
+            ancestor_closure: if root.is_machine()
+                || opts
+                    .custody
+                    .as_ref()
+                    .is_some_and(|plan| plan.placement == crate::supervise::Placement::Detached)
+            {
+                None
+            } else {
+                checkout_custody::ancestor_closure(cx.operation())?
+            },
             processes: Default::default(),
         };
+        if inv.spec().owner.kind() == crate::id::ResourceKind::Env {
+            if let crate::id::Scope::Checkout(checkout) = inv.spec().owner.scope() {
+                run.protect_checkout(checkout, opts.wait)?;
+            }
+        }
         if let Some(plan) = opts.custody {
             let registration = crate::supervise::spawn_sentinel(&run, root, &plan, &opts.next);
             match registration.and_then(|registration| run.register_lifecycle(registration, &plan))
@@ -381,12 +454,23 @@ impl<'a> Run<'a> {
         sequence: i64,
         stream: crate::custody::Stream,
         limits: &crate::ctx::Limits,
-    ) -> std::io::Result<crate::custody::capture::Log> {
-        crate::custody::capture::Log::open(self.root, self.id, sequence, stream, limits)
+    ) -> std::io::Result<Option<crate::custody::capture::Log>> {
+        if self.root.is_machine() {
+            return Ok(None);
+        }
+        crate::custody::capture::Log::open(self.root, self.id, sequence, stream, limits).map(Some)
+    }
+    pub(crate) fn operation(&self) -> &crate::ctx::OperationContext {
+        self.cx.operation()
     }
     /// Capture bounds of the run's own effect context.
     pub(crate) fn limits(&self) -> crate::ctx::Limits {
         self.cx.operation().limits().clone()
+    }
+    /// Recheck the filesystem generations retained by this run before continuing work.
+    pub fn verify_custody(&self) -> Result<(), RunError> {
+        self.root.verify_binding().map_err(StoreError::from)?;
+        self.verify_checkout_custody()
     }
     pub(crate) fn has_sentinel(&self) -> bool {
         self.sentinel.is_some()
@@ -442,9 +526,15 @@ impl<'a> Run<'a> {
         Ok(state.map(|s| serde_json::from_str(&s)).transpose()?)
     }
     pub fn phase(&self) -> Result<Phase, RunError> {
+        if self.closed_effects.is_some() {
+            return Ok(Phase::Closed);
+        }
         Ok(journal::run(self.store.conn(), self.id)?.phase)
     }
     pub fn effects(&self) -> Result<Vec<Effect>, RunError> {
+        if let Some(effects) = &self.closed_effects {
+            return Ok(effects.clone());
+        }
         journal::effects(self.store.conn(), self.id)
     }
 
@@ -482,6 +572,13 @@ impl<'a> Run<'a> {
     }
     fn intend_inner(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError> {
         self.can_effect()?;
+        if self
+            .machine_startup
+            .as_ref()
+            .is_some_and(|startup| !startup.active)
+        {
+            return self.planned_intent(&spec);
+        }
         let result = (|| {
             crate::fault_point!(IntendBefore)?;
             let sequence = self.store.transaction(
@@ -511,6 +608,13 @@ impl<'a> Run<'a> {
         result
     }
     pub fn applied(&mut self, ticket: &EffectTicket, receipt: Value) -> Result<(), RunError> {
+        if self
+            .machine_startup
+            .as_ref()
+            .is_some_and(|startup| !startup.active)
+        {
+            return self.planned_receipt(ticket, receipt);
+        }
         self.callback(ticket, EffectState::Applied, Some(receipt), None)
     }
     /// Only verified non-occurrence permits Failed; uncertain attempts use unknown.
@@ -596,6 +700,9 @@ impl<'a> Run<'a> {
     pub fn advance(&mut self, phase: Phase) -> Result<(), RunError> {
         self.can_effect()?;
         let previous = self.phase()?;
+        if self.machine_lifecycle() && previous == Phase::Active && phase == Phase::Active {
+            return Ok(());
+        }
         if !matches!(
             (previous, phase),
             (Phase::Starting, Phase::Active) | (_, Phase::Stopping)
@@ -743,9 +850,13 @@ impl<'a> Run<'a> {
             return Err(RunError::Invalid("invalid interruption outcome".into()));
         }
         let cx = settle::cleanup_effects(cleanup)?;
+        let machine_lifecycle = self.machine_lifecycle();
         self.store.transaction_within(&cx, BusyWait::AtLeast(SETTLE_BUSY_WAIT), |txn| {
             journal::check_fence(txn.conn(),&self.owner)?;
             txn.conn().execute("UPDATE runs SET phase='stopping',workload_outcome=?2,updated_at=?3 WHERE run_id=?1",params![self.id.to_string(),serde_json::to_string(&workload)?,txn.now()])?;
+            if machine_lifecycle {
+                txn.conn().execute("UPDATE requests SET state='resolved',resolved_at=?2 WHERE run_id=?1 AND state='pending'", params![self.id.to_string(),txn.now()])?;
+            }
             Ok::<_,RunError>(())
         })
     }

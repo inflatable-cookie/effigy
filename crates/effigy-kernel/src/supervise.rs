@@ -31,6 +31,7 @@ use std::time::{Duration, Instant};
 
 pub(crate) mod anchor;
 mod image;
+pub(crate) mod memory;
 use image::{private_image, PrivateImage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,6 +188,10 @@ impl SentinelLease {
 #[derive(Serialize, Deserialize)]
 struct SentinelConfig {
     home: PathBuf,
+    #[serde(default)]
+    machine: bool,
+    #[serde(default)]
+    machine_gates: Option<crate::root::MachineGateAddress>,
     owner: ResourceId,
     run: RunId,
     next: Vec<Vec<u8>>,
@@ -250,6 +255,7 @@ fn helper_not_started(entry: &str, cause: io::Error) -> RunError {
 /// spawn failure are typed, never store I/O. An engine supervisor gets its
 /// client's working directory and environment explicitly, never inherited.
 fn spawn_helper(
+    op: &OperationContext,
     executable: &Executable,
     entry: &str,
     log: &std::fs::File,
@@ -263,9 +269,32 @@ fn spawn_helper(
                 .envs(launch.env.iter().map(|(k, v)| (k, v)))
                 .current_dir(&launch.cwd);
         }
+        if entry == SENTINEL {
+            // A registered sentinel owns fenced recovery, independent of an
+            // ancestor's revocable admission lease. It never starts a workload.
+            command.env_remove(crate::inheritance::ENV);
+        } else if let Some(marker) = launch.and_then(|launch| {
+            launch
+                .env
+                .iter()
+                .find(|(key, _)| key == crate::inheritance::ENV)
+                .map(|(_, value)| value)
+        }) {
+            let marker = marker.to_str().ok_or_else(|| {
+                helper_not_started(
+                    entry,
+                    io::Error::other("invalid helper parent capability selector"),
+                )
+            })?;
+            crate::inheritance::InheritedCapability::capture(op, marker)
+                .and_then(|capability| capability.forward_command(op, &mut command))
+                .map_err(|error| helper_not_started(entry, error))?;
+        }
         command
             .stdout(Stdio::piped())
             .stderr(log.try_clone().map_err(|e| helper_not_started(entry, e))?);
+        prepare_helper_exec(&mut command, executable, entry)
+            .map_err(|error| helper_not_started(entry, error))?;
         match command.spawn() {
             // A just-written image can be briefly busy while another thread's
             // fork still holds its write descriptor.
@@ -333,6 +362,28 @@ fn release_helper_log() {
         }
     }
 }
+fn helper_root(
+    cx: &EffectContext,
+    home: &Path,
+    machine: bool,
+    gates: Option<crate::root::MachineGateAddress>,
+) -> Result<StateRoot, RunError> {
+    let root = if machine {
+        StateRoot::machine_effects(cx, home)
+    } else {
+        StateRoot::effects(cx, home)
+    };
+    let mut root = root.map_err(|error| RunError::Store(error.into()))?;
+    if let Some(address) = gates {
+        let observe = cx
+            .child(Duration::from_secs(10))
+            .operation()
+            .observe()
+            .map_err(|_| RunError::Invalid("helper machine gate observation".into()))?;
+        root = root.restore_machine_gates(&observe, address);
+    }
+    Ok(root)
+}
 fn nonce() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -357,12 +408,26 @@ pub(crate) fn helper(executable: &Executable, entry: &str) -> io::Result<Command
             }
         });
     }
-    #[cfg(target_os = "linux")]
-    if let Some(fd) = executable.exec_fd {
-        image::exec_held(&mut command, executable, fd, entry)?;
-    }
+
     Ok(command)
 }
+/// Register a held-image exec only after all descriptor and environment
+/// preparation. On Linux execveat never returns on success, so later callbacks
+/// would otherwise be skipped.
+fn prepare_helper_exec(
+    command: &mut Command,
+    executable: &Executable,
+    entry: &str,
+) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    if let Some(fd) = executable.exec_fd {
+        image::exec_held(command, executable, fd, entry)?;
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (command, executable, entry);
+    Ok(())
+}
+
 pub(crate) fn spawn_sentinel(
     run: &Run<'_>,
     root: &StateRoot,
@@ -415,7 +480,13 @@ fn sentinel_attempt(
         cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
         env: std::env::vars_os().collect(),
     });
-    let mut child = spawn_helper(executable, SENTINEL, &log, inherited.as_ref())?;
+    let mut child = spawn_helper(
+        run.operation(),
+        executable,
+        SENTINEL,
+        &log,
+        inherited.as_ref(),
+    )?;
     // The fault driver waits for every helper, registered or not (§12.1).
     #[cfg(all(test, feature = "fault-injection"))]
     crate::fault::note_helper(child.id());
@@ -425,6 +496,8 @@ fn sentinel_attempt(
         .ok_or_else(|| RunError::Invalid("sentinel pipe missing".into()))?;
     let config = SentinelConfig {
         home: home.into(),
+        machine: root.is_machine(),
+        machine_gates: root.machine_gate_address(),
         owner: run.fence().resource.clone(),
         run: run.id(),
         next: next.argv().iter().map(|a| a.as_bytes().to_vec()).collect(),
@@ -583,7 +656,8 @@ pub fn internal_entry(
                 router,
                 adapter,
                 validate_next,
-                config.home,
+                (config.home, config.machine),
+                config.machine_gates,
                 config.executable,
                 work,
             ),
@@ -614,7 +688,8 @@ pub fn engine_entry(
                 &mut router,
                 adapter,
                 validate_next,
-                config.home,
+                (config.home, config.machine),
+                config.machine_gates,
                 config.executable,
                 work,
             ),
@@ -652,7 +727,11 @@ fn sentinel(
 ) -> Result<(), RunError> {
     let mut input = std::io::stdin().lock();
     nonblocking(input.as_raw_fd())?;
-    let config: SentinelConfig = serde_json::from_slice(&read_frame(&mut input)?)?;
+    let config: serde_json::Value = serde_json::from_slice(&read_frame(&mut input)?)?;
+    if config.get("memory").and_then(serde_json::Value::as_bool) == Some(true) {
+        return memory::serve(config, &mut input);
+    }
+    let config: SentinelConfig = serde_json::from_value(config)?;
     config
         .executable
         .verify()
@@ -691,7 +770,18 @@ fn sentinel(
     let cx = op
         .effects()
         .map_err(|_| RunError::Invalid("sentinel context".into()))?;
-    let root = StateRoot::effects(&cx, &config.home).map_err(crate::store::StoreError::from)?;
+    let root = helper_root(&cx, &config.home, config.machine, config.machine_gates)?;
+    if root.is_machine() && config.owner.kind() == crate::id::ResourceKind::Gateway {
+        let observe = op
+            .observe()
+            .map_err(|_| RunError::Invalid("sentinel observe".into()))?;
+        if let Observed::Verified(reader, _) = crate::store::Store::read(&observe, &root) {
+            if matches!(run::machine_completion(&reader, &config.owner), Observed::Verified(completion, _) if completion.run == config.run)
+            {
+                return Ok(());
+            }
+        }
+    }
     if matches!(
         crate::run::metadata(
             &op.observe()
@@ -817,6 +907,10 @@ impl WireProcess {
 #[derive(Serialize, Deserialize)]
 struct SupervisorConfig {
     home: PathBuf,
+    #[serde(default)]
+    machine: bool,
+    #[serde(default)]
+    machine_gates: Option<crate::root::MachineGateAddress>,
     executable: Executable,
     work: Work,
 }
@@ -862,7 +956,7 @@ pub struct SupervisorClient {
     buffer: Vec<u8>,
     pub run: RunId,
     pub fence: Fence,
-    home: PathBuf,
+    root: StateRoot,
     active: bool,
     closed: bool,
 }
@@ -924,10 +1018,10 @@ impl SupervisorClient {
             .operation()
             .effects()
             .map_err(|_| RunError::Invalid("stop needs effects".into()))?;
-        let root = StateRoot::effects(cx, &self.home).map_err(crate::store::StoreError::from)?;
+        let root = &self.root;
         run::request(
             cx,
-            &root,
+            root,
             &Request {
                 id,
                 run: self.run,
@@ -935,12 +1029,8 @@ impl SupervisorClient {
                 action,
             },
         )?;
-        if let Ok(mut socket) = UnixStream::connect(run::control_socket_path(
-            &root,
-            &self.fence.resource,
-            self.run,
-        )) {
-            let _ = socket.write_all(&[1]);
+        if let Ok(observe) = cx.operation().child(Duration::from_secs(1)).observe() {
+            let _ = run::connect_control_socket(&observe, root, &self.fence.resource, self.run);
         }
         Ok(())
     }
@@ -969,12 +1059,20 @@ impl SupervisorClient {
         Ok(self.run)
     }
     pub fn wait(mut self, cx: &OperationContext) -> io::Result<()> {
+        let mut stream_error = None;
         while !self.closed {
-            self.event(cx)?;
+            if let Err(error) = self.event(cx) {
+                // EOF can precede the recorded child's reap (a killed owner).
+                // Release our owning pipe, then reap that exact child even
+                // when no Closed event can arrive. The journal owns outcome.
+                self.writer.take();
+                stream_error = Some(error);
+                break;
+            }
         }
         loop {
             if self.child.try_wait()?.is_some() {
-                return Ok(());
+                return stream_error.map_or(Ok(()), Err);
             }
             cx.check("supervisor exit")
                 .map_err(|e| io::Error::other(format!("{e:?}")))?;
@@ -995,18 +1093,40 @@ pub fn start_detached(
     executable: &Executable,
     client: ClientMode,
 ) -> Result<SupervisorClient, RunError> {
+    cx.require(crate::ctx::Capability::AdapterEffect)
+        .map_err(|_| RunError::Invalid("detached spawn needs Mutate".into()))?;
+    let root = StateRoot::effects(cx, home).map_err(crate::store::StoreError::from)?;
+    start_detached_at(cx, &root, inv, id, next, processes, executable, client)
+}
+/// Detached custody with an explicit checkout or machine journal.
+#[allow(clippy::too_many_arguments)]
+pub fn start_detached_at(
+    cx: &EffectContext,
+    root: &StateRoot,
+    inv: &ResolvedInvocation,
+    id: RunId,
+    next: &Invocation,
+    processes: Vec<ProcessSpec>,
+    executable: &Executable,
+    client: ClientMode,
+) -> Result<SupervisorClient, RunError> {
     let work = Work::Processes {
         invocation: serde_json::to_vec(inv)?,
         processes: processes.into_iter().map(WireProcess::encode).collect(),
         run: id,
-        next: next.argv().iter().map(|a| a.as_bytes().to_vec()).collect(),
+        next: next
+            .argv()
+            .iter()
+            .map(|arg| arg.as_bytes().to_vec())
+            .collect(),
     };
     let fence = Fence {
         resource: inv.spec().owner.clone(),
         generation: crate::id::Generation::new(0),
     };
-    launch(cx, home, work, None, (id, fence), executable, client)
+    launch(cx, root, work, None, (id, fence), executable, client)
 }
+
 /// What an engine's detached supervisor is started with besides its binary:
 /// an opaque payload, and the client's working directory and environment,
 /// handed over explicitly at spawn. The engine admits its own run (§5.8).
@@ -1030,6 +1150,19 @@ pub fn start_engine(
     executable: &Executable,
     client: ClientMode,
 ) -> Result<SupervisorClient, RunError> {
+    cx.require(crate::ctx::Capability::AdapterEffect)
+        .map_err(|_| RunError::Invalid("detached spawn needs Mutate".into()))?;
+    let root = StateRoot::effects(cx, home).map_err(crate::store::StoreError::from)?;
+    start_engine_at(cx, &root, launch_spec, executable, client)
+}
+/// Engine custody with an explicit journal, retained by the returned client.
+pub fn start_engine_at(
+    cx: &EffectContext,
+    root: &StateRoot,
+    launch_spec: EngineLaunch,
+    executable: &Executable,
+    client: ClientMode,
+) -> Result<SupervisorClient, RunError> {
     let work = Work::Engine {
         payload: launch_spec.payload.clone(),
     };
@@ -1044,7 +1177,7 @@ pub fn start_engine(
     );
     launch(
         cx,
-        home,
+        root,
         work,
         Some(&launch_spec),
         pending,
@@ -1054,26 +1187,36 @@ pub fn start_engine(
 }
 fn launch(
     cx: &EffectContext,
-    home: &Path,
+    root: &StateRoot,
     work: Work,
     engine: Option<&EngineLaunch>,
     (id, fence): (RunId, Fence),
     executable: &Executable,
     client: ClientMode,
 ) -> Result<SupervisorClient, RunError> {
+    crate::inheritance::require_durable(cx.operation())
+        .map_err(|error| RunError::Invalid(error.to_string()))?;
     cx.require(crate::ctx::Capability::AdapterEffect)
         .map_err(|_| RunError::Invalid("detached spawn needs Mutate".into()))?;
     cx.require(crate::ctx::Capability::HostAuthority)
         .map_err(|_| RunError::HostAuthorityRequired)?;
     cx.operation().check("start detached")?;
+    let observe = cx
+        .child(Duration::from_secs(10))
+        .operation()
+        .observe()
+        .map_err(|_| RunError::Invalid("detached publication context".into()))?;
+    crate::migration::adoption::access(&observe, root)?;
+
     let config = SupervisorConfig {
-        home: home.into(),
+        home: root.owning_directory().path().into(),
+        machine: root.is_machine(),
+        machine_gates: root.machine_gate_address(),
         executable: executable.clone(),
         work,
     };
-    let root = StateRoot::effects(cx, home).map_err(crate::store::StoreError::from)?;
-    let log = helper_log(&root)?;
-    let mut child = spawn_helper(executable, SUPERVISOR, &log, engine)?;
+    let log = helper_log(root)?;
+    let mut child = spawn_helper(cx.operation(), executable, SUPERVISOR, &log, engine)?;
     let mut writer = child
         .stdin
         .take()
@@ -1097,7 +1240,7 @@ fn launch(
         buffer: Vec::new(),
         run: id,
         fence,
-        home: home.into(),
+        root: root.clone(),
         active: false,
         closed: false,
     };
@@ -1219,7 +1362,12 @@ impl OwningChannel {
                     control.stop.get_or_insert(StopCause::Requested);
                 }
             }
-            run.resolve_request(&request)?;
+            // Detach changes only this authenticated owning channel. Its
+            // committed request remains the durable fact until close; repeated
+            // observation is idempotent and needs no acknowledgement write.
+            if !run.machine_lifecycle() {
+                run.resolve_request(&request)?;
+            }
         }
         if let Some(listener) = &self.listener {
             // The socket is a doorbell: the journal already holds the request.
@@ -1437,7 +1585,11 @@ impl OutputCapture {
             crate::custody::Stream::Stdout,
             crate::custody::Stream::Stderr,
         ]
-        .map(|stream| run.capture_log(OUTPUT_SEQUENCE, stream, &limits).ok());
+        .map(|stream| {
+            run.capture_log(OUTPUT_SEQUENCE, stream, &limits)
+                .ok()
+                .flatten()
+        });
         let mut readers = Vec::new();
         for target in [libc::STDOUT_FILENO, libc::STDERR_FILENO] {
             let (read, write) = crate::custody::spawn::pipe()?;
@@ -1545,7 +1697,8 @@ fn supervisor(
     router: &mut RouterHandle,
     adapter: &mut impl SettlementAdapter,
     validate_next: impl Fn(&[OsString]) -> bool,
-    home: PathBuf,
+    (home, machine): (PathBuf, bool),
+    machine_gates: Option<crate::root::MachineGateAddress>,
     executable: Executable,
     work: Work,
 ) -> Result<(), RunError> {
@@ -1577,27 +1730,34 @@ fn supervisor(
     let cx = op
         .effects()
         .map_err(|_| RunError::Invalid("supervisor context".into()))?;
-    let root = StateRoot::effects(&cx, &home).map_err(crate::store::StoreError::from)?;
+    let root = helper_root(&cx, &home, machine, machine_gates)?;
     let cleanup = op
         .cleanup(Duration::from_secs(30))
         .map_err(|_| RunError::Invalid("cleanup overflow".into()))?;
-    let run = Run::begin(
-        &cx,
-        &root,
-        &inv,
-        BeginOpts {
-            id: run_id,
-            wait: Wait::FailFast,
-            acknowledge: vec![],
-            next,
-            custody: Some(LifecyclePlan {
-                executable,
-                placement: Placement::Detached,
-            }),
-        },
-        &cleanup,
-        adapter,
-    );
+    let specs = processes
+        .into_iter()
+        .map(WireProcess::decode)
+        .collect::<io::Result<Vec<_>>>()?;
+    let options = BeginOpts {
+        id: run_id,
+        wait: Wait::FailFast,
+        acknowledge: vec![],
+        next,
+        custody: Some(LifecyclePlan {
+            executable,
+            placement: Placement::Detached,
+        }),
+    };
+    let run = if root.is_machine() && inv.spec().owner.kind() == crate::id::ResourceKind::Gateway {
+        let [process] = specs.as_slice() else {
+            return Err(RunError::Invalid(
+                "gateway must have one planned process".into(),
+            ));
+        };
+        Run::begin_gateway(&cx, &root, &inv, options, &cleanup, adapter, process)
+    } else {
+        Run::begin(&cx, &root, &inv, options, &cleanup, adapter)
+    };
     let mut run = match run {
         Ok(run) => run,
         Err(error) => {
@@ -1626,10 +1786,6 @@ fn supervisor(
         listener: Some(listener),
         detached: false,
     };
-    let specs = processes
-        .into_iter()
-        .map(WireProcess::decode)
-        .collect::<io::Result<Vec<_>>>()?;
     let mut children = match Custody::spawn_all(&mut run, specs, &cx) {
         Ok(children) => children,
         Err(error) => {

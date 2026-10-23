@@ -149,7 +149,7 @@ impl<'r> EnvContext<'r> {
     }
 }
 
-pub(super) fn operation(
+pub(crate) fn operation(
     class: EffectClass,
     cancel: CancelToken,
     budget: Duration,
@@ -769,7 +769,7 @@ fn fault(point: &'static str) -> std::io::Result<()> {
     }
 }
 
-pub(super) fn new_run_id() -> Result<RunId, EnvError> {
+pub(crate) fn new_run_id() -> Result<RunId, EnvError> {
     let mut entropy = [0; 10];
     std::fs::File::open("/dev/urandom")
         .and_then(|mut file| file.read_exact(&mut entropy))

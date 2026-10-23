@@ -9,8 +9,14 @@
 //! Each file is formatted with rustfmt's own configuration discovery, run from
 //! the file's own directory, so the nearest `rustfmt.toml` applies.
 
+use super::task_engine;
+use effigy_kernel::{
+    ctx::OpenReason,
+    custody::{Lifetime, ProcessSpec, Terminal},
+    observe::Observed,
+};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::time::Duration;
 
 use effigy_cli::{FmtArgs, FmtSubcommand};
 
@@ -158,32 +164,74 @@ fn run_rustfmt(repo_root: &Path, file: &Path, check: bool) -> Result<bool, Runne
             display(repo_root, file)
         ))
     })?;
-    let mut command = Command::new("rustfmt");
-    command
-        .arg("--edition")
-        .arg(RUST_EDITION)
-        // `skip_children` stops rustfmt following `mod` declarations into
-        // files the caller did not name.
-        .arg("--config")
-        .arg("skip_children=true");
+    let mut argv = vec![
+        effigy_containers::compose::resolve_host_cli_program("rustfmt"),
+        "--edition".into(),
+        RUST_EDITION.into(),
+        "--config".into(),
+        "skip_children=true".into(),
+    ];
     if check {
-        command.arg("--check");
+        argv.push("--check".into());
     }
-    // Running from the file's own directory is what selects the nearest
-    // `rustfmt.toml`.
-    command.arg(file_name).current_dir(directory);
-
-    let output = command.output().map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "`effigy fmt rust` could not run rustfmt for {}: {error}",
-            display(repo_root, file)
-        ))
-    })?;
-    if output.status.success() {
+    argv.push(file_name.to_os_string());
+    // Formatting mutates explicit checkout files, so use the task engine's
+    // memory custody rather than a read-only probe or an unowned child.
+    let mut run = task_engine::TaskRun::standalone_foreground(repo_root, "fmt rust")?;
+    let result = (|| -> Result<(i32, Vec<u8>, Vec<u8>), RunnerError> {
+        let spec = ProcessSpec {
+            argv,
+            cwd: directory.into(),
+            env: task_engine::process_environment(directory, Vec::new())?,
+            grace: Duration::from_secs(3),
+            lifetime: Lifetime::Open(OpenReason::Shell),
+            terminal: Terminal::None,
+            label: "rustfmt".into(),
+        };
+        let mut process = run
+            .spawn(spec, false)
+            .map_err(|error| RunnerError::task_invocation(format!("rustfmt custody: {error:?}")))?;
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        loop {
+            let (out, err) = process.take_stream_output();
+            stdout.extend(out);
+            stderr.extend(err);
+            if let Observed::Verified(exit, _) = process.poll() {
+                let closed = process.stop(&task_engine::cleanup_context(Duration::from_secs(30)));
+                if !matches!(closed.group, Observed::Verified(..) | Observed::Absent(_))
+                    || !closed.residue.is_empty()
+                    || closed.capture != effigy_kernel::custody::CaptureState::Complete
+                {
+                    return Err(RunnerError::task_invocation(
+                        "rustfmt closure or output is unresolved",
+                    ));
+                }
+                let (out, err) = process.take_stream_output();
+                stdout.extend(out);
+                stderr.extend(err);
+                run.complete(&process, exit).map_err(|e| {
+                    RunnerError::task_invocation(format!("rustfmt completion: {e:?}"))
+                })?;
+                return Ok((exit.code, stdout, stderr));
+            }
+            if !task_engine::routed_signals().is_empty() {
+                return Err(RunnerError::task_invocation("rustfmt interrupted"));
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    })();
+    let code = result.as_ref().map(|r| r.0).unwrap_or(1);
+    let warnings = run.close(task_engine::workload_for_exit(code));
+    if !warnings.is_empty() {
+        return Err(RunnerError::task_invocation(warnings.join("; ")));
+    }
+    let (code, stdout, stderr) = result?;
+    if code == 0 {
         return Ok(false);
     }
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let stdout = String::from_utf8_lossy(&stdout).trim().to_owned();
+    let stderr = String::from_utf8_lossy(&stderr).trim().to_owned();
     if stderr.is_empty() && !stdout.is_empty() && (check || stdout.contains("Diff in")) {
         // rustfmt reports each difference on stdout and exits non-zero.
         return Ok(true);

@@ -17,8 +17,26 @@ use serde_json::Value;
 
 use super::support::{parse_stdout_json, temp_execution_workspace, temp_workspace};
 
-fn run_effigy(root: &Path, args: &[&str]) -> std::process::Output {
+fn fixture_command(root: &Path) -> Command {
+    let home = root.join(".fixture-home");
+    fs::create_dir_all(&home).expect("private QA-group home");
     let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    command.env("HOME", &home);
+    for key in [
+        "EFFIGY_PARENT_CAPABILITY",
+        "EFFIGY_CUSTODY_NONCE",
+        "EFFIGY_PROBE_NONCE",
+        "EFFIGY_ADMITTED",
+        "EFFIGY_ADMISSION_HOOK",
+        "EFFIGY_MANAGED_RUN_TOKEN",
+    ] {
+        command.env_remove(key);
+    }
+    command
+}
+
+fn run_effigy(root: &Path, args: &[&str]) -> std::process::Output {
+    let mut command = fixture_command(root);
     command.arg("--repo").arg(root);
     for arg in args {
         command.arg(arg);
@@ -31,7 +49,7 @@ fn run_effigy_json(root: &Path, args: &[&str]) -> Value {
 }
 
 fn run_effigy_json_with_env(root: &Path, args: &[&str], envs: &[(&str, &Path)]) -> Value {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    let mut command = fixture_command(root);
     command.arg("--json");
     command.arg("--repo").arg(root);
     for arg in args {
@@ -447,6 +465,14 @@ fn qa_group_run_passes_all_members_and_records_the_ledger() {
         assert!(member["log_ref"].as_str().is_some());
     }
     let run_id = body["run_id"].as_str().unwrap().to_owned();
+    for task in ["ok", "echo-args"] {
+        let member = run_effigy_json(&root, &["tasks", "status", task]);
+        assert_eq!(member["result"]["schema"], "effigy.tasks-status.v3");
+        assert!(
+            !member["result"]["latest"].is_null(),
+            "group member lost durable history: {member}"
+        );
+    }
 
     // Timing: execution measured, admission fields null for a non-heavy
     // group, cold/warm build unknown rather than inferred.
@@ -853,7 +879,7 @@ run = "exit 130"
 /// Run the group through the compiled binary, tolerate its failing exit, and
 /// return the finalized run directory.
 fn run_group_and_capture(root: &Path, args: &[&str]) -> PathBuf {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+    let mut command = fixture_command(root);
     command.arg("--repo").arg(root);
     for arg in args {
         command.arg(arg);
@@ -904,7 +930,7 @@ run = "sleep 0.4"
     // A passing group can be over budget: the evidence never changes the
     // outcome and never truncates the member list.
     let run_dir = {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_effigy"));
+        let mut command = fixture_command(&root);
         command
             .args(["tasks", "qa-group", "run", "hopeful"])
             .arg("--repo")

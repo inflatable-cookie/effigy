@@ -102,6 +102,8 @@ fn scope_record(token: &str, checkout: &str, identities: &[&str]) -> ScopeRecord
         token: token.to_owned(),
         host_key: "abcdef01".to_owned(),
         checkout: checkout.to_owned(),
+        checkout_fence: None,
+        checkout_generation: None,
         updated_unix: 0,
         compose_kind: crate::runtime::scope::ScopeComposeKind::Generated,
         profile: "effigy".to_owned(),

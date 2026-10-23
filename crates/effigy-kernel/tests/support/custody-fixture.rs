@@ -101,13 +101,233 @@ fn main() {
             entry,
             router,
             &mut Strict,
-            |a| a == [OsString::from("recover")],
+            |a| a == [OsString::from("recover")] || a == ["effigy", "release", "run"],
             fixture_engine,
         );
         if !matches!(result, Some(Ok(()))) {
             std::process::exit(1);
         }
         return;
+    }
+    if entry == "inheritance-check" {
+        let cx = op(router.root_cancel());
+        let captured = std::env::var(effigy_kernel::inheritance::ENV)
+            .ok()
+            .and_then(|marker| {
+                effigy_kernel::inheritance::InheritedCapability::capture(&cx, &marker).ok()
+            });
+        let Some(capability) = captured else {
+            std::process::exit(41);
+        };
+        for _ in 0..3 {
+            if capability.payload::<serde_json::Value>(&cx).ok()
+                != Some(serde_json::json!({"admitted": true, "class": "foreground"}))
+            {
+                std::process::exit(42);
+            }
+        }
+        return;
+    }
+    if entry == "runtime-open" {
+        let cx = op(router.root_cancel()).effects().unwrap();
+        let grant = effigy_kernel::inheritance::RuntimeParent::inherited(cx.operation())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            grant.class,
+            effigy_kernel::inheritance::RunClass::Foreground
+        );
+        let home = Path::new(args.get(1).expect("private nonexistent fixture home"));
+        let location = effigy_kernel::migration::CheckoutLocation {
+            root: home.join("checkout"),
+            git_directory: None,
+        };
+        assert!(StateRoot::checkout_effects(&cx, &home.join("machine"), &location).is_err());
+        assert!(StateRoot::runtime_machine_effects(&cx, &home.join("machine")).is_err());
+        assert!(!home.exists());
+        return;
+    }
+    if entry == "migration-key" {
+        // Emit an old host-global keyed id and leave its journal open when
+        // this disposable process exits. Import must preserve its alias.
+        let home = Path::new(args.get(1).expect("private fixture home"));
+        let cx = op(router.root_cancel()).effects().unwrap();
+        let root = StateRoot::effects(&cx, home).unwrap();
+        let digest = Digest::of(b"effigy-run-key\0imported-key");
+        let mut random = [0; 10];
+        random.copy_from_slice(&digest.0[..10]);
+        let id = RunId::new(0, random).unwrap();
+        let task = TaskId::new(
+            CheckoutId::new(CheckoutKind::Primary, [7; 16]),
+            "",
+            Surface::Published,
+            "noop",
+            None,
+        )
+        .unwrap();
+        let mut spec = invocation().spec().clone();
+        spec.owner = task.resource();
+        spec.task = task;
+        spec.argv = vec!["noop".into()];
+        let invocation = ResolvedInvocation::new(spec).unwrap();
+        let run = Run::begin(
+            &cx,
+            &root,
+            &invocation,
+            BeginOpts {
+                id,
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: None,
+            },
+            &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+            &mut Strict,
+        )
+        .unwrap();
+        std::mem::forget(run);
+        println!("{id}");
+        return;
+    }
+    if entry == "migration-writer" {
+        let home = Path::new(args.get(1).expect("private fixture home"));
+        let cx = op(router.root_cancel()).effects().unwrap();
+        let root = StateRoot::effects(&cx, home).unwrap();
+        let mut store = effigy_kernel::store::Store::open(&cx, &root).unwrap();
+        if args.get(2).and_then(|arg| arg.to_str()) == Some("seed-aliases") {
+            store
+                .txn(&cx, |txn| {
+                    for token in [7, 8] {
+                        let env = ResourceId::environment(
+                            CheckoutId::new(CheckoutKind::Primary, [token; 16]),
+                            "dev",
+                        )
+                        .unwrap();
+                        txn.resource(&env, "legacy alias fixture")?;
+                    }
+                    Ok::<_, effigy_kernel::store::StoreError>(())
+                })
+                .unwrap();
+        }
+        drop(store);
+        let owner = ResourceId::store(Scope::Machine, "kernel").unwrap();
+        let guard = effigy_kernel::gate::Gate::acquire(
+            &cx,
+            &root,
+            std::slice::from_ref(&owner),
+            Wait::FailFast,
+        )
+        .unwrap();
+        let conn = rusqlite::Connection::open(root.path().join("kernel.db")).unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE; UPDATE meta SET value=value")
+            .unwrap();
+        let identity = effigy_kernel::ident::process_identity(std::process::id())
+            .verified()
+            .unwrap()
+            .clone();
+        let target = effigy_kernel::migration::WriterTarget {
+            scope: "machine".into(),
+            resource: owner.name().to_string(),
+            run: None,
+            process: identity,
+        };
+        std::fs::write(
+            home.join("writer.pending"),
+            serde_json::to_vec(&target).unwrap(),
+        )
+        .unwrap();
+        std::fs::rename(home.join("writer.pending"), home.join("writer.json")).unwrap();
+        while router.poll().is_empty() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        conn.execute_batch("ROLLBACK").unwrap();
+        drop(conn);
+        drop(guard);
+        return;
+    }
+    if matches!(entry, "foreground-owner" | "foreground-tree-owner") {
+        let home = Path::new(args.get(1).expect("private fixture root"));
+        let cx = op(router.root_cancel()).effects().unwrap();
+        let root = StateRoot::effects(&cx, home).unwrap();
+        let mut run = ForegroundRun::begin(
+            &cx,
+            &root,
+            &invocation(),
+            BeginOpts {
+                id: RunId::new(1, [1; 10]).unwrap(),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: Some(LifecyclePlan {
+                    executable: Executable::current().unwrap(),
+                    placement: effigy_kernel::supervise::Placement::Inline,
+                }),
+            },
+        )
+        .unwrap();
+        let mut ancestors = Vec::new();
+        if entry == "foreground-tree-owner" {
+            for n in 2..=3 {
+                let mut child_invocation = invocation().spec().clone();
+                child_invocation.task = TaskId::new(
+                    child_invocation.task.checkout(),
+                    "",
+                    Surface::Published,
+                    &format!("child-{n}"),
+                    None,
+                )
+                .unwrap();
+                child_invocation.owner = child_invocation.task.resource();
+                let child_run = run
+                    .begin_child(
+                        &root,
+                        &ResolvedInvocation::new(child_invocation).unwrap(),
+                        BeginOpts {
+                            id: RunId::new(1, [n; 10]).unwrap(),
+                            wait: Wait::FailFast,
+                            acknowledge: vec![],
+                            next: next(),
+                            custody: Some(LifecyclePlan {
+                                executable: Executable::current().unwrap(),
+                                placement: effigy_kernel::supervise::Placement::Inline,
+                            }),
+                        },
+                    )
+                    .unwrap();
+                ancestors.push(run);
+                run = child_run;
+            }
+        }
+        let mut child = Custody::spawn_foreground(&mut run, spec(home), &cx).unwrap();
+        std::fs::write(
+            home.join("foreground.pending"),
+            serde_json::to_vec(&serde_json::json!({
+                "process": child.identity(), "guard": run.guard_identity(),
+                "ancestor_guards": ancestors.iter().map(|run| run.guard_identity()).collect::<Vec<_>>(),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::rename(
+            home.join("foreground.pending"),
+            home.join("foreground.json"),
+        )
+        .unwrap();
+        loop {
+            if let Some(signal) = router.poll().first() {
+                let received = signal.received;
+                run.interrupt(WorkloadOutcome::Cancelled {
+                    cause: StopCause::Signal(received),
+                    signal: Some(received),
+                })
+                .unwrap();
+                run.settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+                    .unwrap();
+                std::process::exit(128 + received);
+            }
+            let _ = child.poll();
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
     if entry == "anchor-no-children" {
         let mut status = 0;
@@ -117,6 +337,55 @@ fn main() {
         if result != -1 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ECHILD) {
             std::process::exit(29);
         }
+        return;
+    }
+    if entry == "checkout-lease-owner" {
+        let home = Path::new(args.get(1).expect("fixture home"));
+        let checkout = home.join("checkout");
+        let machine = home.join("machine");
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::create_dir_all(&machine).unwrap();
+        let op = op(router.root_cancel());
+        let cx = op.effects().unwrap();
+        let cleanup = op.cleanup(Duration::from_secs(10)).unwrap();
+        let root = StateRoot::checkout_effects(
+            &cx,
+            &machine,
+            &effigy_kernel::migration::CheckoutLocation {
+                root: checkout.clone(),
+                git_directory: None,
+            },
+        )
+        .unwrap();
+        let mut spec_inv = invocation().spec().clone();
+        spec_inv.owner =
+            ResourceId::environment(spec_inv.task.checkout(), "lease-fixture").unwrap();
+        let invocation = ResolvedInvocation::new(spec_inv).unwrap();
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &invocation,
+            BeginOpts {
+                id: RunId::new(1, [9; 10]).unwrap(),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: Some(LifecyclePlan {
+                    executable: Executable::current().unwrap(),
+                    placement: effigy_kernel::supervise::Placement::Inline,
+                }),
+            },
+            &cleanup,
+            &mut Strict,
+        )
+        .unwrap();
+        let mut process_spec = spec(&checkout);
+        process_spec.grace = Duration::from_secs(2);
+        let mut child = Custody::spawn(&mut run, process_spec, &cx).unwrap();
+        run.advance(Phase::Active).unwrap();
+        std::fs::write(home.join("lease-ready.json"),serde_json::to_vec(&serde_json::json!({"identity":run.checkout_fence_identity(),"child":child.identity()})).unwrap()).unwrap();
+        let _ = child.wait(&op);
+        run.settle(&cleanup, &mut Strict).unwrap();
         return;
     }
     if entry == "nonce-workload" {
@@ -140,7 +409,21 @@ fn main() {
     let op = op(router.root_cancel());
     let cx = op.effects().unwrap();
     let cleanup = op.cleanup(Duration::from_secs(10)).unwrap();
-    let root = StateRoot::effects(&cx, home).unwrap();
+    let root = if entry == "inline-alias" {
+        let machine = home.join("machine");
+        std::fs::create_dir(&machine).unwrap();
+        StateRoot::checkout_effects(
+            &cx,
+            &machine,
+            &effigy_kernel::migration::CheckoutLocation {
+                root: home.into(),
+                git_directory: None,
+            },
+        )
+        .unwrap()
+    } else {
+        StateRoot::effects(&cx, home).unwrap()
+    };
     let id = RunId::new(1, [9; 10]).unwrap();
     let inv = invocation();
     if entry == "engine-client" {
@@ -344,6 +627,7 @@ fn sequence_foreground(run: &mut Run<'_>, cx: &EffectContext, op: &OperationCont
     assert_eq!(child.tail(), b"first-captured");
     // Release-on-exit: the lease ended with the workload, not with settle.
     assert_owner_terminal(home, "first-done");
+    wait_terminal_observation(op, home, "first-observed");
 
     let read = ProcessSpec {
         argv: vec![
@@ -360,6 +644,16 @@ fn sequence_foreground(run: &mut Run<'_>, cx: &EffectContext, op: &OperationCont
     child.complete(run, exit).unwrap();
     assert_eq!(child.tail(), b"second-ok:terminal-input");
     assert_owner_terminal(home, "second-done");
+    wait_terminal_observation(op, home, "second-observed");
+}
+
+// Hold this exact terminal phase until the parent observes it: otherwise
+// the next workload or session exit races tcgetpgrp in the proof process.
+fn wait_terminal_observation(op: &OperationContext, home: &Path, marker: &str) {
+    while !home.join(marker).exists() {
+        op.check("terminal phase observation").unwrap();
+        std::thread::sleep(Duration::from_millis(2));
+    }
 }
 
 /// The engine payload a fixture client hands its supervisor: the home.

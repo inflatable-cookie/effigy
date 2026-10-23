@@ -16,13 +16,15 @@
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use nix::errno::Errno;
-use nix::sys::signal::kill;
-use nix::unistd::Pid;
+use effigy_kernel::{
+    fs::{DirFd, FileName},
+    gate::{Gate, GateGuard, Wait},
+    observe::Observed,
+};
 
 use super::{render_root, ROOT_VARIABLE};
 
@@ -136,66 +138,88 @@ fn invalid(message: String) -> io::Error {
 /// reclaim it once its writer is gone.
 fn write_interpolation_file(entries: &BTreeMap<String, OsString>) -> io::Result<PathBuf> {
     let body = render(entries)?;
-    let directory = directory()?;
-    prune(&directory);
+    let op = crate::environment::operation(
+        effigy_kernel::ctx::EffectClass::Mutate,
+        effigy_kernel::ctx::CancelToken::default(),
+        Duration::from_secs(10),
+    );
+    let cx = op.effects().map_err(|e| invalid(format!("{e:?}")))?;
+    let home = crate::effigy_home().ok_or_else(|| invalid("the Effigy home is unknown (HOME is required to deliver Compose interpolation to the Colima VM)".into()))?;
+    let home_dir = match DirFd::open(&home) {
+        Ok(dir) => dir,
+        Err(_) if !home.exists() => {
+            let parent = home
+                .parent()
+                .ok_or_else(|| invalid("Effigy home has no parent".into()))?;
+            let name = home
+                .file_name()
+                .and_then(OsStr::to_str)
+                .ok_or_else(|| invalid("invalid Effigy home".into()))?;
+            DirFd::open(parent)
+                .and_then(|dir| dir.prepare_setup_child(&cx, &FileName::new(name)?, 0o700))
+                .map_err(|e| invalid(e.to_string()))?
+        }
+        Err(error) => return Err(invalid(error.to_string())),
+    };
+    let directory = home_dir
+        .prepare_setup_child(
+            &cx,
+            &FileName::new(DIRECTORY).map_err(|e| invalid(e.to_string()))?,
+            0o700,
+        )
+        .map_err(|e| invalid(e.to_string()))?;
+    let gate = Gate::files(
+        &cx,
+        &directory,
+        "compose-interpolation",
+        Wait::Until(std::time::Instant::now() + Duration::from_secs(10)),
+    )
+    .map_err(|e| invalid(e.to_string()))?;
+    prune(&cx, &gate, &directory);
     let digest = effigy_gateway::ports::sha256_hex(body.as_bytes());
-    let path = directory.join(format!("{}-{}.env", std::process::id(), &digest[..16]));
-    if path.is_file() {
+    let name = FileName::new(&format!("{}-{}.env", std::process::id(), &digest[..16]))
+        .map_err(|e| invalid(e.to_string()))?;
+    let path = home.join(DIRECTORY).join(name.as_str());
+    if path
+        .symlink_metadata()
+        .is_ok_and(|metadata| metadata.file_type().is_file())
+    {
         return Ok(path);
     }
-    let temporary = directory.join(format!(".{}-{}.tmp", std::process::id(), &digest[..16]));
-    {
-        let mut file = private_file(&temporary)?;
-        file.write_all(body.as_bytes())?;
-        file.sync_all()?;
-    }
-    std::fs::rename(&temporary, &path)?;
+    effigy_kernel::record::atomic_replace(
+        &cx,
+        &gate,
+        &directory,
+        &name,
+        body.as_bytes(),
+        Default::default(),
+    )
+    .map_err(|e| invalid(e.to_string()))?;
     Ok(path)
 }
 
-fn directory() -> io::Result<PathBuf> {
-    let home = crate::effigy_home().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            "the Effigy home is unknown (HOME is required to deliver Compose interpolation to the Colima VM)",
-        )
-    })?;
-    let directory = home.join(DIRECTORY);
-    private_dir(&directory)?;
-    Ok(directory)
-}
-
+#[cfg(test)]
 fn private_dir(directory: &Path) -> io::Result<()> {
-    let mut builder = std::fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    builder.create(directory)
-}
-
-fn private_file(path: &Path) -> io::Result<std::fs::File> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options.open(path)
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(directory)
 }
 
 /// Reclaim interpolation files whose writer is gone, whose age makes them
 /// stale, or that exceed the retained-file bound. A file that cannot be
 /// removed is never fatal: only Compose's own read of the current file matters.
-fn prune(directory: &Path) {
-    let Ok(entries) = std::fs::read_dir(directory) else {
+fn prune(cx: &effigy_kernel::ctx::EffectContext, gate: &GateGuard, directory: &DirFd) {
+    let Ok(entries) = std::fs::read_dir(directory.path()) else {
         return;
     };
     let mut retained = Vec::new();
     for entry in entries.flatten() {
+        // The stable gate directory is not an interpolation record.
+        if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
+            continue;
+        }
         let path = entry.path();
         let Some(name) = path.file_name().and_then(OsStr::to_str).map(str::to_owned) else {
             continue;
@@ -210,7 +234,9 @@ fn prune(directory: &Path) {
             .and_then(|written| written.elapsed().ok())
             .is_some_and(|age| age > MAX_AGE);
         if abandoned || stale {
-            let _ = std::fs::remove_file(&path);
+            if let Ok(name) = FileName::new(&name) {
+                let _ = effigy_kernel::record::remove_record(cx, gate, directory, &name);
+            }
         } else {
             retained.push((written, path));
         }
@@ -221,12 +247,23 @@ fn prune(directory: &Path) {
     retained.sort();
     let excess = retained.len() - MAX_FILES;
     for (_, path) in retained.into_iter().take(excess) {
-        let _ = std::fs::remove_file(path);
+        if let Some(name) = path
+            .file_name()
+            .and_then(OsStr::to_str)
+            .and_then(|name| FileName::new(name).ok())
+        {
+            let _ = effigy_kernel::record::remove_record(cx, gate, directory, &name);
+        }
     }
 }
 
 fn alive(pid: i32) -> bool {
-    pid > 0 && matches!(kill(Pid::from_raw(pid), None), Ok(()) | Err(Errno::EPERM))
+    // Unknown identity protects a possible live writer. Never signal a numeric PID.
+    pid > 0
+        && !matches!(
+            effigy_kernel::ident::process_identity(pid as u32),
+            Observed::Absent(_)
+        )
 }
 
 #[cfg(test)]

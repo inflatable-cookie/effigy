@@ -984,7 +984,7 @@ fn store_retention_caps_logs_oldest_settled_first() {
             .conn()
             .execute(
                 "INSERT INTO logs(run_id, stream, path, bytes, truncated, redaction) VALUES (?1, 'stdout', 'x', ?2, 0, 'default')",
-                params![id, 1i64 << 30],
+                params![&id, 1i64 << 30],
             )
             .unwrap();
     }

@@ -44,6 +44,10 @@ fn fmt_rust_formats_only_the_named_files() {
 
     let report = format_files(&root, std::slice::from_ref(&named), false).expect("format");
     assert!(report.contains("src/named.rs"), "{report}");
+    assert!(
+        !root.join(".effigy/state/kernel.db").exists(),
+        "formatting keeps its run in memory"
+    );
 
     assert_eq!(
         fs::read_to_string(&named).expect("named"),

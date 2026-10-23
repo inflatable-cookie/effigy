@@ -283,7 +283,9 @@ fn v0_2_13_repo_owned_smoke_task_runs_against_the_binary() {
     let baseline = load_baseline();
     let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let binary = env!("CARGO_BIN_EXE_effigy");
+    let home = temp_workspace("released-surface-v0-2-13-smoke-home");
     let output = Command::new(binary)
+        .env("HOME", &home)
         .arg("--repo")
         .arg(repo_root)
         .arg("smoke:release")

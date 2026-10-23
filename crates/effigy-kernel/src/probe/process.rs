@@ -13,6 +13,10 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::time::Duration;
 
+// Signal grace bounds workload lifetime. Closure verification also scans native
+// identities, reaps and drains buffered output, so it has its own finite budget.
+const CLOSURE_BUDGET: Duration = Duration::from_secs(5);
+
 /// Adapters declare this command non-mutating. A complete environment is passed
 /// explicitly; stdin is EOF and there is no terminal, state root, or journal.
 #[derive(Clone)]
@@ -181,8 +185,9 @@ fn execute(
     })();
     let cleanup = cx
         .operation
-        .cleanup(guard::GRACE)
+        .cleanup(CLOSURE_BUDGET)
         .map_err(|_| UnknownReason::GuardUnavailable)?;
+    let close_fault = crate::fault_point!(ProbeCloseBefore);
     let closed = pin.close(&cleanup, &mut capture);
     let mut warnings = Vec::new();
     if !client.alive() {
@@ -211,6 +216,7 @@ fn execute(
         }
     }
     let exit = work?;
+    close_fault.map_err(failure)?;
     if !closed {
         return Err(UnknownReason::TimedOut {
             phase: "probe closure".into(),
@@ -232,21 +238,31 @@ impl Pin {
         platform::owner_signal(&self.receipt, libc::SIGKILL);
         guard::stop_nonce(&self.receipt);
         loop {
-            let _ = capture.drain();
-            if matches!(
-                platform::group_closed(self.receipt.pgid, Some(self.receipt.identity.pid)),
-                Observed::Verified(..) | Observed::Absent(_)
-            ) && matches!(spawn::reap(self.receipt.identity.pid), Ok(Some(_)))
+            let moved = match capture.drain() {
+                Ok(moved) => moved,
+                Err(_) => return false,
+            };
+            if !self.reaped
+                && matches!(
+                    platform::group_closed(self.receipt.pgid, Some(self.receipt.identity.pid)),
+                    Observed::Verified(..) | Observed::Absent(_)
+                )
+                && matches!(spawn::reap(self.receipt.identity.pid), Ok(Some(_)))
             {
                 self.reaped = true;
-                let _ = capture.drain();
+            }
+            if self.reaped && capture.stdout.is_none() && capture.stderr.is_none() {
                 capture.finish();
                 return true;
             }
             if cx.operation().check("probe closure").is_err() {
                 return false;
             }
-            std::thread::sleep(Duration::from_millis(1));
+            // A reaped writer can leave several pipe reads buffered. Drain
+            // that finite output to EOF before flushing the redactor.
+            if !moved {
+                std::thread::sleep(Duration::from_millis(1));
+            }
         }
     }
 }
@@ -269,7 +285,8 @@ struct Capture {
     truncated: bool,
 }
 impl Capture {
-    fn drain(&mut self) -> io::Result<()> {
+    fn drain(&mut self) -> io::Result<bool> {
+        let mut moved = false;
         // One bounded read from each stream per round prevents an infinite
         // writer from starving the process deadline or the other stream.
         for stream in [&mut self.stdout, &mut self.stderr] {
@@ -281,8 +298,10 @@ impl Capture {
             let count =
                 unsafe { libc::read(fd.as_raw_fd(), chunk.as_mut_ptr().cast(), chunk.len()) };
             if count == 0 {
+                moved = true;
                 *stream = None;
             } else if count > 0 {
+                moved = true;
                 let redacted = self.redactor.push(&chunk[..count as usize], false);
                 let keep = redacted
                     .len()
@@ -296,7 +315,7 @@ impl Capture {
                 return Err(io::Error::last_os_error());
             }
         }
-        Ok(())
+        Ok(moved)
     }
     fn finish(&mut self) {
         let rest = self.redactor.push(&[], true);

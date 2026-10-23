@@ -489,7 +489,7 @@ run = "echo after >> runs.log"
         fs::read_to_string(fixture.repo.join("runs.log")).expect("runs log"),
         "after\n"
     );
-    let leftovers = fs::read_dir(fixture.home.join(".effigy/state"))
+    let leftovers = fs::read_dir(fixture.repo.join(".effigy/state"))
         .expect("state root")
         .flatten()
         .filter(|entry| entry.file_name().to_string_lossy().starts_with("exe-"))

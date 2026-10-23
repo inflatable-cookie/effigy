@@ -52,7 +52,19 @@ fn key(root: &Path, name: &str) -> RunKey {
         .and_then(|name| name.to_str())
         .unwrap_or("root")
         .replace(|c: char| !c.is_ascii_alphanumeric(), "-");
-    RunKey::parse(&format!("{name}-{unique}")).expect("key")
+    let token =
+        effigy_core::worktree_scope::prepare_checkout_token(root).expect("private fixture token");
+    let mut bytes = [0; 16];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&token[index * 2..index * 2 + 2], 16).expect("token byte");
+    }
+    RunKey::parse(&format!("{name}-{unique}"))
+        .expect("key")
+        .scoped(effigy_kernel::id::CheckoutId::new(
+            effigy_kernel::id::CheckoutKind::Primary,
+            bytes,
+        ))
+        .expect("checkout key")
 }
 
 /// Starts `command` as a keyed custody run on another thread; joins to its
@@ -106,6 +118,70 @@ fn found(id: RunId) -> Option<RunRecord> {
         Lookup::Found(record) => Some(*record),
         _ => None,
     }
+}
+
+#[test]
+fn unreadable_history_does_not_hide_verified_foreground_custody() {
+    let directory = tempfile::tempdir().expect("checkout");
+    let target = target(directory.path(), "live");
+    let request = || TaskRunRequest {
+        target: &target,
+        lock_wait_ms: 0,
+        custody: false,
+        scratch: false,
+        managed_run_token: None,
+        args: &[],
+        key: None,
+        admission: None,
+        cwd: None,
+    };
+    let durable = TaskRun::begin(request()).expect("initialize durable layout");
+    assert!(durable
+        .close(effigy_kernel::outcome::WorkloadOutcome::Succeeded)
+        .is_empty());
+    let memory = TaskRun::begin_foreground(request()).expect("foreground admitted");
+    let id = memory.id();
+    // No journal handle remains open: this damages only this fixture's
+    // completed history while independently held foreground gates stay valid.
+    std::fs::write(
+        directory.path().join(".effigy/state/kernel.db"),
+        b"unreadable history",
+    )
+    .expect("fixture history damaged");
+    let listing = list_runs(Some(directory.path()), 20).expect("partial view");
+    assert_eq!(listing.runs.len(), 1);
+    assert_eq!(listing.runs[0].id, id);
+    assert_eq!(listing.runs[0].view.evidence_source, "live-foreground");
+    assert_eq!(listing.runs[0].view.state, "running");
+    assert!(listing
+        .omitted
+        .iter()
+        .any(|reason| reason.contains("journal unavailable")));
+    let observed = listing.runs[0].clone();
+    let state = directory.path().join(".effigy/state");
+    std::fs::rename(state.join("gates"), state.join("retired-gates"))
+        .expect("replace fixture gates");
+    std::fs::create_dir(state.join("gates")).expect("new fixture gates");
+    assert!(
+        !observed.foreground_released(),
+        "a replacement path is not release of the observed inode"
+    );
+    assert!(matches!(
+        memory
+            .close(effigy_kernel::outcome::WorkloadOutcome::Succeeded)
+            .as_slice(),
+        []
+    ));
+    assert!(
+        observed.foreground_released(),
+        "the retained gate inode is now free"
+    );
+    let listing = list_runs(Some(directory.path()), 20).expect("partial history");
+    assert!(
+        listing.runs.is_empty(),
+        "free diagnostic bodies cannot resurrect a run"
+    );
+    assert!(!listing.omitted.is_empty());
 }
 
 /// Collects a follower's output, asserting each chunk starts exactly where
@@ -216,7 +292,7 @@ fn assert_single_settled_run(root: &Path, id: RunId, ending: &Ending, collected:
         "stderr: no gap, no duplicate"
     );
     let runs = list_runs(Some(root), 50).expect("runs");
-    assert_eq!(runs.len(), 1, "the run was never resubmitted");
+    assert_eq!(runs.runs.len(), 1, "the run was never resubmitted");
 }
 
 #[cfg(feature = "fault-injection")]
@@ -278,7 +354,8 @@ fn a_terminal_run_without_logs_still_reports_its_settled_outcome() {
         5
     );
     // Retention removes a settled run's logs before its row.
-    let logs: PathBuf = crate::runner::task_engine::test_state_home()
+    let logs: PathBuf = root
+        .path()
         .join(".effigy/state/runs")
         .join(key.id().to_string());
     std::fs::remove_dir_all(&logs).expect("remove the run's logs");
@@ -394,11 +471,18 @@ fn a_run_key_names_one_run_under_racing_invocations_and_repeats() {
     })
     .expect_err("a key never binds a second task");
     assert!(other.to_string().contains("already names run"), "{other}");
-    assert_eq!(list_runs(Some(root.path()), 50).expect("runs").len(), 1);
+    assert_eq!(
+        list_runs(Some(root.path()), 50).expect("runs").runs.len(),
+        1
+    );
 }
 
 #[test]
 fn run_keys_are_bounded_and_derive_one_stable_id() {
+    let checkout =
+        effigy_kernel::id::CheckoutId::new(effigy_kernel::id::CheckoutKind::Primary, [1; 16]);
+    let other =
+        effigy_kernel::id::CheckoutId::new(effigy_kernel::id::CheckoutKind::Primary, [2; 16]);
     assert_eq!(
         RunKey::parse("ci-1234").expect("key").id(),
         RunKey::parse("ci-1234").expect("key").id()
@@ -410,6 +494,17 @@ fn run_keys_are_bounded_and_derive_one_stable_id() {
     for bad in ["", "has space", "slash/key", &"k".repeat(RunKey::MAX + 1)] {
         assert!(RunKey::parse(bad).is_err(), "{bad:?} is refused");
     }
+    let key = RunKey::parse("same").expect("key");
+    assert_eq!(key.scoped(checkout).unwrap(), key.scoped(checkout).unwrap());
+    assert_ne!(
+        key.scoped(checkout).unwrap().id(),
+        key.scoped(other).unwrap().id()
+    );
+    assert_ne!(
+        key.id(),
+        key.scoped(checkout).unwrap().id(),
+        "legacy ids have a separate domain"
+    );
 }
 
 #[test]

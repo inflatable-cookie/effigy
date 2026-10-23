@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use effigy_kernel::custody::Stream;
 use effigy_kernel::id::RunId;
 use effigy_kernel::observe::Observed;
-use effigy_kernel::run::{Effect, EffectState, Phase};
+use effigy_kernel::run::{Effect, EffectState};
 use effigy_kernel::supervise::OUTPUT_SEQUENCE;
 use serde::Serialize;
 
@@ -16,8 +16,8 @@ use super::engine::SETTLE_BUDGET;
 use super::settlement::{self, EnvironmentEffect};
 use crate::runner::error::RunnerError;
 use crate::runner::task_engine::{
-    self, lookup_run, read_run_log, request_stop, task_status, Lookup, RunView, StopStarted,
-    TaskTarget, HISTORY_LIMIT,
+    self, lookup_checkout, request_stop, task_status, Lookup, RunView, StopStarted, TaskTarget,
+    HISTORY_LIMIT,
 };
 
 const STATUS_SCHEMA: &str = "effigy.managed.status.v1";
@@ -105,7 +105,14 @@ fn shown_state(state: &str) -> &str {
 /// The newest run of this task and profile, projected from the journal.
 pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus {
     let view = task_status(addressed.target, HISTORY_LIMIT);
-    let state = shown_state(&view.state).to_owned();
+    let state = if view.state == "not-recorded" {
+        view.latest
+            .as_ref()
+            .map_or(view.state.as_str(), |run| run.state.as_str())
+    } else {
+        &view.state
+    };
+    let state = shown_state(state).to_owned();
     let mut status = ManagedStatus {
         schema: STATUS_SCHEMA,
         task: addressed.task.to_owned(),
@@ -124,25 +131,33 @@ pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus
     };
     if let Some(run) = &status.run {
         match run.run_id.parse::<RunId>() {
-            Ok(id) => match task_engine::run_effects(id) {
-                Observed::Verified(effects, _) => {
-                    status.processes = processes(&effects, run.state == "running");
-                    status.environment = environment(&effects);
-                    status.residue = effects
-                        .iter()
-                        .filter(|effect| {
-                            matches!(effect.state, EffectState::Residue | EffectState::Unknown)
-                        })
-                        .map(|effect| match &effect.reason {
-                            Some(reason) => format!("{}: {reason}", effect.spec.kind),
-                            None => effect.spec.kind.clone(),
-                        })
-                        .collect();
-                }
-                Observed::Absent(_) => {}
-                Observed::Unknown(reason) => status
+            Ok(id) => match lookup_checkout(&addressed.target.root, id) {
+                Lookup::Found(record) => match record.effects() {
+                    Observed::Verified(effects, _) => {
+                        status.processes = processes(&effects, run.state == "running");
+                        status.environment = environment(&effects);
+                        status.residue = effects
+                            .iter()
+                            .filter(|effect| {
+                                matches!(effect.state, EffectState::Residue | EffectState::Unknown)
+                            })
+                            .map(|effect| match &effect.reason {
+                                Some(reason) => format!("{}: {reason}", effect.spec.kind),
+                                None => effect.spec.kind.clone(),
+                            })
+                            .collect();
+                    }
+                    Observed::Absent(_) => {}
+                    Observed::Unknown(reason) => status
+                        .warnings
+                        .push(format!("run effects are unreadable: {reason:?}")),
+                },
+                Lookup::NotFound => status
                     .warnings
-                    .push(format!("run effects are unreadable: {reason:?}")),
+                    .push("run is absent from its owning checkout".into()),
+                Lookup::Unknown(reason) => status
+                    .warnings
+                    .push(format!("run effects are unreadable: {reason}")),
             },
             Err(_) => status.warnings.push("run id is unreadable".to_owned()),
         }
@@ -150,10 +165,10 @@ pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus
     status.next = match status.state.as_str() {
         "running" | "stopping" => vec![addressed.command("logs"), addressed.command("stop")],
         "interrupted" => vec![addressed.command("stop")],
-        "never-run" => vec![format!("effigy {}", addressed.task)],
+        "not-recorded" => vec![format!("effigy {}", addressed.task)],
         _ => vec![format!("effigy {} --headless", addressed.task)],
     };
-    if status.state == "never-run" {
+    if status.state == "not-recorded" {
         if let Some(legacy) = super::legacy::live_session(addressed) {
             status.state = "legacy".to_owned();
             status.warnings.push(legacy);
@@ -319,6 +334,10 @@ pub(in crate::runner) fn logs(
         .run_id
         .parse::<RunId>()
         .map_err(|_| RunnerError::task_invocation("run id is unreadable"))?;
+    let record = match lookup_checkout(&addressed.target.root, id) {
+        Lookup::Found(record) => record,
+        _ => return Err(not_running(addressed, &status)),
+    };
     let mut sources: Vec<(String, i64)> = match process {
         Some(name) if name == OUTPUT_LOG => vec![(name.to_owned(), OUTPUT_SEQUENCE)],
         Some(name) => {
@@ -360,7 +379,7 @@ pub(in crate::runner) fn logs(
         for (index, (name, sequence)) in sources.iter().enumerate() {
             for (slot, stream) in [Stream::Stdout, Stream::Stderr].into_iter().enumerate() {
                 let Observed::Verified(read, _) =
-                    read_run_log(id, *sequence, stream, offsets[index][slot], READ_MAX)
+                    record.read_log(*sequence, stream, offsets[index][slot], READ_MAX)
                 else {
                     continue;
                 };
@@ -390,7 +409,7 @@ pub(in crate::runner) fn logs(
         if !follow {
             return Ok(text);
         }
-        let closed = matches!(lookup_run(id), Lookup::Found(record) if record.summary.phase == Phase::Closed || record.view.state == "interrupted");
+        let closed = matches!(record.refresh(), Lookup::Found(record) if record.closed() || record.view.state == "interrupted");
         if closed && !moved {
             return Ok(String::new());
         }
@@ -418,7 +437,7 @@ pub(in crate::runner) fn stop(addressed: &Addressed<'_>) -> Result<String, Runne
         .run_id
         .parse::<RunId>()
         .map_err(|_| RunnerError::task_invocation("run id is unreadable"))?;
-    let record = match lookup_run(id) {
+    let record = match lookup_checkout(&addressed.target.root, id) {
         Lookup::Found(record) => *record,
         Lookup::NotFound => return Err(not_running(addressed, &status)),
         Lookup::Unknown(reason) => {
@@ -431,8 +450,8 @@ pub(in crate::runner) fn stop(addressed: &Addressed<'_>) -> Result<String, Runne
     let how = request_stop(&record)?;
     let deadline = SETTLE_BUDGET + Duration::from_secs(30);
     let settled = loop {
-        match lookup_run(id) {
-            Lookup::Found(now) if now.summary.phase == Phase::Closed => break *now,
+        match record.refresh() {
+            Lookup::Found(now) if now.closed() => break *now,
             Lookup::Found(now) if now.view.state == "interrupted" => {
                 // The supervisor died with the stop in flight; settle here.
                 let _ = request_stop(&now);
@@ -485,10 +504,17 @@ pub(in crate::runner) fn stop(addressed: &Addressed<'_>) -> Result<String, Runne
 
 /// Stops one managed run by id and waits for its settle: the handover and
 /// `container down` path for a run bound to the environment they change.
-pub(in crate::runner) fn stop_run(id: RunId) -> Result<String, RunnerError> {
-    let record = match lookup_run(id) {
+pub(in crate::runner) fn stop_run(
+    checkout: &std::path::Path,
+    id: RunId,
+) -> Result<String, RunnerError> {
+    let record = match lookup_checkout(checkout, id) {
         Lookup::Found(record) => *record,
-        Lookup::NotFound => return Ok(format!("run {id} is gone")),
+        Lookup::NotFound => {
+            return Err(RunnerError::task_invocation(format!(
+                "managed holder {id} is not readable in its owning checkout; nothing was stopped"
+            )))
+        }
         Lookup::Unknown(reason) => {
             return Err(RunnerError::task_invocation(format!(
                 "run {id} is unreadable ({reason}); nothing was stopped"
@@ -499,8 +525,8 @@ pub(in crate::runner) fn stop_run(id: RunId) -> Result<String, RunnerError> {
     let budget = SETTLE_BUDGET + Duration::from_secs(30);
     let deadline = Instant::now() + budget;
     loop {
-        match lookup_run(id) {
-            Lookup::Found(now) if now.summary.phase == Phase::Closed => {
+        match record.refresh() {
+            Lookup::Found(now) if now.closed() => {
                 if now.view.cleanup == Some("incomplete") {
                     return Err(RunnerError::task_invocation(format!(
                         "run {id} settled ({}) with cleanup incomplete; its residue is listed by its status",

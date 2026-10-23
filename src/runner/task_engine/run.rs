@@ -7,6 +7,8 @@
 //! every effect and releases the gate; journal failures become warnings and
 //! never change the task's own result (K10).
 
+pub(super) mod foreground;
+
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -80,14 +82,18 @@ pub(in crate::runner) struct TaskRunRequest<'a> {
     pub(in crate::runner) cwd: Option<&'a std::path::Path>,
 }
 
-/// A caller-chosen `--run-id` key and the one run id it derives. Equal keys
-/// derive equal ids on every host, so the journal's unique run id makes a
-/// repeat or a racing second invocation find the first run instead of
-/// starting another.
+/// A validated caller key. Admission binds it to the checkout before using
+/// its id. The unbound digest is retained solely to locate imported old runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct RunKey {
     key: String,
     id: RunId,
+}
+
+#[derive(Debug)]
+pub(super) struct KeyNamespace {
+    pub ids: Vec<RunId>,
+    pub aliases: Vec<effigy_kernel::id::CheckoutId>,
 }
 
 impl RunKey {
@@ -124,11 +130,81 @@ impl RunKey {
     pub(in crate::runner) fn id(&self) -> RunId {
         self.id
     }
+
+    pub(in crate::runner) fn scoped(
+        &self,
+        checkout: effigy_kernel::id::CheckoutId,
+    ) -> Result<Self, RunnerError> {
+        let mut bytes = b"effigy-checkout-run-key-v1\0".to_vec();
+        bytes.push(checkout.kind() as u8);
+        bytes.extend_from_slice(checkout.token());
+        bytes.extend_from_slice(self.key.as_bytes());
+        let digest = Digest::of(&bytes);
+        let mut random = [0; 10];
+        random.copy_from_slice(&digest.0[..10]);
+        let id = RunId::new(0, random)
+            .map_err(|error| RunnerError::task_invocation(format!("run id: {error}")))?;
+        Ok(Self {
+            key: self.key.clone(),
+            id,
+        })
+    }
+
+    pub(super) fn namespace(
+        &self,
+        cx: &effigy_kernel::ctx::ObserveContext,
+        root: &effigy_kernel::root::StateRoot,
+    ) -> Result<KeyNamespace, RunnerError> {
+        if root.is_machine() {
+            return Ok(KeyNamespace {
+                ids: Vec::new(),
+                aliases: Vec::new(),
+            });
+        }
+        let mut checkouts = checkout::identities(cx, root.owning_directory().path())
+            .map_err(|error| unverifiable_key(self, &error.to_string()))?;
+        let aliases = match effigy_kernel::migration::authority(cx, root) {
+            Observed::Verified(
+                effigy_kernel::migration::Authority::Committed {
+                    checkout,
+                    checkout_aliases,
+                    ..
+                },
+                _,
+            ) => checkout
+                .into_iter()
+                .chain(checkout_aliases)
+                .collect::<Vec<_>>(),
+            Observed::Verified(effigy_kernel::migration::Authority::Fresh, _) => Vec::new(),
+            other => {
+                return Err(unverifiable_key(
+                    self,
+                    &format!("import authority: {other:?}"),
+                ))
+            }
+        };
+        for alias in &aliases {
+            if !checkouts.contains(alias) {
+                checkouts.push(*alias);
+            }
+        }
+        let mut ids = checkouts
+            .into_iter()
+            .map(|checkout| self.scoped(checkout).map(|key| key.id()))
+            .collect::<Result<Vec<_>, _>>()?;
+        if !aliases.is_empty() {
+            ids.push(Self::parse(&self.key)?.id());
+        }
+        Ok(KeyNamespace { ids, aliases })
+    }
 }
 
 #[derive(Debug)]
 pub(in crate::runner) struct TaskRun {
     run: Option<Arc<Mutex<Run<'static>>>>,
+    memory: Option<Arc<Mutex<effigy_kernel::run::ForegroundRun>>>,
+    lease: Option<effigy_kernel::inheritance::MemoryLease>,
+    prior_leases: Vec<effigy_kernel::inheritance::MemoryLease>,
     shared: Option<Run<'static>>,
     target: TaskTarget,
     ancestors: Vec<ResourceId>,
@@ -147,14 +223,17 @@ pub(in crate::runner) struct TaskRun {
 
 #[derive(Clone)]
 struct Parent {
-    run: Arc<Mutex<Run<'static>>>,
+    run: Option<Arc<Mutex<Run<'static>>>>,
+    memory: Option<Arc<Mutex<effigy_kernel::run::ForegroundRun>>>,
     ancestors: Vec<ResourceId>,
     shared_owners: Vec<ResourceId>,
 }
 thread_local! {
     static PARENTS: RefCell<Vec<Parent>> = const { RefCell::new(Vec::new()) };
 }
-pub(in crate::runner) struct ParentScope;
+pub(in crate::runner) struct ParentScope {
+    _runtime: effigy_kernel::inheritance::RunScope,
+}
 impl Drop for ParentScope {
     fn drop(&mut self) {
         PARENTS.with(|parents| {
@@ -162,11 +241,16 @@ impl Drop for ParentScope {
         });
     }
 }
-fn owned(run: Arc<Mutex<Run<'static>>>) -> Run<'static> {
+fn owned<T: std::fmt::Debug>(run: Arc<Mutex<T>>) -> T {
     Arc::try_unwrap(run)
         .expect("parent scope ends before run closes")
         .into_inner()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+enum Standalone {
+    Memory,
+    Journal { scratch: bool, custody: bool },
 }
 
 impl TaskRun {
@@ -237,7 +321,15 @@ impl TaskRun {
         label: &str,
         admission: Option<effigy_manifest::ManifestTaskAdmission>,
     ) -> Result<Self, RunnerError> {
-        Self::standalone_with(root, label, admission, false, false)
+        Self::standalone_with(
+            root,
+            label,
+            admission,
+            Standalone::Journal {
+                scratch: false,
+                custody: false,
+            },
+        )
     }
 
     /// A standalone run whose host processes may use the configured per-run
@@ -250,15 +342,44 @@ impl TaskRun {
         root: &std::path::Path,
         label: &str,
     ) -> Result<Self, RunnerError> {
-        Self::standalone_with(root, label, None, true, true)
+        Self::standalone_with(
+            root,
+            label,
+            None,
+            Standalone::Journal {
+                scratch: true,
+                custody: true,
+            },
+        )
+    }
+
+    pub(in crate::runner) fn standalone_foreground(
+        root: &std::path::Path,
+        label: &str,
+    ) -> Result<Self, RunnerError> {
+        Self::standalone_with(root, label, None, Standalone::Memory)
+    }
+
+    pub(in crate::runner) fn standalone_custody(
+        root: &std::path::Path,
+        label: &str,
+    ) -> Result<Self, RunnerError> {
+        Self::standalone_with(
+            root,
+            label,
+            None,
+            Standalone::Journal {
+                scratch: false,
+                custody: true,
+            },
+        )
     }
 
     fn standalone_with(
         root: &std::path::Path,
         label: &str,
         admission: Option<effigy_manifest::ManifestTaskAdmission>,
-        scratch: bool,
-        custody: bool,
+        storage: Standalone,
     ) -> Result<Self, RunnerError> {
         let nonce = new_run_id()?;
         let lock = format!("{BUILTIN_LOCK_PREFIX}run:{nonce}");
@@ -271,21 +392,27 @@ impl TaskRun {
             shared_lock: Some(lock),
             label: label.to_owned(),
         };
-        Self::begin_with(
-            TaskRunRequest {
-                target: &target,
-                lock_wait_ms: 0,
-                custody,
-                scratch,
-                managed_run_token: None,
-                args: &[],
-                key: None,
-                admission,
-                cwd: Some(root),
-            },
-            false,
-            LifecyclePlacement::Inline,
-        )
+        let (scratch, custody) = match storage {
+            Standalone::Memory => (false, true),
+            Standalone::Journal { scratch, custody } => (scratch, custody),
+        };
+        let request = TaskRunRequest {
+            target: &target,
+            lock_wait_ms: 0,
+            custody,
+            scratch,
+            managed_run_token: None,
+            args: &[],
+            key: None,
+            admission,
+            cwd: Some(root),
+        };
+        match storage {
+            Standalone::Memory => Self::begin_foreground_with(request, false),
+            Standalone::Journal { .. } => {
+                Self::begin_with(request, false, LifecyclePlacement::Inline)
+            }
+        }
     }
 
     fn begin_with(
@@ -293,9 +420,16 @@ impl TaskRun {
         task_gate: bool,
         placement: LifecyclePlacement,
     ) -> Result<Self, RunnerError> {
+        foreground::require_durable_parent()?;
+        let admission = super::admission::plan(request.admission)?;
         let parent = PARENTS.with(|parents| parents.borrow().last().cloned());
-        let root = kernel::effects_root()?;
+        let root = kernel::effects_root(&request.target.root)?;
         let checkout = checkout::mint(&request.target.root)?;
+        let key = request.key.map(|key| key.scoped(checkout)).transpose()?;
+        let request = TaskRunRequest {
+            key: key.as_ref(),
+            ..request
+        };
         let owner = request.target.owner(checkout)?;
         let task_id = request.target.task_id(checkout)?;
         let ancestors = parent
@@ -311,10 +445,9 @@ impl TaskRun {
                 "task reference cycle at `{}`: a nested reference cannot reacquire an ancestor's Task gate; remove the recursive reference",
                 request.target.label)));
         }
-        let admission = super::admission::plan(request.admission)?;
         let run_id = match request.key {
             Some(key) => {
-                refuse_bound_key(key, &task_id)?;
+                refuse_bound_key(key, &task_id, &request.target.root)?;
                 key.id()
             }
             None => new_run_id()?,
@@ -377,13 +510,7 @@ impl TaskRun {
                     &mut TaskSettlement::default(),
                 )
                 .map_err(|error| {
-                    begin_error(
-                        error,
-                        request.target,
-                        &lock_owner,
-                        request.lock_wait_ms,
-                        started,
-                    )
+                    begin_error(error, request.target, request.lock_wait_ms, started)
                 })?;
                 Some(run)
             }
@@ -392,6 +519,9 @@ impl TaskRun {
         if !task_gate {
             let mut run = Self {
                 run: shared.map(|run| Arc::new(Mutex::new(run))),
+                memory: None,
+                lease: None,
+                prior_leases: Vec::new(),
                 shared: None,
                 target: request.target.clone(),
                 ancestors,
@@ -425,6 +555,7 @@ impl TaskRun {
         let run = match parent {
             Some(parent) => parent
                 .run
+                .expect("durable parent checked before effects")
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .begin_child(
@@ -448,10 +579,10 @@ impl TaskRun {
         .map_err(|error| match request.key {
             // The racing first invocation with this key holds the gate, or
             // finished between our check and our insert: attach to it.
-            Some(key) if key_run_exists(key) => RunnerError::RunKeyExists {
+            Some(key) if key_run_exists(key, &request.target.root) => RunnerError::RunKeyExists {
                 run: key.id().to_string(),
             },
-            _ => begin_error(error, request.target, &owner, request.lock_wait_ms, started),
+            _ => begin_error(error, request.target, request.lock_wait_ms, started),
         });
         let run = match run {
             Ok(run) => run,
@@ -464,6 +595,9 @@ impl TaskRun {
         };
         let mut run = Self {
             run: Some(Arc::new(Mutex::new(run))),
+            memory: None,
+            lease: None,
+            prior_leases: Vec::new(),
             shared,
             target: request.target.clone(),
             ancestors,
@@ -499,21 +633,10 @@ impl TaskRun {
         };
         let target = self.target.clone();
         let cwd = cwd.unwrap_or(&target.root).to_path_buf();
-        let admitted = match self.run.as_ref() {
-            Some(run) => super::admission::admit(
-                &mut run
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner),
-                &target,
-                class,
-                &command,
-                timeout,
-                &cwd,
-            ),
-            None => return Ok(()),
-        };
+        let admitted = super::admission::admit(self, &target, class, &command, timeout, &cwd);
         match admitted {
             Ok(admission) => {
+                self.lease = None;
                 self.admission = Some(admission);
                 Ok(())
             }
@@ -522,6 +645,9 @@ impl TaskRun {
                     self,
                     Self {
                         run: None,
+                        memory: None,
+                        lease: None,
+                        prior_leases: Vec::new(),
                         shared: None,
                         target,
                         ancestors: Vec::new(),
@@ -553,37 +679,54 @@ impl TaskRun {
         self.keyed
     }
 
-    pub(in crate::runner) fn run_mut(&mut self) -> MutexGuard<'_, Run<'static>> {
+    pub(in crate::runner) fn run_mut(
+        &mut self,
+    ) -> Result<MutexGuard<'_, Run<'static>>, RunnerError> {
         self.run
             .as_ref()
-            .expect("open run")
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .ok_or_else(|| {
+                RunnerError::task_invocation(
+                    "late durable effect refused: this tree was admitted as foreground",
+                )
+            })
+            .map(|run| {
+                run.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+            })
     }
 
-    /// The lexical parent for nested invocations on this thread. This carries
-    /// handles, never global environment or authority from an untrusted token.
-    pub(in crate::runner) fn enter(&self) -> ParentScope {
-        let run = self.run.as_ref().expect("open run").clone();
+    /// Lexical nesting carries native handles on this thread.
+    pub(in crate::runner) fn enter(&self) -> Result<ParentScope, RunnerError> {
+        let runtime = effigy_kernel::inheritance::RunScope::enter(
+            effigy_kernel::inheritance::RuntimeParent::new(
+                self.id(),
+                if self.memory.is_some() {
+                    effigy_kernel::inheritance::RunClass::Foreground
+                } else {
+                    effigy_kernel::inheritance::RunClass::CheckoutDurable
+                },
+                super::admission::current_hook()?,
+            )
+            .with_closure(self.runtime_closure()?),
+        )
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
         let mut ancestors = self.ancestors.clone();
-        ancestors.push(
-            run.lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .fence()
-                .resource
-                .clone(),
-        );
+        ancestors.push(self.owner());
         PARENTS.with(|parents| {
             parents.borrow_mut().push(Parent {
-                run,
+                run: self.run.clone(),
+                memory: self.memory.clone(),
                 ancestors,
                 shared_owners: self.shared_owners.clone(),
             })
         });
-        ParentScope
+        Ok(ParentScope { _runtime: runtime })
     }
 
     pub(in crate::runner) fn step(&self, index: usize, label: &str) -> Result<Self, RunnerError> {
+        if self.memory.is_some() {
+            return self.memory_step(index, label);
+        }
         let checkout = checkout::mint(&self.target.root)?;
         let owner = ResourceId::store(
             effigy_kernel::id::Scope::Checkout(checkout),
@@ -647,6 +790,9 @@ impl TaskRun {
         );
         Ok(Self {
             run: Some(Arc::new(Mutex::new(run))),
+            memory: None,
+            lease: None,
+            prior_leases: Vec::new(),
             shared: None,
             target,
             ancestors,
@@ -661,6 +807,14 @@ impl TaskRun {
     }
 
     pub(in crate::runner) fn id(&self) -> RunId {
+        if let Some(memory) = &self.memory {
+            return memory
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .record()
+                .incarnation()
+                .run;
+        }
         self.run
             .as_ref()
             .expect("open run")
@@ -686,9 +840,16 @@ impl TaskRun {
         let admission = self.admission.take();
         self.leave_programs();
         let scratch = self.conclude_scratch(&workload);
-        let result = match self.run.take() {
-            Some(run) => close_run_settled(owned(run), workload, kernel::cleanup_context(budget)),
-            None => (None, Vec::new()),
+        let result = match self.memory.take() {
+            Some(memory) => {
+                foreground::close_memory(owned(memory), workload, &kernel::cleanup_context(budget))
+            }
+            None => match self.run.take() {
+                Some(run) => {
+                    close_run_settled(owned(run), workload, kernel::cleanup_context(budget))
+                }
+                None => (None, Vec::new()),
+            },
         };
         drop(admission);
         let (outcome, mut warnings) = result;
@@ -704,6 +865,13 @@ impl TaskRun {
         let admission = self.admission.take();
         self.leave_programs();
         warnings.extend(self.conclude_scratch(&workload));
+        if let Some(memory) = self.memory.take() {
+            match kernel::cleanup() {
+                Ok(cleanup) => warnings
+                    .extend(foreground::close_memory(owned(memory), workload.clone(), &cleanup).1),
+                Err(error) => warnings.push(error.to_string()),
+            }
+        }
         if let Some(run) = self.run.take() {
             warnings.extend(close_run(owned(run), workload.clone()));
         }
@@ -805,6 +973,7 @@ impl Drop for TaskRun {
         if let Some(scratch) = self.scratch.take() {
             crate::runner::scratch::leave(&scratch);
         }
+        drop(self.memory.take());
         let cleanup = kernel::cleanup();
         for run in [self.run.take().map(owned), self.shared.take()]
             .into_iter()
@@ -917,9 +1086,13 @@ fn invocation(
 
 /// A key already naming a run of another task is refused: a key names
 /// exactly one run. A key naming a run of this task attaches to it.
-fn refuse_bound_key(key: &RunKey, task: &TaskId) -> Result<(), RunnerError> {
+fn refuse_bound_key(
+    key: &RunKey,
+    task: &TaskId,
+    checkout: &std::path::Path,
+) -> Result<(), RunnerError> {
     let cx = kernel::observe();
-    let root = match kernel::observe_root(&cx) {
+    let root = match kernel::observe_root(&cx, checkout) {
         Observed::Verified(root, _) => root,
         Observed::Absent(_) => return Ok(()),
         Observed::Unknown(reason) => return Err(unverifiable_key(key, &format!("{reason:?}"))),
@@ -929,13 +1102,36 @@ fn refuse_bound_key(key: &RunKey, task: &TaskId) -> Result<(), RunnerError> {
         Observed::Absent(_) => return Ok(()),
         Observed::Unknown(reason) => return Err(unverifiable_key(key, &format!("{reason:?}"))),
     };
-    match effigy_kernel::run::summary(&reader, key.id()) {
+    let namespace = key.namespace(&cx, &root)?;
+    for id in namespace.ids {
+        let candidate = RunKey {
+            key: key.key.clone(),
+            id,
+        };
+        check_bound_key(&candidate, task, &reader, &namespace.aliases)?;
+    }
+    Ok(())
+}
+
+fn check_bound_key(
+    key: &RunKey,
+    task: &TaskId,
+    reader: &effigy_kernel::store::StoreReader,
+    aliases: &[effigy_kernel::id::CheckoutId],
+) -> Result<(), RunnerError> {
+    match effigy_kernel::run::summary(reader, key.id()) {
         Observed::Absent(_) => Ok(()),
         Observed::Verified(existing, _) => {
-            let same = existing
-                .invocation
-                .as_ref()
-                .is_some_and(|invocation| invocation.spec().task.resource() == task.resource());
+            let same = existing.invocation.as_ref().is_some_and(|invocation| {
+                let old = &invocation.spec().task;
+                old.resource() == task.resource()
+                    || aliases.contains(&old.checkout())
+                        && aliases.contains(&task.checkout())
+                        && old.catalog() == task.catalog()
+                        && old.task() == task.task()
+                        && old.surface() == task.surface()
+                        && old.profile() == task.profile()
+            });
             if same {
                 Err(RunnerError::RunKeyExists {
                     run: key.id().to_string(),
@@ -969,11 +1165,11 @@ fn unverifiable_key(key: &RunKey, reason: &str) -> RunnerError {
 
 /// Whether the key's run appeared: a racing invocation may hold the gate
 /// before its row commits, so the check waits briefly for the row.
-fn key_run_exists(key: &RunKey) -> bool {
+fn key_run_exists(key: &RunKey, checkout: &std::path::Path) -> bool {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let cx = kernel::observe();
-        if let Observed::Verified(root, _) = kernel::observe_root(&cx) {
+        if let Observed::Verified(root, _) = kernel::observe_root(&cx, checkout) {
             if let Observed::Verified(reader, _) = Store::read(&cx, &root) {
                 if matches!(
                     effigy_kernel::run::summary(&reader, key.id()),
@@ -1025,17 +1221,16 @@ fn run_error(error: &RunError) -> String {
 fn begin_error(
     error: RunError,
     target: &TaskTarget,
-    owner: &ResourceId,
     lock_wait_ms: u64,
     started: Instant,
 ) -> RunnerError {
     match error {
-        RunError::Gate(GateError::Busy { holder, .. }) => {
-            conflict(target, owner, *holder, None, started)
+        RunError::Gate(GateError::Busy { id, holder }) => {
+            conflict(target, &id, *holder, None, started)
         }
-        RunError::Gate(GateError::TimedOut { holder, waited, .. }) => conflict(
+        RunError::Gate(GateError::TimedOut { id, holder, waited }) => conflict(
             target,
-            owner,
+            &id,
             *holder,
             Some((lock_wait_ms, waited.as_millis() as u64)),
             started,
@@ -1076,7 +1271,7 @@ fn conflict(
     started: Instant,
 ) -> RunnerError {
     let diag = holder.verified().cloned();
-    let run_started = holders::holder_run_started_ms(owner);
+    let run_started = holders::holder_run_started_ms(&target.root, owner);
     let scope = match &target.shared_lock {
         Some(name) if owner.kind() == effigy_kernel::id::ResourceKind::Store => {
             shared_scope_label(name)
@@ -1193,20 +1388,20 @@ fn age_text(started_ms: i64) -> Option<String> {
 pub(super) fn stop_requested() -> bool {
     PARENTS.with(|parents| {
         parents.borrow().iter().any(|parent| {
-            parent
-                .run
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .requests()
-                .is_ok_and(|requests| {
-                    requests.iter().any(|request| {
-                        matches!(
-                            request.action,
-                            effigy_kernel::run::RequestAction::Stop
-                                | effigy_kernel::run::RequestAction::Escalate
-                        )
+            parent.run.as_ref().is_some_and(|run| {
+                run.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .requests()
+                    .is_ok_and(|requests| {
+                        requests.iter().any(|request| {
+                            matches!(
+                                request.action,
+                                effigy_kernel::run::RequestAction::Stop
+                                    | effigy_kernel::run::RequestAction::Escalate
+                            )
+                        })
                     })
-                })
+            })
         })
     })
 }

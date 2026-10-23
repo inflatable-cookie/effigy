@@ -7,6 +7,70 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Tasks whose scripts launch durable Effigy operations declare `durable = true`;
+  the runner journals their tree before starting children. Checkout custody
+  leases use machine lock files without initializing machine journal state.
+- Read-only process probes verify closure on a separate finite cleanup budget;
+  signal grace and workload deadlines remain unchanged.
+- QA-group members retain their parent checkout journal, so completed member
+  status and logs remain available even for otherwise local commands.
+- Release Git operations and stage tasks now run under their checkout run’s
+  process custody. Owner death triggers cleanup, and output or closure gaps
+  refuse completion. Vault locking opens no runtime database.
+- Scoped Docker services bind to the checkout label and scope token even when
+  Compose reports the immutable render directory as its working directory.
+- Runtime scope inventory lives in each checkout journal. Deleted checkout cleanup
+  discovers ownership on the selected backend and requires the recorded native
+  checkout generation and custody lease; live and uncertain scopes stay protected.
+- The machine store rejects checkout owners, data claims, checkout catalogs
+  and immutable payloads. Machine process output remains in memory for every
+  lifecycle path.
+- Resumable release runs keep their journal, checkpoints, receipts and certified
+  candidates in the checkout's gitignored `.effigy/state/`. Checkpoint files
+  use journalled atomic replacement; status never recreates missing records.
+  Migration preserves paused release identities and approvals, verifies certified
+  artifacts, and relocates the record and candidate into that checkout.
+- Gateway process startup batches its admitted intents and its applied receipts
+  into two commits before process go; the detach request is the third commit.
+  Receipt-commit refusal keeps the workload blocked. Positive close removes
+  completed machine run history and retains one bounded current gateway
+  diagnostic; process output stays in memory.
+- Endpoint and port fact edits publish their complete conflict set in one
+  transaction. Unchanged edits and imports write nothing and create no run
+  history; cold schema initialization is counted separately.
+- Runtime migration freezes the legacy writer scope with bounded descriptors,
+  rechecks old owners before publication, and refuses replaced scope inodes.
+- Managed supervisors initialize in the selected checkout journal and explicitly
+  forward verified parent capabilities; Linux retained-image helpers prepare
+  descriptors before exec and preserve their explicit environment.
+- Static sequences classify nested task references with the execution resolver,
+  including declared built-in overrides and deferrals; diagnostic steps retain
+  foreground custody without a journal.
+- Machine-scoped resource locks now exclude across checkout journals, and
+  recovery helpers retain their machine lock domain. Local resource gates
+  stay usable when the machine store is unavailable.
+- Built-in test suites, including the interactive TUI, now run under memory custody when their
+  selected commands and task references are local. Plans and help create no
+  runtime state. Remote suites and retained scratch use checkout journals;
+  suite workers explicitly carry their parent's verified admission hook.
+  The TUI uses kernel custody for output, input, stop and verified retry.
+- Before migration, foreground owners with persisted checkout identities
+  also hold their legacy lock-file aliases and read their old predecessors.
+  Unresolved legacy evidence refuses before workload start. Compatibility
+  locks stay in memory custody and never write the old database; migrated
+  checkout runs no longer consult that source.
+- Runtime migration reports busy destination checkout owners before staging
+  and holds checkout directory fences through publication. Existing foreground
+  work continues when migration refuses; the report includes stop and drain
+  commands for its verified owner.
+- Named run keys now derive their run IDs from the owning checkout token.
+  Equal keys in different checkouts are independent; peer queries refuse
+  ambiguous keys. Imported legacy IDs remain local aliases after cutover.
+- Generic run views include live foreground holders with explicit evidence
+  provenance and bounded discovery coverage. Foreground logs report that no
+  log is retained; stop signals only the verified owner, waits for custody
+  release, and leaves the outcome unrecorded.
+
 - Local custody receipts add a process-group anchor. Recovery can stop
   descendants that cleared their environment after their leader was reaped.
   Each group retains one extra process until settle; a killed anchor or an
@@ -169,14 +233,11 @@ During v0.x, MINOR bumps may include breaking changes.
   group (`cmd &` without `setsid`) no longer survive the task.
 - A failed task command now exits with the command's own code instead of 1.
 - `effigy tasks status` reads the run journal and the task's gate
-  (`effigy.tasks-status.v2`, `effigy.tasks-status-all.v2`). A run is `running`
-  while it holds its gate, however long it takes; a run whose owner died reads
-  `interrupted` with the command that settles it; the newest 20 runs are kept.
-  The v0.14 read-only fallback is removed: kernel run rows are the only task
-  status, so a task with no runs reads `never-run`. Old status history under
-  `.effigy/runtime/tasks/` and `.effigy/reports/tasks/` is dropped, never
-  imported or read; it is history, not state, so nothing restarts or unlocks
-  from it, and the files are left untouched.
+  (`effigy.tasks-status.v3`, `effigy.tasks-status-all.v3`). Verified live
+  foreground gates appear without a token or journal; their phase, profile and
+  start time are nullable. Foreground completion retains no runtime record.
+  With no live or unresolved run, state is `not-recorded`; `latest` and history
+  describe only durable runs. v0.14 status families remain retired and untouched.
 - Running from inside a member catalog, however deep, resolves to the root
   that declares it in `[catalog.members]`, so subdirectory and root runs see
   the same catalogs, locks and status.
@@ -384,6 +445,21 @@ During v0.x, MINOR bumps may include breaking changes.
   `simulate --version`. The refusal names the replacement.
 
 ### Added
+- Task journals live in the owning checkout's `.effigy/state/`. Durable
+  initialization refuses an unresolved legacy migration and binds checkout
+  and Git directory generations, so same-path replacements cannot adopt old
+  state. Retained handles also refuse new effects after a linked worktree's
+  `.git` pointer changes. Run control reads the local journals without a central run index.
+  Environment records, holder sessions and render objects use that same
+  checkout journal; an unavailable journal refuses backend effects. Source
+  preparation also journals per checkout. Gateway lifecycle and endpoint/port
+  facts route to `machine.db`; unmigrated central state is reported explicitly.
+- `effigy run migrate --plan` inspects legacy runtime state and reports exact
+  blocking writers with verified stop commands. Withdraw old launchers, then
+  use `--legacy-launchers-stopped` to import retained state into per-checkout
+  journals and the machine store. `--checkout` and user-config
+  `[runtime].checkout_roots` locate existing checkout identities without a
+  central registration index. Interrupted imports resume the same cutover.
 - `effigy skill run ... --repo <DIR>` accepts a bare target directory with no
   repository marker, so an isolated fixture can be the consumer target of an
   installed skill task. The JSON evidence reports canonical root paths, and a
@@ -1038,6 +1114,11 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- Stopping an empty Compose project still withdraws its owned routes; declared
+  host processes take the normal stop path. Live listener and foreign successor
+  routes remain protected. Backend output and VM interpolation files use checked
+  kernel records, formatting uses foreground custody, and host-load sampling is
+  a bounded read-only probe.
 - A full loopback pool no longer blocks a new stack forever because deleted
   projects kept their `127.1.0.x` addresses (effigy#295). `effigy container
   up`/`dev` and gateway registration now release provably dead owners once when

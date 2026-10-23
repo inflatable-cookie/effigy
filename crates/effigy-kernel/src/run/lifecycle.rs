@@ -49,8 +49,13 @@ impl Run<'_> {
             .verified()
             .cloned()
             .ok_or_else(|| RunError::Invalid("owner identity unavailable".into()))?;
+        if let Some(startup) = self.machine_startup.as_mut() {
+            startup.lifecycle = Some((identity, lease.identity.clone(), plan.placement));
+            self.sentinel = Some(lease);
+            return Ok(());
+        }
         let mut lease = Some(lease);
-        let result = (|| {
+        let result: Result<(), RunError> = (|| {
             crate::fault_point!(LifecycleBefore)?;
             self.store.transaction(&self.cx.child(std::time::Duration::from_secs(30)),|txn| {
                 journal::check_fence(txn.conn(),&self.owner)?;
@@ -77,7 +82,8 @@ impl Run<'_> {
                 lease.close(&cleanup)?;
             }
         }
-        result
+        result?;
+        self.start_checkout_backup()
     }
 }
 /// Pure reads of persisted identities plus fresh process facts. A dead,

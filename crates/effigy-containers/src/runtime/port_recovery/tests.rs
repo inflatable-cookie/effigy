@@ -112,6 +112,8 @@ fn scope_record(token: &str, checkout: &str, projects: &[&str]) -> ScopeRecord {
         loopback_identities: Vec::new(),
         retain_loopback_identities: Vec::new(),
         pending_tls_certs: Vec::new(),
+        checkout_fence: None,
+        checkout_generation: None,
     }
 }
 

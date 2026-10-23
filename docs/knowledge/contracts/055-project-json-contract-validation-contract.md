@@ -29,8 +29,16 @@ selection_contract = "docs/knowledge/contracts/json-selection-contract.json"
 ## Schema index
 
 The index keeps its existing row format (`schemas[]` with `schema`,
-`schema_version`, `command`, `status`, optional `expect_failure`) and adds one
+`schema_version`, `command`, `status`, optional `expect_failure` and
+`isolated_home`) and adds one
 optional table:
+
+A row with `isolated_home: true` gets its own empty, owned temporary HOME for
+the command. This is required for observations such as runtime migration plans
+that must not inspect the validator's active runtime state. The directory
+survives through command completion and is removed with the other owned
+fixtures; omitted or false preserves the caller's environment. Non-boolean
+values refuse the index.
 
 ```json
 "payload_schemas": {

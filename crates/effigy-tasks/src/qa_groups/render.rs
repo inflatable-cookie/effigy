@@ -193,7 +193,7 @@ pub fn render_qa_group_plan_text(plan: &QaGroupPlan) -> Result<String, EffigyTas
     renderer.text("")?;
     renderer.notice(
         NoticeLevel::Info,
-        "hard_timeout_ms and stop are unavailable: owned-run supervision (contract 052) has not landed",
+        "hard_timeout_ms and stop are unavailable: QA-group controls are not integrated with owned-run supervision (contract 052)",
     )?;
     if !plan.executable {
         renderer.notice(

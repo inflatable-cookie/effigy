@@ -641,7 +641,8 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
         let root = StateRoot::effects(&cx, home.path()).unwrap();
         let image = crate::supervise::anchor::Image::prepare(&root, &executable()).unwrap();
         let mut child =
-            spawn::Blocked::fork(&spec, "anchor-proof", cx.operation(), &image).unwrap();
+            spawn::Blocked::fork(&spec, "anchor-proof", cx.operation(), &image, None, None)
+                .unwrap();
         let anchor = fixture_identity(child.anchor.unwrap());
         let r = ProcessReceipt {
             identity: fixture_identity(child.pid),
@@ -846,7 +847,14 @@ fn anchor_spawn_overhead_is_measured() {
             let image = enabled
                 .then(|| crate::supervise::anchor::Image::prepare(&root, &executable).unwrap());
             let mut child = if enabled {
-                spawn::Blocked::fork(&spec, "overhead", cx.operation(), image.as_ref().unwrap())
+                spawn::Blocked::fork(
+                    &spec,
+                    "overhead",
+                    cx.operation(),
+                    image.as_ref().unwrap(),
+                    None,
+                    None,
+                )
             } else {
                 spawn::Blocked::fork_with_nonce(
                     &spec,
@@ -965,7 +973,7 @@ fn nononce_foreground_takes_the_terminal_from_the_background_and_hands_it_back()
         ])
         .env(OWNER, home.path())
         .stdin(slave)
-        .stdout(Stdio::null());
+        .stdout(std::fs::File::create(home.path().join("owner-output")).unwrap());
     // SAFETY: only session and terminal syscalls run after fork, before exec.
     unsafe {
         command.pre_exec(|| {
@@ -991,7 +999,11 @@ fn nononce_foreground_takes_the_terminal_from_the_background_and_hands_it_back()
     // macOS waits for its PTY peer during session-leader exit.
     drop(master);
     let status = owner.0.wait().unwrap();
-    assert!(status.success(), "terminal owner failed: {status:?}");
+    assert!(
+        status.success(),
+        "terminal owner failed: {status:?}; {}",
+        std::fs::read_to_string(home.path().join("owner-output")).unwrap()
+    );
 }
 
 /// A stopped owner cannot write any marker: the whole point of the proof.
@@ -1070,6 +1082,14 @@ fn nononce_foreground_owner(home: &Path) {
         "the owner did not get its terminal back"
     );
     assert_eq!(output, b"b-read:queued-input");
+    // All terminal assertions are complete. The parent now closes the PTY
+    // to let macOS finish session-leader exit; its HUP must not race libtest's
+    // successful return in this isolated helper process.
+    // SAFETY: changes only this dedicated helper's teardown signal policy,
+    // after its workloads were reaped and terminal restoration was proved.
+    unsafe {
+        libc::signal(libc::SIGHUP, libc::SIG_IGN);
+    }
     std::fs::write(home.join("owner-done"), b"yes").unwrap();
 }
 

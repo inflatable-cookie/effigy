@@ -442,7 +442,7 @@ where
 
     if dead && scope.is_some() {
         return Err(CliParseError::InvalidArguments(
-            "`effigy container retire --dead` selects every recorded scope whose checkout is gone; it cannot be combined with `--scope`".to_owned(),
+            "`effigy container retire --dead` discovers scopes of deleted checkouts on the selected backend; it cannot be combined with `--scope`".to_owned(),
         ));
     }
 

@@ -1,5 +1,10 @@
-//! The host state root `~/.effigy/state/` (§7.1) and its kernel-owned path
-//! families (§7.3, families 1–6).
+//! Verified checkout and machine state roots (§7.1), with separate database
+//! names. A machine root never implicitly opens the legacy central database.
+mod checkout;
+mod gates;
+pub(crate) use gates::MachineGateAddress;
+pub(crate) mod runtime;
+
 use crate::ctx::{Capability, EffectContext, ObserveContext, Placement};
 use crate::fs::{DirFd, FsError, Trust};
 use crate::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
@@ -31,7 +36,18 @@ impl Family {
 #[derive(Debug, Clone)]
 pub struct StateRoot {
     dir: DirFd,
+    owner: DirFd,
     writable: bool,
+    database: Database,
+    adoption: bool,
+    checkout: Option<checkout::RetainedCheckout>,
+    machine_gates: Option<std::sync::Arc<gates::MachineGates>>,
+}
+
+#[derive(Debug, Clone)]
+enum Database {
+    Checkout,
+    Machine,
 }
 impl StateRoot {
     /// The existing Effigy home rule: `$HOME/.effigy`. Test isolation uses a
@@ -41,7 +57,9 @@ impl StateRoot {
             .map(PathBuf::from)
             .filter(|home| home.is_absolute())
     }
-    /// Opens (creating 0700 as needed) for Prepare, RefreshDerived and Mutate.
+    /// Opens a checkout's `.effigy/state/`, creating private directories as
+    /// needed for Prepare, RefreshDerived and Mutate. `home` is the resolved
+    /// owning checkout, not its invocation subdirectory.
     /// A guest placement is refused before any filesystem call (R1).
     pub fn effects(cx: &EffectContext, home: &Path) -> Result<Self, FsError> {
         cx.require(Capability::HostAuthority)
@@ -56,7 +74,12 @@ impl StateRoot {
         dir.require_local()?;
         Ok(Self {
             dir,
+            owner: home,
             writable: true,
+            database: Database::Checkout,
+            adoption: true,
+            checkout: None,
+            machine_gates: None,
         })
     }
     /// Read-only open. Missing is `Absent`; untrusted or unreadable is
@@ -67,21 +90,129 @@ impl StateRoot {
         }
         let opened = DirFd::walk(home, Trust::Operator).and_then(|home| {
             match home.child(".effigy", Trust::Operator, false)? {
-                Some(effigy) => effigy.child("state", Trust::Private, false),
+                Some(effigy) => effigy
+                    .child("state", Trust::Private, false)
+                    .map(|state| state.map(|state| (home, state))),
                 None => Ok(None),
             }
         });
         match opened {
-            Ok(Some(dir)) => Observed::Verified(
+            Ok(Some((owner, dir))) => Observed::Verified(
                 Self {
                     dir,
+                    owner,
                     writable: false,
+                    database: Database::Checkout,
+                    adoption: true,
+                    checkout: None,
+                    machine_gates: None,
                 },
                 Evidence::new("kernel state root".into(), None).expect("fixed source"),
             ),
             Ok(None) => Observed::Absent(AbsenceProof::NoStateRoot),
             Err(error) => Observed::Unknown(unknown(&error)),
         }
+    }
+    /// Shared-fact storage under `$HOME/.effigy/state/machine.db`. This never
+    /// opens, initializes or repairs the legacy `kernel.db` beside it.
+    pub fn machine_effects(cx: &EffectContext, home: &Path) -> Result<Self, FsError> {
+        crate::inheritance::require_durable(cx.operation())
+            .map_err(|error| FsError::io("runtime class", home, &error))?;
+        let mut root = Self::effects(cx, home)?;
+        root.database = Database::Machine;
+        Ok(root)
+    }
+    /// Pure machine-store observation. Absence never falls back to legacy data;
+    /// importing a legacy source is a separate, explicitly fenced operation.
+    pub fn machine_observe(cx: &ObserveContext, home: &Path) -> Observed<Self> {
+        Self::observe(cx, home).map(|mut root| {
+            root.database = Database::Machine;
+            root
+        })
+    }
+    /// An explicitly historical, read-only source for migration and fixture
+    /// observation. This never grants authority to mutate a legacy journal.
+    pub fn legacy_observe(cx: &ObserveContext, home: &Path) -> Observed<Self> {
+        Self::observe(cx, home).map(|root| root.legacy_source())
+    }
+    pub(crate) fn legacy_source(&self) -> Self {
+        let mut root = self.unpublished();
+        root.database = Database::Checkout;
+        root
+    }
+    pub(crate) fn legacy_control(&self) -> Self {
+        let mut root = self.legacy_source();
+        root.writable = true;
+        root
+    }
+    pub(crate) fn unpublished(&self) -> Self {
+        let mut root = self.clone();
+        root.writable = false;
+        root.adoption = false;
+        root
+    }
+    pub(crate) fn requires_adoption(&self) -> bool {
+        self.adoption
+    }
+    /// Whether this handle routes shared machine facts rather than a checkout journal.
+    pub fn is_machine(&self) -> bool {
+        matches!(self.database, Database::Machine)
+    }
+    pub(crate) fn database_name(&self) -> &'static str {
+        match self.database {
+            Database::Checkout => crate::store::DB_NAME,
+            Database::Machine => "machine.db",
+        }
+    }
+    /// Recheck the retained checkout, state and Git generations before an
+    /// engine continues file work through this handle.
+    pub fn verify_binding(&self) -> Result<(), FsError> {
+        if DirFd::walk(self.owner.path(), Trust::Operator)?.identity()? != self.owner.identity()? {
+            return Err(FsError::untrusted(
+                self.owner.path(),
+                "owning checkout directory changed",
+            ));
+        }
+        let reopened = DirFd::walk(self.path(), Trust::Private)?;
+        if self.dir.identity()? != reopened.identity()? {
+            return Err(FsError::untrusted(
+                self.path(),
+                "state root identity changed",
+            ));
+        }
+        if let Some(checkout) = &self.checkout {
+            checkout.verify(&self.owner)?;
+        }
+        Ok(())
+    }
+    /// An inert migration staging root inside this verified destination. It
+    /// inherits database routing, but publication remains a separate authority
+    /// switch; normal engine callers never receive this root.
+    pub(crate) fn migration_stage(&self, name: &str) -> Result<Self, FsError> {
+        if !self.writable {
+            return Err(FsError::untrusted(self.path(), "read-only staging parent"));
+        }
+        let dir = self
+            .dir
+            .child(name, Trust::Private, true)?
+            .expect("created staging directory");
+        Ok(Self {
+            dir,
+            owner: self.owner.clone(),
+            writable: true,
+            database: self.database.clone(),
+            adoption: false,
+            checkout: self.checkout.clone(),
+            machine_gates: self.machine_gates.clone(),
+        })
+    }
+    /// Retained filesystem identity of the actual checkout or machine home.
+    pub fn owning_directory(&self) -> &DirFd {
+        &self.owner
+    }
+    /// Kernel file-record operations may use this already verified directory.
+    pub fn state_directory(&self) -> &DirFd {
+        &self.dir
     }
     pub fn path(&self) -> &Path {
         self.dir.path()
@@ -97,6 +228,12 @@ impl StateRoot {
         self.dir.child(family.dir_name(), Trust::Private, false)
     }
     pub(crate) fn family(&self, family: Family) -> Result<Option<DirFd>, FsError> {
+        if self.is_machine() && matches!(family, Family::Objects | Family::Staging) {
+            return Err(FsError::untrusted(
+                self.path(),
+                "payload families belong in a checkout journal",
+            ));
+        }
         self.dir
             .child(family.dir_name(), Trust::Private, self.writable)
     }

@@ -5,6 +5,7 @@
     "effigy.command.v1": "payload-schemas/effigy.command.v1.json",
     "effigy.container.migrate.v1": "payload-schemas/effigy.container.migrate.v1.json",
     "effigy.container.render.v1": "payload-schemas/effigy.container.render.v1.json",
+    "effigy.runtime-migration.v1": "payload-schemas/effigy.runtime-migration.v1.json",
     "effigy.release.input.v1": "payload-schemas/effigy.release.input.v1.json",
     "effigy.release.output.v1": "payload-schemas/effigy.release.output.v1.json"
   },
@@ -239,15 +240,23 @@
       "schema": "effigy.release.plan.v1",
       "schema_version": 1,
       "command": "effigy --json release --plan --repo <fixture_release_platform>",
-      "surface": "release pipeline plan (contract 054 §5)",
+      "surface": "release pipeline plan (contract 054 \u00a75)",
       "status": "active"
     },
     {
       "schema": "effigy.release.status.v1",
       "schema_version": 1,
       "command": "effigy --json release status --repo <fixture_release_platform>",
-      "surface": "release pipeline status (contract 054 §5)",
+      "surface": "release pipeline status (contract 054 \u00a75)",
       "status": "active"
+    },
+    {
+      "schema": "effigy.runtime-migration.v1",
+      "schema_version": 1,
+      "command": "effigy run migrate --plan --json --repo <fixture_task_success>",
+      "surface": "read-only legacy runtime migration plan",
+      "status": "active",
+      "isolated_home": true
     }
   ]
 }

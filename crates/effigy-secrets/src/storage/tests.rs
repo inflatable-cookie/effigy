@@ -77,6 +77,15 @@ fn vault_migrates_legacy_and_retains_previous_decryptable_generation() {
 }
 
 #[test]
+fn vault_gate_requires_no_runtime_database() {
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join("vault.json");
+    let _write = VaultWrite::acquire_in(home.path(), &path).expect("private vault gate");
+    assert!(!home.path().join(".effigy/state/kernel.db").exists());
+    assert!(!home.path().join(".effigy/state/machine.db").exists());
+}
+
+#[test]
 fn vault_refuses_unreadable_state_without_overwriting_it() {
     let (home, path) = fixture(false);
     let raw = fs::read(&path).expect("pointer");

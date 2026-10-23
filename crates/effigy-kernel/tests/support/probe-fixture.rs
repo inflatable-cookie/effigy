@@ -17,7 +17,7 @@ fn op(cancel: CancelToken, class: EffectClass, budget: Duration) -> OperationCon
         Deadline::At(Instant::now() + budget),
         cancel,
         Limits {
-            capture_tail: 4096,
+            capture_tail: 128 << 10,
             line_max: 4096,
             log_rotate: 0,
             log_keep: 0,
@@ -162,6 +162,12 @@ pub fn run(entry: &str, args: &[OsString], cancel: CancelToken) {
             "--porcelain".into(),
         ],
         "missing" => vec![home.join("missing-tool").into_os_string()],
+        "bulk" => vec![
+            "/usr/bin/head".into(),
+            "-c".into(),
+            "65536".into(),
+            "/dev/zero".into(),
+        ],
         "capture" => {
             env.insert(
                 "SECRET".into(),
@@ -187,10 +193,16 @@ pub fn run(entry: &str, args: &[OsString], cancel: CancelToken) {
         // diff, a missing tool, a bounded capture - so they get the proof's
         // remaining budget instead of a machine-speed assumption.
         deadline: match mode {
-            "git" | "missing" | "capture" => cx.remaining(),
+            "git" | "missing" | "capture" | "bulk" => cx.remaining(),
             _ => Duration::from_millis(1200),
         },
-        max_output: if mode == "capture" { 64 } else { 4096 },
+        max_output: if mode == "capture" {
+            64
+        } else if mode == "bulk" {
+            128 << 10
+        } else {
+            4096
+        },
     });
     match output {
         Observed::Verified(value, _) => println!(

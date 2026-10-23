@@ -51,22 +51,6 @@ fn journal_mode(state: &Path) -> String {
     .query_row("PRAGMA journal_mode", [], |row| row.get(0))
     .unwrap()
 }
-/// Every entry except the store's own write-ahead files and the state
-/// directory's timestamps: SQLite's shared-memory index belongs to the store,
-/// not to a record a read could change.
-fn records_only(root: &Path) -> std::collections::BTreeMap<PathBuf, Entry> {
-    snapshot(root)
-        .into_iter()
-        .filter(|(path, _)| {
-            let store_side = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name == "kernel.db-wal" || name == "kernel.db-shm");
-            let state_dir = path.ends_with(".effigy/state");
-            !store_side && !state_dir && path != Path::new(".effigy")
-        })
-        .collect()
-}
 #[derive(Debug)]
 struct Text(String);
 impl Record for Text {
@@ -106,6 +90,116 @@ fn store_layout_settings_and_schema_metadata() {
         .verified()
         .unwrap()
         .starts_with("effigy-kernel "));
+}
+
+#[test]
+fn store_machine_root_does_not_open_or_rewrite_the_legacy_database() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let legacy_root = root(home.path());
+    let mut legacy = Store::open(&cx, &legacy_root).unwrap();
+    legacy
+        .txn(&cx, |txn| txn.resource(&task("legacy"), "task").map(|_| ()))
+        .unwrap();
+    drop(legacy);
+    let legacy_path = legacy_root.path().join(DB_NAME);
+    let before = std::fs::read(&legacy_path).unwrap();
+
+    let machine_root = StateRoot::machine_effects(&cx, home.path()).unwrap();
+    let machine = Store::open(&cx, &machine_root).unwrap();
+    machine.check_integrity().unwrap();
+    drop(machine);
+    let reader = match Store::read(&observe(), &machine_root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("machine reader {other:?}"),
+    };
+    assert!(matches!(
+        reader.resource(&task("legacy")),
+        Observed::Absent(_)
+    ));
+    assert_eq!(std::fs::read(&legacy_path).unwrap(), before);
+    assert!(machine_root.path().join("machine.db").is_file());
+    assert!(!machine_root.path().join("machine.db-journal").exists());
+}
+
+#[test]
+fn store_machine_observation_without_state_is_read_only() {
+    let home = home();
+    assert!(matches!(
+        StateRoot::machine_observe(&observe(), home.path()),
+        Observed::Absent(AbsenceProof::NoStateRoot)
+    ));
+    assert!(!home.path().join(".effigy").exists());
+
+    let cx = effects(EffectClass::Mutate);
+    let legacy_root = root(home.path());
+    Store::open(&cx, &legacy_root).unwrap();
+    let machine_root = match StateRoot::machine_observe(&observe(), home.path()) {
+        Observed::Verified(root, _) => root,
+        other => panic!("machine root {other:?}"),
+    };
+    assert!(matches!(
+        Store::read(&observe(), &machine_root),
+        Observed::Absent(AbsenceProof::NoStore)
+    ));
+    assert!(!machine_root.path().join("machine.db").exists());
+}
+
+#[test]
+fn store_machine_repair_does_not_move_the_legacy_database() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let legacy_root = root(home.path());
+    Store::open(&cx, &legacy_root).unwrap();
+    let legacy_path = legacy_root.path().join(DB_NAME);
+    let before = std::fs::read(&legacy_path).unwrap();
+    let machine_root = StateRoot::machine_effects(&cx, home.path()).unwrap();
+    let machine_path = machine_root.path().join("machine.db");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&machine_path)
+        .unwrap();
+    std::fs::write(&machine_path, b"not a database").unwrap();
+    let aside = Store::repair(&cx, &machine_root).unwrap();
+    assert!(aside.as_str().starts_with("machine.db.corrupt-"));
+    assert!(!machine_path.exists());
+    assert_eq!(std::fs::read(&legacy_path).unwrap(), before);
+    assert_eq!(
+        std::fs::read(machine_root.path().join(aside.as_str())).unwrap(),
+        b"not a database"
+    );
+}
+
+#[test]
+fn store_checkout_write_lock_does_not_block_another_checkout_or_machine() {
+    let home = home();
+    let a = home.path().join("checkout-a");
+    let b = home.path().join("checkout-b");
+    std::fs::create_dir(&a).unwrap();
+    std::fs::create_dir(&b).unwrap();
+    let cx = effects(EffectClass::Mutate);
+    let a_root = root(&a);
+    let b_root = root(&b);
+    let machine_root = StateRoot::machine_effects(&cx, home.path()).unwrap();
+    let a_store = Store::open(&cx, &a_root).unwrap();
+    let mut b_store = Store::open(&cx, &b_root).unwrap();
+    let mut machine_store = Store::open(&cx, &machine_root).unwrap();
+    a_store.check_integrity().unwrap();
+    // A distinct SQLite connection holds the first checkout's write lock.
+    let a_writer = rusqlite::Connection::open(a_root.path().join(DB_NAME)).unwrap();
+    a_writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    b_store
+        .txn(&cx, |txn| txn.resource(&task("other"), "task").map(|_| ()))
+        .unwrap();
+    machine_store
+        .txn(&cx, |txn| {
+            txn.resource(&ResourceId::gateway("default").unwrap(), "gateway")
+                .map(|_| ())
+        })
+        .unwrap();
+    a_writer.execute_batch("ROLLBACK").unwrap();
 }
 
 #[test]
@@ -174,14 +268,14 @@ fn store_reads_are_pure_including_on_a_read_only_root() {
         .unwrap();
     drop(store);
     let state = root.path().to_path_buf();
-    let before = records_only(home.path());
+    let before = snapshot(home.path());
     {
         let reader = reader(home.path());
         let reader = reader.verified().unwrap();
         assert!(reader.resource(&task("a")).verified().is_some());
     }
-    assert_eq!(records_only(home.path()), before, "a read changed state");
-    // Read-only directory and file: the reader drops to an immutable open of
+    assert_eq!(snapshot(home.path()), before, "a read changed state");
+    // Read-only directory and file: the reader takes an in-memory snapshot of
     // the checkpointed store, which creates nothing at all. SQLite's own
     // write-ahead side files go first, so "creates nothing" is measured.
     for suffix in ["-wal", "-shm"] {
@@ -1253,4 +1347,214 @@ fn store_repair_moves_the_write_ahead_log_and_index_aside() {
     store
         .txn(&cx, |txn| txn.resource(&task("a"), "task").map(|_| ()))
         .unwrap();
+}
+
+#[test]
+fn store_closed_snapshot_stays_coherent_after_a_new_writer() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| txn.resource(&task("before"), "task").map(|_| ()))
+        .unwrap();
+    drop(store);
+    let before = snapshot(home.path());
+    let observed = reader(home.path());
+    let snapshot_reader = observed.verified().unwrap();
+    assert_eq!(snapshot(home.path()), before);
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| txn.resource(&task("after"), "task").map(|_| ()))
+        .unwrap();
+    assert!(snapshot_reader
+        .resource(&task("before"))
+        .verified()
+        .is_some());
+    assert!(matches!(
+        snapshot_reader.resource(&task("after")),
+        Observed::Absent(_)
+    ));
+    assert!(reader(home.path())
+        .verified()
+        .unwrap()
+        .resource(&task("after"))
+        .verified()
+        .is_some());
+}
+
+#[test]
+#[ignore]
+fn store_helper_read_live_wal() {
+    if !support::helper_is("store_helper_read_live_wal") {
+        return;
+    }
+    assert!(reader(&stress_home())
+        .verified()
+        .unwrap()
+        .resource(&task("wal-only"))
+        .verified()
+        .is_some());
+    println!("WAL-READ");
+}
+
+#[test]
+fn store_live_wal_observation_never_changes_files() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| {
+            txn.resource(&task("wal-only"), "task").map(|_| ())
+        })
+        .unwrap();
+    let before = snapshot(home.path());
+    let mut helper = support::Helper::spawn(
+        "store_helper_read_live_wal",
+        &[("EFFIGY_STORE_STRESS_HOME", home.path().to_str().unwrap())],
+    );
+    helper.expect("WAL-READ", Duration::from_secs(30));
+    assert!(helper.wait_for_exit().success());
+    assert_eq!(snapshot(home.path()), before);
+}
+
+#[test]
+fn store_observations_preserve_unicode_and_reserved_path_bytes() {
+    let fixture = home();
+    let home = fixture.path().join("checkout-東京 é%?#");
+    std::fs::create_dir(&home).unwrap();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(&home);
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| {
+            txn.resource(&task("unicode"), "task").map(|_| ())
+        })
+        .unwrap();
+    assert!(reader(&home)
+        .verified()
+        .unwrap()
+        .resource(&task("unicode"))
+        .verified()
+        .is_some());
+    drop(store);
+    let before = snapshot(&home);
+    assert!(reader(&home)
+        .verified()
+        .unwrap()
+        .resource(&task("unicode"))
+        .verified()
+        .is_some());
+    assert_eq!(snapshot(&home), before);
+}
+
+#[test]
+fn store_machine_contents_refuse_checkout_data_and_catalog_rows_atomically() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::machine_effects(&cx, home.path()).unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    for forbidden in [
+        task("foreground"),
+        ResourceId::environment(checkout(), "dev").unwrap(),
+        ResourceId::data("docker", "private", "volume").unwrap(),
+        ResourceId::store(Scope::Machine, "bundles").unwrap(),
+        ResourceId::store(Scope::Checkout(checkout()), "ports").unwrap(),
+    ] {
+        let result: Result<(), StoreError> = store.txn(&cx, |txn| {
+            txn.resource(&ResourceId::gateway("rolled-back").unwrap(), "gateway")?;
+            txn.resource(&forbidden, "refused").map(|_| ())
+        });
+        assert!(matches!(result, Err(StoreError::MachineContentsRefused(_))));
+    }
+    assert!(matches!(
+        store.txn(&cx, |txn| txn.checkout_seen(&checkout(), None, None)),
+        Err(StoreError::MachineContentsRefused(_))
+    ));
+    drop(store);
+    let conn = rusqlite::Connection::open_with_flags(
+        root.path().join("machine.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    for table in [
+        "resources",
+        "checkouts",
+        "objects",
+        "runs",
+        "events",
+        "claims",
+    ] {
+        let count: i64 = conn
+            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0, "{table}");
+    }
+}
+
+#[test]
+fn store_checked_output_and_cache_retirement_refuse_aliases_before_effects() {
+    use std::io::Write;
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let dir = DirFd::open(root.path()).unwrap();
+    let resource = vault();
+    let guard = Gate::acquire(&cx, &root, &[resource], Wait::FailFast).unwrap();
+    let name = FileName::new("backend.log").unwrap();
+    let wrong = Gate::acquire(&cx, &root, &[task("not-a-store")], Wait::FailFast).unwrap();
+    assert!(matches!(
+        open_output(&cx, &wrong, &dir, &name),
+        Err(StoreError::WrongGuard)
+    ));
+    assert_eq!(
+        remove_record(&cx, &wrong, &dir, &name),
+        Err(StoreError::WrongGuard)
+    );
+    assert!(!dir.path().join(name.as_str()).exists());
+    let mut file = open_output(&cx, &guard, &dir, &name).unwrap();
+    file.write_all(b"old output").unwrap();
+    drop(file);
+    let file = open_output(&cx, &guard, &dir, &name).unwrap();
+    assert_eq!(file.metadata().unwrap().len(), 0);
+    assert_eq!(mode(&dir.path().join(name.as_str())), 0o600);
+    drop(file);
+    remove_record(&cx, &guard, &dir, &name).unwrap();
+    remove_record(&cx, &guard, &dir, &name).unwrap();
+    let victim = home.path().join("victim");
+    std::fs::write(&victim, b"must survive").unwrap();
+    let alias = dir.path().join(name.as_str());
+    std::os::unix::fs::symlink(&victim, &alias).unwrap();
+    assert!(open_output(&cx, &guard, &dir, &name).is_err());
+    assert!(remove_record(&cx, &guard, &dir, &name).is_err());
+    assert_eq!(std::fs::read(&victim).unwrap(), b"must survive");
+    std::fs::remove_file(&alias).unwrap();
+    std::fs::hard_link(&victim, &alias).unwrap();
+    assert!(open_output(&cx, &guard, &dir, &name).is_err());
+    assert_eq!(std::fs::read(&victim).unwrap(), b"must survive");
+}
+
+#[test]
+fn store_private_file_mutex_keeps_the_stable_inode_without_a_database() {
+    let home = home();
+    std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let cx = effects(EffectClass::Mutate);
+    let dir = DirFd::open(home.path()).unwrap();
+    let held = Gate::files(&cx, &dir, "interpolation", Wait::FailFast).unwrap();
+    assert!(matches!(
+        Gate::files(&cx, &dir, "interpolation", Wait::FailFast),
+        Err(GateError::Busy { .. })
+    ));
+    assert!(!home.path().join(".effigy").exists());
+    assert!(!home.path().join("kernel.db").exists());
+    drop(held);
+    drop(Gate::files(&cx, &dir, "interpolation", Wait::FailFast).unwrap());
+    std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(matches!(
+        Gate::files(&cx, &dir, "interpolation", Wait::FailFast),
+        Err(GateError::Untrusted { .. })
+    ));
 }

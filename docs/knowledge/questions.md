@@ -351,3 +351,20 @@ grew by about 18,700 runs in four days and about 20 MB in 15 minutes. The ruling
   from the current machine store. Contract 052 is amended to match, and the
   kernel's crash-recovery guarantees still hold for every run that outlives its
   terminal.
+
+The storage model is owned by [052 §3.1](contracts/052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary),
+with storage in §7, migration in §11.1 and acceptance proofs in §12.6; contracts
+[053](contracts/053-environment-reconciler-contract.md) and
+[049](contracts/049-heavy-validation-admission-contract.md) specify environment
+and admission touch-points. Task status is owned by
+[017](contracts/017-task-status-record-and-active-run-model-contract.md) and
+[018](contracts/018-task-status-query-surface-and-read-model-contract.md);
+[051](contracts/051-bounded-qa-groups-contract.md) preserves durable group
+evidence. The runtime implements this classification, checkout routing and built-in migration.
+
+Tom, 2026-10-22: "Approve" (planner relayed acceptance of the Q-010 design).
+The conditions are owned by contract 052 §11.1 (busy-machine migration lists
+exact blocking writers and stop/drain commands without partial work; ordinary
+foreground runs continue) and §12.6 (read-only copy of the actual large store,
+elapsed duration/per-checkout results, and deleted-worktree `retire --dead`
+without a central index). The amendment and implementation ship together.

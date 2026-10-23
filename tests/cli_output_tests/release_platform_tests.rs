@@ -530,10 +530,10 @@ fn release_run_writes_a_receipt_and_pushes_the_candidate_tag() {
         candidate
     );
 
-    // The receipt is durable Effigy-owned state outside the repo.
+    // The receipt belongs to this checkout’s ignored runtime journal.
     let receipt_path = result["receipt_path"].as_str().expect("receipt path");
     assert!(
-        receipt_path.starts_with(home.to_string_lossy().as_ref()),
+        Path::new(receipt_path).starts_with(root.join(".effigy/state/release")),
         "{receipt_path}"
     );
     assert!(Path::new(receipt_path).exists());

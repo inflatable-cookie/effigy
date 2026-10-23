@@ -119,6 +119,14 @@ fn spec(home: &Path, script: &str) -> ProcessSpec {
         label: "fixture".into(),
     }
 }
+/// A poll is a new observation: StoreReader intentionally owns a snapshot.
+fn fresh_status(cx: &ObserveContext, root: &StateRoot, id: RunId) -> Observed<RunStatus> {
+    match effigy_kernel::store::Store::read(cx, root) {
+        Observed::Verified(reader, _) => status(cx, root, &reader, id, next()),
+        Observed::Absent(proof) => Observed::Absent(proof),
+        Observed::Unknown(reason) => Observed::Unknown(reason),
+    }
+}
 fn eventually(mut predicate: impl FnMut() -> bool) {
     let end = Instant::now() + Duration::from_secs(12);
     while !predicate() {
@@ -405,22 +413,9 @@ fn custody_signal_and_owner_kill_matrix_settles_without_survivors() {
             eventually(|| owner.0.try_wait().unwrap().is_some());
             let cx = context();
             let root = StateRoot::effects(&cx, home.path()).unwrap();
-            let reader = match effigy_kernel::store::Store::read(
-                &cx.operation().observe().unwrap(),
-                &root,
-            ) {
-                Observed::Verified(r, _) => r,
-                other => panic!("{other:?}"),
-            };
             let runid = RunId::new(1, [9; 10]).unwrap();
-            eventually(|| {
-                match status(
-                    &cx.operation().observe().unwrap(),
-                    &root,
-                    &reader,
-                    runid,
-                    next(),
-                ) {
+            eventually(
+                || match fresh_status(&cx.operation().observe().unwrap(), &root, runid) {
                     Observed::Verified(RunStatus::Closed { complete: true, .. }, _) => true,
                     Observed::Verified(
                         RunStatus::Closed {
@@ -431,15 +426,9 @@ fn custody_signal_and_owner_kill_matrix_settles_without_survivors() {
                         _,
                     ) => panic!("{placement}/{signal}: incomplete {effects:?}"),
                     _ => false,
-                }
-            });
-            let status = status(
-                &cx.operation().observe().unwrap(),
-                &root,
-                &reader,
-                runid,
-                next(),
+                },
             );
+            let status = fresh_status(&cx.operation().observe().unwrap(), &root, runid);
             if let Observed::Verified(RunStatus::Closed { effects, .. }, _) = status {
                 for effect in effects {
                     if effect.spec.kind != "kernel:process" {
@@ -487,16 +476,8 @@ fn custody_detach_secondary_client_death_and_explicit_stop() {
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let socket = root.path().join("sock").join(format!("{}.sock", id(1)));
     drop(std::os::unix::net::UnixStream::connect(&socket).unwrap());
-    let reader = effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &root);
-    let reader = reader.verified().unwrap();
     assert!(matches!(
-        status(
-            &cx.operation().observe().unwrap(),
-            &root,
-            reader,
-            id(1),
-            next()
-        ),
+        fresh_status(&cx.operation().observe().unwrap(), &root, id(1)),
         Observed::Verified(RunStatus::Live(_), _)
     ));
     let fence = client.fence.clone();
@@ -514,13 +495,7 @@ fn custody_detach_secondary_client_death_and_explicit_stop() {
     .unwrap();
     eventually(|| {
         matches!(
-            status(
-                &cx.operation().observe().unwrap(),
-                &root,
-                reader,
-                id(1),
-                next()
-            ),
+            fresh_status(&cx.operation().observe().unwrap(), &root, id(1)),
             Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
         )
     });
@@ -586,16 +561,8 @@ fn custody_sentinel_recovers_nonce_descendant_after_leader_and_owner_die() {
     let cx = context();
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let observed = cx.operation().observe().unwrap();
-    let reader = effigy_kernel::store::Store::read(&observed, &root);
-    let reader = reader.verified().unwrap();
-    eventually(|| {
-        match status(
-            &observed,
-            &root,
-            reader,
-            RunId::new(1, [9; 10]).unwrap(),
-            next(),
-        ) {
+    eventually(
+        || match fresh_status(&observed, &root, RunId::new(1, [9; 10]).unwrap()) {
             Observed::Verified(RunStatus::Closed { complete: true, .. }, _) => true,
             Observed::Verified(
                 RunStatus::Closed {
@@ -606,8 +573,8 @@ fn custody_sentinel_recovers_nonce_descendant_after_leader_and_owner_die() {
                 _,
             ) => panic!("{effects:?}"),
             _ => false,
-        }
-    });
+        },
+    );
     assert_ne!(
         effigy_kernel::ident::process_identity(descendant).verified(),
         Some(&identity)
@@ -665,10 +632,9 @@ fn custody_supervisor_kill_is_settled_and_stopped_owner_does_not_trigger_sentine
             Observed::Verified(effigy_kernel::ident::ProcessState::Stopped, _)
         )
     });
-    let reader = effigy_kernel::store::Store::read(&observe, &root1);
     std::thread::sleep(Duration::from_millis(100));
     assert!(matches!(
-        status(&observe, &root1, reader.verified().unwrap(), runid, next()),
+        fresh_status(&observe, &root1, runid),
         Observed::Verified(RunStatus::Live(_), _)
     ));
     assert_eq!(
@@ -708,10 +674,9 @@ fn custody_supervisor_kill_is_settled_and_stopped_owner_does_not_trigger_sentine
         unsafe { libc::kill(supervisor.pid as i32, libc::SIGKILL) },
         0
     );
-    let reader = effigy_kernel::store::Store::read(&observe, &root2);
     eventually(|| {
         matches!(
-            status(&observe, &root2, reader.verified().unwrap(), id(1), next()),
+            fresh_status(&observe, &root2, id(1)),
             Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
         )
     });
@@ -862,6 +827,7 @@ fn sequential_foreground_spawns(tostop: bool) {
         seen.windows(8).any(|window| window == b"first-ok")
     });
     assert_eq!(foreground_group(&master), pid as i32);
+    std::fs::write(home.path().join("first-observed"), b"yes").unwrap();
     master.write_all(b"terminal-input\n").unwrap();
     eventually(|| {
         assert_running(pid);
@@ -869,6 +835,7 @@ fn sequential_foreground_spawns(tostop: bool) {
         home.path().join("second-done").exists()
     });
     assert_eq!(foreground_group(&master), pid as i32);
+    std::fs::write(home.path().join("second-observed"), b"yes").unwrap();
     eventually(|| home.path().join("sequence-done").exists());
     // macOS waits for its PTY peer during session-leader exit.
     drop(master);
@@ -933,10 +900,9 @@ fn custody_detached_escalation_interrupts_an_in_progress_settle_grace() {
     client.stop(&cx, id(2)).unwrap();
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let observe = cx.operation().observe().unwrap();
-    let reader = effigy_kernel::store::Store::read(&observe, &root);
     eventually(|| {
         matches!(
-            status(&observe, &root, reader.verified().unwrap(), id(1), next()),
+            fresh_status(&observe, &root, id(1)),
             Observed::Verified(RunStatus::Live(Phase::Stopping), _)
         )
     });
@@ -944,7 +910,7 @@ fn custody_detached_escalation_interrupts_an_in_progress_settle_grace() {
     client.escalate(&cx, id(3)).unwrap();
     eventually(|| {
         matches!(
-            status(&observe, &root, reader.verified().unwrap(), id(1), next()),
+            fresh_status(&observe, &root, id(1)),
             Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
         )
     });
@@ -1004,16 +970,9 @@ fn custody_terminal_close_stops_detached_owning_client() {
     let cx = context();
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let observe = cx.operation().observe().unwrap();
-    let reader = effigy_kernel::store::Store::read(&observe, &root);
     eventually(|| {
         matches!(
-            status(
-                &observe,
-                &root,
-                reader.verified().unwrap(),
-                RunId::new(1, [9; 10]).unwrap(),
-                next()
-            ),
+            fresh_status(&observe, &root, RunId::new(1, [9; 10]).unwrap()),
             Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
         )
     });
@@ -1054,9 +1013,8 @@ fn custody_both_owner_and_sentinel_die_successor_is_the_only_settle_writer() {
     });
     assert_eq!(unsafe { libc::kill(owner.0.id() as i32, libc::SIGKILL) }, 0);
     eventually(|| owner.0.try_wait().unwrap().is_some());
-    let reader = effigy_kernel::store::Store::read(&observe, &root);
     assert!(matches!(
-        status(&observe, &root, reader.verified().unwrap(), runid, next()),
+        fresh_status(&observe, &root, runid),
         Observed::Verified(RunStatus::Interrupted { .. }, _)
     ));
     let outcome = settle_interrupted(
@@ -1128,14 +1086,7 @@ fn engine_status(home: &Path) -> Observed<RunStatus> {
     let cx = context();
     let root = StateRoot::effects(&cx, home).unwrap();
     let observe = cx.operation().observe().unwrap();
-    let reader = effigy_kernel::store::Store::read(&observe, &root);
-    status(
-        &observe,
-        &root,
-        reader.verified().unwrap(),
-        RunId::new(1, [9; 10]).unwrap(),
-        next(),
-    )
+    fresh_status(&observe, &root, RunId::new(1, [9; 10]).unwrap())
 }
 fn workload_gone(home: &Path) -> bool {
     let pid: i32 = std::fs::read_to_string(home.join("engine-workload.pid"))
@@ -1303,4 +1254,1012 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
         engine_status(home.path()),
         Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
     ));
+}
+
+fn foreground_begin(cx: &EffectContext, root: &StateRoot) -> ForegroundRun {
+    ForegroundRun::begin(
+        cx,
+        root,
+        &invocation(),
+        BeginOpts {
+            id: id(1),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: Some(LifecyclePlan {
+                executable: Executable::capture(&fixture()).unwrap(),
+                placement: effigy_kernel::supervise::Placement::Inline,
+            }),
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn foreground_custody_completes_without_database_or_logs() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    for _ in 0..2 {
+        let mut run = foreground_begin(&cx, &root);
+        let mut child =
+            Custody::spawn_foreground(&mut run, spec(home.path(), "printf hello"), &cx).unwrap();
+        let exit = child.wait(cx.operation()).verified().copied().unwrap();
+        assert_eq!(exit.code, 0);
+        child.complete_foreground(&mut run, exit).unwrap();
+        run.finish(WorkloadOutcome::Succeeded).unwrap();
+        let outcome = run
+            .settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+            .unwrap();
+        assert_eq!(outcome.cleanup(), CleanupOutcome::Complete);
+        assert_eq!(outcome.workload(), &WorkloadOutcome::Succeeded);
+        assert!(!root.path().join("kernel.db").exists());
+        assert!(!root.path().join("runs").exists());
+        assert!(!root.path().join("sock").exists());
+        assert!(!root.path().join("objects").exists());
+        assert!(matches!(
+            effigy_kernel::gate::Gate::probe(
+                &cx.operation().observe().unwrap(),
+                &root,
+                &invocation().spec().owner
+            ),
+            Observed::Verified(effigy_kernel::gate::GateState::Free, _)
+        ));
+    }
+}
+
+#[test]
+fn foreground_leader_exit_keeps_descendant_custody_and_cleans_on_drop() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    let mut child = Custody::spawn_foreground(
+        &mut run,
+        spec(home.path(), "/bin/sleep 30 >/dev/null 2>&1 & exit 0"),
+        &cx,
+    )
+    .unwrap();
+    let receipt = child.identity();
+    let exit = child.wait(cx.operation()).verified().copied().unwrap();
+    assert_eq!(exit.code, 0);
+    child.complete_foreground(&mut run, exit).unwrap();
+    drop(run);
+    assert!(matches!(
+        effigy_kernel::gate::Gate::probe(
+            &cx.operation().observe().unwrap(),
+            &root,
+            &invocation().spec().owner
+        ),
+        Observed::Verified(effigy_kernel::gate::GateState::Free, _)
+    ));
+    // Numeric reuse is not authority: the observable group must be gone.
+    let output = Command::new("/bin/ps")
+        .args(["-axo", "pgid="])
+        .output()
+        .unwrap();
+    assert!(!String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|line| line.trim() == receipt.pgid.to_string()));
+    assert!(!root.path().join("kernel.db").exists());
+}
+
+#[test]
+fn foreground_guard_death_refuses_new_go_but_owner_closes_existing_custody() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    let child =
+        Custody::spawn_foreground(&mut run, spec(home.path(), "exec /bin/sleep 30"), &cx).unwrap();
+    let guard = run.guard_identity().unwrap().clone();
+    // SAFETY: this is the exact guard started and retained by this fixture's
+    // run. The owner has not reaped it, so its PID cannot have been reused.
+    assert_eq!(unsafe { libc::kill(guard.pid as i32, libc::SIGKILL) }, 0);
+    eventually(|| {
+        !matches!(
+            effigy_kernel::ident::process_state(guard.pid),
+            Observed::Verified(
+                effigy_kernel::ident::ProcessState::Active
+                    | effigy_kernel::ident::ProcessState::Stopped,
+                _
+            )
+        )
+    });
+    assert!(Custody::spawn_foreground(
+        &mut run,
+        spec(home.path(), "printf forbidden > forbidden"),
+        &cx
+    )
+    .is_err());
+    assert!(!home.path().join("forbidden").exists());
+    drop(run);
+    eventually(|| {
+        !matches!(
+            effigy_kernel::ident::process_identity(child.identity().identity.pid),
+            Observed::Verified(_, _)
+        )
+    });
+    assert!(!root.path().join("kernel.db").exists());
+}
+
+#[test]
+fn foreground_owner_kill_retains_gate_until_memory_guard_closes_group() {
+    foreground_owner_kill(false);
+}
+
+#[test]
+fn foreground_tree_owner_kill_retains_ancestor_gates_until_leaf_guard_closes_group() {
+    foreground_owner_kill(true);
+}
+
+fn foreground_owner_kill(tree: bool) {
+    let home = home();
+    let cx = context();
+    let mut owner = ChildGuard(
+        Command::new(fixture())
+            .arg(if tree {
+                "foreground-tree-owner"
+            } else {
+                "foreground-owner"
+            })
+            .arg(home.path())
+            .env("HOME", home.path())
+            .spawn()
+            .unwrap(),
+    );
+    eventually(|| home.path().join("foreground.json").exists());
+    let data: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.path().join("foreground.json")).unwrap())
+            .unwrap();
+    let process: ProcessReceipt = serde_json::from_value(data["process"].clone()).unwrap();
+    let guard: effigy_kernel::ident::ProcessIdentity =
+        serde_json::from_value(data["guard"].clone()).unwrap();
+    struct ResumeGuard(effigy_kernel::ident::ProcessIdentity);
+    impl Drop for ResumeGuard {
+        fn drop(&mut self) {
+            // SAFETY: only the memory guard started by this fixture is named;
+            // generation is rechecked before resuming on a failure path.
+            if effigy_kernel::ident::process_identity(self.0.pid).verified() == Some(&self.0) {
+                unsafe {
+                    libc::kill(self.0.pid as i32, libc::SIGCONT);
+                }
+            }
+        }
+    }
+    let resume = ResumeGuard(guard.clone());
+    // SAFETY: exact guard of the newly started, live fixture; no PID scan.
+    assert_eq!(unsafe { libc::kill(guard.pid as i32, libc::SIGSTOP) }, 0);
+    eventually(|| {
+        matches!(
+            effigy_kernel::ident::process_state(guard.pid),
+            Observed::Verified(effigy_kernel::ident::ProcessState::Stopped, _)
+        )
+    });
+    owner.0.kill().unwrap();
+    owner.0.wait().unwrap();
+    if tree {
+        let ancestors: Vec<effigy_kernel::ident::ProcessIdentity> =
+            serde_json::from_value(data["ancestor_guards"].clone()).unwrap();
+        assert_eq!(ancestors.len(), 2);
+        // Let both ancestor guards exit while leaf cleanup is paused. Their
+        // descriptor copies alone must no longer be what holds the root.
+        for ancestor in ancestors {
+            eventually(|| {
+                effigy_kernel::ident::process_identity(ancestor.pid).verified() != Some(&ancestor)
+            });
+        }
+    }
+    let observe = cx.operation().observe().unwrap();
+    let root = StateRoot::observe(&observe, home.path())
+        .verified()
+        .unwrap()
+        .path()
+        .to_path_buf();
+    assert!(!root.join("kernel.db").exists());
+    let state = match StateRoot::observe(&observe, home.path()) {
+        Observed::Verified(root, _) => root,
+        other => panic!("{other:?}"),
+    };
+    assert!(matches!(
+        effigy_kernel::gate::Gate::probe(&observe, &state, &invocation().spec().owner),
+        Observed::Verified(effigy_kernel::gate::GateState::Held(_), _)
+    ));
+    assert_eq!(
+        effigy_kernel::ident::process_identity(process.identity.pid).verified(),
+        Some(&process.identity)
+    );
+    drop(resume);
+    eventually(|| {
+        matches!(
+            effigy_kernel::gate::Gate::probe(&observe, &state, &invocation().spec().owner),
+            Observed::Verified(effigy_kernel::gate::GateState::Free, _)
+        )
+    });
+    eventually(|| {
+        effigy_kernel::ident::process_identity(process.identity.pid).verified()
+            != Some(&process.identity)
+    });
+    let output = Command::new("/bin/ps")
+        .args(["-axo", "pgid="])
+        .output()
+        .unwrap();
+    assert!(!String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|line| line.trim() == process.pgid.to_string()));
+}
+
+#[test]
+fn foreground_open_lifetime_reads_predecessors_with_a_finite_budget() {
+    let home = home();
+    let bounded = context();
+    let cx = OperationContext::new(
+        Deadline::Open(OpenReason::Shell),
+        CancelToken::default(),
+        bounded.operation().limits().clone(),
+        EffectClass::Mutate,
+        effigy_kernel::ctx::Placement::Host,
+    )
+    .effects()
+    .unwrap();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    let mut child = Custody::spawn_foreground(&mut run, spec(home.path(), "exit 0"), &cx).unwrap();
+    let exit = child.wait(bounded.operation()).verified().copied().unwrap();
+    child.complete_foreground(&mut run, exit).unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    assert_eq!(
+        run.settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+            .unwrap()
+            .cleanup(),
+        CleanupOutcome::Complete
+    );
+}
+
+#[test]
+fn foreground_refuses_unresolved_durable_predecessor_without_database_writes() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let previous = Run::begin(
+        &cx,
+        &root,
+        &invocation(),
+        BeginOpts {
+            id: id(2),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: None,
+        },
+        &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+    drop(previous);
+    let before = std::fs::read(root.path().join("kernel.db")).unwrap();
+    let refused = ForegroundRun::begin(
+        &cx,
+        &root,
+        &invocation(),
+        BeginOpts {
+            id: id(1),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: Some(LifecyclePlan {
+                executable: Executable::capture(&fixture()).unwrap(),
+                placement: effigy_kernel::supervise::Placement::Inline,
+            }),
+        },
+    );
+    assert!(matches!(refused, Err(RunError::PredecessorUnsettled { run, .. }) if run == id(2)));
+    assert_eq!(
+        before,
+        std::fs::read(root.path().join("kernel.db")).unwrap()
+    );
+    settle_interrupted(
+        &cx,
+        &root,
+        &invocation().spec().owner,
+        id(2),
+        next(),
+        &cx.operation().cleanup(Duration::from_secs(10)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+}
+
+#[test]
+fn foreground_same_owner_is_busy_and_never_reclaims_a_live_gate() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let run = foreground_begin(&cx, &root);
+    let refused = ForegroundRun::begin(
+        &cx,
+        &root,
+        &invocation(),
+        BeginOpts {
+            id: id(2),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: Some(LifecyclePlan {
+                executable: Executable::capture(&fixture()).unwrap(),
+                placement: effigy_kernel::supervise::Placement::Inline,
+            }),
+        },
+    );
+    assert!(matches!(
+        refused,
+        Err(RunError::Gate(effigy_kernel::gate::GateError::Busy { .. }))
+    ));
+    drop(run);
+    assert!(!root.path().join("kernel.db").exists());
+}
+
+#[test]
+fn custody_machine_journal_routes_supervisor_requests_and_sentinel_recovery_without_legacy_writes()
+{
+    for killed in [false, true] {
+        let home = home();
+        let cx = context();
+        let legacy = StateRoot::effects(&cx, home.path()).unwrap();
+        drop(effigy_kernel::store::Store::open(&cx, &legacy).unwrap());
+        let legacy_before = std::fs::read(legacy.path().join("kernel.db")).unwrap();
+        let machine = StateRoot::machine_effects(&cx, home.path()).unwrap();
+        let mut coordinates = invocation().spec().clone();
+        coordinates.task = TaskId::new(
+            CheckoutId::new(CheckoutKind::Machine, [0; 16]),
+            "",
+            Surface::Published,
+            "gateway",
+            None,
+        )
+        .unwrap();
+        coordinates.owner = ResourceId::gateway("fixture-machine").unwrap();
+        let invocation = ResolvedInvocation::new(coordinates).unwrap();
+        let mut client = start_detached_at(
+            &cx,
+            &machine,
+            &invocation,
+            id(1),
+            &next(),
+            vec![spec(
+                home.path(),
+                "printf machine-output; printf machine-error >&2; exec /bin/sleep 30",
+            )],
+            &Executable::capture(&fixture()).unwrap(),
+            ClientMode::Owning,
+        )
+        .unwrap();
+        while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
+        if let Ok(entries) = std::fs::read_dir(machine.path().join("runs").join(id(1).to_string()))
+        {
+            for entry in entries {
+                assert!(
+                    !entry
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .ends_with(".log"),
+                    "machine output must remain in memory"
+                );
+            }
+        }
+        if killed {
+            let metadata = metadata(&cx.operation().observe().unwrap(), &machine, id(1));
+            let supervisor = metadata.verified().unwrap().supervisor.as_ref().unwrap();
+            assert_eq!(
+                effigy_kernel::ident::process_identity(supervisor.pid).verified(),
+                Some(supervisor)
+            );
+            // SAFETY: the private fixture's exact newly admitted supervisor is
+            // still owned by this client; its fresh boot/start identity matches.
+            assert_eq!(
+                unsafe { libc::kill(supervisor.pid as i32, libc::SIGKILL) },
+                0
+            );
+        } else {
+            client.stop(&cx, id(2)).unwrap();
+        }
+        eventually(|| {
+            let observe = cx.operation().observe().unwrap();
+            let Observed::Verified(reader, _) =
+                effigy_kernel::store::Store::read(&observe, &machine)
+            else {
+                return false;
+            };
+            matches!(effigy_kernel::run::machine_completion(&reader, &invocation.spec().owner),
+                Observed::Verified(completion, _) if completion.run == id(1))
+        });
+        let read = effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &machine);
+        assert!(
+            matches!(
+                effigy_kernel::run::summary(read.verified().unwrap(), id(1)),
+                Observed::Absent(_)
+            ),
+            "completed machine runs retain no history"
+        );
+        let waited = client.wait(cx.operation());
+        if killed {
+            assert_eq!(
+                waited.unwrap_err().kind(),
+                std::io::ErrorKind::UnexpectedEof
+            );
+        } else {
+            waited.unwrap();
+        }
+        assert_eq!(
+            std::fs::read(legacy.path().join("kernel.db")).unwrap(),
+            legacy_before
+        );
+    }
+}
+
+fn foreground_child(
+    parent: &mut ForegroundRun,
+    cx: &EffectContext,
+    root: &StateRoot,
+) -> ForegroundRun {
+    let mut invocation = invocation().spec().clone();
+    invocation.task = TaskId::new(
+        invocation.task.checkout(),
+        "",
+        Surface::Published,
+        "child",
+        None,
+    )
+    .unwrap();
+    invocation.owner = invocation.task.resource();
+    parent
+        .begin_child(
+            root,
+            &ResolvedInvocation::new(invocation).unwrap(),
+            BeginOpts {
+                id: id(2),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: Some(LifecyclePlan {
+                    executable: Executable::capture(&fixture()).unwrap(),
+                    placement: effigy_kernel::supervise::Placement::Inline,
+                }),
+            },
+        )
+        .unwrap_or_else(|error| panic!("child admission: {error}; context: {cx:?}"))
+}
+
+#[test]
+fn foreground_parent_requires_positive_child_completion() {
+    for complete in [false, true] {
+        let home = home();
+        let cx = context();
+        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let mut parent = foreground_begin(&cx, &root);
+        let mut child = foreground_child(&mut parent, &cx, &root);
+        assert!(parent.finish(WorkloadOutcome::Succeeded).is_err());
+        if complete {
+            let mut process =
+                Custody::spawn_foreground(&mut child, spec(home.path(), "exit 0"), &cx).unwrap();
+            let exit = *process.wait(cx.operation()).verified().unwrap();
+            process.complete_foreground(&mut child, exit).unwrap();
+            child.finish(WorkloadOutcome::Succeeded).unwrap();
+            child
+                .settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+                .unwrap();
+            parent.finish(WorkloadOutcome::Succeeded).unwrap();
+            parent
+                .settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+                .unwrap();
+        } else {
+            drop(child);
+            assert!(parent.finish(WorkloadOutcome::Succeeded).is_err());
+        }
+        assert!(!root.path().join("kernel.db").exists());
+    }
+}
+
+#[test]
+fn foreground_auxiliary_custody_is_not_a_completion_obligation() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    let process =
+        Custody::spawn_auxiliary_foreground(&mut run, spec(home.path(), "exec /bin/sleep 30"), &cx)
+            .unwrap();
+    let identity = process.identity().identity.clone();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    let outcome = run
+        .settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+        .unwrap();
+    assert_eq!(outcome.exit_code(), 0);
+    assert_ne!(
+        effigy_kernel::ident::process_identity(identity.pid).verified(),
+        Some(&identity)
+    );
+    assert!(!root.path().join("kernel.db").exists());
+}
+
+#[test]
+fn inheritance_custody_exports_one_reader_to_sibling_foreground_children() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    let lease = effigy_kernel::inheritance::MemoryLease::new(
+        &cx,
+        &serde_json::json!({"admitted": true, "class": "foreground"}),
+    )
+    .unwrap();
+    let reader = lease.capability();
+    let mut children = Vec::new();
+    for _ in 0..2 {
+        let mut spec = spec(home.path(), "unused");
+        spec.argv = vec![fixture().into_os_string(), "inheritance-check".into()];
+        children.push(
+            Custody::spawn_foreground_with_lease(&mut run, spec, &cx, &reader, true).unwrap(),
+        );
+    }
+    for child in &mut children {
+        let exit = child.wait(cx.operation()).verified().copied().unwrap();
+        assert_eq!(exit.code, 0);
+        child.complete_foreground(&mut run, exit).unwrap();
+    }
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    assert_eq!(
+        run.settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+            .unwrap()
+            .cleanup(),
+        CleanupOutcome::Complete
+    );
+    assert!(!root.path().join("kernel.db").exists());
+    assert!(!root.path().join("runs").exists());
+    assert!(!root.path().join("sock").exists());
+}
+
+#[test]
+fn inheritance_foreground_class_refuses_durable_factories_in_a_native_child() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    let grant = effigy_kernel::inheritance::RuntimeParent::new(
+        id(1),
+        effigy_kernel::inheritance::RunClass::Foreground,
+        None,
+    );
+    let lease = effigy_kernel::inheritance::MemoryLease::new(&cx, &grant).unwrap();
+    let mut command = spec(home.path(), "unused");
+    command.argv = vec![
+        fixture().into_os_string(),
+        "runtime-open".into(),
+        home.path().join("forbidden").into_os_string(),
+    ];
+    let mut process =
+        Custody::spawn_foreground_with_lease(&mut run, command, &cx, &lease.capability(), true)
+            .unwrap();
+    let exit = process.wait(cx.operation()).verified().copied().unwrap();
+    assert_eq!(exit.code, 0);
+    process.complete_foreground(&mut run, exit).unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(&cx.operation().cleanup(Duration::from_secs(5)).unwrap())
+        .unwrap();
+    assert!(!home.path().join("forbidden").exists());
+    assert!(!root.path().join("kernel.db").exists());
+}
+
+#[test]
+fn inheritance_ambient_marker_cannot_export_an_unowned_descriptor() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    let mut spec = spec(home.path(), "unused");
+    spec.argv = vec![fixture().into_os_string(), "inheritance-check".into()];
+    spec.env.insert(
+        effigy_kernel::inheritance::ENV.into(),
+        EnvValue::Plain("forged parent grant".into()),
+    );
+    let mut child = Custody::spawn_foreground(&mut run, spec, &cx).unwrap();
+    let exit = child.wait(cx.operation()).verified().copied().unwrap();
+    assert_eq!(exit.code, 41);
+    child.complete_foreground(&mut run, exit).unwrap();
+    run.finish(WorkloadOutcome::Failed { code: 41 }).unwrap();
+    run.settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+        .unwrap();
+    assert!(!root.path().join("kernel.db").exists());
+}
+
+#[test]
+fn foreground_retained_git_pointer_refuses_new_workload_go() {
+    let home = home();
+    let cx = context();
+    let one = home.path().join("git-one");
+    let two = home.path().join("git-two");
+    std::fs::create_dir(&one).unwrap();
+    std::fs::create_dir(&two).unwrap();
+    std::fs::write(home.path().join(".git"), "gitdir: git-one\n").unwrap();
+    let location = effigy_kernel::migration::CheckoutLocation {
+        root: home.path().into(),
+        git_directory: Some(one),
+    };
+    let root = StateRoot::foreground_effects(&cx, &location).unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    std::fs::write(home.path().join(".git"), "gitdir: git-two\n").unwrap();
+    assert!(
+        Custody::spawn_foreground(&mut run, spec(home.path(), "printf bad > forbidden"), &cx)
+            .is_err()
+    );
+    assert!(run.record().effects().is_empty());
+    assert!(!home.path().join("forbidden").exists());
+    assert!(!root.path().join("kernel.db").exists());
+    run.interrupt(WorkloadOutcome::NotStarted).unwrap();
+    run.settle(&cx.operation().cleanup(Duration::from_secs(5)).unwrap())
+        .unwrap();
+}
+
+#[test]
+fn foreground_git_replacement_keeps_directory_exclusion_until_old_custody_closes() {
+    let home = home();
+    let cx = context();
+    let git = home.path().join(".git");
+    std::fs::create_dir(&git).unwrap();
+    let location = || effigy_kernel::migration::CheckoutLocation {
+        root: home.path().into(),
+        git_directory: Some(git.clone()),
+    };
+    let observe = cx.operation().observe().unwrap();
+    let old_id = StateRoot::filesystem_checkout(&observe, &location()).unwrap();
+    let old_root = StateRoot::foreground_effects(&cx, &location()).unwrap();
+    let opts = |n| BeginOpts {
+        id: id(n),
+        wait: Wait::FailFast,
+        acknowledge: vec![],
+        next: next(),
+        custody: Some(LifecyclePlan {
+            executable: Executable::capture(&fixture()).unwrap(),
+            placement: effigy_kernel::supervise::Placement::Inline,
+        }),
+    };
+    let mut old =
+        ForegroundRun::begin(&cx, &old_root, &invocation_at_checkout(old_id), opts(18)).unwrap();
+    std::fs::rename(&git, home.path().join("git-retired")).unwrap();
+    std::fs::create_dir(&git).unwrap();
+    assert!(old.verify_custody().is_err());
+    let new_id = StateRoot::filesystem_checkout(&observe, &location()).unwrap();
+    assert_ne!(old_id, new_id);
+    let new_root = StateRoot::foreground_effects(&cx, &location()).unwrap();
+    assert!(matches!(
+        ForegroundRun::begin(&cx, &new_root, &invocation_at_checkout(new_id), opts(19)),
+        Err(RunError::Gate(effigy_kernel::gate::GateError::Busy { .. }))
+    ));
+    old.interrupt(WorkloadOutcome::NotStarted).unwrap();
+    old.settle(&cx.operation().cleanup(Duration::from_secs(5)).unwrap())
+        .unwrap();
+    let mut new =
+        ForegroundRun::begin(&cx, &new_root, &invocation_at_checkout(new_id), opts(19)).unwrap();
+    new.finish(WorkloadOutcome::Succeeded).unwrap();
+    new.settle(&cx.operation().cleanup(Duration::from_secs(5)).unwrap())
+        .unwrap();
+    assert!(!new_root.path().join("kernel.db").exists());
+}
+
+#[test]
+fn foreground_filesystem_identity_cannot_be_promoted_into_a_durable_run() {
+    let home = home();
+    let cx = context();
+    let location = effigy_kernel::migration::CheckoutLocation {
+        root: home.path().into(),
+        git_directory: None,
+    };
+    let checkout =
+        StateRoot::filesystem_checkout(&cx.operation().observe().unwrap(), &location).unwrap();
+    let root = StateRoot::foreground_effects(&cx, &location).unwrap();
+    let task = TaskId::new(checkout, "", Surface::Published, "fixture", None).unwrap();
+    let original = invocation();
+    let mut spec = original.spec().clone();
+    spec.owner = task.resource();
+    spec.task = task;
+    let invocation = ResolvedInvocation::new(spec).unwrap();
+    assert!(Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        BeginOpts {
+            id: id(3),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: None
+        },
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict
+    )
+    .is_err());
+    assert!(!root.path().join("kernel.db").exists());
+    assert!(!root.path().join("runs").exists());
+}
+
+fn invocation_at_checkout(checkout: CheckoutId) -> ResolvedInvocation {
+    let mut spec = invocation().spec().clone();
+    spec.task = TaskId::new(checkout, "", Surface::Published, "fixture", None).unwrap();
+    spec.owner = spec.task.resource();
+    ResolvedInvocation::new(spec).unwrap()
+}
+
+#[test]
+fn foreground_and_durable_exclusion_survives_first_token_creation() {
+    let home = home();
+    let cx = context();
+    let location = effigy_kernel::migration::CheckoutLocation {
+        root: home.path().into(),
+        git_directory: None,
+    };
+    let local =
+        StateRoot::filesystem_checkout(&cx.operation().observe().unwrap(), &location).unwrap();
+    let transient = StateRoot::foreground_effects(&cx, &location).unwrap();
+    let foreground_invocation = invocation_at_checkout(local);
+    let mut foreground = ForegroundRun::begin(
+        &cx,
+        &transient,
+        &foreground_invocation,
+        BeginOpts {
+            id: id(11),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: Some(LifecyclePlan {
+                executable: Executable::capture(&fixture()).unwrap(),
+                placement: effigy_kernel::supervise::Placement::Inline,
+            }),
+        },
+    )
+    .unwrap();
+    let machine = home.path().join("machine");
+    std::fs::create_dir(&machine).unwrap();
+    let durable_root = StateRoot::checkout_effects(&cx, &machine, &location).unwrap();
+    let token = CheckoutId::new(CheckoutKind::Primary, [17; 16]);
+    std::fs::write(
+        home.path().join(".effigy/effigy-runtime-scope"),
+        "11111111111111111111111111111111\n",
+    )
+    .unwrap();
+    let durable_invocation = invocation_at_checkout(token);
+    let opts = || BeginOpts {
+        id: id(12),
+        wait: Wait::FailFast,
+        acknowledge: vec![],
+        next: next(),
+        custody: None,
+    };
+    let cleanup = cx.operation().cleanup(Duration::from_secs(5)).unwrap();
+    assert!(matches!(
+        Run::begin(
+            &cx,
+            &durable_root,
+            &durable_invocation,
+            opts(),
+            &cleanup,
+            &mut Strict
+        ),
+        Err(RunError::Gate(_))
+    ));
+    assert!(!durable_root.path().join("kernel.db").exists());
+    foreground.finish(WorkloadOutcome::Succeeded).unwrap();
+    foreground.settle(&cleanup).unwrap();
+    let mut durable = Run::begin(
+        &cx,
+        &durable_root,
+        &durable_invocation,
+        opts(),
+        &cleanup,
+        &mut Strict,
+    )
+    .unwrap();
+    assert!(matches!(
+        effigy_kernel::gate::Gate::probe(
+            &cx.operation().observe().unwrap(),
+            &transient,
+            &foreground_invocation.spec().owner
+        ),
+        Observed::Verified(effigy_kernel::gate::GateState::Held(_), _)
+    ));
+    assert!(matches!(
+        ForegroundRun::begin(
+            &cx,
+            &transient,
+            &durable_invocation,
+            BeginOpts {
+                id: id(13),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: Some(LifecyclePlan {
+                    executable: Executable::capture(&fixture()).unwrap(),
+                    placement: effigy_kernel::supervise::Placement::Inline
+                })
+            }
+        ),
+        Err(RunError::Gate(_))
+    ));
+    durable.finish(WorkloadOutcome::Succeeded).unwrap();
+    durable.settle(&cleanup, &mut Strict).unwrap();
+}
+
+#[test]
+fn custody_sentinel_recovery_meets_the_filesystem_gate_alias() {
+    use effigy_kernel::{
+        gate::{Gate, GateState},
+        ident,
+    };
+    let home = home();
+    let mut owner = ChildGuard(
+        Command::new(fixture())
+            .arg("inline-alias")
+            .arg(home.path())
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    eventually(|| home.path().join("ready").exists());
+    let cx = context();
+    let observe = cx.operation().observe().unwrap();
+    let root = StateRoot::observe(&observe, home.path())
+        .verified()
+        .unwrap()
+        .clone();
+    let location = effigy_kernel::migration::CheckoutLocation {
+        root: home.path().into(),
+        git_directory: None,
+    };
+    let local = StateRoot::filesystem_checkout(&observe, &location).unwrap();
+    let alias = invocation_at_checkout(local).spec().owner.clone();
+    assert!(matches!(
+        Gate::probe(&observe, &root, &alias),
+        Observed::Verified(GateState::Held(_), _)
+    ));
+    let metadata = metadata(&observe, &root, RunId::new(1, [9; 10]).unwrap());
+    let sentinel = metadata.verified().unwrap().sentinel.clone().unwrap();
+    let process: ProcessReceipt =
+        serde_json::from_slice(&std::fs::read(home.path().join("receipt")).unwrap()).unwrap();
+    struct Resume(ident::ProcessIdentity);
+    impl Drop for Resume {
+        fn drop(&mut self) {
+            if ident::process_identity(self.0.pid).verified() == Some(&self.0) {
+                // SAFETY: exact identity of the sentinel this test started.
+                unsafe {
+                    libc::kill(self.0.pid as i32, libc::SIGCONT);
+                }
+            }
+        }
+    }
+    assert_eq!(
+        ident::process_identity(sentinel.pid).verified(),
+        Some(&sentinel)
+    );
+    // SAFETY: this fixture owns this freshly verified sentinel.
+    assert_eq!(unsafe { libc::kill(sentinel.pid as i32, libc::SIGSTOP) }, 0);
+    let resume = Resume(sentinel.clone());
+    eventually(|| {
+        matches!(
+            ident::process_state(sentinel.pid),
+            Observed::Verified(ident::ProcessState::Stopped, _)
+        )
+    });
+    owner.0.kill().unwrap();
+    owner.0.wait().unwrap();
+    let effects_root = StateRoot::effects(&cx, home.path()).unwrap();
+    let blocker = Gate::acquire(&cx, &effects_root, &[alias], Wait::FailFast).unwrap();
+    drop(resume);
+    // The multi-gate acquire writes diagnostics only after every lock is
+    // held. While blocked on our alias, the owner gate can still name the
+    // dead predecessor; observe the lock and the exact live sentinel itself.
+    eventually(|| {
+        matches!(
+            Gate::probe(&observe, &root, &invocation().spec().owner),
+            Observed::Verified(GateState::Held(_), _)
+        )
+    });
+    assert_eq!(
+        ident::process_identity(sentinel.pid).verified(),
+        Some(&sentinel)
+    );
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        ident::process_identity(process.identity.pid).verified(),
+        Some(&process.identity)
+    );
+    assert!(!matches!(
+        fresh_status(&observe, &root, RunId::new(1, [9; 10]).unwrap()),
+        Observed::Verified(RunStatus::Closed { .. }, _)
+    ));
+    drop(blocker);
+    eventually(|| {
+        matches!(
+            fresh_status(&observe, &root, RunId::new(1, [9; 10]).unwrap()),
+            Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
+        )
+    });
+    eventually(|| {
+        ident::process_identity(process.identity.pid).verified() != Some(&process.identity)
+    });
+}
+
+#[test]
+fn custody_deleted_checkout_lease_survives_owner_kill_until_positive_group_closure() {
+    let home = home();
+    let mut owner = ChildGuard(
+        Command::new(fixture())
+            .arg("checkout-lease-owner")
+            .arg(home.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    eventually(|| home.path().join("lease-ready.json").is_file());
+    let value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.path().join("lease-ready.json")).unwrap())
+            .unwrap();
+    let expected: effigy_kernel::gate::CheckoutFenceIdentity =
+        serde_json::from_value(value["identity"].clone()).unwrap();
+    let process: ProcessReceipt = serde_json::from_value(value["child"].clone()).unwrap();
+    let cx = context();
+    let machine = StateRoot::runtime_machine_effects(&cx, &home.path().join("machine")).unwrap();
+    let token = "04040404040404040404040404040404";
+    assert!(effigy_kernel::gate::Gate::checkout_retirement(
+        &cx,
+        &machine,
+        token,
+        expected,
+        Wait::FailFast
+    )
+    .is_err());
+    std::fs::remove_dir_all(home.path().join("checkout")).unwrap();
+    assert!(effigy_kernel::gate::Gate::checkout_retirement(
+        &cx,
+        &machine,
+        token,
+        expected,
+        Wait::FailFast
+    )
+    .is_err());
+    owner.0.kill().unwrap();
+    owner.0.wait().unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    assert!(
+        effigy_kernel::gate::Gate::checkout_retirement(
+            &cx,
+            &machine,
+            token,
+            expected,
+            Wait::FailFast
+        )
+        .is_err(),
+        "cleanup retains the shared lease through the resistant process grace"
+    );
+    eventually(|| {
+        effigy_kernel::gate::Gate::checkout_retirement(
+            &cx,
+            &machine,
+            token,
+            expected,
+            Wait::FailFast,
+        )
+        .is_ok()
+    });
+    assert!(
+        matches!(
+            effigy_kernel::ident::process_identity(process.identity.pid),
+            Observed::Absent(_)
+        ) || matches!(
+            effigy_kernel::ident::process_state(process.identity.pid),
+            Observed::Verified(effigy_kernel::ident::ProcessState::Zombie, _)
+        )
+    );
+    assert!(!machine.path().join("machine.db").exists());
+    assert!(!machine.path().join("kernel.db").exists());
 }

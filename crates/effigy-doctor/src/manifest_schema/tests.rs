@@ -1176,3 +1176,14 @@ description = "Alias for the dev stack"
         sink.findings
     );
 }
+
+#[test]
+fn task_durable_declaration_has_boolean_schema() {
+    for (value, valid) in [("true", true), ("false", true), ("'yes'", false)] {
+        let manifest: Value =
+            toml::from_str(&format!("[tasks.probe]\nrun = 'true'\ndurable = {value}\n")).unwrap();
+        let mut sink = TestSink::default();
+        validate_manifest_schema(Path::new("effigy.toml"), &manifest, &mut sink);
+        assert_eq!(sink.findings.is_empty(), valid, "{:?}", sink.findings);
+    }
+}

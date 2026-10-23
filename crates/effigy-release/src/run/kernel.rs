@@ -20,7 +20,7 @@ use effigy_kernel::ctx::{
 use effigy_kernel::gate::Wait;
 use effigy_kernel::id::{
     CheckoutId, CheckoutKind, ExecutionTarget, InvocationSpec, ResolvedInvocation, ResourceId,
-    Route, RunId, Surface, TaskId,
+    Route, RunId, Scope, Surface, TaskId,
 };
 use effigy_kernel::observe::{AbsenceProof, Observed, UnknownReason};
 use effigy_kernel::outcome::Invocation;
@@ -101,12 +101,11 @@ fn operation() -> OperationContext {
     )
 }
 
-/// The user's home, which holds Effigy-owned release state.
+/// The machine home used for migration; release state belongs to its checkout.
 pub fn release_home() -> Result<PathBuf, ReleaseError> {
     StateRoot::home_from_env().ok_or_else(|| {
         ReleaseError::TaskInvocation(
-            "a release Run needs an absolute HOME: its state and receipts live in \
-             `$HOME/.effigy/state` (contract 054 §10 ruling 2)"
+            "a release Run needs an absolute HOME for runtime migration checks; its state and receipts live in the checkout's `.effigy/state`"
                 .into(),
         )
     })
@@ -132,16 +131,10 @@ pub fn new_run_id() -> Result<RunId, ReleaseError> {
     })
 }
 
-fn invocation(owner: ResourceId) -> ResolvedInvocation {
+fn invocation(checkout: CheckoutId, owner: ResourceId) -> ResolvedInvocation {
     ResolvedInvocation::new(InvocationSpec {
-        task: TaskId::new(
-            CheckoutId::new(CheckoutKind::Machine, [0; 16]),
-            "release",
-            Surface::Published,
-            "release run",
-            None,
-        )
-        .expect("fixed release task identity"),
+        task: TaskId::new(checkout, "release", Surface::Published, "release run", None)
+            .expect("fixed release task identity"),
         route: Route::Builtin("release".into()),
         argv: vec![OsString::from("release"), OsString::from("run")],
         cwd: String::new(),
@@ -159,23 +152,54 @@ fn invocation(owner: ResourceId) -> ResolvedInvocation {
 
 fn next_invocation() -> Invocation {
     Invocation::validated(
-        vec![OsString::from("release"), OsString::from("resume")],
-        |args| args == ["release", "resume"],
+        vec![
+            OsString::from("effigy"),
+            OsString::from("release"),
+            OsString::from("run"),
+        ],
+        |args| args == ["effigy", "release", "run"],
     )
     .expect("fixed recovery invocation")
 }
 
-/// The release owner: one per release root, machine-scoped, so two checkouts of
-/// the same project never share a run.
-pub fn release_owner(repo_root: &Path) -> ResourceId {
-    let canonical = repo_root
-        .canonicalize()
-        .unwrap_or_else(|_| repo_root.into());
-    ResourceId::store(
-        effigy_kernel::id::Scope::Machine,
-        &format!("release {}", canonical.display()),
-    )
-    .expect("release owner identity")
+/// Release authority is local to the checkout's retained identity.
+pub fn release_owner(checkout: CheckoutId) -> ResourceId {
+    ResourceId::store(Scope::Checkout(checkout), "release").expect("fixed release owner")
+}
+fn location(root: &Path) -> Result<effigy_kernel::migration::CheckoutLocation, ReleaseError> {
+    Ok(effigy_kernel::migration::CheckoutLocation {
+        root: root.into(),
+        git_directory: effigy_core::worktree_scope::git_directory(root).map_err(storage_error)?,
+    })
+}
+fn storage_error(error: impl std::fmt::Display) -> ReleaseError {
+    ReleaseError::TaskInvocation(format!("release checkout state: {error}"))
+}
+fn checkout(root: &Path, mint: bool) -> Result<Option<CheckoutId>, ReleaseError> {
+    use effigy_core::worktree_scope::{self, ScopeKind};
+    let kind = match worktree_scope::scope_kind(root).map_err(storage_error)? {
+        Some(ScopeKind::LinkedWorktree) => CheckoutKind::LinkedWorktree,
+        Some(ScopeKind::EphemeralClone) => CheckoutKind::EphemeralClone,
+        None => CheckoutKind::Primary,
+    };
+    let token = if mint {
+        Some(worktree_scope::prepare_checkout_token(root).map_err(storage_error)?)
+    } else {
+        worktree_scope::checkout_token(root).map_err(storage_error)?
+    };
+    token
+        .map(|token| {
+            if token.len() != 32 || !token.is_ascii() {
+                return Err(storage_error("invalid checkout token"));
+            }
+            let mut bytes = [0; 16];
+            for (index, byte) in bytes.iter_mut().enumerate() {
+                *byte = u8::from_str_radix(&token[index * 2..index * 2 + 2], 16)
+                    .map_err(storage_error)?;
+            }
+            Ok(CheckoutId::new(kind, bytes))
+        })
+        .transpose()
 }
 
 /// A release's Effigy-owned state directory: the record and the candidate.
@@ -186,68 +210,78 @@ pub struct ReleaseState {
 }
 
 impl ReleaseState {
-    pub fn for_owner(state_root: &Path, owner: &ResourceId) -> Result<Self, ReleaseError> {
+    pub fn for_owner(state_root: &Path, owner: &ResourceId) -> Self {
         let directory = state_root
             .join(RELEASE_STATE_DIR)
             .join(owner.name().to_string());
-        for path in [directory.clone(), directory.join("candidate")] {
-            std::fs::create_dir_all(&path).map_err(|error| {
-                ReleaseError::TaskInvocation(format!(
-                    "failed to create release state directory {}: {error}",
-                    path.display()
-                ))
-            })?;
-        }
-        Ok(Self {
+        Self {
             record_path: directory.join("record.json"),
             candidate_dir: directory.join("candidate"),
-        })
-    }
-
-    /// Write the record atomically: a crash leaves the previous generation.
-    pub fn write_record(&self, record: &ReleaseRecord) -> Result<(), ReleaseError> {
-        let bytes = serde_json::to_vec_pretty(record).map_err(|error| {
-            ReleaseError::TaskInvocation(format!("failed to encode the release record: {error}"))
-        })?;
-        let temporary = self.record_path.with_extension("record-tmp");
-        std::fs::write(&temporary, &bytes).map_err(|error| {
-            ReleaseError::TaskInvocation(format!(
-                "failed to write the release record {}: {error}",
-                temporary.display()
-            ))
-        })?;
-        std::fs::rename(&temporary, &self.record_path).map_err(|error| {
-            ReleaseError::TaskInvocation(format!(
-                "failed to publish the release record {}: {error}",
-                self.record_path.display()
-            ))
-        })?;
-        if let Some(parent) = self.record_path.parent() {
-            if let Ok(directory) = std::fs::File::open(parent) {
-                let _ = directory.sync_all();
-            }
         }
-        Ok(())
+    }
+    /// The run owns this Store resource; the intent precedes publication and
+    /// the kernel commits the file and its directory before acknowledging it.
+    pub fn write_record(
+        &self,
+        record: &ReleaseRecord,
+        run: &mut Run<'_>,
+    ) -> Result<(), ReleaseError> {
+        let bytes = serde_json::to_vec_pretty(record).map_err(storage_error)?;
+        if bytes.len() as u64 > <ReleaseRecord as effigy_kernel::record::Record>::MAX_BYTES {
+            return Err(storage_error("release record exceeds 4 MiB"));
+        }
+        let ticket = run.intend(effigy_kernel::run::EffectSpec {
+            target: run.fence().clone(), kind: "release:checkpoint-file".into(),
+            payload: serde_json::json!({"record":self.record_path,"sha256":super::artifacts::sha256_bytes(&bytes)}),
+            settlement: effigy_kernel::run::Settlement::Retain, required: false,
+        }).map_err(storage_error)?;
+        let directory = effigy_kernel::fs::DirFd::open(
+            self.record_path
+                .parent()
+                .ok_or_else(|| storage_error("record parent missing"))?,
+        )
+        .map_err(storage_error)?;
+        let name = effigy_kernel::fs::FileName::new("record.json").map_err(storage_error)?;
+        run.replace_record(&directory, &name, &bytes, Default::default())
+            .map_err(storage_error)?;
+        run.applied(&ticket, serde_json::Value::Null)
+            .map_err(storage_error)
     }
 
     pub fn read_record(&self) -> Result<Option<ReleaseRecord>, ReleaseError> {
-        let raw = match std::fs::read(&self.record_path) {
-            Ok(raw) => raw,
+        let parent = self
+            .record_path
+            .parent()
+            .ok_or_else(|| storage_error("record parent missing"))?;
+        match std::fs::symlink_metadata(parent) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => {
-                return Err(ReleaseError::TaskInvocation(format!(
-                    "failed to read the release record {}: {error}",
-                    self.record_path.display()
-                )))
+            Err(error) => return Err(storage_error(error)),
+            Ok(_) => {}
+        }
+        let directory = effigy_kernel::fs::DirFd::open(parent).map_err(storage_error)?;
+        let observe = operation()
+            .child(Duration::from_secs(30))
+            .observe()
+            .map_err(|_| storage_error("record observation context"))?;
+        let name = effigy_kernel::fs::FileName::new("record.json").map_err(storage_error)?;
+        match effigy_kernel::record::read_record::<ReleaseRecord>(&observe, &directory, &name) {
+            Observed::Verified(record, _) => Ok(Some(record)),
+            Observed::Absent(_) => Ok(None),
+            Observed::Unknown(reason) => {
+                Err(storage_error(format!("record is unreadable: {reason:?}")))
             }
-        };
-        let record: ReleaseRecord = serde_json::from_slice(&raw).map_err(|error| {
-            ReleaseError::TaskInvocation(format!(
-                "release record {} is unreadable: {error}",
-                self.record_path.display()
-            ))
-        })?;
-        Ok(Some(record))
+        }
+    }
+}
+
+impl effigy_kernel::record::Record for ReleaseRecord {
+    const MAX_BYTES: u64 = 4 << 20;
+    fn decode(bytes: &[u8]) -> Result<Self, String> {
+        let record: Self = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        if record.schema != super::record::RELEASE_RECORD_SCHEMA {
+            return Err("unsupported release record schema".into());
+        }
+        Ok(record)
     }
 }
 
@@ -256,7 +290,7 @@ pub struct ReleaseSession {
     cx: EffectContext,
     cleanup: CleanupContext,
     root: StateRoot,
-    home: PathBuf,
+    checkout: CheckoutId,
     pub owner: ResourceId,
     pub repo_root: PathBuf,
 }
@@ -273,6 +307,11 @@ impl std::fmt::Debug for ReleaseSession {
 
 impl ReleaseSession {
     pub fn open(home: &Path, repo_root: &Path) -> Result<Self, ReleaseError> {
+        if effigy_core::container_detection::process_is_inside_effigy_workspace_container() {
+            return Err(ReleaseError::TaskInvocation(
+                "release mutation requires host authority".into(),
+            ));
+        }
         let op = operation();
         let cx = op.effects().map_err(|_| {
             ReleaseError::TaskInvocation("release runs need write capability".into())
@@ -280,24 +319,59 @@ impl ReleaseSession {
         let cleanup = op.cleanup(CLEANUP_BUDGET).map_err(|_| {
             ReleaseError::TaskInvocation("release cleanup budget is unusable".into())
         })?;
-        let root = StateRoot::effects(&cx, home).map_err(|error| {
-            ReleaseError::TaskInvocation(format!(
-                "release state root is unusable at {}: {error:?}",
-                home.join(".effigy/state").display()
-            ))
-        })?;
+        effigy_kernel::inheritance::require_durable(&op).map_err(storage_error)?;
+        let root =
+            StateRoot::checkout_effects(&cx, home, &location(repo_root)?).map_err(storage_error)?;
+        effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root(repo_root)
+            .map_err(storage_error)?;
+        let checkout =
+            checkout(repo_root, true)?.ok_or_else(|| storage_error("checkout identity missing"))?;
+        let observe = op
+            .observe()
+            .map_err(|_| storage_error("import alias observation"))?;
+        let owner = match Store::read(&observe, &root) {
+            Observed::Verified(reader, _) => local_owner(&reader, checkout)?,
+            Observed::Absent(_) => release_owner(checkout),
+            Observed::Unknown(reason) => {
+                return Err(storage_error(format!(
+                    "release owner is unreadable: {reason:?}"
+                )))
+            }
+        };
         Ok(Self {
             cx,
             cleanup,
             root,
-            home: home.to_path_buf(),
-            owner: release_owner(repo_root),
+            checkout,
+            owner,
             repo_root: repo_root.to_path_buf(),
         })
     }
 
     pub fn state(&self) -> Result<ReleaseState, ReleaseError> {
-        ReleaseState::for_owner(self.root.path(), &self.owner)
+        self.root.verify_binding().map_err(storage_error)?;
+        use effigy_kernel::fs::FileName;
+        let release = self
+            .root
+            .state_directory()
+            .prepare_child(
+                &self.cx,
+                &FileName::new(RELEASE_STATE_DIR).map_err(storage_error)?,
+            )
+            .map_err(storage_error)?;
+        let owner = release
+            .prepare_child(
+                &self.cx,
+                &FileName::new(&self.owner.name().to_string()).map_err(storage_error)?,
+            )
+            .map_err(storage_error)?;
+        owner
+            .prepare_child(
+                &self.cx,
+                &FileName::new("candidate").map_err(storage_error)?,
+            )
+            .map_err(storage_error)?;
+        Ok(ReleaseState::for_owner(self.root.path(), &self.owner))
     }
 
     /// The checkpoint pointer the kernel engine record carries.
@@ -310,7 +384,7 @@ impl ReleaseSession {
             .map_err(|_| {
                 ReleaseError::TaskInvocation("release state observation needs a deadline".into())
             })?;
-        let root = match StateRoot::observe(&observe, &self.home) {
+        let root = match StateRoot::checkout_observe(&observe, &location(&self.repo_root)?) {
             Observed::Verified(root, _) => root,
             Observed::Absent(_) => return Ok(None),
             Observed::Unknown(reason) => {
@@ -331,12 +405,27 @@ impl ReleaseSession {
         checkpoint_from_reader(&reader, &self.owner)
     }
 
+    pub fn project_record(&self, record: &mut ReleaseRecord) -> Result<(), ReleaseError> {
+        let observe = self
+            .cx
+            .operation()
+            .observe()
+            .map_err(|_| storage_error("record observation context"))?;
+        match Store::read(&observe, &self.root) {
+            Observed::Verified(reader, _) => project_cleanup(&reader, record),
+            Observed::Absent(_) => Ok(()),
+            Observed::Unknown(reason) => {
+                Err(storage_error(format!("journal is unreadable: {reason:?}")))
+            }
+        }
+    }
+
     pub fn begin(&self, id: RunId, adapter: &mut ReportsOnly) -> Result<Run<'_>, ReleaseError> {
         let deadline = std::time::Instant::now() + OWNER_GATE_WAIT;
         Run::begin(
             &self.cx,
             &self.root,
-            &invocation(self.owner.clone()),
+            &invocation(self.checkout, self.owner.clone()),
             BeginOpts {
                 id,
                 wait: Wait::Until(deadline),
@@ -376,6 +465,26 @@ fn begin_error(repo_root: &Path, error: effigy_kernel::run::RunError) -> Release
         _ => format!("the kernel refused the release Run: {error}"),
     };
     ReleaseError::TaskInvocation(message)
+}
+
+fn local_owner(reader: &StoreReader, checkout: CheckoutId) -> Result<ResourceId, ReleaseError> {
+    match reader.imported_owner("release") {
+        Observed::Verified(owner, _)
+            if owner.kind() == effigy_kernel::id::ResourceKind::Store
+                && owner.scope() == Scope::Machine
+                && owner
+                    .key()
+                    .first()
+                    .and_then(Option::as_deref)
+                    .is_some_and(|key| key.starts_with("release ")) =>
+        {
+            Ok(owner)
+        }
+        Observed::Absent(_) => Ok(release_owner(checkout)),
+        other => Err(storage_error(format!(
+            "invalid imported release owner: {other:?}"
+        ))),
+    }
 }
 
 fn checkpoint_from_reader(
@@ -427,10 +536,9 @@ pub fn read_release_record(
     let observe = op.observe().map_err(|_| {
         ReleaseError::TaskInvocation("release state observation needs a deadline".into())
     })?;
-    let owner = release_owner(repo_root);
-    let root = match StateRoot::observe(&observe, home) {
+    let root = match StateRoot::checkout_observe_in(&observe, home, &location(repo_root)?) {
         Observed::Verified(root, _) => root,
-        Observed::Absent(_) => return Ok(None),
+        Observed::Absent(_) => return legacy_release_refusal(&observe, home, repo_root),
         Observed::Unknown(reason) => {
             return Err(ReleaseError::TaskInvocation(format!(
                 "release state is unreadable: {reason:?}"
@@ -439,26 +547,89 @@ pub fn read_release_record(
     };
     let reader = match Store::read(&observe, &root) {
         Observed::Verified(reader, _) => reader,
-        Observed::Absent(_) => return Ok(None),
+        Observed::Absent(_) => return legacy_release_refusal(&observe, home, repo_root),
         Observed::Unknown(reason) => {
             return Err(ReleaseError::TaskInvocation(format!(
                 "release state store is unreadable: {reason:?}"
             )))
         }
     };
+    let checkout = checkout(repo_root, false)?
+        .ok_or_else(|| storage_error("journal exists without its checkout identity"))?;
+    let owner = local_owner(&reader, checkout)?;
     match checkpoint_from_reader(&reader, &owner)? {
         Some(checkpoint) => {
-            let state = ReleaseState::for_owner(root.path(), &owner)?;
+            let state = ReleaseState::for_owner(root.path(), &owner);
             if !record_path_is_owned(&state, Path::new(&checkpoint.record)) {
                 return Err(ReleaseError::TaskInvocation(format!(
                     "release Run {} points its state outside this release's state directory",
                     checkpoint.release_id
                 )));
             }
-            state.read_record()
+            let mut record = state.read_record()?.ok_or_else(|| storage_error(format!(
+                "release {} has a checkpoint but its record is missing; preserving the journal for recovery", checkpoint.release_id)))?;
+            project_cleanup(&reader, &mut record)?;
+            Ok(Some(record))
         }
         None => Ok(None),
     }
+}
+
+/// Historical evidence is read-only. Missing local state must not hide a
+/// paused old release or silently turn it into a new release.
+fn legacy_release_refusal(
+    observe: &effigy_kernel::ctx::ObserveContext,
+    home: &Path,
+    repo_root: &Path,
+) -> Result<Option<ReleaseRecord>, ReleaseError> {
+    if effigy_kernel::migration::committed(observe, home)
+        .map_err(storage_error)?
+        .is_some()
+    {
+        return Ok(None);
+    }
+    let root = match StateRoot::legacy_observe(observe, home) {
+        Observed::Verified(root, _) => root,
+        Observed::Absent(_) => return Ok(None),
+        Observed::Unknown(reason) => {
+            return Err(storage_error(format!("legacy release source: {reason:?}")))
+        }
+    };
+    let reader = match Store::read(observe, &root) {
+        Observed::Verified(reader, _) => reader,
+        Observed::Absent(_) => return Ok(None),
+        Observed::Unknown(reason) => {
+            return Err(storage_error(format!("legacy release source: {reason:?}")))
+        }
+    };
+    let canonical = repo_root.canonicalize().map_err(storage_error)?;
+    let owner = ResourceId::store(Scope::Machine, &format!("release {}", canonical.display()))
+        .map_err(storage_error)?;
+    match checkpoint_from_reader(&reader, &owner)? {
+        None => Ok(None),
+        Some(checkpoint) => Err(storage_error(format!(
+            "legacy release checkpoint {} requires `effigy run migrate`; its record and certified artifacts remain untouched", checkpoint.release_id))),
+    }
+}
+
+/// Incomplete cleanup stays in the journal. Project it without a late file
+/// write after the owner's gate was released by settle.
+fn project_cleanup(reader: &StoreReader, record: &mut ReleaseRecord) -> Result<(), ReleaseError> {
+    let id = record.run_id.parse::<RunId>().map_err(storage_error)?;
+    match effigy_kernel::run::summary(reader, id) {
+        Observed::Verified(summary, _) if summary.cleanup_complete == Some(false) => {
+            record.status = super::record::ReleaseRunStatus::Failed;
+            record.errors.push(format!(
+                "release Run {} left unresolved cleanup; `effigy release receipt {}` lists it",
+                record.run_id, record.release_id
+            ));
+        }
+        Observed::Unknown(reason) => {
+            return Err(storage_error(format!("cleanup is unknown: {reason:?}")))
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// `read_release_record` for the user's `HOME`, when it is absolute.
@@ -473,5 +644,5 @@ pub fn read_release_record_for_root(
 
 /// A record path is under this release's state directory, never anywhere else.
 pub fn record_path_is_owned(state: &ReleaseState, path: &Path) -> bool {
-    path.parent() == state.record_path.parent()
+    path == state.record_path
 }

@@ -109,6 +109,7 @@ impl Fixture {
             .env_remove("EFFIGY_ADMISSION_HOOK")
             .env_remove("EFFIGY_ADMISSION_HOOK_TIMEOUT_MS")
             .env_remove("EFFIGY_ADMITTED")
+            .env_remove("EFFIGY_PARENT_CAPABILITY")
             .env_remove("EFFIGY_MANAGED_RUN_TOKEN")
             .env_remove("EFFIGY_CUSTODY_NONCE")
             .env_remove("EFFIGY_LOCK_WAIT_MS")
@@ -185,7 +186,7 @@ fn wait_child(child: &mut OwnedChild) -> std::process::ExitStatus {
 fn an_admitted_heavy_run_holds_the_hook_until_it_ends_and_marks_its_children() {
     let fixture = Fixture::new();
     let hook = fixture.hook("hold.sh", HOLD_HOOK);
-    let output = fixture.with_hook(&hook, &["heavy"]);
+    let output = fixture.with_hook(&hook, &["--run-id", "admitted-1", "heavy"]);
     assert!(output.status.success(), "{}", text(&output));
     assert!(fixture.exists("ran.txt"));
     assert!(
@@ -337,10 +338,7 @@ fn a_root_task_named_run_still_owns_the_word() {
         .iter()
         .map(|run| run["task"].clone())
         .collect();
-    assert_eq!(
-        tasks,
-        vec![serde_json::json!("run"), serde_json::json!("run")]
-    );
+    assert_eq!(tasks, vec![serde_json::json!("run")]);
 }
 
 #[test]
@@ -568,7 +566,7 @@ fn an_unreadable_journal_is_unknown_and_names_the_run() {
         .run(&["--run-id", "dark-1", "light"])
         .status
         .success());
-    let state = fixture.home.join(".effigy/state");
+    let state = fixture.repo.join(".effigy/state");
     fs::set_permissions(&state, fs::Permissions::from_mode(0o000)).expect("hide journal");
     let status = fixture.run(&["run", "status", "dark-1"]);
     let follow = fixture.run(&["run", "logs", "dark-1", "--follow"]);
@@ -602,4 +600,62 @@ fn runs_lists_this_checkouts_runs_and_retired_surfaces_refuse() {
     let retired = fixture.run(&["tasks", "request", "status"]);
     assert_eq!(retired.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&retired.stderr).contains("effigy run status <key>"));
+}
+
+#[test]
+fn equal_keys_are_checkout_scoped_and_peer_discovery_refuses_ambiguity() {
+    let first = Fixture::new();
+    // Both checkouts and discovery configuration live under this fixture's
+    // fresh HOME. They share neither a token nor a journal.
+    let second = first.home.join("second");
+    let observer = first.home.join("observer");
+    fs::create_dir(&second).unwrap();
+    fs::create_dir(&observer).unwrap();
+    fs::write(second.join("effigy.toml"), MANIFEST).unwrap();
+    fs::write(observer.join("effigy.toml"), "").unwrap();
+    for checkout in [&first.repo, &second] {
+        let result = first
+            .effigy(&["--run-id", "equal-key", "light"])
+            .current_dir(checkout)
+            .output_owned()
+            .unwrap();
+        assert!(result.status.success(), "{}", text(&result));
+    }
+    let current = first.status_json("equal-key");
+    let result = first
+        .effigy(&["--json", "run", "status", "equal-key"])
+        .current_dir(&second)
+        .output_owned()
+        .unwrap();
+    assert!(result.status.success(), "{}", text(&result));
+    let peer: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_ne!(current["run_id"], peer["result"]["run"]["run_id"]);
+    assert!(first.repo.join(".effigy/state/kernel.db").is_file());
+    assert!(second.join(".effigy/state/kernel.db").is_file());
+    assert!(!first.home.join(".effigy/state/kernel.db").exists());
+    fs::create_dir_all(first.home.join(".effigy")).unwrap();
+    fs::write(
+        first.home.join(".effigy/config.toml"),
+        format!(
+            "[runtime]\ncheckout_roots = [{:?}, {:?}]\n",
+            first.repo, second
+        ),
+    )
+    .unwrap();
+    let result = first
+        .effigy(&["--json", "run", "status", "equal-key"])
+        .current_dir(&observer)
+        .output_owned()
+        .unwrap();
+    assert!(
+        !result.status.success(),
+        "a peer key must not select the first match"
+    );
+    let message = text(&result);
+    assert!(
+        message.contains("ambiguous")
+            && message.contains(first.repo.to_str().unwrap())
+            && message.contains(second.to_str().unwrap()),
+        "{message}"
+    );
 }

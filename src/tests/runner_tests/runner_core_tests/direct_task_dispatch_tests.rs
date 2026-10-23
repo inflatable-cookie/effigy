@@ -32,7 +32,7 @@ fn direct_task_dispatch_runs_through_execution_request_boundary() {
 }
 
 #[test]
-fn direct_task_dispatch_records_a_succeeded_run_and_writes_no_legacy_records() {
+fn direct_foreground_dispatch_succeeds_without_recording_runtime_history() {
     let root = temp_workspace("task-status-success");
     let marker = root.join("status-success.out");
     write_root_manifest(
@@ -55,10 +55,10 @@ fn direct_task_dispatch_records_a_succeeded_run_and_writes_no_legacy_records() {
 
     assert_file_text_equals(&marker, "ok");
     let status = root_task_status_for_tests(&root, "echo");
-    assert_eq!(status.state, "succeeded");
-    let latest = status.latest.expect("latest run");
-    assert_eq!(latest.exit_code, Some(0));
-    assert_eq!(latest.cleanup, Some("complete"));
+    assert_eq!(status.state, "not-recorded");
+    assert!(status.latest.is_none());
+    assert!(status.history.is_empty());
+    assert!(!root.join(".effigy/state/kernel.db").exists());
     assert!(status.current.is_none());
     assert!(!root.join(".effigy/reports").exists());
     assert!(!root.join(".effigy/runtime/tasks").exists());
@@ -66,7 +66,7 @@ fn direct_task_dispatch_records_a_succeeded_run_and_writes_no_legacy_records() {
 }
 
 #[test]
-fn direct_task_dispatch_records_a_failed_run_with_its_exit_code() {
+fn direct_foreground_dispatch_reports_failure_without_recording_history() {
     let root = temp_workspace("task-status-failed");
     write_root_manifest(&root, "[tasks.fail]\nrun = \"sh -c 'exit 7'\"\n");
     let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
@@ -85,12 +85,13 @@ fn direct_task_dispatch_records_a_failed_run_with_its_exit_code() {
     }
 
     let status = root_task_status_for_tests(&root, "fail");
-    assert_eq!(status.state, "failed");
-    assert_eq!(status.latest.expect("latest").exit_code, Some(7));
+    assert_eq!(status.state, "not-recorded");
+    assert!(status.latest.is_none());
+    assert!(status.history.is_empty());
 }
 
 #[test]
-fn direct_task_dispatch_records_a_cancelled_run_for_exit_130() {
+fn direct_foreground_dispatch_reports_cancellation_without_recording_history() {
     let root = temp_workspace("task-status-cancelled");
     write_root_manifest(&root, "[tasks.stop]\nrun = \"sh -c 'exit 130'\"\n");
     let context = EffigyRuntimeContext::capture(Some(root.clone()), None).expect("runtime context");
@@ -109,10 +110,9 @@ fn direct_task_dispatch_records_a_cancelled_run_for_exit_130() {
     }
 
     let status = root_task_status_for_tests(&root, "stop");
-    assert_eq!(status.state, "cancelled");
-    let latest = status.latest.expect("latest");
-    assert_eq!(latest.signal, Some(2));
-    assert_eq!(latest.exit_code, Some(130));
+    assert_eq!(status.state, "not-recorded");
+    assert!(status.latest.is_none());
+    assert!(status.history.is_empty());
 }
 
 #[test]

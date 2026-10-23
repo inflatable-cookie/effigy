@@ -260,6 +260,7 @@ fn probe_runtime_fault_boundaries_preserve_no_execution_before_ack() {
         crate::fault::Point::ProbeRegister,
         crate::fault::Point::ProbeBeforeGo,
         crate::fault::Point::ProbeAfterGo,
+        crate::fault::Point::ProbeCloseBefore,
     ] {
         assert!(trace.contains(&point), "missing boundary {point:?}");
         for fault in [crate::fault::Fault::Enospc, crate::fault::Fault::Eperm] {
@@ -269,7 +270,15 @@ fn probe_runtime_fault_boundaries_preserve_no_execution_before_ack() {
         }
     }
     crate::fault::arm(None);
+    // Native identity scans can consume more than signal grace after a probe
+    // already exited. Reaping and EOF verification get a separate finite budget.
+    crate::fault::hook(Some(Box::new(|point| {
+        if point == crate::fault::Point::ProbeCloseBefore {
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    })));
     let observed = cx.probe_process(command());
+    crate::fault::hook(None);
     assert!(matches!(observed, Observed::Verified(..)), "{observed:?}");
 }
 

@@ -175,6 +175,22 @@ pub(super) fn exec_held(
     let arg0 =
         std::ffi::CString::new(executable.path.as_os_str().as_bytes()).map_err(io::Error::other)?;
     let arg1 = std::ffi::CString::new(entry).map_err(io::Error::other)?;
+    // `helper` clears the ambient environment. Snapshot the explicit entries
+    // only after the caller installed its capability marker and launch inputs.
+    let env: Vec<std::ffi::CString> = command
+        .get_envs()
+        .filter_map(|(key, value)| value.map(|value| (key, value)))
+        .map(|(key, value)| {
+            let mut entry = key.as_bytes().to_vec();
+            entry.push(b'=');
+            entry.extend_from_slice(value.as_bytes());
+            std::ffi::CString::new(entry).map_err(io::Error::other)
+        })
+        .collect::<io::Result<_>>()?;
+    const ENV_SLOTS: usize = 4096;
+    if env.len() >= ENV_SLOTS {
+        return Err(io::Error::other("helper environment exceeds 4095 entries"));
+    }
     crate::fault_point!(ImageExec)?;
     // SAFETY: after fork only async-signal-safe fcntl and execveat run. The
     // closure owns the live image and both C strings; argv/envp are terminated
@@ -188,7 +204,12 @@ pub(super) fn exec_held(
                 return Err(io::Error::last_os_error());
             }
             let argv = [arg0.as_ptr(), arg1.as_ptr(), std::ptr::null()];
-            let envp: [*const libc::c_char; 1] = [std::ptr::null()];
+            // Bounded stack storage avoids allocating in the forked child.
+            // Every CString and its terminator remain owned by this closure.
+            let mut envp = [std::ptr::null(); ENV_SLOTS];
+            for (slot, entry) in envp.iter_mut().zip(&env) {
+                *slot = entry.as_ptr();
+            }
             libc::syscall(
                 libc::SYS_execveat,
                 fd,

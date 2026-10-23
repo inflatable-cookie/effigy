@@ -5,6 +5,7 @@
 //! `doctor`, `execute`, `command_context`, and `tasks_command`
 //! modules, converting `RunnerError` to `BuiltinError` at the port
 //! boundary so the built-in layer only speaks its own error type.
+mod test_session;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -27,9 +28,9 @@ use crate::runner::tasks_command;
 /// Concrete `BuiltinRuntimePorts` implementation that delegates to the
 /// runner modules directly.
 ///
-/// A caller that holds a run owning a scratch directory lends that run here:
+/// A caller that owns suite custody lends its memory or durable run here:
 /// each host suite then runs as a child run of it, so the suite's process tree
-/// is custody the run settles before its scratch directory is released.
+/// is custody the run settles before releasing its gates and any scratch.
 pub(in crate::runner) struct RunnerBuiltinPorts<'a> {
     suite_parent: Option<std::cell::RefCell<&'a mut TaskRun>>,
     next_suite: std::cell::Cell<usize>,
@@ -72,6 +73,7 @@ impl<'a> RunnerBuiltinPorts<'a> {
 struct SuiteCustody {
     run: Option<TaskRun>,
     label: String,
+    admission: crate::runner::task_engine::AdmissionInheritance,
 }
 
 impl effigy_builtin::HostSuiteCustody for SuiteCustody {
@@ -82,11 +84,18 @@ impl effigy_builtin::HostSuiteCustody for SuiteCustody {
         env: &std::collections::BTreeMap<String, String>,
         capture: bool,
     ) -> Result<effigy_builtin::HostSuiteOutcome, BuiltinError> {
+        let _admission = self
+            .admission
+            .enter()
+            .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
         let Some(run) = self.run.as_mut() else {
             return Err(BuiltinError::task_invocation(
                 "the suite's run was already settled",
             ));
         };
+        let _scope = run
+            .enter()
+            .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
         let exit = crate::runner::task_engine::run_plain(
             run,
             crate::runner::task_engine::PlainCommand {
@@ -138,6 +147,21 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts<'_> {
         self.suite_parent.is_some()
     }
 
+    fn has_test_tui_source(&self) -> bool {
+        self.suite_parent.is_some()
+    }
+
+    fn test_tui_source(
+        &self,
+        specs: Vec<effigy_process::ProcessSpec>,
+    ) -> Result<Option<Box<dyn effigy_tui::multiprocess::SessionProcesses + '_>>, BuiltinError>
+    {
+        self.suite_parent
+            .as_ref()
+            .map(|parent| test_session::source(parent, specs))
+            .transpose()
+    }
+
     fn host_suite_custody(
         &self,
         label: &str,
@@ -152,6 +176,8 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts<'_> {
             .step(index, label)
             .map_err(|error| BuiltinError::task_invocation(error.to_string()))?;
         Ok(Some(Box::new(SuiteCustody {
+            admission: crate::runner::task_engine::AdmissionInheritance::capture(run.id())
+                .map_err(|error| BuiltinError::task_invocation(error.to_string()))?,
             run: Some(run),
             label: label.to_owned(),
         })))

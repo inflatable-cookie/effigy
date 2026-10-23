@@ -593,3 +593,19 @@ fn repo_payload_schema(schema_id: &str) -> effigy_json_schema::CompiledSchema {
     .expect("parse payload schema");
     effigy_json_schema::CompiledSchema::compile(&document).expect("compile payload schema")
 }
+
+#[test]
+fn runtime_migration_json_contract_home_isolation_is_explicit_and_typed() {
+    let mut row = json!({"schema":"effigy.runtime-migration.v1","schema_version":1,"command":"effigy run migrate --plan --json","status":"active"});
+    assert!(
+        !super::load_active_contract_rows(&json!({"schemas":[row.clone()]})).unwrap()[0]
+            .isolated_home
+    );
+    row["isolated_home"] = json!(true);
+    assert!(
+        super::load_active_contract_rows(&json!({"schemas":[row.clone()]})).unwrap()[0]
+            .isolated_home
+    );
+    row["isolated_home"] = json!("true");
+    assert!(super::load_active_contract_rows(&json!({"schemas":[row]})).is_err());
+}

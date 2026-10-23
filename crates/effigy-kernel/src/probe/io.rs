@@ -55,6 +55,10 @@ pub enum ObservationTarget {
         total_timeout: Duration,
     },
     UnixSocket(PathBuf),
+    UnixSocketAt {
+        directory: crate::fs::DirFd,
+        name: crate::fs::FileName,
+    },
     Dns {
         name: String,
         server: SocketAddr,
@@ -111,7 +115,14 @@ impl ObserveContext {
                     http(address, &host, &path, method, &expect, connect_timeout, &cx)
                 }
                 ObservationTarget::UnixSocket(path) => {
-                    unix(&path, self)?;
+                    unix(&path, self, false)?;
+                    Ok(ProbeIo::UnixOpen)
+                }
+                ObservationTarget::UnixSocketAt { directory, name } => {
+                    crate::socket_at::in_directory(&directory, &name, |name| {
+                        unix(name, self, true)
+                    })
+                    .map_err(failure)??;
                     Ok(ProbeIo::UnixOpen)
                 }
                 ObservationTarget::Dns { name, server } => dns(&name, server, self),
@@ -253,11 +264,18 @@ fn retry(e: &io::Error) -> bool {
 fn pause(cx: &ObserveContext) {
     std::thread::sleep(cx.remaining().min(Duration::from_millis(2)));
 }
-fn unix(path: &std::path::Path, cx: &ObserveContext) -> Result<(), UnknownReason> {
+fn unix(
+    path: &std::path::Path,
+    cx: &ObserveContext,
+    verified_directory: bool,
+) -> Result<(), UnknownReason> {
     let bytes = path.as_os_str().as_bytes();
     // SAFETY: zero is a valid representation of sockaddr_un; fields filled below.
     let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
-    if !path.is_absolute() || bytes.contains(&0) || bytes.len() >= address.sun_path.len() {
+    if (!path.is_absolute() && !verified_directory)
+        || bytes.contains(&0)
+        || bytes.len() >= address.sun_path.len()
+    {
         return Err(UnknownReason::Unparsable("Unix socket path".into()));
     }
     address.sun_family = libc::AF_UNIX as _;

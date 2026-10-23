@@ -49,7 +49,7 @@ use chrono::Utc;
 use effigy_changelog as changelog;
 use effigy_kernel::observe::UnknownReason;
 use effigy_kernel::outcome::WorkloadOutcome;
-use effigy_kernel::run::{EffectTicket, Run, Settlement};
+use effigy_kernel::run::{EffectSpec, EffectTicket, Run, Settlement};
 
 use crate::hosted_evidence::{HostedEvidenceBinding, HostedEvidenceSpec};
 use crate::model::{FileMutationApply, FileMutationPlan};
@@ -87,7 +87,7 @@ pub enum ReleaseAction {
 #[derive(Debug, Clone)]
 pub struct ReleaseRunRequest {
     pub repo_root: PathBuf,
-    /// The user's home. Effigy-owned state lives at `<home>/.effigy/state`.
+    /// Machine home for explicit migration checks; release state is checkout-local.
     pub home: PathBuf,
     pub action: ReleaseAction,
     /// The stage boundary to stop after. Defaults to `closeout`.
@@ -131,16 +131,51 @@ pub fn run_release(
     request: &ReleaseRunRequest,
     effects: &mut dyn ReleaseEffects,
 ) -> Result<ReleaseRunOutcome, ReleaseError> {
-    let plan = plan_release_pipeline(&request.repo_root)?;
     let session = ReleaseSession::open(&request.home, &request.repo_root)?;
     let state = session.state()?;
-    let checkpoint = session.read_checkpoint()?;
-    let existing = state.read_record()?;
     let receipt_path = state.record_path.with_file_name(RELEASE_RECEIPT_FILE);
-
-    let continuation = continue_record(request, existing, checkpoint.as_ref(), &state, effects)?;
+    let run_id = new_run_id()?;
+    let mut adapter = ReportsOnly;
+    let mut run = session.begin(run_id, &mut adapter)?;
+    // Read the resumable state and resolve versions under the same owner gate
+    // that will perform the work. A waiter never acts on a predecessor's
+    // checkpoint or clears its candidate before admission.
+    let prepared = (|| {
+        let plan = plan_release_pipeline(&request.repo_root)?;
+        let checkpoint = session.read_checkpoint()?;
+        let mut existing = state.read_record()?;
+        if let Some(record) = &mut existing {
+            session.project_record(record)?;
+        }
+        let continuation = continue_record(
+            request,
+            existing,
+            checkpoint.as_ref(),
+            &state,
+            effects,
+            &mut run,
+        )?;
+        Ok::<_, ReleaseError>((plan, continuation))
+    })();
+    let (plan, continuation) = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            let finished = run.finish(WorkloadOutcome::Failed { code: 1 });
+            let settled = run.settle(session.cleanup(), &mut adapter);
+            if let Err(cleanup) = finished.and(settled.map(|_| ())) {
+                return Err(ReleaseError::TaskInvocation(format!(
+                    "{error}; release preparation cleanup: {cleanup}"
+                )));
+            }
+            return Err(error);
+        }
+    };
     let (mut record, start) = match continuation {
         Continuation::Nothing(record) => {
+            run.finish(WorkloadOutcome::Succeeded)
+                .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
+            run.settle(session.cleanup(), &mut adapter)
+                .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
             return Ok(ReleaseRunOutcome {
                 messages: vec![format!(
                     "release Run {} is already complete; nothing to resume",
@@ -148,16 +183,10 @@ pub fn run_release(
                 )],
                 record,
                 receipt_path,
-            })
+            });
         }
         Continuation::RunFrom(record, stage) => (record, stage),
     };
-    if record.stage.is_empty() {
-        // A fresh release: its candidate directory belongs to this Run alone.
-        clear_directory(&state.candidate_dir)?;
-    }
-
-    let run_id = new_run_id()?;
     let run_id_text = run_id.to_string();
     record.run_id = run_id_text.clone();
     record.release_id = if record.stage.is_empty() {
@@ -168,8 +197,6 @@ pub fn run_release(
     record.updated_at = now();
 
     let to = request.to.unwrap_or(ReleaseStage::Closeout);
-    let mut adapter = ReportsOnly;
-    let mut run = session.begin(run_id, &mut adapter)?;
     let mut runner = Runner {
         plan: &plan,
         record: &mut record,
@@ -211,7 +238,6 @@ pub fn run_release(
             record.run_id, record.release_id
         ));
         record.status = ReleaseRunStatus::Failed;
-        state.write_record(&record)?;
     }
 
     Ok(ReleaseRunOutcome {
@@ -233,6 +259,7 @@ fn continue_record(
     checkpoint: Option<&ReleaseCheckpoint>,
     state: &ReleaseState,
     effects: &mut dyn ReleaseEffects,
+    run: &mut Run<'_>,
 ) -> Result<Continuation, ReleaseError> {
     let requested = match &request.action {
         ReleaseAction::Run => None,
@@ -317,7 +344,7 @@ fn continue_record(
             };
             record.approvals.push(RecordApproval {
                 stage: stage.label().to_owned(),
-                approved_by: approver_name(effects),
+                approved_by: approver_name(effects, run),
                 approved_at: now(),
             });
             record.status = ReleaseRunStatus::Paused;
@@ -362,7 +389,7 @@ fn continue_record(
             record.decisions.push(RecordDecision {
                 target: target_name.clone(),
                 decision: decision.label().to_owned(),
-                decided_by: approver_name(effects),
+                decided_by: approver_name(effects, run),
                 decided_at: now(),
             });
             record.status = ReleaseRunStatus::Paused;
@@ -522,7 +549,7 @@ impl<'a, 's> Runner<'a, 's> {
     /// Write the record and its kernel checkpoint pointer.
     fn persist(&mut self) -> Result<(), ReleaseError> {
         self.record.updated_at = now();
-        self.state.write_record(self.record)?;
+        self.state.write_record(self.record, self.run)?;
         let checkpoint = self.record.checkpoint(&self.state.record_path);
         let value = serde_json::to_value(&checkpoint).map_err(|error| {
             ReleaseError::TaskInvocation(format!(
@@ -550,6 +577,22 @@ impl<'a, 's> Runner<'a, 's> {
     }
 
     fn validate(&mut self) -> Result<(), ReleaseError> {
+        if self.record.stage.is_empty() {
+            let ticket = self
+                .run
+                .intend(EffectSpec {
+                    target: self.run.fence().clone(),
+                    kind: "release:candidate-reset".into(),
+                    payload: serde_json::json!({"directory":self.candidate_dir}),
+                    settlement: Settlement::Irreversible,
+                    required: false,
+                })
+                .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
+            clear_directory(self.candidate_dir)?;
+            self.run
+                .applied(&ticket, serde_json::Value::Null)
+                .map_err(|error| ReleaseError::TaskInvocation(error.to_string()))?;
+        }
         if !self.plan.ready {
             return Err(ReleaseError::TaskInvocation(format!(
                 "release validate refused the release: {}",
@@ -563,8 +606,8 @@ impl<'a, 's> Runner<'a, 's> {
             )));
         }
 
-        self.record.branch = Some(self.effects.current_branch()?);
-        self.record.source_commit = Some(self.effects.head_commit()?);
+        self.record.branch = Some(self.effects.current_branch(self.run)?);
+        self.record.source_commit = Some(self.effects.head_commit(self.run)?);
         self.record.identities = Vec::new();
         self.record.artifacts = Vec::new();
         self.record.verifications = Vec::new();
@@ -663,7 +706,7 @@ impl<'a, 's> Runner<'a, 's> {
                 let binding = self.open_hosted_wait(&gate.name, &spec, &commit)?;
                 match self
                     .effects
-                    .hosted_evidence(&gate.name, &spec, &commit, &binding)?
+                    .hosted_evidence(self.run, &gate.name, &spec, &commit, &binding)?
                 {
                     HostedEvidence::Accepted {
                         repository,
@@ -858,7 +901,7 @@ impl<'a, 's> Runner<'a, 's> {
             .iter()
             .map(|mutation| mutation.path.clone())
             .collect();
-        match self.effects.commit_paths(&paths, &message) {
+        match self.effects.commit_paths(self.run, &paths, &message) {
             Ok(commit) => {
                 self.record.candidate_commit = Some(commit);
                 self.persist()
@@ -880,7 +923,7 @@ impl<'a, 's> Runner<'a, 's> {
         let restore: Vec<PathBuf> = prepared.iter().map(|(path, _)| path.clone()).collect();
         let snapshots: BTreeMap<PathBuf, Option<Vec<u8>>> = prepared.into_iter().collect();
         let unrestored = crate::restore_mutation_snapshots(&snapshots);
-        if let Err(error) = self.effects.discard_staged(&restore) {
+        if let Err(error) = self.effects.discard_staged(self.run, &restore) {
             self.messages.push(format!(
                 "prepared release changes could not be unstaged: {error}"
             ));
@@ -1354,7 +1397,7 @@ impl<'a, 's> Runner<'a, 's> {
             }
             // Reconcile before any retry: an interrupted invocation may have
             // pushed this tag without recording it (contract 054 §7).
-            match self.effects.remote_tag_commit(&tag) {
+            match self.effects.remote_tag_commit(self.run, &tag) {
                 Ok(Some(sha)) if sha == candidate => {
                     self.record_destination(target, Some(&identity), &tag, candidate)?;
                     continue;
@@ -1378,7 +1421,7 @@ impl<'a, 's> Runner<'a, 's> {
                 }
             }
 
-            match self.effects.local_tag_commit(&tag) {
+            match self.effects.local_tag_commit(self.run, &tag) {
                 Ok(Some(sha)) if sha == candidate => {}
                 Ok(Some(sha)) => {
                     return Err(self.target_failed(
@@ -1390,7 +1433,7 @@ impl<'a, 's> Runner<'a, 's> {
                 }
                 Ok(None) => {
                     let message = ANNOTATED_TAG_MESSAGE.replace("{tag}", &tag);
-                    self.effects.create_annotated_tag(&tag, candidate, &message)?;
+                    self.effects.create_annotated_tag(self.run, &tag, candidate, &message)?;
                 }
                 Err(error) => {
                     return Err(self.target_failed(
@@ -1404,7 +1447,7 @@ impl<'a, 's> Runner<'a, 's> {
                 kernel::TAG_PUSH_EFFECT,
                 serde_json::json!({ "tag": tag, "commit": candidate }),
             )?;
-            match self.effects.push_tag(&tag) {
+            match self.effects.push_tag(self.run, &tag) {
                 Ok(()) => {
                     self.record_applied(&ticket, &tag, candidate)?;
                     self.record_destination(target, Some(&identity), &tag, candidate)?;
@@ -1548,7 +1591,7 @@ impl<'a, 's> Runner<'a, 's> {
                 kernel::COMMIT_PUSH_EFFECT,
                 serde_json::json!({ "commit": commit, "branch": branch }),
             )?;
-            match self.effects.push_commit(&commit, &branch) {
+            match self.effects.push_commit(self.run, &commit, &branch) {
                 Ok(()) => {
                     self.record_applied(&ticket, &branch, &commit)?;
                     self.record.pushed_commit = true;
@@ -1685,14 +1728,17 @@ impl<'a, 's> Runner<'a, 's> {
             self.record.release_id.clone(),
         );
         env.insert("EFFIGY_RELEASE_STAGE".to_owned(), stage.label().to_owned());
-        let response = self.effects.run_task(&TaskRequest {
-            task: task.to_owned(),
-            label: format!("release {} task `{task}`", stage.label()),
-            cwd: self.plan.repo_root.clone(),
-            env,
-            input_path,
-            output_path: output_path.clone(),
-        })?;
+        let response = self.effects.run_task(
+            self.run,
+            &TaskRequest {
+                task: task.to_owned(),
+                label: format!("release {} task `{task}`", stage.label()),
+                cwd: self.plan.repo_root.clone(),
+                env,
+                input_path,
+                output_path: output_path.clone(),
+            },
+        )?;
         let output = input::read_release_task_output(&output_path);
         Ok(TaskOutcome { response, output })
     }

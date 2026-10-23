@@ -1420,6 +1420,36 @@ fn run_log_write_failure_is_reported_as_truncation() {
 }
 
 #[test]
+fn run_control_socket_long_checkout_path_has_bounded_probe_and_exact_cleanup() {
+    let fixture = tempfile::tempdir().unwrap();
+    let path = fixture
+        .path()
+        .join(format!("long-checkout-{}", "x".repeat(180)));
+    std::fs::create_dir(&path).unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, &path).unwrap();
+    let mut fake = Fake::new(&path);
+    let mut run = begin(&cx, &root, owner(), 63, &mut fake);
+    let listener = run.control_socket().unwrap();
+    let address = control_socket_path(&root, &owner(), run.id());
+    assert!(address.as_os_str().len() > 200);
+    let observe = cx
+        .operation()
+        .child(Duration::from_secs(1))
+        .observe()
+        .unwrap();
+    assert_eq!(
+        connect_control_socket(&observe, &root, &owner(), run.id()).verified(),
+        Some(&crate::probe::ProbeIo::UnixOpen)
+    );
+    drop(listener.accept().unwrap());
+    drop(listener);
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    assert!(!address.exists());
+}
+
+#[test]
 fn gateway_control_socket_lives_in_trusted_runtime_and_settles_exact_inode() {
     let home = tempfile::Builder::new()
         .prefix("g219-")
@@ -1497,7 +1527,20 @@ fn gateway_store_latest_run_tracks_generation_and_absence() {
     ));
     run.settle(&cleanup(&cx), &mut fake).unwrap();
     let run = begin(&cx, &root, resource.clone(), 64, &mut fake);
-    assert_eq!(reader.latest_run(&resource).verified().unwrap().0, id(64));
+    // An observation is a coherent snapshot; a later observation sees the
+    // new generation without keeping a filesystem connection open.
+    assert_eq!(reader.latest_run(&resource).verified().unwrap().0, id(63));
+    let fresh = Store::read(&observe, &root);
+    assert_eq!(
+        fresh
+            .verified()
+            .unwrap()
+            .latest_run(&resource)
+            .verified()
+            .unwrap()
+            .0,
+        id(64)
+    );
     run.settle(&cleanup(&cx), &mut fake).unwrap();
 }
 #[test]
@@ -1797,4 +1840,128 @@ fn run_children_admission_faults_recover_both_sides() {
         .unwrap();
         assert_eq!(outcome.cleanup(), CleanupOutcome::Complete, "{point:?}");
     }
+}
+
+#[test]
+fn run_checkout_aliases_remain_exclusive_until_the_logical_owner_closes() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let alias = TaskId::new(
+        CheckoutId::new(CheckoutKind::Primary, [2; 16]),
+        "",
+        Surface::Published,
+        "task",
+        None,
+    )
+    .unwrap()
+    .resource();
+    let mut spec = inv(owner()).spec().clone();
+    spec.gates.push(alias.clone());
+    let invocation = ResolvedInvocation::new(spec).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut run = Run::begin(&cx, &root, &invocation, opts(1), &cleanup(&cx), &mut fake).unwrap();
+    assert!(matches!(
+        Gate::probe(&cx.operation().observe().unwrap(), &root, &alias),
+        Observed::Verified(crate::gate::GateState::Held(_), _)
+    ));
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    assert!(matches!(
+        Gate::probe(&cx.operation().observe().unwrap(), &root, &alias),
+        Observed::Verified(crate::gate::GateState::Free, _)
+    ));
+}
+
+#[test]
+fn run_machine_owner_refusal_precedes_database_creation_and_shared_runs_reject_payloads() {
+    let home = effigy_test_support::Fixture::new("kernel-machine-model-").unwrap();
+    let cx = context();
+    let root = StateRoot::machine_effects(&cx, home.path()).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut spec = inv(owner()).spec().clone();
+    for (resource, machine_task) in [
+        (owner(), false),
+        (env(), true),
+        (
+            ResourceId::store(Scope::Machine, "release arbitrary").unwrap(),
+            true,
+        ),
+        (ResourceId::gateway("fixture").unwrap(), false),
+    ] {
+        spec.owner = resource;
+        if machine_task {
+            spec.task = TaskId::new(
+                CheckoutId::new(CheckoutKind::Machine, [0; 16]),
+                "",
+                Surface::Published,
+                "gateway",
+                None,
+            )
+            .unwrap();
+        } else {
+            spec.task = inv(owner()).spec().task.clone();
+        }
+        let invocation = ResolvedInvocation::new(spec.clone()).unwrap();
+        let result = Run::begin(
+            &cx,
+            &root,
+            &invocation,
+            BeginOpts {
+                id: id(1),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: None,
+            },
+            &cleanup(&cx),
+            &mut fake,
+        );
+        assert!(matches!(result, Err(RunError::Invalid(_))));
+        assert!(!root.path().join("machine.db").exists());
+    }
+    spec.owner = ResourceId::gateway("fixture").unwrap();
+    spec.task = TaskId::new(
+        CheckoutId::new(CheckoutKind::Machine, [0; 16]),
+        "",
+        Surface::Published,
+        "gateway",
+        None,
+    )
+    .unwrap();
+    let invocation = ResolvedInvocation::new(spec).unwrap();
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &invocation,
+        BeginOpts {
+            id: id(2),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: next(),
+            custody: None,
+        },
+        &cleanup(&cx),
+        &mut fake,
+    )
+    .unwrap();
+    let before = run.effects().unwrap().len();
+    let closure = crate::objects::Closure::new(BTreeMap::from([(
+        "payload".into(),
+        b"checkout only".to_vec(),
+    )]))
+    .unwrap();
+    assert!(crate::objects::Objects::publish_desired(&mut run, &closure).is_err());
+    assert!(crate::objects::Objects::promote(&mut run, closure.digest()).is_err());
+    assert!(crate::objects::Objects::reset(&mut run).is_err());
+    assert_eq!(run.effects().unwrap().len(), before);
+    assert!(run
+        .capture_log(1, crate::custody::Stream::Stdout, cx.operation().limits())
+        .unwrap()
+        .is_none());
+    for family in ["objects", "staging", "runs"] {
+        assert!(!root.path().join(family).exists());
+    }
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
 }

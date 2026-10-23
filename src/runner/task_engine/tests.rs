@@ -75,7 +75,7 @@ fn equivalent_spellings_serialize_on_one_gate_and_distinct_tasks_do_not() {
 fn status_reports_the_live_run_then_its_outcome_without_staleness() {
     let root = tempfile::tempdir().expect("root");
     let target = TaskTarget::for_catalog(root.path(), "build", &catalog(root.path(), "", "", 0));
-    assert_eq!(task_status(&target, HISTORY_LIMIT).state, "never-run");
+    assert_eq!(task_status(&target, HISTORY_LIMIT).state, "not-recorded");
 
     let run = begin(&target).expect("admitted");
     let live = task_status(&target, HISTORY_LIMIT);
@@ -91,7 +91,7 @@ fn status_reports_the_live_run_then_its_outcome_without_staleness() {
 
     assert!(run.close(WorkloadOutcome::Failed { code: 3 }).is_empty());
     let closed = task_status(&target, HISTORY_LIMIT);
-    assert_eq!(closed.state, "failed");
+    assert_eq!(closed.state, "not-recorded");
     assert!(closed.current.is_none());
     let latest = closed.latest.expect("latest run");
     assert_eq!(latest.exit_code, Some(3));
@@ -113,7 +113,7 @@ fn an_unclosed_run_reads_interrupted_once_its_gate_is_free_and_the_next_run_sett
     let next = begin(&target).expect("the successor settles its predecessor first");
     assert!(next.close(WorkloadOutcome::Succeeded).is_empty());
     let settled = task_status(&target, HISTORY_LIMIT);
-    assert_eq!(settled.state, "succeeded");
+    assert_eq!(settled.state, "not-recorded");
     assert_eq!(settled.history.len(), 2);
     assert_eq!(settled.history[1].state, "interrupted");
 }
@@ -156,12 +156,13 @@ fn sequence_durable_stop_request_cancels_active_custody_and_settles_child() {
     // Read the fence from the live owner handle before another thread posts
     // the durable request. Only the owning thread writes run outcomes.
     let mut parent = run;
-    let expected = parent.run_mut().fence().clone();
+    let expected = parent.run_mut().expect("durable test run").fence().clone();
+    let state = super::kernel::effects_root(root.path()).unwrap();
     let requester = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(100));
         effigy_kernel::run::request(
             &super::kernel::effects(),
-            super::kernel::effects_root().unwrap(),
+            state,
             &effigy_kernel::run::Request {
                 id: effigy_kernel::id::RunId::new(99, [19; 10]).unwrap(),
                 run: id,
@@ -172,8 +173,8 @@ fn sequence_durable_stop_request_cancels_active_custody_and_settles_child() {
         .unwrap();
     });
     let exit = {
-        let _parent = parent.enter();
-        let _step = child.enter();
+        let _parent = parent.enter().expect("parent scope");
+        let _step = child.enter().expect("child scope");
         run_plain(
             &mut child,
             PlainCommand {
@@ -207,10 +208,10 @@ fn sequence_pending_stop_starts_no_next_workload() {
     let catalog = catalog(root.path(), "", "root", 0);
     let target = TaskTarget::for_catalog(root.path(), "pending-stop-proof", &catalog);
     let mut parent = begin(&target).unwrap();
-    let expected = parent.run_mut().fence().clone();
+    let expected = parent.run_mut().expect("durable test run").fence().clone();
     effigy_kernel::run::request(
         &super::kernel::effects(),
-        super::kernel::effects_root().unwrap(),
+        super::kernel::effects_root(root.path()).unwrap(),
         &effigy_kernel::run::Request {
             id: effigy_kernel::id::RunId::new(99, [20; 10]).unwrap(),
             run: parent.id(),
@@ -221,8 +222,8 @@ fn sequence_pending_stop_starts_no_next_workload() {
     .unwrap();
     let mut child = parent.step(0, "must-not-start").unwrap();
     let exit = {
-        let _parent = parent.enter();
-        let _step = child.enter();
+        let _parent = parent.enter().expect("parent scope");
+        let _step = child.enter().expect("child scope");
         run_plain(
             &mut child,
             PlainCommand {
@@ -236,7 +237,12 @@ fn sequence_pending_stop_starts_no_next_workload() {
         .unwrap()
     };
     assert!(!root.path().join("should-not-exist").exists());
-    assert!(child.run_mut().effects().unwrap().is_empty());
+    assert!(child
+        .run_mut()
+        .expect("durable test run")
+        .effects()
+        .unwrap()
+        .is_empty());
     child.close(exit.workload.clone());
     parent.close(exit.workload);
 }
@@ -672,7 +678,7 @@ fn the_builtin_test_routes_run_holds_a_sentinel_so_a_kill_still_settles_it() {
                 .expect("the built-in run is admitted");
             let id = run.id();
             assert!(
-                run.run_mut().owns_sentinel(),
+                run.run_mut().expect("durable test run").owns_sentinel(),
                 "the built-in test route's run must have a sentinel"
             );
             let env = crate::runner::scratch::temp_env();
@@ -833,7 +839,7 @@ fn a_nested_run_that_opts_out_hides_its_parents_scratch() {
             // A nested task reference on this thread: the child declares
             // `scratch = false`, so its host processes see the inherited temp
             // environment, not its parent's directory.
-            let _parent_scope = parent.enter();
+            let _parent_scope = parent.enter().expect("parent scope");
             let mut child = TaskRun::begin(TaskRunRequest {
                 target: &child_target,
                 lock_wait_ms: 0,
@@ -880,4 +886,36 @@ fn without_a_configured_root_a_host_run_sees_the_inherited_temp_environment() {
         assert_eq!(seen, inherited, "no config changes nothing about the env");
         assert!(run.close(WorkloadOutcome::Succeeded).is_empty());
     });
+}
+
+#[test]
+fn checkout_journals_are_independent_while_another_checkout_writer_is_busy() {
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    let a = TaskTarget::for_catalog(first.path(), "build", &catalog(first.path(), "", "", 0));
+    let b = TaskTarget::for_catalog(second.path(), "build", &catalog(second.path(), "", "", 0));
+    let run_a = begin(&a).unwrap();
+    let state_a = super::kernel::effects_root(first.path()).unwrap();
+    let cx = super::kernel::effects();
+    let mut writer = effigy_kernel::store::Store::open(&cx, state_a).unwrap();
+    writer
+        .txn(&cx, |_| {
+            std::thread::spawn(move || {
+                let run_b =
+                    begin(&b).expect("a peer checkout's writer is not part of this admission");
+                assert!(second.path().join(".effigy/state/kernel.db").is_file());
+                assert!(!super::kernel::test_state_home()
+                    .join(".effigy/state/kernel.db")
+                    .exists());
+                let runs = super::control::list(Some(second.path()), 20).unwrap();
+                assert_eq!(runs.runs.len(), 1);
+                assert_eq!(runs.runs[0].id, run_b.id());
+                assert!(run_b.close(WorkloadOutcome::Succeeded).is_empty());
+            })
+            .join()
+            .unwrap();
+            Ok::<_, effigy_kernel::store::StoreError>(())
+        })
+        .unwrap();
+    assert!(run_a.close(WorkloadOutcome::Succeeded).is_empty());
 }

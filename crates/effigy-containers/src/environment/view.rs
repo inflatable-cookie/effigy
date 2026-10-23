@@ -30,7 +30,7 @@ impl EnvironmentView {
                     std::time::Duration::from_secs(5),
                 );
                 match operation.observe() {
-                    Ok(cx) => match super::observe_root(&cx) {
+                    Ok(cx) => match super::observe_root(&cx, &policy.repo_root) {
                         Observed::Verified(root, _) => EnvRecord::read(&cx, &root, &env.resource),
                         Observed::Absent(proof) => Observed::Absent(proof),
                         Observed::Unknown(reason) => Observed::Unknown(reason),

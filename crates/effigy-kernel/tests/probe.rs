@@ -390,6 +390,22 @@ fn probe_permission_denied_roots_git_and_http_leave_empty_filesystem_diff() {
     writable(&checkout);
 }
 #[test]
+fn probe_fast_exit_drains_all_buffered_reads_before_declaring_capture_complete() {
+    let home = tempfile::tempdir().unwrap();
+    let before = snapshot(home.path());
+    let listener = listener();
+    let mut observer = Observer::start(home.path(), "bulk", listener.local_addr().unwrap());
+    observer.go();
+    let result = observer.result();
+    assert_eq!(result["verified"], true);
+    assert_eq!(result["exit"], 0);
+    assert_eq!(result["truncated"], false);
+    assert_eq!(result["output"].as_str().unwrap().len(), 65536);
+    assert_eq!(result["warnings"], serde_json::json!([]));
+    assert_eq!(snapshot(home.path()), before);
+}
+
+#[test]
 fn probe_capture_is_bounded_redacted_and_missing_tool_is_unknown() {
     let home = tempfile::tempdir().unwrap();
     let listener = listener();

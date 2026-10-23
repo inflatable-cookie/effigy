@@ -52,6 +52,11 @@ pub(super) fn validate_tasks_table(context: &mut SchemaContext<'_, '_>, tasks: &
             task_table.get("group"),
             &format!("{task_path}.group"),
         );
+        validate_optional_boolean_field(
+            context,
+            task_table.get("durable"),
+            &format!("tasks.{task_name}.durable"),
+        );
         if is_compact_inline_task_table(task_table) {
             validate_compact_inline_task_table(context, task_name, task_table);
             continue;
@@ -105,6 +110,7 @@ fn validate_compact_inline_task_table(
             "run",
             "task",
             "rhai",
+            "durable",
             "run_in",
             "visibility",
             "group",
@@ -182,6 +188,7 @@ fn validate_task_table_keys(
             "concurrent",
             "profiles",
             "scratch",
+            "durable",
         ],
     );
 }

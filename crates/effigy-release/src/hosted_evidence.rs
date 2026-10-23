@@ -470,7 +470,7 @@ fn collect_hosted_evidence_bound(
 /// Only a window with no run yet is retried: ambiguity, a failed run, the
 /// wrong commit and an unusable lookup answer for good, and repeating them
 /// would only delay the refusal.
-fn collect_bound_runs(
+pub(crate) fn collect_bound_runs(
     query: &HostedEvidenceQuery,
     polling: HostedEvidencePolling,
     lookup: &dyn HostedEvidenceLookup,

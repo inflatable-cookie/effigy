@@ -48,11 +48,16 @@ where
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     // A never-prepared environment with no project resources has nothing to
     // stop, and its unassigned ports must not reach Compose (effigy#286).
-    if let Some(reason) = effigy_containers::environment::nothing_to_stop(repo_root, &policy) {
-        return Ok(render_container_report(
-            down_noop_report(&policy, &reason),
-            output_json,
-        ));
+    // An empty Compose project is not proof that host integrations are down.
+    // A declared host process still needs the ordinary whole-environment stop.
+    if policy.host_processes.is_empty() {
+        if let Some(reason) = effigy_containers::environment::nothing_to_stop(repo_root, &policy) {
+            transition(repo_root, &policy, &|| Ok(()))?;
+            let removed = deregister_gateway_routes(&policy)?;
+            let mut report = down_noop_report(&policy, &reason);
+            annotate_removed_gateway_routes(&mut report, &removed);
+            return Ok(render_container_report(report, output_json));
+        }
     }
     let runtime_running = runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;

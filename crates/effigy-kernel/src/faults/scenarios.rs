@@ -98,19 +98,13 @@ pub(super) fn begin<'a>(
     )
 }
 /// The recovery step's rerun: a fresh successor of `owner`, settled at once.
-/// `Err(true)` is a refusal for unacknowledged residue (K5).
-pub(super) fn rerun(home: &Path, owner: &ResourceId, n: u8) -> Result<(), bool> {
+/// The caller distinguishes unacknowledged residue (K5) from other errors.
+pub(super) fn rerun(home: &Path, owner: &ResourceId, n: u8) -> Result<(), RunError> {
     let cx = mutate();
     let root = StateRoot::effects(&cx, home).expect("root");
     let mut fake = Fake::new(home);
-    match begin(&cx, &root, owner.clone(), n, None, vec![], &mut fake) {
-        Err(RunError::PredecessorUnsettled { .. }) => Err(true),
-        Ok(run) => run
-            .settle(&cleanup(&cx), &mut fake)
-            .map(drop)
-            .map_err(|_| false),
-        Err(_) => Err(false),
-    }
+    let run = begin(&cx, &root, owner.clone(), n, None, vec![], &mut fake)?;
+    run.settle(&cleanup(&cx), &mut fake).map(drop)
 }
 
 // --- The durable strict fake: adapter effects, environment backend calls. ---
@@ -1033,6 +1027,7 @@ impl Scenario for ObserveProbes {
             Point::ProbeRegister,
             Point::ProbeBeforeGo,
             Point::ProbeAfterGo,
+            Point::ProbeCloseBefore,
             Point::ProbeConnect,
         ]
     }
@@ -1130,6 +1125,12 @@ impl Scenario for ObserveProbes {
             deadline: PROBE_DEADLINE,
             max_output: 1024,
         });
+        if !crate::fault::fired()
+            && crate::fault::trace().contains(&Point::ProbeFork)
+            && !crate::fault::trace().contains(&Point::ProbeRegister)
+        {
+            eprintln!("probe registration was not reached: {hung:?}");
+        }
         assert!(
             matches!(hung, Observed::Unknown(_)),
             "a hung probe must read Unknown: {hung:?}"

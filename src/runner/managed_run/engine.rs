@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use effigy_kernel::ctx::{OpenReason, StopCause};
 use effigy_kernel::custody::{
-    Custody, EnvValue, Lifetime, OwnedProcess, ProcessSpec, SecretValue, Terminal,
+    EnvValue, Lifetime, OwnedProcess, ProcessSpec, SecretValue, Terminal,
 };
 use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::{CleanupOutcome, WorkloadOutcome};
@@ -177,7 +177,7 @@ pub(in crate::runner) fn own(
             return Err(error);
         }
     };
-    let admitted = session.admitted(&mut run.run_mut());
+    let admitted = session.admitted(&mut *run.run_mut()?);
     if let Err(error) = admitted {
         let message = format!("the managed run could not open its control socket: {error}");
         session.refused(&message);
@@ -191,7 +191,7 @@ pub(in crate::runner) fn own(
         .filter(|value| !value.is_empty())
         .map(|value| value.as_bytes().to_vec())
         .collect();
-    if let Err(error) = session.capture_output(&run.run_mut(), secrets) {
+    if let Err(error) = session.capture_output(&*run.run_mut()?, secrets) {
         eprintln!("warning: run output is not logged: {error}");
     }
     println!(
@@ -314,6 +314,9 @@ impl Owner {
             );
         let mut active = false;
         loop {
+            if let Err(error) = run.verify_admission() {
+                return End::StartFailed(error.to_string(), None);
+            }
             while next < self.workloads.len() && Instant::now() >= next_at {
                 if let Err(reason) = self.spawn(run, next) {
                     return End::StartFailed(reason, None);
@@ -327,7 +330,10 @@ impl Owner {
                     );
             }
             if !active && next == self.workloads.len() {
-                if let Err(error) = run.run_mut().advance(effigy_kernel::run::Phase::Active) {
+                if let Err(error) = run.run_mut().and_then(|mut run| {
+                    run.advance(effigy_kernel::run::Phase::Active)
+                        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+                }) {
                     return End::StartFailed(
                         format!("the run could not become active: {error}"),
                         None,
@@ -346,13 +352,21 @@ impl Owner {
                 }
             }
             let routed = task_engine::routed_signals();
-            let control = match self.session.control(&mut run.run_mut(), &routed) {
-                Ok(control) => control,
-                Err(error) => {
-                    eprintln!("[managed] the run journal is unreadable: {error}");
-                    return End::Stopped(StopCause::Requested);
-                }
-            };
+            let control =
+                match run
+                    .run_mut()
+                    .map_err(|error| error.to_string())
+                    .and_then(|mut run| {
+                        self.session
+                            .control(&mut run, &routed)
+                            .map_err(|error| error.to_string())
+                    }) {
+                    Ok(control) => control,
+                    Err(error) => {
+                        eprintln!("[managed] the run journal is unreadable: {error}");
+                        return End::Stopped(StopCause::Requested);
+                    }
+                };
             if control.escalate {
                 for workload in &mut self.workloads {
                     if let Some(process) = workload.process.as_mut() {
@@ -405,7 +419,7 @@ impl Owner {
                 marker: group.marker.clone(),
                 nonce: nonce.clone(),
             };
-            let mut kernel = run.run_mut();
+            let mut kernel = run.run_mut().map_err(|error| error.to_string())?;
             let target = kernel.fence().clone();
             let ticket = kernel
                 .intend(EffectSpec {
@@ -451,8 +465,8 @@ impl Owner {
             },
             label: workload.spec.name.clone(),
         };
-        let cx = task_engine::effect_context(OpenReason::DevServer);
-        let process = Custody::spawn(&mut run.run_mut(), spec, &cx)
+        let process = run
+            .spawn(spec, false)
             .map_err(|error| format!("`{}` did not start: {error:?}", workload.spec.name))?;
         let sequence = sequence_of(&process);
         println!(
@@ -478,7 +492,7 @@ impl Owner {
         let Observed::Verified(exit, _) = process.poll() else {
             return None;
         };
-        let _ = process.complete(&mut run.run_mut(), exit);
+        let _ = run.complete(process, exit);
         workload.tail = String::from_utf8_lossy(&process.tail()).into_owned();
         let name = workload.spec.name.clone();
         let shutdown = workload.spec.shutdown_on_exit;
@@ -538,7 +552,7 @@ impl Owner {
         };
         let report = process.stop(&task_engine::cleanup_context(Duration::from_secs(30)));
         if let Observed::Verified(exit, _) = report.leader {
-            let _ = process.complete(&mut run.run_mut(), exit);
+            let _ = run.complete(&process, exit);
             self.workloads[index].exit = Some(exit.code);
             println!("[managed] stopped `{name}` (exit={})", exit.code);
             self.event(&EngineEvent::Exited {
@@ -715,6 +729,7 @@ fn pending_stop(run: &mut TaskRun, watch: Option<&OwnerWatch>) -> Option<StopCau
         return Some(StopCause::OwnerLost);
     }
     run.run_mut()
+        .ok()?
         .requests()
         .ok()?
         .iter()
@@ -756,7 +771,7 @@ fn warn(warnings: &[String]) {
 /// Records the gateway the run ensures before it ensures it (K3). The
 /// user gateway outlives every run, so the run retains it at settle.
 pub(in crate::runner) fn record_gateway(run: &mut TaskRun) -> Result<(), RunnerError> {
-    let mut kernel = run.run_mut();
+    let mut kernel = run.run_mut()?;
     let target = kernel.fence().clone();
     let ticket = kernel
         .intend(EffectSpec {

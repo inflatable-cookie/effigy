@@ -125,7 +125,7 @@ pub(in crate::runner) fn run_remote_with(
         attempt += 1;
         let fence = fence()?;
         let launched = RemoteCustody::launch(
-            &mut run.run_mut(),
+            &mut *run.run_mut()?,
             RemoteLaunch {
                 env: fence,
                 target: target.clone(),
@@ -224,7 +224,7 @@ pub(in crate::runner) fn run_remote_with(
         },
         (Some((Stop::Requested, _)), _) => requested(),
         (Some((Stop::Request(request), _)), _) => {
-            let _ = run.run_mut().resolve_request(request);
+            let _ = run.run_mut()?.resolve_request(request);
             requested()
         }
         (Some((Stop::Signal(signal), _)), _) => WorkloadOutcome::Cancelled {
@@ -234,15 +234,15 @@ pub(in crate::runner) fn run_remote_with(
         (None, Some(exit)) if client_lost(adapter, &remote, exit.code) => {
             // The exec client died by a signal while the session runs on: the
             // workload has no outcome yet. Settle stops the session.
-            let _ = remote.client().complete(&mut run.run_mut(), exit);
+            let _ = remote.client().complete(&mut *run.run_mut()?, exit);
             WorkloadOutcome::Interrupted
         }
         (None, Some(exit)) => {
             // Natural completion: the backend reports the registered
             // leader's own exit. The session's closure is observed by settle.
-            let _ = remote.client().complete(&mut run.run_mut(), exit);
+            let _ = remote.client().complete(&mut *run.run_mut()?, exit);
             let _ = remote.complete(
-                &mut run.run_mut(),
+                &mut *run.run_mut()?,
                 RequiredObligation::ProcessExit(exit.code),
             );
             super::process::workload(Some(exit.code), None)
@@ -311,6 +311,7 @@ fn requested() -> WorkloadOutcome {
 
 fn own_stop_request(run: &mut TaskRun) -> Option<effigy_kernel::run::Request> {
     run.run_mut()
+        .ok()?
         .requests()
         .ok()?
         .into_iter()

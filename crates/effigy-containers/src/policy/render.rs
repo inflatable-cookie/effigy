@@ -8,7 +8,7 @@ use effigy_kernel::objects::Closure;
 use crate::{ContainerPolicyError, EffectiveContainerPolicy};
 
 mod publication;
-pub(crate) use publication::{checkout, recorded_backend, state_home};
+pub(crate) use publication::{checkout, checkout_for_root, recorded_backend, state_home};
 pub use publication::{prepare, reset, verify};
 mod vm;
 pub use vm::compose_invocation_args;
@@ -54,7 +54,7 @@ pub fn prepare_inputs(
     let Some(render) = &policy.render else {
         return Ok(policy.clone());
     };
-    effigy_core::worktree_scope::prepare_checkout_token(&policy.repo_root).map_err(error)?;
+    publication::prepare_identity(policy)?;
     effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root(&policy.repo_root)
         .map_err(error)?;
     let resolve = || match &render.request {
@@ -251,7 +251,7 @@ impl Draft {
             "backend":super::admission::backend_name(crate::compose::resolve_declared_backend(&policy.repo_root,&policy.name,policy.driver)),
         })).map_err(error)?);
         let closure = Closure::new(files).map_err(error)?;
-        let path = publication::object_directory()?.join(closure.digest());
+        let path = publication::object_directory(&policy.repo_root)?.join(closure.digest());
         for file in &mut policy.compose_files {
             *file = path.join(&names[&*file]);
         }

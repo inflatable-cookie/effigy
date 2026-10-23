@@ -585,3 +585,76 @@ fn context_effect_child_bounds_store_phases_without_extending_parent() {
     cx.operation().cancel_token().cancel(StopCause::Requested);
     assert!(child.operation().check("phase").is_err());
 }
+
+#[test]
+fn identity_canonical_decode_roundtrips_all_stored_kinds_and_scopes() {
+    let mut ids = vec![
+        checkout().resource(),
+        task("apps/api", "a:b", Some("fast")).resource(),
+        task("", "build", None).resource(),
+        RunId::new(1, [9; 10]).unwrap().resource(),
+        ResourceId::environment(checkout(), "dev").unwrap(),
+        ResourceId::data("docker", "fixture", "a-b").unwrap(),
+        ResourceId::gateway("user").unwrap(),
+        ResourceId::store(Scope::Machine, "gateway-endpoints").unwrap(),
+        ResourceId::store(Scope::Checkout(checkout()), "task-lock:qa").unwrap(),
+    ];
+    for (kind, value) in [
+        (EndpointKind::Domain, "example.test"),
+        (EndpointKind::Address, "127.0.0.1"),
+        (EndpointKind::Port, "8000"),
+    ] {
+        ids.push(ResourceId::endpoint(kind, value).unwrap());
+    }
+    for kind in [
+        CheckoutKind::Primary,
+        CheckoutKind::LinkedWorktree,
+        CheckoutKind::EphemeralClone,
+    ] {
+        ids.push(
+            TaskId::new(
+                CheckoutId::new(kind, [5; 16]),
+                "",
+                Surface::Draft,
+                "é",
+                None,
+            )
+            .unwrap()
+            .resource(),
+        );
+    }
+    for id in ids {
+        let bytes = id.canonical();
+        assert_eq!(ResourceId::decode_canonical(&bytes).unwrap(), id);
+        for end in 0..bytes.len() {
+            assert!(ResourceId::decode_canonical(&bytes[..end]).is_err());
+        }
+        let mut extra = bytes.clone();
+        extra.push(0);
+        assert!(ResourceId::decode_canonical(&extra).is_err());
+    }
+}
+
+#[test]
+fn identity_canonical_decode_rejects_unknown_tags_noncanonical_and_hostile_lengths() {
+    let original = ResourceId::store(Scope::Machine, "x").unwrap().canonical();
+    for offset in [0, 11, 12, 13, 14] {
+        let mut bad = original.clone();
+        bad[offset] = 255;
+        assert!(ResourceId::decode_canonical(&bad).is_err());
+    }
+    let mut huge = original.clone();
+    huge[15..19].copy_from_slice(&u32::MAX.to_be_bytes());
+    assert!(ResourceId::decode_canonical(&huge).is_err());
+    let mut absent = original.clone();
+    absent[14] = 0;
+    assert!(ResourceId::decode_canonical(&absent).is_err());
+    let mut utf8 = original;
+    utf8[19] = 255;
+    assert!(ResourceId::decode_canonical(&utf8).is_err());
+    let id = ResourceId::endpoint(EndpointKind::Domain, "example.test").unwrap();
+    let mut uppercase = id.canonical();
+    let last = uppercase.last_mut().unwrap();
+    *last = b'T';
+    assert!(ResourceId::decode_canonical(&uppercase).is_err());
+}

@@ -35,7 +35,7 @@ pub const LOOPBACK_RECLAIM_SCHEMA: &str = "effigy.gateway.loopback-reclaim.v1";
 /// Ownership facts gathered once per plan. Each source is an explicit
 /// `Result`, so an unreadable store can never read as an empty one.
 pub struct LoopbackRecoveryFacts {
-    /// Durable runtime-scope records for this machine.
+    /// Checkout-local runtime-scope records discovered through endpoint owners.
     pub scopes: Result<Vec<ScopeRecord>, String>,
 
     /// Compose containers in every state on every profile that is running.
@@ -66,7 +66,39 @@ impl LoopbackRecoveryFacts {
 
     /// Assemble facts around an already-observed container inventory.
     pub fn with_inventory(inventory: RunningComposeContainerInventory) -> Self {
-        let scopes = scope::load_all().map_err(|error| error.to_string());
+        let scopes = (|| -> Result<Vec<ScopeRecord>, String> {
+            let home = effigy_home_dir().ok_or("cannot resolve Effigy home")?;
+            let snapshot = EndpointStore::for_effigy_home(&home)
+                .read_compatible()
+                .map_err(|error| error.to_string())?;
+            let registry = snapshot.loopback().map_err(|error| error.to_string())?;
+            let routes = snapshot.routes().map_err(|error| error.to_string())?;
+            let roots = registry
+                .assignments
+                .iter()
+                .filter_map(|(identity, assignment)| owner_path(identity, assignment))
+                .chain(routes.routes.values().map(|route| route.project.clone()))
+                .collect::<BTreeSet<_>>();
+            if roots.len() > 1000 {
+                return Err("checkout journal discovery exceeds 1000 endpoint roots".into());
+            }
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut records = Vec::new();
+            for root in roots {
+                if std::time::Instant::now() >= deadline {
+                    return Err("checkout journal discovery exceeded its five-second budget".into());
+                }
+                match probe_project_path(Path::new(&root)) {
+                    PathState::Present => records.extend(
+                        scope::load_for_checkout(Path::new(&root))
+                            .map_err(|error| error.to_string())?,
+                    ),
+                    PathState::Missing => {}
+                    PathState::Unknown(error) => return Err(error),
+                }
+            }
+            Ok(records)
+        })();
         let gateway_pid = effigy_home_dir()
             .map(|home| home.join("gateway").join("gateway.pid"))
             .and_then(|path| {

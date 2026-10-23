@@ -68,6 +68,22 @@ check = [{ task = "fmt" }, { task = "lint" }]
 Use when you want one local catalog with explicit command ownership while
 leaving `effigy test` available as the built-in test entrypoint.
 
+### Scripts That Launch Retained Effigy Work
+
+Declare opaque durable descendants before the task starts:
+
+```toml
+[tasks.integration]
+durable = true
+run = "scripts/integration.sh"
+```
+
+Use this when a shell script or test harness opens a writable Effigy journal,
+launches a named or detached run, or changes an environment. Static task
+references propagate the requirement to their ancestors. Ordinary local tasks
+remain in memory by default. An undeclared late durable operation is refused;
+setting the field after workload start cannot promote a foreground tree.
+
 ### Health, Validate, and QA Cost Ladder
 
 ```toml

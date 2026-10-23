@@ -1,5 +1,5 @@
-//! The runtime store (§5.5, §7.2): one SQLite `kernel.db` under the state
-//! root, typed records and multi-record transactions.
+//! Runtime records (§5.5, §7.2): checkout `kernel.db` or machine `machine.db`
+//! under a verified state root, with typed multi-record transactions.
 //!
 //! SQLite opens `kernel.db` by path. The kernel first creates or verifies the
 //! file descriptor-relative (regular, operator-owned, 0600, one link, bounded)
@@ -11,6 +11,8 @@
 //! a busy store always names its holder. A caller's workload deadline never
 //! shortens the wait below the store's own window, and settle keeps waiting
 //! for two minutes: a busy store delays a run, it never loses its outcome.
+mod read_vfs;
+
 use crate::ctx::{EffectClass, EffectContext, Interrupt, ObserveContext};
 use crate::fs::{FileName, FsError, IoError, Trust, FILE_MODE};
 use crate::gate::{self, Gate, GateError, GateGuard, HolderDiag, OwnerState, RunPhaseFact, Wait};
@@ -21,6 +23,8 @@ use crate::root::StateRoot;
 use rusqlite::{params, Connection, ErrorCode, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -98,6 +102,8 @@ pub enum StoreError {
     Identity(IdentityError),
     /// Store waits need a finite deadline (K8, I-CX2).
     Unbounded,
+    MigrationPending(String),
+    LegacyMigrationRequired,
     /// Retention, repair and scope removal run only in Mutate (K15).
     ClassRefused(EffectClass),
     InTransaction,
@@ -105,6 +111,8 @@ pub enum StoreError {
     Gate(Box<GateError>),
     /// `atomic_replace` needs a held store gate.
     WrongGuard,
+    /// A checkout or payload resource was offered to the shared-fact store.
+    MachineContentsRefused(String),
     TooLarge {
         limit: u64,
     },
@@ -118,6 +126,8 @@ pub enum StoreError {
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::LegacyMigrationRequired => write!(f, "legacy runtime exists; run `effigy run migrate --plan`, stop or drain its exact writers, then `effigy run migrate --legacy-launchers-stopped`"),
+            Self::MigrationPending(id) => write!(f, "runtime import {id} is prepared but not sealed; finish migration before using this journal"),
             Self::Corrupt(reason) => write!(
                 f,
                 "kernel.db is unreadable ({reason}); the explicit store repair moves it aside"
@@ -243,13 +253,21 @@ impl Store {
         root: &StateRoot,
         wait: BusyWait,
     ) -> Result<Self, StoreError> {
+        crate::inheritance::require_durable(cx.operation())
+            .map_err(|error| StoreError::from(FsError::io("runtime class", root.path(), &error)))?;
         if !root.writable() {
             return Err(StoreError::Untrusted {
                 path: root.path().into(),
                 reason: "state root opened read-only".into(),
             });
         }
-        let name = FileName::new(DB_NAME)?;
+        let observe = cx
+            .child(Duration::from_secs(10))
+            .operation()
+            .observe()
+            .map_err(|_| StoreError::Unbounded)?;
+        let adoption = crate::migration::adoption::access(&observe, root)?;
+        let name = FileName::new(root.database_name())?;
         let (_, stat) = root
             .dir()
             .open_file(&name, libc::O_RDWR, Some(FILE_MODE), Trust::Private)?
@@ -261,11 +279,12 @@ impl Store {
         }
         check_store_files(root).map_err(StoreError::from)?;
         let conn = Connection::open_with_flags(
-            root.dir().join(DB_NAME),
+            root.dir().join(root.database_name()),
             OpenFlags::SQLITE_OPEN_READ_WRITE
                 | OpenFlags::SQLITE_OPEN_NOFOLLOW
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
+        crate::migration::adoption::validate_database(&conn, &adoption)?;
         let mut store = Self {
             conn,
             root: root.clone(),
@@ -331,20 +350,57 @@ impl Store {
             }
         }
     }
-    /// Read-only open (R2): no record or schema file is created or written.
-    /// A WAL store's shared-memory index (`kernel.db-shm`) is SQLite's, so a
-    /// read on a writable root may create it; on a read-only root the same
-    /// read is an immutable open, which creates nothing (§5.5).
+    /// A checkpointed, quiescent source read which cannot create a WAL index
+    /// or modify any source file. Migration uses this stricter read; a hot log
+    /// requires recovery/checkpoint by the old owner before import can proceed.
+    pub fn read_sealed(cx: &ObserveContext, root: &StateRoot) -> Observed<StoreReader> {
+        if cx.check("sealed store read").is_err() {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "sealed store read".into(),
+            });
+        }
+        let opened = (|| {
+            let adoption = crate::migration::adoption::access(cx, root)?;
+            check_store_files(root)?;
+            let name = FileName::new(root.database_name())?;
+            let Some(stat) = root.dir().entry(&name)? else {
+                return Ok(None);
+            };
+            if stat.st_size as u64 > MAX_DB_BYTES {
+                return Err(StoreError::TooLarge {
+                    limit: MAX_DB_BYTES,
+                });
+            }
+            let reader = read_immutable(root, cx.remaining())?;
+            if let Some(reader) = &reader {
+                crate::migration::adoption::validate_database(reader.conn(), &adoption)?;
+            }
+            Ok(reader)
+        })();
+        match opened {
+            Ok(Some(reader)) => Observed::Verified(reader, evidence("sealed kernel store")),
+            Ok(None) => Observed::Absent(AbsenceProof::NoStore),
+            Err(error) => Observed::Unknown(read_unknown(&error)),
+        }
+    }
+
+    /// Read-only open (R2): no file is created. Live WAL reads use SQLite's
+    /// read-only shared-memory index. A closed checkpointed store is copied
+    /// into memory and verified unchanged before SQLite parses the snapshot.
     pub fn read(cx: &ObserveContext, root: &StateRoot) -> Observed<StoreReader> {
         #[cfg(all(test, feature = "fault-injection"))]
         if let Some(injected) = crate::fault::injected() {
             return injected;
         }
+        let adoption = match crate::migration::adoption::access(cx, root) {
+            Ok(adoption) => adoption,
+            Err(error) => return Observed::Unknown(read_unknown(&error)),
+        };
         let busy = cx.remaining();
         if let Err(error) = check_store_files(root) {
             return Observed::Unknown(crate::root::unknown(&error));
         }
-        let name = FileName::new(DB_NAME).expect("fixed name");
+        let name = FileName::new(root.database_name()).expect("fixed name");
         match root
             .dir()
             .open_file(&name, libc::O_RDONLY, None, Trust::Private)
@@ -358,26 +414,23 @@ impl Store {
         }
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
             | OpenFlags::SQLITE_OPEN_NOFOLLOW
+            | OpenFlags::SQLITE_OPEN_URI
             | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-        let opened = match Connection::open_with_flags(root.dir().join(DB_NAME), flags) {
-            Ok(conn) => match verify_reader(conn, busy) {
-                // A WAL store on a read-only root cannot create its `-shm`
-                // index: SQLite refuses on open or on the first read with
-                // CANTOPEN, READONLY or PERM. Nothing can write such a root,
-                // so its checkpointed file is read immutably and no file is
-                // created.
-                Err(error) if needs_writable_root(&error) => read_immutable(root, busy),
+        let uri = format!(
+            "file:{}?mode=ro&readonly_shm=1",
+            uri_path(root.path().join(root.database_name()))
+        );
+        let opened =
+            match read_vfs::open(&uri, flags).and_then(|conn| snapshot_live(cx, conn, busy)) {
+                Err(error) if needs_writable_root(&error) => read_snapshot(cx, root),
                 other => other,
-            },
-            Err(error) => {
-                let error = StoreError::from(error);
-                if needs_writable_root(&error) {
-                    read_immutable(root, busy)
-                } else {
-                    Err(error)
-                }
+            };
+        let opened = opened.and_then(|reader| {
+            if let Some(reader) = &reader {
+                crate::migration::adoption::validate_database(reader.conn(), &adoption)?;
             }
-        };
+            Ok(reader)
+        });
         match opened {
             Ok(Some(reader)) => Observed::Verified(reader, evidence("kernel store")),
             Ok(None) => Observed::Absent(AbsenceProof::NoStore),
@@ -411,6 +464,9 @@ impl Store {
         wait: BusyWait,
         f: impl FnOnce(&mut Txn<'_>) -> Result<T, E>,
     ) -> Result<T, E> {
+        crate::inheritance::require_journal_write().map_err(|error| {
+            StoreError::from(FsError::io("runtime class", self.root.path(), &error))
+        })?;
         let window = wait.window(cx);
         // Cancellation still wins; only the deadline is replaced.
         let patient = cx.patience(window);
@@ -425,6 +481,7 @@ impl Store {
         let value = f(&mut Txn {
             conn: &self.conn,
             now: wall_ms(),
+            machine: self.root.is_machine(),
         });
         let value = match value {
             Ok(value) => match crate::fault_point!(StoreCommitBefore) {
@@ -462,7 +519,7 @@ impl Store {
         cx: &EffectContext,
         window: Duration,
     ) -> Result<Option<GateGuard>, StoreError> {
-        let id = ResourceId::store(Scope::Machine, WRITER_GATE)?;
+        let id = self.root.store_gate(cx, WRITER_GATE)?;
         let name = |guard: GateGuard| {
             if let Some(run) = &self.run {
                 guard.set_run(run);
@@ -621,7 +678,7 @@ impl Store {
         if cx.operation().class() != EffectClass::Mutate {
             return Err(StoreError::ClassRefused(cx.operation().class()));
         }
-        let gate = ResourceId::store(Scope::Machine, "kernel")?;
+        let gate = root.store_gate(cx, WRITER_GATE)?;
         let _guard = Gate::acquire(cx, root, &[gate], Wait::FailFast)?;
         match Self::open(cx, root) {
             Ok(_) => return Err(StoreError::NotCorrupt),
@@ -629,17 +686,18 @@ impl Store {
             Err(other) => return Err(other),
         }
         let stamp = wall_ms();
-        let aside = FileName::new(&format!("{DB_NAME}.corrupt-{stamp}"))?;
+        let aside = FileName::new(&format!("{}.corrupt-{stamp}", root.database_name()))?;
         // The journal and the write-ahead log and index are the store's own
         // files: they move with it, or the next `kernel.db` inherits a foreign
         // log written by the repaired one (§5.5).
         for suffix in ["-journal", "-wal", "-shm"] {
-            let side = FileName::new(&format!("{DB_NAME}{suffix}"))?;
+            let side = FileName::new(&format!("{}{suffix}", root.database_name()))?;
             if root.dir().entry(&side)?.is_some() {
                 root.dir().rename(&side, &aside.with_suffix(suffix)?)?;
             }
         }
-        root.dir().rename(&FileName::new(DB_NAME)?, &aside)?;
+        root.dir()
+            .rename(&FileName::new(root.database_name())?, &aside)?;
         root.dir().sync()?;
         Ok(aside)
     }
@@ -735,6 +793,7 @@ pub struct MaintainReport {
 pub struct Txn<'a> {
     conn: &'a Connection,
     now: i64,
+    machine: bool,
 }
 impl std::fmt::Debug for Txn<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -787,6 +846,9 @@ impl Txn<'_> {
         id: &ResourceId,
         authority: &str,
     ) -> Result<ResourceRecord, StoreError> {
+        if self.machine && !id.is_machine_fact() {
+            return Err(StoreError::MachineContentsRefused(id.label()));
+        }
         let name = id.name().to_string();
         let existing: Option<Vec<u8>> = self
             .conn
@@ -853,6 +915,11 @@ impl Txn<'_> {
         path_hint: Option<&str>,
         git_dir_hint: Option<&str>,
     ) -> Result<(), StoreError> {
+        if self.machine {
+            return Err(StoreError::MachineContentsRefused(
+                "checkout catalog".into(),
+            ));
+        }
         self.conn.execute(
             "INSERT INTO checkouts(token, kind, path_hint, git_dir_hint, state, first_seen, last_seen) \
              VALUES (?1, ?2, ?3, ?4, 'live', ?5, ?5) \
@@ -887,6 +954,8 @@ impl Txn<'_> {
 
 /// A read-only store view. Reads only the columns schema 1 defines (I-S5).
 #[derive(Debug)]
+/// One coherent observation. Reopen for facts after a subsequent mutation;
+/// no filesystem SQLite connection or read lock survives this snapshot.
 pub struct StoreReader {
     conn: Connection,
     version: i64,
@@ -905,6 +974,39 @@ impl StoreReader {
             [],
             |row| row.get(0),
         )
+    }
+    /// An immutable local import alias. The referenced canonical resource must
+    /// still exist; a missing row is corruption, never a fresh owner.
+    pub fn imported_owner(&self, role: &str) -> Observed<ResourceId> {
+        let name: Observed<String> = self.row(
+            "meta",
+            "SELECT value FROM meta WHERE key=?1",
+            [format!("migration_owner:{role}")],
+            |r| r.get(0),
+        );
+        let name = match name {
+            Observed::Verified(name, _) => name,
+            Observed::Absent(proof) => return Observed::Absent(proof),
+            Observed::Unknown(reason) => return Observed::Unknown(reason),
+        };
+        let canonical: Observed<Vec<u8>> = self.row(
+            "resources",
+            "SELECT canonical FROM resources WHERE name=?1",
+            [&name],
+            |r| r.get(0),
+        );
+        match canonical {
+            Observed::Verified(bytes, evidence) => match ResourceId::decode_canonical(&bytes) {
+                Ok(id) if id.name().to_string() == name => Observed::Verified(id, evidence),
+                _ => Observed::Unknown(UnknownReason::Inconsistent(
+                    "invalid imported owner alias".into(),
+                )),
+            },
+            Observed::Unknown(reason) => Observed::Unknown(reason),
+            Observed::Absent(_) => Observed::Unknown(UnknownReason::Inconsistent(
+                "imported owner alias has no resource".into(),
+            )),
+        }
     }
     pub fn resource(&self, id: &ResourceId) -> Observed<ResourceRecord> {
         let canonical: Observed<Vec<u8>> = self.row(
@@ -1145,7 +1247,7 @@ fn busy(error: GateError) -> StoreError {
 /// (§7.1), including the log and index a WAL store keeps (§5.5).
 fn check_store_files(root: &StateRoot) -> Result<(), FsError> {
     for suffix in ["", "-journal", "-wal", "-shm"] {
-        let name = FileName::new(&format!("{DB_NAME}{suffix}"))?;
+        let name = FileName::new(&format!("{}{suffix}", root.database_name()))?;
         if let Some(stat) = root.dir().entry(&name)? {
             crate::fs::check(
                 &stat,
@@ -1170,20 +1272,139 @@ fn verify_reader(conn: Connection, busy: Duration) -> Result<Option<StoreReader>
     let version = schema_version(&conn)?;
     Ok(Some(StoreReader { conn, version }))
 }
+/// Close the filesystem reader before returning. Besides giving every query
+/// one coherent snapshot, this prevents a read-only shared-memory attachment
+/// from constraining a subsequent writer in the same process.
+fn snapshot_live(
+    cx: &ObserveContext,
+    source: Connection,
+    busy: Duration,
+) -> Result<Option<StoreReader>, StoreError> {
+    source.busy_timeout(busy)?;
+    source.execute_batch("PRAGMA query_only=1; PRAGMA trusted_schema=OFF;")?;
+    let mut memory = Connection::open_in_memory()?;
+    {
+        let backup = rusqlite::backup::Backup::new(&source, &mut memory)?;
+        loop {
+            cx.check("store WAL snapshot")
+                .map_err(StoreError::Interrupted)?;
+            match backup.step(128)? {
+                rusqlite::backup::StepResult::Done => break,
+                rusqlite::backup::StepResult::More => {}
+                rusqlite::backup::StepResult::Busy | rusqlite::backup::StepResult::Locked => {
+                    std::thread::sleep(cx.remaining().min(Duration::from_millis(5)));
+                }
+                _ => return Err(StoreError::NeedsRecovery),
+            }
+        }
+    }
+    drop(source);
+    verify_reader(memory, cx.remaining())
+}
+
+/// Without an existing WAL index, SQLite would create side files even for a
+/// read-only connection. Copy a checkpointed image instead. The descriptor,
+/// nanosecond modification/change times, size and name binding must remain
+/// unchanged across the bounded copy, and no hot log may exist at either end.
+/// A racing writer yields Unknown, never an older immutable view of live WAL.
+fn read_snapshot(cx: &ObserveContext, root: &StateRoot) -> Result<Option<StoreReader>, StoreError> {
+    root.verify_binding()?;
+    no_hot_log(root)?;
+    let name = FileName::new(root.database_name())?;
+    let Some((file, _)) = root
+        .dir()
+        .open_file(&name, libc::O_RDONLY, None, Trust::Private)?
+    else {
+        return Ok(None);
+    };
+    let before = file.metadata()?;
+    if before.len() > MAX_DB_BYTES {
+        return Err(StoreError::TooLarge {
+            limit: MAX_DB_BYTES,
+        });
+    }
+    if before.len() == 0 {
+        return Ok(None);
+    }
+    let source = Connection::open_with_flags(
+        format!(
+            "file:{}?immutable=1",
+            uri_path(root.path().join(root.database_name()))
+        ),
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_NOFOLLOW
+            | OpenFlags::SQLITE_OPEN_URI
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    // Immutable is safe only inside this checked copy window, never as the
+    // returned lazy filesystem reader. Reject any source change below.
+    let reader = snapshot_live(cx, source, cx.remaining())?;
+    let after = file.metadata()?;
+    let stamp = |m: &std::fs::Metadata| {
+        (
+            m.dev(),
+            m.ino(),
+            m.len(),
+            m.mtime(),
+            m.mtime_nsec(),
+            m.ctime(),
+            m.ctime_nsec(),
+        )
+    };
+    if stamp(&before) != stamp(&after)
+        || root.dir().entry(&name)?.is_none_or(|stat| {
+            stat.st_ino != after.ino() || {
+                #[cfg(target_os = "macos")]
+                {
+                    stat.st_dev as u64 != after.dev()
+                }
+                #[cfg(target_os = "linux")]
+                {
+                    stat.st_dev != after.dev()
+                }
+            }
+        })
+    {
+        return Err(StoreError::NeedsRecovery);
+    }
+    no_hot_log(root)?;
+    root.verify_binding()?;
+    cx.check("store snapshot")
+        .map_err(StoreError::Interrupted)?;
+    Ok(reader)
+}
+
+fn no_hot_log(root: &StateRoot) -> Result<(), StoreError> {
+    for suffix in ["-wal", "-journal"] {
+        let name = FileName::new(&format!("{}{suffix}", root.database_name()))?;
+        if root
+            .dir()
+            .entry(&name)?
+            .is_some_and(|stat| stat.st_size > 0)
+        {
+            return Err(StoreError::NeedsRecovery);
+        }
+    }
+    Ok(())
+}
+
 /// A read-only root cannot host SQLite's WAL shared-memory index, so the same
 /// read is an immutable open: no lock, no file, and no hot log to recover
 /// (nothing can write a read-only root). A non-empty log or rollback journal
 /// is `Unknown(needs recovery)` rather than a silent older read.
 fn read_immutable(root: &StateRoot, busy: Duration) -> Result<Option<StoreReader>, StoreError> {
     for suffix in ["-wal", "-journal"] {
-        let name = FileName::new(&format!("{DB_NAME}{suffix}"))?;
+        let name = FileName::new(&format!("{}{suffix}", root.database_name()))?;
         if let Some(stat) = root.dir().entry(&name)? {
             if stat.st_size > 0 {
                 return Err(StoreError::NeedsRecovery);
             }
         }
     }
-    let uri = format!("file:{}?immutable=1", uri_path(root.path().join(DB_NAME)));
+    let uri = format!(
+        "file:{}?immutable=1",
+        uri_path(root.path().join(root.database_name()))
+    );
     let conn = Connection::open_with_flags(
         uri,
         OpenFlags::SQLITE_OPEN_READ_ONLY
@@ -1220,12 +1441,13 @@ fn needs_writable_root(error: &StoreError) -> bool {
 }
 /// Percent-escapes the characters a SQLite URI reserves.
 fn uri_path(path: PathBuf) -> String {
-    let path = path.to_string_lossy();
+    let path = path.as_os_str().as_bytes();
     let mut out = String::with_capacity(path.len());
-    for byte in path.bytes() {
-        match byte {
-            b'%' | b'?' | b'#' => out.push_str(&format!("%{byte:02X}")),
-            other => out.push(other as char),
+    for &byte in path {
+        if byte.is_ascii_alphanumeric() || b"/._-~:".contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
         }
     }
     out
@@ -1248,6 +1470,7 @@ fn schema_version(conn: &Connection) -> Result<i64, StoreError> {
 }
 fn read_unknown(error: &StoreError) -> UnknownReason {
     match error {
+        StoreError::Untrusted { reason, .. } => UnknownReason::Untrusted(reason.clone()),
         StoreError::NeedsRecovery => UnknownReason::StoreNeedsRecovery,
         StoreError::Busy { .. } => UnknownReason::TimedOut {
             phase: "store read".into(),

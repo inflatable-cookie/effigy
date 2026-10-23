@@ -9,6 +9,7 @@
 mod admission;
 mod checkout;
 mod control;
+pub(in crate::runner) mod discovery;
 mod holders;
 mod identity;
 mod kernel;
@@ -19,15 +20,17 @@ mod run;
 mod spawn_env;
 mod status;
 
+pub(in crate::runner) use admission::AdmissionInheritance;
 pub(in crate::runner) use control::{
-    effects as run_effects, list as list_runs, lookup as lookup_run, read_log as read_run_log,
-    request_stop, resolve as resolve_run, signal_owner, workload_process, Lookup, RunRecord,
-    StopStarted, POLL as RUN_POLL,
+    effects as run_effects, list as list_runs, lookup as lookup_run, lookup_checkout,
+    read_log as read_run_log, request_stop, resolve as resolve_run, signal_owner, workload_process,
+    Lookup, RunRecord, StopStarted, POLL as RUN_POLL,
 };
 pub(in crate::runner) use holders::{live_holders, HolderKind};
 pub(in crate::runner) use identity::TaskTarget;
 pub use kernel::{adopt_signal_router, capture_startup_executable, run_internal_kernel_entry};
 pub(in crate::runner) use legacy::{legacy_families, refuse_live_legacy_holder};
+pub(in crate::runner) use process::environment as process_environment;
 pub(in crate::runner) use process::{run_plain, EnvOverride, PlainCommand, PlainExit, RunExec};
 pub(in crate::runner) use remote::{remote_tty, run_remote, RemoteTask};
 pub(in crate::runner) use run::{resolve_lock_wait_ms, RunKey, TaskRun, TaskRunRequest};
@@ -38,12 +41,13 @@ pub(in crate::runner) use status::{
 #[cfg(test)]
 pub(in crate::runner) use kernel::test_state_home;
 pub(in crate::runner) use kernel::{
-    adopt_state_home, cleanup_context, effect_context, install_client_router, interrupted_by,
-    journal_reader, observe_context, reading_context, root_cancel_cause, routed_signals,
-    startup_executable, state_home_path, CustodyWait,
+    adopt_state_home, cleanup_context, effect_context, effects_root as checkout_effects_root,
+    install_client_router, interrupted_by, observe_context, probe_runtime, reading_context,
+    root_cancel_cause, routed_signals, startup_executable, state_home_path, CustodyWait,
 };
 pub(in crate::runner) use process::spawn_environment;
 pub(in crate::runner) use run::{fresh_request_id, request_run_stop};
+pub(in crate::runner) use spawn_env::remaining as remaining_lifetime;
 pub(in crate::runner) use spawn_env::{nested_capture, spawn_plain_env, SpawnScope};
 
 /// The recorded outcome of a task command that exited with `code`.

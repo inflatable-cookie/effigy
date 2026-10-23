@@ -1,5 +1,7 @@
 #[cfg(test)]
 use crate::gateway_legacy_fixture::LegacyRegistryFixture;
+#[cfg(test)]
+use effigy_containers::upsert_scope_record;
 use std::path::PathBuf;
 
 use effigy_catalog::volumes::{
@@ -7,10 +9,10 @@ use effigy_catalog::volumes::{
     parse_listed_resource_names, remove_volume_command, DockerCommand,
 };
 use effigy_containers::{
-    load_all_scope_records, load_for_checkout, load_scope_record, plan_retirement, remaining_after,
-    remove_scope_record, retire_report, retire_report_unverified, upsert_scope_record,
-    volume_has_ownership_proof, ObservedKind, ObservedResource, ScopeComposeKind, ScopeRecord,
-    COMPOSE_PROJECT_LABEL, PROJECT_LABEL, SCOPE_LABEL,
+    load_for_checkout, load_scope_record, plan_retirement, remaining_after, remove_scope_record,
+    retire_report, retire_report_unverified, upsert_scope_record_at, volume_has_ownership_proof,
+    ObservedKind, ObservedResource, ScopeComposeKind, ScopeRecord, COMPOSE_PROJECT_LABEL,
+    PROJECT_LABEL, SCOPE_LABEL,
 };
 use effigy_gateway::endpoint_store::EndpointStore;
 use effigy_gateway::loopback::LoopbackRegistry;
@@ -23,6 +25,8 @@ use super::support::run_runtime_volume_capture;
 use super::{render_container_report, RunnerError};
 use crate::runner::command_context::resolve_active_command_context;
 use crate::runner::gateway_command::{gateway_dir, remove_gateway_tls_cert};
+
+mod dead;
 
 const NAMED_CONTAINER_RETIRE_ERROR: &str = "`effigy container <NAME> retire` is unsupported; use `effigy container retire` for the checkout or `effigy container retire --scope <TOKEN>` for one recorded scope";
 
@@ -39,6 +43,7 @@ pub(super) fn run_container_retire(
         ));
     }
 
+    let checkout = journal_checkout(repo_override.clone())?;
     let records = resolve_retire_records(repo_override, scope)?;
     if records.is_empty() {
         return Ok(render_container_report(
@@ -59,7 +64,7 @@ pub(super) fn run_container_retire(
     }
     let mut last_report = None;
     for record in records {
-        last_report = Some(retire_one_record(&record, output_json)?);
+        last_report = Some(retire_one_record(&checkout, &record, output_json)?);
     }
     last_report.ok_or_else(|| RunnerError::task_invocation("no runtime scope to retire"))
 }
@@ -68,135 +73,54 @@ pub(super) fn run_container_retire(
 /// example worktrees removed without running their teardown. Each scope uses
 /// the ordinary retirement path; one failure does not stop the others.
 pub(super) fn run_container_retire_dead(
+    repo_override: Option<PathBuf>,
     yes: bool,
     output_json: bool,
 ) -> Result<String, RunnerError> {
-    let records = dead_scope_records()?;
-    if records.is_empty() {
-        return Ok(if output_json {
-            serde_json::json!({"schema": DEAD_RETIRE_SCHEMA, "scopes": []}).to_string()
-        } else {
-            "[ok] no recorded runtime scope has a missing checkout".to_owned()
-        });
-    }
-    let listing = records
-        .iter()
-        .map(|record| format!("  {} {}", record.token, record.checkout))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let plan = format!(
-        "Retire {} runtime scope(s) whose checkout no longer exists, removing their owned containers, networks, mutable volumes, routes and ports:\n{listing}",
-        records.len()
-    );
-    // A refused confirmation still names exactly what `--yes` would retire.
-    maybe_confirm_destructive_container_action(
-        "effigy container retire --dead",
-        &plan,
-        output_json,
-        yes,
-    )
-    .map_err(|error| RunnerError::task_invocation(format!("{plan}\n{error}")))?;
-    let mut outcomes = Vec::new();
-    let mut failures = 0;
-    for record in &records {
-        let result = retire_one_record(record, output_json);
-        if result.is_err() {
-            failures += 1;
-        }
-        outcomes.push((record, result));
-    }
-    let rendered = if output_json {
-        let scopes = outcomes
-            .iter()
-            .map(|(record, result)| {
-                let (ok, report) = match result {
-                    Ok(text) => (true, text.clone()),
-                    Err(RunnerError::CommandJsonFailure { rendered }) => (false, rendered.clone()),
-                    Err(error) => (false, error.to_string()),
-                };
-                serde_json::json!({
-                    "token": record.token,
-                    "checkout": record.checkout,
-                    "ok": ok,
-                    "report": serde_json::from_str::<serde_json::Value>(&report)
-                        .unwrap_or(serde_json::Value::String(report)),
-                })
-            })
-            .collect::<Vec<_>>();
-        serde_json::json!({"schema": DEAD_RETIRE_SCHEMA, "scopes": scopes}).to_string()
-    } else {
-        outcomes
-            .iter()
-            .map(|(record, result)| match result {
-                Ok(text) => format!(
-                    "[ok] retired {} ({})\n{text}",
-                    record.token, record.checkout
-                ),
-                Err(error) => format!(
-                    "[warn] {} ({}) not fully retired\n{error}",
-                    record.token, record.checkout
-                ),
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    if failures == 0 {
-        Ok(rendered)
-    } else if output_json {
-        Err(RunnerError::CommandJsonFailure { rendered })
-    } else {
-        Err(RunnerError::task_invocation(format!(
-            "{rendered}\n{failures} of {} dead scope(s) were not fully retired; their records are kept for a retry",
-            records.len()
-        )))
-    }
+    dead::run(repo_override, yes, output_json)
 }
 
 const DEAD_RETIRE_SCHEMA: &str = "effigy.container.retire-dead.v1";
-
-fn dead_scope_records() -> Result<Vec<ScopeRecord>, RunnerError> {
-    Ok(load_all_scope_records()
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-        .into_iter()
-        .filter(|record| checkout_definitely_missing(std::path::Path::new(&record.checkout)))
-        .collect())
-}
-
-/// Only a path that is positively absent counts as gone; an unreadable or
-/// otherwise uncertain path keeps its scope.
-fn checkout_definitely_missing(path: &std::path::Path) -> bool {
-    path.is_absolute()
-        && matches!(
-            std::fs::symlink_metadata(path),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound
-        )
-}
 
 fn resolve_retire_records(
     repo_override: Option<PathBuf>,
     scope: Option<&str>,
 ) -> Result<Vec<ScopeRecord>, RunnerError> {
-    if let Some(token) = scope {
-        return Ok(load_scope_record(token)
+    let checkout = journal_checkout(repo_override)?;
+    let records = if let Some(token) = scope {
+        load_scope_record(&checkout, token)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?
             .into_iter()
-            .collect());
-    }
-    let checkout = match resolve_active_command_context(repo_override.clone()) {
-        Ok(context) => context.resolved.resolved_root,
-        Err(_) => {
-            if let Some(path) = repo_override {
-                return load_for_checkout(&path)
-                    .map_err(|error| RunnerError::task_invocation(error.to_string()));
-            }
-            return Ok(Vec::new());
-        }
+            .collect()
+    } else {
+        load_for_checkout(&checkout)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?
     };
-    load_for_checkout(&checkout).map_err(|error| RunnerError::task_invocation(error.to_string()))
+    Ok(records)
+}
+fn journal_checkout(repo_override: Option<PathBuf>) -> Result<PathBuf, RunnerError> {
+    match resolve_active_command_context(repo_override.clone()) {
+        Ok(context) => Ok(context.resolved.resolved_root),
+        Err(error) => match repo_override {
+            Some(path) if path.is_dir() => Ok(path),
+            _ => Err(error),
+        },
+    }
 }
 
-fn retire_one_record(record: &ScopeRecord, output_json: bool) -> Result<String, RunnerError> {
-    let record = remember_pending_tls(record)?;
+fn retire_one_record(
+    checkout: &std::path::Path,
+    record: &ScopeRecord,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    if PathBuf::from(&record.checkout).canonicalize().ok() != checkout.canonicalize().ok() {
+        return Err(RunnerError::task_invocation(
+            "scope belongs to another or missing checkout; use container retire --dead",
+        ));
+    }
+    let record = remember_pending_tls(checkout, record)?;
+    upsert_scope_record_at(checkout, &record)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let (live, stopped) = split_stopped_profiles(&record);
     let observed = observe_scope(&record, &live)?;
     let plan = plan_retirement(&record, &observed);
@@ -232,7 +156,7 @@ fn retire_one_record(record: &ScopeRecord, output_json: bool) -> Result<String, 
     let remaining = remaining_after(&record, &observe_scope(&record, &live)?);
     let record_removed = remaining.is_empty() && stopped.is_empty();
     if record_removed {
-        remove_scope_record(&record.token)
+        remove_scope_record(checkout, &record.token)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     }
     let report = retire_report_unverified(
@@ -644,7 +568,10 @@ fn observe_tls_certs(record: &ScopeRecord) -> Result<Vec<ObservedResource>, Runn
         .collect())
 }
 
-fn remember_pending_tls(record: &ScopeRecord) -> Result<ScopeRecord, RunnerError> {
+fn remember_pending_tls(
+    checkout: &std::path::Path,
+    record: &ScopeRecord,
+) -> Result<ScopeRecord, RunnerError> {
     let mut domains = record.pending_tls_certs.clone();
     let path = super::gateway_registration::gateway_route_table_path()?;
     {
@@ -666,8 +593,9 @@ fn remember_pending_tls(record: &ScopeRecord) -> Result<ScopeRecord, RunnerError
     }
     let mut next = record.clone();
     next.pending_tls_certs = domains;
-    upsert_scope_record(&next).map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    load_scope_record(&record.token)
+    upsert_scope_record_at(checkout, &next)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    load_scope_record(checkout, &record.token)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?
         .ok_or_else(|| {
             RunnerError::task_invocation("runtime-scope record vanished after TLS inventory write")
@@ -920,14 +848,17 @@ mod tests {
         let home = temp.path().join("home");
 
         effigy_containers::with_test_effigy_home(&home.join(".effigy"), || {
-            let first = sample_record();
-            let mut second = sample_record();
+            let checkout = home.join("checkout");
+            std::fs::create_dir_all(&checkout).unwrap();
+            let mut first = sample_record();
+            first.checkout = checkout.display().to_string();
+            let mut second = first.clone();
             second.token = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned();
             second.host_key = "bbbbbbbb".to_owned();
             upsert_scope_record(&first).expect("write first scope record");
             upsert_scope_record(&second).expect("write second scope record");
 
-            let records = resolve_retire_records(None, Some(&second.token))
+            let records = resolve_retire_records(Some(checkout), Some(&second.token))
                 .expect("resolve the explicit scope token");
             assert_eq!(records.len(), 1);
             assert_eq!(records[0].token, second.token);
@@ -966,14 +897,14 @@ mod tests {
             let token = effigy_core::worktree_scope::load_or_create(&checkout)
                 .expect("resolve fixture token")
                 .expect("ephemeral fixture scope");
-            let mut record = load_scope_record(&token)
+            let mut record = load_scope_record(&checkout, &token)
                 .expect("load scope")
                 .expect("record exists");
             record.profile = "unknown-stopped-profile".to_owned();
             record.profiles = vec!["unknown-stopped-profile".to_owned()];
             upsert_scope_record(&record).expect("preserve unknown profile in record");
-            let record_path = home
-                .join(".effigy/runtime-scopes")
+            let record_path = checkout
+                .join(".effigy/state/runtime-scopes")
                 .join(format!("{token}.json"));
             let before = std::fs::read(&record_path).expect("read record before lookup");
 
@@ -1008,6 +939,8 @@ mod tests {
             loopback_identities: vec![],
             retain_loopback_identities: vec![],
             pending_tls_certs: vec![],
+            checkout_fence: None,
+            checkout_generation: None,
         }
     }
 
@@ -1123,32 +1056,5 @@ mod stopped_profile_tests {
         assert_eq!(details["schema"], "effigy.container.retire.v1");
         assert_eq!(details["idempotent"], false);
         assert_eq!(details["unverified_profiles"][0], "stopped-profile");
-    }
-}
-
-#[cfg(test)]
-mod dead_selection_tests {
-    use super::checkout_definitely_missing;
-
-    #[test]
-    fn only_a_positively_absent_absolute_checkout_counts_as_dead() {
-        let root = tempfile::tempdir().expect("tempdir");
-        assert!(!checkout_definitely_missing(root.path()), "live checkout");
-        assert!(checkout_definitely_missing(
-            &root.path().join("removed-worktree")
-        ));
-        assert!(
-            !checkout_definitely_missing(std::path::Path::new("relative/worktree")),
-            "a relative record path is not trusted as gone"
-        );
-        #[cfg(unix)]
-        {
-            let link = root.path().join("dangling");
-            std::os::unix::fs::symlink(root.path().join("missing-target"), &link).expect("symlink");
-            assert!(
-                !checkout_definitely_missing(&link),
-                "an existing (dangling) entry is not positively absent"
-            );
-        }
     }
 }

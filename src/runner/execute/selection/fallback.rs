@@ -10,7 +10,7 @@ use crate::runner::deferral::run_deferred_request;
 use crate::runner::error::RunnerError;
 use crate::runner::exec_command::try_run_exec_alias;
 use crate::runner::task_engine::TaskRun;
-use effigy_builtin::try_run_builtin_task;
+use effigy_builtin::{try_run_builtin_task, TestRunRequirement};
 
 /// Carries out the route the one resolver chose for a selector that names
 /// no declared task.
@@ -22,32 +22,43 @@ pub(super) fn run_fallback_route<'a>(
     match route {
         Route::Task { selection, plan } => Ok(SelectionResolution::Selected { selection, plan }),
         Route::Builtin => {
-            // The built-in `test` route runs a project's suites on the host
-            // exactly as a manifest test task would, so with a configured
-            // scratch directory it holds a run of its own: that run's scratch
-            // is the suites' temp directory, its suites are child runs whose
-            // process trees it settles, and its settle decides retention.
-            // Unconfigured — or with an explicit `TMPDIR` — it holds no run
-            // and needs no Effigy state, exactly as before.
-            let mut scratch_run = if builtin_runs_project_tests(&preflight.selector.task_name)
+            let requirement = if builtin_runs_project_tests(&preflight.selector.task_name)
                 && !preflight.plan
-                && crate::runner::scratch::wanted()
+                && !preflight.help
             {
-                let label = format!("effigy {}", preflight.selector.task_name);
-                match TaskRun::standalone_scratching(&preflight.resolved.resolved_root, &label) {
-                    Ok(run) => Some(run),
-                    // A scratch that cannot be admitted falls back to the
-                    // default temp directory rather than failing the suites.
-                    Err(error) => {
-                        eprintln!("warning: {label}: no scratch run: {error}");
-                        None
-                    }
-                }
+                effigy_builtin::test_run_requirement(
+                    &preflight.selector,
+                    &preflight.runtime_args_raw,
+                    &preflight.resolved.resolved_root,
+                    &preflight.catalogs,
+                )?
             } else {
-                None
+                TestRunRequirement::Observe
             };
-            let outcome = match scratch_run.as_mut() {
+            let label = format!("effigy {}", preflight.selector.task_name);
+            let root = &preflight.resolved.resolved_root;
+            let mut suite_run = match requirement {
+                TestRunRequirement::Observe => None,
+                TestRunRequirement::Checkout => Some(if crate::runner::scratch::wanted() {
+                    TaskRun::standalone_scratching(root, &label)?
+                } else {
+                    TaskRun::standalone_custody(root, &label)?
+                }),
+                TestRunRequirement::Local(sources) => {
+                    let local =
+                        super::super::sequence_run::foreground_test_sources(preflight, sources)?;
+                    Some(if crate::runner::scratch::wanted() {
+                        TaskRun::standalone_scratching(root, &label)?
+                    } else if !local || preflight.task_source.is_some() {
+                        TaskRun::standalone_custody(root, &label)?
+                    } else {
+                        TaskRun::standalone_foreground(root, &label)?
+                    })
+                }
+            };
+            let outcome = match suite_run.as_mut() {
                 Some(run) => {
+                    let _scope = run.enter()?;
                     let ports = RunnerBuiltinPorts::with_suite_run(run);
                     try_run_builtin_task(
                         &ports,
@@ -69,7 +80,7 @@ pub(super) fn run_fallback_route<'a>(
                     &preflight.invocation_cwd,
                 ),
             };
-            if let Some(run) = scratch_run {
+            if let Some(run) = suite_run {
                 let workload = match &outcome {
                     Ok(Some(_)) => WorkloadOutcome::Succeeded,
                     Ok(None) => WorkloadOutcome::NotStarted,

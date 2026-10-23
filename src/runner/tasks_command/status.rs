@@ -1,5 +1,5 @@
 //! `effigy tasks status`: the task engine's run journal plus a fresh gate
-//! probe (contract 018, `effigy.tasks-status.v2`). A pure read: nothing is
+//! probe (contract 018, `effigy.tasks-status.v3`). A pure read: nothing is
 //! created, imported or repaired. Kernel run rows are the only task status;
 //! v0.14 status records are neither read nor imported (contract 052 §10.1).
 
@@ -33,8 +33,8 @@ pub(super) fn run_task_status(args: &TasksArgs, raw_selector: &str) -> Result<St
 
     if args.output_json {
         let payload = json!({
-            "schema": "effigy.tasks-status.v2",
-            "schema_version": 2,
+            "schema": "effigy.tasks-status.v3",
+            "schema_version": 3,
             "task": task_json(&target),
             "state": view.state,
             "current": view.current,
@@ -85,8 +85,8 @@ pub(super) fn run_task_status_all(args: &TasksArgs) -> Result<String, RunnerErro
             })
             .collect::<Vec<_>>();
         return render_json(&json!({
-            "schema": "effigy.tasks-status-all.v2",
-            "schema_version": 2,
+            "schema": "effigy.tasks-status-all.v3",
+            "schema_version": 3,
             "scope_root": repo_root.display().to_string(),
             "catalog_scopes": catalog_scopes,
             "counts_by_state": counts,
@@ -238,8 +238,14 @@ fn render_task_status_text(
         let _ = renderer.text("");
         let mut values = vec![
             KeyValue::new("run", current.run_id.clone()),
-            KeyValue::new("phase", current.phase.to_owned()),
-            KeyValue::new("started", epoch_text(current.started_at_epoch_ms)),
+            KeyValue::new("phase", current.phase.unwrap_or("unavailable").to_owned()),
+            KeyValue::new(
+                "started",
+                current
+                    .started_at_epoch_ms
+                    .map(epoch_text)
+                    .unwrap_or_else(|| "unavailable".into()),
+            ),
         ];
         if let Some(pid) = current.pid {
             values.push(KeyValue::new("pid", pid.to_string()));
@@ -260,7 +266,13 @@ fn render_task_status_text(
         let mut values = vec![
             KeyValue::new("last-run", latest.run_id.clone()),
             KeyValue::new("outcome", latest.state.clone()),
-            KeyValue::new("started", epoch_text(latest.started_at_epoch_ms)),
+            KeyValue::new(
+                "started",
+                latest
+                    .started_at_epoch_ms
+                    .map(epoch_text)
+                    .unwrap_or_else(|| "unavailable".into()),
+            ),
         ];
         if let Some(code) = latest.exit_code {
             values.push(KeyValue::new("exit-code", code.to_string()));
@@ -342,7 +354,7 @@ fn render_task_status_all_text(repo_root: &Path, rows: &[TaskStatusInventoryRow]
                 .current
                 .as_ref()
                 .or(row.latest.as_ref())
-                .map(|run| epoch_text(run.started_at_epoch_ms));
+                .and_then(|run| run.started_at_epoch_ms.map(epoch_text));
             if let Some(when) = when {
                 line.push_str(&format!(" started={when}"));
             }

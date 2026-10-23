@@ -33,28 +33,23 @@ const KEEP_RUNNING_ENV: &str = "EFFIGY_DISABLE_HOST_CONTAINER_LEASE";
 const LEGACY_LEASE_WAIT: Duration = Duration::from_secs(600);
 const INVENTORY_BUDGET: Duration = Duration::from_secs(15);
 
-pub(in crate::runner) fn context() -> Result<EnvContext<'static>, RunnerError> {
+pub(in crate::runner) fn context(repo_root: &Path) -> Result<EnvContext<'static>, RunnerError> {
     if inside_guest() {
         return Err(error(EnvError::HostAuthorityRequired));
     }
-    EnvContext::new(root()?, CancelToken::default()).map_err(error)
+    EnvContext::new(root(repo_root)?, CancelToken::default()).map_err(error)
 }
 
-/// The state root beside the render objects (`$HOME/.effigy/state`, the
-/// task engine's too). One root per home is opened once per process.
-fn root() -> Result<&'static effigy_kernel::root::StateRoot, RunnerError> {
+/// Environment records and render objects share the owning checkout with
+/// task holders. Retained handles are revalidated before each use.
+fn root(repo_root: &Path) -> Result<&'static effigy_kernel::root::StateRoot, RunnerError> {
+    if inside_guest() {
+        return Err(error(EnvError::HostAuthorityRequired));
+    }
     use std::collections::BTreeMap;
     use std::sync::{Mutex, OnceLock};
     static ROOTS: OnceLock<Mutex<BTreeMap<PathBuf, &'static effigy_kernel::root::StateRoot>>> =
         OnceLock::new();
-    let home = engine::state_home().map_err(error)?;
-    let mut roots = ROOTS
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(root) = roots.get(&home) {
-        return Ok(root);
-    }
     let operation = effigy_kernel::ctx::OperationContext::new(
         effigy_kernel::ctx::Deadline::At(Instant::now() + Duration::from_secs(30)),
         CancelToken::default(),
@@ -72,8 +67,28 @@ fn root() -> Result<&'static effigy_kernel::root::StateRoot, RunnerError> {
     let cx = operation
         .effects()
         .map_err(|_| RunnerError::task_invocation("Mutate capability refused"))?;
-    let root: &'static _ = Box::leak(Box::new(engine::state_root(&cx).map_err(error)?));
-    roots.insert(home, root);
+    let current = engine::state_root(&cx, repo_root).map_err(error)?;
+    let mut roots = ROOTS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let key = current.owning_directory().path().to_owned();
+    if let Some(root) = roots.get(&key) {
+        let identity = |dir: &effigy_kernel::fs::DirFd| {
+            dir.identity()
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))
+        };
+        if identity(root.owning_directory())? != identity(current.owning_directory())?
+            || identity(root.state_directory())? != identity(current.state_directory())?
+        {
+            return Err(RunnerError::task_invocation(
+                "environment checkout was replaced during this invocation",
+            ));
+        }
+        return Ok(root);
+    }
+    let root = Box::leak(Box::new(current));
+    roots.insert(key, root);
     Ok(root)
 }
 
@@ -90,6 +105,7 @@ fn runtime_error(error: RunnerError) -> effigy_runtime::EffigyRuntimeError {
 }
 
 pub(in crate::runner) fn env_ref(policy: &EffectiveContainerPolicy) -> Result<EnvRef, RunnerError> {
+    root(&policy.repo_root)?;
     effigy_core::worktree_scope::prepare_checkout_token(&policy.repo_root).map_err(|error| {
         RunnerError::task_invocation(format!("cannot record the checkout identity: {error}"))
     })?;
@@ -100,8 +116,10 @@ pub(in crate::runner) fn env_ref(policy: &EffectiveContainerPolicy) -> Result<En
 /// no record yet or it cannot be read.
 pub(in crate::runner) fn record(policy: &EffectiveContainerPolicy) -> Option<EnvRecord> {
     let env = EnvRef::for_policy(policy).ok()?;
-    let ctx = context().ok()?;
-    match EnvRecord::read(&ctx.observe(), ctx.root, &env.resource) {
+    let cx = super::task_engine::observe_context(Duration::from_secs(10));
+    let observed = engine::observe_root(&cx, &policy.repo_root);
+    let root = observed.verified()?;
+    match EnvRecord::read(&cx, root, &env.resource) {
         Observed::Verified(record, _) => Some(record),
         _ => None,
     }
@@ -165,7 +183,7 @@ pub(in crate::runner) fn import_legacy(
         std::thread::sleep(remaining + Duration::from_secs(1));
     }
     let env = env_ref(policy)?;
-    let ctx = context()?;
+    let ctx = context(&policy.repo_root)?;
     let backend = backend(repo_root, policy);
     let workloads = backend.adapter().inventory(repo_root, &policy.project_name);
     let ownership = Ownership {
@@ -292,6 +310,7 @@ fn evidence() -> effigy_kernel::observe::Evidence {
 pub(in crate::runner) struct BringUp {
     env: EnvRef,
     pending: Pending,
+    repo_root: PathBuf,
 }
 
 impl BringUp {
@@ -322,7 +341,7 @@ pub(in crate::runner) fn reconcile(
 ) -> Result<BringUp, RunnerError> {
     import_legacy(repo_root, policy)?;
     let env = env_ref(policy)?;
-    let ctx = context()?;
+    let ctx = context(&policy.repo_root)?;
     let existing = record(policy);
     let running = running(repo_root, policy)?;
     let mut drift = match running {
@@ -378,7 +397,11 @@ pub(in crate::runner) fn reconcile(
             eprintln!("[warn] {detail}");
         }
     }
-    Ok(BringUp { env, pending })
+    Ok(BringUp {
+        env,
+        pending,
+        repo_root: policy.repo_root.clone(),
+    })
 }
 
 /// The activation run: publishes the generation and attaches `holders`.
@@ -386,7 +409,7 @@ pub(in crate::runner) fn activate(
     bring_up: &BringUp,
     holders: &[RunId],
 ) -> Result<(), RunnerError> {
-    let ctx = context()?;
+    let ctx = context(&bring_up.repo_root)?;
     let mode = record_mode(&ctx, &bring_up.env);
     let holders = holders
         .iter()
@@ -440,6 +463,7 @@ pub(in crate::runner) fn stop_exempting(
     import_legacy(repo_root, policy)?;
     let env = env_ref(policy)?;
     stop_env(
+        &policy.repo_root,
         &env,
         &backend(repo_root, policy),
         &policy.project_name,
@@ -460,6 +484,7 @@ pub(in crate::runner) fn stop_peer(
 ) -> Result<(), RunnerError> {
     let env = EnvRef::new(env_ref(policy)?.checkout, peer).map_err(error)?;
     stop_env(
+        &policy.repo_root,
         &env,
         &backend(repo_root, policy),
         project,
@@ -470,6 +495,7 @@ pub(in crate::runner) fn stop_peer(
 }
 
 fn stop_env(
+    repo_root: &Path,
     env: &EnvRef,
     backend: &BackendSelection,
     project: &str,
@@ -477,7 +503,7 @@ fn stop_env(
     exempt: Option<RunId>,
     effect: impl FnOnce() -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
-    let ctx = context()?;
+    let ctx = context(repo_root)?;
     let mut failure = None;
     let result = engine::down(&ctx, env, op, backend, project, exempt, || {
         effect().map_err(|error| {
@@ -502,7 +528,7 @@ pub(in crate::runner) fn repair(
     effect: impl FnOnce() -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
     let env = env_ref(policy)?;
-    let ctx = context()?;
+    let ctx = context(&policy.repo_root)?;
     let mut failure = None;
     let result = engine::repair(
         &ctx,
@@ -533,7 +559,7 @@ pub(in crate::runner) fn reset(
 ) -> Result<(), RunnerError> {
     import_legacy(repo_root, policy)?;
     let env = env_ref(policy)?;
-    let ctx = context()?;
+    let ctx = context(&policy.repo_root)?;
     let backend = backend(repo_root, policy);
     let mut failure = None;
     let result = engine::reset(&ctx, &env, &backend, &policy.project_name, || {
@@ -608,25 +634,24 @@ pub(in crate::runner) struct Held {
 
 impl Held {
     /// Begins the session before any bring-up, so the bring-up's activation
-    /// can attach it; outside a host or for an unrecordable checkout there
-    /// is no session and the command proceeds unheld.
+    /// can attach it. A failed local journal refuses the operation before
+    /// backend effects; guest work continues through host authority.
     pub(in crate::runner) fn begin(
         repo_root: &Path,
         policy: &EffectiveContainerPolicy,
         label: &str,
-    ) -> Option<Self> {
+    ) -> Result<Option<Self>, RunnerError> {
         if inside_guest() {
-            return None;
+            return Ok(None);
         }
-        // Prepare already minted the checkout identity; a hold never does.
-        let env = EnvRef::for_policy(policy).ok()?;
-        let ctx = context().ok()?;
-        let session = Session::begin(&ctx, &env, label).ok()?;
-        Some(Self {
+        let env = env_ref(policy)?;
+        let ctx = context(&policy.repo_root)?;
+        let session = Session::begin(&ctx, &env, label).map_err(error)?;
+        Ok(Some(Self {
             session: Some(session),
             repo_root: repo_root.to_path_buf(),
             policy: policy.clone(),
-        })
+        }))
     }
 
     pub(in crate::runner) fn id(&self) -> Option<RunId> {
@@ -640,7 +665,7 @@ impl Held {
             return Ok(true);
         };
         let env = env_ref(&self.policy)?;
-        let ctx = context()?;
+        let ctx = context(&self.policy.repo_root)?;
         match engine::hold(
             session.run_mut(),
             &ctx,
@@ -674,7 +699,7 @@ impl Drop for Held {
 /// Holder-based idle stop after a run released its hold. Never fails the
 /// command: an idle stop that cannot run leaves the stack running.
 pub(in crate::runner) fn release(repo_root: &Path, policy: &EffectiveContainerPolicy) {
-    let (Ok(env), Ok(ctx)) = (env_ref(policy), context()) else {
+    let (Ok(env), Ok(ctx)) = (env_ref(policy), context(&policy.repo_root)) else {
         return;
     };
     let backend = backend(repo_root, policy);

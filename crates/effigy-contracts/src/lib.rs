@@ -312,6 +312,7 @@ struct ContractRow {
     schema_version: i64,
     command: String,
     expect_failure: bool,
+    isolated_home: bool,
     raw: Value,
 }
 
@@ -587,6 +588,12 @@ fn load_active_contract_rows(index: &Value) -> Result<Vec<ContractRow>, Contract
                 .get("expect_failure")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            isolated_home: match row.get("isolated_home") {
+                None => false,
+                Some(value) => value.as_bool().ok_or_else(|| {
+                    ContractsError::Message("schema row `isolated_home` must be a boolean".into())
+                })?,
+            },
             raw: row.clone(),
         });
     }
@@ -670,15 +677,31 @@ fn run_contract_row(
         reason,
     })?;
 
-    let output = Command::new(executable)
-        .args(args)
-        .current_dir(repo_root)
-        .output()
-        .map_err(|error| CheckFailure {
-            schema: row.schema.clone(),
-            command: row.command.clone(),
-            reason: format!("command execution failed: {error}"),
-        })?;
+    // Runtime observations must not inspect the validator's own active HOME.
+    // The explicit row flag owns one empty HOME through command completion.
+    let isolated_home = if row.isolated_home {
+        Some(
+            fixtures
+                .directory("effigy-contract-home-", FixturePlacement::External)
+                .map_err(|error| CheckFailure {
+                    schema: row.schema.clone(),
+                    command: row.command.clone(),
+                    reason: format!("cannot allocate isolated HOME: {error}"),
+                })?,
+        )
+    } else {
+        None
+    };
+    let mut command = Command::new(executable);
+    command.args(args).current_dir(repo_root);
+    if let Some(home) = isolated_home {
+        command.env("HOME", home);
+    }
+    let output = command.output().map_err(|error| CheckFailure {
+        schema: row.schema.clone(),
+        command: row.command.clone(),
+        reason: format!("command execution failed: {error}"),
+    })?;
 
     if row.expect_failure {
         if output.status.success() {

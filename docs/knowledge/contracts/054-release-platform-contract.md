@@ -11,6 +11,13 @@ reconciled, never replayed)
 Ruling: [questions](../questions.md) Q-009, the release platform bullet
 Evidence: the planner's portfolio inventory (2026-10, `release-audits/effigy/release-platform-inventory-2026-10/`). These cover 38 project roots and 101 legacy roots.
 
+Q-010 process custody: Git operations, hosted evidence lookups and stage tasks receive the admitted
+checkout run explicitly. Before launch, the run registers its sentinel and each
+process receipt; closure and bounded output are verified before a stage consumes
+the result. Adapter exit codes are interpreted by the stage (a missing tag is
+an observed absence), while unknown closure refuses completion. Workspace guests
+cannot mutate release state through the host-only release API.
+
 ## 1. Purpose
 
 Every project releases through one Effigy protocol. A release is one durable
@@ -276,7 +283,7 @@ Projects with an explicit no-release ruling stay out.
 ## 10. Rulings (Tom, 2026-10-22, "as recommended")
 
 1. **Tags are pushed at publish,** by the `tag` target, so later targets (npm, deploy) can rely on the tag existing. Closeout pushes only a release commit that no target already pushed.
-2. **Run state and receipts live in Effigy-owned state outside the repo.** History stays in git and the orchestrator. A project that wants receipts in its tree adds a `closeout` task that writes them.
+2. **Run state and receipts live in Effigy-owned state.** The approved Q-010 amendment in [052 §3.1 and §7](052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary) supersedes the original outside-the-repo placement: resumable release runs use the owning checkout's gitignored `.effigy/state/`. Project history stays in git and the orchestrator. A project that wants tracked receipts adds a `closeout` task that writes them.
 3. **Approval before publish is on by default** for any release with a non-`tag` target, and off for tag-only releases. `approve = []` or an explicit list overrides it.
 
 ## 11. Implementation record: config, status and plan
@@ -384,12 +391,28 @@ The Run stops at the first unapproved one with status `awaiting-approval` and
 `waiting_on` naming it; `release approve <run>` records the approver (git
 `user.name`, else `$USER`, else `operator`) and continues at that stage.
 
-**State layout outside the repo** (§10 ruling 2):
-`$HOME/.effigy/state/release/<owner>/record.json` is the durable record,
+**Checkout state layout** (Q-010; §10 ruling 2):
+`<checkout>/.effigy/state/release/<owner>/record.json` is the durable record,
 `receipt.json` the receipt, `candidate/<artifact>/` the certified artifact
-copies that publish re-hashes. The kernel store is the journal and the
-checkpoint pointer. There is no state file in the repository, so a project that
-wants a receipt in its tree adds a `closeout` task.
+copies that publish re-hashes. The checkout journal holds the checkpoint
+pointer. The release owner uses that checkout's retained identity, and a linked
+worktree owns its own journal and candidate. State is registered in Git's local
+exclude file; tracked receipts remain an explicit `closeout` task. Status and
+receipt reads create nothing, and a missing checkpoint record is unknown.
+Candidate reset and checkpoint publication happen after admission under the
+release owner's gate. Record replacement writes and syncs a private temporary,
+renames it and syncs the directory through the kernel. Cleanup failures are
+projected from the retained journal without a late write after gate release.
+
+Legacy relocation preserves the old release resource's canonical identity and
+run ids in the checkout journal, with a local import alias for subsequent
+invocations. The importer requires that owner's retained checkout identity;
+an unbound owner must finish or drain under the previous binary. It copies the
+record and candidate without following absolute record pointers, re-hashes every
+certified artifact, and rebases only the checkout and candidate paths. A missing
+record, escaped path or mismatched digest prevents publication. Completed
+releases may be dropped with completed history; a committed cutover never
+falls back to the old release record.
 
 **Artifacts.** An artifact `path` is a file, a directory (every file beneath
 it) or a glob matched below its fixed prefix, relative to the release root.

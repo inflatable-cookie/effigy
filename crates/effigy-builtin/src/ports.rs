@@ -127,6 +127,21 @@ pub trait BuiltinRuntimePorts {
         false
     }
 
+    fn has_test_tui_source(&self) -> bool {
+        false
+    }
+
+    /// A view over the caller's process custody. The borrow ends before the
+    /// caller settles its run, including when terminal initialization fails.
+    fn test_tui_source(
+        &self,
+        specs: Vec<effigy_process::ProcessSpec>,
+    ) -> Result<Option<Box<dyn effigy_tui::multiprocess::SessionProcesses + '_>>, BuiltinError>
+    {
+        let _ = specs;
+        Ok(None)
+    }
+
     /// The caller's run custody for one host suite. `None` keeps the built-in's
     /// own spawn, which is what a caller without a scratch run provides.
     fn host_suite_custody(

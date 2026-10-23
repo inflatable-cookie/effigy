@@ -15,18 +15,29 @@ where
         .map(|(name, mut value)| {
             // Discovery metadata belongs to every task shorthand, including a
             // run-step table with timeout/retry fields.
-            let (visibility, group, description) = if let Some(table) = value.as_table_mut() {
-                (
-                    table.remove("visibility"),
-                    table.remove("group"),
-                    table.remove("description"),
-                )
-            } else {
-                (None, None, None)
-            };
+            let (visibility, group, description, durable) =
+                if let Some(table) = value.as_table_mut() {
+                    (
+                        table.remove("visibility"),
+                        table.remove("group"),
+                        table.remove("description"),
+                        table.remove("durable"),
+                    )
+                } else {
+                    (None, None, None, None)
+                };
             let definition: ManifestTaskLikeDefinition =
                 value.try_into().map_err(serde::de::Error::custom)?;
             let mut task = definition.into_manifest_task();
+            task.durable = durable
+                .map(toml::Value::try_into)
+                .transpose()
+                .map_err(|error| {
+                    serde::de::Error::custom(format!(
+                        "task `{name}` durable must be a boolean: {error}"
+                    ))
+                })?
+                .unwrap_or(false);
             task.visibility = visibility
                 .map(toml::Value::try_into)
                 .transpose()
@@ -67,12 +78,13 @@ mod tests {
         let parsed: TasksEnvelope = toml::from_str(
             r#"
 [tasks]
-full = { run = "echo full", visibility = "internal", group = "Checks" }
-compact = { task = "full", visibility = "public", group = "Development" }
-step = { run = "echo step", timeout_ms = 500, visibility = "internal", group = "Checks" }
+full = { durable = true, run = "echo full", visibility = "internal", group = "Checks" }
+compact = { durable = true, task = "full", visibility = "public", group = "Development" }
+step = { durable = true, run = "echo step", timeout_ms = 500, visibility = "internal", group = "Checks" }
 "#,
         )
         .expect("visibility keys");
+        assert!(parsed.tasks.values().all(|task| task.durable));
         assert_eq!(
             parsed.tasks["full"].visibility,
             Some(crate::ManifestTaskVisibility::Internal)
@@ -204,7 +216,7 @@ run = "cargo test"
 full = { run = "echo full", description = "Full table" }
 compact-task = { task = "full", description = "Compact task reference" }
 compact-rhai = { rhai = "scripts/capture.rhai", description = "Compact Rhai step" }
-step = { run = "echo step", timeout_ms = 500, description = "Run-step table" }
+step = { durable = true, run = "echo step", timeout_ms = 500, description = "Run-step table" }
 sequence = { run = ["echo one", "echo two"], description = "Step list" }
 shorthand = "echo shorthand"
 "#,

@@ -692,11 +692,10 @@ disposable caches, mutable volumes, isolated routes and ports using
 label, and only on the runtime profile that produced each observation.
 Shared services, persistent volumes, external volumes, and shared-identity
 routes stay. Repo-owned Compose volumes stay unless labelled
-`com.effigy.persist=false`. A record under `~/.effigy/runtime-scopes/`
-survives a deleted checkout and aggregates every environment and runtime
-profile in that scope so the same command can retry. Record writes are
-locked and atomic; corrupt JSON fails closed. A backend that cannot list
-resources, or that returns malformed inspect output, fails instead of
+`com.effigy.persist=false`. The checkout keeps its scope inventory under
+`.effigy/state/runtime-scopes/`, with journalled atomic edits and corrupt-input
+refusal. Deleting a checkout deletes that inventory; no machine index survives.
+A backend that cannot list resources, or that returns malformed inspect output, fails instead of
 reporting an empty stack. TLS certificates for isolated routes are removed
 under the route lock after an owner check; failure leaves the route and a
 pending-cert list on the record. A pending certificate whose domain now has
@@ -708,34 +707,36 @@ scope kind and full generation token without loading a container policy or
 contacting a backend or writing state. A scoped checkout with no prepared
 runtime returns its scope kind and a null token; Prepare establishes the token
 in its private Git directory. A primary checkout or unmarked clone returns kind
-`none` and a null token. Persist the token before archive, then pass it to
-`effigy container retire --scope <token> --yes` if cleanup must be retried
-after the checkout is gone.
+`none` and a null token. Persist the token before archive and use
+`effigy container retire --scope <token> --yes` while its checkout exists.
+After deletion, use `container retire --dead` from a live checkout.
 
 Paseo worktree archive should call retire from `paseo.json`
 `worktree.teardown` before the checkout disappears. After the directory is
-gone, retry with `effigy container retire --scope <token> --yes`. Bootstrap
-has no teardown of its own: environments own reset and retirement, so worker
+gone, run `effigy container retire --dead --yes` from a live checkout (or name
+one with `--repo`). Bootstrap has no teardown of its own: environments own reset and retirement, so worker
 scopes are retired exactly as above. A failed retire must stay non-zero so the
 durable record remains and archive does not swallow residue.
 
 Worktrees removed without running their teardown (for example Queue task
 checkouts) leave their stacks behind. `effigy container retire --dead` retires
-every recorded scope whose checkout path is positively absent, through the same
-retirement path; an unreadable or uncertain path keeps its scope. Without a
-terminal or `--yes` it refuses and prints the scopes it would retire. Each scope
+scopes discovered on the selected backend whose native checkout generation is
+positively gone. Backend labels and surviving shared endpoint/port facts supply
+ownership; the exact recorded custody lease must be free. Missing/replaced
+lease state, unavailable volumes and ambiguous ownership stay protected. Retry
+progress is kept in the invoking live checkout. Without a terminal or `--yes` it refuses and prints the scopes it would retire. Each scope
 is retired independently: a scope that cannot be fully retired keeps its record
 for a retry and makes the command exit non-zero. `--json` reports every scope in
 one `effigy.container.retire-dead.v1` document. To prune on a host schedule, run
 it periodically, for example from cron:
 
 ```text
-0 4 * * * /usr/local/bin/effigy container retire --dead --yes
+0 4 * * * /usr/local/bin/effigy container retire --repo /path/to/live/checkout --dead --yes
 ```
 
-Stacks created before runtime-scope records existed have no record and are not
-selected; remove them through `container volume prune --global --orphans` and
-the runtime's own tooling.
+Older stacks lacking verifiable generation and custody labels remain unknown.
+Inspect them with the runtime’s own tooling; absence of a local record never
+grants automatic deletion authority.
 
 Generated compose binds every published port to loopback by default —
 the port policy rewrites fragment entries like `"3000:3000"` into

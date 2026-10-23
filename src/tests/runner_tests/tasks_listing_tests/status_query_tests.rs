@@ -21,7 +21,7 @@ fn run_tasks_status_json_reports_the_live_run() {
 
     let out = run_task_status_from_repo(&root, "check", true);
 
-    let parsed = parse_json_output_with_schema_version(&out, "effigy.tasks-status.v2", 2);
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.tasks-status.v3", 3);
     assert_eq!(parsed["task"]["selector"], "check");
     assert_eq!(parsed["state"], "running");
     assert_eq!(parsed["current"]["pid"], std::process::id());
@@ -30,8 +30,8 @@ fn run_tasks_status_json_reports_the_live_run() {
     held.close(WorkloadOutcome::Succeeded);
 
     let out = run_task_status_from_repo(&root, "check", true);
-    let parsed = parse_json_output_with_schema_version(&out, "effigy.tasks-status.v2", 2);
-    assert_eq!(parsed["state"], "succeeded");
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.tasks-status.v3", 3);
+    assert_eq!(parsed["state"], "not-recorded");
     assert!(parsed["current"].is_null());
 }
 
@@ -45,7 +45,12 @@ fn run_tasks_status_text_reports_last_run_outcome() {
 
     assert_output_contains_all(
         &out,
-        &["Task Status", "check", "succeeded", "last-run", "exit-code"],
+        &[
+            "Task Status",
+            "check",
+            "not-recorded",
+            "No runs recorded yet.",
+        ],
     );
 }
 
@@ -56,11 +61,11 @@ fn run_tasks_status_text_reports_never_run() {
 
     let out = run_task_status_from_repo(&root, "check", false);
 
-    assert_output_contains_all(&out, &["never-run", "No runs recorded yet."]);
+    assert_output_contains_all(&out, &["not-recorded", "No runs recorded yet."]);
     let parsed = parse_json_output_with_schema_version(
         &run_task_status_from_repo(&root, "check", true),
-        "effigy.tasks-status.v2",
-        2,
+        "effigy.tasks-status.v3",
+        3,
     );
     // v0.14 status records are retired, not read: a task with no kernel run
     // rows carries no legacy view at all (contract 052 §10.1).
@@ -86,23 +91,22 @@ fn run_tasks_status_all_json_reports_declared_and_undeclared_live_rows() {
 
     let out = run_task_status_all_from_repo(&root, true);
 
-    let parsed = parse_json_output_with_schema_version(&out, "effigy.tasks-status-all.v2", 2);
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.tasks-status-all.v3", 3);
     let rows = parsed["rows"].as_array().expect("rows array");
     assert_eq!(rows.len(), 4, "{rows:#?}");
     assert_eq!(parsed["counts_by_state"]["running"], 2);
-    assert_eq!(parsed["counts_by_state"]["succeeded"], 1);
-    assert_eq!(parsed["counts_by_state"]["never-run"], 1);
+    assert_eq!(parsed["counts_by_state"]["not-recorded"], 2);
     assert!(rows.iter().any(|row| {
         row["selector"] == "check" && row["state"] == "running" && row["currently_declared"] == true
     }));
     assert!(rows.iter().any(|row| {
         row["selector"] == "idle"
-            && row["state"] == "never-run"
+            && row["state"] == "not-recorded"
             && row["currently_declared"] == true
     }));
     assert!(rows.iter().any(|row| {
         row["selector"] == "catalog_a/build"
-            && row["state"] == "succeeded"
+            && row["state"] == "not-recorded"
             && row["currently_declared"] == true
     }));
     assert!(rows.iter().any(|row| {
@@ -136,8 +140,8 @@ fn run_tasks_status_all_text_groups_rows_by_catalog_scope() {
         &[
             "Task Status",
             "Catalog: catalog_a",
-            "- check [never-run]",
-            "- catalog_a/build [succeeded]",
+            "- check [not-recorded]",
+            "- catalog_a/build [not-recorded]",
         ],
     );
 }

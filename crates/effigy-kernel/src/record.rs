@@ -123,6 +123,82 @@ pub fn atomic_replace(
     Ok(Replaced { previous_kept })
 }
 
+/// Open a regular output record for a child, under its store gate. Check the
+/// inode before truncation; stdout/stderr may share clones of this descriptor.
+/// The caller keeps the guard until the child closes its descriptors.
+pub fn open_output(
+    cx: &EffectContext,
+    guard: &GateGuard,
+    dir: &DirFd,
+    name: &FileName,
+) -> Result<std::fs::File, StoreError> {
+    record_effect(cx, guard)?;
+    let (file, stat) = dir
+        .open_file(name, libc::O_WRONLY, Some(fs::FILE_MODE), Trust::Operator)?
+        .ok_or_else(|| StoreError::Corrupt("created output record is missing".into()))?;
+    if stat.st_nlink != 1 {
+        return Err(StoreError::Untrusted {
+            path: dir.path().join(name.as_str()),
+            reason: "hard-linked output record".into(),
+        });
+    }
+    fs::fchmod(&file, fs::FILE_MODE).map_err(|error| {
+        StoreError::Io(IoError::new(
+            "protect output",
+            &dir.path().join(name.as_str()),
+            &error,
+        ))
+    })?;
+    file.set_len(0).map_err(|error| {
+        StoreError::Io(IoError::new(
+            "truncate output",
+            &dir.path().join(name.as_str()),
+            &error,
+        ))
+    })?;
+    Ok(file)
+}
+
+/// Remove an owner-checked regular record without following a symlink.
+/// Cache retirement must supply the same store gate used by publication.
+pub fn remove_record(
+    cx: &EffectContext,
+    guard: &GateGuard,
+    dir: &DirFd,
+    name: &FileName,
+) -> Result<(), StoreError> {
+    record_effect(cx, guard)?;
+    if let Some(stat) = dir.entry(name)? {
+        fs::check(
+            &stat,
+            Trust::Operator,
+            fs::Kind::File,
+            &dir.path().join(name.as_str()),
+        )?;
+        if stat.st_nlink != 1 {
+            return Err(StoreError::Untrusted {
+                path: dir.path().join(name.as_str()),
+                reason: "hard-linked cache record".into(),
+            });
+        }
+        dir.remove(name, false)?;
+        dir.sync()?;
+    }
+    Ok(())
+}
+
+fn record_effect(cx: &EffectContext, guard: &GateGuard) -> Result<(), StoreError> {
+    cx.require(crate::ctx::Capability::HostAuthority)
+        .map_err(|_| StoreError::HostAuthorityRequired)?;
+    cx.operation()
+        .check("record effect")
+        .map_err(StoreError::Interrupted)?;
+    if !guard.ids().any(|id| id.kind() == ResourceKind::Store) {
+        return Err(StoreError::WrongGuard);
+    }
+    Ok(())
+}
+
 /// Bounded, no-follow, owner-checked read (I-S3).
 pub fn read_record<T: Record>(cx: &ObserveContext, dir: &DirFd, name: &FileName) -> Observed<T> {
     #[cfg(all(test, feature = "fault-injection"))]

@@ -53,6 +53,10 @@ impl<'a> Run<'a> {
             settlement: Settlement::Release(Value::Null),
             required: true,
         })?;
+        let detached = opts
+            .custody
+            .as_ref()
+            .is_some_and(|plan| plan.placement == crate::supervise::Placement::Detached);
         let mut run = Self::begin_under(
             &self.cx,
             self.root,
@@ -61,7 +65,11 @@ impl<'a> Run<'a> {
             cleanup,
             adapter,
             Some(self.id),
+            None,
         )?;
+        if !detached && !run.root.is_machine() && run.ancestor_closure.is_none() {
+            run.ancestor_closure = self.checkout_closure_pin()?;
+        }
         if let Err(error) = self.applied(&ticket, Value::Null) {
             run.settle_inner(cleanup, adapter)?;
             return Err(error);

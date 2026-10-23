@@ -8,6 +8,8 @@
 //! still reports the settled outcome from the journal; only an unobservable
 //! journal reads `unknown` (R3).
 
+mod migrate;
+
 use std::io::Write;
 use std::time::{Duration, Instant};
 
@@ -40,6 +42,19 @@ const STOP_WAIT_DEFAULT: Duration = Duration::from_secs(30);
 pub(in crate::runner) fn run_runs(args: RunsArgs) -> Result<String, RunnerError> {
     let json = args.output_json;
     match args.action {
+        RunsAction::Migrate {
+            plan,
+            legacy_launchers_stopped,
+            checkouts,
+            stop,
+        } => migrate::run(
+            args.repo_override,
+            plan,
+            legacy_launchers_stopped,
+            checkouts,
+            stop,
+            json,
+        ),
         RunsAction::List { limit, all } => list(args.repo_override, limit, all, json),
         RunsAction::Status { run } => status(&run, json),
         RunsAction::Logs {
@@ -88,24 +103,31 @@ fn list(
                 .resolved_root,
         )
     };
-    let runs = list_runs(root.as_deref(), limit)?;
+    let listing = list_runs(root.as_deref(), limit)?;
+    let runs = &listing.runs;
     if json {
         return Ok(serde_json::json!({
             "schema": RUNS_SCHEMA,
             "schema_version": 1,
             "scope": if all { "host" } else { "checkout" },
             "runs": runs.iter().map(run_json).collect::<Vec<_>>(),
+            "coverage": {
+                "kind": if all { "bounded-discovery" } else { "checkout" },
+                "observed_roots": listing.observed_roots,
+                "complete": !all && listing.omitted.is_empty(),
+                "omitted": listing.omitted,
+            },
         })
         .to_string());
     }
-    if runs.is_empty() {
-        return Ok("No runs recorded.".to_owned());
+    if runs.is_empty() && listing.omitted.is_empty() {
+        return Ok("No retained runs or live foreground holders found.".to_owned());
     }
     let mut lines = vec![format!(
         "{:<26}  {:<14}  {:<9}  {}",
         "RUN", "STATE", "EXIT", "TASK"
     )];
-    for run in &runs {
+    for run in runs {
         lines.push(format!(
             "{:<26}  {:<14}  {:<9}  {}",
             run.view.run_id,
@@ -115,6 +137,12 @@ fn list(
                 .map_or_else(|| "-".to_owned(), |code| code.to_string()),
             run.task
         ));
+    }
+    for reason in &listing.omitted {
+        lines.push(format!("warning: runtime view omitted {reason}"));
+    }
+    if all {
+        lines.push("Coverage: bounded filesystem discovery; unlisted checkouts may exist.".into());
     }
     Ok(lines.join("\n"))
 }
@@ -154,14 +182,15 @@ fn status(selector: &str, json: bool) -> Result<String, RunnerError> {
 
 fn stop(selector: &str, wait: Duration, json: bool) -> Result<String, RunnerError> {
     let record = find(selector)?;
+    if record.foreground() {
+        return stop_foreground(&record, wait, json);
+    }
     let started = Instant::now();
     let how = request_stop(&record)?;
     let mut signalled = false;
     let settled = loop {
-        match lookup_run(record.id) {
-            Lookup::Found(now) if now.summary.phase == effigy_kernel::run::Phase::Closed => {
-                break *now
-            }
+        match record.refresh() {
+            Lookup::Found(now) if now.closed() => break *now,
             Lookup::Found(now) => {
                 // An owner that reads no requests (a sequence, managed or
                 // container run) gets TERM through its verified gate holder.
@@ -220,6 +249,40 @@ fn stop(selector: &str, wait: Duration, json: bool) -> Result<String, RunnerErro
     Ok(format!(
         "run {} is {} (stop: {how})",
         settled.view.run_id, settled.view.state
+    ))
+}
+
+fn stop_foreground(record: &RunRecord, wait: Duration, json: bool) -> Result<String, RunnerError> {
+    if !signal_owner(record) {
+        return Err(unknown(
+            &record.id.to_string(),
+            "foreground owner is no longer verified; no signal was sent",
+        ));
+    }
+    let started = Instant::now();
+    while !record.foreground_released() {
+        if started.elapsed() >= wait {
+            return Err(unknown(
+                &record.id.to_string(),
+                "the verified foreground owner was signalled but custody has not released its gate",
+            ));
+        }
+        std::thread::sleep(RUN_POLL);
+    }
+    if json {
+        let mut run = run_json(record);
+        run["state"] = "not-recorded".into();
+        run["pid"] = serde_json::Value::Null;
+        return Ok(serde_json::json!({
+            "schema": RUN_SCHEMA, "schema_version": 1,
+            "run": run, "stop": "signalled-owner", "custody": "released",
+            "outcome": "not-recorded",
+        })
+        .to_string());
+    }
+    Ok(format!(
+        "run {}: owner signalled, custody released; outcome not recorded (foreground)",
+        record.id
     ))
 }
 
@@ -308,6 +371,10 @@ pub(in crate::runner) fn follow(
                 continue;
             }
         };
+        if record.foreground() {
+            sink(Event::LogsGone).map_err(FollowError::Lost)?;
+            return Ok(Ending::Open(record));
+        }
         // Observed before the drain: a run terminal now has all of its
         // output in its logs, so the drain below is the last one.
         let terminal = record.terminal();
@@ -409,7 +476,21 @@ fn logs(
     from: Offsets,
     json: bool,
 ) -> Result<String, RunnerError> {
-    let id = find(selector)?.id;
+    let record = find(selector)?;
+    if record.foreground() {
+        return Ok(if json {
+            serde_json::json!({
+                "schema": LOGS_SCHEMA, "schema_version": 1, "run": run_json(&record),
+                "settled": false, "logs_available": false, "reason": "foreground-no-retained-log",
+                "stdout": StreamJson::new(from.stdout).json(from.stdout),
+                "stderr": StreamJson::new(from.stderr).json(from.stderr),
+            })
+            .to_string()
+        } else {
+            format!("run {} is foreground; no retained log", record.id)
+        });
+    }
+    let id = record.id;
     let mut offsets = from;
     let ending = if json {
         let mut streams = [StreamJson::new(from.stdout), StreamJson::new(from.stderr)];
@@ -535,8 +616,7 @@ impl StreamJson {
 }
 
 fn find(selector: &str) -> Result<RunRecord, RunnerError> {
-    let id = resolve_run(selector)?;
-    match lookup_run(id) {
+    match resolve_run(selector)? {
         Lookup::Found(record) => Ok(*record),
         Lookup::NotFound => Err(not_found(selector)),
         Lookup::Unknown(reason) => Err(unknown(selector, &reason)),
@@ -562,14 +642,14 @@ fn not_found(selector: &str) -> RunnerError {
     RunnerError::RunControl {
         code: 1,
         detail: format!(
-            "no run `{selector}` in the run journal; it never ran on this host, or retention \
-             removed it (the newest 20 settled runs per task are kept)"
+            "run `{selector}`: not recorded (foreground or expired); no live holder or retained journal record was found"
         ),
         details_json: serde_json::json!({
             "schema": RUN_SCHEMA,
             "schema_version": 1,
             "selector": selector,
             "state": "not-found",
+            "recording": "not-recorded",
         })
         .to_string(),
     }
@@ -579,7 +659,7 @@ fn unknown(selector: &str, reason: &str) -> RunnerError {
     RunnerError::RunControl {
         code: 1,
         detail: format!(
-            "run `{selector}`: outcome unknown, because the run journal cannot be read ({reason}). \
+            "run `{selector}`: outcome unknown, because runtime evidence cannot be verified ({reason}). \
              The run itself is unaffected; check it with `effigy run status {selector}`"
         ),
         details_json: serde_json::json!({

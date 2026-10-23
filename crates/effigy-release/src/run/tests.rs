@@ -218,7 +218,17 @@ struct TestEffects {
 impl TestEffects {
     fn new(root: &Path) -> Self {
         Self {
-            inner: GitEffects::new(root),
+            inner: GitEffects::with_executable(
+                root,
+                effigy_kernel::supervise::Executable::capture(Path::new(
+                    &std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE").unwrap_or_else(|| {
+                        Path::new(env!("CARGO_MANIFEST_DIR"))
+                            .join("../../target/debug/kernel-custody-fixture")
+                            .into_os_string()
+                    }),
+                ))
+                .unwrap(),
+            ),
             pushes: Vec::new(),
             commit_pushes: Vec::new(),
             push_attempts: 0,
@@ -241,43 +251,52 @@ impl TestEffects {
 }
 
 impl ReleaseEffects for TestEffects {
-    fn current_branch(&mut self) -> Result<String, ReleaseError> {
-        self.inner.current_branch()
+    fn current_branch(&mut self, run: &mut Run<'_>) -> Result<String, ReleaseError> {
+        self.inner.current_branch(run)
     }
 
-    fn head_commit(&mut self) -> Result<String, ReleaseError> {
-        self.inner.head_commit()
+    fn head_commit(&mut self, run: &mut Run<'_>) -> Result<String, ReleaseError> {
+        self.inner.head_commit(run)
     }
 
-    fn working_tree_clean(&mut self) -> Result<bool, ReleaseError> {
-        self.inner.working_tree_clean()
+    fn working_tree_clean(&mut self, run: &mut Run<'_>) -> Result<bool, ReleaseError> {
+        self.inner.working_tree_clean(run)
     }
 
-    fn local_tag_commit(&mut self, tag: &str) -> Result<Option<String>, ReleaseError> {
-        self.inner.local_tag_commit(tag)
+    fn local_tag_commit(
+        &mut self,
+        run: &mut Run<'_>,
+        tag: &str,
+    ) -> Result<Option<String>, ReleaseError> {
+        self.inner.local_tag_commit(run, tag)
     }
 
-    fn remote_tag_commit(&mut self, tag: &str) -> Result<Option<String>, ReleaseError> {
-        self.inner.remote_tag_commit(tag)
+    fn remote_tag_commit(
+        &mut self,
+        run: &mut Run<'_>,
+        tag: &str,
+    ) -> Result<Option<String>, ReleaseError> {
+        self.inner.remote_tag_commit(run, tag)
     }
 
     fn create_annotated_tag(
         &mut self,
+        run: &mut Run<'_>,
         tag: &str,
         commit: &str,
         message: &str,
     ) -> Result<(), ReleaseError> {
-        self.inner.create_annotated_tag(tag, commit, message)
+        self.inner.create_annotated_tag(run, tag, commit, message)
     }
 
-    fn push_tag(&mut self, tag: &str) -> Result<(), ReleaseError> {
+    fn push_tag(&mut self, run: &mut Run<'_>, tag: &str) -> Result<(), ReleaseError> {
         self.push_attempts += 1;
         if self.failed_push_on == Some(self.push_attempts) {
             return Err(ReleaseError::TaskInvocation(format!(
                 "simulated unknown push of `{tag}`"
             )));
         }
-        self.inner.push_tag(tag)?;
+        self.inner.push_tag(run, tag)?;
         self.pushes.push(tag.to_owned());
         if self.ambiguous_push_on == Some(self.push_attempts) {
             return Err(ReleaseError::TaskInvocation(format!(
@@ -287,26 +306,40 @@ impl ReleaseEffects for TestEffects {
         Ok(())
     }
 
-    fn push_commit(&mut self, commit: &str, branch: &str) -> Result<(), ReleaseError> {
-        self.inner.push_commit(commit, branch)?;
+    fn push_commit(
+        &mut self,
+        run: &mut Run<'_>,
+        commit: &str,
+        branch: &str,
+    ) -> Result<(), ReleaseError> {
+        self.inner.push_commit(run, commit, branch)?;
         self.commit_pushes.push(commit.to_owned());
         Ok(())
     }
 
-    fn commit_paths(&mut self, paths: &[PathBuf], message: &str) -> Result<String, ReleaseError> {
+    fn commit_paths(
+        &mut self,
+        run: &mut Run<'_>,
+        paths: &[PathBuf],
+        message: &str,
+    ) -> Result<String, ReleaseError> {
         if self.fail_commit {
             return Err(ReleaseError::TaskInvocation(
                 "simulated prepare commit failure".to_owned(),
             ));
         }
-        self.inner.commit_paths(paths, message)
+        self.inner.commit_paths(run, paths, message)
     }
 
-    fn discard_staged(&mut self, paths: &[PathBuf]) -> Result<(), ReleaseError> {
-        self.inner.discard_staged(paths)
+    fn discard_staged(&mut self, run: &mut Run<'_>, paths: &[PathBuf]) -> Result<(), ReleaseError> {
+        self.inner.discard_staged(run, paths)
     }
 
-    fn run_task(&mut self, request: &TaskRequest) -> Result<TaskResponse, ReleaseError> {
+    fn run_task(
+        &mut self,
+        _run: &mut Run<'_>,
+        request: &TaskRequest,
+    ) -> Result<TaskResponse, ReleaseError> {
         self.tasks.push(request.task.clone());
         let input = std::fs::read_to_string(&request.input_path).expect("release task input");
         self.inputs.push(
@@ -345,6 +378,7 @@ impl ReleaseEffects for TestEffects {
 
     fn hosted_evidence(
         &mut self,
+        _run: &mut Run<'_>,
         _gate: &str,
         _spec: &crate::hosted_evidence::HostedEvidenceSpec,
         commit: &str,
@@ -367,7 +401,7 @@ impl ReleaseEffects for TestEffects {
         Ok(evidence)
     }
 
-    fn operator(&mut self) -> Option<String> {
+    fn operator(&mut self, _run: &mut Run<'_>) -> Option<String> {
         Some("release tests".to_owned())
     }
 }
@@ -462,6 +496,10 @@ fn a_full_run_prepares_certifies_publishes_and_writes_a_receipt() {
 
     let outcome = run(&fixture, &mut effects, ReleaseAction::Run, None);
 
+    assert!(fixture.root.join(".effigy/state/kernel.db").is_file());
+    assert!(!fixture.home.join(".effigy/state/kernel.db").exists());
+    assert!(!fixture.home.join(".effigy/state/machine.db").exists());
+
     assert!(
         outcome.succeeded(),
         "run failed: {:?}",
@@ -545,6 +583,34 @@ fn a_full_run_prepares_certifies_publishes_and_writes_a_receipt() {
         receipt["candidate"]["artifacts"][0]["files"][0]["sha256"],
         sha256_bytes(b"certified artifact").as_str()
     );
+}
+
+#[test]
+fn a_missing_release_record_is_unknown_and_status_recreates_no_directory() {
+    let fixture = fixture("missing-record");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    let outcome = run(
+        &fixture,
+        &mut effects,
+        ReleaseAction::Run,
+        Some(ReleaseStage::PreGates),
+    );
+    let directory = outcome.receipt_path.parent().unwrap();
+    assert!(directory.starts_with(
+        fixture
+            .root
+            .canonicalize()
+            .unwrap()
+            .join(".effigy/state/release")
+    ));
+    std::fs::remove_dir_all(directory).unwrap();
+    assert!(read_release_record(&fixture.home, &fixture.root)
+        .unwrap_err()
+        .to_string()
+        .contains("record is missing"));
+    assert!(!directory.exists());
+    assert!(!fixture.home.join(".effigy").exists());
 }
 
 #[test]
@@ -1068,6 +1134,117 @@ fn copy_tree(source: &Path, target: &Path) {
     }
 }
 
+#[test]
+fn checkout_release_resumes_while_another_checkout_writer_is_stalled() {
+    use effigy_kernel::ctx::*;
+    use effigy_kernel::id::{ResourceId, Scope};
+    use effigy_kernel::migration::CheckoutLocation;
+    use effigy_kernel::{root::StateRoot, store::Store};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    };
+    use std::time::{Duration, Instant};
+    let first = fixture("writer-stall");
+    let mut second = fixture("independent-resume");
+    second.home = first.home.clone();
+    single_identity_project(&first);
+    single_identity_project(&second);
+    let mut first_effects = TestEffects::new(&first.root);
+    let mut second_effects = TestEffects::new(&second.root);
+    run(
+        &first,
+        &mut first_effects,
+        ReleaseAction::Run,
+        Some(ReleaseStage::Validate),
+    );
+    let paused = run(
+        &second,
+        &mut second_effects,
+        ReleaseAction::Run,
+        Some(ReleaseStage::Validate),
+    );
+    let op = OperationContext::new(
+        Deadline::At(Instant::now() + Duration::from_secs(60)),
+        CancelToken::default(),
+        Limits {
+            capture_tail: 4096,
+            log_rotate: 4096,
+            log_keep: 1,
+            line_max: 4096,
+            queue_bytes: 4096,
+            probe_concurrency: 1,
+        },
+        EffectClass::Mutate,
+        Placement::Host,
+    );
+    let cx = op.effects().unwrap();
+    let location = CheckoutLocation {
+        root: first.root.clone(),
+        git_directory: effigy_core::worktree_scope::git_directory(&first.root).unwrap(),
+    };
+    let root = StateRoot::checkout_effects(&cx, &first.home, &location).unwrap();
+    let owner = ReleaseSession::open(&first.home, &first.root)
+        .unwrap()
+        .owner;
+    let Scope::Checkout(checkout) = owner.scope() else {
+        panic!("local release owner");
+    };
+    let stalled = ResourceId::store(Scope::Checkout(checkout), "stalled-writer-proof").unwrap();
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let active = Arc::new(AtomicBool::new(false));
+    let writer_active = active.clone();
+    let writer = std::thread::spawn(move || {
+        let mut store = Store::open(&cx, &root).unwrap();
+        store
+            .txn(&cx, |txn| {
+                txn.resource(&stalled, "private fixture")?;
+                txn.next_generation(&stalled)?;
+                writer_active.store(true, Ordering::SeqCst);
+                ready_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(60)).unwrap();
+                writer_active.store(false, Ordering::SeqCst);
+                Ok::<_, effigy_kernel::store::StoreError>(())
+            })
+            .unwrap();
+    });
+    struct ReleaseWriter(
+        Option<mpsc::Sender<()>>,
+        Option<std::thread::JoinHandle<()>>,
+    );
+    impl Drop for ReleaseWriter {
+        fn drop(&mut self) {
+            if let Some(sender) = self.0.take() {
+                let _ = sender.send(());
+            }
+            if let Some(writer) = self.1.take() {
+                writer.join().unwrap();
+            }
+        }
+    }
+    let _release = ReleaseWriter(Some(release_tx), Some(writer));
+    ready_rx.recv_timeout(Duration::from_secs(30)).unwrap();
+    let resumed = run(
+        &second,
+        &mut second_effects,
+        ReleaseAction::Resume {
+            run: paused.record.release_id.clone(),
+        },
+        Some(ReleaseStage::PreGates),
+    );
+    assert_eq!(resumed.record.release_id, paused.record.release_id);
+    assert_eq!(resumed.record.stage, "pre-gates");
+    assert!(
+        active.load(Ordering::SeqCst),
+        "the other checkout's write transaction remains held"
+    );
+    assert!(
+        !first.home.join(".effigy").exists(),
+        "neither release initializes machine runtime state"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // task targets, check/verify, decisions and hosted waits (contract 054 §3, §6, §7)
 // ---------------------------------------------------------------------------
@@ -1488,6 +1665,188 @@ fn an_unknown_task_publish_with_a_check_reconciles_before_any_retry() {
         retried.record.target("npm").expect("npm").state,
         RecordTargetState::Published
     );
+}
+
+#[test]
+fn legacy_release_migration_resumes_the_certified_candidate_from_its_checkout() {
+    use effigy_kernel::ctx::*;
+    use effigy_kernel::gate::Wait;
+    use effigy_kernel::id::*;
+    use effigy_kernel::migration::{self, CheckoutLocation, LegacyQuiescence};
+    use effigy_kernel::observe::Observed;
+    use effigy_kernel::outcome::{Invocation, WorkloadOutcome};
+    use effigy_kernel::root::StateRoot;
+    use effigy_kernel::run::{BeginOpts, Run};
+    use effigy_kernel::store::Store;
+    use std::time::{Duration, Instant};
+    let fixture = fixture("legacy-migration");
+    single_identity_project(&fixture);
+    let mut effects = TestEffects::new(&fixture.root);
+    effects.artifact_path = Some("dist/app-0.2.5.tgz".into());
+    let paused = run(
+        &fixture,
+        &mut effects,
+        ReleaseAction::Run,
+        Some(ReleaseStage::Certify),
+    );
+    assert!(paused.succeeded(), "{:?}", paused.record.errors);
+    assert_eq!(paused.record.stage, "certify");
+    assert_eq!(paused.record.artifacts.len(), 1);
+    let session = ReleaseSession::open(&fixture.home, &fixture.root).unwrap();
+    let Scope::Checkout(checkout) = session.owner.scope() else {
+        panic!("checkout owner")
+    };
+    let local_state = session.state().unwrap();
+    drop(session);
+    let op = OperationContext::new(
+        Deadline::At(Instant::now() + Duration::from_secs(120)),
+        CancelToken::default(),
+        Limits {
+            capture_tail: 4096,
+            log_rotate: 4096,
+            log_keep: 1,
+            line_max: 4096,
+            queue_bytes: 4096,
+            probe_concurrency: 1,
+        },
+        EffectClass::Mutate,
+        Placement::Host,
+    );
+    let cx = op.effects().unwrap();
+    let observe = op.observe().unwrap();
+    let cleanup = op.cleanup(Duration::from_secs(30)).unwrap();
+    let source = StateRoot::effects(&cx, &fixture.home).unwrap();
+    let owner = ResourceId::store(
+        Scope::Machine,
+        &format!("release {}", fixture.root.canonicalize().unwrap().display()),
+    )
+    .unwrap();
+    let legacy_dir = source.path().join("release").join(owner.name().to_string());
+    std::fs::create_dir_all(legacy_dir.parent().unwrap()).unwrap();
+    std::fs::rename(local_state.record_path.parent().unwrap(), &legacy_dir).unwrap();
+    // The fixture now has exactly the previous release layout. Its checkout
+    // journal is removed only after all fixture invocations have settled.
+    std::fs::remove_dir_all(fixture.root.join(".effigy/state")).unwrap();
+    let mut record = paused.record.clone();
+    record.root = fixture.root.canonicalize().unwrap().display().to_string();
+    for artifact in &mut record.artifacts {
+        for file in &mut artifact.files {
+            let suffix = Path::new(&file.path)
+                .strip_prefix(&local_state.candidate_dir)
+                .unwrap();
+            file.path = legacy_dir
+                .join("candidate")
+                .join(suffix)
+                .display()
+                .to_string();
+        }
+    }
+    std::fs::write(
+        legacy_dir.join("record.json"),
+        serde_json::to_vec(&record).unwrap(),
+    )
+    .unwrap();
+    let invocation = ResolvedInvocation::new(InvocationSpec {
+        task: TaskId::new(checkout, "release", Surface::Published, "release run", None).unwrap(),
+        route: Route::Builtin("release".into()),
+        argv: vec!["release".into(), "run".into()],
+        cwd: String::new(),
+        target: ExecutionTarget::Host,
+        env: BTreeMap::new(),
+        owner: owner.clone(),
+        gates: vec![],
+        attachments: vec![],
+        class: EffectClass::Mutate,
+        placement: Placement::Host,
+        provenance: BTreeMap::new(),
+    })
+    .unwrap();
+    let mut adapter = ReportsOnly;
+    let mut legacy = Run::begin(
+        &cx,
+        &source,
+        &invocation,
+        BeginOpts {
+            id: record.run_id.parse().unwrap(),
+            wait: Wait::FailFast,
+            acknowledge: vec![],
+            next: Invocation::validated(vec!["release".into(), "resume".into()], |_| true).unwrap(),
+            custody: None,
+        },
+        &cleanup,
+        &mut adapter,
+    )
+    .unwrap();
+    legacy
+        .set_engine_record(
+            &serde_json::to_value(record.checkpoint(&legacy_dir.join("record.json"))).unwrap(),
+        )
+        .unwrap();
+    legacy.finish(WorkloadOutcome::Succeeded).unwrap();
+    legacy.settle(&cleanup, &mut adapter).unwrap();
+    let mut store = Store::open(&cx, &source).unwrap();
+    store
+        .txn(&cx, |txn| {
+            txn.checkout_seen(&checkout, Some(&record.root), None)
+        })
+        .unwrap();
+    drop(store);
+    let source_bytes = std::fs::read(source.path().join("kernel.db")).unwrap();
+    let refused = read_release_record(&fixture.home, &fixture.root)
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("run migrate"), "{refused}");
+    let git_directory = effigy_core::worktree_scope::git_directory(&fixture.root).unwrap();
+    migration::import(
+        &cx,
+        &source,
+        &fixture.home,
+        &LegacyQuiescence::launchers_withdrawn(),
+        &mut |id, _, _| {
+            assert_eq!(id, checkout);
+            Ok(CheckoutLocation {
+                root: fixture.root.clone(),
+                git_directory: git_directory.clone(),
+            })
+        },
+    )
+    .unwrap();
+    let imported = current_record(&fixture);
+    assert_eq!(imported.release_id, record.release_id);
+    assert_eq!(imported.approvals, record.approvals);
+    assert_eq!(imported.candidate_commit, record.candidate_commit);
+    let alias_session = ReleaseSession::open(&fixture.home, &fixture.root).unwrap();
+    assert_eq!(alias_session.owner, owner);
+    drop(alias_session);
+    let resumed = resume(&fixture, &mut effects);
+    assert_eq!(resumed.record.release_id, record.release_id);
+    assert_eq!(
+        resumed.record.status,
+        ReleaseRunStatus::Complete,
+        "{:?}",
+        resumed.record.errors
+    );
+    assert_eq!(
+        std::fs::read(source.path().join("kernel.db")).unwrap(),
+        source_bytes
+    );
+    let local = match StateRoot::checkout_observe_in(
+        &observe,
+        &fixture.home,
+        &CheckoutLocation {
+            root: fixture.root.clone(),
+            git_directory,
+        },
+    ) {
+        Observed::Verified(root, _) => root,
+        other => panic!("local root: {other:?}"),
+    };
+    assert!(local
+        .path()
+        .join("release")
+        .join(owner.name().to_string())
+        .join("record.json")
+        .exists());
 }
 
 #[test]

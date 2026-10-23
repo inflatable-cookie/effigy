@@ -455,7 +455,10 @@ fn end_headless_managed_owners(
             continue;
         }
         let label = holder.scope_label();
-        crate::runner::managed_run::stop_run(run).map_err(|error| {
+        let owning_checkout = holder.checkout_root.as_deref().ok_or_else(|| {
+            RunnerError::task_invocation("managed holder has no verified owning checkout")
+        })?;
+        crate::runner::managed_run::stop_run(owning_checkout, run).map_err(|error| {
             RunnerError::task_invocation(format!(
                 "cannot hand over environment `{}`: failed to end managed run {run} (`{label}`) holding it: {error}. The stop the handover requested is already in progress and settles or fails on its own; environment `{}` stays in a state its own `effigy container up` or `effigy container down` recovers",
                 target.environment, target.environment,
@@ -728,6 +731,82 @@ domain = "switch.test"
         .expect("register live listener route");
         assert_eq!(publication, ManagedListenerRoutePublication::Registered);
         listener
+    }
+
+    /// Empty Compose inventory cannot strand an owned route, or grant a
+    /// stopped environment authority over a live/foreign successor route.
+    #[test]
+    fn empty_backend_stop_withdraws_owned_routes_and_preserves_successors() {
+        use crate::runner::container_command::gateway_registration::deregister_gateway_routes_for_container;
+        for case in ["owned", "live", "foreign"] {
+            let fixture = RouteFixture::new();
+            fs::write(
+                fixture.repo_root.join("compose.yml"),
+                "services:\n  app:\n    image: alpine:latest\n    ports: ['8100:80']\n",
+            )
+            .unwrap();
+            let policy = fixture.policy("stack");
+            let foreign = fixture.parent.join("foreign");
+            fs::create_dir_all(&foreign).unwrap();
+            let listener = if case == "live" {
+                Some(register_live_web_listener(&fixture))
+            } else {
+                None
+            };
+            if case != "live" {
+                register_route(
+                    &fixture.route_table_path(),
+                    &RouteRegistration {
+                        domain: "switch.test".into(),
+                        target: Some("127.0.0.1:8100".into()),
+                        dns_ip: None,
+                        tcp_port: None,
+                        tcp_target: None,
+                        tls: false,
+                        project_path: if case == "foreign" {
+                            foreign.display().to_string()
+                        } else {
+                            policy.repo_root.display().to_string()
+                        },
+                        source: RouteSource::Container,
+                    },
+                )
+                .unwrap();
+            }
+            effigy_runtime::write::run_container_down(
+                &fixture.repo_root,
+                Some("stack"),
+                false,
+                |policy| {
+                    deregister_gateway_routes_for_container(policy).map_err(|error| {
+                        effigy_runtime::EffigyRuntimeError::task_invocation(error.to_string())
+                    })
+                },
+                |_, _, effect| effect(),
+            )
+            .expect("ordinary stop");
+            let table = RouteTable::load(&fixture.route_table_path()).unwrap();
+            match case {
+                "owned" => assert!(table.lookup("switch.test").is_none()),
+                "live" => {
+                    assert!(table
+                        .lookup("switch.test")
+                        .unwrap()
+                        .managed_listener
+                        .is_some());
+                    assert!(
+                        std::net::TcpStream::connect(listener.unwrap().local_addr().unwrap())
+                            .is_ok(),
+                        "live successor survives"
+                    );
+                }
+                "foreign" => assert_eq!(
+                    table.lookup("switch.test").unwrap().project,
+                    foreign.display().to_string()
+                ),
+                _ => unreachable!(),
+            }
+        }
     }
 
     #[test]

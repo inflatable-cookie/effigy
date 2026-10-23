@@ -1133,7 +1133,7 @@ allow = [
 [[retired]]
 id = "effigy-release-prepare-execute"
 retired = "2026-10-22"
-replacement = "Contract 054 §3 and §5: one durable release Run replaces prepared state. `effigy release run [--to <stage>]` runs validate → [pre-gates] → prepare → certify → publish → verify → closeout with a checkpoint at every boundary, `effigy release resume <run>` continues an interrupted Run from its last checkpoint with the same candidate commit, versions and artifact digests, `effigy release approve <run>` passes an approval checkpoint, and `effigy release receipt [<run>]` prints the receipt. `effigy release prepare`, `effigy release execute` and a `release resume` without a Run id refuse with these replacements. Run state and receipts live in `$HOME/.effigy/state`, so `.release-prepared.json` and the prepared-state review menus are gone. The repo task selector `release:prepare` is replaced by `release:run`, which runs `effigy release run --to certify` under the same heavy admission and never publishes."
+replacement = "Contract 054 §3 and §5: one durable release Run replaces prepared state. `effigy release run [--to <stage>]` runs validate → [pre-gates] → prepare → certify → publish → verify → closeout with a checkpoint at every boundary, `effigy release resume <run>` continues an interrupted Run from its last checkpoint with the same candidate commit, versions and artifact digests, `effigy release approve <run>` passes an approval checkpoint, and `effigy release receipt [<run>]` prints the receipt. `effigy release prepare`, `effigy release execute` and a `release resume` without a Run id refuse with these replacements. Run state and receipts live in the owning checkout’s `.effigy/state`, so `.release-prepared.json` and the prepared-state review menus are gone. The repo task selector `release:prepare` is replaced by `release:run`, which runs `effigy release run --to certify` under the same heavy admission and never publishes."
 owner = "docs/knowledge/contracts/054-release-platform-contract.md"
 terms = [
   "effigy release prepare",
@@ -1169,6 +1169,16 @@ allow = [
   "crates/effigy-release/src/tests.rs",
   "crates/effigy-release/src/text.rs",
 ]
+
+[[retired]]
+id = "effigy-central-runtime-journal"
+retired = "2026-10-23"
+replacement = "Contract 052 §3.1/§7: short foreground runs use memory and lock files; retained runs journal in their checkout; machine.db contains gateway endpoints/routes, ports and admission only. Built-in migration reads the old kernel.db without changing it. Scope inventory is checkout-local and dead-checkout retirement uses verified backend ownership and custody leases, without an index. Close-time retention scans and their environment-variable stopgap are removed."
+owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
+terms = ["EFFIGY_RETENTION_ON_CLOSE", "machine-wide runtime journal", "~/.effigy/runtime-scopes/"]
+paths = []
+config_keys = []
+allow = ["CHANGELOG.md"]
 
 [[retired]]
 id = "effigy-distribution-surface"

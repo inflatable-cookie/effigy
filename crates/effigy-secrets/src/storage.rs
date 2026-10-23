@@ -133,7 +133,7 @@ impl VaultWrite {
         let cx = context()
             .effects()
             .map_err(|e| VaultStorageError::Unavailable(format!("{e:?}")))?;
-        let root = StateRoot::effects(&cx, home)?;
+        let root = StateRoot::machine_effects(&cx, home)?;
         let id = ResourceId::store(Scope::Machine, "vault").map_err(StoreError::from)?;
         let guard = Gate::acquire(&cx, &root, &[id], Wait::Until(Instant::now() + BUDGET))?;
         std::fs::create_dir_all(parent(path))?;

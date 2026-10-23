@@ -134,7 +134,8 @@ pub(in crate::runner) fn observe_context(budget: Duration) -> ObserveContext {
 /// This process's probe guard service (§5.11), installed on first use. When
 /// it cannot be installed, probes observe `GuardUnavailable`; nothing is
 /// guessed.
-fn probe_runtime() -> Option<std::sync::Arc<effigy_kernel::probe::ProbeRuntime>> {
+pub(in crate::runner) fn probe_runtime(
+) -> Option<std::sync::Arc<effigy_kernel::probe::ProbeRuntime>> {
     static RUNTIME: OnceLock<Option<std::sync::Arc<effigy_kernel::probe::ProbeRuntime>>> =
         OnceLock::new();
     RUNTIME
@@ -152,31 +153,120 @@ pub(in crate::runner) fn cleanup_context(budget: Duration) -> CleanupContext {
         .expect("cleanup budget")
 }
 
-/// The writable state root, opened once per process for its first run.
-pub(super) fn effects_root() -> Result<&'static StateRoot, RunnerError> {
-    static ROOT: OnceLock<Result<StateRoot, String>> = OnceLock::new();
-    ROOT.get_or_init(|| {
-        let home = state_home().ok_or_else(|| {
-            "HOME is unset or relative; Effigy keeps run state under $HOME/.effigy/state".to_owned()
-        })?;
-        StateRoot::effects(&effects(), &home).map_err(|error| {
-            format!(
-                "cannot open the Effigy state root under {}: {error}",
-                home.display()
-            )
-        })
-    })
-    .as_ref()
-    .map_err(|message| RunnerError::task_invocation(message.clone()))
+static CHECKOUT_ROOTS: OnceLock<Mutex<std::collections::BTreeMap<PathBuf, &'static StateRoot>>> =
+    OnceLock::new();
+
+/// In-process handles plus bounded, explicit filesystem discovery. Nothing is
+/// registered durably. Observation of one checkout never opens its peers.
+pub(super) fn known_roots(cx: &ObserveContext) -> Result<Vec<StateRoot>, RunnerError> {
+    let view = known_roots_view(cx)?;
+    for reason in view.omitted {
+        eprintln!("warning: runtime view omitted {reason}");
+    }
+    Ok(view.roots)
 }
 
-/// A read-only view: never creates the state root (R2).
-pub(super) fn observe_root(cx: &ObserveContext) -> Observed<StateRoot> {
+#[derive(Debug)]
+pub(super) struct RootsView {
+    pub roots: Vec<StateRoot>,
+    pub omitted: Vec<String>,
+}
+
+pub(super) fn known_roots_view(cx: &ObserveContext) -> Result<RootsView, RunnerError> {
+    let mut paths = CHECKOUT_ROOTS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .keys()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let cwd =
+        std::env::current_dir().map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let current = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
+        .map(|resolved| resolved.resolved_root)
+        .unwrap_or(cwd);
+    let home =
+        state_home().ok_or_else(|| RunnerError::task_invocation("HOME is unset or relative"))?;
+    let config = effigy_manifest::load_user_config_from(&home.join(".effigy/config.toml"))
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let found = super::discovery::collect(cx, &current, &config.runtime.checkout_roots);
+    let mut omitted = found
+        .omitted
+        .iter()
+        .map(|entry| format!("{}: {}", entry.path.display(), entry.reason))
+        .collect::<Vec<_>>();
+    paths.extend(found.checkouts);
+    let mut roots = Vec::new();
+    for path in paths {
+        match observe_root(cx, &path) {
+            Observed::Verified(root, _) => roots.push(root),
+            Observed::Absent(_) => {}
+            Observed::Unknown(reason) => omitted.push(format!("{}: {reason:?}", path.display())),
+        }
+    }
+    match StateRoot::runtime_machine_observe(cx, &home) {
+        Observed::Verified(root, _) => roots.push(root),
+        Observed::Absent(_) => {}
+        Observed::Unknown(reason) => {
+            omitted.push(format!("machine facts: {reason:?}"));
+        }
+    }
+    Ok(RootsView { roots, omitted })
+}
+
+/// Checkout journals are opened independently; the actual user HOME is only
+/// the migration source and shared machine-store location.
+pub(in crate::runner) fn effects_root(checkout: &Path) -> Result<&'static StateRoot, RunnerError> {
+    let checkout = effigy_kernel::fs::DirFd::open(checkout)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let home =
+        state_home().ok_or_else(|| RunnerError::task_invocation("HOME is unset or relative"))?;
+    let location = effigy_kernel::migration::CheckoutLocation {
+        root: checkout.path().into(),
+        git_directory: effigy_core::worktree_scope::git_directory(checkout.path())
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
+    };
+    // Revalidate before reusing a retained handle: same-path replacement is
+    // never permission to write through the previous checkout's descriptor.
+    let current = StateRoot::checkout_effects(&effects(), &home, &location)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let mut roots = CHECKOUT_ROOTS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(root) = roots.get(checkout.path()) {
+        let identity = |dir: &effigy_kernel::fs::DirFd| {
+            dir.identity()
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))
+        };
+        if identity(root.owning_directory())? != identity(current.owning_directory())?
+            || identity(root.state_directory())? != identity(current.state_directory())?
+        {
+            return Err(RunnerError::task_invocation(
+                "checkout state directory was replaced during this invocation",
+            ));
+        }
+        return Ok(root);
+    }
+    let root = Box::leak(Box::new(current));
+    roots.insert(checkout.path().into(), root);
+    Ok(root)
+}
+
+/// A read-only checkout view never creates state, falls back to another
+/// checkout or opens the legacy machine journal.
+pub(super) fn observe_root(cx: &ObserveContext, checkout: &Path) -> Observed<StateRoot> {
+    let git_directory = match effigy_core::worktree_scope::git_directory(checkout) {
+        Ok(git) => git,
+        Err(error) => return Observed::Unknown(UnknownReason::Untrusted(error.to_string())),
+    };
+    let location = effigy_kernel::migration::CheckoutLocation {
+        root: checkout.into(),
+        git_directory,
+    };
     match state_home() {
-        Some(home) => StateRoot::observe(cx, &home),
-        None => Observed::Unknown(UnknownReason::Untrusted(
-            "HOME is unset or relative".to_owned(),
-        )),
+        Some(home) => StateRoot::checkout_observe_in(cx, &home, &location),
+        None => StateRoot::checkout_observe(cx, &location),
     }
 }
 
@@ -349,21 +439,6 @@ fn cancel_token() -> CancelToken {
                 .root_cancel()
         })
         .unwrap_or_default()
-}
-
-/// A read-only journal view for engines outside the run path, such as the
-/// scratch directory's retention sweep. `None` when the journal is absent or
-/// unreadable: retention removes nothing rather than guessing.
-pub(in crate::runner) fn journal_reader() -> Option<effigy_kernel::store::StoreReader> {
-    let cx = observe();
-    let root = match observe_root(&cx) {
-        Observed::Verified(root, _) => root,
-        _ => return None,
-    };
-    match effigy_kernel::store::Store::read(&cx, &root) {
-        Observed::Verified(reader, _) => Some(reader),
-        _ => None,
-    }
 }
 
 /// Task runs record kernel effects: local custody, remote custody and their own

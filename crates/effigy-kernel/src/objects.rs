@@ -3,7 +3,7 @@
 use crate::ctx::{EffectClass, EffectContext, ObserveContext};
 use crate::fs::{self, DirFd, FileName, FsError, Trust};
 use crate::gate::{Gate, GateGuard, Wait};
-use crate::id::{ResourceId, Scope};
+use crate::id::ResourceId;
 use crate::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
 use crate::root::{Family, StateRoot};
 use crate::store::{Store, StoreError};
@@ -188,7 +188,7 @@ pub(crate) fn lock(cx: &EffectContext, root: &StateRoot) -> Result<GateGuard, St
     Ok(Gate::acquire(
         cx,
         root,
-        &[ResourceId::store(Scope::Machine, "objects")?],
+        &[root.store_gate(cx, "objects")?],
         Wait::Until(deadline),
     )?)
 }

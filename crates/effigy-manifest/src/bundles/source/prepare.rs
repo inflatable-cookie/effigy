@@ -259,10 +259,30 @@ fn prepare(
     let cx = op
         .effects()
         .map_err(|err| error(&manifest, format!("{err:?}")))?;
-    let root = StateRoot::effects(&cx, &preparation.home)
+    let location = state_location(&manifest)?;
+    let root = StateRoot::checkout_effects(&cx, &preparation.home, &location)
         .map_err(|err| error(&manifest, err.to_string()))?;
-    let checkout = CheckoutId::new(CheckoutKind::Machine, [0; 16]);
-    let owner = ResourceId::store(Scope::Machine, "bundles")
+    let token = effigy_core::worktree_scope::prepare_checkout_token(&location.root)
+        .map_err(|err| error(&manifest, err.to_string()))?;
+    // Core validates a token as exactly 32 ASCII hexadecimal characters.
+    let mut bytes = [0; 16];
+    for (index, byte) in bytes.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&token[index * 2..index * 2 + 2], 16)
+            .map_err(|err| error(&manifest, err.to_string()))?;
+    }
+    let kind = match effigy_core::worktree_scope::scope_kind(&location.root)
+        .map_err(|err| error(&manifest, err.to_string()))?
+    {
+        Some(effigy_core::worktree_scope::ScopeKind::LinkedWorktree) => {
+            CheckoutKind::LinkedWorktree
+        }
+        Some(effigy_core::worktree_scope::ScopeKind::EphemeralClone) => {
+            CheckoutKind::EphemeralClone
+        }
+        None => CheckoutKind::Primary,
+    };
+    let checkout = CheckoutId::new(kind, bytes);
+    let owner = ResourceId::store(Scope::Checkout(checkout), "bundles")
         .map_err(|err| error(&manifest, err.to_string()))?;
     let invocation = ResolvedInvocation::new(InvocationSpec {
         task: TaskId::new(checkout, "", Surface::Published, "bundle:sync", None)
@@ -324,7 +344,6 @@ fn prepare(
         &cx,
         &mut run,
         &preparation.home,
-        root.path(),
     );
     // Settlement gets its own fresh budget after acquisition, independent of
     // both the workload deadline and begin's predecessor-recovery budget.
@@ -571,7 +590,6 @@ fn acquire_and_publish(
     cx: &EffectContext,
     run: &mut Run<'_>,
     home: &Path,
-    store: &Path,
 ) -> Result<BundleSyncReport, ManifestError> {
     let ticket = retained_intent(run, "sources:generation", parent(manifest), manifest)?;
     let project = DirFd::open(parent(manifest)).map_err(|err| error(manifest, err.to_string()))?;
@@ -739,7 +757,33 @@ fn acquire_and_publish(
         .map_err(|err| error(manifest, err.to_string()))?;
     // Other checkouts can report a known newer source without remote probes.
     // This bounded hint is never used to select or acquire source bytes.
-    let store_dir = DirFd::open(store).map_err(|err| error(manifest, err.to_string()))?;
+    // This is a derived shared hint cache, never a runtime database or run
+    // index. A short cache lock serializes publishers from different checkouts.
+    // This handle supplies only a shared cache lock. It never opens a
+    // machine database or makes source acquisition depend on its health.
+    let machine =
+        StateRoot::machine_effects(cx, home).map_err(|err| error(manifest, err.to_string()))?;
+    let cache_gate = effigy_kernel::gate::Gate::acquire(
+        cx,
+        &machine,
+        &[ResourceId::store(Scope::Machine, "source-hints")
+            .map_err(|err| error(manifest, err.to_string()))?],
+        Wait::Until(Instant::now() + Duration::from_secs(10)),
+    )
+    .map_err(|err| error(manifest, err.to_string()))?;
+    let home_dir = DirFd::open(home).map_err(|err| error(manifest, err.to_string()))?;
+    let effigy = home_dir
+        .prepare_child(
+            cx,
+            &FileName::new(".effigy").map_err(|err| error(manifest, err.to_string()))?,
+        )
+        .map_err(|err| error(manifest, err.to_string()))?;
+    let store_dir = effigy
+        .prepare_child(
+            cx,
+            &FileName::new("cache").map_err(|err| error(manifest, err.to_string()))?,
+        )
+        .map_err(|err| error(manifest, err.to_string()))?;
     let known_name =
         FileName::new("sources-known.json").map_err(|err| error(manifest, err.to_string()))?;
     let observe = cx
@@ -767,10 +811,12 @@ fn acquire_and_publish(
     let known_ticket = retained_intent(
         run,
         "sources:known-versions",
-        &store.join("sources-known.json"),
+        &store_dir.path().join("sources-known.json"),
         manifest,
     )?;
-    run.replace_record(
+    effigy_kernel::record::atomic_replace(
+        cx,
+        &cache_gate,
         &store_dir,
         &known_name,
         &known_bytes,
@@ -1110,16 +1156,14 @@ fn command(
             !matches!(
                 name.to_str(),
                 Some(
-                    "GIT_DIR"
+                    "EFFIGY_CUSTODY_NONCE"
+                        | "EFFIGY_PROBE_NONCE"
+                        | "GIT_DIR"
                         | "GIT_WORK_TREE"
                         | "GIT_COMMON_DIR"
                         | "GIT_INDEX_FILE"
                         | "GIT_OBJECT_DIRECTORY"
                         | "GIT_ALTERNATE_OBJECT_DIRECTORIES"
-                        // Custody markers of the process that ran this Prepare
-                        // are never inherited by a source command.
-                        | "EFFIGY_CUSTODY_NONCE"
-                        | "EFFIGY_PROBE_NONCE"
                 )
             )
         })

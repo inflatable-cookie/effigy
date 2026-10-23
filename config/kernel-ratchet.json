@@ -34,11 +34,6 @@
       "std.process.Command.spawn": 2,
       "std.process.Command.status": 1
     },
-    "crates/effigy-containers/src/runtime/scope.rs": {
-      "std::fs::remove_file": 2,
-      "std::fs::rename": 1,
-      "std::fs::write": 1
-    },
     "crates/effigy-containers/src/workspace/host_integration.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1

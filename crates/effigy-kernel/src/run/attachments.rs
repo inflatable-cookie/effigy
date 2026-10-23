@@ -149,6 +149,9 @@ impl Attachments {
                 "attachment would reverse canonical gate order".into(),
             ));
         }
+        if let crate::id::Scope::Checkout(checkout) = env.resource.scope() {
+            run.protect_checkout(checkout, wait)?;
+        }
         let _gate = Gate::acquire(&run.cx, run.root, std::slice::from_ref(&env.resource), wait)?;
         let result = (|| {
             crate::fault_point!(AttachBefore)?;

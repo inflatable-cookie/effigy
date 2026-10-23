@@ -1587,7 +1587,7 @@ mod tests {
                 .expect("ephemeral fixture scope");
 
             let error = start_runtime_after_scope_registration::<()>(&policy, || {
-                assert!(effigy_containers::load_scope_record(&token)
+                assert!(effigy_containers::load_scope_record(&checkout, &token)
                     .expect("read registered scope")
                     .is_some());
                 Err(RunnerError::task_invocation("injected start failure"))
@@ -1595,7 +1595,7 @@ mod tests {
             .expect_err("injected start should fail");
 
             assert!(error.to_string().contains("injected start failure"));
-            assert!(effigy_containers::load_scope_record(&token)
+            assert!(effigy_containers::load_scope_record(&checkout, &token)
                 .expect("scope remains readable")
                 .is_some());
         });
@@ -2050,7 +2050,7 @@ primary_service = "app"
         effigy_containers::with_test_effigy_home(&home, || {
             let policy = prepared_marker_policy(temp.path());
             let env = crate::runner::environment::env_ref(&policy).unwrap();
-            let ctx = crate::runner::environment::context().unwrap();
+            let ctx = crate::runner::environment::context(&policy.repo_root).unwrap();
             let evidence = effigy_kernel::observe::Evidence::new("fixture".into(), None).unwrap();
             // The apply ran; activation never did: a partial generation.
             effigy_containers::environment::reconcile(
@@ -2563,7 +2563,8 @@ catalog = "postgres"
         /// partial and never applied, and its ports were never assigned.
         fn record_partial_activation(&self, policy: &EffectiveContainerPolicy) {
             let env = crate::runner::environment::env_ref(policy).expect("fixture environment");
-            let ctx = crate::runner::environment::context().expect("fixture context");
+            let ctx =
+                crate::runner::environment::context(&self.repo_root).expect("fixture context");
             let evidence =
                 effigy_kernel::observe::Evidence::new("fixture".into(), None).expect("evidence");
             effigy_containers::environment::reconcile(
