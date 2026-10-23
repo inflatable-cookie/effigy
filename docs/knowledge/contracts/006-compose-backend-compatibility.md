@@ -155,10 +155,14 @@ Effigy ownership:
 - start only currently declared services whose project label matches an
   owned project; skip one-off `compose run` containers and undeclared
   orphans
+- re-observe each candidate container with its own `inspect` immediately
+  before the start, and start it only when that observation proves a
+  stopped `created`, `exited` or `dead` container; a running or in-flight
+  container is left to the readiness wait
 - never rerun a one-time `compose run` command
 - bound inspect and start so a hung nerdctl command still names live status
-- treat a stale timer warning as a warning only after inspect shows the
-  container running; start exit 0 is not readiness
+- treat a timer collision as a warning once inspect shows the container
+  running; start exit 0 is not readiness
 - when the owned Colima container stays stopped with that collision,
   inspect the full ID, require stopped exact-owned labels, confirm the
   unit pair is transient in the selected profile, stop only
@@ -168,10 +172,10 @@ Effigy ownership:
   pair with a bounded wait until both units are unloaded; a late unload
   recovers once, a never-unloaded pair fails bounded with its load/fragment
   state, and a persistent/unverified unit appearing mid-flight refuses
-- a start that reports the collision while inspect shows the container
-  running reports an unresolved health check with the exact inspect/start
-  commands instead of a clean recovery; never repeat a unit mutation on a
-  now-running container
+- a start that reports the collision while the container ends up running
+  hands the service to the normal readiness and health wait with the exact
+  inspect command in the recorded warning, never a stale-backend-state
+  failure; never repeat a unit mutation on a now-running container
 - refuse automatic repair for running, unknown, foreign, one-off,
   undeclared, persistent, mismatched, wrong-profile, or missing-authority
   cases; keep Docker start unchanged; never delete unit files
@@ -202,7 +206,12 @@ Target compatibility cases:
 - `unload_proof_late_unload_within_bounded_probes_recovers_once`
 - `unload_proof_persistent_fragment_mid_flight_refuses`
 - `unload_proof_post_stop_probe_failure_fails_closed`
-- `pathological_start_fatal_with_running_container_reports_unresolved_healthcheck`
+- `pre_start_observation_skips_a_container_compose_already_started`
+- `pre_start_observation_skips_containers_the_backend_is_acting_on`
+- `pre_start_observation_still_recovers_a_genuinely_stopped_sibling`
+- `failed_pre_start_observation_refuses_the_start`
+- `reboot_timer_collision_with_a_running_container_hands_off_to_readiness`
+  (private fake transport; no real engine or readiness proof)
 - `docker_backend_does_not_recover_healthcheck_units`
 
 ### Primary-service exec readiness

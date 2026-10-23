@@ -71,8 +71,103 @@ pub fn compose_status_is_running(status: &str) -> bool {
 }
 
 pub(crate) fn compose_status_needs_start(status: &str) -> bool {
+    if compose_status_is_in_flight(status) {
+        return false;
+    }
     let lowered = status.to_ascii_lowercase();
     lowered.contains("exited") || lowered.contains("created") || lowered.contains("dead")
+}
+
+/// Statuses that say the backend is already acting on the container. A
+/// `restarting` or `starting` container is not a start target however the
+/// rest of its status reads, and a `removing` one has no stable task to start.
+fn compose_status_is_in_flight(status: &str) -> bool {
+    let lowered = status.to_ascii_lowercase();
+    [
+        "restarting",
+        "starting",
+        "stopping",
+        "pausing",
+        "unpausing",
+        "removing",
+    ]
+    .iter()
+    .any(|word| lowered.contains(word))
+}
+
+/// A single container's own `inspect` observation. `running` is the backend's
+/// authoritative task state; `status` is its `State.Status` word.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InspectedContainerState {
+    pub status: String,
+    pub running: bool,
+}
+
+/// Only a created, exited or dead container is a recovery start target. A
+/// running container needs nothing, and a container the backend is still
+/// acting on (restarting, starting, stopping, removing, paused) is never
+/// started again on the strength of one stale inventory row.
+pub(crate) fn inspected_container_needs_start(state: &InspectedContainerState) -> bool {
+    if state.running || compose_status_is_in_flight(&state.status) {
+        return false;
+    }
+    let lowered = state.status.to_ascii_lowercase();
+    matches!(lowered.as_str(), "created" | "exited" | "dead")
+}
+
+#[derive(serde::Deserialize)]
+struct InspectStateRecord {
+    #[serde(rename = "State", default)]
+    state: Option<InspectStateWord>,
+}
+
+#[derive(serde::Deserialize)]
+struct InspectStateWord {
+    #[serde(rename = "Status", alias = "status")]
+    status: Option<String>,
+    #[serde(rename = "Running", alias = "running")]
+    running: Option<bool>,
+}
+
+pub(crate) fn parse_inspect_container_state(
+    stdout: &str,
+) -> Result<InspectedContainerState, ContainerExecError> {
+    let records: Vec<InspectStateRecord> =
+        serde_json::from_str(stdout).map_err(|error| ContainerExecError::Failure {
+            command: "runtime inspect".to_owned(),
+            code: None,
+            stdout: stdout.to_owned(),
+            stderr: format!("failed to parse inspect json: {error}"),
+        })?;
+    let Some(record) = records.into_iter().next() else {
+        return Err(ContainerExecError::Failure {
+            command: "runtime inspect".to_owned(),
+            code: None,
+            stdout: stdout.to_owned(),
+            stderr: "inspect returned no container record".to_owned(),
+        });
+    };
+    let status = record
+        .state
+        .as_ref()
+        .and_then(|state| state.status.as_deref())
+        .unwrap_or("")
+        .trim()
+        .to_owned();
+    if status.is_empty() {
+        return Err(ContainerExecError::Failure {
+            command: "runtime inspect".to_owned(),
+            code: None,
+            stdout: stdout.to_owned(),
+            stderr: "inspect record missing State.Status".to_owned(),
+        });
+    }
+    let running = record
+        .state
+        .as_ref()
+        .and_then(|state| state.running)
+        .unwrap_or(false);
+    Ok(InspectedContainerState { status, running })
 }
 
 pub fn parse_running_compose_containers(
@@ -481,5 +576,66 @@ mod tests {
         assert!(compose_status_needs_start("Created"));
         assert!(compose_status_needs_start("Dead"));
         assert!(!compose_status_needs_start("Up 2 minutes"));
+    }
+
+    #[test]
+    fn compose_status_never_targets_a_container_in_flight() {
+        for status in [
+            "Restarting (1) 2 seconds ago",
+            "Starting",
+            "Stopping",
+            "Removing",
+            "Pausing",
+        ] {
+            assert!(
+                !compose_status_needs_start(status),
+                "`{status}` must never be a start target"
+            );
+            assert!(
+                !compose_status_is_running(status),
+                "`{status}` in-flight status must not read as running"
+            );
+        }
+    }
+
+    #[test]
+    fn inspected_state_starts_only_proven_stopped_containers() {
+        let state = |status: &str, running: bool| InspectedContainerState {
+            status: status.to_owned(),
+            running,
+        };
+        assert!(inspected_container_needs_start(&state("created", false)));
+        assert!(inspected_container_needs_start(&state("exited", false)));
+        assert!(inspected_container_needs_start(&state("dead", false)));
+        assert!(!inspected_container_needs_start(&state("running", true)));
+        assert!(!inspected_container_needs_start(&state("created", true)));
+        assert!(!inspected_container_needs_start(&state("restarting", true)));
+        assert!(!inspected_container_needs_start(&state(
+            "restarting",
+            false
+        )));
+        assert!(!inspected_container_needs_start(&state("paused", false)));
+        assert!(!inspected_container_needs_start(&state("removing", false)));
+    }
+
+    #[test]
+    fn inspect_state_parses_the_record_nerdctl_and_docker_report() {
+        let parsed = parse_inspect_container_state(
+            r#"[{"Id":"abc","State":{"Status":"exited","Running":false},"Config":{}}]"#,
+        )
+        .expect("inspect state");
+        assert_eq!(
+            parsed,
+            InspectedContainerState {
+                status: "exited".to_owned(),
+                running: false,
+            }
+        );
+        assert!(
+            parse_inspect_container_state(r#"[{"Id":"abc","Config":{}}]"#).is_err(),
+            "a record without State.Status is not proof of anything"
+        );
+        assert!(parse_inspect_container_state("[]").is_err());
+        assert!(parse_inspect_container_state("not json").is_err());
     }
 }

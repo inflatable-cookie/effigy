@@ -27,7 +27,8 @@ use super::implementation::{
     list_compose_containers_for_project_including_stopped, ContainerExecError,
 };
 use super::parse::{
-    compose_status_is_running, compose_status_needs_start, looks_like_stale_healthcheck_timer,
+    compose_status_is_running, compose_status_needs_start, inspected_container_needs_start,
+    looks_like_stale_healthcheck_timer, parse_inspect_container_state, InspectedContainerState,
     RunningComposeContainer,
 };
 use super::process::run_command_capture_allow_failure_with_timeout;
@@ -89,6 +90,7 @@ pub fn recover_exited_owned_compose_services_for_project(
         backend,
         &declared,
         || list_compose_containers_for_project_including_stopped(repo_root, policy, project_name),
+        |container_name| observe_owned_container_state(repo_root, policy, container_name),
         |container_name| {
             let output = run_runtime_command_capture_for_policy_allow_failure_with_timeout(
                 repo_root,
@@ -127,6 +129,14 @@ pub fn recover_exited_owned_services_with(
         backend,
         declared_services,
         inspect,
+        // The private tests exercise the start decision itself; a stopped
+        // observation is the one they hand to the pre-start check.
+        |_| {
+            Ok(Some(InspectedContainerState {
+                status: "exited".to_owned(),
+                running: false,
+            }))
+        },
         start,
         |_, _| Ok(StaleTimerAction::Skip),
     )
@@ -138,6 +148,7 @@ pub(crate) fn recover_exited_owned_services_with_stale_timer(
     backend: ComposeBackend,
     declared_services: &[&str],
     mut inspect: impl FnMut() -> Result<Vec<RunningComposeContainer>, ContainerExecError>,
+    mut observe: impl FnMut(&str) -> Result<Option<InspectedContainerState>, ContainerExecError>,
     mut start: impl FnMut(&str) -> Result<RuntimeStartResult, ContainerExecError>,
     mut recover_timer: impl FnMut(
         &RunningComposeContainer,
@@ -153,6 +164,15 @@ pub(crate) fn recover_exited_owned_services_with_stale_timer(
     let mut recovery = OwnedServiceStartRecovery::default();
     let mut start_results = Vec::new();
     for row in &targets {
+        // The inventory is one observation of the whole project. Compose may
+        // have started this container since, and the backend may be restarting
+        // it, so judge the container's own fresh state before touching it.
+        // Effigy never issues a second start for an owned container that is
+        // already running or that the backend is still acting on (effigy#287).
+        match observe(&row.container_name)? {
+            Some(state) if inspected_container_needs_start(&state) => {}
+            Some(_) | None => continue,
+        }
         match start(&row.container_name) {
             Ok(result) => {
                 recovery.started.push(row.container_name.clone());
@@ -171,6 +191,10 @@ pub(crate) fn recover_exited_owned_services_with_stale_timer(
         }
     }
 
+    if start_results.is_empty() {
+        return Ok(recovery);
+    }
+
     let after = match inspect() {
         Ok(rows) => rows,
         Err(error) => {
@@ -178,7 +202,6 @@ pub(crate) fn recover_exited_owned_services_with_stale_timer(
                 project_name,
                 profile,
                 backend,
-                &targets,
                 &before,
                 &start_results,
                 error,
@@ -238,7 +261,6 @@ pub(crate) fn recover_exited_owned_services_with_stale_timer(
                     project_name,
                     profile,
                     backend,
-                    &targets,
                     &before,
                     &start_results,
                     error,
@@ -248,16 +270,15 @@ pub(crate) fn recover_exited_owned_services_with_stale_timer(
     } else {
         after
     };
-    if let Some(error) = persistent_start_failure(
-        project_name,
-        profile,
-        backend,
-        &targets,
-        &after,
-        &start_results,
-    ) {
+    if let Some(error) =
+        persistent_start_failure(project_name, profile, backend, &after, &start_results)
+    {
         return Err(error);
     }
+    // A container that ends up running after a start that reported a health
+    // check timer collision is not stale backend state: nerdctl left an
+    // already loaded transient timer unit behind, the container did start, and
+    // the normal readiness and health wait proves or fails the service itself.
     for (row, result) in &start_results {
         if looks_like_stale_healthcheck_timer(&result.stdout, &result.stderr)
             && after.iter().any(|current| {
@@ -266,15 +287,42 @@ pub(crate) fn recover_exited_owned_services_with_stale_timer(
                     && compose_status_is_running(&current.status)
             })
         {
-            recovery.warnings.push(stale_timer_diagnostic(
-                row,
-                &result.stderr,
-                result.success,
-                profile,
-            ));
+            recovery
+                .warnings
+                .push(timer_collision_warning(row, &result.stderr, profile));
         }
     }
     Ok(recovery)
+}
+
+/// One owned container's own observation, immediately before a recovery start.
+/// `None` means the backend no longer has a container by that name.
+fn observe_owned_container_state(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    container_name: &str,
+) -> Result<Option<InspectedContainerState>, ContainerExecError> {
+    let output = run_runtime_command_capture_for_policy_allow_failure_with_timeout(
+        repo_root,
+        policy,
+        &[OsString::from("inspect"), OsString::from(container_name)],
+        &format!("inspect owned container `{container_name}` before start"),
+        OWNED_INSPECT_TIMEOUT,
+    )?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        let lowered = stderr.to_ascii_lowercase();
+        if lowered.contains("no such container") || lowered.contains("no such object") {
+            return Ok(None);
+        }
+        return Err(ContainerExecError::Failure {
+            command: format!("inspect owned container `{container_name}` before start"),
+            code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr,
+        });
+    }
+    parse_inspect_container_state(&String::from_utf8_lossy(&output.stdout)).map(Some)
 }
 
 fn live_recover_stale_healthcheck_units(
@@ -463,11 +511,10 @@ fn persistent_start_failure(
     project_name: &str,
     profile: &str,
     backend: ComposeBackend,
-    targets: &[RunningComposeContainer],
     after: &[RunningComposeContainer],
     start_results: &[(RunningComposeContainer, RuntimeStartResult)],
 ) -> Option<ContainerExecError> {
-    for target in targets {
+    for (target, result) in start_results {
         let current = after.iter().find(|row| {
             row.container_name == target.container_name
                 && row.project_name.as_deref() == Some(project_name)
@@ -476,37 +523,12 @@ fn persistent_start_failure(
             .map(|row| !compose_status_is_running(&row.status))
             .unwrap_or(true);
         if !still_down {
-            if let Some((_, result)) = start_results.iter().find(|(row, result)| {
-                row.container_name == target.container_name
-                    && backend == ComposeBackend::ColimaNerdctl
-                    && !result.success
-                    && looks_like_stale_healthcheck_timer(&result.stdout, &result.stderr)
-            }) {
-                return Some(ContainerExecError::Failure {
-                    command: format!("start owned service `{}`", target.container_name),
-                    code: None,
-                    stdout: String::new(),
-                    stderr: format!(
-                        "stale backend state in Colima profile `{profile}`: {}",
-                        stale_timer_diagnostic(
-                            target,
-                            &format!("{}\n{}", result.stdout, result.stderr),
-                            false,
-                            profile,
-                        )
-                    ),
-                });
-            }
             continue;
         }
         let status = current
             .map(|row| row.status.as_str())
             .unwrap_or(target.status.as_str());
-        let backend_text = start_results
-            .iter()
-            .find(|(row, _)| row.container_name == target.container_name)
-            .map(|(_, result)| format!("{}\n{}", result.stdout.trim(), result.stderr.trim()))
-            .unwrap_or_default();
+        let backend_text = format!("{}\n{}", result.stdout.trim(), result.stderr.trim());
         return Some(persistent_exited_service_error(
             project_name,
             profile,
@@ -523,43 +545,20 @@ fn failure_from_last_observed_state(
     project_name: &str,
     profile: &str,
     backend: ComposeBackend,
-    targets: &[RunningComposeContainer],
     before: &[RunningComposeContainer],
     start_results: &[(RunningComposeContainer, RuntimeStartResult)],
     inspect_error: ContainerExecError,
 ) -> ContainerExecError {
     let inspect_text = inspect_error.to_string();
     let mut start_results = start_results.to_vec();
-    for target in targets {
-        match start_results
-            .iter_mut()
-            .find(|(row, _)| row.container_name == target.container_name)
-        {
-            Some((_, result)) => {
-                if !result.stderr.is_empty() {
-                    result.stderr.push('\n');
-                }
-                result.stderr.push_str(&inspect_text);
-            }
-            None => start_results.push((
-                target.clone(),
-                RuntimeStartResult {
-                    success: false,
-                    stdout: String::new(),
-                    stderr: inspect_text.clone(),
-                },
-            )),
+    for (_, result) in &mut start_results {
+        if !result.stderr.is_empty() {
+            result.stderr.push('\n');
         }
+        result.stderr.push_str(&inspect_text);
     }
-    persistent_start_failure(
-        project_name,
-        profile,
-        backend,
-        targets,
-        before,
-        &start_results,
-    )
-    .unwrap_or(inspect_error)
+    persistent_start_failure(project_name, profile, backend, before, &start_results)
+        .unwrap_or(inspect_error)
 }
 
 fn persistent_exited_service_error(
@@ -604,29 +603,21 @@ fn persistent_exited_service_error(
 #[path = "restart_recovery/tests/private.rs"]
 mod production_refusal_tests;
 
-fn stale_timer_diagnostic(
-    row: &RunningComposeContainer,
-    stderr: &str,
-    start_succeeded: bool,
-    profile: &str,
-) -> String {
+/// A start that reported a nerdctl health-check timer collision and left the
+/// container running. The collision is nerdctl leaving a transient
+/// `{full_id}.timer` unit loaded; it is not unresolved backend state, because
+/// the container did start and readiness and the service's own health check
+/// now decide. Effigy still never deletes systemd units.
+fn timer_collision_warning(row: &RunningComposeContainer, stderr: &str, profile: &str) -> String {
     let service = row
         .service
         .as_deref()
         .unwrap_or(row.container_name.as_str());
-    if start_succeeded {
-        format!(
-            "nerdctl reported a stale health-check timer while starting owned service `{service}` (`{}`); the container is running and systemd units were not deleted",
-            excerpt_timer_line(stderr)
-        )
-    } else {
-        format!(
-            "unresolved nerdctl health-check unit collision while starting owned service `{service}` (`{}`): inspect shows the container running, but the failed start did not prove health-check readiness. Inspect with `{}` and retry the exact-owned pair with `{}` once the timer is unloaded; systemd units were not deleted",
-            excerpt_timer_line(stderr),
-            owned_inspect_recovery_command(ComposeBackend::ColimaNerdctl, profile, &row.container_name),
-            owned_start_recovery_command(ComposeBackend::ColimaNerdctl, profile, &row.container_name),
-        )
-    }
+    format!(
+        "nerdctl reported a health-check timer collision while starting owned service `{service}` (`{}`); the container is running, so readiness and its health check decide. The timer unit belongs to this container, Effigy did not delete systemd units, and `{}` inspects the exact container if it stays unhealthy",
+        excerpt_timer_line(stderr),
+        owned_inspect_recovery_command(ComposeBackend::ColimaNerdctl, profile, &row.container_name),
+    )
 }
 
 fn excerpt_timer_line(stderr: &str) -> String {
@@ -702,6 +693,19 @@ mod tests {
         }
     }
 
+    /// A fresh single-container observation, as the pre-start check obtains it.
+    fn observed(
+        status: &'static str,
+        running: bool,
+    ) -> impl FnMut(&str) -> Result<Option<InspectedContainerState>, ContainerExecError> {
+        move |_| {
+            Ok(Some(InspectedContainerState {
+                status: status.to_owned(),
+                running,
+            }))
+        }
+    }
+
     #[test]
     fn recoverable_exited_service_is_started_despite_stale_timer() {
         let inspect_states = [
@@ -752,9 +756,12 @@ mod tests {
         assert_eq!(started, vec!["acowtancy-postgres-1".to_owned()]);
         assert_eq!(recovery.started, vec!["acowtancy-postgres-1".to_owned()]);
         assert_eq!(recovery.warnings.len(), 1);
-        assert!(recovery.warnings[0].contains("stale health-check timer"));
+        assert!(recovery.warnings[0].contains("health-check timer collision"));
         assert!(recovery.warnings[0].contains("postgres"));
-        assert!(recovery.warnings[0].contains("systemd units were not deleted"));
+        assert!(recovery.warnings[0].contains("the container is running"));
+        assert!(recovery.warnings[0].contains("readiness and its health check decide"));
+        assert!(recovery.warnings[0].contains("did not delete systemd units"));
+        assert!(!recovery.warnings[0].contains("stale backend state"));
     }
 
     #[test]
@@ -1320,6 +1327,7 @@ mod tests {
                 inspect_calls += 1;
                 Ok(rows)
             },
+            observed("exited", false),
             |container| {
                 started.push(container.to_owned());
                 if started.len() == 1 {
@@ -1413,6 +1421,7 @@ mod tests {
                 inspect_calls += 1;
                 Ok(rows)
             },
+            observed("exited", false),
             |container| {
                 started.push(container.to_owned());
                 Ok(RuntimeStartResult {
@@ -1484,6 +1493,7 @@ mod tests {
                 inspect_calls += 1;
                 Ok(rows)
             },
+            observed("exited", false),
             |container| {
                 started.push(container.to_owned());
                 Ok(RuntimeStartResult {
@@ -1539,6 +1549,7 @@ mod tests {
                 inspect_calls += 1;
                 Ok(rows)
             },
+            observed("exited", false),
             |_| {
                 Ok(RuntimeStartResult {
                     success: false,
@@ -1557,7 +1568,7 @@ mod tests {
     }
 
     #[test]
-    fn pathological_start_fatal_with_running_container_reports_unresolved_healthcheck() {
+    fn failed_start_with_a_timer_collision_on_a_running_container_hands_off_to_readiness() {
         let inspect_states = [
             vec![row(
                 "acowtancy-shared-mysql",
@@ -1575,7 +1586,7 @@ mod tests {
         let mut inspect_calls = 0;
         let mut started = Vec::new();
         let mut recoveries = 0;
-        let error = recover_exited_owned_services_with_stale_timer(
+        let recovery = recover_exited_owned_services_with_stale_timer(
             "acowtancy-shared-mysql",
             "effigy",
             ComposeBackend::ColimaNerdctl,
@@ -1585,6 +1596,7 @@ mod tests {
                 inspect_calls += 1;
                 Ok(rows)
             },
+            observed("exited", false),
             |container| {
                 started.push(container.to_owned());
                 Ok(RuntimeStartResult {
@@ -1598,19 +1610,24 @@ mod tests {
                 panic!("a now-running container must not be mutated");
             },
         )
-        .expect_err("failed start with a timer collision must fail before readiness");
+        .expect("a running container after a timer collision hands off to readiness");
 
         assert_eq!(started.len(), 1, "the single start is not retried");
         assert_eq!(recoveries, 0, "no unit mutation on a now-running container");
         assert_eq!(inspect_calls, 2);
-        let warning = error.to_string();
-        assert!(warning.contains("stale backend state in Colima profile `effigy`"));
+        assert_eq!(recovery.started, vec!["acowtancy-mysql-1".to_owned()]);
+        assert_eq!(recovery.warnings.len(), 1);
+        let warning = &recovery.warnings[0];
         assert!(
-            warning.contains("unresolved nerdctl health-check unit collision"),
+            warning.contains("health-check timer collision"),
             "got: {warning}"
         );
         assert!(
-            warning.contains("did not prove health-check readiness"),
+            warning.contains("the container is running"),
+            "got: {warning}"
+        );
+        assert!(
+            warning.contains("readiness and its health check decide"),
             "got: {warning}"
         );
         assert!(
@@ -1621,14 +1638,249 @@ mod tests {
             warning.contains("colima nerdctl --profile effigy -- inspect acowtancy-mysql-1"),
             "got: {warning}"
         );
+        assert!(!warning.contains("stale backend state"), "got: {warning}");
         assert!(
-            warning.contains("colima nerdctl --profile effigy -- start acowtancy-mysql-1"),
+            !warning.contains("did not prove health-check readiness"),
             "got: {warning}"
         );
+    }
+
+    #[test]
+    fn a_service_still_restarting_after_start_is_a_bounded_failure() {
+        // A start result that reports success is not readiness either: the
+        // bound still reports a service that stays down.
+        let inspect_states = [
+            vec![row(
+                "acowtancy-shared-mysql",
+                "mysql",
+                "acowtancy-mysql-1",
+                "Exited (255) 2 minutes ago",
+            )],
+            vec![row(
+                "acowtancy-shared-mysql",
+                "mysql",
+                "acowtancy-mysql-1",
+                "Restarting (1) 1 second ago",
+            )],
+        ];
+        let mut inspect_calls = 0;
+        let error = recover_exited_owned_services_with_stale_timer(
+            "acowtancy-shared-mysql",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            &["mysql"],
+            || {
+                let rows = inspect_states[inspect_calls.min(inspect_states.len() - 1)].clone();
+                inspect_calls += 1;
+                Ok(rows)
+            },
+            observed("exited", false),
+            |_| {
+                Ok(RuntimeStartResult {
+                    success: true,
+                    stdout: String::new(),
+                    stderr: STALE_TIMER.to_owned(),
+                })
+            },
+            |_, _| Ok(StaleTimerAction::Skip),
+        )
+        .expect_err("a service the backend is still restarting is not ready");
+
+        let detail = error.to_string();
+        assert!(detail.contains("service `mysql`"), "got: {detail}");
         assert!(
-            !warning.contains("the container is running and systemd units were not deleted"),
-            "running alone must not be reported as clean recovery: {warning}"
+            detail.contains("Restarting (1) 1 second ago"),
+            "got: {detail}"
         );
+    }
+
+    #[test]
+    fn pre_start_observation_skips_a_container_compose_already_started() {
+        let mut inspect_calls = 0;
+        let recovery = recover_exited_owned_services_with_stale_timer(
+            "demo-web",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            &["app"],
+            || {
+                inspect_calls += 1;
+                Ok(vec![row(
+                    "demo-web",
+                    "app",
+                    "demo-app-1",
+                    "Exited (0) 1 second ago",
+                )])
+            },
+            observed("running", true),
+            |container| {
+                panic!("start must not run for a container already started, got {container}")
+            },
+            |_, _| panic!("no timer recovery without a start"),
+        )
+        .expect("a container that is already running is left to readiness");
+
+        assert!(recovery.started.is_empty());
+        assert!(recovery.warnings.is_empty());
+        assert_eq!(
+            inspect_calls, 1,
+            "a skipped target needs no second project inventory"
+        );
+    }
+
+    #[test]
+    fn pre_start_observation_skips_containers_the_backend_is_acting_on() {
+        for (status, running) in [
+            ("restarting", true),
+            ("restarting", false),
+            ("starting", false),
+            ("paused", false),
+            ("removing", false),
+            ("created", true),
+        ] {
+            let recovery = recover_exited_owned_services_with_stale_timer(
+                "demo-web",
+                "effigy",
+                ComposeBackend::ColimaNerdctl,
+                &["app"],
+                || Ok(vec![row("demo-web", "app", "demo-app-1", "Created")]),
+                observed(status, running),
+                |container| panic!("`{status}` must not be started, got {container}"),
+                |_, _| panic!("no timer recovery without a start"),
+            )
+            .expect("an in-flight container is left alone");
+            assert!(recovery.started.is_empty());
+        }
+    }
+
+    #[test]
+    fn pre_start_observation_of_a_removed_container_does_not_start_it() {
+        let mut observe_calls = 0;
+        let recovery = recover_exited_owned_services_with_stale_timer(
+            "demo-web",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            &["app"],
+            || {
+                Ok(vec![row(
+                    "demo-web",
+                    "app",
+                    "demo-app-1",
+                    "Exited (0) 1 second ago",
+                )])
+            },
+            |_| {
+                observe_calls += 1;
+                Ok(None)
+            },
+            |container| panic!("a removed container is not started, got {container}"),
+            |_, _| panic!("no timer recovery without a start"),
+        )
+        .expect("a container the backend no longer has is not started");
+
+        assert_eq!(observe_calls, 1);
+        assert!(recovery.started.is_empty());
+    }
+
+    #[test]
+    fn failed_pre_start_observation_refuses_the_start() {
+        let mut started = false;
+        let error = recover_exited_owned_services_with_stale_timer(
+            "demo-web",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            &["app"],
+            || {
+                Ok(vec![row(
+                    "demo-web",
+                    "app",
+                    "demo-app-1",
+                    "Exited (0) 1 second ago",
+                )])
+            },
+            |_| {
+                Err(ContainerExecError::Failure {
+                    command: "inspect owned container `demo-app-1` before start".to_owned(),
+                    code: None,
+                    stdout: String::new(),
+                    stderr: "[effigy] command timed out after 15s".to_owned(),
+                })
+            },
+            |container| {
+                started = true;
+                panic!("an unproven container state must not start {container}")
+            },
+            |_, _| panic!("no timer recovery without a start"),
+        )
+        .expect_err("an unproven observation is a bounded failure, not a blind start");
+
+        assert!(!started);
+        let detail = error.to_string();
+        assert!(
+            detail.contains("command timed out after 15s"),
+            "got: {detail}"
+        );
+        assert!(
+            detail.contains("inspect owned container `demo-app-1` before start"),
+            "got: {detail}"
+        );
+    }
+
+    #[test]
+    fn pre_start_observation_still_recovers_a_genuinely_stopped_sibling() {
+        let inspect_states = [
+            vec![
+                row(
+                    "demo-web",
+                    "postgres",
+                    "demo-postgres-1",
+                    "Exited (255) 1 minute ago",
+                ),
+                row(
+                    "demo-web",
+                    "mailpit",
+                    "demo-mailpit-1",
+                    "Exited (255) 1 minute ago",
+                ),
+            ],
+            vec![
+                row("demo-web", "postgres", "demo-postgres-1", "Up 2 seconds"),
+                row("demo-web", "mailpit", "demo-mailpit-1", "Up 1 second"),
+            ],
+        ];
+        let mut inspect_calls = 0;
+        let mut started = Vec::new();
+        let recovery = recover_exited_owned_services_with_stale_timer(
+            "demo-web",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            &["postgres", "mailpit"],
+            || {
+                let rows = inspect_states[inspect_calls.min(inspect_states.len() - 1)].clone();
+                inspect_calls += 1;
+                Ok(rows)
+            },
+            |container| {
+                let running = container == "demo-postgres-1";
+                Ok(Some(InspectedContainerState {
+                    status: if running { "running" } else { "exited" }.to_owned(),
+                    running,
+                }))
+            },
+            |container| {
+                started.push(container.to_owned());
+                Ok(RuntimeStartResult {
+                    success: true,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            },
+            |_, _| panic!("no timer collision in this recovery"),
+        )
+        .expect("the genuinely stopped sibling still recovers");
+
+        assert_eq!(started, vec!["demo-mailpit-1".to_owned()]);
+        assert_eq!(recovery.started, vec!["demo-mailpit-1".to_owned()]);
+        assert_eq!(inspect_calls, 2);
     }
 
     #[test]
@@ -1640,6 +1892,7 @@ mod tests {
             ComposeBackend::ColimaNerdctl,
             &["app"],
             || Ok(vec![row("demo-web", "app", "demo-app-1", "Up 10 seconds")]),
+            observed("exited", false),
             |container| panic!("start must not run for running containers, got {container}"),
             |_, _| {
                 recoveries += 1;

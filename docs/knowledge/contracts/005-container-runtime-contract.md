@@ -1297,17 +1297,29 @@ started by name. Effigy does not recreate them, does not delete volumes,
 and does not delete systemd units, including nerdctl health-check timers
 named after container ids.
 
-Start exit 0 is not readiness. A nerdctl warning that
-`Unit <id>.timer was already loaded or has a fragment file` is recorded when
-inspect then shows the owned container running; systemd units are not
-deleted. A start that reports that collision while inspect shows the
-container running fails immediately as **stale backend state** with the selected
-Colima profile and exact inspect/start commands. A running process does not
-prove its health-check timer was installed. Effigy does not enter readiness
-polling or publish the environment as ready after this failure, and does not
-stop or mutate the now-running container or its systemd units. The operator
-inspects the named container and retries the exact start after the backend
-timer has unloaded. This applies to Colima/nerdctl only; Docker is unchanged. If the owned
+Start exit 0 is not readiness. Effigy never starts a container that is
+already running or that the backend is still acting on. Immediately before
+each recovery start it observes that one container with its own `inspect`,
+and starts it only when the observation proves a stopped state: `Running`
+false with `State.Status` `created`, `exited` or `dead`. A running container
+needs nothing, and `restarting`, `starting`, `stopping`, `pausing`,
+`unpausing`, `removing`, `paused` or any unproven status is left to the
+readiness wait, so a container Compose started in the meantime is never
+started a second time. An inspect that cannot prove the state fails closed
+with its own bounded error instead of starting blind, and a container the
+backend no longer has is not started.
+
+nerdctl implements a container health check as the transient timer
+`{full_id}.timer`. A container whose process exits on its own leaves that
+unit loaded and active, so the next `start` of the same container reports
+`Unit <id>.timer was already loaded or has a fragment file` and exits
+non-zero even though the container does start. When a start reports that
+collision and the following inventory shows the container running, Effigy
+records the collision line and hands the service to the normal readiness
+and health wait, which proves or fails the health check itself. That is not
+stale backend state, and Effigy does not stop or mutate the now-running
+container or delete its systemd units. This applies to Colima/nerdctl only;
+Docker is unchanged. If the owned
 Colima/nerdctl container stays stopped with that collision, Effigy may
 recover once: inspect the container for a full 64-character hexadecimal ID,
 require stopped status and the selected project/service labels (not one-off,
