@@ -119,7 +119,7 @@
 "test:gateway:loopback-dead-owners" = { visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(loopback_recovery::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --lib -E 'test(loopback::reclaim::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
-  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(gateway_repair_preview_) | test(gateway_repair_apply_) | test(parse_gateway_repair_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(gateway_repair_preview_) | test(gateway_repair_apply_) | test(parse_gateway_repair_) | test(exhausted_registration_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
 "check:gateway:loopback-dead-owners" = { visibility = "internal", group = "Maintenance", run = [
   { run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-cli -p effigy-containers -p effigy-gateway --all-targets", timeout_ms = 900000 },

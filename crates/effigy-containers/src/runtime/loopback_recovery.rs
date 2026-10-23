@@ -47,10 +47,21 @@ pub struct LoopbackRecoveryFacts {
     pub gateway_pid: Option<u32>,
 }
 
+/// The one container inventory every loopback collection proves ownership
+/// from: every state on every profile that is running.
+///
+/// `gateway repair` and both allocation seams call this, so no path can release
+/// what another holds. A created or stopped container on a running profile
+/// holds its owner everywhere; a stopped profile binds no host address and
+/// cannot start a stack whose checkout is gone, so it holds nothing.
+pub fn loopback_ownership_inventory() -> RunningComposeContainerInventory {
+    discover_compose_containers_all_states_in_running_profiles()
+}
+
 impl LoopbackRecoveryFacts {
     /// Read the live ownership facts for the Effigy home.
     pub fn gather() -> Self {
-        Self::with_inventory(discover_compose_containers_all_states_in_running_profiles())
+        Self::with_inventory(loopback_ownership_inventory())
     }
 
     /// Assemble facts around an already-observed container inventory.

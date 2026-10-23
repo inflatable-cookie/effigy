@@ -124,11 +124,20 @@ fn container(
     project: Option<&str>,
     working_dir: Option<&str>,
 ) -> RunningComposeContainerProfiled {
+    container_with_status(name, "running", project, working_dir)
+}
+
+fn container_with_status(
+    name: &str,
+    status: &str,
+    project: Option<&str>,
+    working_dir: Option<&str>,
+) -> RunningComposeContainerProfiled {
     RunningComposeContainerProfiled {
         profile: "effigy".to_owned(),
         row: RunningComposeContainer {
             container_name: name.to_owned(),
-            status: "running".to_owned(),
+            status: status.to_owned(),
             ports: Vec::new(),
             project_name: project.map(str::to_owned),
             working_dir: working_dir.map(str::to_owned),
@@ -220,6 +229,30 @@ fn a_running_container_holds_its_owner() {
     assert!(assignment_row(&plan, "127.1.0.4")
         .reason
         .contains("gone-app-1"));
+}
+
+#[test]
+fn a_created_or_exited_container_holds_its_owner() {
+    for status in ["Created", "Exited (0)"] {
+        let registry = registry_with(&[("project:gone:/gone", "127.1.0.4", MISSING)]);
+        let routes = route_table_with(vec![alias_route("gone.test", MISSING, "127.1.0.4", 8104)]);
+        let mut facts = clean_facts();
+        facts.inventory.rows.push(container_with_status(
+            "gone-app-1",
+            status,
+            None,
+            Some(MISSING),
+        ));
+
+        let plan = plan_recovery(&registry, &routes, &facts, missing, no_listener);
+
+        assert_eq!(
+            assignment_row(&plan, "127.1.0.4").decision,
+            Decision::Hold,
+            "{status} container must hold its owner"
+        );
+        assert_eq!(route_row(&plan, "gone.test").decision, Decision::Hold);
+    }
 }
 
 #[test]
@@ -477,16 +510,10 @@ fn preview_lists_the_decisions_without_writing() {
     assert_eq!(document["routes"][0]["decision"], "reclaim");
 }
 
-fn full_dead_pool() -> Vec<(&'static str, String, String)> {
+/// One absent owner per pool address, each with its own checkout path.
+fn full_dead_pool() -> Vec<(String, String)> {
     (1..=50)
-        .map(|octet| {
-            (
-                // Identities are only used as registry keys here.
-                "project:gone:/gone",
-                format!("127.1.0.{octet}"),
-                MISSING.to_owned(),
-            )
-        })
+        .map(|octet| (format!("127.1.0.{octet}"), format!("{MISSING}-{octet}")))
         .collect()
 }
 
@@ -513,11 +540,7 @@ fn exhausted_store(assignments: &[(String, String)]) -> (tempfile::TempDir, Endp
 
 #[test]
 fn a_full_pool_releases_dead_owners_once_then_reports_the_reuse_window() {
-    let pool = full_dead_pool();
-    let assignments = pool
-        .iter()
-        .map(|(_, ip, scope)| (ip.clone(), scope.clone()))
-        .collect::<Vec<_>>();
+    let assignments = full_dead_pool();
     let (_dir, store) = exhausted_store(&assignments);
 
     let error = reserve_loopback_collecting_dead_with(
@@ -550,12 +573,47 @@ fn a_full_pool_releases_dead_owners_once_then_reports_the_reuse_window() {
 }
 
 #[test]
+fn auto_collect_holds_an_owner_with_a_created_container_and_releases_the_rest() {
+    let assignments = full_dead_pool();
+    let (_dir, store) = exhausted_store(&assignments);
+    let held_scope = assignments[6].1.clone();
+    let held = container_with_status("gone-app-1", "Created", None, Some(held_scope.as_str()));
+    let mut facts = clean_facts();
+    facts.inventory.rows.push(held);
+
+    let error = reserve_loopback_collecting_dead_with(
+        &store,
+        "project:new:/new",
+        None,
+        "/new",
+        || facts,
+        missing,
+    )
+    .expect_err("released addresses stay in the reuse quarantine");
+
+    match error {
+        GatewayError::LoopbackPoolExhaustedAfterReclaim {
+            assignments: released,
+            ..
+        } => assert_eq!(released, 49, "the created container's owner is held"),
+        other => panic!("expected a reclaim-aware exhaustion error, got {other:?}"),
+    }
+    let snapshot = store.read_compatible().expect("store");
+    let remaining = snapshot.loopback().expect("registry");
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(
+        remaining
+            .assignments
+            .values()
+            .map(|assignment| assignment.scope.clone())
+            .collect::<Vec<_>>(),
+        vec![held_scope]
+    );
+}
+
+#[test]
 fn a_full_pool_of_live_owners_is_never_touched() {
-    let pool = full_dead_pool();
-    let assignments = pool
-        .iter()
-        .map(|(_, ip, scope)| (ip.clone(), scope.clone()))
-        .collect::<Vec<_>>();
+    let assignments = full_dead_pool();
     let (_dir, store) = exhausted_store(&assignments);
 
     let error = reserve_loopback_collecting_dead_with(

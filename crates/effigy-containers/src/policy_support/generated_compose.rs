@@ -14,7 +14,7 @@ use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value as YamlValue;
 
-use crate::exec::{discover_running_compose_containers, RunningComposeContainerInventory};
+use crate::exec::RunningComposeContainerInventory;
 use crate::runtime::scope::{CHECKOUT_LABEL, MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL};
 use crate::{
     catalog_resolver, mount_spec::resolve_host_mounts, resolve_catalog_network_contract,
@@ -1174,7 +1174,7 @@ fn discover_loopback_inventory() -> RunningComposeContainerInventory {
         return inventory;
     }
 
-    discover_running_compose_containers()
+    crate::runtime::loopback_recovery::loopback_ownership_inventory()
 }
 
 #[cfg(test)]
@@ -1639,6 +1639,78 @@ mod tests {
                 .contains("loopback pool exhausted"));
             assert_eq!(probes, 1, "an exhausted pool probes ownership once");
             assert_eq!(LoopbackRegistry::load(&path).unwrap().assignments, before);
+        });
+    }
+
+    #[test]
+    fn prepare_time_collection_holds_an_owner_with_a_created_container() {
+        let _lock = crate::test_env_lock();
+        let home = tempfile::tempdir().expect("private state");
+        with_test_effigy_home(home.path(), || {
+            let path = home.path().join("gateway/loopback-ips.json");
+            // A full pool of absent owners, one of which still has a created
+            // container on a running profile. The Prepare path must hold that
+            // owner exactly as `gateway repair` would.
+            let mut registry = LoopbackRegistry::new();
+            let mut held_scope = String::new();
+            for index in 1..=50 {
+                let source = home
+                    .path()
+                    .join(format!("gone-{index}"))
+                    .display()
+                    .to_string();
+                let identity =
+                    project_loopback_identity(&format!("gone-{index}"), Path::new(&source));
+                registry
+                    .allocate(&identity, &source)
+                    .expect("fill private loopback pool");
+                if index == 7 {
+                    held_scope = source;
+                }
+            }
+            registry.save(&path).expect("full registry");
+            let inventory = RunningComposeContainerInventory {
+                rows: vec![crate::exec::RunningComposeContainerProfiled {
+                    profile: "effigy".to_owned(),
+                    row: crate::exec::RunningComposeContainer {
+                        container_name: "gone-app-1".to_owned(),
+                        status: "Created".to_owned(),
+                        ports: Vec::new(),
+                        project_name: None,
+                        working_dir: Some(held_scope.clone()),
+                        service: None,
+                        oneoff: false,
+                    },
+                }],
+                failures: Vec::new(),
+            };
+
+            let (error, probes) = with_test_loopback_inventory(inventory, || {
+                load_or_allocate_loopback_ip("project:new:/tmp/new", None, "/tmp/new")
+                    .expect_err("a full pool of absent owners reports its release")
+            });
+
+            assert_eq!(probes, 1, "an exhausted pool probes ownership once");
+            let message = error.to_string();
+            assert!(
+                message.contains("released 49 dead assignment"),
+                "the created container's owner must be held: {message}"
+            );
+            let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(home.path());
+            let remaining = store
+                .read_compatible()
+                .expect("store")
+                .loopback()
+                .expect("registry");
+            assert_eq!(remaining.len(), 1);
+            assert_eq!(
+                remaining
+                    .assignments
+                    .values()
+                    .map(|assignment| assignment.scope.clone())
+                    .collect::<Vec<_>>(),
+                vec![held_scope]
+            );
         });
     }
 

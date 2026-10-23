@@ -1535,9 +1535,11 @@ address, and no non-gateway process listens on the route's alias tuple. The
 gateway binds its TCP aliases from the Store's route table and stops a listener
 when its route disappears, so its own alias for a dead route is not a hold; a
 same-user process that is not the recorded gateway daemon, or a listener probe
-that cannot answer, is. A shared-service identity is dead only when no consumer
-project that uses it is live and no container carries the shared service's own
-project name. Incomplete inventory or an unreadable scope store
+that cannot answer, is. Allocation, its one automatic collection and `gateway
+repair` prove ownership from the same inventory — every container state on every
+profile that is running — so no path can release what another holds. A
+shared-service identity is dead only when no consumer project that uses it is
+live and no container carries the shared service's own project name. Incomplete inventory or an unreadable scope store
 holds the whole plan and names the reason. A stopped Colima profile does not
 hold a loopback entry: it binds no host address and cannot start a stack whose
 checkout is gone. Present paths, running containers and unknown path states are

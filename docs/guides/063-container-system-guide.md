@@ -1938,6 +1938,10 @@ A loopback assignment or container route is dead only when all of these hold:
   same-user process that is not the recorded gateway, or a probe that cannot
   answer, is.
 
+Allocation, its automatic collection and this preview prove ownership from the
+same inventory — every container state on every profile that is running — so
+the automatic path can never release what the preview would hold.
+
 A shared-service identity is dead only when no consumer project that uses it
 is live and no container carries the shared service's own project name. Incomplete ownership proof holds the whole plan and names the reason;
 a stopped Colima profile does not hold anything, because it binds no host

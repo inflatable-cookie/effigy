@@ -4,7 +4,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use effigy_containers::exec::{
-    discover_running_compose_containers,
     list_compose_containers_for_policy_including_stopped_with_timeout,
     list_running_compose_containers_for_policy,
     list_running_compose_containers_for_policy_with_timeout, ContainerExecError,
@@ -1301,7 +1300,7 @@ fn load_or_allocate_loopback_ip(
         legacy_identity,
         project_path,
         allocate_if_missing,
-        discover_running_compose_containers,
+        effigy_containers::loopback_ownership_inventory,
     )
 }
 
