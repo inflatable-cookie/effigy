@@ -5,6 +5,7 @@ pub mod compose;
 pub mod environment;
 pub mod exec;
 pub mod health;
+pub mod host_load;
 pub mod manager;
 mod mount_spec;
 pub mod ops;
@@ -31,8 +32,10 @@ pub use policy::data_from::{
     borrowed_volume_ensure_commands, plan_volume_data_handover, VolumeDataHandover,
 };
 pub use policy::hosts::{
-    add_managed_listener_routes, build_host_map, uses_shared_runtime_identity, EffectiveHostMap,
-    EffectiveHostRoute, HostRouteKind, HostScopeKind,
+    add_managed_listener_routes, build_host_map, build_host_map_including_listeners,
+    domain_has_suffix, infer_base_domain, resolve_base_domain, route_scope_host_key,
+    uses_shared_runtime_identity, EffectiveHostMap, EffectiveHostRoute, HostRouteKind,
+    HostScopeKind, InferredBaseDomain,
 };
 pub use policy::inline_workspace::{
     load_inline_workspace_container_policy, resolve_inline_workspace_exec_working_dir,
@@ -51,18 +54,24 @@ pub use policy::model::{
 pub use report::{
     annotate_workspace_extra_mount_decisions, cache_list_global_report, cache_list_report,
     cache_prune_report, data_list_report, data_pull_production_report, data_transfer_report,
-    down_report, hosts_report, logs_report, reset_report, retire_report, retire_report_unverified,
-    stats_global_report, status_global_report, status_report, up_detached_report,
-    volume_list_report, volume_prune_report, workspace_extra_mount_decision_lines,
-    AllocatedPortsSummary, ContainerCacheGlobalEntry, ContainerCachePruneEntry,
-    ContainerCacheVolumeEntry, ContainerCommandReport, ContainerDataHookResult,
-    ContainerDataTransferAction, ContainerDataVolumeEntry, ContainerStatsAllEntry,
-    ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
+    down_noop_report, down_report, hosts_report, logs_report, reset_report, retire_report,
+    retire_report_unverified, stats_global_report, status_global_report, status_report,
+    up_detached_report, volume_list_report, volume_prune_report,
+    workspace_extra_mount_decision_lines, AllocatedPortsSummary, ContainerCacheGlobalEntry,
+    ContainerCachePruneEntry, ContainerCacheVolumeEntry, ContainerCommandReport,
+    ContainerDataHookResult, ContainerDataTransferAction, ContainerDataVolumeEntry,
+    ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
     ContainerVolumeGlobalEntry, ContainerVolumePruneEntry,
 };
 pub use runtime::loopback::{
     prune_loopback_assignments, prune_loopback_assignments_with_rows, warn_skipped_reclamation,
     LoopbackPruneOutcome,
+};
+pub use runtime::loopback_recovery::{
+    loopback_ownership_inventory, loopback_reclaim_apply, loopback_reclaim_json,
+    loopback_reclaim_preview, reserve_loopback_collecting_dead, stale_alias_listener_hold,
+    LoopbackCollection, LoopbackReclaimReport, LoopbackRecoveryFacts, LoopbackRecoveryPlan,
+    LoopbackRecoveryRow, StaleRouteRow, LOOPBACK_RECLAIM_SCHEMA,
 };
 /// The Effigy state home for this process: `~/.effigy`, or the private
 /// fixture home while unit tests run. Callers that touch `ports.json` or other
@@ -72,8 +81,9 @@ pub fn effigy_home() -> Option<std::path::PathBuf> {
 }
 
 pub use runtime::port_recovery::{
-    port_capacity_note, port_reclaim_apply, port_reclaim_dry_run, port_report_json, port_status,
-    Decision, PortRecoveryReport, PortRecoveryRow, PORTS_SCHEMA,
+    port_capacity_note, port_reclaim_apply, port_reclaim_dry_run, port_reclaim_under_pressure,
+    port_report_json, port_status, Decision, PathState, PortPressureReclaim, PortRecoveryReport,
+    PortRecoveryRow, AUTO_RECLAIM_FREE_RANGES, PORTS_SCHEMA,
 };
 pub use runtime::retire::{
     plan_retirement, remaining_after, ObservedKind, ObservedResource, RetirementPlan,

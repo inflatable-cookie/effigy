@@ -263,6 +263,32 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- The distribution surface (Q-009), contract 054 §4.4 and §13. Effigy's own
+  release is now one `[release]` declaration in `config/release.toml`: the
+  `effigy` `semver` identity, a `preflight` pre gate and the `ci`, `format`,
+  `test`, `qa`, `build`, `smoke` and `metadata` certify gates, the release
+  binary as the certified artifact, and two targets — the annotated `tag` and a
+  `binaries` `task` target that dispatches `release-binaries.yml` and records
+  the GitHub Release and Homebrew results.
+- `effigy release validate`, `preflight`, `proof`, `check-binary`,
+  `verify-install` and `evidence validate|closeout|summary` retired into repo
+  tasks in `config/tasks.toml`, implemented by `scripts/release/checks.sh`:
+  `release:metadata` (the `metadata` gate), `release:preflight` (the `preflight`
+  gate), `release:proof`, `release:check-binary`, `release:verify:install` (the
+  `binaries` target's `verify`), `release:evidence:validate` and
+  `release:evidence:closeout`. `effigy release receipt <run>` replaces the
+  evidence summary. Each retired command refuses with its replacement, and the
+  `effigy.distribution.*` JSON payloads, the `distribution::` Rhai module,
+  `crates/effigy-distribution` and `src/runner/distribution_command` are gone.
+- The `[distribution]` table. It only configured those retired commands, so a
+  manifest that still declares it loads and is ignored with one deprecation
+  notice per manifest (effigy#274); release settings belong under `[release]`
+  and project checks under `[tasks]`. No other project used the table.
+- Release owners: `.github/workflows/release-binaries.yml` still calls the
+  retired `effigy release check-binary` in its Linux build job, so that step
+  must move to `./scripts/release/checks.sh check-binary` in an approved
+  workflow edit before the next publication. `effigy release:metadata` warns and
+  names the exact replacement; it fails if the GLIBC guard disappears.
 - Five scanners (Q-009): `effigy scan attention-markers`, `scan comment-ratio`,
   `scan generated-assets`, `scan generated-in-src` and `scan
   stale-suppressions`, with their JSON contracts, help topics, doctor checks,
@@ -434,6 +460,26 @@ During v0.x, MINOR bumps may include breaking changes.
   journals and the machine store. `--checkout` and user-config
   `[runtime].checkout_roots` locate existing checkout identities without a
   central registration index. Interrupted imports resume the same cutover.
+- `effigy skill run ... --repo <DIR>` accepts a bare target directory with no
+  repository marker, so an isolated fixture can be the consumer target of an
+  installed skill task. The JSON evidence reports canonical root paths, and a
+  symlinked target spelling (`/var` against `/private/var`) compares equal
+  (papercut `ec7a47f5`).
+- `effigy container profile prune-health-pid-files [--profile <NAME>]` deletes
+  only the stale nerdctl health-check pid files a running Colima profile leaks
+  into the VM's `/run` (exact `health-check-*.pid` name, directly inside a
+  containerd runtime-v2 task directory, older than ten minutes) and reports the
+  pid-file counts and `/run` inode use before and after
+  (`effigy.container.profile-prune-health-pid-files.v1`). `container up` runs
+  the same bounded prune, which never fails the bring-up, and `effigy doctor`
+  now reports `/run` inode use and the leaked pid-file counts for every running
+  Colima profile, warning at 80% inode use or 10,000 stale files (effigy#291,
+  papercut `03f4e93a`). nerdctl 2.3.1 never deletes the health-check exec
+  process; nerdctl 2.4.1 does, so the warning names the fixed version.
+- `runtime::paths()` exposes `repo_root`, `catalog_root`, `skill_root`,
+  `invocation_cwd` and `cwd` to Rhai script functions. The top-level scope
+  constants stay as they were, but a function no longer fails with
+  `Variable not found` when it needs a host path (papercut `d8e1d7b0`).
 - The checkpointed release Run (contract 054 §3, §5, §7). `effigy release run
   [--to <stage>]` runs one durable kernel Run through validate → [pre-gates] →
   prepare → certify → publish → verify → closeout, with a checkpoint after
@@ -461,6 +507,36 @@ During v0.x, MINOR bumps may include breaking changes.
   the active or last Run's id, stage, status and what it waits on.
 - Release tasks and artifact tasks receive the candidate as
   `effigy.release.input.v1` at `$EFFIGY_RELEASE_INPUT`.
+- `task` release targets (contract 054 §6, §7). A `[release.targets.<name>]`
+  of `kind = "task"` now publishes in the Run, after the tag targets and in
+  declared order, through its project task. Every task target, artifact task
+  and verify task reads the exact certified candidate at
+  `$EFFIGY_RELEASE_INPUT` (`effigy.release.input.v1`: Run, stage, commits,
+  identities, artifact paths and sha256, target name) and writes
+  `effigy.release.output.v1` at `$EFFIGY_RELEASE_OUTPUT` with `committed`
+  (`true`, `false` or `"unknown"`), destination IDs and an optional note. An
+  unusable output is an unknown outcome, never an assumption.
+- Retries never publish blind. Before a `task` target's publish task starts,
+  the target is written `Unknown` and the publish journalled as an
+  `Irreversible` effect, so a crash mid-task leaves an unknown outcome instead
+  of a target a resume would publish again blind. `effigy release resume`
+  reconciles an unknown target by running its `check` task first
+  (`committed: true` means the candidate is already there, `false` means it is
+  not), and a target with no `check` — including one whose task could not be
+  started — stops at `awaiting-decision` in that same invocation until
+  `effigy release decide <run> --published|--not-published` records who
+  decided, when, and what. That stop also holds the publish fan-out: later
+  targets stay pending and none of them publishes until the outcome is
+  resolved. A target that succeeded stays recorded, so a partial fan-out
+  resumes with the remaining targets.
+- Hosted evidence is a checkpoint, not a held process. A gate with
+  `reuse-hosted-evidence = true` stops the Run at
+  `awaiting-hosted-evidence` while the exact-commit GitHub Actions evidence is
+  missing or still running, keeps the previous checkpoints, holds no process
+  open and captures no further artifacts for that stage; `effigy release
+  resume <run>` re-checks it and skips the gates that already passed. A failed
+  run, the wrong commit or repository, an ambiguous answer or an unusable
+  lookup still fails the gate closed.
 - The release platform's configuration and read surfaces (contract 054 §2, §4
   and the `status`/`--plan` half of §5). `[release]` now expresses named
   `[release.identities.<name>]` of kind `semver` (the default), `digest`,
@@ -852,8 +928,42 @@ During v0.x, MINOR bumps may include breaking changes.
   gate; the one missing capability (`loopback-privileged-listener-handoff`)
   is a design boundary, not a supported start path. No operator defaults,
   endpoints, or trust behavior change.
+- `effigy fmt rust <FILE>... [--check]` formats an explicit Rust file set with
+  rustfmt and each file's nearest `rustfmt.toml`, so a format pass never
+  follows a path-linked workspace into unrelated crates (papercut `d988bc52`).
+  Every path must be an existing `.rs` file inside the target repository;
+  `--check` reports without writing.
 
 ### Changed
+- Explicit `docs check` path arguments resolve against the invoking task's cwd,
+  so a nested catalog's check reads its own files, and every report prints the
+  resolved set. The no-argument default scope stays repository-root relative.
+  For one release a root-relative spelling from a nested cwd still passes with
+  a warning naming the cwd-proof spelling, and `{repo}`/`{cwd}` now expand
+  inside `{ task = "docs check ..." }` references (papercut `27a40ad8`).
+- The `bundle behind` notice labels each short id with its kind (`locked
+  revision <rev>, available digest <digest>`), so a Git revision is no longer
+  presented as comparable to a content digest; a pair of revisions stays bare
+  (papercut `1ef87556`).
+- The doctor's dependency-inspection process service requires a deadline:
+  every child shares the remaining doctor budget, and unbounded execution needs
+  the explicit `EFFIGY_DOCTOR_TIMEOUT_MS=0` opt-out. One timeout helper
+  (`is_process_timeout`) still propagates budget exhaustion instead of
+  recording a diagnosis (papercut `d3007fd6`).
+- A stale bundle or catalog source updates itself on the next `effigy dev`,
+  `effigy bootstrap` or `effigy container up`, so `effigy bundle sync` is no
+  longer needed in normal work (Tom, 2026-10-23). A changed declaration
+  re-acquires immediately, a path bundle re-snapshots when its content changed
+  (`target/`, `node_modules/` and `.git/` are skipped), and a floating Git
+  source gets one bounded `git ls-remote` per checkout every 10 minutes,
+  recorded in `.effigy/sources.update.json`. A full commit id in `ref`, an OCI
+  digest and a tag at its pinned commit never move; `update = "manual"` in
+  `[bundle]` or in one `[catalog.sources.<name>]` restores explicit-sync-only
+  sources. Each update prints one line
+  (`bundle updated <old> → <new> (reason)`) and joins the JSON envelope's
+  `notes`; a failed update keeps the pins and warns once. Read paths stay
+  network-free and now name the locked and available revisions
+  ([contract 020](docs/knowledge/contracts/020-remote-bundle-sources-git-and-oci-delivery-contract.md)).
 - `scan god-files` and `scan duplicate-blocks` are more precise and faster
   (Q-009). `god-files` uses per-language code-line defaults when no explicit
   `warn`/`high`/`critical` is configured (typescript/javascript/vue/svelte and
@@ -991,7 +1101,160 @@ During v0.x, MINOR bumps may include breaking changes.
   1.1.2 or earlier reject 0.15: run `effigy service pack update` to move to
   1.2.0.
 
+- `effigy release gates` prints its configured gate inventory — each gate's
+  name, stage and command — before the first gate starts, then one progress
+  line per gate start and finish with the duration, so a slow gate no longer
+  looks like a hung command (papercut `029ac746`). The JSON payload carries the
+  same inventory as `gates[]`.
+- `release.sync-files` may name a nested `Cargo.lock`, such as a
+  workspace-excluded consumer's `prototypes/*/Cargo.lock`, and `prepare`
+  refreshes it with `cargo update -p <package>` in its own workspace
+  (papercut `a3f1f9f7`). Entries must be repo-relative and stay inside the
+  release root, and a lockfile whose owning workspace is anchored elsewhere is
+  refused instead of writing an undeclared lockfile.
+
 ### Fixed
+- A full loopback pool no longer blocks a new stack forever because deleted
+  projects kept their `127.1.0.x` addresses (effigy#295). `effigy container
+  up`/`dev` and gateway registration now release provably dead owners once when
+  an allocation would otherwise fail, together with the stale container routes
+  that keep their addresses reserved, then retry. `effigy gateway repair` gains
+  the same proof as a preview: it lists every reclaimable and held assignment
+  and container route with its reason and a plan digest, `--yes` applies it
+  under the endpoint Store's owner gate, and `--yes --expect-plan <DIGEST>`
+  refuses when the recomputed plan changed. A write keeps a pre-edit backup of
+  both endpoint documents with SHA-256 evidence. A dead entry is one whose
+  owner checkout is definitely missing and that no runtime-scope record,
+  container in any state, published address, gateway listener or managed
+  listener still uses; an existing path, a running container or an unknown path
+  state never releases anything. Released addresses stay in the endpoint reuse
+  quarantine for about three minutes so a cached DNS answer never reaches a new
+  owner, and a live project's address never changes; an allocation that needed
+  the release therefore succeeds once that window passes.
+- A repository task named `fmt` runs again for `effigy fmt`, `effigy fmt
+  --check` and `effigy fmt <args>`; the built-in Rust formatter added in #290
+  no longer took that word at parse time (effigy#293). Every built-in
+  top-level name is now classified as shadowable or reserved, so a new
+  built-in cannot silently take a consumer task name, and a reservation must
+  name the contract that owns it (`test`, `help`, `version`). The shadowed
+  formatter stays reachable as `effigy fmt-rust <FILE>...`, `--plan` names
+  that spelling, `fmt` is in shell completion, and the formatter help says
+  relative paths are cwd-relative.
+- Deleted projects no longer hold generated-port ranges for ever (effigy#294).
+  A project path whose parent is gone is now `missing` whenever the nearest
+  existing ancestor is a readable directory, instead of `unknown`; only a real
+  I/O or permission error, a non-directory ancestor or an absent volume root
+  such as an unmounted `/Volumes/...` stays unknown. A stopped Colima profile
+  no longer holds every absent-path entry: it holds only the entries recorded
+  on that profile, says so per entry, and never has to be started to answer a
+  host-port question. A runtime-scope record now holds an entry only while it
+  still retains that project's volumes or routes. `container up` reclaims
+  provably dead ranges by the same reviewed `--apply` rules when fewer than ten
+  free ranges remain, and prints one line saying what it reclaimed.
+- A bounded Colima/nerdctl call that times out on a loaded host no longer reads
+  as a service failure (effigy#291, papercut `8064c5b9`). Effigy observes the
+  host's own load average: on a saturated host (one runnable task per CPU) an
+  owned inspect that times out is retried with the same bound at most twice
+  before failing, `container up` opens the first exec-readiness window from two
+  to fifteen seconds once before considering any restart, and the resulting
+  error names the observed load (`load average 40.00 over 18 CPU(s)`) and says
+  the service's state is unproven. An idle host keeps exactly one attempt and
+  its existing error. A service observed `Exited (141)` is now reported as
+  SIGPIPE — a closed stdout/stderr pipe whose reader went away — instead of as
+  a health verdict; detached `container up` keeps backend output in a retained
+  file, so Effigy owns no reader lifetime there.
+- Rhai steps receive the same task `args` as a run step's `{args}` template:
+  Effigy drops the single leading `--` boundary flag it consumed and keeps
+  later `--` tokens, so a direct task and `skill run <task> -- <args>` agree
+  (papercut `19d7b6fe`).
+- Rhai's `Expression exceeds maximum complexity` now names Effigy's configured
+  expression depths and suggests splitting the expression into smaller
+  functions or statements (papercut `1a140ffe`). The Rhai guide also documents
+  the mutating-method/`()` boundary and the value-returning `str::*` pattern
+  (papercut `eb53ef2b`).
+- The Rhai surface catalog lists `container.workspace_artifact_build` once with
+  its host signature, and the workspace artifact streaming policy regression
+  runs against the current typed helper again (papercuts `e86ef33a`,
+  `38acb0f4`).
+- A first `effigy dev` on a fresh Colima VM no longer fails when a nerdctl
+  health-check timer collides. nerdctl runs each container health check from
+  the transient systemd unit `{full_id}.timer` and leaves it loaded when the
+  container's process exits on its own, so the next `start` of that container
+  reports `Unit <id>.timer was already loaded or has a fragment file` and
+  exits non-zero while the container does start (effigy#287, papercut
+  `93f4d687`). Effigy now re-inspects each recovery candidate on its own
+  immediately before starting it and starts only a container the backend
+  proves stopped (`created`, `exited` or `dead`), so a container Compose
+  already started or is still starting is never started a second time; an
+  observation that cannot prove the state fails closed instead of starting
+  blind. When a start does report the collision and the container ends up
+  running, Effigy records the collision line and hands the service to the
+  normal readiness and health wait instead of failing it as stale backend
+  state; a container that stays stopped keeps the bounded failure and the
+  exact-owned transient-unit recovery. Systemd units are still never deleted.
+- `effigy container down` is a clean no-op on an environment this checkout
+  never prepared whose Compose project owns no container, network or volume
+  (effigy#286). It succeeds with one line saying nothing was running instead of
+  failing interpolation of the `EFFIGY_UNASSIGNED_PORT` a never-prepared render
+  deliberately carries; the JSON report keeps `ok: true` and adds `noop` with
+  the reason. When the project does own resources, the stop runs against it
+  with a teardown-only interpolation value, so cleaning up a first start that
+  failed no longer fails too. Teardown never assigns, reserves or reclaims a
+  port, and `up` and `prepare` keep failing closed on an unprepared render.
+- Container host diagnostics tell the truth about an undeclared apex (papercut
+  `dbb81698`). Without `[containers.<name>.dns] base_domain`, the cookie
+  domain, WebAuthn RP ID and TCP alias suffix are inferred from the HTTP
+  routes: the shallowest route host served by the primary service (the service
+  of the front route) or by a managed host listener wins, route order breaks a
+  depth tie, and only when neither serves a usable host does the shallowest
+  route host of any service stand in. A wildcard route never becomes the apex,
+  and the answer is always one of the declared route hosts, never a parent
+  domain the routes happen to share. So a bundle whose first route was
+  `s3.acowtancy.test` no longer advertises that subdomain as its apex, and a
+  project whose services already use a deeper name keeps it. Policy load
+  resolves that one apex in the checkout's scope and uses it for the generated
+  TCP aliases, the Compose route-parity `extra_hosts` and gateway
+  service-alias registration, so `container hosts`, the gateway and the
+  container's own aliases agree. When the inferred base is not a suffix of
+  every HTTP route, `container hosts` warns, and its JSON `base_domain` object
+  reports `inferred` and the warning. A declared `base_domain` is never
+  inferred or rewritten, and a manifest that needs a different apex declares
+  it.
+- An undeclared base domain no longer shrinks to a shared parent domain when a
+  project routes unrelated hosts beside its own. A site that routes
+  `cbs.legacy.test`, `admin.cbs.legacy.test`, `borderway.legacy.test` and a
+  wildcard tunnel keeps `cbs.legacy.test` as its cookie apex, RP ID and TCP
+  alias suffix, so `mysql.cbs.legacy.test` and its database URL survive the
+  update; only the routes themselves still warn about the disagreement.
+- `container logs` and `container status` say plainly when Compose created no
+  container for the project, instead of reporting "expected one container for
+  service …, found 0" (papercut `890e2912`). They name the last activation
+  attempt's retained backend log when Effigy kept one
+  (`.effigy/runtime/logs/<project>.compose.log`), and say so when it did not.
+- The isolated-mount symlink refusal names the link's target and the conflict —
+  a host output link on a container-isolated path — and lists the owner
+  remedies without Oxide-specific knowledge: keep the path a real directory so
+  the producer detaches its link, or drop it from `isolated_dirs` (papercut
+  `1023b7a7`).
+- Shared-service port reservations are covered by a regression test that
+  allocates them under `shared_service_output_dir(project)` and then retains
+  them against that same machine-level lifetime owner, not the rendered object
+  parent (#411).
+- A rendered Compose stack works on the `colima-nerdctl` (containerd) backend
+  again (effigy#277). #229 keeps every Compose input under
+  `~/.effigy/state/objects/<digest>/` with `${EFFIGY_RENDER_ROOT}` paths, but
+  `colima nerdctl` runs Compose inside the VM, where the host environment never
+  arrives, so interpolation failed before any container was created. Every
+  Compose invocation on that backend now names an interpolation file under the
+  Effigy home that the VM can read, carrying the generation root and the values
+  the plan forwards (container secrets delivered through Compose's own
+  environment). The immutable closure bytes are unchanged, so a generation's
+  digest does not depend on the state-home path, and a detached activation this
+  failure left partial is applied by a plain `effigy container up`. A detached
+  backend's output is no longer discarded: it is retained in
+  `.effigy/runtime/logs/<project>.compose.log`, bounded to its last 64 KiB, and
+  a failure names that file and prints its tail. Detached `--json` failure
+  details still carry no raw backend output.
 - Concurrent Effigy runs no longer refuse each other with `state store: store
   refused: Busy` (effigy#275). The runtime store moved to write-ahead logging,
   serializes its writers on the store's own gate so a refusal names the
@@ -1023,7 +1286,9 @@ During v0.x, MINOR bumps may include breaking changes.
   `[bootstrap]` spellings are read for the whole v0.15 line instead of failing
   the parse, so `effigy tasks`, selectors, `container`, `test` and every other
   non-bootstrap command work unchanged. One deprecation notice per manifest is
-  printed on stderr (and by `effigy doctor`) and never in `--json` stdout:
+  printed on stderr (once per checkout per manifest digest, and on every
+  `effigy doctor` run) and never in `--json` stderr (the envelope's `warnings`
+  carry it):
   `run` is read as `setup` (`{ task = ... }` entries become selectors, inline
   `run`/`rhai`/command steps become internal tasks that `setup` selects in
   order), `submodules = "none"|"init"|"recursive"` becomes a boolean, a
@@ -1034,10 +1299,25 @@ During v0.x, MINOR bumps may include breaking changes.
   for `bootstrap:db-seed`, and a repo-owned dependency task for
   `bootstrap deps sync`. Bundles and `[manifest].extend = ["bootstrap.children"]`
   follow the same rules. The translation is removed after v0.15.
+- A bundle's retired `[bootstrap]` spelling is normalised before its defaults
+  merge (effigy#282). A bundle that still writes `run` is read as `setup`
+  first, so a consumer that declares its own `setup` replaces it instead of
+  inheriting a second list beside it, and a consumer that declares nothing
+  inherits the translated `setup`; a retired `start` keeps inheriting and
+  `[bootstrap].children` is ignored with its notice. Previously the merge ran
+  before the retired translation, so a consumer's `setup` and a bundle's `run`
+  both reached the effective plan.
+- The retired v0.15 config notice stops repeating on every command and every
+  nested selector (effigy#282). It reaches stderr once per checkout per
+  manifest digest (a marker under `.effigy/`), `effigy doctor` names it on
+  every run, a nested Effigy invocation stays quiet because its parent already
+  said it, and `--json` never writes it to stderr: the command envelope carries
+  it in a new `warnings` array. Notice content is unchanged.
 - A project that still declares config for a feature v0.15 removed also keeps
   loading (effigy#274). When ignoring the section changes nothing else, Effigy
-  ignores it and names it in the same one-notice-per-manifest deprecation on
-  stderr (and in `effigy doctor`), never in `--json` stdout: every removed
+  ignores it and names it in the same one-notice deprecation on stderr (once
+  per checkout per manifest digest, and on every `effigy doctor` run) and in
+  the `--json` envelope's `warnings`: every removed
   scanner's `[scan.<name>]` table (`attention_markers`, `comment_ratio`,
   `generated_assets`, `generated_in_src`, `stale_suppressions`, and the
   graph-backed `boundary_violations`, `dead_code`, `validation_gaps`),
@@ -1579,6 +1859,28 @@ During v0.x, MINOR bumps may include breaking changes.
   `changelog extract` work with prose-bearing consumer changelogs. Prose is
   preserved on format, extraction and release promotion; malformed headings and
   entries are still rejected.
+- A release hosted wait binds the run it dispatched instead of whichever run
+  is newest for the commit (papercut bb47b891). The first check opens and
+  records a dispatch window, accepts only the one matching run created inside
+  it, and journals that run's id on the gate and in the record; every
+  `effigy release resume` re-checks the bound run, so a sibling dispatch or
+  re-run can never certify the release. Several runs inside one window fail
+  the gate closed with the candidates named, and `effigy release gates`
+  refuses more than one match for a commit the same way. The check waits a
+  bounded ten seconds for a just-dispatched run to appear.
+- `scripts/check-release-ci.sh` requires exactly one `workflow_dispatch` run
+  of `ci.yml` for the candidate commit and names the candidates when there are
+  none or several. A sibling dispatch on the same commit no longer passes the
+  `ci` gate as "the" green run.
+- The retired `effigy release preflight` refusal names the `pre-gates` stage
+  and the `effigy release:preflight` repo task it became. It pointed at
+  `certify`, but contract 054 makes preflight a pre-prepare gate (papercut
+  dc4b15af).
+- The changelog parser accepts a CommonMark lazy continuation line as part of
+  the entry it follows, so a hard-wrapped list entry parses instead of being
+  read as release prose. Effigy 0.14.1 refused that shape (papercut
+  `f5d597db`); an unindented paragraph after a blank line is still release
+  prose.
 
 ## [0.14.1] - 2026-10-08
 

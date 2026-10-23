@@ -17,6 +17,11 @@
       }
     },
     "result": {},
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Human-readable notices for config the command accepted, such as retired v0.15 manifest config. JSON mode never writes these to stderr."
+    },
     "error": {}
   }
 }

@@ -64,6 +64,10 @@ pub(in crate::runner) struct ManagedStatus {
     pub(in crate::runner) next: Vec<String>,
     /// Effects the run's settle could not prove released: what `cleanup
     /// incomplete` refers to, as `kind: reason`.
+    /// Bundle or catalog sources the Prepare path refreshed before this run
+    /// started (contract 020).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(in crate::runner) notes: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(in crate::runner) residue: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -121,6 +125,7 @@ pub(in crate::runner) fn status_view(addressed: &Addressed<'_>) -> ManagedStatus
         environment: None,
         processes: Vec::new(),
         next: Vec::new(),
+        notes: effigy_manifest::bundle_update_notes(),
         residue: Vec::new(),
         warnings: view.warnings.clone(),
     };

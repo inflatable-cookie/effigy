@@ -9,6 +9,7 @@
 
 use std::path::PathBuf;
 
+pub mod builtin_names;
 mod command_parsing;
 pub mod command_surface;
 mod global_json;
@@ -24,6 +25,7 @@ pub enum Command {
     Version,
     Bundle(BundleArgs),
     Changelog(ChangelogArgs),
+    Fmt(FmtArgs),
     Deploy(DeployArgs),
     Deps(DepsArgs),
     Secrets(SecretsArgs),
@@ -137,12 +139,25 @@ pub enum HelpTopic {
     Init,
     Uninstall,
     Runs,
+    Fmt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangelogArgs {
     pub subcommand: ChangelogSubcommand,
     pub file: Option<PathBuf>,
+    pub repo_override: Option<PathBuf>,
+    pub output_json: bool,
+}
+
+/// `effigy fmt ...`: format an explicit, declared file set.
+///
+/// The route exists because `cargo fmt --manifest-path` reads a workspace and
+/// can trail path-linked consumers into unrelated crates. An explicit file set
+/// plus rustfmt's `skip_children` keeps a format pass inside the named files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FmtArgs {
+    pub subcommand: FmtSubcommand,
     pub repo_override: Option<PathBuf>,
     pub output_json: bool,
 }
@@ -555,11 +570,17 @@ pub enum BundleSubcommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GatewaySubcommand {
-    Setup { suffixes: Vec<String>, remove: bool },
+    Setup {
+        suffixes: Vec<String>,
+        remove: bool,
+    },
     Up,
     Down,
     Status,
-    Repair { yes: bool },
+    Repair {
+        yes: bool,
+        expect_plan: Option<String>,
+    },
     SetupTls,
 }
 
@@ -730,6 +751,11 @@ pub enum ContainerProfileSubcommand {
         disk_gib: Option<u64>,
         yes: bool,
     },
+    /// Delete only the stale nerdctl health-check pid files the VM's `/run`
+    /// accumulated, and report the counts around it (effigy#291).
+    PruneHealthPidFiles {
+        profile: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -823,6 +849,14 @@ pub enum ChangelogSubcommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FmtSubcommand {
+    /// Format the named Rust files in place.
+    Rust { files: Vec<PathBuf> },
+    /// Report the named Rust files that are not formatted, writing nothing.
+    RustCheck { files: Vec<PathBuf> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseArgs {
     pub subcommand: ReleaseSubcommand,
     pub repo_override: Option<PathBuf>,
@@ -835,34 +869,6 @@ pub enum ReleaseSubcommand {
         check_gates: bool,
     },
     Gates,
-    VerifyInstall {
-        tag: Option<String>,
-        repo_url: Option<String>,
-    },
-    Validate {
-        tag: Option<String>,
-    },
-    CheckBinary {
-        binary_path: PathBuf,
-        glibc_floor: String,
-    },
-    Preflight {
-        tag: Option<String>,
-        skip_docs: bool,
-        skip_smoke: bool,
-        output_path: Option<PathBuf>,
-    },
-    Proof {
-        tag: String,
-        crate_version: Option<String>,
-        repo_url: String,
-        brew_formula: String,
-        skip_homebrew: bool,
-        artifacts_dir: Option<PathBuf>,
-    },
-    Evidence {
-        subcommand: ReleaseEvidenceSubcommand,
-    },
     /// `effigy release --plan`: the whole pipeline, no mutation (contract 054
     /// §5). Replaces the retired `simulate`.
     Plan {
@@ -880,33 +886,15 @@ pub enum ReleaseSubcommand {
     Approve {
         run: String,
     },
+    /// `effigy release decide <run> --published|--not-published`: record an
+    /// operator's ruling on an unknown publish outcome (contract 054 §7).
+    Decide {
+        run: String,
+        published: bool,
+    },
     /// `effigy release receipt <run>`: print the Run's receipt.
     Receipt {
         run: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReleaseEvidenceSubcommand {
-    Validate {
-        artifacts_dir: PathBuf,
-        expect_homebrew: bool,
-    },
-    Closeout {
-        tag: String,
-        artifacts_dir: PathBuf,
-        output_path: Option<PathBuf>,
-        owner: String,
-        expect_homebrew: bool,
-    },
-    Summary {
-        tag: String,
-        artifacts_dir: PathBuf,
-        crate_version: Option<String>,
-        repo_url: String,
-        brew_formula: String,
-        homebrew_executed: bool,
-        log_files: Vec<String>,
     },
 }
 

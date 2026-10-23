@@ -20,6 +20,7 @@ mod qa_groups;
 mod retired_bootstrap;
 mod retired_config;
 mod retired_keys;
+mod retired_notice;
 mod retired_sections;
 pub mod sources;
 mod task_defs;
@@ -35,10 +36,10 @@ pub const TASK_DESCRIPTION_MAX_CHARS: usize = 200;
 pub use portfolio::{load_portfolio, Portfolio, PORTFOLIO_FILE};
 
 pub use bundles::{
-    bundle_sources_need_preparation, catalog_source_roots, inspect_bundle_source,
-    prepare_bundle_sources, resolve_catalog_source, sync_bundle_source, BundleInputSpec,
-    BundleInputType, BundleSourceInspectReport, BundleSourceType, BundleSpec, BundleSyncReport,
-    CatalogSourceRoots, SourcePreparation, SourceSettlement,
+    bundle_update_notes, catalog_source_roots, inspect_bundle_source, prepare_bundle_sources,
+    resolve_catalog_source, sync_bundle_source, BundleInputSpec, BundleInputType,
+    BundleSourceInspectReport, BundleSourceType, BundleSpec, BundleSyncReport, CatalogSourceRoots,
+    SourcePreparation, SourceSettlement,
 };
 pub use composition::{
     load_docs_policy_graph_config, load_task_manifest_with_inspection, LoadedTaskManifest,
@@ -46,8 +47,8 @@ pub use composition::{
 };
 pub use config_sections::{
     load_committed_docs_policy_sources, ManifestBootstrapConfig, ManifestBundleBase,
-    ManifestBundleConfig, ManifestContainerConfig, ManifestContainerDataConfig,
-    ManifestContainerDnsConfig, ManifestContainerDnsDomainDefaults,
+    ManifestBundleConfig, ManifestCatalogSourceConfig, ManifestContainerConfig,
+    ManifestContainerDataConfig, ManifestContainerDnsConfig, ManifestContainerDnsDomainDefaults,
     ManifestContainerDnsRouteConfig, ManifestContainerDriver, ManifestContainerExecAliasConfig,
     ManifestContainerExecAliasTableConfig, ManifestContainerHostConfig, ManifestContainerHostMount,
     ManifestContainerHostMountTable, ManifestContainerHostProcess,
@@ -55,19 +56,18 @@ pub use config_sections::{
     ManifestContainerSecretDelivery, ManifestContainerSecretsConfig,
     ManifestContainerServiceConfig, ManifestContainerShutdownMode, ManifestContainerStartup,
     ManifestContainersConfig, ManifestContractsConfig, ManifestDataConfig,
-    ManifestDataTargetConfig, ManifestDistributionConfig, ManifestDistributionMetadataConfig,
-    ManifestDistributionPackageConfig, ManifestDistributionPreflightConfig,
-    ManifestDocsPolicyConfig, ManifestDocsPolicyGraphCardinality, ManifestDocsPolicyGraphConfig,
-    ManifestDocsPolicyGraphCurrentnessClass, ManifestDocsPolicyGraphCurrentnessConfig,
-    ManifestDocsPolicyGraphFieldConfig, ManifestDocsPolicyGraphKindConfig,
-    ManifestDocsPolicyGraphRelationConfig, ManifestDocsPolicySourcesConfig,
-    ManifestEnvSchemaConfig, ManifestInlineWorkspaceContainerConfig, ManifestIsolationAdoption,
-    ManifestIsolationConfig, ManifestJsPackageManager, ManifestPackageManagerConfig,
-    ManifestPinnedSourceConfig, ManifestReleaseConfig, ManifestScanConfig, ManifestSecretKeyConfig,
-    ManifestSecretTarget, ManifestSecretsBackend, ManifestSecretsConfig,
-    ManifestSecretsExternalConfig, ManifestSecretsVaultConfig, ManifestSystemConfig,
-    ManifestSystemMount, ManifestSystemMountTable, ManifestSystemsConfig,
-    ManifestTaskDefaultsConfig, ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
+    ManifestDataTargetConfig, ManifestDocsPolicyConfig, ManifestDocsPolicyGraphCardinality,
+    ManifestDocsPolicyGraphConfig, ManifestDocsPolicyGraphCurrentnessClass,
+    ManifestDocsPolicyGraphCurrentnessConfig, ManifestDocsPolicyGraphFieldConfig,
+    ManifestDocsPolicyGraphKindConfig, ManifestDocsPolicyGraphRelationConfig,
+    ManifestDocsPolicySourcesConfig, ManifestEnvSchemaConfig,
+    ManifestInlineWorkspaceContainerConfig, ManifestIsolationAdoption, ManifestIsolationConfig,
+    ManifestJsPackageManager, ManifestPackageManagerConfig, ManifestPinnedSourceConfig,
+    ManifestReleaseConfig, ManifestScanConfig, ManifestSecretKeyConfig, ManifestSecretTarget,
+    ManifestSecretsBackend, ManifestSecretsConfig, ManifestSecretsExternalConfig,
+    ManifestSecretsVaultConfig, ManifestSourceUpdate, ManifestSystemConfig, ManifestSystemMount,
+    ManifestSystemMountTable, ManifestSystemsConfig, ManifestTaskDefaultsConfig,
+    ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
 };
 pub use execution_binding::{
     resolve_task_execution_binding, resolve_task_execution_binding_from_parts,
@@ -85,6 +85,10 @@ pub use qa_groups::{
     QaScopeToken,
 };
 pub use retired_config::RetiredConfigDeclaration;
+pub use retired_notice::{
+    set_delivery as set_retired_notice_delivery, take_pending as take_retired_notices,
+    RetiredNoticeDelivery,
+};
 pub use sources::{
     inspect_pinned_sources, prepare_pinned_sources, resolve_pinned_sources, PinnedSourceReport,
     PinnedSourceSpec, PinnedSourceState,
@@ -187,7 +191,7 @@ pub const MANIFEST_TOP_LEVEL_KEYS: &[&str] = &[
 /// Top-level tables retired in v0.15 that still load for one release. They are
 /// accepted document keys but not [`TaskManifest`] fields: the manifest drops
 /// them and names each in its one deprecation notice (effigy#274).
-pub const RETIRED_MANIFEST_TOP_LEVEL_KEYS: &[&str] = &["shell", "demos"];
+pub const RETIRED_MANIFEST_TOP_LEVEL_KEYS: &[&str] = &["shell", "demos", "distribution"];
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(remote = "Self", deny_unknown_fields)]
@@ -244,8 +248,6 @@ pub struct TaskManifest {
     #[serde(default)]
     pub systems: Option<ManifestSystemsConfig>,
     #[serde(default)]
-    pub distribution: Option<ManifestDistributionConfig>,
-    #[serde(default)]
     pub release: Option<ManifestReleaseConfig>,
     #[serde(default)]
     pub contracts: Option<ManifestContractsConfig>,
@@ -265,7 +267,7 @@ pub struct ManifestCatalog {
     #[serde(default)]
     pub members: BTreeMap<String, String>,
     #[serde(default)]
-    pub sources: BTreeMap<String, ManifestBundleBase>,
+    pub sources: BTreeMap<String, ManifestCatalogSourceConfig>,
 }
 
 fn deserialize_sources<'de, D>(

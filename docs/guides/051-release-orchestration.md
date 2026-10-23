@@ -11,7 +11,7 @@ Use:
 - [`049-ci-binary-distribution-and-release-protocol.md`](049-ci-binary-distribution-and-release-protocol.md)
   for maintainer policy and binary channel rules
 - [`062-distribution-system-guide.md`](062-distribution-system-guide.md) for
-  the wider distribution commands
+  the retired distribution surface, its repo tasks and what replaced it
 - [`052-changelog-workflows-and-northstar-profile.md`](052-changelog-workflows-and-northstar-profile.md)
   for changelog-specific work
 
@@ -27,6 +27,8 @@ If you only need the shortest operator path, use:
 - `run --to certify`
 - `run`
 - `resume <run>`
+- `approve <run>`
+- `decide <run> --published|--not-published`
 - `receipt <run>`
 
 If you are approaching the release flow for the first time, start with:
@@ -48,8 +50,11 @@ Use the commands by intent:
   `--to certify` to prepare and certify without publishing
 - `run` for the whole pipeline: validate, gates, prepare, certify, publish,
   verify and closeout, with a checkpoint after every stage
-- `resume <run>` to continue an interrupted Run from its last checkpoint
+- `resume <run>` to continue an interrupted Run from its last checkpoint,
+  including a Run waiting on hosted evidence
 - `approve <run>` to pass an approval checkpoint
+- `decide <run> --published|--not-published` to record an unknown `task` target
+  outcome that has no `check` task to reconcile it
 - `receipt <run>` to print what the Run recorded: candidate, digests,
   destinations and verification results
 - `release gates` when you want the same local release-gate verdict CI should
@@ -108,34 +113,45 @@ Current built-in release commands:
     gates; `prepare` writes each identity's version, syncs lockfiles, renders
     the changelog notes and commits; `certify` runs `stage = "certify"` gates
     and artifact tasks, copying each artifact into the Run's candidate
-    directory and recording its sha256; `publish` pushes one annotated tag per
-    identity; `verify` runs each target's `verify` task; `closeout` pushes the
-    release commit if no target did and writes the receipt
+    directory and recording its sha256; `publish` handles each target in
+    declared order, pushing one annotated tag per identity and running each
+    `task` target's publish task with the certified candidate; `verify` runs
+    each target's `verify` task; `closeout` pushes the release commit if no
+    target did and writes the receipt
 - `effigy release resume <run>`
   - continue an interrupted Run from its last checkpoint. An interrupted tag
-    push is reconciled by looking the tag up on the remote first; a release
-    never re-publishes something it cannot prove was absent
+    push is reconciled by looking the tag up on the remote first, and an
+    interrupted `task` target by running its `check` task; a release never
+    re-publishes something it cannot prove was absent. A Run waiting on
+    hosted evidence is also resumed this way: it holds no process open
 - `effigy release approve <run>`
   - pass an approval checkpoint (`approve = ["publish"]` in `[release]`) and
     continue. The approval records who approved and when
+- `effigy release decide <run> --published|--not-published`
+  - record the operator's ruling on a `task` target whose publish outcome is
+    unknown and which declares no `check` task, then continue. The decision
+    records who decided and when
 - `effigy release receipt [<run>] [--json]`
   - print the receipt: inputs, checkpoints, gate results, artifact digests,
-    approvals, destination IDs and verification results
-- `effigy release verify-install`
-  - Effigy self-hosting only: install the tagged `effigy` binary from git into
-    a temporary root and validate the installed command against a fixture repo
-  - library and service repos must use a repo-owned consumer smoke instead
-  - when Effigy auto-detects `origin`, scp-style SSH remotes such as
-    `git@github.com:owner/repo.git` are normalized for install verification, so
-    operators do not need to translate them into `ssh://...` form by hand
+    approvals, decisions, destination IDs and verification results
 
-Retired in v0.15 (contract 054 §5), each refusing with the replacement above:
+Retired in v0.15 (contract 054 §5 and §4.4), each refusing with the
+replacement above:
 
 - `release prepare` and `release execute` → `release run`
 - `release simulate` → `release --plan`
 - the plain `release resume` prepared-state review → `release resume <run>`
 - the `.release-prepared.json` state file: the Run's checkpoint and record live
   in Effigy-owned state outside the repo
+- `release validate`, `preflight`, `proof`, `check-binary`, `verify-install`
+  and `evidence validate|closeout|summary` → Effigy's own repo tasks
+  (`release:metadata`, `release:preflight`, `release:proof`,
+  `release:check-binary`, `release:verify:install`,
+  `release:evidence:validate`, `release:evidence:closeout`), or
+  `release receipt` for `evidence summary`
+- the `[distribution]` table: a manifest that still declares it loads and is
+  ignored with one deprecation notice, because the release platform owns
+  release settings now
 
 Related built-ins:
 
@@ -201,6 +217,15 @@ Supported `[release]` fields:
         changes, including a third-party move to a workspace member's target
         version. Mixed-version workspaces retain each member's own
         metadata-reported package version
+      - may name a nested lockfile, such as
+        `sync-files = ["Cargo.lock", "prototypes/fixture/Cargo.lock"]`, to
+        refresh a workspace-excluded Cargo consumer. The nested lockfile must
+        sit beside its own `Cargo.toml`; Effigy runs `cargo update -p <package>`
+        in that directory and refuses a lockfile whose owning workspace is
+        anchored somewhere else, so an undeclared lockfile is never rewritten
+      - every entry is repo-relative: an absolute path, a `..` component or a
+        path that resolves outside the repository (through a symlink included)
+        is refused
     - `package.json`
       - updates the root `version` field to the selected release version while
         preserving file layout
@@ -242,10 +267,52 @@ reuse-hosted-evidence = true
 ```
 
 Gates run in declaration order. Put cheap checks first. A gate with
-`reuse-hosted-evidence = true` is satisfied by a successful GitHub Actions run
-for this repository's exact `HEAD` SHA, verified through authenticated `gh`.
-Gates without that flag still run locally. Bad hosted evidence fails closed
-instead of running the local command.
+`reuse-hosted-evidence = true` is a **hosted wait**: it is satisfied by a
+successful GitHub Actions run for this repository's exact commit — the
+candidate commit once `prepare` committed it, and the source commit before
+that — verified through authenticated `gh`. While that evidence is missing or
+still running, the Run stops with status `awaiting-hosted-evidence`, holds no
+process open and runs no later work in that stage (no artifact task runs before
+the evidence exists); `effigy release resume <run>` re-checks it and continues.
+A failed run, the wrong commit, the wrong repository or an ambiguous answer
+fails the gate closed instead of running the local command. Gates without that
+flag run locally.
+
+The wait binds one run, never a sibling. It opens a dispatch window the first
+time the gate needs evidence, and accepts only a run of the configured workflow
+and event for the exact commit that was created after that instant; that run's
+id is recorded on the gate and re-checked by every resume, so a newer dispatch
+cannot be substituted for it. Zero matches keeps waiting; several matches
+inside the window fail closed with the candidates named. Dispatch the workflow
+once for the commit this Run is waiting on, then `effigy release resume <run>`.
+
+A release with a `task` target can publish to any destination without Effigy
+knowing its protocol. The task runs as an ordinary Effigy task and reads the
+candidate at `$EFFIGY_RELEASE_INPUT` (`effigy.release.input.v1`): the Run and
+invocation ids, the stage, the source and candidate commits, every identity's
+name, kind, version or ID and tag, every certified artifact's path and sha256,
+and the target name. It writes `effigy.release.output.v1` to
+`$EFFIGY_RELEASE_OUTPUT`:
+
+```json
+{
+  "schema": "effigy.release.output.v1",
+  "committed": true,
+  "destinations": ["@scope/pkg@1.4.0", "https://example.test/releases/1"],
+  "note": "uploaded by the registry task"
+}
+```
+
+`committed` is `true`, `false` or `"unknown"`. `true` publishes the candidate
+and records its destinations; `false` fails the target without recording a
+destination; `"unknown"` is never retried blind. A task that exits 0 without
+writing an output records `committed = "unknown"`. A target's `check` task
+writes the same document and answers whether this candidate is already at the
+destination (`true`), is not (`false`), or cannot tell (`"unknown"`). With no
+`check` task, an unknown outcome stops the Run at `awaiting-decision` in that
+same invocation, until the operator records `--published` or `--not-published`.
+A target is written unknown before its publish task starts, so a crash mid-task
+is reconciled the same way instead of being published again blind.
 
 For a new project that already declares its intended first release version,
 opt in explicitly:
@@ -397,8 +464,10 @@ verify = "release:verify:npm"
   `tag-format`; omit it for an independent bump.
 - A gate runs `command` or a project `task` in `stage = "pre"` or
   `stage = "certify"`; the shorthand's gates run in `certify`.
-- A target is `kind = "tag"` or `kind = "task"`; a task target may declare a
-  `check` (idempotency probe) and a `verify` task.
+- A target is `kind = "tag"` or `kind = "task"`; a task target declares the
+  `task` that publishes and may declare a `check` (idempotency probe) and a
+  `verify` task. Publish is irreversible: Effigy records it before it runs,
+  reconciles an unknown outcome before any retry, and never unpublishes.
 - `approve` names the stage boundaries that stop for approval. Absent, it
   defaults to `["publish"]` when any target is not a `tag` target, and to none
   for a tag-only release; `approve = []` means never.
@@ -431,8 +500,8 @@ effigy release status --check-gates
 effigy release run --to certify     # prepare and certify, publish nothing
 effigy release run                  # the whole Run, including tags
 effigy release receipt
-# Effigy binary releases only:
-effigy release verify-install --tag vX.Y.Z
+# Effigy binary releases only, after the Run published and verified:
+effigy release:verify:install --tag vX.Y.Z
 ```
 
 The candidate must be a clean commit already pushed to `main`. Select its CI
@@ -440,25 +509,32 @@ run with:
 
 ```sh
 gh run list --workflow ci.yml --branch main --commit "$candidate_sha" \
-  --event workflow_dispatch --limit 1 \
-  --json databaseId,headSha,status,conclusion,url
+  --event workflow_dispatch --limit 20 \
+  --json databaseId,headSha,status,conclusion,url,createdAt
 ```
 
-Do not accept the latest green run unless its `headSha` is the candidate SHA.
-Effigy's self-hosted `ci` release gate checks the same invariant. Missing,
+There must be exactly one `workflow_dispatch` run for the candidate SHA.
+Never take the newest run: a sibling dispatch of the same commit is a
+different run, so zero matches or several matches refuse and name the
+candidates instead of choosing one. Effigy's self-hosted `ci` release gate
+(`scripts/check-release-ci.sh`) applies the same rule. Missing,
 pending, red, cancelled, or different-commit evidence blocks the `pre-gates`
 stage. The other local gates validate the deterministic version, changelog, and
 lockfile mutations after hosted CI has proved the source commit.
 
-For Effigy's own binary publication, explicitly dispatch the immutable tag
-after the Run's `publish` stage has pushed it and before install verification:
-
-```sh
-gh workflow run release-binaries.yml -f tag=vX.Y.Z
-```
-
-The workflow definition runs from `main`, but every release job checks out and
+For Effigy's own binary publication, the Run's second target does the
+dispatch. `[release.targets.binaries]` is a `task` target whose publish task is
+`effigy release:publish:binaries`: it reads the certified candidate at
+`$EFFIGY_RELEASE_INPUT`, runs `gh workflow run release-binaries.yml -f
+tag=<tag>`, and records the run URL and GitHub Release as destinations. Its
+`check` task (`release:check:binaries`) reports whether the release already
+exists, and its `verify` task (`release:verify:binaries`) checks the GitHub
+Release assets, the Homebrew formula and the tagged-source install. The
+workflow definition runs from `main`, but every release job checks out and
 validates the supplied annotated tag. Pushing a tag alone does not publish.
+
+A manifest that wants a workflow dispatch as a destination needs no Effigy
+change: it declares a `task` target and keeps the dispatch in a repo task.
 
 For Effigy's own release prep, the useful pre-cut habit is:
 
@@ -468,9 +544,10 @@ effigy release gates
 
 Treat a red gate as a fix-the-repo signal, not something to work around.
 
-`verify-install` can auto-detect the repo URL from `origin`, or you can pass
-`--repo-url <URL>` explicitly. Both paths accept normal HTTPS/file URLs, and
-scp-style SSH remotes are normalized automatically for the install step.
+The install proof is the repo task `effigy release:verify:install`. It needs
+`--tag <TAG>` (or a release input) and takes `--repo-url <URL>`; without that
+flag it uses the checkout's `origin` remote, and scp-style SSH remotes such as
+`git@github.com:owner/repo.git` are passed to `cargo install --git` as they are.
 
 What each step is for:
 
@@ -496,10 +573,12 @@ What each step is for:
 5. `receipt`
    - the durable record, including which destination received which commit and
      whether the artifact digests still matched at publish
-6. `verify-install` (Effigy binary releases only)
-   - validates Effigy's tagged install path after the manually dispatched
-     release workflow publishes its artifacts
-   - library and service repos use their own consumer smoke instead
+6. `release:verify:install` (Effigy binary releases only)
+   - validates Effigy's tagged install path after the `binaries` target's
+     workflow publishes its artifacts; the Run's `verify` stage runs it through
+     `release:verify:binaries`
+   - library and service repos use their own consumer smoke as the target's
+     `verify` task instead
 
 Interruptions resume; they never restart. A Run that fails at `certify` leaves
 its prepared commit and checkpoints in place:
@@ -523,31 +602,33 @@ Effigy's own repository wraps authorized in-place release work in a maintained
 ```
 
 The selector runs `./target/debug/effigy release run --to certify {args}` from a
-source-built binary, so an installed or PATH binary cannot supply stale release
-logic. It never forwards a different subcommand: publishing is a separate,
+source-built binary, so the Run itself never uses an installed or PATH binary.
+A gate declared as `task` still runs as `effigy <task>` (contract 054 §11), so
+keep the installed `effigy` at least as new as the checkout; a stale one fails
+the gate loudly at config parse. It never forwards a different subcommand: publishing is a separate,
 explicitly authorized `release run` with no `--to`, or the `release:run -- --to
 closeout` form when the operator has decided to publish. The whole operation is
 admitted once; nested gate work reuses that run. This selector is for approved
 Effigy release work only, not worker per-task QA. See
 [the release contract](../knowledge/contracts/release.md).
 
-### Effigy's admitted install verification selector
+### Effigy's admitted install verification task
 
 After Effigy's release assets publish, use the maintained
-`admission = "heavy"` selector for the isolated tagged-source install proof:
+`admission = "heavy"` task for the isolated tagged-source install proof:
 
 ```sh
-./target/debug/effigy release:verify-install --tag vX.Y.Z
+effigy release:verify:install --tag vX.Y.Z
 ```
 
-The selector fixes the command to
-`./target/debug/effigy release verify-install {args}` and forwards normal task
-arguments to that subcommand. The task runner shell-quotes each argument, so a
-value cannot change the fixed subcommand or become another shell command. Use
-a compatible source-built Effigy at `target/debug/effigy`; this invokes the
-selector without replacing or refreshing the installed local Effigy. The
-verifier installs into its own temporary root and checks the installed command
-against a fixture.
+The task runs `sh scripts/release/checks.sh verify-install {args}`; the task
+runner shell-quotes each argument, so a value cannot become another shell
+command. `release:verify:binaries` (the `binaries` target's verify) also checks
+the GitHub Release assets and the Homebrew formula, and fails when `brew` is
+missing instead of reporting an unverified tap. The script installs the tag with `cargo install --git` into its own
+temporary root and checks the installed command's version, fixture tasks,
+prefixed builtin tasks and JSON help envelope. It never replaces the installed
+local Effigy.
 
 This admitted path is for the planner's authorized post-publication proof. It
 does not replace milestone `project.qa.run`, authorize release preparation,
@@ -557,6 +638,10 @@ or grant tag, publish, workflow-edit or live-operation authority. See
 ## 6) Gate Configuration
 
 Gate commands are normal shell commands. They do not need to be Rust-specific.
+A gate may also declare `task = "<task>"`, which runs as `effigy <task>`; use it
+when the gate needs no arguments, and the command form when it does (Effigy's
+own `preflight` gate runs `sh scripts/release/checks.sh preflight --skip-smoke`
+for that reason).
 
 Examples:
 
@@ -608,11 +693,16 @@ reuse-hosted-evidence = true
 
 - lookup uses authenticated `gh run list --repo <origin-owner/name>`
 - the run must match this repository and the exact `HEAD` SHA
+- the wait binds the one run created inside its dispatch window and records
+  the run id; a resume re-checks that run and never a newer sibling
+- exactly one match is required: zero keeps waiting, several fail closed and
+  name the candidate runs
 - `prepare` changes `HEAD` only when it commits the prepared tree; reuse
   attests the source commit, so a hosted-evidence gate belongs in the
   `pre-gates` stage
 - `status`, `release --plan` and `release gates` share that verdict
-- the Run's record keeps each reused gate and its run URL
+- the Run's record keeps each hosted gate, its dispatch window and its bound
+  run id and URL
 - missing, pending, failed, ambiguous, wrong-repository, or wrong-SHA evidence
   fails the named gate; unlisted gates still run locally
 
@@ -690,7 +780,7 @@ Recommended migration direction:
 - keep wrapper scripts only when an external caller still depends on them
 - prefer `effigy release --plan/status/run/resume/receipt` for operator-driven
   runs
-- for Effigy's binary release, use `effigy release verify-install` instead of
+- for Effigy's binary release, use `effigy release:verify:install` instead of
   bespoke tag-install helpers
 - for library and service repos, retain an honest repo-owned consumer smoke
 
@@ -698,16 +788,18 @@ Recommended migration direction:
 
 Still intentionally not shipped:
 
-- `task` release targets in a Run: v0.15 publishes `tag` targets, and a release
-  that declares a `task` target is refused by `validate` with that reason
+- native publish providers (GitHub Release, npm, Homebrew, OCI, Packagist) as
+  target kinds: v0.15 publishes `tag` targets and project `task` targets
+  through the §6 input/output protocol, and v0.16 adds the providers behind
+  the same interface
 - custom interactive editing flows beyond a single semver override, or full
   inline/unified diffs before apply
 - automatic workflow migration in `.github/workflows/` without explicit human
   approval
-- a claim that the fuller `release proof` path is already universally generic
-  across non-Cargo consumer repos
-- generic library or service install verification through `release
-  verify-install`; that command deliberately validates the Effigy binary
+- a claim that Effigy's `release:proof` task is universally generic across
+  non-Cargo consumer repos: it proves Effigy's own release asset directory
+- generic library or service install verification; `release:verify:install`
+  deliberately validates the Effigy binary and refuses another root package
 
 ## Expected Outcome
 

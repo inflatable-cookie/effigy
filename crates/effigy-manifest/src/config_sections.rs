@@ -3,13 +3,14 @@ mod bundle;
 mod common;
 mod container;
 mod contracts;
-mod distribution;
 mod docs_policy;
 mod release;
 mod secrets;
 
 pub use bootstrap::{ManifestBootstrapConfig, ManifestPinnedSourceConfig};
-pub use bundle::{ManifestBundleBase, ManifestBundleConfig};
+pub use bundle::{
+    ManifestBundleBase, ManifestBundleConfig, ManifestCatalogSourceConfig, ManifestSourceUpdate,
+};
 pub use common::{
     ManifestDuplicateBlocksConfig, ManifestEnvSchemaConfig, ManifestGodFilesConfig,
     ManifestIsolationAdoption, ManifestIsolationConfig, ManifestJsPackageManager,
@@ -32,11 +33,6 @@ pub use container::{
     ManifestWorkspaceContainerRef,
 };
 pub use contracts::ManifestContractsConfig;
-pub use distribution::{
-    ManifestDistributionCloseoutConfig, ManifestDistributionConfig,
-    ManifestDistributionMetadataConfig, ManifestDistributionPackageConfig,
-    ManifestDistributionPreflightConfig, ManifestDistributionPublishConfig,
-};
 pub use docs_policy::load_committed_docs_policy_sources;
 pub use docs_policy::{
     ManifestDocsPolicyConfig, ManifestDocsPolicyGraphCardinality, ManifestDocsPolicyGraphConfig,

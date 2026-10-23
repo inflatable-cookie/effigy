@@ -13,7 +13,6 @@ mod defer_command;
 mod deferral;
 mod deploy_command;
 mod deps_command;
-mod distribution_command;
 mod docs_command;
 mod doctor_ports;
 mod embedded_runner;
@@ -22,6 +21,7 @@ mod environment;
 mod error;
 mod exec_command;
 mod execute;
+mod format_command;
 mod gateway_command;
 mod host_process;
 mod interactive_session;
@@ -74,6 +74,7 @@ pub use entrypoints::{
 };
 pub use error::RunnerError;
 pub(in crate::runner) use exec_command::run_exec;
+pub(in crate::runner) use format_command::run_fmt;
 pub(in crate::runner) use gateway_command::{
     run_gateway, run_internal_gateway, run_internal_gateway_identity,
 };

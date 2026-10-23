@@ -131,7 +131,7 @@ allow = ["CHANGELOG.md", "crates/effigy-codegraph/src/index.rs", "src/tests/runn
 [[retired]]
 id = "effigy-bundle-read-refresh-ttl"
 retired = "2026-10-19"
-replacement = "Checkout source pins move only through explicit effigy bundle sync; Prepare warns for one release when the old variable is present."
+replacement = "Checkout source pins move through a host Prepare (effigy dev, bootstrap, container up) or explicit effigy bundle sync; the floating-source remote check is fixed at once per checkout per 10 minutes, and Prepare warns for one release when the old variable is present."
 owner = "docs/knowledge/contracts/020-remote-bundle-sources-git-and-oci-delivery-contract.md"
 terms = ["EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS"]
 paths = []
@@ -770,6 +770,7 @@ allow = [
   "CHANGELOG.md",
   "crates/effigy-cli/src/command_parsing.rs",
   "docs/guides/025-command-reference-matrix.md",
+  "docs/guides/049-ci-binary-distribution-and-release-protocol.md",
   "docs/guides/072-artifact-commands-guide.md",
   "docs/guides/085-v0.15.0-consumer-migration.md",
   "docs/knowledge/architecture/010-package-map.md",
@@ -815,6 +816,7 @@ allow = [
   "crates/effigy-cli/src/command_parsing_runtime.rs",
   "crates/effigy-gateway/src/listener_handoff.rs",
   "docs/guides/025-command-reference-matrix.md",
+  "docs/guides/049-ci-binary-distribution-and-release-protocol.md",
   "docs/guides/085-v0.15.0-consumer-migration.md",
   "docs/knowledge/architecture/020-container-infrastructure-design.md",
   "docs/knowledge/architecture/034-gateway-legacy-upgrade-recovery.md",
@@ -855,6 +857,7 @@ allow = [
   "crates/effigy-cli/src/command_parsing.rs",
   "docs/guides/024-ci-and-automation-recipes.md",
   "docs/guides/025-command-reference-matrix.md",
+  "docs/guides/049-ci-binary-distribution-and-release-protocol.md",
   "docs/guides/028-migration-quick-paths.md",
   "docs/guides/085-v0.15.0-consumer-migration.md",
   "docs/knowledge/contracts/055-project-json-contract-validation-contract.md",
@@ -883,7 +886,7 @@ allow = [
 [[retired]]
 id = "bootstrap-children-and-runtime-flags"
 retired = "2026-10-22"
-replacement = "Q-009 rebuilt `effigy bootstrap` around ordinary task selectors and pinned sources. `[bootstrap].setup` is an ordered list of selectors, `start` is one selector, and `submodules = true` initialises submodules recursively at their recorded commits. For the whole v0.15 line the retired spellings are translated instead of refused, so a v0.14.1 project keeps loading (effigy#273): `run` is read as `setup` (`{ task = ... }` entries become selectors and inline `run`/`rhai`/command steps run as internal tasks selected in order), `{ task = ... }` entries in `setup` are read as selectors, a `submodules` policy string is read as a boolean, a multi-selector `start` chain runs as one internal task, and `[bootstrap].children`/the `bootstrap:db-seed` callback keep loading, with one deprecation notice per manifest on stderr and in `effigy doctor`. Only `effigy bootstrap` refuses the retired-only surfaces, with today's message: `[bootstrap].children` and `bootstrap children status|sync` became pinned `[sources.<name>]` (`git`, `rev` or `rev_file`, `path`) checked by `effigy doctor`; `bootstrap deps sync` became a repo-owned selector in `setup`; `--db-seed`, the dump prompts and the `bootstrap:db-seed` bootstrap callback became a first-seed task in `setup`; `--fresh` and `bootstrap teardown` became environment lifecycle (`effigy container <name> down`); `--backend` became the declared environment plus the machine backend preference; `--start` is the default. The translation is removed after v0.15, when every retired spelling refuses again with this entry and the changelog."
+replacement = "Q-009 rebuilt `effigy bootstrap` around ordinary task selectors and pinned sources. `[bootstrap].setup` is an ordered list of selectors, `start` is one selector, and `submodules = true` initialises submodules recursively at their recorded commits. For the whole v0.15 line the retired spellings are translated instead of refused, so a v0.14.1 project keeps loading (effigy#273): `run` is read as `setup` (`{ task = ... }` entries become selectors and inline `run`/`rhai`/command steps run as internal tasks selected in order), `{ task = ... }` entries in `setup` are read as selectors, a `submodules` policy string is read as a boolean, a multi-selector `start` chain runs as one internal task, and `[bootstrap].children`/the `bootstrap:db-seed` callback keep loading, with one deprecation notice per manifest: stderr once per checkout per manifest digest, every `effigy doctor` run, and the `--json` envelope's `warnings`. A bundle's retired `run`/`children` are normalised before its defaults merge, so a consumer `setup` replaces the bundle's instead of joining it (effigy#282). Only `effigy bootstrap` refuses the retired-only surfaces, with today's message: `[bootstrap].children` and `bootstrap children status|sync` became pinned `[sources.<name>]` (`git`, `rev` or `rev_file`, `path`) checked by `effigy doctor`; `bootstrap deps sync` became a repo-owned selector in `setup`; `--db-seed`, the dump prompts and the `bootstrap:db-seed` bootstrap callback became a first-seed task in `setup`; `--fresh` and `bootstrap teardown` became environment lifecycle (`effigy container <name> down`); `--backend` became the declared environment plus the machine backend preference; `--start` is the default. The translation is removed after v0.15, when every retired spelling refuses again with this entry and the changelog."
 owner = "docs/knowledge/contracts/020-remote-bundle-sources-git-and-oci-delivery-contract.md"
 terms = ["bootstrap children", "bootstrap.children", "children-status", "children-sync", "bootstrap deps sync", "bootstrap:deps", "bootstrap:db-seed", "bootstrap teardown", "bootstrap-fresh-session", "BootstrapChildConfig", "BootstrapSubcommand", "bootstrap --fresh", "bootstrap --db-seed", "bootstrap --backend", "bootstrap --start", "effigy.bootstrap.children-status.v1", "effigy.bootstrap.children-sync.v1", "effigy.bootstrap.deps.v1", "effigy.bootstrap-teardown.v1"]
 paths = ["src/runner/bootstrap_command/deps.rs", "src/runner/bootstrap_command/session.rs"]
@@ -905,6 +908,7 @@ allow = [
   "docs/guides/022-manifest-cookbook.md",
   "crates/effigy-doctor/src/manifest_schema/bootstrap_section.rs",
   "docs/guides/025-command-reference-matrix.md",
+  "docs/guides/049-ci-binary-distribution-and-release-protocol.md",
   "docs/guides/057-bootstrap-repo-bringup.md",
   "docs/guides/085-v0.15.0-consumer-migration.md",
   "docs/knowledge/questions.md",
@@ -1153,6 +1157,7 @@ allow = [
   "docs/guides/085-v0.15.0-consumer-migration.md",
   "crates/effigy-cli/src/command_parsing_release.rs",
   "src/runner/release_command/mod.rs",
+  "tests/fixtures/released_surface/",
   "tests/cli_output_tests/release_platform_tests.rs",
   "tests/cli_output_tests/command_behavior_tests.rs",
   "src/tests/lib_tests_parse_tests/release_option_tests.rs",
@@ -1174,3 +1179,63 @@ terms = ["EFFIGY_RETENTION_ON_CLOSE", "machine-wide runtime journal", "~/.effigy
 paths = []
 config_keys = []
 allow = ["CHANGELOG.md"]
+
+[[retired]]
+id = "effigy-distribution-surface"
+retired = "2026-10-22"
+replacement = "Contract 054 §4.4 and §13: the Effigy-only release commands are repo tasks in `config/tasks.toml` whose code is `scripts/release/checks.sh` — `release:metadata` (the `metadata` certify gate and the metadata slice of `release:preflight`), `release:preflight` (the `preflight` pre gate), `release:proof`, `release:check-binary`, `release:verify:install` (the `binaries` target's `verify`, through `release:verify:binaries`), `release:evidence:validate` and `release:evidence:closeout`. `effigy release receipt <run>` replaces the evidence summary. `effigy release validate`, `preflight`, `proof`, `check-binary`, `verify-install` and `evidence validate|closeout|summary` refuse with those replacements. The `[distribution]` table is ignored with one deprecation notice per manifest, because the release platform owns release settings: declare identities, gates, artifacts and targets under `[release]` and keep project checks in `[tasks]`. The `distribution::` Rhai module and `crates/effigy-distribution` are gone."
+owner = "docs/knowledge/contracts/054-release-platform-contract.md"
+terms = [
+  "effigy release validate",
+  "effigy release preflight",
+  "effigy release proof",
+  "effigy release check-binary",
+  "effigy release verify-install",
+  "effigy release evidence",
+  "distribution::",
+  "effigy-distribution",
+  "[distribution]",
+  "[distribution.package]",
+  "[distribution.publish]",
+  "[distribution.preflight]",
+  "[distribution.metadata]",
+  "[distribution.closeout]",
+]
+paths = [
+  "crates/effigy-distribution/",
+  "src/runner/distribution_command/",
+  "crates/effigy-manifest/src/config_sections/distribution.rs",
+  "crates/effigy-doctor/src/manifest_schema/distribution_section.rs",
+  "crates/effigy-release/src/verify_install.rs",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/guides/014-release-checklist-template.md",
+  "docs/guides/024-ci-and-automation-recipes.md",
+  "docs/guides/025-command-reference-matrix.md",
+  "docs/guides/049-ci-binary-distribution-and-release-protocol.md",
+  "docs/guides/044-distribution-first-publish-execution-runbook.md",
+  "docs/guides/051-release-orchestration.md",
+  "docs/guides/061-rhai-script-steps-guide.md",
+  "docs/guides/062-distribution-system-guide.md",
+  "docs/guides/068-rhai-host-surface-audit.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/contracts/release.md",
+  "docs/knowledge/questions.md",
+  "config/release.toml",
+  "config/tasks.toml",
+  "crates/effigy-cli/src/command_parsing_release.rs",
+  "crates/effigy-cli/src/help/topics/release.rs",
+  "crates/effigy-manifest/src/retired_sections.rs",
+  "crates/effigy-manifest/src/lib.rs",
+  "scripts/release/",
+  "tests/fixtures/released_surface/",
+  "tests/cli_output_tests/release_platform_tests.rs",
+  "tests/cli_output_tests/command_behavior_tests.rs",
+  "tests/cli_output_tests/released_surface_v0_2_13_tests.rs",
+  "tests/cli_output_tests/support.rs",
+  "src/runner/release_command/tests.rs",
+  "src/runner/script_command/tests.rs",
+  "src/tests/lib_tests_parse_tests/release_option_tests.rs",
+]

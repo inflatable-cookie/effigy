@@ -165,7 +165,7 @@ Catalog sources layer on top, highest priority first (Q-005, architecture
 1. **Project:** `infra/dev/catalog/` in the repo
 2. **Bundle:** the pinned bundle's shipped `catalog/`
 3. **Declared sources:** `[catalog.sources.<name>]`, pinned per checkout and
-   moved only by `effigy bundle sync`
+   moved by a host Prepare or `effigy bundle sync`
 4. **Baseline:** embedded in the binary (lowest priority)
 
 `effigy service list` shows each service's source and what it shadows.

@@ -394,7 +394,7 @@ fn inventory(
     workdir: &Path,
     project: &str,
 ) -> Observed<Vec<Workload>> {
-    let filter = format!("label=com.docker.compose.project={project}");
+    let filter = format!("label={COMPOSE_PROJECT_LABEL}={project}");
     let ps = [
         "ps",
         "--all",
@@ -437,6 +437,105 @@ fn inventory(
         },
         Err(error) => Observed::Unknown(UnknownReason::Inconsistent(error.to_string())),
     }
+}
+
+/// Compose labels every container, network and volume it creates with its
+/// project name.
+const COMPOSE_PROJECT_LABEL: &str = "com.docker.compose.project";
+/// Effigy labels the volumes it creates for one project with its own name.
+const EFFIGY_PROJECT_LABEL: &str = "com.effigy.project";
+
+/// What one Compose project owns on one backend, observed before any effect.
+/// A stop asks this before rendering: an environment this checkout never
+/// prepared has nothing to stop, and its never-assigned ports must not reach
+/// Compose at all (effigy#286).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProjectResources {
+    pub containers: usize,
+    pub networks: usize,
+    /// Compose-created and Effigy-managed volumes that name the project.
+    pub volumes: usize,
+}
+
+impl ProjectResources {
+    /// Proven to own nothing: no container, network or volume names the
+    /// project. Only `Observed::Verified` emptiness is proof; an unavailable
+    /// backend never is.
+    pub fn empty(&self) -> bool {
+        self.containers == 0 && self.networks == 0 && self.volumes == 0
+    }
+}
+
+/// What `project` owns on `selection`. Every listing runs through the selected
+/// backend, and any listing that cannot be read makes the whole answer
+/// `Unknown`: a stop treats only proven emptiness as nothing to tear down.
+pub fn project_resources(
+    selection: &BackendSelection,
+    workdir: &Path,
+    project: &str,
+) -> Observed<ProjectResources> {
+    let containers = match inventory(selection, workdir, project) {
+        Observed::Verified(rows, _) => rows.len(),
+        Observed::Absent(proof) => return Observed::Absent(proof),
+        Observed::Unknown(reason) => return Observed::Unknown(reason),
+    };
+    let count = |kind: &str, label: &str| {
+        count_project_rows(selection, workdir, kind, label, project)
+            .map_err(|error| UnknownReason::Inconsistent(error.to_string()))
+    };
+    let networks = match count("network", COMPOSE_PROJECT_LABEL) {
+        Ok(count) => count,
+        Err(reason) => return Observed::Unknown(reason),
+    };
+    let compose_volumes = match count("volume", COMPOSE_PROJECT_LABEL) {
+        Ok(count) => count,
+        Err(reason) => return Observed::Unknown(reason),
+    };
+    let managed_volumes = match count("volume", EFFIGY_PROJECT_LABEL) {
+        Ok(count) => count,
+        Err(reason) => return Observed::Unknown(reason),
+    };
+    Observed::Verified(
+        ProjectResources {
+            containers,
+            networks,
+            // A volume may carry both labels; only emptiness matters here.
+            volumes: compose_volumes.max(managed_volumes),
+        },
+        effigy_kernel::observe::Evidence::new("backend project resources".into(), None)
+            .expect("fixed evidence"),
+    )
+}
+
+/// How many rows of one backend listing carry the project label.
+fn count_project_rows(
+    selection: &BackendSelection,
+    workdir: &Path,
+    kind: &str,
+    label: &str,
+    project: &str,
+) -> Result<usize, crate::exec::ContainerExecError> {
+    let filter = format!("label={label}={project}");
+    let args = [
+        kind,
+        "ls",
+        "--filter",
+        filter.as_str(),
+        "--format",
+        "{{.Name}}",
+    ]
+    .map(OsString::from);
+    let (program, args) = runtime_invocation(selection, &args);
+    let output =
+        crate::exec::run_backend_invocation(workdir, &program, &args, "list project rows", &[])?;
+    Ok(non_empty_lines(&output.stdout))
+}
+
+fn non_empty_lines(bytes: &[u8]) -> usize {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count()
 }
 
 fn runtime_invocation(
@@ -509,4 +608,43 @@ pub fn parse_inspect(bytes: &[u8]) -> Result<Vec<Workload>, String> {
                 .collect(),
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{non_empty_lines, ProjectResources};
+
+    /// A listing that names nothing is an empty listing; a listing the backend
+    /// could not answer is never counted as one (`project_resources` refuses
+    /// with `Unknown` before this point).
+    #[test]
+    fn only_a_listing_with_a_row_names_a_resource() {
+        assert_eq!(non_empty_lines(b""), 0);
+        assert_eq!(non_empty_lines(b"\n  \n\n"), 0);
+        assert_eq!(non_empty_lines(b"demo-web-dev_default\n"), 1);
+        assert_eq!(non_empty_lines(b"a\nb\n"), 2);
+    }
+
+    /// effigy#286: only a project proven to own no container, network or
+    /// volume may be called empty.
+    #[test]
+    fn a_project_is_empty_only_with_no_container_network_or_volume() {
+        assert!(ProjectResources::default().empty());
+        for resources in [
+            ProjectResources {
+                containers: 1,
+                ..ProjectResources::default()
+            },
+            ProjectResources {
+                networks: 1,
+                ..ProjectResources::default()
+            },
+            ProjectResources {
+                volumes: 1,
+                ..ProjectResources::default()
+            },
+        ] {
+            assert!(!resources.empty(), "{resources:?}");
+        }
+    }
 }

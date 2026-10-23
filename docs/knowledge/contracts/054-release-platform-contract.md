@@ -1,6 +1,6 @@
 # 054 - Release Platform Contract
 
-Status: accepted by Tom on 2026-10-22 ("I'll go with your recommendation … release draft questions"). §2, §4, §5 and the Run of §3 and §7 are implemented for `tag` targets; `task` targets and native providers are v0.16.
+Status: accepted by Tom on 2026-10-22 ("I'll go with your recommendation … release draft questions"). §2, §4 and §5, and the Run of §3, §6 and §7, are implemented for `tag` and `task` targets, including `check`, `verify`, approval and decision checkpoints and hosted waits; §4.4's Effigy release is implemented (§13); native providers are v0.16.
 It supersedes the generic mechanics in guide 051 when implemented. Effigy's own release
 policy stays in [release.md](release.md).
 
@@ -11,7 +11,7 @@ reconciled, never replayed)
 Ruling: [questions](../questions.md) Q-009, the release platform bullet
 Evidence: the planner's portfolio inventory (2026-10, `release-audits/effigy/release-platform-inventory-2026-10/`). These cover 38 project roots and 101 legacy roots.
 
-Q-010 process custody: Git operations and stage tasks receive the admitted
+Q-010 process custody: Git operations, hosted evidence lookups and stage tasks receive the admitted
 checkout run explicitly. Before launch, the run registers its sentinel and each
 process receipt; closure and bounded output are verified before a stage consumes
 the result. Adapter exit codes are interpreted by the stage (a missing tag is
@@ -71,6 +71,19 @@ recording who approved and when. A gate may also be a **hosted wait**, such as
 exact-commit CI evidence on GitHub. A Run waiting on it is resumable and
 doesn't hold a process open. The current `reuse-hosted-evidence` gate option
 becomes this mechanism.
+
+**A hosted wait binds one run, never a sibling.** The wait opens a dispatch
+window the first time the gate needs evidence ("no run created before this
+instant is this release's") and records it in the Run's record. Exactly one run
+of the configured workflow and event, for the exact commit and repository, may
+be created inside that window: that run becomes the **bound run**, and its id
+is journalled on the gate and in the wait entry. From then on the wait
+re-checks the bound run only, so a newer dispatch — another release, an
+operator's re-dispatch, a re-run — can never substitute for it. Zero matches
+wait (`awaiting-hosted-evidence`), and several matches inside one window fail
+the gate closed with the candidates named. A one-shot `effigy release gates`
+check has no record to open a window in, so it accepts only a commit's single
+matching run and refuses the same way.
 
 ## 4. Configuration
 
@@ -315,6 +328,15 @@ surface and the choices §4 left open; §12 records the Run.
   source but no per-identity lockfile, so the configured sync files belong to
   the release, which also means a release with no `semver` identity refuses
   `sync-files`.
+- **A sync file may be nested, but only the declared file is written.** A
+  `Cargo.lock` entry may name a workspace-excluded consumer's lockfile below
+  the release root. `prepare` runs `cargo update -p <package>` for each release
+  package that lockfile records, from the lockfile's own directory, and refuses
+  a lockfile whose owning workspace is anchored elsewhere (a plain member
+  directory's `Cargo.lock` belongs to the enclosing workspace). Absolute paths,
+  `..` components and paths that resolve outside the release root are refused,
+  and a `Cargo.lock` entry must sit beside its own `Cargo.toml`. The primary
+  `Cargo.lock` keeps the `cargo update --workspace` behaviour.
 - **The changelog is a `semver` identity's business.** §4.3 says bump rules
   apply only to `semver`, so a release with no `semver` identity never reads a
   changelog: the file may be absent (`release changelog path does not exist`
@@ -400,11 +422,71 @@ the sorted file digests when an artifact holds several. The artifact task runs
 with `EFFIGY_RELEASE_INPUT`, `EFFIGY_RELEASE_OUTPUT`,
 `EFFIGY_RELEASE_CANDIDATE_DIR`, `EFFIGY_RELEASE_RUN` and
 `EFFIGY_RELEASE_STAGE` set, and the input is the `effigy.release.input.v1`
-document of §6. `effigy.release.output.v1` arrives with `task` targets.
+document of §6.
 
-**`task` targets stop at validate.** v0.15 publishes `tag` targets in a Run.
-A release that declares a `task` target is refused by `validate` with that
-reason, before anything is written or pushed.
+**The task protocol.** The input document also carries `schema_version: 1` and
+a `subject` object (`{"kind": "target" | "artifact" | "identity" | "release",
+"name": …}`) plus a top-level `target` for a target or verify task, because §6
+names the target and the artifact task needs the same document. A task target's
+output is read from `$EFFIGY_RELEASE_OUTPUT` as `effigy.release.output.v1`:
+`committed` (`true`, `false` or `"unknown"`), `destinations` (an array of
+destination-ID strings) and an optional `note`. `true` publishes the target and
+records its destinations; `false` fails the target and records no destination;
+anything unreadable — a missing file after exit 0, invalid JSON, an unknown
+field or a wrong schema id — is an unknown outcome, never an assumption. A
+non-zero exit with a valid `committed: false` is a known failure, so a task
+that fails before publishing does not need an operator.
+
+**`check` writes the same document.** §6 covers target, artifact and verify
+tasks, and §7 gives a target a `check` that reports whether this candidate is
+already at the destination, so `check` writes `effigy.release.output.v1` too:
+`committed: true` means the candidate is already there, `false` means it is
+not, and `"unknown"` (or an unusable answer) stops the Run at
+`awaiting-decision`.
+
+**Decisions and hosted waits are stops, not failures.** A stop records
+`waiting_on`: the stage boundary for an approval, the gate name for hosted
+evidence, and the target name for a decision. `release decide <run>
+--published|--not-published` records the operator (same identity rule as an
+approval) and the time in the record's `decisions`, sets the target published
+or pending, and continues at `publish`.
+
+An unknown `task` result whose target declares no `check` stops that same
+invocation at `awaiting-decision`, so the operator can decide immediately
+instead of resuming a failed Run first. A target that cannot be started at all
+is an unknown outcome too, so it follows the same rule. A target that declares
+a `check` fails at `publish` with the outcome recorded unknown, and the resume
+reconciles it through the check before any retry — §7's "on resume, a target
+whose last outcome is unknown is first reconciled". A wait also stops the
+publish fan-out: every later target stays pending, and none of them publishes
+until the outcome it is waiting behind is resolved.
+
+A hosted gate is checked before its command would run, for the candidate commit
+at `certify` and the source commit at `pre-gates`. Missing or still-running
+evidence stops the Run at `awaiting-hosted-evidence` with no process open, and
+it stops the gate stage itself: `certify` captures no artifacts until the gate
+has its exact-commit evidence. A resume re-checks the evidence, skips the gates
+it already recorded as passed, and continues the stage. A failed run, the wrong
+commit or repository, an ambiguous answer or an unusable lookup fails the gate
+closed, exactly as the previous synchronous `reuse-hosted-evidence` did.
+
+**Task targets publish in declared order.** A target that succeeded stays
+recorded, so a resume continues with the remaining targets. Before a task
+target's publish task starts, the Run writes the target as `Unknown` in the
+record and journals the publish as an `Irreversible` effect. A crash mid-task
+therefore leaves `Unknown`, never the `Pending` a resume would publish again
+blind, and the kernel settles the journalled effect as `Irreversible` rather
+than blocking the next invocation. A task publish settles `Applied` once the
+task reported a definite outcome — `committed` true or false, which the record
+keeps — and `Unknown` when the task could not tell or could not run, so only a
+real unknown reaches reconciliation.
+
+**The protocol schemas are file contracts.** `effigy.release.input.v1` and
+`effigy.release.output.v1` are documents a task reads and writes, not command
+payloads, so the schema index carries them under `payload_schemas` and has no
+runnable row for them: no `effigy` command emits them. `effigy-release`'s tests
+validate the documents a real Run writes and reads against those shipped
+documents, so the protocol and its schema cannot drift apart silently.
 
 **One changelog and one lockfile version.** One changelog feeds every identity,
 so `prepare` promotes `[Unreleased]` into the first `semver` identity's next
@@ -431,3 +513,73 @@ authority.
 plus Longhorn's, Poodle's and Underlay's real `[release]` tables, so the
 shorthand compatibility claim is proven on consumer configuration rather than on
 an invented one. Nothing in those fixtures pushes, tags or publishes.
+
+## 13. Implementation record: Effigy's own release (§4.4)
+
+`config/release.toml` is one declaration for Effigy: the `effigy` identity, a
+`preflight` pre gate and the `ci`, `format`, `test`, `qa`, `build`, `smoke` and
+`metadata` certify gates, the `binary` artifact, and the `tag` and `binaries`
+targets. §13 records the choices §4.4 left open.
+
+**The Effigy-only commands are repo tasks, and two of them are gates.** The
+retired `release validate|preflight|proof|check-binary|verify-install|evidence`
+commands became `release:metadata`, `release:preflight`, `release:proof`,
+`release:check-binary`, `release:verify:install`,
+`release:evidence:validate|closeout` and the `release:verify:binaries`
+composition in `config/tasks.toml`; `evidence summary` has no task because the
+Run's receipt is the record. Their code is a repo script,
+[`scripts/release/checks.sh`](../../../scripts/release/checks.sh), so it can
+name Effigy's own artifacts, workflow and tap without becoming product surface.
+`metadata` is a `certify` gate declared as `task = "release:metadata"`, because
+it reads the prepared version, changelog and lockfile and needs no arguments —
+which also keeps the task-gate form (§11) exercised by Effigy's own release.
+`preflight` is a **`pre` gate** whose docs slice runs before any version edit;
+it runs the repo script with `--skip-smoke` because the `smoke` certify gate
+already proves the prepared binary, so no check runs twice. The retired
+`release preflight` command's refusal names that `pre-gates` stage. The manual
+`effigy release:preflight` task still runs all three slices. `proof` and `evidence closeout` stay manual tasks: both need a human to
+name an artifact directory, and neither is part of a Run's stages.
+
+**The artifact is the release binary the build gate produced.** `release:artifact`
+composes the existing `build:release` task, and the artifact pattern is
+`target/release/effigy`. Certify copies it into the candidate directory and
+records its sha256; publish re-hashes that copy, so a task that rebuilt the
+binary instead of using the candidate is refused as §6 requires.
+
+**The task target dispatches, then verification inspects the result.**
+`release:publish:binaries` reads the candidate at `$EFFIGY_RELEASE_INPUT` and
+runs `gh workflow run release-binaries.yml -f tag=<tag>`; it reports
+`committed: true` with the workflow run URL and the GitHub Release as
+destinations, and never waits for the workflow. `release:check:binaries` answers
+§7's idempotency question from `gh release view`. `release:verify:binaries` runs
+after the workflow and checks the four binary assets and the two macOS checksum
+sidecars on the GitHub Release, the Homebrew formula's version, and the
+tagged-source install through `release:verify:install`. A workflow that has not
+finished therefore leaves the release published but unverified, which §7
+already covers: Effigy never unpublishes, and the receipt records the failure.
+
+**`[distribution]` retires as an ignored section, not a manifest error.** The
+table only configured the retired Effigy-only commands, so dropping it changes
+nothing else about a v0.14.1 project (052 §11): the manifest removes it and
+records one deprecation notice per manifest, naming `[release]` and `[tasks]` as
+the replacements. Each retired command still refuses with its repo task, and
+`crates/effigy-distribution`, `src/runner/distribution_command` and the
+`distribution::` Rhai module were deleted with it.
+
+**The workflow's GLIBC step is a disclosed follow-up.** The release binary
+workflow still calls `effigy-<target> release check-binary`. The retirement
+makes that step fail, and this change does not edit `.github/workflows/`: the
+`metadata` gate warns with the exact replacement
+(`./scripts/release/checks.sh check-binary …`) instead of failing closed,
+because the workflow is outside the Run. A release owner lands that approved
+workflow edit before the next publication; `release:metadata` starts failing if
+the guard disappears entirely.
+
+**The proof is a fixture, not a publication.** `tests/cli_output_tests/
+release_platform_tests.rs` copies this repository's `config/release.toml` byte
+for byte and stubs only what a temporary workspace cannot reproduce: the hosted
+CI probe, the fixture's own `build:release` leaf, and the `task` target's
+dispatch. The tests run `release --plan`, then `run --to certify` on a local bare
+remote, assert nothing was dispatched or tagged, continue to the approval stop,
+approve, and complete the Run through the fake dispatch — so the whole
+declaration is exercised without publishing anything.

@@ -302,6 +302,17 @@ fn catalog_reads_are_write_free_and_never_reach_a_source_remote() {
                 .keys()
                 .chain(after.keys())
                 .filter(|path| before.get(*path) != after.get(*path))
+                // Reading the kernel's own run journal opens SQLite sidecars
+                // inside the state store, which touches the store directory
+                // too. That is the store's runtime bookkeeping, never source
+                // state, and this proof is about source state.
+                .filter(|path| {
+                    path.as_path() != Path::new(".effigy/state")
+                        && !matches!(
+                            path.file_name().and_then(|name| name.to_str()),
+                            Some("kernel.db-shm" | "kernel.db-wal")
+                        )
+                })
                 .collect::<std::collections::BTreeSet<_>>();
             assert!(
                 changed.is_empty(),

@@ -73,9 +73,16 @@ effigy --json test --plan
     "name": "build"
   },
   "result": {},
+  "warnings": [],
   "error": null
 }
 ```
+
+`warnings` is always present and holds human-readable notices that explain
+something the command accepted instead of refusing: today, the retired v0.15
+manifest config this invocation read (see
+[guide 085](085-v0.15.0-consumer-migration.md)). A `--json` run never writes
+those notices to stderr, so a machine reader gets one parseable document.
 
 Failure envelope shape:
 
@@ -95,6 +102,7 @@ Failure envelope shape:
     "name": "missing-task"
   },
   "result": null,
+  "warnings": [],
   "error": {
     "kind": "RunnerError",
     "message": "...",
@@ -138,6 +146,13 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.version.v1`
 - `effigy.release.status.v1`
 - `effigy.release.plan.v1`
+- `effigy.release.run.v1` and `effigy.release.receipt.v1` (`release run`,
+  `release resume`, `release approve`, `release decide`, `release receipt`)
+- `effigy.release.input.v1` and `effigy.release.output.v1`: file contracts a
+  `task` target, artifact task or verify task reads at `$EFFIGY_RELEASE_INPUT`
+  and writes at `$EFFIGY_RELEASE_OUTPUT` (contract 054 §6). They are registered
+  in the schema index under `payload_schemas`; no `effigy` command emits them,
+  so they have no runnable index row.
 - `effigy.scan.god-files.v1`
 - `effigy.scan.duplicate-blocks.v1`
 - `effigy.config.v1`
@@ -158,7 +173,9 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.completion.v2`
 - `effigy.completion.candidates.v1`
 - `effigy.task.run.v1`
-- `effigy.task.plan.v1`
+- `effigy.task.plan.v1` (adds `shadowed_builtin: {name, escape}` when a
+  repository task owns a built-in's word, so a plan can name the built-in's
+  explicit spelling)
 - `effigy.service.list.v2` (`sources` in precedence order; each fragment has `name`, `qualified`, `source`, `layer`, `path` and `shadows`)
 - `effigy.service.extract.v1`
 - `effigy.artifact.inspect.v1` (`state artifact inspect --json`)
@@ -168,6 +185,7 @@ Operator workflow and recovery: [`077-local-dependency-linking.md`](077-local-de
 - `effigy.container.retire.v1`
 - `effigy.container.retire-dead.v1` (`container retire --dead --json`)
 - `effigy.container.ports.v1` (`container ports status|reclaim`)
+- `effigy.gateway.loopback-reclaim.v1` (`dead_loopback_owners` inside `gateway repair --json`)
 - `effigy.container.bounded-exec.v1` (`container <NAME> shell --bounded --json`)
 - `effigy.container-partial-activation.v2` (detached `container up` failure details)
 - `effigy.runs.v1` (`runs --json`)
@@ -402,9 +420,12 @@ Rule of thumb:
   include additive optional `log_path` on each gate result and
   `environment_path` for the run. Named hosted reuse may add optional
   `reused`, `hosted_run_url`, `hosted_head_sha`, and `hosted_repository` on a
-  gate result, and `gates.reused_gates` on execute/resume payloads. Progress
-  and configured-gate inventory stay on stderr and never on JSON stdout.
-  Schema ids are unchanged.
+  gate result, and `gates.reused_gates` on execute/resume payloads.
+  `effigy.release.gates.v1` also carries `gates[]` (name, stage, command, task,
+  description, `reuse_hosted_evidence`) as the configured inventory it ran, so
+  a JSON reader sees the same gates the progress lines named. Streaming
+  progress lines stay on stderr and never on JSON stdout. Schema ids are
+  unchanged.
 - `effigy.release.plan.v1` is the `effigy release --plan` payload (contract 054
   §5), replacing the retired simulate payload. It reports
   `identities[]` (name, kind, current and next version, tag, `follows`,

@@ -1,10 +1,18 @@
 //! Supported, allocation-only recovery of generated-container port ranges.
 //!
 //! A registry entry is released only when its project path is definitely
-//! missing and nothing can still use it: no runtime-scope record, no gateway
-//! route, no container in any state, no published or bound host port. Any
-//! incomplete proof holds the entry with a reason. Releasing a registry entry
-//! never touches runtime resources, data, volumes, routes or profiles.
+//! missing and nothing can still use it: no runtime-scope record that retains
+//! project resources, no gateway route, no container in any state, no
+//! published or bound host port. Any incomplete proof holds the entry with a
+//! reason. Releasing a registry entry never touches runtime resources, data,
+//! volumes, routes or profiles.
+//!
+//! A stopped Colima profile is scoped to the entries it can own (effigy#294).
+//! Its created or stopped containers cannot be listed without starting it, but
+//! it publishes no host port while it is stopped, so it only makes an entry
+//! uncertain when the ownership stores record that entry on that profile. An
+//! entry with no recorded profile is attributed to the configured Effigy
+//! profile (see [`stopped_profile_hold`]).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -26,15 +34,17 @@ pub const PORTS_SCHEMA: &str = "effigy.container.ports.v1";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathState {
     Present,
-    /// The leaf is absent and its parent directory is readable.
+    /// The leaf is absent and its nearest existing ancestor is a readable
+    /// directory, so nothing can be mounted at or above it unobserved.
     Missing,
-    /// Any other result, including permission or I/O errors and an absent
-    /// parent such as an unmounted volume.
+    /// Any other result: permission or I/O errors, a non-directory ancestor,
+    /// and a path whose volume root is absent (such as an unmounted
+    /// `/Volumes/...`).
     Unknown(String),
 }
 
 impl PathState {
-    fn label(&self) -> &'static str {
+    pub fn label(&self) -> &'static str {
         match self {
             Self::Present => "present",
             Self::Missing => "missing",
@@ -43,25 +53,76 @@ impl PathState {
     }
 }
 
+/// Filesystem roots whose immediate children are volume mount points. A path
+/// below one is absent from disk whenever the volume is not mounted, which is
+/// not proof that the project itself is gone.
+const VOLUME_ROOTS: [&str; 4] = ["/Volumes", "/media", "/mnt", "/run/media"];
+
 /// Probe a project path without following it into anything.
+///
+/// The leaf being absent proves nothing on its own: the parent may be absent
+/// too. Walking to the nearest existing ancestor proves absence whenever that
+/// ancestor is a readable directory, because nothing can exist below it that
+/// the probe skipped. Only a real I/O error, a permission failure, a
+/// non-directory ancestor or an absent volume root stays unknown.
 pub fn probe_project_path(path: &Path) -> PathState {
     match std::fs::symlink_metadata(path) {
-        Ok(_) => PathState::Present,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => match path.parent() {
-            Some(parent) => match std::fs::metadata(parent) {
-                Ok(metadata) if metadata.is_dir() => PathState::Missing,
-                Ok(_) => {
-                    PathState::Unknown(format!("parent {} is not a directory", parent.display()))
-                }
-                Err(error) => PathState::Unknown(format!(
-                    "parent {} is unreadable: {error}",
-                    parent.display()
-                )),
-            },
-            None => PathState::Unknown("project path has no parent".to_owned()),
-        },
-        Err(error) => PathState::Unknown(error.to_string()),
+        Ok(_) => return PathState::Present,
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            return PathState::Unknown(error.to_string())
+        }
+        Err(_) => {}
     }
+    if let Some(volume) = unmounted_volume(path) {
+        return PathState::Unknown(format!(
+            "volume {} is not mounted, so absence below it is unprovable",
+            volume.display()
+        ));
+    }
+    for ancestor in path.ancestors().skip(1) {
+        match std::fs::metadata(ancestor) {
+            Ok(metadata) if metadata.is_dir() => return PathState::Missing,
+            Ok(_) => {
+                return PathState::Unknown(format!(
+                    "ancestor {} is not a directory",
+                    ancestor.display()
+                ))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return PathState::Unknown(format!(
+                    "ancestor {} is unreadable: {error}",
+                    ancestor.display()
+                ))
+            }
+        }
+    }
+    PathState::Unknown(format!(
+        "project path {} has no existing ancestor",
+        path.display()
+    ))
+}
+
+/// The volume mount point a path depends on, when that volume is not mounted.
+fn unmounted_volume(path: &Path) -> Option<PathBuf> {
+    for root in VOLUME_ROOTS {
+        let Ok(rest) = path.strip_prefix(root) else {
+            continue;
+        };
+        let Some(volume_name) = rest.components().next() else {
+            continue;
+        };
+        let volume = Path::new(root).join(volume_name);
+        match std::fs::metadata(&volume) {
+            Ok(metadata) if metadata.is_dir() => return None,
+            Ok(_) => return Some(volume),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Some(volume),
+            // An unreadable volume root is already reported by the ancestor
+            // walk; a volume-shaped guess must not mask that error.
+            Err(_) => return None,
+        }
+    }
+    None
 }
 
 /// Whether a host TCP port can be bound on the wildcard address right now.
@@ -86,6 +147,10 @@ pub struct PortRecoveryFacts {
     pub scopes: Result<Vec<ScopeRecord>, String>,
     pub routes: Result<RouteTable, String>,
     pub inventory: RunningComposeContainerInventory,
+    /// The Colima profile Effigy itself allocates on: the user's configured
+    /// profile, or the built-in default. An entry with no recorded profile is
+    /// attributed to it (effigy#294).
+    pub running_profile: String,
 }
 
 impl PortRecoveryFacts {
@@ -124,6 +189,7 @@ impl PortRecoveryFacts {
             scopes,
             routes,
             inventory: discover_compose_containers_all_states(),
+            running_profile: crate::exec::default_runtime_profile(),
         }
     }
 }
@@ -203,18 +269,26 @@ pub fn plan_recovery(
                 ),
                 PathState::Missing => match global_hold.as_ref() {
                     Some(reason) => (Decision::Hold, format!("global hold: {reason}")),
-                    None => decide_missing(
-                        name,
-                        alloc.base,
-                        alloc.range,
-                        &alloc.project,
-                        facts,
-                        path_counts
-                            .get(alloc.project.as_str())
-                            .copied()
-                            .unwrap_or(0),
-                        &host_port_hold,
-                    ),
+                    None => {
+                        let recorded = match &facts.scopes {
+                            Ok(records) => {
+                                RecordedOwnership::of(records, name, alloc.project.as_str())
+                            }
+                            Err(_) => RecordedOwnership::default(),
+                        };
+                        let entry = MissingEntry {
+                            name,
+                            base: alloc.base,
+                            range: alloc.range,
+                            project: &alloc.project,
+                            recorded: &recorded,
+                            sharing_path: path_counts
+                                .get(alloc.project.as_str())
+                                .copied()
+                                .unwrap_or(0),
+                        };
+                        decide_missing(&entry, facts, &host_port_hold)
+                    }
                 },
             };
             PortRecoveryRow {
@@ -246,7 +320,10 @@ pub fn plan_recovery(
 
 fn global_hold_reason(facts: &PortRecoveryFacts) -> Option<String> {
     let mut reasons = Vec::new();
-    if let Some(summary) = facts.inventory.failure_summary() {
+    // A stopped Colima profile is scoped per entry instead of failing the whole
+    // inventory: it can only own entries recorded on it (see
+    // `stopped_profile_hold`).
+    if let Some(summary) = facts.inventory.incomplete_failure_summary() {
         reasons.push(format!(
             "container runtime inventory is incomplete: {summary}"
         ));
@@ -268,22 +345,20 @@ fn path_counts(registry: &PortRegistry) -> BTreeMap<&str, usize> {
     counts
 }
 
-fn decide_missing(
-    name: &str,
-    base: u16,
-    range: u16,
-    project: &str,
-    facts: &PortRecoveryFacts,
-    sharing_path: usize,
-    host_port_hold: &impl Fn(u16) -> Option<String>,
-) -> (Decision, String) {
-    if sharing_path > 1 {
-        return (
-            Decision::Hold,
-            format!("{sharing_path} allocations record this project path"),
-        );
-    }
-    if let Ok(records) = &facts.scopes {
+/// What the ownership stores record about where one entry was created.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct RecordedOwnership {
+    /// Colima profiles of the runtime-scope records that name this entry's
+    /// project name or checkout path.
+    profiles: Vec<String>,
+    /// Runtime-scope records that still retain volumes or routes of their own
+    /// for this entry.
+    retaining: Vec<String>,
+}
+
+impl RecordedOwnership {
+    fn of(records: &[ScopeRecord], name: &str, project: &str) -> Self {
+        let mut recorded = Self::default();
         for record in records {
             let names_project = record
                 .project_names
@@ -291,19 +366,111 @@ fn decide_missing(
                 .chain(&record.retain_project_names)
                 .chain(&record.repo_owned_projects)
                 .any(|owned| owned == name);
-            if names_project || record.checkout == project {
-                return (
-                    Decision::Hold,
-                    format!("runtime-scope record {} still owns it", record.token),
-                );
+            if !(names_project || record.checkout == project) {
+                continue;
+            }
+            for profile in record.observation_profiles() {
+                if !recorded.profiles.contains(&profile) {
+                    recorded.profiles.push(profile);
+                }
+            }
+            // Containers in any state are proved separately from the inventory.
+            let retains_volumes = !record.owned_volumes.is_empty();
+            let retains_routes = !record.routes.is_empty();
+            if retains_volumes || retains_routes {
+                recorded.retaining.push(record.token.clone());
             }
         }
+        recorded
+    }
+}
+
+/// Why a stopped Colima profile still holds this entry, if it does.
+///
+/// A stopped profile publishes no host port, so it never blocks the bound-port
+/// question and never has to be started to answer it. It only makes an entry
+/// uncertain when the entry may live in that profile: when a runtime-scope
+/// record names the entry on that profile, or when no record names any
+/// profile and the configured Effigy profile itself is stopped. An entry with
+/// no recorded profile is attributed to the configured Effigy profile, the
+/// profile Prepare would allocate it on now. That inference stays
+/// conservative in the direction that matters: a stopped configured profile is
+/// itself in the stopped set, so it holds every entry attributed to it.
+fn stopped_profile_hold(
+    recorded: &RecordedOwnership,
+    stopped: &[&str],
+    running: &str,
+) -> Option<String> {
+    let recorded_stopped = recorded
+        .profiles
+        .iter()
+        .filter(|profile| stopped.contains(&profile.as_str()))
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    if !recorded_stopped.is_empty() {
+        return Some(format!(
+            "runtime-scope record names stopped Colima profile(s) {}; their created or stopped containers cannot be inspected without starting them",
+            quoted_list(&recorded_stopped)
+        ));
+    }
+    if recorded.profiles.is_empty() && stopped.contains(&running) {
+        return Some(format!(
+            "no runtime-scope record names another profile and the configured Effigy profile `{running}` is stopped, so its created or stopped containers cannot be inspected without starting it"
+        ));
+    }
+    None
+}
+
+fn quoted_list(items: &[&str]) -> String {
+    items
+        .iter()
+        .map(|item| format!("`{item}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// One absent-path entry under decision.
+struct MissingEntry<'a> {
+    name: &'a str,
+    base: u16,
+    range: u16,
+    project: &'a str,
+    recorded: &'a RecordedOwnership,
+    sharing_path: usize,
+}
+
+fn decide_missing(
+    entry: &MissingEntry<'_>,
+    facts: &PortRecoveryFacts,
+    host_port_hold: &impl Fn(u16) -> Option<String>,
+) -> (Decision, String) {
+    let stopped = facts.inventory.stopped_profiles();
+    if let Some(reason) = stopped_profile_hold(entry.recorded, &stopped, &facts.running_profile) {
+        return (Decision::Hold, reason);
+    }
+    if entry.sharing_path > 1 {
+        return (
+            Decision::Hold,
+            format!(
+                "{} allocations record this project path",
+                entry.sharing_path
+            ),
+        );
+    }
+    // A record that still retains project volumes or routes keeps the hold:
+    // retirement clears them, and the stable range stays while the project's
+    // own runtime resources are still registered.
+    if let Some(token) = entry.recorded.retaining.first() {
+        return (
+            Decision::Hold,
+            format!("runtime-scope record {token} still retains volumes or routes for it"),
+        );
     }
     if let Ok(table) = &facts.routes {
         if let Some(route) = table
             .all_routes()
             .into_iter()
-            .find(|route| route.project == name || route.project == project)
+            .find(|route| route.project == entry.name || route.project == entry.project)
         {
             return (
                 Decision::Hold,
@@ -313,8 +480,8 @@ fn decide_missing(
     }
     for row in &facts.inventory.rows {
         let row = &row.row;
-        let owns_by_label = row.project_name.as_deref() == Some(name);
-        let owns_by_path = row.working_dir.as_deref() == Some(project);
+        let owns_by_label = row.project_name.as_deref() == Some(entry.name);
+        let owns_by_path = row.working_dir.as_deref() == Some(entry.project);
         if owns_by_label || owns_by_path {
             return (
                 Decision::Hold,
@@ -326,7 +493,7 @@ fn decide_missing(
         }
         if let Some(port) = published_host_ports(&row.ports)
             .into_iter()
-            .find(|port| port_in_range(*port, base, range))
+            .find(|port| port_in_range(*port, entry.base, entry.range))
         {
             return (
                 Decision::Hold,
@@ -337,7 +504,7 @@ fn decide_missing(
             );
         }
     }
-    for port in u32::from(base)..u32::from(base) + u32::from(range) {
+    for port in u32::from(entry.base)..u32::from(entry.base) + u32::from(entry.range) {
         let Ok(port) = u16::try_from(port) else {
             break;
         };
@@ -347,14 +514,33 @@ fn decide_missing(
     }
     if effigy_core::worktree_scope::PROJECT_TAGS
         .iter()
-        .any(|tag| name.contains(&format!("-{tag}-")))
+        .any(|tag| entry.name.contains(&format!("-{tag}-")))
     {
         return (Decision::Hold,"scoped checkout is missing; use `effigy container retire --dead` for verified backend-label retirement".into());
     }
+    let attribution = if entry.recorded.profiles.is_empty() {
+        format!(
+            "no runtime-scope record names another profile and the running profile `{}` has none",
+            facts.running_profile
+        )
+    } else {
+        format!(
+            "its runtime-scope record on profile(s) {} still owns no volume, route or container",
+            quoted_list(
+                &entry
+                    .recorded
+                    .profiles
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+            )
+        )
+    };
     (
         Decision::Reclaim,
-        "project path is missing; no scope, route, container, published or bound port references it"
-            .to_owned(),
+        format!(
+            "project path is missing; {attribution}, and no scope, route, container, published or bound port references it"
+        ),
     )
 }
 
@@ -443,11 +629,10 @@ fn report_at(
 fn apply_at(
     path: &Path,
     expect_digest: &str,
-    gather: impl FnOnce() -> PortRecoveryFacts,
+    facts: PortRecoveryFacts,
     probe_path: impl Fn(&Path) -> PathState,
     host_hold: impl Fn(u16) -> Option<String>,
 ) -> Result<PortRecoveryReport, ContainerPolicyError> {
-    let facts = gather();
     let outcome = edit_locked(path, |registry| {
         let plan = plan_recovery(registry, &facts, &probe_path, &host_hold);
         if plan.digest != expect_digest {
@@ -521,6 +706,81 @@ pub fn port_capacity_note() -> Option<String> {
     ))
 }
 
+/// Free default-size ranges at or below which an allocation first reclaims
+/// provably dead entries (effigy#294). At ten free ranges a handful of new
+/// projects still fit, so the reclaim runs before a deleted project's hold can
+/// starve them, not after the allocation has already failed.
+pub const AUTO_RECLAIM_FREE_RANGES: usize = 10;
+
+/// What one pressure reclaim removed, and the capacity it moved between.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortPressureReclaim {
+    pub reclaimed: usize,
+    pub range: u16,
+    pub free_ranges_before: usize,
+    pub free_ranges_after: usize,
+}
+
+impl PortPressureReclaim {
+    /// The one-line note a `container up` prints when it reclaimed.
+    pub fn note(&self) -> String {
+        format!(
+            "[note] reclaimed {} provably dead port allocation(s) under capacity pressure; {} free {}-port range(s) remain",
+            self.reclaimed, self.free_ranges_after, self.range
+        )
+    }
+}
+
+/// Reclaim provably dead ranges inside the allocation path when the registry is
+/// within [`AUTO_RECLAIM_FREE_RANGES`] of exhaustion (effigy#294).
+///
+/// It applies exactly the reviewed `--apply` rules: the same decisions, the
+/// same plan digest recomputed under the registry lock, and the same backup
+/// before the write. `home` is the Effigy home the caller is already preparing
+/// for. It returns `None` when capacity is comfortable or when nothing is
+/// provably dead, and it never runs from a read path.
+pub fn port_reclaim_under_pressure(
+    home: &Path,
+) -> Result<Option<PortPressureReclaim>, ContainerPolicyError> {
+    reclaim_under_pressure_at(
+        &home.join("ports.json"),
+        AUTO_RECLAIM_FREE_RANGES,
+        PortRecoveryFacts::gather,
+        probe_project_path,
+        host_port_hold,
+    )
+}
+
+/// `free_ranges_threshold` is a parameter so tests can exhaust a small fixture
+/// instead of a 574-range registry; production passes
+/// [`AUTO_RECLAIM_FREE_RANGES`].
+fn reclaim_under_pressure_at(
+    path: &Path,
+    free_ranges_threshold: usize,
+    gather: impl FnOnce() -> PortRecoveryFacts,
+    probe_path: impl Fn(&Path) -> PathState,
+    host_hold: impl Fn(u16) -> Option<String>,
+) -> Result<Option<PortPressureReclaim>, ContainerPolicyError> {
+    let registry = PortRegistry::load(path).map_err(registry_error)?;
+    let before = registry.capacity();
+    if before.allocatable_ranges > free_ranges_threshold {
+        return Ok(None);
+    }
+    let facts = gather();
+    let plan = plan_recovery(&registry, &facts, &probe_path, &host_hold);
+    if plan.reclaim_names().is_empty() {
+        return Ok(None);
+    }
+    let digest = plan.digest.clone();
+    let applied = apply_at(path, &digest, facts, probe_path, host_hold)?;
+    Ok(Some(PortPressureReclaim {
+        reclaimed: applied.removed.len(),
+        range: applied.capacity_now.range,
+        free_ranges_before: before.allocatable_ranges,
+        free_ranges_after: applied.capacity_now.allocatable_ranges,
+    }))
+}
+
 /// Read-only status: performs no writes and takes no registry lock.
 pub fn port_status() -> Result<PortRecoveryReport, ContainerPolicyError> {
     report_at(
@@ -552,7 +812,7 @@ pub fn port_reclaim_apply(expect_digest: &str) -> Result<PortRecoveryReport, Con
     apply_at(
         &live_path()?,
         expect_digest,
-        PortRecoveryFacts::gather,
+        PortRecoveryFacts::gather(),
         probe_project_path,
         host_port_hold,
     )
@@ -565,7 +825,7 @@ pub(crate) fn port_reclaim_apply_at(
     facts: impl FnOnce() -> PortRecoveryFacts,
     host_hold: impl Fn(u16) -> Option<String>,
 ) -> Result<PortRecoveryReport, ContainerPolicyError> {
-    apply_at(path, expect_digest, facts, probe_project_path, host_hold)
+    apply_at(path, expect_digest, facts(), probe_project_path, host_hold)
 }
 
 fn registry_error(error: impl std::fmt::Display) -> ContainerPolicyError {

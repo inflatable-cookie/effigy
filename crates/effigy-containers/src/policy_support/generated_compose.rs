@@ -14,7 +14,7 @@ use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value as YamlValue;
 
-use crate::exec::{discover_running_compose_containers, RunningComposeContainerInventory};
+use crate::exec::RunningComposeContainerInventory;
 use crate::runtime::scope::{
     CHECKOUT_FENCE_LABEL, CHECKOUT_GENERATION_LABEL, CHECKOUT_LABEL, MANAGED_LABEL, PROJECT_LABEL,
     SCOPE_LABEL,
@@ -1259,7 +1259,7 @@ fn discover_loopback_inventory() -> RunningComposeContainerInventory {
         return inventory;
     }
 
-    discover_running_compose_containers()
+    crate::runtime::loopback_recovery::loopback_ownership_inventory()
 }
 
 #[cfg(test)]
@@ -1302,15 +1302,27 @@ fn load_or_allocate_loopback_ip_with_inventory(
     identity: &str,
     legacy_identity: Option<&str>,
     source: &str,
-    _discover_inventory: impl FnOnce() -> RunningComposeContainerInventory,
+    discover_inventory: impl FnOnce() -> RunningComposeContainerInventory,
 ) -> Result<Option<std::net::Ipv4Addr>, ContainerPolicyError> {
     let Some(home) = effigy_home_dir() else {
         return Ok(None);
     };
-    effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home)
-        .reserve_loopback_importing(identity, legacy_identity, source)
-        .map(Some)
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
+    let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
+    // A full pool releases provably dead owners once, then retries. Live
+    // owners are never touched.
+    crate::runtime::loopback_recovery::reserve_loopback_collecting_dead(
+        &store,
+        identity,
+        legacy_identity,
+        source,
+        || {
+            crate::runtime::loopback_recovery::LoopbackRecoveryFacts::with_inventory(
+                discover_inventory(),
+            )
+        },
+    )
+    .map(|(ip, _)| Some(ip))
+    .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
 }
 
 fn parse_port_binding(raw: &str) -> Result<PortBinding, ContainerPolicyError> {
@@ -1676,26 +1688,113 @@ mod tests {
     }
 
     #[test]
-    fn loopback_allocator_preserves_stopped_owners_and_never_probes_inventory() {
+    fn full_pool_probes_ownership_once_and_preserves_every_live_owner() {
         let _lock = crate::test_env_lock();
         let home = tempfile::tempdir().expect("private state");
         with_test_effigy_home(home.path(), || {
             let path = home.path().join("gateway/loopback-ips.json");
-            let before = full_project_registry();
-            before.save(&path).expect("full registry");
-            let result = load_or_allocate_loopback_ip_with_inventory(
-                "project:new:/tmp/new",
-                None,
-                "/tmp/new",
-                || panic!("inventory cannot release persistent claims"),
-            );
+            // A full pool whose owners all still exist: exhaustion may probe
+            // ownership once, but no live assignment is released.
+            let mut registry = LoopbackRegistry::new();
+            for index in 1..=50 {
+                let checkout = home.path().join(format!("live-{index}"));
+                std::fs::create_dir_all(&checkout).expect("live checkout");
+                let source = checkout.display().to_string();
+                registry
+                    .allocate(
+                        &project_loopback_identity(&format!("live-{index}"), &checkout),
+                        &source,
+                    )
+                    .expect("fill private loopback pool");
+            }
+            registry.save(&path).expect("full registry");
+            let before = registry.assignments.clone();
+            let (result, probes) =
+                with_test_loopback_inventory(RunningComposeContainerInventory::default(), || {
+                    load_or_allocate_loopback_ip_with_inventory(
+                        "project:new:/tmp/new",
+                        None,
+                        "/tmp/new",
+                        discover_loopback_inventory,
+                    )
+                });
             assert!(result
                 .unwrap_err()
                 .to_string()
                 .contains("loopback pool exhausted"));
+            assert_eq!(probes, 1, "an exhausted pool probes ownership once");
+            assert_eq!(LoopbackRegistry::load(&path).unwrap().assignments, before);
+        });
+    }
+
+    #[test]
+    fn prepare_time_collection_holds_an_owner_with_a_created_container() {
+        let _lock = crate::test_env_lock();
+        let home = tempfile::tempdir().expect("private state");
+        with_test_effigy_home(home.path(), || {
+            let path = home.path().join("gateway/loopback-ips.json");
+            // A full pool of absent owners, one of which still has a created
+            // container on a running profile. The Prepare path must hold that
+            // owner exactly as `gateway repair` would.
+            let mut registry = LoopbackRegistry::new();
+            let mut held_scope = String::new();
+            for index in 1..=50 {
+                let source = home
+                    .path()
+                    .join(format!("gone-{index}"))
+                    .display()
+                    .to_string();
+                let identity =
+                    project_loopback_identity(&format!("gone-{index}"), Path::new(&source));
+                registry
+                    .allocate(&identity, &source)
+                    .expect("fill private loopback pool");
+                if index == 7 {
+                    held_scope = source;
+                }
+            }
+            registry.save(&path).expect("full registry");
+            let inventory = RunningComposeContainerInventory {
+                rows: vec![crate::exec::RunningComposeContainerProfiled {
+                    profile: "effigy".to_owned(),
+                    row: crate::exec::RunningComposeContainer {
+                        container_name: "gone-app-1".to_owned(),
+                        status: "Created".to_owned(),
+                        ports: Vec::new(),
+                        project_name: None,
+                        working_dir: Some(held_scope.clone()),
+                        service: None,
+                        oneoff: false,
+                    },
+                }],
+                failures: Vec::new(),
+            };
+
+            let (error, probes) = with_test_loopback_inventory(inventory, || {
+                load_or_allocate_loopback_ip("project:new:/tmp/new", None, "/tmp/new")
+                    .expect_err("a full pool of absent owners reports its release")
+            });
+
+            assert_eq!(probes, 1, "an exhausted pool probes ownership once");
+            let message = error.to_string();
+            assert!(
+                message.contains("released 49 dead assignment"),
+                "the created container's owner must be held: {message}"
+            );
+            let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(home.path());
+            let remaining = store
+                .read_compatible()
+                .expect("store")
+                .loopback()
+                .expect("registry");
+            assert_eq!(remaining.len(), 1);
             assert_eq!(
-                LoopbackRegistry::load(&path).unwrap().assignments,
-                before.assignments
+                remaining
+                    .assignments
+                    .values()
+                    .map(|assignment| assignment.scope.clone())
+                    .collect::<Vec<_>>(),
+                vec![held_scope]
             );
         });
     }
@@ -1721,6 +1820,7 @@ mod tests {
                         backend: "colima".to_owned(),
                         profile: "broken".to_owned(),
                         error: "runtime ps failed".to_owned(),
+                        stopped_profile: false,
                     }],
                 },
             )

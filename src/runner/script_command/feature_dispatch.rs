@@ -5,18 +5,14 @@ use effigy_cli::{
     ContainerArgs, ContainerCacheSubcommand, ContainerDataSubcommand, ContainerDbDumpInput,
     ContainerSubcommand, ContainerVolumeSubcommand, ContractsArgs, ContractsCheckMode,
     ContractsSelectionPrintMode, ContractsSubcommand, DeployArgs, DeploySubcommand, DocsArgs,
-    DocsBlockRequirement, DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand, ReleaseArgs,
-    ReleaseEvidenceSubcommand, ReleaseSubcommand, ServiceArgs, ServiceSubcommand, StateArgs,
-    StateSubcommand, TaskInvocation, TasksArgs,
+    DocsBlockRequirement, DocsSubcommand, DoctorArgs, GatewayArgs, GatewaySubcommand, ServiceArgs,
+    ServiceSubcommand, StateArgs, StateSubcommand, TaskInvocation, TasksArgs,
 };
 use effigy_execution::ExecutionSurface;
 use effigy_rhai::surface::*;
 use serde_json::Value;
 
 use crate::runner::error::RunnerError;
-
-const DEFAULT_DISTRIBUTION_REPO_URL: &str = "https://github.com/inflatable-cookie/effigy.git";
-const DEFAULT_DISTRIBUTION_BREW_FORMULA: &str = "inflatable-cookie/effigy/effigy";
 
 pub(super) fn run_rhai_feature(
     repo_root: &Path,
@@ -663,115 +659,6 @@ pub(super) fn run_rhai_feature(
                 output_json: true,
             }),
         ),
-        FEATURE_DISTRIBUTION_VALIDATE_METADATA => run_typed_command(
-            repo_root,
-            effigy_cli::Command::Release(ReleaseArgs {
-                subcommand: ReleaseSubcommand::Validate {
-                    tag: string_option(&options, "tag")?,
-                },
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: true,
-            }),
-        ),
-        FEATURE_DISTRIBUTION_CHECK_GLIBC_FLOOR => run_typed_command(
-            repo_root,
-            effigy_cli::Command::Release(ReleaseArgs {
-                subcommand: ReleaseSubcommand::CheckBinary {
-                    binary_path: path_option(&options, "binary")?
-                        .ok_or_else(|| RunnerError::task_invocation("`binary` is required"))?,
-                    glibc_floor: required_string(&options, "max_glibc")?,
-                },
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: true,
-            }),
-        ),
-        FEATURE_DISTRIBUTION_PREFLIGHT => run_typed_command(
-            repo_root,
-            effigy_cli::Command::Release(ReleaseArgs {
-                subcommand: ReleaseSubcommand::Preflight {
-                    tag: string_option(&options, "tag")?,
-                    skip_docs: bool_option(&options, "skip_docs")?.unwrap_or(false),
-                    skip_smoke: bool_option(&options, "skip_smoke")?.unwrap_or(false),
-                    output_path: path_option(&options, "output")?,
-                },
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: true,
-            }),
-        ),
-        FEATURE_DISTRIBUTION_FIRST_PUBLISH => run_typed_command(
-            repo_root,
-            effigy_cli::Command::Release(ReleaseArgs {
-                subcommand: ReleaseSubcommand::Proof {
-                    tag: required_string(&options, "tag")?,
-                    crate_version: string_option(&options, "crate_version")?,
-                    repo_url: string_option(&options, "repo_url")?
-                        .unwrap_or_else(|| DEFAULT_DISTRIBUTION_REPO_URL.to_owned()),
-                    brew_formula: string_option(&options, "brew_formula")?
-                        .unwrap_or_else(|| DEFAULT_DISTRIBUTION_BREW_FORMULA.to_owned()),
-                    skip_homebrew: bool_option(&options, "skip_homebrew")?.unwrap_or(false),
-                    artifacts_dir: path_option(&options, "artifacts_dir")?,
-                },
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: true,
-            }),
-        ),
-        FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS => run_typed_command(
-            repo_root,
-            effigy_cli::Command::Release(ReleaseArgs {
-                subcommand: ReleaseSubcommand::Evidence {
-                    subcommand: ReleaseEvidenceSubcommand::Validate {
-                        artifacts_dir: path_option(&options, "artifacts_dir")?.ok_or_else(
-                            || RunnerError::task_invocation("`artifacts_dir` is required"),
-                        )?,
-                        expect_homebrew: bool_option(&options, "expect_homebrew")?.unwrap_or(false),
-                    },
-                },
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: true,
-            }),
-        ),
-        FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT => run_typed_command(
-            repo_root,
-            effigy_cli::Command::Release(ReleaseArgs {
-                subcommand: ReleaseSubcommand::Evidence {
-                    subcommand: ReleaseEvidenceSubcommand::Closeout {
-                        tag: required_string(&options, "tag")?,
-                        artifacts_dir: path_option(&options, "artifacts_dir")?.ok_or_else(
-                            || RunnerError::task_invocation("`artifacts_dir` is required"),
-                        )?,
-                        output_path: path_option(&options, "output")?,
-                        owner: string_option(&options, "owner")?
-                            .unwrap_or_else(|| "Platform".to_owned()),
-                        expect_homebrew: bool_option(&options, "expect_homebrew")?.unwrap_or(false),
-                    },
-                },
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: true,
-            }),
-        ),
-        FEATURE_DISTRIBUTION_WRITE_SUMMARY => run_typed_command(
-            repo_root,
-            effigy_cli::Command::Release(ReleaseArgs {
-                subcommand: ReleaseSubcommand::Evidence {
-                    subcommand: ReleaseEvidenceSubcommand::Summary {
-                        tag: required_string(&options, "tag")?,
-                        artifacts_dir: path_option(&options, "artifacts_dir")?.ok_or_else(
-                            || RunnerError::task_invocation("`artifacts_dir` is required"),
-                        )?,
-                        crate_version: string_option(&options, "crate_version")?,
-                        repo_url: string_option(&options, "repo_url")?
-                            .unwrap_or_else(|| DEFAULT_DISTRIBUTION_REPO_URL.to_owned()),
-                        brew_formula: string_option(&options, "brew_formula")?
-                            .unwrap_or_else(|| DEFAULT_DISTRIBUTION_BREW_FORMULA.to_owned()),
-                        homebrew_executed: bool_option(&options, "homebrew_executed")?
-                            .unwrap_or(false),
-                        log_files: string_array_any(&options, &["log_files", "log_file"])?,
-                    },
-                },
-                repo_override: Some(repo_root.to_path_buf()),
-                output_json: true,
-            }),
-        ),
         FEATURE_CHANGELOG_VALIDATE => run_typed_command(
             repo_root,
             effigy_cli::Command::Changelog(ChangelogArgs {
@@ -873,6 +760,7 @@ pub(super) fn is_runner_dispatch_feature(feature: &str) -> bool {
             | FEATURE_STATE_APPLY
             | FEATURE_STATE_CAPTURE
             | FEATURE_STATE_HISTORY
+            | FEATURE_CONTAINER_WORKSPACE_ARTIFACT_BUILD
             | FEATURE_CONTAINER_STATUS
             | FEATURE_CONTAINER_LOGS
             | FEATURE_CONTAINER_RESET
@@ -919,13 +807,6 @@ pub(super) fn is_runner_dispatch_feature(feature: &str) -> bool {
             | FEATURE_DEPLOY_STATUS
             | FEATURE_DEPLOY_HISTORY
             | FEATURE_DEPLOY_REDEPLOY
-            | FEATURE_DISTRIBUTION_VALIDATE_METADATA
-            | FEATURE_DISTRIBUTION_CHECK_GLIBC_FLOOR
-            | FEATURE_DISTRIBUTION_PREFLIGHT
-            | FEATURE_DISTRIBUTION_FIRST_PUBLISH
-            | FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS
-            | FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT
-            | FEATURE_DISTRIBUTION_WRITE_SUMMARY
             | FEATURE_CHANGELOG_VALIDATE
             | FEATURE_CHANGELOG_EXTRACT
             | FEATURE_UNLOCK_SCOPES

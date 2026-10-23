@@ -51,7 +51,15 @@ built-in invocation is the canonical operator grammar.
    displaying direct command spellings.
 5. Completion, current guides, generated references, and managed skills teach
    direct spellings.
-6. Repository task shadowing and slash-selector precedence remain unchanged.
+6. Repository task shadowing and slash-selector precedence remain unchanged:
+   a repository task named like a built-in owns that word, `test` stays
+   reserved by contract [038](../contracts/038-unified-test-orchestration-contract.md)
+   along with the `help` and `version` meta routes, and every built-in name is
+   classified as shadowable or reserved in `effigy-cli`'s `builtin_names`
+   table so a new built-in cannot silently take a consumer task name. A
+   shadowed built-in keeps an explicit spelling where it has one
+   (`effigy fmt-rust` for the formatter behind a repository `fmt` task), and
+   `effigy --plan <name>` names it.
 7. Genuine command-owned subcommands stay nested under their owning command.
 
 The exact primary help taxonomy is:
@@ -123,7 +131,8 @@ from the compiled baseline only.
 
 Declared sources share the bundle source pin and acquisition code: one
 checkout lock (`.effigy/sources.lock.json`) records the bundle and every
-`catalog:<name>` pin, and only an explicit host `effigy bundle sync` moves
+`catalog:<name>` pin, and a host Prepare (`dev`, `bootstrap`, `container up`)
+or an explicit `effigy bundle sync` moves
 them. Resolution reads the pinned local snapshots and never fetches; an
 unprepared declared source is an error that names `effigy bundle sync`.
 

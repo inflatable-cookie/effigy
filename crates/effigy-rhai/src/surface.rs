@@ -20,7 +20,6 @@ pub const MODULE_CONTAINER: &str = "container";
 pub const MODULE_SCAN: &str = "scan";
 pub const MODULE_DOCS: &str = "docs";
 pub const MODULE_DEPLOY: &str = "deploy";
-pub const MODULE_DISTRIBUTION: &str = "distribution";
 pub const MODULE_CHANGELOG: &str = "changelog";
 pub const MODULE_CACHE: &str = "cache";
 pub const MODULE_GATEWAY: &str = "gateway";
@@ -61,7 +60,6 @@ pub const MODULE_NAMES: &[&str] = &[
     MODULE_SCAN,
     MODULE_DOCS,
     MODULE_DEPLOY,
-    MODULE_DISTRIBUTION,
     MODULE_CHANGELOG,
     MODULE_CACHE,
     MODULE_GATEWAY,
@@ -143,13 +141,6 @@ pub const FEATURE_DEPLOY_APPLY: &str = "deploy.apply";
 pub const FEATURE_DEPLOY_STATUS: &str = "deploy.status";
 pub const FEATURE_DEPLOY_HISTORY: &str = "deploy.history";
 pub const FEATURE_DEPLOY_REDEPLOY: &str = "deploy.redeploy";
-pub const FEATURE_DISTRIBUTION_VALIDATE_METADATA: &str = "distribution.validate_metadata";
-pub const FEATURE_DISTRIBUTION_CHECK_GLIBC_FLOOR: &str = "distribution.check_glibc_floor";
-pub const FEATURE_DISTRIBUTION_PREFLIGHT: &str = "distribution.preflight";
-pub const FEATURE_DISTRIBUTION_FIRST_PUBLISH: &str = "distribution.first_publish";
-pub const FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS: &str = "distribution.validate_artifacts";
-pub const FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT: &str = "distribution.generate_closeout";
-pub const FEATURE_DISTRIBUTION_WRITE_SUMMARY: &str = "distribution.write_summary";
 pub const FEATURE_CHANGELOG_VALIDATE: &str = "changelog.validate";
 pub const FEATURE_CHANGELOG_EXTRACT: &str = "changelog.extract";
 pub const FEATURE_UNLOCK_SCOPES: &str = "unlock.scopes";
@@ -219,13 +210,6 @@ pub const FEATURE_NAMES: &[&str] = &[
     FEATURE_DEPLOY_STATUS,
     FEATURE_DEPLOY_HISTORY,
     FEATURE_DEPLOY_REDEPLOY,
-    FEATURE_DISTRIBUTION_VALIDATE_METADATA,
-    FEATURE_DISTRIBUTION_CHECK_GLIBC_FLOOR,
-    FEATURE_DISTRIBUTION_PREFLIGHT,
-    FEATURE_DISTRIBUTION_FIRST_PUBLISH,
-    FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS,
-    FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT,
-    FEATURE_DISTRIBUTION_WRITE_SUMMARY,
     FEATURE_CHANGELOG_VALIDATE,
     FEATURE_CHANGELOG_EXTRACT,
     FEATURE_UNLOCK_SCOPES,
@@ -297,6 +281,7 @@ pub const FEATURE_DESCRIPTORS: &[RhaiFeatureDescriptor] = &[
     runner_feature(FEATURE_STATE_CAPTURE),
     host_handled_feature(FEATURE_STATE_CAPTURE_SET),
     runner_feature(FEATURE_STATE_HISTORY),
+    runner_feature(FEATURE_CONTAINER_WORKSPACE_ARTIFACT_BUILD),
     runner_feature(FEATURE_CONTAINER_STATUS),
     runner_feature(FEATURE_CONTAINER_LOGS),
     runner_feature(FEATURE_CONTAINER_RESET),
@@ -343,13 +328,6 @@ pub const FEATURE_DESCRIPTORS: &[RhaiFeatureDescriptor] = &[
     runner_feature(FEATURE_DEPLOY_STATUS),
     runner_feature(FEATURE_DEPLOY_HISTORY),
     runner_feature(FEATURE_DEPLOY_REDEPLOY),
-    runner_feature(FEATURE_DISTRIBUTION_VALIDATE_METADATA),
-    runner_feature(FEATURE_DISTRIBUTION_CHECK_GLIBC_FLOOR),
-    runner_feature(FEATURE_DISTRIBUTION_PREFLIGHT),
-    runner_feature(FEATURE_DISTRIBUTION_FIRST_PUBLISH),
-    runner_feature(FEATURE_DISTRIBUTION_VALIDATE_ARTIFACTS),
-    runner_feature(FEATURE_DISTRIBUTION_GENERATE_CLOSEOUT),
-    runner_feature(FEATURE_DISTRIBUTION_WRITE_SUMMARY),
     runner_feature(FEATURE_CHANGELOG_VALIDATE),
     runner_feature(FEATURE_CHANGELOG_EXTRACT),
     runner_feature(FEATURE_UNLOCK_SCOPES),
@@ -377,11 +355,20 @@ pub struct RhaiSurfaceFunction {
 
 pub fn rhai_surface_functions() -> Vec<RhaiSurfaceFunction> {
     let mut functions = EXTRA_SURFACE_FUNCTIONS.to_vec();
+    // A feature may have a hand-written surface entry with its exact host
+    // signature (for example `container::workspace_artifact_build(args)`).
+    // That entry wins over the generic descriptor projection so the catalog
+    // never lists one callable twice with two signatures.
     functions.extend(
         FEATURE_DESCRIPTORS
             .iter()
             .copied()
-            .map(feature_surface_function),
+            .map(feature_surface_function)
+            .filter(|function| {
+                !EXTRA_SURFACE_FUNCTIONS
+                    .iter()
+                    .any(|extra| extra.module == function.module && extra.name == function.name)
+            }),
     );
     functions.sort_by(|left, right| {
         left.module
@@ -468,6 +455,13 @@ const EXTRA_SURFACE_FUNCTIONS: &[RhaiSurfaceFunction] = &[
         name: "context",
         signature: "runtime::context()",
         description: "Return the active Effigy runtime context.",
+        safety: "read-only",
+    },
+    RhaiSurfaceFunction {
+        module: MODULE_RUNTIME,
+        name: "paths",
+        signature: "runtime::paths()",
+        description: "Return the host paths (`repo_root`, `catalog_root`, `skill_root`, `cwd`, `invocation_cwd`) so script functions can read what the top-level scope constants hold.",
         safety: "read-only",
     },
     RhaiSurfaceFunction {

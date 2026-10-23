@@ -146,7 +146,7 @@ pub fn load_task_manifest_with_inspection(
         );
     }
     reject_retired_sequence_keys(&composed.value, manifest_path, "manifest")?;
-    let manifest: TaskManifest =
+    let mut manifest: TaskManifest =
         composed
             .value
             .clone()
@@ -155,8 +155,15 @@ pub fn load_task_manifest_with_inspection(
                 path: manifest_path.to_path_buf(),
                 error,
             })?;
+    if let Some(bundle_defaults) = bundle_defaults.as_ref() {
+        // `apply_bundle_defaults` already translated the retired `[bootstrap]`
+        // spelling it merged in, so its statements reach the same notice.
+        manifest
+            .retired_config
+            .merge(bundle_defaults.retired_config.clone());
+    }
     manifest.validate(manifest_path)?;
-    crate::retired_config::emit_notice(manifest_path, &manifest.retired_config);
+    crate::retired_notice::emit(manifest_path, &manifest.retired_config);
     let effective_manifest =
         toml::to_string_pretty(&composed.value).map_err(|error| ManifestError::Render {
             path: manifest_path.to_path_buf(),
@@ -208,7 +215,7 @@ pub(crate) fn load_manifest_source_declarations(
 ) -> Result<
     (
         Option<ManifestBundleConfig>,
-        BTreeMap<String, crate::ManifestBundleBase>,
+        BTreeMap<String, crate::ManifestCatalogSourceConfig>,
     ),
     ManifestError,
 > {

@@ -390,6 +390,39 @@ fn skill_run_forwards_arguments_after_the_passthrough_delimiter() {
 }
 
 #[test]
+fn skill_run_args_match_run_and_rhai_steps_after_the_boundary() {
+    let fixtures = fixture_root();
+    let output = run_skill(
+        &fixtures.join("consumer-one"),
+        &[
+            "skill",
+            "run",
+            "--path",
+            "../source",
+            "args-parity",
+            "--json",
+            "--",
+            "--repo",
+            "literal-task-arg",
+            "--",
+            "tail",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let stdout = json(&output)["result"]["task_output"]["stdout"]
+        .as_str()
+        .expect("task stdout")
+        .to_owned();
+
+    // One leading `--` is Effigy's own boundary; later `--` tokens stay the
+    // task's. A `{args}` run step and a Rhai step see exactly the same list.
+    let expected = "run-arg=--repo\nrun-arg=literal-task-arg\nrun-arg=--\nrun-arg=tail\n";
+    assert!(stdout.contains(expected), "{stdout}");
+    let rhai_expected = "rhai-arg=--repo\nrhai-arg=literal-task-arg\nrhai-arg=--\nrhai-arg=tail\n";
+    assert!(stdout.contains(rhai_expected), "{stdout}");
+}
+
+#[test]
 fn skill_member_source_fails_before_side_effects() {
     let fixtures = fixture_root();
     let consumer = fixtures.join("consumer-one");
@@ -1536,4 +1569,79 @@ fn skill_named_passthrough_keeps_host_only_isolation() {
     );
 
     std::fs::remove_dir_all(&root).expect("remove named isolation fixture");
+}
+
+#[test]
+fn skill_run_accepts_an_explicit_bare_target_root() {
+    let fixtures = fixture_root();
+    let source = fixtures.join("source");
+    let root = unique_temp_root("bare-target");
+    let bare = root.join("bare-consumer");
+    std::fs::create_dir_all(&bare).expect("create bare target");
+
+    let output = run_skill(
+        &bare,
+        &[
+            "skill",
+            "run",
+            "--path",
+            source.to_str().expect("utf8 source"),
+            "identity",
+            "--repo",
+            bare.to_str().expect("utf8 bare target"),
+            "--json",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "a bare --repo target must not need repository markers: {output:?}"
+    );
+    let payload = json(&output);
+    let canonical = std::fs::canonicalize(&bare).expect("canonical bare target");
+    let canonical = canonical.to_str().expect("utf8 canonical target");
+    assert_eq!(payload["result"]["target"]["resolution_mode"], "Explicit");
+    assert_eq!(payload["result"]["target"]["root"], canonical);
+    assert_eq!(payload["result"]["target"]["repo_override"], canonical);
+    assert_eq!(payload["result"]["execution_cwd"], canonical);
+    let task_output = &payload["result"]["task_output"];
+    assert_eq!(task_output["cwd"], canonical);
+    assert_eq!(task_output["exit_code"], 0);
+    let stdout = task_output["stdout"].as_str().expect("task stdout");
+    assert!(stdout.contains(&format!("repo={canonical}")), "{stdout}");
+}
+
+#[cfg(unix)]
+#[test]
+fn skill_run_json_evidence_canonicalizes_a_symlinked_target_root() {
+    let fixtures = fixture_root();
+    let source = fixtures.join("source");
+    let root = unique_temp_root("bare-target-link");
+    let bare = root.join("bare-consumer");
+    std::fs::create_dir_all(&bare).expect("create bare target");
+    let alias = root.join("bare-consumer-link");
+    std::os::unix::fs::symlink(&bare, &alias).expect("symlink target alias");
+
+    let output = run_skill(
+        &bare,
+        &[
+            "skill",
+            "run",
+            "--path",
+            source.to_str().expect("utf8 source"),
+            "identity",
+            "--repo",
+            alias.to_str().expect("utf8 alias target"),
+            "--json",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let payload = json(&output);
+    let canonical = std::fs::canonicalize(&bare).expect("canonical bare target");
+    let canonical = canonical.to_str().expect("utf8 canonical target");
+    assert_eq!(payload["result"]["target"]["root"], canonical);
+    assert_eq!(payload["result"]["target"]["repo_override"], canonical);
+    assert_eq!(
+        payload["result"]["execution_cwd"], canonical,
+        "execution evidence must not keep the symlinked spelling"
+    );
 }

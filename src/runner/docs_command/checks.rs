@@ -13,7 +13,7 @@ use effigy_docs_policy::{
     insert_log_index_entry, json_examples_check_report, link_check_report,
     next_action_check_report, normalize_log_index_relative_path, path_check_report,
     resolve_docs_index_spec, resolve_docs_next_action_spec, scan_markdown_links,
-    workflow_path_check_report, AddLogIndexReportInputs, JsonExamplesReportInputs,
+    workflow_path_check_report, AddLogIndexReportInputs, DocsCheckReport, JsonExamplesReportInputs,
 };
 
 use super::report::dispatch_docs_report;
@@ -33,7 +33,30 @@ pub(super) fn run_check_links(
         .iter()
         .flat_map(|file| scan_markdown_links(file).unwrap_or_else(|err| vec![err]))
         .collect::<Vec<_>>();
-    dispatch_docs_report(link_check_report(&files, &failures), output_json)
+    dispatch_docs_report(
+        with_resolved_paths(link_check_report(&files, &failures), paths),
+        output_json,
+    )
+}
+
+/// Print the resolved explicit path set beside the text report.
+///
+/// A nested catalog's check must say which files it actually read, so a
+/// cwd-relative or transition root-relative spelling is never silent. The
+/// no-argument default scope keeps its existing report.
+fn with_resolved_paths(mut report: DocsCheckReport, paths: &[PathBuf]) -> DocsCheckReport {
+    if paths.is_empty() {
+        return report;
+    }
+    let listing = paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let resolved = format!("\nresolved paths: {listing}");
+    report.success_text.push_str(&resolved);
+    report.failure_text.push_str(&resolved);
+    report
 }
 
 pub(super) fn run_check_json_examples(
@@ -45,10 +68,11 @@ pub(super) fn run_check_json_examples(
     required_blocks_override: &[DocsBlockRequirement],
     output_json: bool,
 ) -> Result<String, RunnerError> {
+    let explicit_file = file_override.cloned();
     let file = resolve_repo_input(
         repo_root,
-        file_override
-            .cloned()
+        explicit_file
+            .clone()
             .unwrap_or_else(|| PathBuf::from(DEFAULT_JSON_EXAMPLES_FILE)),
     );
     let section_title = section_override.unwrap_or(DEFAULT_JSON_EXAMPLES_SECTION);
@@ -79,17 +103,18 @@ pub(super) fn run_check_json_examples(
         &required_blocks_tuples,
     );
 
+    let report = json_examples_check_report(JsonExamplesReportInputs {
+        file: &result.file,
+        section: &result.section,
+        block_count: result.block_count,
+        min_blocks: result.min_blocks,
+        required: &result.required,
+        required_blocks: &required_blocks_tuples,
+        failures: &result.failures,
+        ok: result.ok,
+    });
     dispatch_docs_report(
-        json_examples_check_report(JsonExamplesReportInputs {
-            file: &result.file,
-            section: &result.section,
-            block_count: result.block_count,
-            min_blocks: result.min_blocks,
-            required: &result.required,
-            required_blocks: &required_blocks_tuples,
-            failures: &result.failures,
-            ok: result.ok,
-        }),
+        with_resolved_paths(report, explicit_file.as_slice()),
         output_json,
     )
 }
@@ -115,7 +140,10 @@ pub(super) fn run_check_headings(
         check_headings(repo_root, paths, required_headings).map_err(map_docs_policy_error)?;
 
     dispatch_docs_report(
-        heading_check_report(&files, required_headings, &findings),
+        with_resolved_paths(
+            heading_check_report(&files, required_headings, &findings),
+            paths,
+        ),
         output_json,
     )
 }
@@ -141,7 +169,10 @@ pub(super) fn run_check_contains(
         check_contains(repo_root, paths, required_text).map_err(map_docs_policy_error)?;
 
     dispatch_docs_report(
-        contains_check_report(&files, required_text, &findings),
+        with_resolved_paths(
+            contains_check_report(&files, required_text, &findings),
+            paths,
+        ),
         output_json,
     )
 }
@@ -158,7 +189,10 @@ pub(super) fn run_check_paths(
     }
 
     let (resolved_paths, findings) = check_paths(repo_root, paths);
-    dispatch_docs_report(path_check_report(&resolved_paths, &findings), output_json)
+    dispatch_docs_report(
+        with_resolved_paths(path_check_report(&resolved_paths, &findings), paths),
+        output_json,
+    )
 }
 
 pub(super) fn run_check_forbidden(
@@ -182,7 +216,10 @@ pub(super) fn run_check_forbidden(
         check_forbidden(repo_root, paths, forbidden_text).map_err(map_docs_policy_error)?;
 
     dispatch_docs_report(
-        forbidden_check_report(&files, forbidden_text, &findings),
+        with_resolved_paths(
+            forbidden_check_report(&files, forbidden_text, &findings),
+            paths,
+        ),
         output_json,
     )
 }

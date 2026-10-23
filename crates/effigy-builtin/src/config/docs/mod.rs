@@ -32,10 +32,6 @@ pub(super) fn package_manager_lines(profile: ConfigDocProfile) -> Vec<&'static s
     tasks::package_manager_lines(profile)
 }
 
-pub(super) fn distribution_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
-    tasks::distribution_lines(profile)
-}
-
 pub(super) fn containers_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
     tasks::containers_lines(profile)
 }

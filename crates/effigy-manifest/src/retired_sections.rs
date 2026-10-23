@@ -95,6 +95,12 @@ pub(crate) fn strip(root: &mut Value) -> RetiredConfigDeclaration {
         ));
     }
 
+    if root.remove("distribution").is_some() {
+        declaration.record(
+            "`[distribution]` is ignored; the distribution commands were removed in v0.15: declare the release in `[release]` (identities, gates, artifacts and targets, contract 054), and keep project-specific release checks as `[tasks]` wired as gates or `verify`",
+        );
+    }
+
     if root.remove("shell").is_some() {
         declaration.record(
             "`[shell]` is ignored; managed shell tabs always run `exec ${SHELL:-/bin/zsh} -i` and there is no manifest override",
@@ -195,6 +201,18 @@ mod tests {
             !notice.contains("external tool"),
             "recording sessions elsewhere is not the answer: {notice}"
         );
+    }
+
+    #[test]
+    fn a_distribution_table_is_ignored_with_its_replacement() {
+        let manifest = parse(
+            "[distribution.package]\nname = \"my-tool\"\n\n[distribution.preflight]\ndocs-task = \"qa:docs\"\n\n[tasks.build]\nrun = \"true\"\n",
+        );
+        assert!(manifest.tasks.contains_key("build"));
+        let notice = notice(&manifest);
+        assert!(notice.contains("`[distribution]` is ignored"), "{notice}");
+        assert!(notice.contains("`[release]`"), "{notice}");
+        assert!(notice.contains("contract 054"), "{notice}");
     }
 
     #[test]

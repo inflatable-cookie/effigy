@@ -23,8 +23,7 @@ impl FindingSink for TestSink {
 }
 
 #[test]
-fn validate_manifest_schema_accepts_docs_policy_bootstrap_container_distribution_and_release_sections(
-) {
+fn validate_manifest_schema_accepts_docs_policy_bootstrap_container_and_release_sections() {
     let manifest: Value = toml::from_str(
         r###"
 [catalog]
@@ -108,28 +107,6 @@ timeout_secs = 60
 [containers.web.host]
 ports = ["8080:80", "3306:3306"]
 mounts = ["./:/workspace"]
-
-[distribution.package]
-name = "effigy"
-repo-url = "https://github.com/inflatable-cookie/effigy.git"
-brew-formula = "inflatable-cookie/effigy/effigy"
-
-[distribution.publish]
-binary-name = "effigy"
-registry-label = "crates.io"
-
-[distribution.preflight]
-docs-task = "qa:docs"
-smoke-task = "dist:preflight:smoke"
-
-[distribution.metadata]
-required-docs = ["docs/guides/010-path-installation-and-release.md"]
-required-files = [".github/workflows/release-binaries.yml"]
-
-[distribution.closeout]
-owner = "release"
-related = "docs/guides/049-ci-binary-distribution-and-release-protocol.md"
-next-step = "Review evidence and publish release sign-off notes."
 
 [release]
 version-file = "Cargo.toml"

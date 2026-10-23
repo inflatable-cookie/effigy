@@ -119,6 +119,34 @@ fn parse_release_resume_approve_and_receipt_take_a_run_id() {
         })
     );
 
+    for (flag, published) in [("--published", true), ("--not-published", false)] {
+        let decide = parse_command(vec![
+            "release".to_owned(),
+            "decide".to_owned(),
+            "run-abc".to_owned(),
+            flag.to_owned(),
+        ])
+        .expect("decide parse");
+        assert_eq!(
+            decide,
+            Command::Release(ReleaseArgs {
+                subcommand: ReleaseSubcommand::Decide {
+                    run: "run-abc".to_owned(),
+                    published,
+                },
+                repo_override: None,
+                output_json: false,
+            })
+        );
+    }
+    let unclear = parse_command(vec![
+        "release".to_owned(),
+        "decide".to_owned(),
+        "run-abc".to_owned(),
+    ])
+    .expect_err("a decision needs --published or --not-published");
+    assert!(unclear.to_string().contains("--published"), "{unclear}");
+
     let receipt =
         parse_command(vec!["release".to_owned(), "receipt".to_owned()]).expect("receipt parse");
     assert_eq!(
@@ -143,31 +171,42 @@ fn parse_release_prepare_and_execute_name_their_replacement() {
 }
 
 #[test]
-fn parse_release_verify_install_with_repo_tag_and_repo_url() {
-    let cmd = parse_command(vec![
-        "release".to_owned(),
-        "verify-install".to_owned(),
-        "--repo".to_owned(),
-        "/tmp/repo".to_owned(),
-        "--tag".to_owned(),
-        "v0.2.5".to_owned(),
-        "--repo-url".to_owned(),
-        "https://example.com/repo.git".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse should succeed");
+fn parse_release_effigy_only_commands_name_their_repo_task() {
+    for (retired, replacement) in [
+        ("validate", "release:metadata"),
+        ("preflight", "release:preflight"),
+        ("proof", "release:proof"),
+        ("check-binary", "release:check-binary"),
+        ("verify-install", "release:verify:install"),
+        ("evidence", "release:receipt_or_evidence"),
+    ] {
+        let error = parse_command(vec!["release".to_owned(), retired.to_owned()])
+            .expect_err("the retired subcommand refuses");
+        let message = error.to_string();
+        assert!(
+            message.contains("retired in v0.15"),
+            "{}: {message}",
+            retired
+        );
+        let expected = if replacement == "release:receipt_or_evidence" {
+            "release receipt"
+        } else {
+            replacement
+        };
+        assert!(message.contains(expected), "{}: {message}", retired);
+    }
+}
 
-    assert_eq!(
-        cmd,
-        Command::Release(ReleaseArgs {
-            subcommand: ReleaseSubcommand::VerifyInstall {
-                tag: Some("v0.2.5".to_owned()),
-                repo_url: Some("https://example.com/repo.git".to_owned()),
-            },
-            repo_override: Some(PathBuf::from("/tmp/repo")),
-            output_json: true,
-        })
-    );
+#[test]
+fn parse_release_retired_preflight_names_the_pre_gate_stage() {
+    let error = parse_command(vec!["release".to_owned(), "preflight".to_owned()])
+        .expect_err("the retired subcommand refuses");
+    let message = error.to_string();
+    // Contract 054 makes preflight a pre-prepare gate, so the refusal names
+    // `pre-gates` and the repo task that replaced the command, never `certify`.
+    assert!(message.contains("`pre-gates` stage"), "{message}");
+    assert!(message.contains("effigy release:preflight"), "{message}");
+    assert!(!message.contains("`certify` gate"), "{message}");
 }
 
 #[test]

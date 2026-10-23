@@ -12,7 +12,7 @@ use super::{
     process_result_map, reject_recursive_effigy_process, resolve_runtime_path, rhai_runtime_error,
     run_feature_dynamic, run_process_streaming, run_process_streaming_with_options,
     run_process_teeing, run_process_teeing_with_options, with_local_node_bin_path, HostCallbacks,
-    ScriptContext,
+    RhaiHostPaths, ScriptContext,
 };
 
 #[path = "host_api/container.rs"]
@@ -48,6 +48,7 @@ pub(super) fn register_host_api(
     engine: &mut Engine,
     context: Arc<ScriptContext>,
     callbacks: HostCallbacks,
+    host_paths: RhaiHostPaths,
 ) {
     // Flat registrations (most commonly used)
     engine.register_fn("log", |message: ImmutableString| {
@@ -64,7 +65,7 @@ pub(super) fn register_host_api(
     utility::register_utility_modules(engine, context.clone());
     engine.register_static_module(
         MODULE_RUNTIME,
-        std::rc::Rc::new(build_runtime_module(context.clone())),
+        std::rc::Rc::new(build_runtime_module(context.clone(), host_paths)),
     );
     fs::register_fs_module(engine, context.clone());
     git::register_git_module(engine, context.clone());
@@ -83,8 +84,11 @@ pub(super) fn register_host_api(
 
 // Module builders
 
-fn build_runtime_module(context: Arc<ScriptContext>) -> rhai::Module {
+fn build_runtime_module(context: Arc<ScriptContext>, host_paths: RhaiHostPaths) -> rhai::Module {
     let mut module = rhai::Module::new();
+    module.set_native_fn("paths", move || -> Result<Dynamic, Box<EvalAltResult>> {
+        Ok(host_paths.to_rhai_map().into())
+    });
     module.set_native_fn("context", move || -> Result<Dynamic, Box<EvalAltResult>> {
         let runtime_context = super::active_runtime_context_for_script(&context)
             .map_err(|error| rhai_runtime_error(error.to_string()))?;

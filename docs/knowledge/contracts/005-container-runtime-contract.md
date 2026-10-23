@@ -361,7 +361,8 @@ and resolves the final isolated identity.
 Manifest resolution reads per-checkout source pins and immutable bundle source
 generations (contract 020). Observe never acquires the source cache lock or
 fetches a bundle. Existing materialized bytes remain readable during migration;
-Prepare imports them and `effigy bundle sync` explicitly updates selected pins.
+Prepare imports them, host Prepare paths refresh a stale pin, and
+`effigy bundle sync` explicitly updates selected pins.
 
 The Prepare stage of `up` and other Mutate commands publishes through kernel
 Objects under the environment owner gate. Files are sealed 0400 and directories
@@ -448,7 +449,14 @@ admission preserving the desired reference, and reset preserving its sibling.
 
 A *partial* activation (the record's `applying` generation: the apply ran,
 activation did not) reconciles only against its original admission; changed
-inputs refuse until `effigy container down`. With unchanged admitted inputs, a
+inputs refuse until `effigy container down`. That stop renders and interpolates
+like any other teardown, never assigning a port: a generation whose ports were
+never assigned is torn down with a teardown-only interpolation value, so the
+cleanup of a first start that failed cannot fail on the unassigned-port
+refusal. `up` and `prepare` still fail closed on such a render. When the
+record holds no applied and no partial generation and the backend project owns
+no container, network or volume, `container down` is a no-op that renders
+nothing and calls no Compose. With unchanged admitted inputs, a
 missing or stopped primary does not require operator intervention: verify every
 existing project container's checkout and scope ownership, including stopped
 siblings, then recover through ordinary Compose up. Unavailable inventory or
@@ -519,7 +527,11 @@ starts from prepared volumes.
 
 Detached JSON failures contain bounded structural details: state, phase,
 unverified readiness/exposure, and supported recovery/stop commands. No raw
-backend logs, argv or environment enter these details. Current inspect must
+backend logs, argv or environment enter these details. A failed detached
+backend's output now lives in the checkout's retained runtime record
+(`.effigy/runtime/logs/<project>.compose.log`, bounded to its last 64 KiB) and
+its tail enters the operator-facing error text, which is not part of the JSON
+detail vocabulary. Current inspect must
 verify full ID, project, service, explicit non-oneoff running state, canonical
 checkout ownership and published-port associations. These are fixture-qualified
 production adapters, not evidence of the original consumer incident or real
@@ -991,9 +1003,25 @@ hosts such as `mail.app.test` stay under that apex. The primary checkout keeps
 declared names. `effigy container hosts` returns declared and effective names,
 origins, cookie domain and WebAuthn relying-party id. Effigy registers those
 effective names on the gateway. It does not rewrite application configuration.
-For a container manifest, `dns.base_domain` overrides the first resolved DNS
-route as the declared apex for generated TCP aliases and the reported cookie
-domain; the same checkout-scoping rule applies to that configured apex.
+For a container manifest, `dns.base_domain` declares the apex for generated TCP
+aliases and the reported cookie domain and RP ID; the same checkout-scoping
+rule applies to that configured apex. Without a declaration Effigy infers the
+base from the HTTP routes: the shallowest route host served by the primary
+service (the service of the front route) or by a managed host listener wins,
+route order breaks a depth tie, and only when neither serves a usable host
+does the shallowest route host of any service stand in. A wildcard route never
+becomes the apex, and an inferred base is one of the declared route hosts,
+never a parent domain the routes share. So a bundle whose first route is a
+subdomain no longer names that subdomain as the apex, while a project whose
+services already use a deeper name keeps it. Policy load resolves that one
+apex (declared or inferred, in the checkout's scope) and passes it to the
+generated TCP aliases, the Compose route-parity `extra_hosts` and gateway
+service-alias registration, so `container hosts` never advertises a different
+apex than the gateway or the container's own aliases. When an inferred base is
+not a suffix of every HTTP route, `container hosts` warns and its JSON
+`base_domain` object carries `"inferred": true` and the `warning`. An
+undeclared base is inferred; a manifest that needs a different apex declares
+`base_domain` explicitly. A declared value is never inferred or rewritten.
 
 Owned mutable resources for that generation carry `com.effigy.scope`,
 `com.effigy.project`, or the exact Compose project label. `effigy container
@@ -1090,8 +1118,10 @@ assignments for stacks that are not running while their routes stay
 registered, so without this reservation generation could publish a stack on
 an IP a stale route's gateway TCP listener still binds while registration
 reallocated elsewhere, hanging the host alias against a dead or wrong
-upstream while mapped localhost ports stayed ready. Stale-route deletion for
-missing checkouts stays with `effigy container retire --dead` (#305).
+upstream while mapped localhost ports stayed ready. A stale route for a
+missing checkout is deleted by `effigy container retire --dead` when its scope
+record still exists, and by `effigy gateway repair` (and once automatically on
+loopback exhaustion) when it does not.
 Status/doctor alias reporting is static route-table analysis (conflicting
 bind tuples, missing/invalid fallbacks); live OS-level listener bind failures
 remain daemon-log-only.
@@ -1254,6 +1284,56 @@ exit status. The existing project, service, published-port and host-listener
 ownership checks still gate every route claim. No route is claimed from a
 fallback port while the declared runtime binding is absent.
 
+## Host load and profile VM maintenance
+
+Every bounded Colima/nerdctl call keeps its own bound. A timeout on a loaded
+host is evidence about the host, not about the service, and the contract
+distinguishes the two:
+
+- Before a bounded observation is retried, Effigy reads the host's own load
+  (`/proc/loadavg`, or `sysctl vm.loadavg` on macOS). A host at or above one
+  runnable task per CPU is saturated. The observation is read-only and never
+  starts a container, VM or runtime command.
+- `container up` opens the first exec-readiness window from two seconds to
+  fifteen seconds once when the host is saturated, so the service gets a
+  bounded second attempt before any restart. A host below that threshold keeps
+  the two-second window, and every post-restart window, live-run refusal and
+  failure path is unchanged.
+- An owned inspect that times out on a saturated host is retried at most twice
+  with the same fifteen-second bound before the failure is reported. The
+  failure names the observed load and states that the container's state is
+  unproven and that Effigy did not start, stop or recreate it.
+- A readiness refusal that ran out on a saturated host names the host in the
+  same error. Without an overload observation the error keeps its
+  service-language and its existing meaning.
+- A service observed `Exited (141)` is reported as SIGPIPE (a closed
+  stdout/stderr pipe whose reader went away), not as a health verdict. Detached
+  `container up` keeps backend output in a retained file, so Effigy owns no
+  reader lifetime there.
+
+nerdctl 2.3.1 never deletes the exec process behind a health check, so the
+profile VM accumulates one `health-check-<id>.pid` file per check under
+`/run/containerd/io.containerd.runtime.v2.task/<namespace>/<container>/`.
+`/run` is a finite-inode tmpfs; once it fills, every exec and container create
+in the profile fails with `no space left on device`. nerdctl 2.4.1 deletes the
+exec process and stops the leak; the VM runs whatever nerdctl its Colima image
+ships (Colima 0.10.3 ships 2.3.1), so the doctor warning names the version
+rather than promising an upgrade. Effigy cannot upgrade a running profile's
+runtime, so it:
+
+- reports `/run` inode use and the total and stale pid-file counts for every
+  running Colima profile in `effigy doctor`, with a warning that names the
+  prune and the fixed nerdctl version when inode use reaches 80% or the stale
+  count reaches 10,000;
+- prunes files matching exactly `health-check-*.pid`, directly inside a
+  containerd runtime-v2 task directory and older than ten minutes, on
+  `container up` (bounded, never failing the bring-up) and on
+  `effigy container profile prune-health-pid-files [--profile <NAME>]`, which
+  reports the counts and inode use before and after.
+
+No other path under the task root is read or removed, and a younger file may
+belong to a health check still in flight, so it is kept.
+
 ## Owned service start after Colima restart
 
 A running Colima VM can still leave Effigy-owned Compose containers `Exited`
@@ -1272,17 +1352,29 @@ started by name. Effigy does not recreate them, does not delete volumes,
 and does not delete systemd units, including nerdctl health-check timers
 named after container ids.
 
-Start exit 0 is not readiness. A nerdctl warning that
-`Unit <id>.timer was already loaded or has a fragment file` is recorded when
-inspect then shows the owned container running; systemd units are not
-deleted. A start that reports that collision while inspect shows the
-container running fails immediately as **stale backend state** with the selected
-Colima profile and exact inspect/start commands. A running process does not
-prove its health-check timer was installed. Effigy does not enter readiness
-polling or publish the environment as ready after this failure, and does not
-stop or mutate the now-running container or its systemd units. The operator
-inspects the named container and retries the exact start after the backend
-timer has unloaded. This applies to Colima/nerdctl only; Docker is unchanged. If the owned
+Start exit 0 is not readiness. Effigy never starts a container that is
+already running or that the backend is still acting on. Immediately before
+each recovery start it observes that one container with its own `inspect`,
+and starts it only when the observation proves a stopped state: `Running`
+false with `State.Status` `created`, `exited` or `dead`. A running container
+needs nothing, and `restarting`, `starting`, `stopping`, `pausing`,
+`unpausing`, `removing`, `paused` or any unproven status is left to the
+readiness wait, so a container Compose started in the meantime is never
+started a second time. An inspect that cannot prove the state fails closed
+with its own bounded error instead of starting blind, and a container the
+backend no longer has is not started.
+
+nerdctl implements a container health check as the transient timer
+`{full_id}.timer`. A container whose process exits on its own leaves that
+unit loaded and active, so the next `start` of the same container reports
+`Unit <id>.timer was already loaded or has a fragment file` and exits
+non-zero even though the container does start. When a start reports that
+collision and the following inventory shows the container running, Effigy
+records the collision line and hands the service to the normal readiness
+and health wait, which proves or fails the health check itself. That is not
+stale backend state, and Effigy does not stop or mutate the now-running
+container or delete its systemd units. This applies to Colima/nerdctl only;
+Docker is unchanged. If the owned
 Colima/nerdctl container stays stopped with that collision, Effigy may
 recover once: inspect the container for a full 64-character hexadecimal ID,
 require stopped status and the selected project/service labels (not one-off,
@@ -1412,14 +1504,81 @@ environment, but they must not invent a separate activation model.
 `effigy container ports` is the only supported way to release generated-port
 allocations outside `container retire`. `status` and `reclaim` without
 `--apply` are read-only. `reclaim --apply --expect-plan <DIGEST>` removes only
-entries whose project path is definitely missing and that no scope record,
-gateway route, container in any state, published port or bound host port still
-references. Its locked recomputation must reproduce the reviewed digest. Any
-incomplete inventory or unreadable ownership store holds every absent-path
-entry, and the report names the reason. Reclaim never removes runtime
-resources, data, volumes, routes, certificates, profiles, scheduler settings or
-loopback assignments. Writes use the registry's `ports.lock`, the same lock
-generated-compose allocation takes, and preserve unknown registry fields.
+entries whose project path is definitely missing and that no scope record that
+retains project volumes or routes, gateway route, container in any state,
+published port or bound host port still references. A path is definitely
+missing when its leaf is absent and its nearest existing ancestor is a readable
+directory; a missing parent under a readable root proves absence, while a real
+I/O or permission error, a non-directory ancestor and an absent volume root
+(such as an unmounted `/Volumes/...`) stay unknown and hold. Its locked
+recomputation must reproduce the reviewed digest. Reclaim never removes
+runtime resources, data, volumes, routes, certificates, profiles, scheduler
+settings or loopback assignments. Writes use the registry's `ports.lock`, the
+same lock generated-compose allocation takes, and preserve unknown registry
+fields.
+
+A runtime-scope record no longer holds an entry on its own. It holds while it
+retains volumes or routes of its own for the project; an observable profile's
+complete all-states inventory, the route table and the bound-port probe decide
+the rest.
+
+A stopped Colima profile is scoped to the entries it can own rather than
+failing the whole proof (effigy#294). It publishes no host port while stopped,
+so clearing a host-port question never requires starting it. It holds an entry
+when a runtime-scope record names that entry on the stopped profile. An entry
+with no recorded profile is attributed to the configured Effigy profile — the
+profile Prepare would allocate it on — because the registry stores no profile
+and environment records are not enumerable from this seam. That inference
+fails closed where it matters: a stopped configured profile holds every entry
+attributed to it. An inventory failure for a running runtime, an unreadable
+scope store and an unreadable route table still hold every absent-path entry.
+
+Allocation reclaims under pressure. When a Prepare that needs a new range
+finds fewer than ten free ranges, it applies the same rules as
+`reclaim --apply` — same evidence, digest recomputed under the lock, backup
+first — then allocates, and reports one line with the reclaimed count. No read
+path reclaims.
+
+## Loopback dead-owner collection
+
+`effigy gateway repair` is the supported way to release loopback assignments and
+container routes whose owner is gone; allocation also self-heals once when the
+pool is full. Preview and JSON output are read-only, listing every assignment and
+container route with `reclaim`, `hold` or `retain` and a reason, plus a plan
+digest over those decisions. `--yes` applies the plan its locked recomputation
+still proves dead; `--yes --expect-plan <DIGEST>` must reproduce the reviewed
+digest or nothing is written. Writes go through the endpoint Store's owner gate,
+release the assignment and its stale container routes in one publication,
+preserve unknown fields and keep a pre-edit copy of both endpoint documents with
+SHA-256 evidence.
+
+A loopback assignment or container route is dead only when its owner checkout
+path is definitely missing (absent with its immediate parent directory readable,
+the classification `container ports reclaim` uses; an I/O or permission error,
+or an absent parent such as an unmounted volume or a vanished intermediate
+directory, is unknown and holds it), no runtime-scope record names the identity, checkout path or
+route, no container in any state carries its project label or working directory
+or publishes on its address, no live assignment or live project route keeps the
+address, and no non-gateway process listens on the route's alias tuple. The
+gateway binds its TCP aliases from the Store's route table and stops a listener
+when its route disappears, so its own alias for a dead route is not a hold; a
+same-user process that is not the recorded gateway daemon, or a listener probe
+that cannot answer, is. Allocation, its one automatic collection and `gateway
+repair` prove ownership from the same inventory — every container state on every
+profile, with a profile whose VM is stopped recorded as stopped rather than
+broken — so no path can release what another holds. A shared-service identity is
+dead only when no consumer project that uses it is live and no container carries
+the shared service's own project name. Incomplete inventory or an unreadable scope store
+holds the whole plan and names the reason. A stopped Colima profile does not
+hold a loopback entry: it binds no host address and cannot start a stack whose
+checkout is gone, so only a failure that is not a stopped profile makes the
+inventory incomplete. Present paths, running containers and unknown path states are
+never released, so a live project's address never changes.
+
+The endpoint Store quarantines a released address for one reuse window (the DNS
+TTL plus drain budget and the operation budget), so an allocation that needed a
+release succeeds after that window. Growing the pool beyond `127.1.0.50` is not
+part of this contract; the `lo0` aliases come from `gateway setup`.
 
 ## Handoff contract
 
@@ -1462,7 +1621,10 @@ locking or migrating them. Missing bindings report `unassigned (assigned on
 first prepare)` and render a Compose placeholder that refuses execution until
 prepared. Shared-service JSON reports `target_port: null` with that label in
 `allocation` until assigned. Explicit fixed host ports remain usable without
-an allocation.
+an allocation. Teardown is the one exception, and it publishes nothing:
+`container down`, reset and the failed-activation cleanup give that variable a
+teardown-only value so they can stop a generation whose ports were never
+assigned, while `up` and `prepare` keep refusing on the same render.
 
 Prepare calls the existing gateway-domain `ports::prepare_ports` allocator,
 then resolves again before admission and publication. The allocator loads,

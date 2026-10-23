@@ -63,8 +63,20 @@ fn build_json_envelope_success_with_binary(
             "name": name,
         },
         "result": result,
+        "warnings": retired_config_warnings(),
         "error": serde_json::Value::Null,
     })
+}
+
+/// Retired v0.15 config this invocation read, as envelope warnings. JSON mode
+/// keeps them out of stderr so machine readers get one parseable document.
+fn retired_config_warnings() -> serde_json::Value {
+    serde_json::Value::Array(
+        effigy_manifest::take_retired_notices()
+            .into_iter()
+            .map(serde_json::Value::String)
+            .collect(),
+    )
 }
 
 pub fn build_json_envelope_error(
@@ -84,6 +96,7 @@ pub fn build_json_envelope_error(
             "name": name,
         },
         "result": serde_json::Value::Null,
+        "warnings": retired_config_warnings(),
         "error": {
             "kind": error_kind,
             "message": message,

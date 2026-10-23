@@ -127,6 +127,19 @@ pub fn run_container_status(
     for detail in &mount_details {
         report.success_text.push_str(&format!("\n[warn] {detail}"));
     }
+    // Compose created nothing for this project, so there is no service row to
+    // explain the empty listing. Say so and name the retained up attempt.
+    if runtime_running && services.is_empty() {
+        let mut diagnostic =
+            effigy_containers::exec::no_containers_diagnostic(repo_root, &policy.project_name)
+                .into_iter();
+        if let Some(first) = diagnostic.next() {
+            report.success_text.push_str(&format!("\n[warn] {first}"));
+        }
+        for line in diagnostic {
+            report.success_text.push_str(&format!("\n{line}"));
+        }
+    }
     annotate_backend_source(&mut report, repo_root, &policy);
     annotate_warning_lines(&mut report, &colima_profile_warnings(&policy, repo_root));
     if let Some(warning) = primary_service_exec_warning {
@@ -211,6 +224,12 @@ pub fn run_container_logs(
     // Log discovery is label-based on the selected backend. It must not open
     // the prospective render, which may never have been published.
     let rows = list_compose_containers_for_policy_including_stopped(repo_root, &policy)?;
+    if rows.is_empty() {
+        return Err(EffigyRuntimeError::task_invocation(
+            effigy_containers::exec::no_containers_diagnostic(repo_root, &policy.project_name)
+                .join("\n"),
+        ));
+    }
     let names = rows
         .iter()
         .filter(|row| !row.oneoff && row.service.as_deref() == Some(service))

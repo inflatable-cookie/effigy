@@ -75,6 +75,13 @@ pub enum ReleaseRunStatus {
     Paused,
     /// The last invocation stopped at an approval checkpoint.
     AwaitingApproval,
+    /// The last invocation stopped waiting for hosted evidence for one gate.
+    /// The Run holds no process open; a resume re-checks the evidence.
+    AwaitingHostedEvidence,
+    /// The last invocation stopped because a target's publish outcome is
+    /// unknown and it declares no `check` task. The operator records whether
+    /// the candidate is published before the Run continues (054 §7).
+    AwaitingDecision,
     /// The last invocation failed. A resume may continue from its checkpoint.
     Failed,
     /// Every stage completed.
@@ -86,10 +93,52 @@ impl ReleaseRunStatus {
         match self {
             Self::Paused => "paused",
             Self::AwaitingApproval => "awaiting-approval",
+            Self::AwaitingHostedEvidence => "awaiting-hosted-evidence",
+            Self::AwaitingDecision => "awaiting-decision",
             Self::Failed => "failed",
             Self::Complete => "complete",
         }
     }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        [
+            Self::Paused,
+            Self::AwaitingApproval,
+            Self::AwaitingHostedEvidence,
+            Self::AwaitingDecision,
+            Self::Failed,
+            Self::Complete,
+        ]
+        .into_iter()
+        .find(|status| status.label() == value.trim())
+    }
+}
+
+/// What an operator records for a target whose publish outcome is unknown
+/// (contract 054 §7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetDecision {
+    Published,
+    NotPublished,
+}
+
+impl TargetDecision {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Published => "published",
+            Self::NotPublished => "not-published",
+        }
+    }
+}
+
+/// One operator decision about an unknown publish outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordDecision {
+    pub target: String,
+    /// `published` or `not-published`.
+    pub decision: String,
+    pub decided_by: String,
+    pub decided_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,6 +192,36 @@ pub struct RecordGate {
     pub stage: String,
     pub name: String,
     pub passed: bool,
+    /// The hosted GitHub Actions run a hosted wait reused, when this gate was
+    /// satisfied by exact-commit evidence instead of running its command.
+    #[serde(default)]
+    pub hosted_run: Option<String>,
+    /// The bound run's GitHub id, so the receipt names the one run this release
+    /// dispatched rather than whichever run was newest.
+    #[serde(default)]
+    pub hosted_run_id: Option<u64>,
+}
+
+/// One hosted-evidence wait: the dispatch window a release Run opened and the
+/// one run it bound (contract 054 §3).
+///
+/// The window is what stops a wait from taking a sibling run. A run created
+/// before it belongs to an earlier dispatch — another release, an operator's
+/// re-dispatch — and is never this Run's evidence. Once bound, the run id is
+/// what a resume re-checks: the release never re-binds to something newer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordHostedWait {
+    pub gate: String,
+    pub workflow: String,
+    /// The commit the evidence must be for.
+    pub commit: String,
+    /// When this Run opened its dispatch window (RFC 3339, UTC).
+    pub created_after: String,
+    /// The dispatched run this Run bound, once it has one.
+    #[serde(default)]
+    pub run_id: Option<u64>,
+    #[serde(default)]
+    pub run_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,8 +237,10 @@ pub enum RecordTargetState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordDestination {
-    /// The identity whose tag this destination is.
-    pub identity: String,
+    /// The identity whose tag this destination is. A `task` target reports
+    /// destination IDs without naming an identity (contract 054 §6).
+    #[serde(default)]
+    pub identity: Option<String>,
     pub destination: String,
     pub commit: String,
 }
@@ -218,9 +299,16 @@ pub struct ReleaseRecord {
     pub identities: Vec<RecordIdentity>,
     pub artifacts: Vec<RecordArtifact>,
     pub gates: Vec<RecordGate>,
+    /// Hosted-evidence waits: the dispatch window each opened and the run it
+    /// bound (contract 054 §3).
+    #[serde(default)]
+    pub hosted_waits: Vec<RecordHostedWait>,
     pub targets: Vec<RecordTarget>,
     pub verifications: Vec<RecordVerification>,
     pub approvals: Vec<RecordApproval>,
+    /// Operator rulings on unknown publish outcomes (contract 054 §7).
+    #[serde(default)]
+    pub decisions: Vec<RecordDecision>,
     pub checkpoints: Vec<RecordCheckpoint>,
     pub pushed_commit: bool,
     pub errors: Vec<String>,
@@ -244,9 +332,11 @@ impl ReleaseRecord {
             identities: Vec::new(),
             artifacts: Vec::new(),
             gates: Vec::new(),
+            hosted_waits: Vec::new(),
             targets: Vec::new(),
             verifications: Vec::new(),
             approvals: Vec::new(),
+            decisions: Vec::new(),
             checkpoints: Vec::new(),
             pushed_commit: false,
             errors: Vec::new(),
@@ -266,6 +356,14 @@ impl ReleaseRecord {
             .any(|approval| approval.stage == stage.label())
     }
 
+    /// A gate that already passed in this stage, so a resumed gate stage never
+    /// re-runs it (a hosted wait resumes in the middle of one).
+    pub fn gate_passed(&self, stage: &str, name: &str) -> bool {
+        self.gates
+            .iter()
+            .any(|gate| gate.stage == stage && gate.name == name && gate.passed)
+    }
+
     pub fn identity(&self, name: &str) -> Option<&RecordIdentity> {
         self.identities
             .iter()
@@ -274,6 +372,57 @@ impl ReleaseRecord {
 
     pub fn target(&self, name: &str) -> Option<&RecordTarget> {
         self.targets.iter().find(|target| target.name == name)
+    }
+
+    pub fn target_mut(&mut self, name: &str) -> Option<&mut RecordTarget> {
+        self.targets.iter_mut().find(|target| target.name == name)
+    }
+
+    /// The hosted wait this gate already opened, if any.
+    pub fn hosted_wait(&self, gate: &str) -> Option<&RecordHostedWait> {
+        self.hosted_waits.iter().find(|wait| wait.gate == gate)
+    }
+
+    /// Open a dispatch window for a gate, unless it already has one for this
+    /// commit.
+    pub fn open_hosted_wait(
+        &mut self,
+        gate: &str,
+        workflow: &str,
+        commit: &str,
+        created_after: &str,
+    ) -> &RecordHostedWait {
+        let fresh = || RecordHostedWait {
+            gate: gate.to_owned(),
+            workflow: workflow.to_owned(),
+            commit: commit.to_owned(),
+            created_after: created_after.to_owned(),
+            run_id: None,
+            run_url: None,
+        };
+        match self.hosted_waits.iter().position(|wait| wait.gate == gate) {
+            Some(index) if self.hosted_waits[index].commit == commit => &self.hosted_waits[index],
+            Some(index) => {
+                // The gate now asks about another commit, so its old window
+                // and binding describe a different dispatch.
+                self.hosted_waits[index] = fresh();
+                &self.hosted_waits[index]
+            }
+            None => {
+                self.hosted_waits.push(fresh());
+                self.hosted_waits
+                    .last()
+                    .expect("a hosted wait was just pushed")
+            }
+        }
+    }
+
+    /// Record the one run this Run bound, so a resume re-checks it.
+    pub fn bind_hosted_run(&mut self, gate: &str, run_id: Option<u64>, run_url: &str) {
+        if let Some(wait) = self.hosted_waits.iter_mut().find(|wait| wait.gate == gate) {
+            wait.run_id = run_id;
+            wait.run_url = Some(run_url.to_owned());
+        }
     }
 
     /// The kernel checkpoint pointer: stage and status only, so the store row
@@ -307,13 +456,7 @@ pub struct ReleaseCheckpoint {
 
 impl ReleaseCheckpoint {
     pub fn status(&self) -> Option<ReleaseRunStatus> {
-        match self.status.as_str() {
-            "paused" => Some(ReleaseRunStatus::Paused),
-            "awaiting-approval" => Some(ReleaseRunStatus::AwaitingApproval),
-            "failed" => Some(ReleaseRunStatus::Failed),
-            "complete" => Some(ReleaseRunStatus::Complete),
-            _ => None,
-        }
+        ReleaseRunStatus::parse(&self.status)
     }
 
     pub fn stage(&self) -> Option<ReleaseStage> {
@@ -324,6 +467,44 @@ impl ReleaseCheckpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hosted_wait_journals_its_window_and_bound_run() {
+        let mut record = ReleaseRecord::new("run-1", Path::new("/repo"), "2026-10-22T00:00:00Z");
+        let opened = record.open_hosted_wait("ci", "ci.yml", "abc123", "2026-10-22T00:10:00Z");
+        assert_eq!(opened.created_after, "2026-10-22T00:10:00Z");
+        assert_eq!(opened.run_id, None);
+
+        // Reopening keeps the window this Run opened: a resume re-checks the
+        // same dispatch, never a newer one.
+        let again = record.open_hosted_wait("ci", "ci.yml", "abc123", "2026-10-22T00:20:00Z");
+        assert_eq!(again.created_after, "2026-10-22T00:10:00Z");
+
+        record.bind_hosted_run("ci", Some(7), "https://example.test/runs/7");
+        assert_eq!(record.hosted_wait("ci").expect("wait").run_id, Some(7));
+
+        // Another commit is another dispatch, so its window opens fresh.
+        let moved = record.open_hosted_wait("ci", "ci.yml", "def456", "2026-10-22T00:30:00Z");
+        assert_eq!(moved.created_after, "2026-10-22T00:30:00Z");
+        assert_eq!(moved.run_id, None);
+
+        let encoded = serde_json::to_string(&record).expect("encode");
+        let decoded: ReleaseRecord = serde_json::from_str(&encoded).expect("decode");
+        assert_eq!(decoded, record);
+    }
+
+    #[test]
+    fn a_record_without_hosted_waits_still_decodes() {
+        let record = ReleaseRecord::new("run-1", Path::new("/repo"), "2026-10-22T00:00:00Z");
+        let mut value: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&record).expect("encode")).expect("value");
+        value
+            .as_object_mut()
+            .expect("record object")
+            .remove("hosted_waits");
+        let decoded: ReleaseRecord = serde_json::from_value(value).expect("decode");
+        assert!(decoded.hosted_waits.is_empty());
+    }
 
     #[test]
     fn stage_order_matches_the_contract() {

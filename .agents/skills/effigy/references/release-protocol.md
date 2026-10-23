@@ -33,7 +33,7 @@ Never run these unprompted:
 | `effigy release run` | `publish` pushes one annotated tag per identity, `closeout` pushes the release commit |
 | `effigy release resume <run>` | Continues an interrupted Run, reconciling an unknown tag push |
 | `gh workflow run release-binaries.yml -f tag=vX.Y.Z` | Starts binary publication for the immutable tag |
-| `effigy release verify-install --tag vX.Y.Z` | Effigy binary network-side verification; not for library or service repos |
+| `effigy release:verify:install --tag vX.Y.Z` | Effigy binary network-side verification; not for library or service repos |
 
 ## Canonical sequence
 
@@ -51,24 +51,30 @@ When a human explicitly asks for a release:
 8. `effigy release run`
 9. `effigy release receipt`
 10. Run the target repo's declared publication and consumer verification.
-    - Effigy itself: `gh workflow run release-binaries.yml -f tag=vX.Y.Z`
-      followed by `effigy release verify-install --tag vX.Y.Z`.
-    - Library or service repos: use their repo-owned consumer smoke. Do not run
-      Effigy's fixed binary verifier.
+    - Effigy itself: the Run's `binaries` task target dispatches
+      `release-binaries.yml`, and its `verify` task checks the GitHub Release,
+      the Homebrew tap and the tagged-source install
+      (`effigy release:verify:install --tag vX.Y.Z`). Do not dispatch the
+      workflow by hand.
+    - Library or service repos: use their repo-owned consumer smoke as the
+      target's `verify` task. Do not run Effigy's fixed binary verifier.
 11. `effigy changelog extract CHANGELOG.md --version X.Y.Z`
 
 Use this query to select the run; never substitute a merely recent green run:
 
 ```sh
 gh run list --workflow ci.yml --branch main --commit "$candidate_sha" \
-  --event workflow_dispatch --limit 1 \
+  --event workflow_dispatch --limit 20 \
   --json databaseId,headSha,status,conclusion,url
 ```
 
-Effigy's configured `ci` release gate checks the same exact-SHA invariant.
-Missing, pending, red, or different-commit evidence blocks every gate-checked
-preview and prepare. Local release gates then validate deterministic release
-file mutations; they do not replace hosted CI on the candidate source.
+Exactly one run must match: zero or several refuse and name the candidates.
+Effigy's configured `ci` release gate checks the same exact-SHA invariant, and
+a hosted-evidence release gate binds the one run it dispatched and records its
+id, so a resume never re-binds a sibling. Missing, pending, red, or
+different-commit evidence blocks every gate-checked preview and prepare. Local
+release gates then validate deterministic release file mutations; they do not
+replace hosted CI on the candidate source.
 
 A gate may opt in with `reuse-hosted-evidence = true` when
 `[release.hosted-evidence].workflow` is set. Reuse accepts only this
@@ -79,7 +85,7 @@ closed. Prepare records each reused gate and its run URL.
 If any step fails, **stop**. Surface the failure to the human. Do not retry
 with bypass flags.
 
-`release verify-install` is not a generic release closer. It installs the
+The tagged-source install proof is not a generic release closer. It installs the
 `effigy` Cargo package and runs Effigy CLI checks against a fixture repo.
 Invoking it from a non-Effigy root is a routing error, not evidence that the
 target library or service tag is broken.

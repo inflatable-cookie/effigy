@@ -1,10 +1,12 @@
 mod colima_runtime;
+mod healthcheck_pidfiles;
 mod healthcheck_timer;
 mod implementation;
 mod managed_stop;
 mod mounts;
 mod parse;
 mod participation;
+pub(crate) use colima_runtime::default_runtime_profile;
 pub(crate) use participation::docker_config_current_context;
 mod process;
 mod restart_recovery;
@@ -15,6 +17,12 @@ pub use colima_runtime::{
     ensure_colima_running, ensure_runtime_backend_running, recover_colima_runtime,
     reset_colima_runtime, running_colima_profiles, runtime_backend_is_running,
     selected_backend_label, ColimaRecoveryReport,
+};
+pub use healthcheck_pidfiles::{
+    inspect_run_inode_pressure, parse_health_check_pidfile_prune, parse_run_inode_pressure,
+    prune_stale_health_check_pidfiles, HealthCheckPidFilePrune, RunInodePressure,
+    HEALTHCHECK_PIDFILE_PATTERN, HEALTHCHECK_PIDFILE_STALE_MINUTES, HEALTHCHECK_TASK_ROOT,
+    RUN_INODE_PRESSURE_PERCENT, STALE_PIDFILE_WARNING_COUNT,
 };
 pub use implementation::{
     capture_compose_ps, capture_running_container_stats,
@@ -44,7 +52,8 @@ pub use parse::{
     RunningComposeContainerProfiled, RunningContainerStats, RunningContainerStatsCapture,
 };
 pub use process::{
-    run_command_capture, run_command_capture_allow_failure, run_input_capture_until,
+    no_containers_diagnostic, retained_backend_log_path, run_command_capture,
+    run_command_capture_allow_failure, run_input_capture_until,
 };
 pub use restart_recovery::{
     recover_exited_owned_compose_services, recover_exited_owned_compose_services_for_project,

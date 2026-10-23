@@ -28,7 +28,10 @@ where
         "up" => GatewaySubcommand::Up,
         "down" => GatewaySubcommand::Down,
         "status" => GatewaySubcommand::Status,
-        "repair" => GatewaySubcommand::Repair { yes: false },
+        "repair" => GatewaySubcommand::Repair {
+            yes: false,
+            expect_plan: None,
+        },
         "recover" => return Err(CliParseError::InvalidArguments(
             "`effigy gateway recover` is retired; v0.14.1 gateways use `effigy gateway up`; for a pre-0.14 gateway ask the host administrator to verify and stop it before removing its old PID/version records".to_owned(),
         )),
@@ -119,13 +122,39 @@ where
                 )?);
             }
             "--yes" if matches!(subcommand, GatewaySubcommand::Repair { .. }) => yes = true,
+            "--expect-plan"
+                if matches!(
+                    subcommand,
+                    GatewaySubcommand::Repair {
+                        expect_plan: None,
+                        ..
+                    }
+                ) =>
+            {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--expect-plan".to_owned(),
+                    },
+                )?;
+                if let GatewaySubcommand::Repair { expect_plan, .. } = &mut subcommand {
+                    *expect_plan = Some(value);
+                }
+            }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Gateway)),
             other => return Err(unknown_argument(other)),
         }
     }
 
-    if matches!(subcommand, GatewaySubcommand::Repair { .. }) {
-        subcommand = GatewaySubcommand::Repair { yes };
+    if let GatewaySubcommand::Repair { expect_plan, .. } = &subcommand {
+        if expect_plan.is_some() && !yes {
+            return Err(CliParseError::InvalidArguments(
+                "`effigy gateway repair --expect-plan <DIGEST>` requires `--yes`: review the dry-run plan first, then apply it".to_owned(),
+            ));
+        }
+    }
+    if let GatewaySubcommand::Repair { expect_plan, .. } = subcommand {
+        subcommand = GatewaySubcommand::Repair { yes, expect_plan };
     }
 
     if private_state_root.is_none()

@@ -97,6 +97,9 @@ pub struct ReleaseStatus {
 #[derive(Debug, Clone)]
 pub struct ReleaseGateRun {
     pub repo_root: PathBuf,
+    /// The configured gate inventory, so a gate run reports what it intended to
+    /// execute and not only what it managed to start.
+    pub gates: Vec<ResolvedGate>,
     pub configured_gate_count: usize,
     pub executed_gate_count: usize,
     pub stopped_early: bool,
@@ -105,32 +108,6 @@ pub struct ReleaseGateRun {
     pub environment_path: Option<PathBuf>,
     pub blockers: Vec<String>,
     pub passed: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct VerificationStepResult {
-    pub name: String,
-    pub command: String,
-    pub passed: bool,
-    pub exit_code: Option<i32>,
-    pub stdout: String,
-    pub stderr: String,
-    pub launch_error: Option<String>,
-    pub duration_ms: u128,
-}
-
-#[derive(Debug, Clone)]
-pub struct ReleaseVerifyInstall {
-    pub repo_root: PathBuf,
-    pub tag: String,
-    pub repo_url: String,
-    pub installed_bin: Option<PathBuf>,
-    pub configured_check_count: usize,
-    pub executed_check_count: usize,
-    pub stopped_early: bool,
-    pub results: Vec<VerificationStepResult>,
-    pub blockers: Vec<String>,
-    pub verified: bool,
 }
 
 #[derive(Debug, Clone)]

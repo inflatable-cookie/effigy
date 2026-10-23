@@ -529,18 +529,27 @@ fn v0141_bootstrap_fixtures_load_and_list_tasks() {
 }
 
 #[test]
-fn the_retired_bootstrap_notice_never_reaches_json_stdout() {
+fn the_retired_bootstrap_notice_reaches_the_json_envelope_warnings() {
     let root = retired_bootstrap_checkout("underlay-bundle.toml");
     let output = effigy(&["--json", "tasks"], &root);
     assert!(output.status.success(), "{output:?}");
-    let stdout = String::from_utf8(output.stdout.clone()).expect("utf8 stdout");
-    assert!(!stdout.contains("retired v0.15 config"), "{stdout}");
     let parsed = parse_stdout_json(&output);
     assert_eq!(parsed["schema"], "effigy.command.v1");
+    let warnings = parsed["warnings"]
+        .as_array()
+        .expect("warnings array in every envelope");
+    assert_eq!(warnings.len(), 1, "{parsed}");
+    assert!(
+        warnings[0]
+            .as_str()
+            .expect("warning text")
+            .contains("retired v0.15 config still loads for one release"),
+        "{parsed}"
+    );
     let stderr = String::from_utf8(output.stderr).expect("utf8 stderr");
     assert!(
-        stderr.contains("retired v0.15 config still loads for one release"),
-        "{stderr}"
+        !stderr.contains("retired v0.15 config"),
+        "--json stderr stays quiet: {stderr}"
     );
 }
 

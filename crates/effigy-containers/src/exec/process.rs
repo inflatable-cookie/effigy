@@ -1,8 +1,8 @@
-use std::ffi::OsString;
-use std::io::Read;
+use std::ffi::{OsStr, OsString};
+use std::io::{Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -32,14 +32,16 @@ pub fn run_command_capture_allow_failure(
     args: &[&str],
 ) -> Result<Output, ContainerExecError> {
     let resolved_program = resolve_host_cli_program(program);
+    let borrowed = args.iter().map(OsString::from).collect::<Vec<_>>();
+    let args = compose_invocation_args(&resolved_program, &borrowed, &[])?;
     let mut command = Command::new(&resolved_program);
-    crate::policy::render::apply_environment(&mut command, args);
+    crate::policy::render::apply_environment(&mut command, &args);
     command
         .current_dir(repo_root)
-        .args(args)
+        .args(&args)
         .output()
         .map_err(|error| ContainerExecError::Launch {
-            command: format!("{program} {}", args.join(" ")),
+            command: format!("{program} {}", format_args(&args)),
             error,
         })
 }
@@ -61,15 +63,16 @@ pub(super) fn run_command_capture_os_with_env(
     env: &[(String, OsString)],
 ) -> Result<Output, ContainerExecError> {
     let resolved_program = resolve_host_cli_program(program);
+    let args = compose_invocation_args(&resolved_program, args, env)?;
     let mut command = Command::new(&resolved_program);
-    command.current_dir(repo_root).args(args);
+    command.current_dir(repo_root).args(&args);
     for (key, value) in env {
         command.env(key, value);
     }
-    crate::policy::render::apply_environment(&mut command, args);
+    crate::policy::render::apply_environment(&mut command, &args);
     let output = capture_output_after_exit(command, PIPE_EOF_GRACE).map_err(|error| {
         ContainerExecError::Launch {
-            command: format!("{program} {}", format_args(args)),
+            command: format!("{program} {}", format_args(&args)),
             error,
         }
     })?;
@@ -88,6 +91,11 @@ pub(super) fn run_command_capture_os_with_env(
 const PIPE_EOF_GRACE: Duration = Duration::from_secs(2);
 const CAPTURE_LIMIT: usize = 1024 * 1024;
 
+/// Bytes retained for one detached backend run, and the smaller tail that
+/// enters a failure message.
+const DETACHED_OUTPUT_LIMIT: u64 = 64 * 1024;
+const DETACHED_OUTPUT_TAIL: usize = 4 * 1024;
+
 pub(super) fn run_detached_command_with_env(
     repo_root: &Path,
     program: &str,
@@ -95,35 +103,226 @@ pub(super) fn run_detached_command_with_env(
     label: &str,
     env: &[(String, OsString)],
 ) -> Result<Output, ContainerExecError> {
-    // A detached service must never inherit an Effigy-owned log pipe. A null
-    // sink has no reader lifetime and remains writable after this CLI exits.
+    let args = compose_invocation_args(program.as_ref(), args, env)?;
+    // A detached service must never inherit an Effigy-owned log pipe. Its
+    // output goes to a regular file in the checkout's retained runtime record:
+    // a file has no reader lifetime and remains writable after this CLI exits.
+    let record = DetachedOutputRecord::for_invocation(repo_root, &args);
+    let (stdout, stderr) = record.open().map_err(|error| ContainerExecError::Launch {
+        command: label.to_owned(),
+        error: std::io::Error::new(
+            error.kind(),
+            format!("{} ({})", error, record.path.display()),
+        ),
+    })?;
     let mut command = Command::new(resolve_host_cli_program(program));
     command
         .current_dir(repo_root)
-        .args(args)
+        .args(&args)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(stdout)
+        .stderr(stderr);
     for (key, value) in env {
         command.env(key, value);
     }
-    crate::policy::render::apply_environment(&mut command, args);
+    crate::policy::render::apply_environment(&mut command, &args);
     let status = command
         .status()
         .map_err(|error| ContainerExecError::Launch {
             command: label.to_owned(),
             error,
         })?;
+    let retained = record.retain_tail();
     if !status.success() {
         return Err(ContainerExecError::Failure {
-            command: label.to_owned(), code: status.code(), stdout: String::new(),
-            stderr: "[effigy] detached backend failed; output was isolated from service writers. Inspect the selected scope with `effigy container status` and `effigy container logs`".to_owned(),
+            command: label.to_owned(),
+            code: status.code(),
+            stdout: String::new(),
+            stderr: detached_failure(&record, status.code(), retained.err()),
         });
     }
     Ok(Output {
         status,
         stdout: Vec::new(),
         stderr: Vec::new(),
+    })
+}
+
+/// The bounded failure text: the retained file's name and its own tail. No
+/// raw backend bytes enter a JSON failure detail; this text belongs to the
+/// operator-facing error only.
+fn detached_failure(
+    record: &DetachedOutputRecord,
+    code: Option<i32>,
+    retention_error: Option<std::io::Error>,
+) -> String {
+    let mut message = format!(
+        "[effigy] detached backend failed (code {code:?}); its output was isolated from service writers and retained at {}",
+        record.path.display()
+    );
+    if let Some(error) = retention_error {
+        message.push_str(&format!(
+            "\n[effigy] retaining the bounded tail failed: {error}"
+        ));
+    }
+    match record.tail(DETACHED_OUTPUT_TAIL) {
+        Ok(Some(tail)) if !tail.trim().is_empty() => {
+            message.push_str("\n[effigy] backend output tail:\n");
+            message.push_str(tail.trim_end());
+        }
+        Ok(_) => message.push_str("\n[effigy] the backend wrote no output"),
+        Err(error) => message.push_str(&format!(
+            "\n[effigy] reading the retained output failed: {error}"
+        )),
+    }
+    message
+}
+
+/// The retained output of one detached backend run. The file is rewritten by
+/// every run of the same project and bounded to its last
+/// [`DETACHED_OUTPUT_LIMIT`] bytes, so it stays a record rather than a log.
+struct DetachedOutputRecord {
+    path: PathBuf,
+}
+
+impl DetachedOutputRecord {
+    fn for_invocation(repo_root: &Path, args: &[OsString]) -> Self {
+        let project = compose_project(args).unwrap_or("compose");
+        Self {
+            path: retained_backend_log_path(repo_root, project),
+        }
+    }
+
+    fn open(&self) -> std::io::Result<(Stdio, Stdio)> {
+        let parent = self
+            .path
+            .parent()
+            .ok_or_else(|| std::io::Error::other("detached output record has no parent"))?;
+        std::fs::create_dir_all(parent)?;
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&self.path)?;
+        Ok((Stdio::from(file.try_clone()?), Stdio::from(file)))
+    }
+
+    /// Keep the last bounded bytes of a run that wrote more than the record
+    /// holds. The marker makes the loss visible instead of silent.
+    fn retain_tail(&self) -> std::io::Result<()> {
+        let length = std::fs::metadata(&self.path)?.len();
+        if length <= DETACHED_OUTPUT_LIMIT {
+            return Ok(());
+        }
+        let bytes = self.read_tail(DETACHED_OUTPUT_LIMIT as usize)?;
+        let marker = format!(
+            "[effigy] earlier backend output was dropped; keeping the last {} KiB\n",
+            DETACHED_OUTPUT_LIMIT / 1024
+        );
+        // A same-project rename never crosses into another writer's file: the
+        // temporary name carries this invocation's pid.
+        let temporary = self
+            .path
+            .with_extension(format!("{}.tmp", std::process::id()));
+        {
+            let mut file = std::fs::File::create(&temporary)?;
+            file.write_all(marker.as_bytes())?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+        }
+        std::fs::rename(&temporary, &self.path)
+    }
+
+    /// The record's last `limit` bytes, or `None` when the run wrote nothing.
+    fn tail(&self, limit: usize) -> std::io::Result<Option<String>> {
+        let length = std::fs::metadata(&self.path)?.len();
+        if length == 0 {
+            return Ok(None);
+        }
+        let bytes = self.read_tail(limit)?;
+        Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+    }
+
+    fn read_tail(&self, limit: usize) -> std::io::Result<Vec<u8>> {
+        let mut file = std::fs::File::open(&self.path)?;
+        let length = file.metadata()?.len();
+        let start = length.saturating_sub(limit as u64);
+        file.seek(SeekFrom::Start(start))?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    }
+}
+
+/// The Compose project this invocation selects, so its record has one name.
+fn compose_project(args: &[OsString]) -> Option<&str> {
+    let mut arguments = args.iter();
+    while let Some(argument) = arguments.next() {
+        if argument == "-p" || argument == "--project-name" {
+            return arguments.next().and_then(|project| project.to_str());
+        }
+    }
+    None
+}
+
+fn sanitize(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// The retained output file of the last detached backend run for one Compose
+/// project. Every activation attempt rewrites it with that run's stdout and
+/// stderr, bounded to its last bytes (effigy#277).
+pub fn retained_backend_log_path(repo_root: &Path, project_name: &str) -> PathBuf {
+    repo_root
+        .join(".effigy/runtime/logs")
+        .join(format!("{}.compose.log", sanitize(project_name)))
+}
+
+/// What to tell an operator when Compose has created no container for a
+/// project. The retained backend record from the last activation attempt is
+/// the only place that attempt's output survives, so name it when it exists
+/// rather than sending the reader back to a backend that shows nothing.
+pub fn no_containers_diagnostic(repo_root: &Path, project_name: &str) -> Vec<String> {
+    let mut lines = vec![format!(
+        "no container exists for compose project `{project_name}`; `effigy container up` creates them"
+    )];
+    let retained = retained_backend_log_path(repo_root, project_name);
+    if retained.is_file() {
+        lines.push(format!(
+            "the last up attempt's retained backend log is at {}",
+            retained.display()
+        ));
+    } else {
+        lines.push("no retained backend log exists for a previous up attempt".to_owned());
+    }
+    lines
+}
+
+/// The one shared Compose invocation transform. A VM-hosted backend cannot
+/// inherit the host environment, so its interpolation values travel in a file;
+/// a host backend keeps the process environment.
+fn compose_invocation_args(
+    program: &OsStr,
+    args: &[impl AsRef<OsStr>],
+    env: &[(String, OsString)],
+) -> Result<Vec<OsString>, ContainerExecError> {
+    let owned = args
+        .iter()
+        .map(|argument| argument.as_ref().to_os_string())
+        .collect::<Vec<_>>();
+    crate::policy::render::compose_invocation_args(program, &owned, env).map_err(|error| {
+        ContainerExecError::Launch {
+            command: format!("{} {}", program.to_string_lossy(), format_args(&owned)),
+            error,
+        }
     })
 }
 
@@ -305,10 +504,26 @@ pub(super) fn run_command_capture_with_timeout(
     label: &str,
     timeout: Duration,
 ) -> Result<Output, ContainerExecError> {
+    run_command_capture_with_timeout_and_env(repo_root, program, args, label, timeout, &[])
+}
+
+/// [`run_command_capture_with_timeout`] carrying values the child cannot
+/// inherit from a VM-hosted Compose backend. A teardown supplies its
+/// interpolation values this way (effigy#286).
+pub(super) fn run_command_capture_with_timeout_and_env(
+    repo_root: &Path,
+    program: &str,
+    args: &[&str],
+    label: &str,
+    timeout: Duration,
+    env: &[(String, OsString)],
+) -> Result<Output, ContainerExecError> {
     // The timeout origin is fixed before the spawn, so a slow fork/exec cannot
     // extend the budget the caller asked for.
     let deadline = Instant::now() + timeout;
-    let output = spawn_and_supervise_capture(repo_root, program, args, label, deadline, timeout)?;
+    let output = spawn_and_supervise_capture_with_env(
+        repo_root, program, args, label, deadline, timeout, env,
+    )?;
     require_success(label, output)
 }
 
@@ -412,12 +627,34 @@ fn spawn_and_supervise_capture(
     deadline: Instant,
     reported_timeout: Duration,
 ) -> Result<Output, ContainerExecError> {
-    let child = spawn_capture_child(repo_root, program, args, false).map_err(|error| {
-        ContainerExecError::Launch {
-            command: format!("{program} {}", args.join(" ")),
-            error,
-        }
-    })?;
+    spawn_and_supervise_capture_with_env(
+        repo_root,
+        program,
+        args,
+        label,
+        deadline,
+        reported_timeout,
+        &[],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_and_supervise_capture_with_env(
+    repo_root: &Path,
+    program: &str,
+    args: &[&str],
+    label: &str,
+    deadline: Instant,
+    reported_timeout: Duration,
+    env: &[(String, OsString)],
+) -> Result<Output, ContainerExecError> {
+    let child =
+        spawn_capture_child_with_env(repo_root, program, args, false, env).map_err(|error| {
+            ContainerExecError::Launch {
+                command: format!("{program} {}", args.join(" ")),
+                error,
+            }
+        })?;
     supervise_capture_child(child, program, args, label, deadline, reported_timeout)
 }
 
@@ -608,6 +845,16 @@ fn spawn_capture_child(
     args: &[impl AsRef<std::ffi::OsStr>],
     input: bool,
 ) -> Result<std::process::Child, std::io::Error> {
+    spawn_capture_child_with_env(repo_root, program, args, input, &[])
+}
+
+fn spawn_capture_child_with_env(
+    repo_root: &Path,
+    program: &str,
+    args: &[impl AsRef<std::ffi::OsStr>],
+    input: bool,
+    env: &[(String, OsString)],
+) -> Result<std::process::Child, std::io::Error> {
     // Private timing seam: simulates a slow fork/exec at the spawn boundary so
     // a test can prove the supervision deadline is not rebased after spawn.
     // Always zero in production and unset in every other test thread.
@@ -616,11 +863,16 @@ fn spawn_capture_child(
         thread::sleep(delay);
     }
     let resolved_program = resolve_host_cli_program(program);
+    let args = compose_invocation_args(&resolved_program, args, env)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
     let mut command = Command::new(&resolved_program);
-    crate::policy::render::apply_environment(&mut command, args);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    crate::policy::render::apply_environment(&mut command, &args);
     command
         .current_dir(repo_root)
-        .args(args)
+        .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(if input { Stdio::piped() } else { Stdio::null() });
@@ -646,11 +898,14 @@ fn spawn_stream_child(
     args: &[&str],
 ) -> Result<std::process::Child, std::io::Error> {
     let resolved_program = resolve_host_cli_program(program);
+    let borrowed = args.iter().map(OsString::from).collect::<Vec<_>>();
+    let args = compose_invocation_args(&resolved_program, &borrowed, &[])
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
     let mut command = Command::new(&resolved_program);
-    crate::policy::render::apply_environment(&mut command, args);
+    crate::policy::render::apply_environment(&mut command, &args);
     command
         .current_dir(repo_root)
-        .args(args)
+        .args(&args)
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .stdin(Stdio::null());
@@ -701,6 +956,30 @@ pub(super) fn error_is_timeout(error: &ContainerExecError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_project_with_no_containers_names_the_retained_up_attempt() {
+        let checkout = tempfile::tempdir().expect("private checkout");
+        let diagnostic = no_containers_diagnostic(checkout.path(), "demo-project");
+        assert!(diagnostic[0].contains("no container exists for compose project `demo-project`"));
+        assert!(diagnostic[1].contains("no retained backend log exists"));
+
+        let retained = retained_backend_log_path(checkout.path(), "demo-project");
+        assert_eq!(
+            retained,
+            checkout
+                .path()
+                .join(".effigy/runtime/logs/demo-project.compose.log")
+        );
+        std::fs::create_dir_all(retained.parent().expect("log parent")).expect("log dir");
+        std::fs::write(&retained, "compose said no").expect("retained log");
+        let diagnostic = no_containers_diagnostic(checkout.path(), "demo-project");
+        assert!(
+            diagnostic[1].contains(&retained.display().to_string()),
+            "{:?}",
+            diagnostic
+        );
+    }
 
     #[test]
     fn command_timeout_message_mentions_elapsed_seconds() {
@@ -1043,7 +1322,7 @@ mod detached_capture_tests {
     }
 
     #[test]
-    fn detached_null_sink_and_inventory_cancel_preserve_independent_pipe_writer() {
+    fn detached_output_record_and_inventory_cancel_preserve_independent_pipe_writer() {
         let fixture = tempfile::tempdir().expect("fresh pipe ownership fixture");
         let sentinel_program = fixture.path().join("sentinel.py");
         fs::write(&sentinel_program, r#"import os,sys,json,stat
@@ -1083,7 +1362,10 @@ for line in sys.stdin:
         probe(&mut sentinel, &mut reader, "before");
         let compose = fixture.path().join("compose.py");
         fs::write(&compose, r#"import os,json,stat,sys
-json.dump({'pid':os.getpid(),'stdout_null':os.fstat(1).st_rdev==os.stat(os.devnull).st_rdev and stat.S_ISCHR(os.fstat(1).st_mode),'stderr_null':os.fstat(2).st_rdev==os.stat(os.devnull).st_rdev and stat.S_ISCHR(os.fstat(2).st_mode)},open('compose-identities.json','w'))
+def shape(fd):
+    st=os.fstat(fd)
+    return {'inode':st.st_ino,'regular':stat.S_ISREG(st.st_mode),'fifo':stat.S_ISFIFO(st.st_mode),'char':stat.S_ISCHR(st.st_mode)}
+json.dump({'pid':os.getpid(),'stdout':shape(1),'stderr':shape(2),'devnull':os.stat(os.devnull).st_ino},open('compose-identities.json','w'))
 print('detached output')
 print('detached diagnostic',file=sys.stderr)
 "#).expect("private detached CLI");
@@ -1097,7 +1379,13 @@ print('detached diagnostic',file=sys.stderr)
             crate::load_container_policy(fixture.path(), None).expect("private policy")
         });
         policy.shared_services.clear();
-        let args = [compose.into_os_string(), "up".into(), "-d".into()];
+        let args = [
+            compose.into_os_string(),
+            "-p".into(),
+            "private-probe".into(),
+            "up".into(),
+            "-d".into(),
+        ];
         let output = super::super::implementation::run_compose_invocation_capture_with_env(
             fixture.path(),
             &policy,
@@ -1112,8 +1400,24 @@ print('detached diagnostic',file=sys.stderr)
             &fs::read(fixture.path().join("compose-identities.json")).expect("actual FD receipt"),
         )
         .expect("identity JSON");
-        assert_eq!(identity["stdout_null"], true);
-        assert_eq!(identity["stderr_null"], true);
+        // The detached backend writes to one retained record file: a regular
+        // file has no reader lifetime, so it never inherits an Effigy pipe.
+        assert_eq!(identity["stdout"]["regular"], true);
+        assert_eq!(identity["stderr"]["regular"], true);
+        assert_eq!(identity["stdout"]["fifo"], false);
+        assert_eq!(identity["stderr"]["fifo"], false);
+        assert_eq!(identity["stdout"]["char"], false);
+        assert_eq!(identity["stderr"]["char"], false);
+        assert_eq!(
+            identity["stdout"]["inode"], identity["stderr"]["inode"],
+            "stdout and stderr share the one retained record"
+        );
+        let record = fixture
+            .path()
+            .join(".effigy/runtime/logs/private-probe.compose.log");
+        let retained = fs::read_to_string(&record).expect("retained detached output");
+        assert!(retained.contains("detached output"), "{retained}");
+        assert!(retained.contains("detached diagnostic"), "{retained}");
         let inventory = fixture.path().join("inventory.py");
         fs::write(&inventory,r#"import os,json,time,stat
 json.dump({'pid':os.getpid(),'group':os.getpgrp(),'stdout_fifo':stat.S_ISFIFO(os.fstat(1).st_mode),'stdout_inode':os.fstat(1).st_ino},open('inventory-identities.json','w'))
@@ -1162,6 +1466,92 @@ while True:
             .wait()
             .expect("positively reap independent writer")
             .success());
+    }
+
+    #[test]
+    fn a_failed_detached_backend_names_its_record_and_keeps_the_output_tail() {
+        let fixture = tempfile::tempdir().expect("fresh detached failure fixture");
+        let program = fixture.path().join("failing.py");
+        fs::write(
+            &program,
+            "import sys\nprint('build failed: missing base image', file=sys.stderr)\nsys.exit(7)\n",
+        )
+        .expect("private failing backend");
+        let args = [
+            program.into_os_string(),
+            "-p".into(),
+            "private-failure".into(),
+            "up".into(),
+            "-d".into(),
+        ];
+        let error = super::super::implementation::run_backend_invocation(
+            fixture.path(),
+            std::ffi::OsStr::new("python3"),
+            &args,
+            "private detached up",
+            &[],
+        )
+        .expect_err("a failing detached backend must fail");
+        let message = error.to_string();
+        let record = fixture
+            .path()
+            .join(".effigy/runtime/logs/private-failure.compose.log");
+        assert!(
+            message.contains("detached backend failed (code Some(7))"),
+            "{message}"
+        );
+        assert!(
+            message.contains(&record.display().to_string()),
+            "the failure names the retained record: {message}"
+        );
+        assert!(
+            message.contains("build failed: missing base image"),
+            "the failure keeps the backend's own diagnostic: {message}"
+        );
+    }
+
+    #[test]
+    fn a_chatty_detached_backend_retains_only_its_bounded_tail() {
+        let fixture = tempfile::tempdir().expect("fresh bounded record fixture");
+        let program = fixture.path().join("chatty.py");
+        fs::write(
+            &program,
+            "import sys\nfor index in range(20000):\n    print('line %d' % index, file=sys.stderr)\n",
+        )
+        .expect("private chatty backend");
+        let args = [
+            program.into_os_string(),
+            "-p".into(),
+            "private-chatty".into(),
+            "up".into(),
+            "-d".into(),
+        ];
+        super::super::implementation::run_backend_invocation(
+            fixture.path(),
+            std::ffi::OsStr::new("python3"),
+            &args,
+            "private detached up",
+            &[],
+        )
+        .expect("a chatty detached backend still succeeds");
+        let record = fixture
+            .path()
+            .join(".effigy/runtime/logs/private-chatty.compose.log");
+        let retained = fs::read_to_string(&record).expect("bounded record");
+        let limit = super::DETACHED_OUTPUT_LIMIT as usize;
+        assert!(
+            retained.len() <= limit + 128,
+            "the retained record stays bounded: {} bytes",
+            retained.len()
+        );
+        assert!(
+            retained.starts_with("[effigy] earlier backend output was dropped"),
+            "the bound is visible, not silent"
+        );
+        assert!(
+            retained.trim_end().ends_with("line 19999"),
+            "the retained record keeps the end of the run"
+        );
     }
 
     #[test]

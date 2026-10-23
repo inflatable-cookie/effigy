@@ -98,11 +98,21 @@ pub(super) fn fmt_runner_error(
             service,
             profile,
             working_dir,
-        } => write!(
-            f,
-            "container `{container}` is not exec-ready: probe with `-w {}` failed even after restarting service `{service}`. Try `colima nerdctl --profile {profile} -- restart <container>` manually, or `effigy container down {container} && effigy container up {container}`.",
-            working_dir.display(),
-        ),
+            host_load,
+        } => {
+            write!(
+                f,
+                "container `{container}` is not exec-ready: probe with `-w {}` failed even after restarting service `{service}`. Try `colima nerdctl --profile {profile} -- restart <container>` manually, or `effigy container down {container} && effigy container up {container}`.",
+                working_dir.display(),
+            )?;
+            if let Some(load) = host_load {
+                write!(
+                    f,
+                    " {load}, so no bounded probe answered; the service's health is unproven, and retrying once the host is quieter is the first step."
+                )?;
+            }
+            Ok(())
+        }
         RunnerError::TaskCatalogsMissing { root } => write_catalogs_missing(f, root),
         RunnerError::TaskManifestRead { path, error } => {
             write!(f, "{}", failed_to_read_path(path, error))

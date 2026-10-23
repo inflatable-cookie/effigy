@@ -126,6 +126,13 @@ Expected outcome:
 
 - run one docs or code change in a focused scope
 - rerun the smallest relevant validation slice
+- format only the Rust files you changed:
+  `effigy fmt rust $(git diff --name-only -- '*.rs')`, and check an existing
+  file set with `effigy fmt rust <FILE>... --check`. It runs rustfmt with each
+  file's nearest config and never follows a path-linked workspace; relative
+  paths are resolved from the directory you run Effigy in, not the repo root.
+  A repository task named `fmt` owns that word, so use `effigy fmt-rust
+  <FILE>...` there (see [task routing precedence](016-task-routing-precedence.md))
 - keep `effigy --json ...` examples aligned with documented schemas
 - link any new guide from at least one docs entrypoint
 

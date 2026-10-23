@@ -28,6 +28,17 @@ fn with_test_home<T>(name: &str, op: impl FnOnce() -> T) -> T {
     result
 }
 
+fn dns_route(domain: &str) -> effigy_containers::EffectiveDnsRoute {
+    effigy_containers::EffectiveDnsRoute {
+        domain: domain.to_owned(),
+        declared_domain: domain.to_owned(),
+        tls: true,
+        port: None,
+        service: None,
+        target_host: None,
+    }
+}
+
 fn test_policy() -> EffectiveContainerPolicy {
     EffectiveContainerPolicy {
         render: None,
@@ -848,6 +859,7 @@ fn shared_service_aliases_reuse_one_loopback_ip_across_project_domains() {
 
         let mut first = test_policy();
         first.dns_domain = Some("app1.test".to_owned());
+        first.dns_routes = vec![dns_route("app1.test")];
         first.service_aliases.clear();
         first.shared_services = vec![shared_service(
             "postgres",
@@ -869,6 +881,7 @@ fn shared_service_aliases_reuse_one_loopback_ip_across_project_domains() {
 
         let mut second = test_policy();
         second.dns_domain = Some("app2.test".to_owned());
+        second.dns_routes = vec![dns_route("app2.test")];
         second.project_name = "demo-api-dev".to_owned();
         second.service_aliases.clear();
         second.shared_services = vec![shared_service(
@@ -908,6 +921,7 @@ fn service_aliases_keep_full_multi_label_project_domain() {
     with_test_home("service-alias-multi-label-domain", || {
         let mut policy = test_policy();
         policy.dns_domain = Some("contact-patch.legacy.test".to_owned());
+        policy.dns_routes = vec![dns_route("contact-patch.legacy.test")];
 
         let routes =
             resolve_gateway_service_alias_routes(Path::new("/tmp/repo"), &policy, true, None)
@@ -1608,6 +1622,76 @@ password = "postgres"
 }
 
 #[test]
+fn exhausted_registration_holds_an_owner_with_a_created_container() {
+    let _env = crate::contract_test_support::lock_test();
+    let owner = tempfile::tempdir().expect("private loopback fixture");
+    let home = owner.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let _gateway_home = crate::runner::gateway_command::set_test_gateway_home(&home);
+    effigy_containers::with_test_effigy_home(&home.join(".effigy"), || {
+        // A full pool of absent owners, one of which still has a created
+        // container on a running profile. Registration must hold that owner
+        // exactly as `gateway repair` would, and release the rest.
+        let mut registry = LoopbackRegistry::new();
+        let mut held_scope = String::new();
+        for index in 1..=50 {
+            let source = owner
+                .path()
+                .join(format!("gone-{index}"))
+                .display()
+                .to_string();
+            registry
+                .allocate(
+                    &project_loopback_identity(&format!("gone-{index}"), Path::new(&source)),
+                    &source,
+                )
+                .expect("fill private loopback pool");
+            if index == 7 {
+                held_scope = source;
+            }
+        }
+        let loopback_path = gateway_dir()
+            .expect("gateway dir")
+            .join("loopback-ips.json");
+        registry.save(&loopback_path).expect("full registry");
+        let mut created = inventory_row("gone-7", &held_scope, "effigy");
+        created.row.status = "Created".to_owned();
+
+        let error = load_or_allocate_loopback_ip_with_inventory(
+            "project:new:/tmp/new",
+            None,
+            "/tmp/new",
+            true,
+            || RunningComposeContainerInventory {
+                rows: vec![created],
+                failures: Vec::new(),
+            },
+        )
+        .expect_err("a full pool of absent owners reports its release");
+
+        assert!(
+            error.to_string().contains("released 49 dead assignment"),
+            "the created container's owner must be held: {error}"
+        );
+        let store = EndpointStore::for_routes(&gateway_route_table_path().expect("route path"));
+        let remaining = store
+            .read_compatible()
+            .expect("store")
+            .loopback()
+            .expect("registry");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(
+            remaining
+                .assignments
+                .values()
+                .map(|assignment| assignment.scope.clone())
+                .collect::<Vec<_>>(),
+            vec![held_scope]
+        );
+    });
+}
+
+#[test]
 fn incomplete_inventory_preserves_all_assignments_and_reports_failed_profile() {
     let mut registry = full_project_loopback_registry();
     let before = registry.assignments.clone();
@@ -1621,6 +1705,7 @@ fn incomplete_inventory_preserves_all_assignments_and_reports_failed_profile() {
             backend: "colima".to_owned(),
             profile: "broken-profile".to_owned(),
             error: "runtime ps failed to parse output".to_owned(),
+            stopped_profile: false,
         }],
     };
 
@@ -1843,6 +1928,7 @@ fn load_or_allocate_project_loopback_ip_migrates_legacy_identity_for_same_repo()
                     backend: "colima".to_owned(),
                     profile: "temporary-failure".to_owned(),
                     error: "test inventory failure".to_owned(),
+                    stopped_profile: false,
                 }],
             },
         )
@@ -2240,4 +2326,79 @@ else:sys.exit('unexpected private backend operation')
         assert!(!commands.contains(forbidden), "{commands}");
     }
     println!("actual production probe receipts:\n{commands}");
+}
+
+#[test]
+fn service_alias_claims_use_the_inferred_apex_not_the_front_route() {
+    let mut policy = test_policy();
+    policy.dns_domain = Some("s3.acme.test".to_owned());
+    policy.dns_routes = vec![
+        effigy_containers::EffectiveDnsRoute {
+            domain: "s3.acme.test".to_owned(),
+            declared_domain: "s3.acme.test".to_owned(),
+            tls: true,
+            port: None,
+            service: None,
+            target_host: None,
+        },
+        effigy_containers::EffectiveDnsRoute {
+            domain: "admin.acme.test".to_owned(),
+            declared_domain: "admin.acme.test".to_owned(),
+            tls: true,
+            port: None,
+            service: None,
+            target_host: None,
+        },
+        effigy_containers::EffectiveDnsRoute {
+            domain: "acme.test".to_owned(),
+            declared_domain: "acme.test".to_owned(),
+            tls: true,
+            port: None,
+            service: None,
+            target_host: None,
+        },
+    ];
+
+    let claims = declared_route_claims(&policy);
+    assert!(
+        claims
+            .iter()
+            .any(|claim| claim.domain == "postgres.acme.test"),
+        "the alias claim uses the shallowest route host: {claims:?}"
+    );
+    assert!(
+        !claims
+            .iter()
+            .any(|claim| claim.domain == "postgres.s3.acme.test"),
+        "the front route is not the apex: {claims:?}"
+    );
+}
+
+#[test]
+fn a_declared_base_domain_wins_for_service_alias_claims() {
+    let mut policy = test_policy();
+    policy.dns_domain = Some("s3.acme.test".to_owned());
+    policy.dns_base_domain = Some("acme.test".to_owned());
+    policy.dns_routes = vec![effigy_containers::EffectiveDnsRoute {
+        domain: "s3.acme.test".to_owned(),
+        declared_domain: "s3.acme.test".to_owned(),
+        tls: true,
+        port: None,
+        service: None,
+        target_host: None,
+    }];
+
+    let claims = declared_route_claims(&policy);
+    assert!(
+        claims
+            .iter()
+            .any(|claim| claim.domain == "postgres.acme.test"),
+        "a declared apex is never inferred over: {claims:?}"
+    );
+    assert!(
+        !claims
+            .iter()
+            .any(|claim| claim.domain == "postgres.s3.acme.test"),
+        "{claims:?}"
+    );
 }

@@ -786,7 +786,6 @@ dependencies = [
  "effigy-core",
  "effigy-data",
  "effigy-deps",
- "effigy-distribution",
  "effigy-docs-policy",
  "effigy-doctor",
  "effigy-env",
@@ -970,19 +969,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "effigy-distribution"
-version = "0.14.1"
-dependencies = [
- "anstyle",
- "chrono",
- "effigy-manifest",
- "effigy-ui",
- "regex",
- "serde_json",
- "toml",
-]
-
-[[package]]
 name = "effigy-docs-policy"
 version = "0.14.1"
 dependencies = [
@@ -1148,6 +1134,7 @@ dependencies = [
  "chrono",
  "effigy-changelog",
  "effigy-core",
+ "effigy-json-schema",
  "effigy-kernel",
  "effigy-manifest",
  "getrandom 0.4.3",

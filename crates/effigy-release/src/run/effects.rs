@@ -13,6 +13,11 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::hosted_evidence::{
+    collect_bound_runs, github_repository_from_remote_url, is_waiting_evidence,
+    parse_gh_run_list_json, BoundRun, HostedEvidenceBinding, HostedEvidenceLookup,
+    HostedEvidencePolling, HostedEvidenceQuery, HostedEvidenceSpec, HostedRun,
+};
 use crate::ReleaseError;
 
 /// One task invocation from a release stage (contract 054 §6).
@@ -23,6 +28,10 @@ pub struct TaskRequest {
     pub label: String,
     pub cwd: PathBuf,
     pub env: BTreeMap<String, String>,
+    /// Where the task reads `effigy.release.input.v1`.
+    pub input_path: PathBuf,
+    /// Where the task writes `effigy.release.output.v1`.
+    pub output_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +39,32 @@ pub struct TaskResponse {
     pub stdout: String,
     pub stderr: String,
     pub success: bool,
+}
+
+/// What a hosted wait found for one gate (contract 054 §3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostedEvidence {
+    /// Exact-commit evidence for this commit, from this repository: the gate
+    /// passes without running its command. `run` is the bound run.
+    Accepted {
+        repository: String,
+        commit: String,
+        run: BoundRun,
+    },
+    /// No evidence yet, or a run still in progress: the Run waits without
+    /// holding a process open and re-checks when it resumes. `run` is the one
+    /// dispatched run the check bound, when there is one, so the wait re-checks
+    /// that run and never a sibling.
+    Waiting {
+        detail: String,
+        run: Option<BoundRun>,
+    },
+    /// A failed run, the wrong commit or repository, an ambiguous answer or an
+    /// unusable lookup: the gate fails closed.
+    Failed {
+        detail: String,
+        run: Option<BoundRun>,
+    },
 }
 
 fn command_error(context: &str, output: &std::process::Output) -> ReleaseError {
@@ -89,8 +124,84 @@ pub trait ReleaseEffects: std::fmt::Debug {
         run: &mut Run<'_>,
         request: &TaskRequest,
     ) -> Result<TaskResponse, ReleaseError>;
+    /// Exact-commit hosted evidence for one gate (contract 054 §3, §7).
+    ///
+    /// `binding` is the run this release dispatched: a resume re-checks the
+    /// bound run, and a fresh wait accepts only a run created inside its
+    /// dispatch window.
+    fn hosted_evidence(
+        &mut self,
+        run: &mut Run<'_>,
+        gate: &str,
+        spec: &HostedEvidenceSpec,
+        commit: &str,
+        binding: &HostedEvidenceBinding,
+    ) -> Result<HostedEvidence, ReleaseError>;
     /// The identity recorded as an approval's approver.
     fn operator(&mut self, run: &mut Run<'_>) -> Option<String>;
+}
+
+/// Hosted lookups share the release Run's process custody and checkout journal.
+struct ReleaseHostedLookup<'a, 'r> {
+    effects: &'a GitEffects,
+    run: std::cell::RefCell<&'a mut Run<'r>>,
+}
+
+impl HostedEvidenceLookup for ReleaseHostedLookup<'_, '_> {
+    fn list_runs(&self, query: &HostedEvidenceQuery) -> Result<Vec<HostedRun>, String> {
+        let program = find_program("gh").map_err(|error| error.to_string())?;
+        let args = [
+            "run",
+            "list",
+            "--repo",
+            &query.repository,
+            "--workflow",
+            &query.workflow,
+            "--branch",
+            &query.branch,
+            "--commit",
+            &query.head_sha,
+            "--event",
+            &query.event,
+            "--limit",
+            "20",
+            "--json",
+            "databaseId,headSha,status,conclusion,url,event,headBranch,createdAt",
+        ];
+        let output = self
+            .effects
+            .execute(
+                &mut self.run.borrow_mut(),
+                std::iter::once(program.into_os_string())
+                    .chain(args.into_iter().map(OsString::from))
+                    .collect(),
+                &self.effects.repo_root,
+                &BTreeMap::new(),
+                "release hosted evidence",
+            )
+            .map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(command_error("`gh run list`", &output).to_string());
+        }
+        parse_gh_run_list_json(&output.stdout)
+    }
+}
+
+/// The bound run an evidence error names, when the check matched one.
+fn bound_run(error: &crate::hosted_evidence::HostedEvidenceError) -> Option<BoundRun> {
+    use crate::hosted_evidence::HostedEvidenceError;
+    match error {
+        HostedEvidenceError::Pending { url, run_id, .. }
+        | HostedEvidenceError::Failed { url, run_id, .. } => Some(BoundRun {
+            run_id: *run_id,
+            url: url.clone(),
+        }),
+        HostedEvidenceError::Missing(_)
+        | HostedEvidenceError::Ambiguous { .. }
+        | HostedEvidenceError::WrongRepository { .. }
+        | HostedEvidenceError::WrongSha { .. }
+        | HostedEvidenceError::LookupFailed { .. } => None,
+    }
 }
 
 /// The approver recorded on an approval checkpoint.
@@ -498,6 +609,56 @@ impl ReleaseEffects for GitEffects {
             stdout: String::from_utf8_lossy(&output.stdout).trim().to_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
             success: output.status.success(),
+        })
+    }
+
+    fn hosted_evidence(
+        &mut self,
+        run: &mut Run<'_>,
+        gate: &str,
+        spec: &HostedEvidenceSpec,
+        commit: &str,
+        binding: &HostedEvidenceBinding,
+    ) -> Result<HostedEvidence, ReleaseError> {
+        let origin = self.git_stdout(run, &["remote", "get-url", "origin"])?;
+        let repository = github_repository_from_remote_url(&origin).ok_or_else(|| {
+            ReleaseError::TaskInvocation(format!(
+                "origin remote is not a GitHub repository: {origin}"
+            ))
+        })?;
+        let query = HostedEvidenceQuery {
+            repository,
+            head_sha: commit.trim().to_owned(),
+            workflow: spec.workflow.clone(),
+            event: spec.event.clone(),
+            branch: spec.branch.clone(),
+            binding: binding.clone(),
+        };
+        let evaluated = collect_bound_runs(
+            &query,
+            HostedEvidencePolling::DISPATCH,
+            &ReleaseHostedLookup {
+                effects: self,
+                run: std::cell::RefCell::new(run),
+            },
+        );
+        Ok(match evaluated {
+            Ok(run) => HostedEvidence::Accepted {
+                repository: run.repository,
+                commit: run.head_sha,
+                run: BoundRun {
+                    run_id: run.database_id,
+                    url: run.url,
+                },
+            },
+            Err(error) if is_waiting_evidence(&error) => HostedEvidence::Waiting {
+                detail: error.diagnostic(gate),
+                run: bound_run(&error),
+            },
+            Err(error) => HostedEvidence::Failed {
+                detail: error.diagnostic(gate),
+                run: bound_run(&error),
+            },
         })
     }
 

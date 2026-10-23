@@ -713,7 +713,9 @@ Behavior:
   loads: `run` is read as `setup`, `{ task = ... }` entries and inline steps
   are read as selectors and internal tasks, a `submodules` policy string is
   read as a boolean, and a multi-selector `start` chain runs as one internal
-  task, with one deprecation notice per manifest. Only `effigy bootstrap`
+  task, with one deprecation notice per manifest (once per checkout per
+  manifest digest on stderr, every `effigy doctor` run, and the `--json`
+  envelope's `warnings`). Only `effigy bootstrap`
   refuses the retired-only surfaces (children, `bootstrap deps sync`,
   `bootstrap:db-seed`) with their replacement; see
   [guide 085](085-v0.15.0-consumer-migration.md).
@@ -723,8 +725,9 @@ Behavior:
 A v0.14.1 project keeps loading after updating to v0.15 when the config it
 still carries only configured a feature v0.15 removed. Such a section is
 ignored, because ignoring it changes nothing else, and named in one
-deprecation notice per manifest on stderr (`effigy doctor` shows it too; a
-`--json` run never puts it on stdout):
+deprecation notice per manifest. The notice prints to stderr once per checkout
+per manifest digest, `effigy doctor` names it on every run, and a `--json` run
+never puts it on stderr: it reports it in the envelope's `warnings`.
 
 - every removed scanner's `[scan.<name>]` table: `attention_markers`,
   `comment_ratio`, `generated_assets`, `generated_in_src`,

@@ -52,6 +52,17 @@ Settled with Tom on 2026-10-18:
 - The direction is an end-to-end `effigy deploy <env>` that runs the same way
   from a developer machine, CI or an agent (Tom: "Probably all three?").
 
+Settled with Tom on 2026-10-23:
+
+- v0.15 makes `deploy model` and `deploy export` environment-aware (Tom:
+  "Yes"). They take `<ENV>` like `plan`, `apply` and `status`, resolve
+  `[deploy.<env>]` over the shared `[deploy.model]`, and refuse an undeclared
+  environment. They never infer UAT or production values from the dev
+  profile. Acowtancy's Render readiness audit found the model could only
+  describe dev `.test` domains and dev task commands.
+- Previews run without network or secrets (effigy#279): pinned provider
+  revisions, offline plan, and the resolved provider commit in every report.
+
 Open: the full design. The starting shape is in Queue lane `deploy`: a kernel
 run with intent before each effect and explicit obligations (artifacts by
 digest, release gates, state and migrations, provider apply through an
@@ -189,6 +200,12 @@ container mode. We shouldn't need a `*:tui` selector at all."
   Rhai.
 - **Object storage** in the Underlay bundle is Silo, not MinIO. That's a
   bundle change, owned by the Underlay side.
+- **Secrets before the TUI** (Tom, 2026-10-23, relayed by the Underlay owner
+  after `effigy dev` in underlay-reference asked for the Vault passphrase
+  inside the services tab): a locked vault prompts once, before the TUI
+  renders. The session resolves secret access once and shares it with
+  everything it starts (environment `up`, host processes, nested Effigy
+  work), with no tab or child prompts and no persisted sealed credential.
 
 Implementation is planned in the v0.15 environment lane (the
 environment-owned host-process and unified-session work after effigy#235).

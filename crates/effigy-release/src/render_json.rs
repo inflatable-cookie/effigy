@@ -3,8 +3,8 @@ use serde::Serialize;
 use crate::text::{remediation_hints_for_blockers, ReleaseBlockedStage};
 use crate::{
     FileMutationPlan, GateResult, ReleaseExecutePlan, ReleaseExecuted, ReleaseGateRun,
-    ReleasePipelinePlan, ReleasePreparePlan, ReleasePrepared, ReleaseStatus, ReleaseVerifyInstall,
-    ResolvedTarget, ResolvedVersionSource, ReusedGateRecord, TargetKind, VerificationStepResult,
+    ReleasePipelinePlan, ReleasePreparePlan, ReleasePrepared, ReleaseStatus, ResolvedTarget,
+    ResolvedVersionSource, ReusedGateRecord, TargetKind,
 };
 
 pub fn render_release_status_json(status: &ReleaseStatus) -> String {
@@ -18,13 +18,6 @@ pub fn render_release_gate_run_json(run: &ReleaseGateRun) -> String {
     render_pretty(
         &ReleaseGateRunPayload::from(run),
         "{\"schema\":\"effigy.release.gates.v1\",\"passed\":false}",
-    )
-}
-
-pub fn render_release_verify_install_json(result: &ReleaseVerifyInstall) -> String {
-    render_pretty(
-        &ReleaseVerifyInstallPayload::from(result),
-        "{\"schema\":\"effigy.release.verify-install.v1\",\"verified\":false}",
     )
 }
 
@@ -221,33 +214,6 @@ impl From<&ReusedGateRecord> for ReusedGatePayload {
 }
 
 #[derive(Serialize)]
-struct VerificationStepResultPayload {
-    name: String,
-    command: String,
-    passed: bool,
-    exit_code: Option<i32>,
-    stdout: String,
-    stderr: String,
-    launch_error: Option<String>,
-    duration_ms: u128,
-}
-
-impl From<&VerificationStepResult> for VerificationStepResultPayload {
-    fn from(step: &VerificationStepResult) -> Self {
-        Self {
-            name: step.name.clone(),
-            command: step.command.clone(),
-            passed: step.passed,
-            exit_code: step.exit_code,
-            stdout: step.stdout.clone(),
-            stderr: step.stderr.clone(),
-            launch_error: step.launch_error.clone(),
-            duration_ms: step.duration_ms,
-        }
-    }
-}
-
-#[derive(Serialize)]
 struct FileMutationPlanPayload {
     path: String,
     kind: &'static str,
@@ -376,18 +342,7 @@ impl From<&ReleasePipelinePlan> for ReleasePlanSummaryPayload {
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect(),
-            gates: plan
-                .gates
-                .iter()
-                .map(|gate| PlanGatePayload {
-                    name: gate.name.clone(),
-                    stage: gate.stage.stage_name(),
-                    command: gate.command.clone(),
-                    task: gate.task.clone(),
-                    description: gate.description.clone(),
-                    reuse_hosted_evidence: gate.reuse_hosted_evidence,
-                })
-                .collect(),
+            gates: plan.gates.iter().map(PlanGatePayload::from).collect(),
             artifacts: plan
                 .artifacts
                 .iter()
@@ -422,6 +377,7 @@ struct ReleaseGateRunPayload {
     executed_gate_count: usize,
     stopped_early: bool,
     total_duration_ms: u128,
+    gates: Vec<PlanGatePayload>,
     results: Vec<GateResultPayload>,
     #[serde(skip_serializing_if = "Option::is_none")]
     environment_path: Option<String>,
@@ -439,6 +395,9 @@ impl From<&ReleaseGateRun> for ReleaseGateRunPayload {
             executed_gate_count: run.executed_gate_count,
             stopped_early: run.stopped_early,
             total_duration_ms: run.total_duration_ms,
+            // The configured inventory the progress lines streamed, so a JSON
+            // reader sees the same gates, stages and commands.
+            gates: run.gates.iter().map(PlanGatePayload::from).collect(),
             results: run
                 .gate_results
                 .iter()
@@ -446,48 +405,6 @@ impl From<&ReleaseGateRun> for ReleaseGateRunPayload {
                 .collect(),
             environment_path: optional_path(&run.environment_path),
             blockers: run.blockers.clone(),
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct ReleaseVerifyInstallPayload {
-    schema: &'static str,
-    schema_version: u8,
-    verified: bool,
-    repo_root: String,
-    tag: String,
-    repo_url: String,
-    installed_bin: Option<String>,
-    configured_check_count: usize,
-    executed_check_count: usize,
-    stopped_early: bool,
-    results: Vec<VerificationStepResultPayload>,
-    blockers: Vec<String>,
-}
-
-impl From<&ReleaseVerifyInstall> for ReleaseVerifyInstallPayload {
-    fn from(result: &ReleaseVerifyInstall) -> Self {
-        Self {
-            schema: "effigy.release.verify-install.v1",
-            schema_version: 1,
-            verified: result.verified,
-            repo_root: result.repo_root.display().to_string(),
-            tag: result.tag.clone(),
-            repo_url: result.repo_url.clone(),
-            installed_bin: result
-                .installed_bin
-                .as_ref()
-                .map(|path| path.display().to_string()),
-            configured_check_count: result.configured_check_count,
-            executed_check_count: result.executed_check_count,
-            stopped_early: result.stopped_early,
-            results: result
-                .results
-                .iter()
-                .map(VerificationStepResultPayload::from)
-                .collect(),
-            blockers: result.blockers.clone(),
         }
     }
 }
@@ -606,18 +523,7 @@ impl From<&ReleasePipelinePlan> for ReleasePipelinePlanPayload {
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect(),
-            gates: plan
-                .gates
-                .iter()
-                .map(|gate| PlanGatePayload {
-                    name: gate.name.clone(),
-                    stage: gate.stage.stage_name(),
-                    command: gate.command.clone(),
-                    task: gate.task.clone(),
-                    description: gate.description.clone(),
-                    reuse_hosted_evidence: gate.reuse_hosted_evidence,
-                })
-                .collect(),
+            gates: plan.gates.iter().map(PlanGatePayload::from).collect(),
             artifacts: plan
                 .artifacts
                 .iter()
@@ -693,6 +599,19 @@ struct PlanGatePayload {
     task: Option<String>,
     description: Option<String>,
     reuse_hosted_evidence: bool,
+}
+
+impl From<&crate::ResolvedGate> for PlanGatePayload {
+    fn from(gate: &crate::ResolvedGate) -> Self {
+        Self {
+            name: gate.name.clone(),
+            stage: gate.stage.stage_name(),
+            command: gate.command.clone(),
+            task: gate.task.clone(),
+            description: gate.description.clone(),
+            reuse_hosted_evidence: gate.reuse_hosted_evidence,
+        }
+    }
 }
 
 #[derive(Serialize)]

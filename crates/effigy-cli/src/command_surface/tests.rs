@@ -1,15 +1,21 @@
 use super::{
-    command_descriptors, deferred_builtin_for_help_topic, descriptor_for_topic,
-    general_help_entries, general_help_entries_for_group, help_builtin_route, help_command_names,
-    help_topic_for_command, help_topic_for_help_argument, HelpGroup, HELP_COMMAND_BUILTIN_ROUTES,
-    HELP_COMMAND_TOPICS,
+    command_descriptors, deferred_builtin_for_help_argument, deferred_builtin_for_help_topic,
+    descriptor_for_topic, general_help_entries, general_help_entries_for_group, help_builtin_route,
+    help_command_names, help_topic_for_command, help_topic_for_help_argument, HelpGroup,
+    HELP_COMMAND_BUILTIN_ROUTES, HELP_COMMAND_TOPICS,
+};
+use crate::builtin_names::{
+    builtin_command_name, builtin_escape_spelling, is_deferred_builtin_command,
+    BuiltinNameAuthority, BUILTIN_COMMAND_NAMES,
 };
 use crate::{parse_command, Command, HelpTopic, TaskInvocation};
+use effigy_core::builtin_tasks::BUILTIN_TASKS;
 
 const CURRENT_HELP_TOPICS: &[HelpTopic] = &[
     HelpTopic::General,
     HelpTopic::Bundle,
     HelpTopic::Changelog,
+    HelpTopic::Fmt,
     HelpTopic::Deploy,
     HelpTopic::Deps,
     HelpTopic::Secrets,
@@ -38,6 +44,8 @@ const CURRENT_TOP_LEVEL_HELP_ROUTES: &[(&str, HelpTopic)] = &[
     ("version", HelpTopic::General),
     ("bundle", HelpTopic::Bundle),
     ("changelog", HelpTopic::Changelog),
+    ("fmt", HelpTopic::Fmt),
+    ("fmt-rust", HelpTopic::Fmt),
     ("deploy", HelpTopic::Deploy),
     ("deps", HelpTopic::Deps),
     ("secrets", HelpTopic::Secrets),
@@ -94,7 +102,13 @@ const CONTRACT_GROUP_INVENTORIES: &[(HelpGroup, &[&str])] = &[
     ),
     (
         HelpGroup::Repo,
-        &["effigy scan", "effigy docs", "effigy contracts"],
+        &[
+            "effigy scan",
+            "effigy docs",
+            "effigy contracts",
+            "effigy fmt rust <FILE>...",
+            "effigy fmt-rust <FILE>...",
+        ],
     ),
     (
         HelpGroup::Deliver,
@@ -199,8 +213,11 @@ fn general_help_entries_are_backed_by_inventory_metadata() {
             entry.command
         );
         if let Some(name) = entry.deferred_builtin {
+            // A deferred row shows the built-in's own direct spelling, which
+            // may carry a command-owned subcommand (`effigy fmt rust …`).
             assert!(
-                entry.command == format!("effigy {name}"),
+                entry.command == format!("effigy {name}")
+                    || entry.command.starts_with(&format!("effigy {name} ")),
                 "deferred builtin `{name}` should match general row `{}`",
                 entry.command
             );
@@ -406,12 +423,126 @@ fn deferred_builtin_for_help_topic_matches_the_inventory_row() {
             continue;
         }
         let topic = help_topic_for_help_argument(argument).expect("listed help argument");
+        assert!(descriptor_for_topic(topic).is_some(), "{argument}");
         if entry.deferred_builtin.is_some() {
+            // Deferral follows the requested name, not the shared panel:
+            // `fmt` and `fmt-rust` are one topic but two built-ins.
             assert_eq!(
-                deferred_builtin_for_help_topic(topic),
+                deferred_builtin_for_help_argument(argument),
                 entry.deferred_builtin,
                 "`effigy help {argument}` must inherit its row's deferral"
             );
+            assert!(
+                deferred_builtin_for_help_topic(topic).is_some(),
+                "a deferred row's topic must name some deferring built-in"
+            );
         }
     }
+}
+
+/// Retired built-in words that stay classified because repositories still
+/// declare tasks with those names.
+const RETIRED_SHADOWABLE_WORDS: &[&str] = &["demo"];
+
+/// The complete built-in top-level inventory: every spelling a help route,
+/// built-in task row, or command descriptor can reach.
+fn builtin_top_level_inventory() -> Vec<&'static str> {
+    let mut inventory: Vec<&'static str> = CURRENT_TOP_LEVEL_HELP_ROUTES
+        .iter()
+        .map(|(name, _)| *name)
+        .chain(HELP_COMMAND_BUILTIN_ROUTES.iter().copied())
+        .chain(BUILTIN_TASKS.iter().map(|(name, _)| *name))
+        .chain(
+            command_descriptors()
+                .iter()
+                .filter_map(|row| row.command_name),
+        )
+        .collect();
+    inventory.sort_unstable();
+    inventory.dedup();
+    inventory
+}
+
+/// A built-in added to the surface must say whether a repository task may own
+/// its word; nothing may take a consumer task name silently.
+#[test]
+fn every_builtin_top_level_command_is_classified() {
+    for name in builtin_top_level_inventory() {
+        let entry = builtin_command_name(name)
+            .unwrap_or_else(|| panic!("built-in `{name}` has no shadowing classification"));
+        assert_eq!(entry.name, name);
+    }
+
+    for entry in BUILTIN_COMMAND_NAMES {
+        assert!(
+            builtin_top_level_inventory().contains(&entry.name)
+                || RETIRED_SHADOWABLE_WORDS.contains(&entry.name),
+            "`{}` is classified but is not a built-in top-level command",
+            entry.name
+        );
+    }
+}
+
+#[test]
+fn builtin_classification_has_one_entry_per_name() {
+    let mut seen: Vec<&'static str> = Vec::new();
+    for entry in BUILTIN_COMMAND_NAMES {
+        assert!(
+            !seen.contains(&entry.name),
+            "`{}` is classified more than once",
+            entry.name
+        );
+        seen.push(entry.name);
+        if let Some(escape) = entry.escape {
+            assert!(
+                builtin_command_name(escape).is_some(),
+                "`{}` names escape spelling `{escape}`, which is not a built-in command",
+                entry.name
+            );
+            assert_ne!(escape, entry.name);
+        }
+    }
+}
+
+/// The reserved set is the deliberate exception, not an accident: `test`
+/// (contract 038) plus the two meta routes that describe Effigy itself.
+#[test]
+fn reserved_builtin_names_are_the_documented_exceptions() {
+    let mut reserved: Vec<&'static str> = BUILTIN_COMMAND_NAMES
+        .iter()
+        .filter(|entry| entry.authority == BuiltinNameAuthority::Reserved)
+        .map(|entry| entry.name)
+        .collect();
+    reserved.sort_unstable();
+    assert_eq!(reserved, ["help", "test", "version"]);
+}
+
+/// The #290 regression: `effigy fmt` is a built-in, so a repository `fmt` task
+/// must still win and the built-in must stay reachable by an explicit
+/// spelling.
+#[test]
+fn fmt_stays_shadowable_and_keeps_an_explicit_escape_spelling() {
+    let fmt = builtin_command_name("fmt").expect("fmt classification");
+    assert_eq!(fmt.authority, BuiltinNameAuthority::Shadowable);
+    assert!(fmt.deferred_at_parse);
+    assert_eq!(fmt.escape, Some("fmt-rust"));
+    assert!(is_deferred_builtin_command("fmt"));
+    assert_eq!(builtin_escape_spelling("fmt"), Some("fmt-rust"));
+    assert_eq!(builtin_escape_spelling("docs"), None);
+}
+
+/// Parse-time deferral must cover every shadowable word the parser claims, and
+/// must not defer a word the built-in owns.
+#[test]
+fn deferred_builtin_commands_are_exactly_the_parser_claimed_shadowable_names() {
+    for entry in BUILTIN_COMMAND_NAMES {
+        assert_eq!(
+            is_deferred_builtin_command(entry.name),
+            entry.authority == BuiltinNameAuthority::Shadowable && entry.deferred_at_parse,
+            "`{}` deferral drifted from its classification",
+            entry.name
+        );
+    }
+    assert!(!is_deferred_builtin_command("test"));
+    assert!(!is_deferred_builtin_command("scan"));
 }

@@ -109,7 +109,8 @@ Effigy release (Q-005, architecture
 - `<source>/<service>` selects one source; `project`, `bundle` and `baseline`
   are reserved handles; catalog-keyed behaviour uses the unqualified name;
 - declared git, OCI and path sources share the bundle source pin and
-  acquisition code, one checkout lock, and explicit host `effigy bundle sync`;
+  acquisition code, one checkout lock, host Prepare refreshes and explicit
+  `effigy bundle sync`;
   reads never fetch, and a guest reads the host's pins without holding its own
   catalog state;
 - `service.toml` `[requires]` names the Effigy range, fragment schema and

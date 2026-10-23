@@ -1,14 +1,21 @@
 use super::super::surface::COMPLETION_COMMAND_OPTIONS;
 use crate::constants::BUILTIN_TASKS;
 
+/// Direct built-in commands that are not listed as built-in task rows but are
+/// still reachable from the first token.
+const EXTRA_DIRECT_COMMANDS: &[(&str, &str)] = &[
+    (
+        "fmt",
+        "Format only the named Rust files with their nearest rustfmt config",
+    ),
+    (
+        "fmt-rust",
+        "Format named Rust files with the built-in formatter when a repository task owns `effigy fmt`",
+    ),
+];
+
 pub(super) fn command_names() -> Vec<&'static str> {
-    let mut names = Vec::with_capacity(BUILTIN_TASKS.len() + 2);
-    names.push("help");
-    names.push("version");
-    for (name, _) in BUILTIN_TASKS {
-        names.push(name);
-    }
-    names
+    command_rows().into_iter().map(|(name, _)| name).collect()
 }
 
 pub(super) fn command_rows() -> Vec<(&'static str, &'static str)> {
@@ -17,6 +24,7 @@ pub(super) fn command_rows() -> Vec<(&'static str, &'static str)> {
         ("version", "Print the current Effigy version"),
     ];
     rows.extend(BUILTIN_TASKS.iter().copied());
+    rows.extend(EXTRA_DIRECT_COMMANDS.iter().copied());
     rows
 }
 
@@ -93,6 +101,8 @@ pub(super) fn command_options(command: &str) -> &'static [&'static str] {
             "-h",
         ],
         "completion" => COMPLETION_COMMAND_OPTIONS,
+        "fmt" => &["rust", "--check", "--repo", "--json", "--help", "-h"],
+        "fmt-rust" => &["--check", "--repo", "--json", "--help", "-h"],
         _ => &[],
     }
 }

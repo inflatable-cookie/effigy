@@ -70,17 +70,22 @@ context`; use `docs/README.md` as the docs index and `rg` for exact text.
 
 | Built-in | Purpose |
 |----------|---------|
-| `release` | Gates, prepare/execute, verify-install, distribution evidence |
+| `release` | The checkpointed release Run, gates, approval and decision checkpoints, receipts |
 | `changelog` | Validate/format/analyze/extract changelog |
 | `docs` | Link/JSON/index/workflow-path QA checks |
 | `contracts` | JSON contract validation |
 | `init` | Repo setup wizard; `--check`, `--checklist`, `--apply` |
 
-## Distribution note
+## Release notes
 
-There is **no** top-level `effigy distribution` command. Distribution work lives
-under `effigy release validate`, `release preflight`, `release proof`, and
-`release evidence …`. Guide: `docs/guides/062-distribution-system-guide.md`.
+There is **no** top-level `effigy distribution` command and no distribution
+subcommand family: v0.15 retired the distribution surface into contract 054.
+Effigy's own release checks are the `release:` repo tasks in `config/tasks.toml`
+(`release:metadata`, `release:preflight`, `release:proof`,
+`release:check-binary`, `release:verify:install`,
+`release:evidence:validate|closeout`); a project declares its own as
+`[release.gates]` or a target's `verify`. Guide:
+`docs/guides/062-distribution-system-guide.md`.
 
 ## JSON mode
 

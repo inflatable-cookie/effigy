@@ -57,10 +57,6 @@ fn execute_rhai_script_exposes_task_effigy_and_container_helpers() {
             if deploy_history["feature"] != "deploy.history" || deploy_history["options"]["limit"] != 5 { throw("deploy history"); }
             let deploy_redeploy = deploy::redeploy(#{ env: "production", deployment: "dep-123", yes: true });
             if deploy_redeploy["feature"] != "deploy.redeploy" || deploy_redeploy["options"]["deployment"] != "dep-123" { throw("deploy redeploy"); }
-            let distribution_preflight = distribution::preflight(#{ tag: "v0.7.1", skip_docs: true, output: "tmp/preflight.env" });
-            if distribution_preflight["feature"] != "distribution.preflight" || distribution_preflight["options"]["skip_docs"] != true { throw("distribution preflight"); }
-            let distribution_glibc = distribution::check_glibc_floor(#{ binary: "./target/release/effigy", max_glibc: "2.35" });
-            if distribution_glibc["feature"] != "distribution.check_glibc_floor" || distribution_glibc["options"]["max_glibc"] != "2.35" { throw("distribution glibc"); }
             let gateway = gateway::status();
             if gateway["feature"] != "gateway.status" { throw("gateway"); }
             let scan = scan::god_files(#{ threshold: 900 });
@@ -160,31 +156,6 @@ fn execute_rhai_script_exposes_extended_rhai_feature_surface() {
             let pull = container::data_pull_production("web");
             if pull["feature"] != "container.data_pull_production" || pull["options"]["name"] != "web" { throw("data pull production"); }
 
-            let validate_metadata = distribution::validate_metadata(#{ tag: "v0.7.1" });
-            if validate_metadata["feature"] != "distribution.validate_metadata" || validate_metadata["options"]["tag"] != "v0.7.1" { throw("distribution validate metadata"); }
-
-            let first_publish = distribution::first_publish(#{ tag: "v0.7.1", artifacts_dir: "artifacts/release", skip_homebrew: true });
-            if first_publish["feature"] != "distribution.first_publish" || first_publish["options"]["skip_homebrew"] != true { throw("distribution first publish"); }
-
-            let validate_artifacts = distribution::validate_artifacts(#{ artifacts_dir: "artifacts/release", expect_homebrew: true });
-            if validate_artifacts["feature"] != "distribution.validate_artifacts" || validate_artifacts["options"]["expect_homebrew"] != true { throw("distribution validate artifacts"); }
-
-            let generate_closeout = distribution::generate_closeout(#{
-                tag: "v0.7.1",
-                artifacts_dir: "artifacts/release",
-                output: "tmp/closeout.md",
-                owner: "Platform",
-                expect_homebrew: true,
-            });
-            if generate_closeout["feature"] != "distribution.generate_closeout" || generate_closeout["options"]["owner"] != "Platform" { throw("distribution generate closeout"); }
-
-            let write_summary = distribution::write_summary(#{
-                tag: "v0.7.1",
-                artifacts_dir: "artifacts/release",
-                homebrew_executed: true,
-                log_files: ["01.log", "02.log"],
-            });
-            if write_summary["feature"] != "distribution.write_summary" || write_summary["options"]["log_files"][1] != "02.log" { throw("distribution write summary"); }
         "#;
 
     execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
@@ -207,4 +178,42 @@ if result["feature"] != "container.workspace_artifact_build" || result["options"
         .contains("maintained workspace:linux:artifact task"));
     context.task_name = "workspace:linux:artifact".to_owned();
     execute_rhai_script(&context, script, &[], &callbacks()).unwrap();
+}
+
+#[test]
+fn script_functions_read_host_paths_from_the_runtime_module() {
+    let root = temp_root("runtime-paths-in-function");
+    let cwd = root.join("cwd");
+    fs::create_dir_all(&cwd).expect("cwd");
+    let task_source = root.join("task-source");
+    fs::create_dir_all(&task_source).expect("task source");
+    let _env = ScopedTestEnv::set_many(&[(
+        crate::EFFIGY_RHAI_CATALOG_ROOT,
+        task_source.display().to_string(),
+    )]);
+    let context = ScriptContext {
+        cwd,
+        repo_root: root.clone(),
+        task_name: "demo".to_owned(),
+        stop_requested: install_stop_requested_flag().expect("stop flag"),
+    };
+    let script = r#"
+fn emit_paths() {
+    let paths = runtime::paths();
+    return [
+        paths["repo_root"],
+        paths["catalog_root"],
+        paths["skill_root"],
+        paths["cwd"],
+        paths["invocation_cwd"],
+    ];
+}
+let paths = emit_paths();
+if paths[0] != repo_root { throw("function repo_root differs from the scope constant"); }
+if paths[1] != catalog_root || paths[2] != skill_root { throw("catalog_root and skill_root must alias"); }
+if paths[3] != cwd { throw("cwd differs"); }
+if paths[4] != invocation_cwd { throw("invocation_cwd differs"); }
+"#;
+
+    execute_rhai_script(&context, script, &[], &callbacks()).expect("execute");
 }

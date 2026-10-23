@@ -152,9 +152,20 @@ pub(crate) fn runtime_route_domains(
 ) -> RuntimeDnsOverrideRoutes {
     let mut host_gateway_domains = std::collections::BTreeSet::new();
     let mut service_alias_domains = BTreeMap::<String, Vec<String>>::new();
+    // Callers that resolved the apex (policy load, `container hosts`) pass it;
+    // otherwise infer the shallowest route host rather than letting the front
+    // route's full domain stand in for an undeclared apex.
     let effective_base = effective_base_domain
         .map(str::to_owned)
-        .or_else(|| dns_routes.first().map(|route| route.domain.clone()))
+        .or_else(|| {
+            crate::infer_base_domain(
+                &dns_routes
+                    .iter()
+                    .map(|route| route.domain.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .base
+        })
         .filter(|domain| base_domain_from_route(domain).is_some());
     // A scoped checkout keeps the canonical declared alias reachable inside
     // its own execution target. The Compose project network is per scope, so
@@ -162,9 +173,13 @@ pub(crate) fn runtime_route_domains(
     let declared_base = declared_base_domain
         .map(str::to_owned)
         .or_else(|| {
-            dns_routes
-                .first()
-                .map(|route| route.declared_domain.clone())
+            crate::infer_base_domain(
+                &dns_routes
+                    .iter()
+                    .map(|route| route.declared().to_owned())
+                    .collect::<Vec<_>>(),
+            )
+            .base
         })
         .filter(|domain| base_domain_from_route(domain).is_some())
         .or_else(|| effective_base.clone());
@@ -294,7 +309,23 @@ mod tests {
     }
 
     #[test]
-    fn runtime_alias_defaults_to_first_route_domain() {
+    fn runtime_alias_infers_the_shallowest_route_host() {
+        let routes = [route("s3.acme.test"), route("admin.acme.test")];
+        let aliases = [alias()];
+
+        let runtime_routes = runtime_route_domains(&routes, &aliases, None, None);
+
+        assert_eq!(
+            runtime_routes.service_alias_domains.get("postgres"),
+            Some(&vec!["postgres.s3.acme.test".to_owned()]),
+            "routes at the same depth keep the front route, never a shared parent"
+        );
+    }
+
+    #[test]
+    fn runtime_alias_keeps_a_lone_subdomain_as_its_own_apex() {
+        // Inference cannot invent a higher apex from one route; a bundle says
+        // so with `base_domain` instead.
         let routes = [route("s3.acme.test"), route("api.s3.acme.test")];
         let aliases = [alias()];
 

@@ -151,6 +151,92 @@ fn tree(root: &Path) -> BTreeMap<PathBuf, Entry> {
     visit(root, root, &mut entries);
     entries
 }
+
+fn git_in(root: &Path, home: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .env_clear()
+        .env("HOME", home)
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+/// A bundle Git remote at `root`, with its first revision committed.
+fn init_git_bundle(root: &Path, home: &Path, run: &str) -> String {
+    fs::create_dir_all(root).unwrap();
+    git_in(root, home, &["init", "--initial-branch=main", "--quiet"]);
+    // A pinned full revision is fetched by id, which a local upload-pack
+    // serves only when asked.
+    git_in(
+        root,
+        home,
+        &["config", "uploadpack.allowReachableSHA1InWant", "true"],
+    );
+    git_in(
+        root,
+        home,
+        &["config", "uploadpack.allowTipSHA1InWant", "true"],
+    );
+    commit_git_bundle(root, home, run)
+}
+
+fn commit_git_bundle(root: &Path, home: &Path, run: &str) -> String {
+    fs::write(root.join("bundle.toml"), "[bundle]\nname = \"fixture\"\n").unwrap();
+    fs::write(
+        root.join("effigy.toml"),
+        format!("[tasks.dev]\nrun = \"echo {run}\"\n"),
+    )
+    .unwrap();
+    git_in(root, home, &["add", "."]);
+    git_in(
+        root,
+        home,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            run,
+            "--quiet",
+        ],
+    );
+    git_in(root, home, &["rev-parse", "HEAD"])
+}
+
+fn git_bundle_manifest(fixture: &Fixture, source: &Path, reference: Option<&str>) {
+    let mut body = format!(
+        "[bundle]\nbase = {{ type = \"git\", url = \"file://{}\"",
+        source.display()
+    );
+    if let Some(reference) = reference {
+        body.push_str(&format!(", ref = \"{reference}\""));
+    }
+    body.push_str(" }\n");
+    fs::write(fixture.repo.join("effigy.toml"), body).unwrap();
+}
+
+fn pinned_revision(fixture: &Fixture) -> String {
+    let lock: serde_json::Value =
+        serde_json::from_slice(&fs::read(fixture.repo.join(".effigy/sources.lock.json")).unwrap())
+            .unwrap();
+    lock["sources"]["bundle"]["revision"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
 #[test]
 fn discovery_is_write_free_and_cannot_reach_a_hung_source_remote() {
     let fixture = Fixture::new();
@@ -193,6 +279,7 @@ fn discovery_is_write_free_and_cannot_reach_a_hung_source_remote() {
     held_legacy_lock.lock().unwrap();
     let before_repo = tree(&fixture.repo);
     let before_home = tree(&fixture.home);
+
     let commands: &[&[&str]] = &[
         &["--help"],
         &["help"],
@@ -208,9 +295,6 @@ fn discovery_is_write_free_and_cannot_reach_a_hung_source_remote() {
         &["config", "inspect", "--json"],
         &["bundle", "inspect"],
         &["doctor", "--json"],
-        &["graph", "status", "--json"],
-        &["graph", "search", "original", "--stale-index", "--json"],
-        &["graph", "explore", "dev", "--stale-index", "--json"],
     ];
     for args in commands {
         let (_, output) = fixture.run(args, &[("PATH", path)], Duration::from_secs(8));
@@ -220,10 +304,22 @@ fn discovery_is_write_free_and_cannot_reach_a_hung_source_remote() {
                 .keys()
                 .chain(after.keys())
                 .filter(|path| before.get(*path) != after.get(*path))
+                // Reading the kernel's own run journal opens SQLite sidecars
+                // inside the state store, which touches the store directory
+                // too. That is the store's runtime bookkeeping, never source
+                // state, and this proof is about source state.
+                .filter(|path| {
+                    path.as_path() != Path::new(".effigy/state")
+                        && !matches!(
+                            path.file_name().and_then(|name| name.to_str()),
+                            Some("kernel.db-shm" | "kernel.db-wal")
+                        )
+                })
                 .collect::<std::collections::BTreeSet<_>>();
             assert!(
                 changed.is_empty(),
-                "filesystem write from {args:?}, changed {changed:?}: {output}"
+                "filesystem write from {args:?} in {}: changed {changed:?}: {output}",
+                root.display()
             );
         }
     }
@@ -436,10 +532,10 @@ else exit 43; fi
 }
 
 #[test]
-fn first_dev_prepares_once_and_later_dev_runs_keep_the_pin() {
+fn a_later_dev_refreshes_a_changed_path_bundle() {
     let fixture = Fixture::new();
     fixture.write_path_bundle();
-    let (ok, output) = fixture.run(&["dev", "--", "--plan"], &[], Duration::from_secs(20));
+    let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(20));
     assert!(ok, "{output}");
     assert!(output.contains("original"), "{output}");
     let pin = fixture.repo.join(".effigy/sources.lock.json");
@@ -451,8 +547,168 @@ fn first_dev_prepares_once_and_later_dev_runs_keep_the_pin() {
     .unwrap();
     let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(20));
     assert!(ok, "{output}");
-    assert!(output.contains("original"), "{output}");
-    assert_eq!(fs::read(pin).unwrap(), initial);
+    assert!(output.contains("changed"), "{output}");
+    assert!(output.contains("(content changed)"), "{output}");
+    assert_ne!(fs::read(&pin).unwrap(), initial);
+}
+
+#[test]
+fn container_up_refreshes_a_changed_path_bundle() {
+    let fixture = Fixture::new();
+    fixture.write_path_bundle();
+    let (ok, output) = fixture.run(&["bundle", "sync"], &[], Duration::from_secs(20));
+    assert!(ok, "{output}");
+    let pin = fixture.repo.join(".effigy/sources.lock.json");
+    let initial = fs::read(&pin).unwrap();
+    fs::write(
+        fixture.repo.join("bundle/effigy.toml"),
+        "[tasks.dev]\nrun = \"echo changed\"\n",
+    )
+    .unwrap();
+    // No container is declared, so the command still refuses after preparing.
+    let (ok, output) = fixture.run(&["container", "up"], &[], Duration::from_secs(20));
+    assert!(!ok, "the fixture declares no container: {output}");
+    assert!(output.contains("(content changed)"), "{output}");
+    assert_ne!(fs::read(&pin).unwrap(), initial);
+}
+
+#[test]
+fn a_floating_git_ref_updates_on_dev_at_most_once_per_ttl() {
+    let fixture = Fixture::new();
+    let source = fixture.owner.path().join("source");
+    let first = init_git_bundle(&source, &fixture.home, "one");
+    git_bundle_manifest(&fixture, &source, None);
+    let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    assert!(output.contains("one"), "{output}");
+    assert_eq!(pinned_revision(&fixture), first);
+
+    let second = commit_git_bundle(&source, &fixture.home, "two");
+    let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    assert!(output.contains("two"), "{output}");
+    assert!(
+        output.contains(&format!(
+            "bundle updated {} → {} (upstream moved)",
+            &first[..8],
+            &second[..8]
+        )),
+        "{output}"
+    );
+    assert_eq!(pinned_revision(&fixture), second);
+
+    // Inside the window the upstream moves again and the pin stays put.
+    commit_git_bundle(&source, &fixture.home, "three");
+    let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    assert!(
+        output.contains("two") && !output.contains("three"),
+        "{output}"
+    );
+    assert!(!output.contains("bundle updated"), "{output}");
+    assert_eq!(pinned_revision(&fixture), second);
+
+    // Past the recorded check, the next Prepare checks and updates again.
+    fs::remove_file(fixture.repo.join(".effigy/sources.update.json")).unwrap();
+    let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    assert!(output.contains("three"), "{output}");
+}
+
+#[test]
+fn a_pinned_git_revision_never_moves_on_dev() {
+    let fixture = Fixture::new();
+    let source = fixture.owner.path().join("source");
+    let pinned = init_git_bundle(&source, &fixture.home, "one");
+    git_bundle_manifest(&fixture, &source, Some(&pinned));
+    let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    assert!(output.contains("one"), "{output}");
+    let pin = fixture.repo.join(".effigy/sources.lock.json");
+    let lock = fs::read(&pin).unwrap();
+    commit_git_bundle(&source, &fixture.home, "two");
+    let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    assert!(output.contains("one"), "{output}");
+    assert!(!output.contains("bundle updated"), "{output}");
+    assert_eq!(fs::read(&pin).unwrap(), lock);
+    assert!(!fixture.repo.join(".effigy/sources.update.json").exists());
+}
+
+#[test]
+fn a_failed_remote_update_keeps_pins_and_warns() {
+    let fixture = Fixture::new();
+    let source = fixture.owner.path().join("source");
+    let first = init_git_bundle(&source, &fixture.home, "one");
+    git_bundle_manifest(&fixture, &source, None);
+    let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    let pin = fixture.repo.join(".effigy/sources.lock.json");
+    let lock = fs::read(&pin).unwrap();
+    let absent = fixture.owner.path().join("source-moved");
+    fs::rename(&source, &absent).unwrap();
+    let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    assert!(output.contains("one"), "{output}");
+    assert!(output.contains("update failed"), "{output}");
+    assert!(output.contains("keeping"), "{output}");
+    assert_eq!(fs::read(&pin).unwrap(), lock);
+    assert_eq!(pinned_revision(&fixture), first);
+    // The failed attempt counts as this window's check.
+    fs::rename(&absent, &source).unwrap();
+    commit_git_bundle(&source, &fixture.home, "two");
+    let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    assert!(
+        output.contains("one") && !output.contains("two"),
+        "{output}"
+    );
+    fs::remove_file(fixture.repo.join(".effigy/sources.update.json")).unwrap();
+    let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    assert!(output.contains("two"), "{output}");
+}
+
+#[test]
+fn read_paths_never_check_a_floating_remote() {
+    let fixture = Fixture::new();
+    let source = fixture.owner.path().join("source");
+    init_git_bundle(&source, &fixture.home, "one");
+    git_bundle_manifest(&fixture, &source, None);
+    let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
+    assert!(ok, "{output}");
+    commit_git_bundle(&source, &fixture.home, "two");
+    let pin = fixture.repo.join(".effigy/sources.lock.json");
+    let lock = fs::read(&pin).unwrap();
+    let tools = fixture.owner.path().join("tools");
+    fs::create_dir(&tools).unwrap();
+    for name in ["git", "oras"] {
+        let executable = tools.join(name);
+        fs::write(
+            &executable,
+            "#!/bin/sh\ncase \" $* \" in *clone*|*fetch*|*ls-remote*|*pull*) printf called > \"$HOME/remote-called\"; exit 1;; esac\nexit 1\n",
+        )
+        .unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path =
+        std::env::join_paths([tools, PathBuf::from("/usr/bin"), PathBuf::from("/bin")]).unwrap();
+    let path = Path::new(&path);
+    for args in [
+        &["bundle", "inspect", "--json"][..],
+        &["dev", "--plan"][..],
+        &["tasks"][..],
+        &["config", "inspect", "--json"][..],
+    ] {
+        let (ok, output) = fixture.run(args, &[("PATH", path)], Duration::from_secs(20));
+        assert!(ok, "{args:?}: {output}");
+        assert!(
+            !fixture.home.join("remote-called").exists(),
+            "{args:?} probed the remote: {output}"
+        );
+    }
+    assert_eq!(fs::read(&pin).unwrap(), lock);
+    assert!(!fixture.repo.join(".effigy/sources.update.json").exists());
 }
 
 #[test]

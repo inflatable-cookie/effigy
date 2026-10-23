@@ -17,7 +17,8 @@ use super::BundleSourceType;
 use crate::{ManifestBundleBase, ManifestError};
 mod prepare;
 pub use prepare::{
-    prepare_bundle_sources, sync_bundle_source, SourcePreparation, SourceSettlement,
+    bundle_update_notes, prepare_bundle_sources, sync_bundle_source, SourcePreparation,
+    SourceSettlement,
 };
 
 const LOCK_FILE: &str = "sources.lock.json";
@@ -41,6 +42,14 @@ pub struct BundleSyncReport {
     pub changed: bool,
     pub applicable: bool,
     pub sources: BTreeMap<String, BundleSourceInspectReport>,
+    /// One line per source this Prepare selected new bytes for, also printed on
+    /// stderr and carried into a JSON envelope's `notes`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+    /// A refresh this Prepare could not complete. The pin it kept is still
+    /// selected, so the caller carries on (contract 020 §Failure).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -124,13 +133,13 @@ impl BundleSelection {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct SourceLock {
     version: u8,
     sources: BTreeMap<String, SourcePin>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SourcePin {
     declaration: ManifestBundleBase,
@@ -208,6 +217,26 @@ impl Record for SourceLock {
         Ok(lock)
     }
 }
+/// Declarations match when they select the same source. A path source compares
+/// by its real directory, so a lock written through one alias of the checkout
+/// (a symlinked temp root, say) still matches a read through another.
+fn same_declaration(declaration: &ManifestBundleBase, selection: &BundleSelection) -> bool {
+    let selected = selection.spec();
+    if declaration == &selected {
+        return true;
+    }
+    match (declaration, &selected) {
+        (ManifestBundleBase::Path { dir: pinned }, ManifestBundleBase::Path { dir }) => {
+            real_dir(Path::new(pinned.trim())) == real_dir(Path::new(dir.trim()))
+        }
+        _ => false,
+    }
+}
+
+fn real_dir(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn parent(manifest: &Path) -> &Path {
     manifest.parent().unwrap_or_else(|| Path::new("."))
 }
@@ -294,10 +323,22 @@ fn resolve_source(
                 format!("pinned source `{name}` is unavailable; run `effigy bundle sync`"),
             ));
         }
-        let stale = pin.declaration != selection.spec()
-            || known_version(selection).is_some_and(|version| version != pin.version);
+        let known = known_version(selection);
+        let declaration_changed = !same_declaration(&pin.declaration, selection);
+        let stale = declaration_changed
+            || known
+                .as_ref()
+                .is_some_and(|version| *version != pin.version);
         if stale {
-            notice("bundle behind: run `effigy bundle sync`");
+            // Reads stay network-free and never select new bytes; the notice
+            // names both sides with their kind and the Prepare path that will
+            // update (contract 020 §Read paths, papercuts 228e8d43/1ef87556).
+            notice(&behind_notice(
+                name,
+                pin,
+                known.as_deref(),
+                declaration_changed,
+            ));
         }
         let selected = BundleSelection::from_spec(manifest, &pin.declaration)?;
         return Ok(ResolvedBundleSource {
@@ -331,20 +372,6 @@ fn inspect(resolved: ResolvedBundleSource) -> BundleSourceInspectReport {
         version_hint: resolved.version_hint,
         stale: resolved.stale,
     }
-}
-/// Pure preflight for bootstrap/dev, before opening any preparation context.
-pub fn bundle_sources_need_preparation(manifest: &Path) -> Result<bool, ManifestError> {
-    let (bundle, catalogs) = crate::composition::load_manifest_source_declarations(manifest)?;
-    if bundle.is_none() && catalogs.is_empty() {
-        return Ok(false);
-    }
-    let lock = read_lock(manifest)?;
-    Ok(lock.is_none_or(|lock| {
-        (bundle.is_some() && !lock.sources.contains_key("bundle"))
-            || catalogs
-                .keys()
-                .any(|name| !lock.sources.contains_key(&format!("catalog:{name}")))
-    }))
 }
 pub fn inspect_bundle_source(
     manifest: &Path,
@@ -400,7 +427,8 @@ pub fn catalog_source_roots(manifest: &Path) -> Result<CatalogSourceRoots, Manif
     let declared = catalogs
         .iter()
         .map(|(name, source)| {
-            resolve_catalog_source(manifest, name, source).map(|pin| (name.clone(), pin.local_path))
+            resolve_catalog_source(manifest, name, &source.base)
+                .map(|pin| (name.clone(), pin.local_path))
         })
         .collect::<Result<_, _>>()?;
     Ok(CatalogSourceRoots { bundle, declared })
@@ -411,6 +439,84 @@ fn notice(message: &str) {
     static EMITTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !EMITTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
         eprintln!("[bundle] {message}");
+    }
+}
+/// A revision or content digest, short enough for one diagnostic line.
+fn short_version(value: &str) -> String {
+    let value = value.strip_prefix("sha256:").unwrap_or(value);
+    let short: String = value.chars().take(8).collect();
+    if short.is_empty() {
+        "unknown".to_owned()
+    } else {
+        short
+    }
+}
+
+/// The `<source> behind` line for one stale pin.
+///
+/// The locked side may be a Git revision while the bounded hint only records a
+/// content digest, so the two short ids are labelled with their kind instead of
+/// looking comparable. Both sides stay bare revision spellings when both are
+/// revisions.
+fn behind_notice(
+    name: &str,
+    pin: &SourcePin,
+    known: Option<&str>,
+    declaration_changed: bool,
+) -> String {
+    let locked_raw = pin.revision.as_deref().unwrap_or(&pin.version);
+    let locked_kind = revision_kind(locked_raw);
+    let suffix = "the next `effigy dev` or `effigy container up` will update";
+    match known.filter(|_| !declaration_changed) {
+        Some(available_raw) => {
+            let available_kind = revision_kind(available_raw);
+            if locked_kind == Kind::Revision && available_kind == Kind::Revision {
+                format!(
+                    "{name} behind: locked {}, available {}; {suffix}",
+                    short_version(locked_raw),
+                    short_version(available_raw)
+                )
+            } else {
+                format!(
+                    "{name} behind: locked {} {}, available {} {}; {suffix}",
+                    locked_kind.label(),
+                    short_version(locked_raw),
+                    available_kind.label(),
+                    short_version(available_raw)
+                )
+            }
+        }
+        None => format!(
+            "{name} behind: locked {} {}, declaration changed; {suffix}",
+            locked_kind.label(),
+            short_version(locked_raw)
+        ),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Revision,
+    Digest,
+}
+
+impl Kind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Revision => "revision",
+            Self::Digest => "digest",
+        }
+    }
+}
+
+/// A sha256 content digest is hex without a `sha256:` prefix; a Git revision is
+/// a short or full commit id.
+fn revision_kind(value: &str) -> Kind {
+    let value = value.strip_prefix("sha256:").unwrap_or(value);
+    if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Kind::Digest
+    } else {
+        Kind::Revision
     }
 }
 fn legacy_root(manifest: &Path, selection: &BundleSelection) -> Option<PathBuf> {
@@ -599,5 +705,77 @@ base = { type = "git", url = "https://invalid.invalid/bundle" }
             assert!(SourceLock::decode(&bytes).is_err());
         }
         assert!(SourceLock::decode(br#"{"version":2,"sources":{}}"#).is_err());
+    }
+
+    fn pin(revision: Option<&str>, version: &str) -> SourcePin {
+        SourcePin {
+            declaration: ManifestBundleBase::Git {
+                url: "https://example.invalid/bundle".into(),
+                r#ref: None,
+            },
+            object: "cache/sources/one".into(),
+            version: version.into(),
+            revision: revision.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn behind_notice_labels_a_revision_against_a_content_digest() {
+        let locked = pin(
+            Some("544c0cc9b30c2a5d0b6e6c5d4f0d1c2b3a4f5e60"),
+            "9b1f7a4c2d6e8f0a1b3c5d7e9f0a2b4c6d8e0f1a3b5c7d9e0f2a4b6c8d0e1f3a",
+        );
+        let line = behind_notice(
+            "bundle",
+            &locked,
+            Some("2750ab75c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8"),
+            false,
+        );
+        assert_eq!(
+            line,
+            "bundle behind: locked revision 544c0cc9, available digest 2750ab75; the next `effigy dev` or `effigy container up` will update"
+        );
+    }
+
+    #[test]
+    fn behind_notice_keeps_bare_revisions_when_both_sides_are_revisions() {
+        let locked = pin(Some("544c0cc9b30c2a5d0b6e6c5d4f0d1c2b3a4f5e60"), "ignored");
+        let line = behind_notice(
+            "bundle",
+            &locked,
+            Some("2fd87567aa11bb22cc33dd44ee55ff66aa77bb88"),
+            false,
+        );
+        assert_eq!(
+            line,
+            "bundle behind: locked 544c0cc9, available 2fd87567; the next `effigy dev` or `effigy container up` will update"
+        );
+    }
+
+    #[test]
+    fn behind_notice_labels_a_path_source_digest_and_a_declaration_change() {
+        let path_pin = SourcePin {
+            declaration: ManifestBundleBase::Path {
+                dir: "bundle".into(),
+            },
+            object: "cache/sources/one".into(),
+            version: "9b1f7a4c2d6e8f0a1b3c5d7e9f0a2b4c6d8e0f1a3b5c7d9e0f2a4b6c8d0e1f3a".into(),
+            revision: None,
+        };
+        let digest_line = behind_notice(
+            "bundle",
+            &path_pin,
+            Some("2750ab75c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8"),
+            false,
+        );
+        assert_eq!(
+            digest_line,
+            "bundle behind: locked digest 9b1f7a4c, available digest 2750ab75; the next `effigy dev` or `effigy container up` will update"
+        );
+        let changed = behind_notice("bundle", &path_pin, None, true);
+        assert_eq!(
+            changed,
+            "bundle behind: locked digest 9b1f7a4c, declaration changed; the next `effigy dev` or `effigy container up` will update"
+        );
     }
 }

@@ -850,13 +850,16 @@ Use this with `effigy.local.toml` for per-machine mounts.
 6. either return immediately or attach, based on startup mode
 
 These waits are bounded. A timeout names the runtime or gateway readiness
-stage; a stopped Compose service is reported with its exit status. After a
-Colima VM restart, a successful owned-container start that reports a stale
-nerdctl health-check timer records a warning. If start fails with that collision
-but inspect reports the container running, Effigy fails immediately as stale
-backend state: running state does not prove health-check readiness. The error
-names the selected Colima profile and exact inspect/start recovery commands;
-Effigy does not continue readiness or gateway setup. If the container stays
+stage; a stopped Compose service is reported with its exit status. Effigy
+never starts a container that is already running or that the backend is
+still acting on: immediately before each recovery start it inspects that one
+container and starts it only when the observation proves a stopped
+`created`, `exited` or `dead` container. After a Colima VM restart, a
+successful owned-container start that reports a nerdctl health-check timer
+collision records a warning. If start reports that collision but the
+container ends up running, Effigy records the collision line and continues
+to the normal readiness and health wait, which proves or fails health
+itself; it is not reported as stale backend state. If the container stays
 Exited with that collision, Effigy inspects the full container ID and, when
 the unit pair is an exact-owned transient health-check timer/service in the selected
 profile, stops `{id}.timer`, `reset-failed` `{id}.service`/`{id}.timer`,
@@ -936,6 +939,15 @@ Attached mode behavior:
 
 - it tears down the compose environment
 - it does not stop the Colima profile itself
+- on an environment this checkout never prepared whose Compose project owns no
+  container, network or volume, it is a one-line no-op: `nothing to stop for
+  <name>`, with `ok: true` and a `noop` reason in JSON. It renders nothing and
+  calls no Compose, so the unassigned ports of a render that was never
+  prepared never reach interpolation
+- a stop never assigns, reserves or reclaims a port. A generation whose ports
+  were never assigned (a first start that failed) is torn down with a
+  teardown-only interpolation value, so its cleanup succeeds; `up` and
+  `prepare` still fail closed on that render
 
 Cross-project views:
 
@@ -1337,13 +1349,33 @@ TCP catalog services such as postgres, mariadb, redis, and memcached also get
 deterministic loopback aliases. That means host and container code can use the
 same stable names without hand-written `/etc/hosts` edits.
 
-By default, generated TCP aliases and the `container hosts` cookie apex use
-the first resolved `[containers.<name>.dns]` route's domain. Set `base_domain`
-when that route is a subdomain and service aliases should use a higher apex.
-For example, with a first route of `s3.acme.test`, setting
+By default, generated TCP aliases, the `container hosts` cookie apex and
+gateway service-alias registration all use the same apex.
+
+An undeclared apex is inferred from the HTTP routes. Effigy picks the
+shallowest route host served by the primary service (the service of the front
+route) or by a managed host listener, and route order decides a tie at the
+same depth. That keeps a bundle whose front route is a subdomain
+(`s3.acme.test`) from naming that subdomain as the apex, as long as a route or
+a host listener publishes the apex (`acme.test`). Only when neither the
+primary service nor a managed listener serves a usable host does the
+shallowest route host of any service stand in. A wildcard route never becomes
+the apex, and the inferred apex is always one of the declared route hosts,
+never a parent domain the routes happen to share. The resolved apex is the one
+added to Compose service aliases and route-parity `extra_hosts`, and the one
+the gateway registers for `postgres`/`mysql`/`redis` style service aliases.
+When the inferred apex is not a suffix of every HTTP route, `container hosts`
+warns, and its JSON `base_domain` object carries `"inferred": true` with the
+warning.
+
+**An undeclared base is inferred; declare `[containers.<name>.dns]
+base_domain` to choose it.** Set it when the routes do not share the apex you
+want, or when a single subdomain route is all Effigy can see. For example,
+with routes `s3.acme.test` and `app.s3.acme.test`, setting
 `base_domain = "acme.test"` gives the postgres service the alias
-`postgres.acme.test` and reports `acme.test` as `cookie_domain`. This setting
-does not change the declared HTTP routes.
+`postgres.acme.test` and reports `acme.test` as `cookie_domain`. A declared
+value is never inferred or rewritten, and it does not change the declared HTTP
+routes.
 
 ```toml
 [containers.web.dns]
@@ -1613,19 +1645,24 @@ Effigy owns those units.
 Fix: re-run `effigy container up`. Effigy starts only currently declared
 Exited/Created services (Compose project label match), skips one-off
 `compose run` containers and undeclared orphans, keeps volumes, and does
-not delete systemd units. When a stopped owned Colima container hits that
-collision, Effigy inspects the full hexadecimal ID and recovers only an
-exact-owned transient unit pair in the selected profile (`systemctl stop`
-of `{id}.timer`, then `reset-failed` of `{id}.service`/`{id}.timer`). After
-that stop/reset it verifies with short bounded re-probes that both units
-actually unloaded; a stopped-but-still-loaded pair fails with its
-load/fragment state rather than claiming recovery, and a start that reports
-the collision while inspect shows the container running is reported as an
-unresolved health check with the exact inspect/start commands instead of a
-clean recovery. It then retries start once. It does not recover running,
-foreign, one-off, undeclared, persistent, or unverified units, and it does
-not change Docker start. Inspect and start are bounded; a hung nerdctl
-command still names
+not delete systemd units. Before each start it inspects that one container
+and starts it only when the observation proves it is stopped; a running or
+in-flight container is left to the readiness wait, so a container Compose
+already started is never started again. When a stopped owned Colima
+container hits that collision, Effigy inspects the full hexadecimal ID and
+recovers only an exact-owned transient unit pair in the selected profile
+(`systemctl stop` of `{id}.timer`, then `reset-failed` of
+`{id}.service`/`{id}.timer`). After that stop/reset it verifies with short
+bounded re-probes that both units actually unloaded; a
+stopped-but-still-loaded pair fails with its load/fragment state rather
+than claiming recovery. A start that reports the collision while the
+container ends up running is recorded as a warning and the service goes on
+to the normal readiness and health wait, which proves or fails its health
+check; the warning names the exact inspect command. A service that stays
+stopped gets one retry after that exact-owned unit recovery. Effigy does
+not recover running, foreign, one-off, undeclared, persistent, or
+unverified units, and it does not change Docker start. Inspect and start
+are bounded; a hung nerdctl command still names
 the last observed status. Start exit 0 is not readiness: if the service
 stays stopped, the error keeps the start backend text (including a
 stale-timer warning or the refusal diagnostic) and names:
@@ -1640,6 +1677,100 @@ id/status/project/service and the exact `colima ssh --profile <profile>`
 
 `effigy container status` shows the live `Exited` row rather than an empty
 or assumed-running service list.
+
+Under host saturation Effigy distinguishes the machine from the service: an
+owned inspect that times out is retried with the same bound (at most twice)
+and a saturated host opens the first exec-readiness window from two to fifteen
+seconds once before any restart, so a healthy service the host never let
+answer is not restarted. When a bounded call still cannot answer, the error
+names the observed host load (`load average 40.00 over 18 CPU(s)`) and says the
+service's state is unproven instead of blaming it. `Exited (141)` is reported
+as SIGPIPE — a closed stdout/stderr pipe — not as a health verdict; read the
+service log for the writer that closed. Let the host quiesce and retry once
+rather than widening timeouts or recreating the stack.
+
+## Troubleshooting: host `docker` cannot see a Colima container
+
+Symptom: the stack is up (`effigy container status` lists every service
+`Up`), but on the host
+
+```
+$ docker inspect <container>
+Error: No such object: <container>
+```
+
+Cause: the Docker CLI talks to whatever context it is pointed at. A host with
+Docker Desktop installed usually has `context = desktop-linux`, which is a
+different engine from the Colima profile Effigy manages (`effigy` by default).
+`docker ps`, `docker inspect` and `docker compose` therefore see Docker
+Desktop's containers, never the ones running in the Colima VM. Effigy's own
+commands select the profile and backend from the manifest, not from the host
+Docker context, so they see the real stack.
+
+This is a context boundary, not a missing or failed container. Do not restart,
+recreate or reset the environment because host `docker` cannot see it.
+
+Use the supported per-service route instead:
+
+```bash
+effigy container status                 # every service, with its live status
+effigy container logs --service db      # one service's log
+effigy container logs --service db --follow
+effigy container shell --service db --command "psql -U postgres"
+effigy container hosts                  # this checkout's HTTP/TCP host map
+```
+
+`effigy doctor` prints the host's `docker-context` and warns when it differs
+from the backend Effigy will use for the declared Colima containers. To inspect
+the VM directly, address the profile explicitly:
+`colima nerdctl --profile effigy -- inspect <container>`. Do not point the host
+`docker` context at Colima while other projects rely on Docker Desktop.
+
+## Troubleshooting: `/run` inodes exhausted by nerdctl health-check pid files
+
+Symptom: every `exec` and container create in the profile starts failing with
+
+```
+no space left on device
+```
+
+even though the disk has room, and `colima ssh --profile <profile> -- df -i /run`
+shows `IUse%` at or near 100%.
+
+Cause: nerdctl 2.3.1 starts each health check as a containerd exec process and
+never deletes it, so the VM keeps one pid file per check under
+`/run/containerd/io.containerd.runtime.v2.task/<namespace>/<container>/`. A
+busy stack leaks tens of thousands of `health-check-<id>.pid` files per
+container per day, and `/run` is a tmpfs with a finite inode count. It is a
+runtime defect, not an Effigy or application failure. nerdctl **2.4.1** deletes
+the exec process (`process.Delete` in a `defer`, added after 2.3.1), which
+stops the leak at the source. The VM's nerdctl is whatever the Colima image
+ships: Colima 0.10.3 ships nerdctl 2.3.1, so check it with
+`colima ssh --profile <profile> -- nerdctl --version` and upgrade Colima (or
+the VM's nerdctl) for the fix.
+
+Effigy reports and repairs it:
+
+```bash
+effigy doctor                            # /run inode use and pid-file counts per running profile
+effigy container profile prune-health-pid-files --profile effigy
+```
+
+`effigy doctor` prints an evidence line for every running profile
+(`colima-profile `effigy` /run: 270087/819200 inodes used (32%), 269082
+health-check pid file(s) (268182 older than 10m)`) and warns once inode use
+reaches 80% or 10,000 stale files accumulate. `container up` runs the same
+bounded prune automatically. The prune removes only files whose name matches
+exactly `health-check-*.pid`, that sit directly inside a containerd runtime-v2
+task directory, and that are older than ten minutes; a younger file may belong
+to a check still in flight, so it is kept. Nothing else under `/run` is read or
+removed. The command reports the counts and `/run` inode use before and after,
+and `--json` emits `effigy.container.profile-prune-health-pid-files.v1`.
+
+Do not delete other files under `/run/containerd/io.containerd.runtime.v2.task`
+or remove a container's task directory: those belong to the runtime, not to
+Effigy. Pruning keeps a profile usable until its nerdctl is upgraded to 2.4.1
+or later inside the VM.
 
 ## Troubleshooting: Colima VM DNS proxy timeouts during image pulls
 
@@ -1739,22 +1870,42 @@ unchanged.
 
 An entry is reclaimed only when all of these hold:
 
-- its project path is definitely missing: the leaf is absent and its parent
-  directory is readable. Permission and I/O errors, and an absent parent such
-  as an unmounted volume, are unknown and hold the entry;
-- no runtime-scope record names the project or its checkout;
+- its project path is definitely missing: the leaf is absent and the nearest
+  existing ancestor is a readable directory, so a missing parent under a
+  readable root proves absence just as well as a missing leaf. A real I/O or
+  permission error, a non-directory ancestor, and an absent volume root such
+  as an unmounted `/Volumes/...` are unknown and hold the entry;
+- no runtime-scope record that still retains that project's volumes or routes
+  names the project or its checkout. A record whose profile is observable and
+  that retains nothing is decided by that profile's own inventory instead:
+  no container there means reclaimable;
 - no gateway route names the project or path;
 - no container in any state (running, Created, exited) carries the project
   label or working directory, and none publishes a host port in the range;
 - no host port in the range is in use on this machine (a wildcard bind probe
   fails, or cannot be attempted);
-- no other allocation records the same project path.
+- no other allocation records the same project path;
+- no stopped Colima profile can own it. A stopped profile publishes no host
+  port, so it never has to be started to answer the bound-port question, and
+  it holds only the entries it is recorded on: those whose runtime-scope
+  record names that profile. An entry with no recorded profile is attributed
+  to the configured Effigy profile. When that profile itself is stopped, every
+  entry attributed to it is held rather than reclaimed.
+
+Present paths are always retained.
 
 Incomplete proof holds the whole registry. An unreadable scope store or route
-table, or an incomplete container inventory, holds every absent-path entry.
-A stopped Colima profile is incomplete, because its created or stopped
-containers cannot be listed without starting it. Present paths are always
-retained.
+table, or a container inventory that failed for a running runtime, holds every
+absent-path entry. A stopped Colima profile is not one of those: it is reported
+per profile and scoped to the entries that profile can own, with a reason on
+each held entry.
+
+Under capacity pressure — fewer than ten free 100-port ranges — a `container
+up` that needs a new range first reclaims provably dead entries by exactly the
+rules above, then allocates, and prints one line saying how many ranges it
+reclaimed and how many remain. It reads the same evidence, backs the registry
+up first and recomputes the plan under the registry lock. Reading capacity and
+planning a reclaim never apply it, so `status` and a dry-run stay read-only.
 
 Apply removes only the reclaim rows. It saves the pre-edit endpoint document as
 `ports.json.reclaim-backup-<nanos>` and reports both document SHA-256 values.
@@ -1769,6 +1920,71 @@ ordinary down/up; retirement explicitly releases the recorded owner's claims.
 Limits: the bound-port probe is a point-in-time check. A backup left by a
 crash between backup and rename is not removed automatically. Recovery does
 not expire entries by age.
+
+## Dead loopback owners
+
+Each isolated project and shared service holds one address in the bounded
+`127.1.0.1`-`127.1.0.50` loopback pool, and its container routes keep that
+address reserved. A project whose checkout, containers, runtime scope and
+listeners are all gone would otherwise hold its address forever, and a new
+stack then fails with `loopback pool exhausted`. Preview what Effigy would
+release, then apply it:
+
+```sh
+effigy gateway repair --json                       # preview, writes nothing
+effigy gateway repair --yes --expect-plan <DIGEST> --json
+```
+
+The preview is read-only. It lists every assignment and container route with
+its decision (`reclaim`, `hold` or `retain`) and a reason, plus a plan digest
+over those decisions. `--yes` releases the entries its locked recomputation
+still proves dead; `--yes --expect-plan <DIGEST>` refuses to write when that
+recomputed plan differs from the digest you reviewed. `--yes` alone applies
+the plan it recomputes and prints the digest it applied.
+
+A loopback assignment or container route is dead only when all of these hold:
+
+- its owner checkout path is definitely missing: the leaf is absent and its
+  parent directory is readable, the same classification `container ports
+  reclaim` uses. Permission and I/O errors, and an absent parent such as an
+  unmounted volume or a vanished intermediate directory, are unknown and hold
+  the entry;
+- no runtime-scope record names the identity, its checkout path or its route;
+- no container in any state carries its project label or working directory,
+  and none publishes on its address;
+- no live assignment or live project route keeps the address;
+- no non-gateway process listens on the route's alias tuple. The gateway
+  binds its aliases from the Store's route table and stops a listener when its
+  route disappears, so its own alias for a dead route is not a hold; a
+  same-user process that is not the recorded gateway, or a probe that cannot
+  answer, is.
+
+Allocation, its automatic collection and this preview prove ownership from the
+same inventory — every container state on every profile, with a stopped profile
+recorded as stopped — so the automatic path can never release what the preview
+would hold.
+
+A shared-service identity is dead only when no consumer project that uses it
+is live and no container carries the shared service's own project name. Incomplete ownership proof holds the whole plan and names the reason;
+a stopped Colima profile does not hold anything, because it binds no host
+address and cannot start a stack whose checkout is gone. Present paths, running
+containers and unknown path states are never touched, so a live project's
+address never changes.
+
+Allocation also self-heals: when `container up`, `dev` or gateway registration
+would fail because the pool is full, Effigy releases the dead entries once
+under the same gate, prints one line naming how many assignments and routes it
+released, and retries once. The endpoint Store keeps a released address out of
+reach for one reuse window (about three minutes: DNS TTL plus drain and the
+store's operation budget) so a cached answer never lands on a new owner, so an
+allocation that needed the release succeeds once that window has passed.
+
+Apply writes under the endpoint Store's owner gate and keeps a pre-edit copy of
+both endpoint documents as
+`~/.effigy/gateway/loopback-dead-reclaim-backup-<nanos>.json`, reporting both
+SHA-256 values. It never touches containers, volumes, data, profiles,
+certificates or live routes. Growing the pool past `127.1.0.50` is not part of
+this surface; the `lo0` aliases come from `gateway setup`.
 
 ## Current Limits
 

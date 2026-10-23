@@ -58,9 +58,11 @@ providers keep supplying local gates.
 
 - `.github/workflows/ci.yml` owns the hosted board and manual trigger
 - `scripts/check-release-ci.sh` owns exact-SHA evidence lookup for this repo's
-  required `ci` gate
-- the release engine owns named reuse lookup, SHA and repository checks, and
-  persisted run links
+  required `ci` gate, and refuses zero or several `workflow_dispatch` runs for
+  the candidate commit rather than taking the newest
+- the release engine owns named reuse lookup, SHA and repository checks, the
+  dispatch window and bound run id each hosted wait records, and persisted run
+  links
 - `config/release.toml` makes the `ci` lookup a required release gate
 - release guides and the bundled agent skill own dispatch/watch sequencing
 

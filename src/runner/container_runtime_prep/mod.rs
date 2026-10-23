@@ -12,6 +12,12 @@ const EXEC_READY_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Retry window for callers that need a ready binding but supply no deadline.
 const EXEC_READY_RETRY_WINDOW: Duration = Duration::from_secs(2);
 
+/// The window a saturated host gets for exec readiness before Effigy considers
+/// a restart. One bounded attempt can spend the whole short window on a
+/// round trip the host never scheduled; a restart is not the repair for that,
+/// because the service was never given a chance to answer (effigy#291).
+const EXEC_READY_SATURATED_RETRY_WINDOW: Duration = Duration::from_secs(15);
+
 mod gateway;
 mod prep;
 mod running;
@@ -21,6 +27,7 @@ use effigy_containers::compose::compose_args;
 use effigy_containers::exec::{
     ensure_colima_running, recover_exited_owned_compose_services, run_compose_capture,
 };
+use effigy_containers::host_load::HostLoad;
 use effigy_containers::{load_container_exec_working_dir, EffectiveContainerPolicy};
 use effigy_runtime_plan::{
     RuntimeActivationPlan, RuntimeActivationRequest, RuntimeActivationRoute, RuntimeLeasePolicy,
@@ -645,7 +652,7 @@ pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
         &policy.primary_service,
         Instant::now() + OWNED_EXEC_VERIFICATION_TIMEOUT,
     )?;
-    ensure_primary_service_exec_ready_with_recovery_using(
+    ensure_primary_service_exec_ready_with_recovery_and_load(
         policy,
         working_dir,
         |window| {
@@ -666,6 +673,7 @@ pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
             })
         },
         None,
+        HostLoad::observe(),
     )
 }
 
@@ -685,14 +693,42 @@ pub(in crate::runner) fn verify_primary_service_exec_ready_for_reconciliation(
     )
 }
 
+/// Load-free form of
+/// [`ensure_primary_service_exec_ready_with_recovery_and_load`], kept for the
+/// deterministic proofs that assert the exact probe windows.
+#[cfg(test)]
 fn ensure_primary_service_exec_ready_with_recovery_using<T>(
+    policy: &EffectiveContainerPolicy,
+    working_dir: &Path,
+    probe: impl FnMut(Duration) -> Result<Option<T>, RunnerError>,
+    restart: impl FnMut() -> Result<(), RunnerError>,
+    live_exec_note: Option<String>,
+) -> Result<T, RunnerError> {
+    ensure_primary_service_exec_ready_with_recovery_and_load(
+        policy,
+        working_dir,
+        probe,
+        restart,
+        live_exec_note,
+        None,
+    )
+}
+
+/// [`ensure_primary_service_exec_ready_with_recovery_using`] with the host
+/// load observed before the first readiness probe. A saturated host opens the
+/// first window to [`EXEC_READY_SATURATED_RETRY_WINDOW`] once, so the service
+/// gets a bounded second attempt instead of a restart; the post-restart
+/// windows, the live-run refusal and every failure path are unchanged.
+#[allow(clippy::too_many_arguments)]
+fn ensure_primary_service_exec_ready_with_recovery_and_load<T>(
     policy: &EffectiveContainerPolicy,
     working_dir: &Path,
     mut probe: impl FnMut(Duration) -> Result<Option<T>, RunnerError>,
     mut restart: impl FnMut() -> Result<(), RunnerError>,
     live_exec_note: Option<String>,
+    load: Option<HostLoad>,
 ) -> Result<T, RunnerError> {
-    if let Some(binding) = probe(Duration::from_secs(2))? {
+    if let Some(binding) = probe(readiness_retry_window(Duration::from_secs(2), load))? {
         return Ok(binding);
     }
     if let Some(note) = live_exec_note {
@@ -713,10 +749,22 @@ fn ensure_primary_service_exec_ready_with_recovery_using<T>(
             return Ok(binding);
         }
     }
-    Err(RunnerError::container_runtime_exec_not_ready(
+    Err(RunnerError::container_runtime_exec_not_ready_with_load(
         policy,
         working_dir,
+        load.and_then(|load| load.overload_phrase()),
     ))
+}
+
+/// The window the first exec-readiness probe gets. A saturated host may not
+/// answer inside the short window at all, so it keeps the bounded
+/// [`EXEC_READY_SATURATED_RETRY_WINDOW`] instead; a host below one runnable
+/// task per CPU keeps `base`. Deterministic proofs pass their own observation.
+fn readiness_retry_window(base: Duration, load: Option<HostLoad>) -> Duration {
+    match load {
+        Some(load) if load.saturated() => base.max(EXEC_READY_SATURATED_RETRY_WINDOW),
+        _ => base,
+    }
 }
 
 fn run_runtime_prep_steps<T>(
@@ -785,7 +833,9 @@ pub(in crate::runner) fn verify_service_exec_ready(
         service,
         deadline.unwrap_or_else(|| Instant::now() + OWNED_EXEC_VERIFICATION_TIMEOUT),
     )?;
-    let retry_until = deadline.unwrap_or_else(|| Instant::now() + EXEC_READY_RETRY_WINDOW);
+    let retry_until = deadline.unwrap_or_else(|| {
+        Instant::now() + readiness_retry_window(EXEC_READY_RETRY_WINDOW, HostLoad::observe())
+    });
     probe_verified_service_exec_ready(
         repo_root,
         policy,

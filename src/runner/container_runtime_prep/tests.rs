@@ -1,16 +1,19 @@
 use super::{
     activate_container_runtime_plan_for_task_using, candidate_host_mount_paths,
-    ensure_exec_container_running_with, ensure_primary_service_exec_ready_with_recovery_using,
+    ensure_exec_container_running_with, ensure_primary_service_exec_ready_with_recovery_and_load,
+    ensure_primary_service_exec_ready_with_recovery_using,
     ensure_runtime_exec_readiness_stage_using, ensure_runtime_gateway_readiness_stage_using,
     ensure_runtime_running_stage, parse_bind_mount_host_path, prepare_host_bind_mount_dirs,
-    prepare_runtime_mounts_stage, readiness_attempt_open, reconcile_runtime_aliases_stage_using,
-    refresh_changed_cargo_inputs_using, restart_primary_service_using,
-    run_runtime_compose_up_stage, run_runtime_prep_steps, runtime_activation_plan_from_request,
-    runtime_activation_report_for_result, service_depends_on_primary, validate_policy_runtime,
-    validate_runtime_activation_stage, verify_live_checkout_mount_using, ActivationRequest,
+    prepare_runtime_mounts_stage, readiness_attempt_open, readiness_retry_window,
+    reconcile_runtime_aliases_stage_using, refresh_changed_cargo_inputs_using,
+    restart_primary_service_using, run_runtime_compose_up_stage, run_runtime_prep_steps,
+    runtime_activation_plan_from_request, runtime_activation_report_for_result,
+    service_depends_on_primary, validate_policy_runtime, validate_runtime_activation_stage,
+    verify_live_checkout_mount_using, ActivationRequest,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
+use effigy_containers::host_load::HostLoad;
 use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy, EffectiveDnsRoute};
 use effigy_runtime_plan::{
     RuntimeActivationRoute, RuntimeActivationStage, RuntimeCleanupResult, RuntimeLeasePolicy,
@@ -817,6 +820,98 @@ fn exec_readiness_recovery_restarts_once_then_accepts_longer_probe_window() {
         vec![Duration::from_secs(2), Duration::from_secs(15)]
     );
     assert_eq!(*restarted.lock().expect("restart lock"), 1);
+}
+
+#[test]
+fn a_saturated_host_opens_the_first_readiness_window_once() {
+    let idle = HostLoad::measured(2.0, 18).expect("idle observation");
+    let saturated = HostLoad::measured(40.0, 18).expect("saturated observation");
+
+    assert_eq!(
+        readiness_retry_window(Duration::from_secs(2), Some(idle)),
+        Duration::from_secs(2)
+    );
+    assert_eq!(
+        readiness_retry_window(Duration::from_secs(2), Some(saturated)),
+        Duration::from_secs(15)
+    );
+    assert_eq!(
+        readiness_retry_window(Duration::from_secs(2), None),
+        Duration::from_secs(2),
+        "an unobserved host keeps the base window"
+    );
+    assert_eq!(
+        readiness_retry_window(Duration::from_secs(30), Some(saturated)),
+        Duration::from_secs(30),
+        "an already-longer window is never shortened"
+    );
+}
+
+#[test]
+fn a_saturated_host_retries_readiness_once_before_any_restart() {
+    let policy = test_policy(PathBuf::from("docker-compose.yml"));
+    let working_dir = Path::new("/workspace-root/demo");
+    let probes = Arc::new(Mutex::new(Vec::<Duration>::new()));
+    let restarted = Arc::new(Mutex::new(0usize));
+    let saturated = HostLoad::measured(40.0, 18).expect("saturated observation");
+
+    ensure_primary_service_exec_ready_with_recovery_and_load(
+        &policy,
+        working_dir,
+        {
+            let probes = Arc::clone(&probes);
+            move |window| {
+                probes.lock().expect("probes lock").push(window);
+                Ok((window == Duration::from_secs(15)).then_some(()))
+            }
+        },
+        {
+            let restarted = Arc::clone(&restarted);
+            move || {
+                *restarted.lock().expect("restart lock") += 1;
+                Ok(())
+            }
+        },
+        None,
+        Some(saturated),
+    )
+    .expect("the bounded second attempt proves readiness");
+
+    assert_eq!(
+        *probes.lock().expect("probes lock"),
+        vec![Duration::from_secs(15)],
+        "a saturated host gets the longer first window, not a restart"
+    );
+    assert_eq!(
+        *restarted.lock().expect("restart lock"),
+        0,
+        "a service the host never let answer is not restarted"
+    );
+}
+
+#[test]
+fn a_saturated_host_that_never_answers_names_the_host_not_only_the_service() {
+    let policy = test_policy(PathBuf::from("docker-compose.yml"));
+    let working_dir = Path::new("/workspace-root/demo");
+    let saturated = HostLoad::measured(40.0, 18).expect("saturated observation");
+
+    let error = ensure_primary_service_exec_ready_with_recovery_and_load(
+        &policy,
+        working_dir,
+        |_window| Ok(None::<()>),
+        || Ok(()),
+        None,
+        Some(saturated),
+    )
+    .expect_err("no probe answers");
+
+    let rendered = error.to_string();
+    assert!(rendered.contains("is not exec-ready"), "got: {rendered}");
+    assert!(
+        rendered.contains("the host was overloaded (load average 40.00 over 18 CPU(s))"),
+        "got: {rendered}"
+    );
+    assert!(rendered.contains("health is unproven"), "got: {rendered}");
 }
 
 #[test]

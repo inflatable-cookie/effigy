@@ -45,7 +45,7 @@ Policy:
 
 | Surface | Rhai helpers | Status |
 | --- | --- | --- |
-| Runtime context | `runtime::context` backed by `EffigyRuntimeContext` | Exposed |
+| Runtime context | `runtime::context` backed by `EffigyRuntimeContext`; `runtime::paths` for the `repo_root`/`catalog_root`/`skill_root`/`cwd`/`invocation_cwd` host paths | Exposed |
 | Execution request | `exec::run` backed by Effigy's routed execution helpers | Exposed |
 | Config | `config::raw`, `config::effective`, `config::get`, `config::get_or`, `config::user_path`, `config::user_get`, `config::user_set`, `config::user_unset` | Exposed |
 | Tasks | `task::run`, `task::run_json`, `task::list`, `task::resolve`, `task::info`, `catalog::tasks` | Exposed |
@@ -67,7 +67,6 @@ Policy:
 | Cache | `cache::inspect`, `cache::invalidate` | Exposed |
 | Contracts | `contracts::check_json` (including `validate_selection`) | Exposed |
 | Deploy | `deploy::model`, `deploy::emit`, `deploy::plan`, `deploy::apply`, `deploy::status`, `deploy::history`, `deploy::redeploy`, `deploy::provider_context`, `deploy::provider_context_path`, `deploy::provider_report_path`, `deploy::provider_report` | Exposed; apply/redeploy refuse in v0.15 |
-| Distribution | `distribution::validate_metadata`, `distribution::check_glibc_floor`, `distribution::preflight`, `distribution::first_publish`, `distribution::validate_artifacts`, `distribution::generate_closeout`, `distribution::write_summary` | Exposed |
 | Changelog | `changelog::validate`, `changelog::extract` | Exposed |
 | Test | `test::plan` | Exposed |
 | Unlock | `unlock::scopes` | Exposed |
@@ -231,23 +230,6 @@ refuse as not yet supported in v0.15, including with `yes: true`. They return
 the same `not_supported` failure as the CLI and cannot execute a deployment.
 Model/export remain supported. Full execution design is in Queue's deploy lane
 (Q-003); see [guide 074](074-deployment-guide.md).
-
-### Distribution preflight plus artifact validation
-
-```rhai
-let preflight = distribution::preflight(#{
-    tag: "v0.7.1",
-    skip_docs: true,
-    output: ".effigy/tmp/release/preflight.env",
-});
-if !preflight["ok"] { throw("distribution preflight failed"); }
-
-let artifacts = distribution::validate_artifacts(#{
-    artifacts_dir: "artifacts/release",
-    expect_homebrew: true,
-});
-if !artifacts["ok"] { throw("artifact validation failed"); }
-```
 
 For fuller task-shape guidance, use
 [`061-rhai-script-steps-guide.md`](061-rhai-script-steps-guide.md),

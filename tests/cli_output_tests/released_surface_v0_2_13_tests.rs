@@ -5,20 +5,17 @@ use std::process::Command;
 
 use super::support::{
     parse_stdout_json, run_cli_command, run_json_cli_command, temp_workspace,
-    write_effigy_release_root_marker, write_fake_effigy_install_repo,
+    write_effigy_release_root_marker,
 };
 
 #[derive(Deserialize)]
 struct ReleasedSurfaceBaseline {
-    baseline_tag: String,
     help_contains: Vec<String>,
     release_status_schema: String,
     release_plan_schema: String,
     release_gates_schema: String,
-    release_verify_install_schema: String,
     test_plan_schema: String,
     smoke_success_text: String,
-    verify_install_check_count: u64,
     release_gates_configured_count: u64,
     release_source_cases: Vec<ReleaseSourceCase>,
 }
@@ -269,36 +266,16 @@ fn v0_2_13_release_gates_keep_json_contract_and_fail_fast_behavior() {
 }
 
 #[test]
-fn v0_2_13_release_verify_install_still_installs_tagged_binary() {
-    let baseline = load_baseline();
+fn v0_2_13_release_verify_install_now_names_the_repo_task() {
     let root = temp_workspace("released-surface-v0-2-13-verify-install");
     write_effigy_release_root_marker(&root);
-    let repo = temp_workspace("released-surface-v0-2-13-verify-install-repo");
-    let repo_url = write_fake_effigy_install_repo(&repo, "0.2.13", &baseline.baseline_tag);
 
-    let output = run_json_cli_command(
-        &root,
-        &[
-            "release",
-            "verify-install",
-            "--tag",
-            &baseline.baseline_tag,
-            "--repo-url",
-            &repo_url,
-        ],
-    );
-    assert!(output.status.success(), "{output:?}");
+    let output = run_json_cli_command(&root, &["release", "verify-install", "--tag", "v0.2.13"]);
     let parsed = parse_stdout_json(&output);
-    assert_eq!(
-        parsed["result"]["schema"],
-        baseline.release_verify_install_schema
-    );
-    assert_eq!(parsed["result"]["verified"], true);
-    assert_eq!(parsed["result"]["tag"], baseline.baseline_tag);
-    assert_eq!(
-        parsed["result"]["executed_check_count"],
-        baseline.verify_install_check_count
-    );
+    assert!(!output.status.success(), "{parsed}");
+    let message = parsed["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("retired in v0.15"), "got: {message}");
+    assert!(message.contains("release:verify:install"), "got: {message}");
 }
 
 #[test]

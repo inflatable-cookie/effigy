@@ -80,10 +80,6 @@
       "std::fs::remove_file": 2,
       "std::fs::rename": 1
     },
-    "crates/effigy-distribution/src/lib.rs": {
-      "std.process.Command.new": 3,
-      "std.process.Command.output": 3
-    },
     "crates/effigy-doctor/src/render/scan_reports.rs": {
       "std::fs::remove_file": 1,
       "std::fs::write": 1
@@ -129,6 +125,9 @@
       "std.process.Command.new": 2,
       "std.process.Command.output": 2
     },
+    "crates/effigy-manifest/src/retired_notice.rs": {
+      "std::fs::write": 1
+    },
     "crates/effigy-manifest/src/sources.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1
@@ -166,10 +165,6 @@
     "crates/effigy-release/src/prepare_helpers.rs": {
       "std.process.Command.new": 2,
       "std.process.Command.output": 2
-    },
-    "crates/effigy-release/src/verify_install.rs": {
-      "std.process.Command.new": 1,
-      "std.process.Command.output": 1
     },
     "crates/effigy-rhai/src/host_api/exec.rs": {
       "std.process.Command.new": 1,
@@ -609,6 +604,9 @@
     "crates/effigy-manifest/src/config_sections/docs_policy.rs": {
       "std.process.Command.new": 4,
       "std.process.Command.output": 4
+    },
+    "crates/effigy-manifest/src/retired_notice.rs": {
+      "std::fs::write": 1
     },
     "crates/effigy-manifest/src/user_config.rs": {
       "std::fs::write": 10

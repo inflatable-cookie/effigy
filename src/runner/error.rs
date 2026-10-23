@@ -103,6 +103,11 @@ pub enum RunnerError {
         service: String,
         profile: String,
         working_dir: PathBuf,
+        /// The host-load observation when the readiness window ran out on a
+        /// saturated host. `None` means the host was keeping up, so the
+        /// refusal is about the service. Boxed so the typed error stays small
+        /// enough for every bounded-timeout call site.
+        host_load: Option<Box<str>>,
     },
     TaskCatalogsMissing {
         root: PathBuf,
@@ -289,11 +294,23 @@ impl RunnerError {
         policy: &effigy_containers::EffectiveContainerPolicy,
         working_dir: &std::path::Path,
     ) -> Self {
+        Self::container_runtime_exec_not_ready_with_load(policy, working_dir, None)
+    }
+
+    /// The exec-ready refusal with the host-load observation that preceded it.
+    /// A saturated host is why a bounded probe did not answer; the text names
+    /// the host instead of only the service.
+    pub(in crate::runner) fn container_runtime_exec_not_ready_with_load(
+        policy: &effigy_containers::EffectiveContainerPolicy,
+        working_dir: &std::path::Path,
+        host_load: Option<String>,
+    ) -> Self {
         Self::ContainerRuntimeExecNotReady {
             container: policy.name.clone(),
             service: policy.primary_service.clone(),
             profile: policy.profile.clone(),
             working_dir: working_dir.to_path_buf(),
+            host_load: host_load.map(String::into_boxed_str),
         }
     }
 
@@ -533,29 +550,6 @@ impl From<ManagedError> for RunnerError {
                 profile,
                 processes,
             },
-        }
-    }
-}
-
-impl From<effigy_distribution::DistributionPolicyError> for RunnerError {
-    fn from(value: effigy_distribution::DistributionPolicyError) -> Self {
-        match value {
-            effigy_distribution::DistributionPolicyError::Manifest(error) => {
-                Self::task_invocation(error.to_string())
-            }
-        }
-    }
-}
-
-impl From<effigy_distribution::DistributionExecutionError> for RunnerError {
-    fn from(value: effigy_distribution::DistributionExecutionError) -> Self {
-        match value {
-            effigy_distribution::DistributionExecutionError::Io { path, error } => {
-                Self::task_invocation_failed_write(&path, error)
-            }
-            effigy_distribution::DistributionExecutionError::Message(message) => {
-                Self::task_invocation(message)
-            }
         }
     }
 }

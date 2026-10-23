@@ -1,6 +1,7 @@
 use effigy_containers::{
-    add_managed_listener_routes, build_host_map, hosts_report, load_container_policy,
-    uses_shared_runtime_identity, EffectiveContainerPolicy, EffectiveHostMap, HostScopeKind,
+    add_managed_listener_routes, build_host_map_including_listeners, hosts_report,
+    load_container_policy, uses_shared_runtime_identity, EffectiveContainerPolicy,
+    EffectiveHostMap, HostScopeKind,
 };
 use effigy_core::worktree_scope::{self, ScopeKind};
 
@@ -34,13 +35,20 @@ pub(super) fn scoped_host_map(
     token: Option<&str>,
 ) -> Result<EffectiveHostMap, RunnerError> {
     let shared = shared_runtime_identity(policy, token);
-    let mut host_map = build_host_map(
+    let listener_domains = policy
+        .host_processes
+        .iter()
+        .filter_map(|process| process.listener.as_ref())
+        .map(|listener| listener.declared_route_domain.clone())
+        .collect::<Vec<_>>();
+    let mut host_map = build_host_map_including_listeners(
         &policy.dns_routes,
         &policy.service_aliases,
         &policy.shared_services,
         token,
         shared,
         policy.dns_base_domain.as_deref(),
+        &listener_domains,
     );
     add_managed_listener_routes(&mut host_map, &policy.host_processes);
     let kind = worktree_scope::scope_kind(repo_root)

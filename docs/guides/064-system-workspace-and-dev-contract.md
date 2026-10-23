@@ -139,9 +139,9 @@ workspace volumes for the later `dev` handoff to trip over.
 Workspace preparation installs the Effigy binary only. It copies no catalog
 content into the guest. A guest Effigy resolves services from the mounted
 project catalog and the bundle and `[catalog.sources]` snapshots pinned in the
-checkout's `.effigy/sources.lock.json`, the same bytes the host resolves. Run
-`effigy bundle sync` on the host to move those pins; it refuses inside the
-workspace. See [catalog sources](067-catalog-services-reference.md#catalog-sources).
+checkout's `.effigy/sources.lock.json`, the same bytes the host resolves. The
+host's `effigy dev`, `effigy bootstrap` and `effigy container up` update a stale
+pin before using it; a guest only reads those pins. See [catalog sources](067-catalog-services-reference.md#catalog-sources).
 
 ### `effigy dev`
 

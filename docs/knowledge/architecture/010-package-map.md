@@ -100,7 +100,6 @@ these callers. `deny.toml` remains the dependency policy authority.
 | Crate | Responsibility |
 | --- | --- |
 | `effigy-bootstrap` | bootstrap repo bring-up model and helpers |
-| `effigy-distribution` | binary distribution and install/update helpers |
 | `effigy-release` | release orchestration helpers |
 | `effigy-changelog` | changelog parsing, extraction, and release-note support |
 | `effigy-contracts` | contract file loading, project `[contracts]` configuration, and contract-surface helpers |
@@ -273,9 +272,8 @@ Current defer notes after the `g07.056` cleanup pass:
   used by several runner-facing paths.
 - `effigy-doctor` stays separate. It is no longer a tiny library; it owns the
   doctor workflow and report model.
-- `effigy-bootstrap`, `effigy-distribution`, and `effigy-release` remain
-  cleanup targets for future internal decomposition, not crate-merge
-  candidates.
+- `effigy-bootstrap` and `effigy-release` remain cleanup targets for future
+  internal decomposition, not crate-merge candidates.
 
 No small crate is currently a merge candidate on ownership grounds. Future
 merge proposals must prove the boundary has no useful API, not just that the

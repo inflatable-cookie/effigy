@@ -100,6 +100,14 @@ Bundle defaults in `export.toml` should therefore keep executors and step
 metadata in the same table, and repo overrides should switch executors by
 naming the new executor rather than deleting the old one.
 
+Retired v0.15 `[bootstrap]` spelling is normalised on both sides before that
+merge. A bundle that still writes `run` is read as `setup` first, so a repo
+that declares its own `setup` replaces the bundle's rather than inheriting a
+second list beside it, and a repo that declares nothing inherits the
+translated `setup`. A retired `start` still inherits the same way, and
+`[bootstrap].children` is ignored with its deprecation notice on either side.
+See [guide 085](085-v0.15.0-consumer-migration.md).
+
 ## Inspect and Sync
 
 Use:
@@ -112,7 +120,12 @@ effigy bundle sync
 - `bundle inspect` reports the active source type, local materialized path,
   version hint, and stale state
 - `bundle sync` snapshots path, Git and OCI sources and updates checkout pins
-- after editing a local path bundle, run `bundle sync` to select the new bytes
+- after editing a local path bundle, the next `effigy dev`, `effigy bootstrap`
+  or `effigy container up` re-snapshots it and prints
+  `bundle updated <old> → <new> (content changed)`; `bundle sync` does the same
+  on demand
+- `update = "manual"` in `[bundle]` (or in one `[catalog.sources.<name>]`) keeps
+  the strict rule where only `bundle sync` moves the pin
 - inspection and discovery never fetch or write source state
 
 ## Template Notes

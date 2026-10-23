@@ -7,6 +7,7 @@ mod parser;
 #[path = "references/resolve.rs"]
 mod resolve;
 
+use effigy_core::shell::shell_quote;
 use effigy_manifest::TaskResolverFn;
 
 use super::run_spec::wrap_reference_command_in_cwd;
@@ -110,7 +111,12 @@ where
     FResolve: Fn(String) -> ManagedError,
     FMissing: Fn(&parser::ParsedTaskRef, &TaskSelection<'a>) -> ManagedError,
 {
-    let parsed = parse_task_ref(task_ref).map_err(|error| invalid_error(error.to_string()))?;
+    let parsed = parse_task_ref(&expand_reference_placeholders(
+        task_ref,
+        resolution.execution_root,
+        resolution.task_scope_cwd,
+    ))
+    .map_err(|error| invalid_error(error.to_string()))?;
     let merged_args_rendered = merge_args_rendered(&parsed.args_rendered, resolution.args_rendered);
     resolve_reference_run(
         &parsed,
@@ -121,4 +127,24 @@ where
         |selection| missing_run_error(&parsed, selection),
     )
     .map_err(|error| resolve_error(error.to_string()))
+}
+
+/// Expand the path placeholders a manifest run command already supports inside
+/// a `{ task = "…" }` reference.
+///
+/// `{repo}` is the task's execution root (the selected catalog root) and
+/// `{cwd}` is the invoking task's cwd, so a reference has a spelling that works
+/// from a nested catalog (`{ task = "docs check links {repo}/README.md" }`).
+/// Paths are shell-quoted because the reference's arguments are parsed as
+/// shell words.
+pub fn expand_reference_placeholders(
+    task_ref: &str,
+    execution_root: &Path,
+    task_scope_cwd: &Path,
+) -> String {
+    let repo_rendered = shell_quote(&execution_root.display().to_string());
+    let cwd_rendered = shell_quote(&task_scope_cwd.display().to_string());
+    task_ref
+        .replace("{repo}", &repo_rendered)
+        .replace("{cwd}", &cwd_rendered)
 }

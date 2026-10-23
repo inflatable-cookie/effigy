@@ -1,6 +1,7 @@
 use std::io::{self, BufRead, IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::time::Instant;
 
 use effigy_cli::ContainerProfileSubcommand;
 use effigy_containers::colima::{
@@ -20,6 +21,9 @@ use crate::runner::command_context::resolve_active_repo_root;
 
 const DEFAULT_PROFILE: &str = "effigy";
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
+/// One absolute deadline for the prune's three bounded VM probes (inspect,
+/// prune, inspect). Pruning a profile that holds the leak takes seconds.
+const PROFILE_PRUNE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
 #[derive(Debug, Clone, Deserialize)]
 struct ColimaListRow {
@@ -87,11 +91,60 @@ pub(super) fn run_container_profile_command(
             disk_gib,
             yes,
         } => run_container_profile_recreate(profile.as_deref(), *disk_gib, *yes, output_json),
+        ContainerProfileSubcommand::PruneHealthPidFiles { profile } => {
+            run_container_profile_prune_health_pid_files(profile.as_deref(), output_json)
+        }
         ContainerProfileSubcommand::Repair { .. }
         | ContainerProfileSubcommand::ResetRuntime { .. } => {
             unreachable!("recovery verbs return before the machine-level profile check")
         }
     }
+}
+
+/// `container profile prune-health-pid-files`: delete only the stale nerdctl
+/// health-check pid files a running profile leaked into `/run`, and report the
+/// counts around it (effigy#291).
+///
+/// This is machine-level runtime maintenance like `purge`, so it takes a
+/// profile and never a repository. It refuses a profile that is not running:
+/// `colima ssh` would either start nothing or fail, and a stopped VM keeps no
+/// `/run` pressure. Nothing outside the exact containerd task directory and
+/// pid-file pattern is read or removed.
+fn run_container_profile_prune_health_pid_files(
+    profile: Option<&str>,
+    output_json: bool,
+) -> Result<String, RunnerError> {
+    let profile = resolve_profile(profile);
+    let status = inspect_profile(&profile)?;
+    if status
+        .row
+        .as_ref()
+        .is_none_or(|row| row.status != "Running")
+    {
+        return Err(RunnerError::task_invocation(format!(
+            "`effigy container profile prune-health-pid-files` needs Colima profile `{profile}` running; a stopped profile keeps no `/run` pressure. Start it with `colima start --profile {profile}` or `effigy container up`."
+        )));
+    }
+    let deadline = Instant::now() + PROFILE_PRUNE_TIMEOUT;
+    let before =
+        effigy_containers::exec::inspect_run_inode_pressure(&profile, Path::new("."), deadline)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let prune = effigy_containers::exec::prune_stale_health_check_pidfiles(
+        &profile,
+        Path::new("."),
+        deadline,
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let after =
+        effigy_containers::exec::inspect_run_inode_pressure(&profile, Path::new("."), deadline)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    Ok(render_profile_prune_health_pid_files(
+        &profile,
+        before,
+        prune,
+        after,
+        output_json,
+    ))
 }
 
 /// `container profile repair` / `reset-runtime`: the Colima runtime belonging
@@ -556,6 +609,56 @@ fn render_profile_purge(
         "[ok] purged Colima profile `{}` and deleted profile runtime data",
         after.profile
     )
+}
+
+fn render_profile_prune_health_pid_files(
+    profile: &str,
+    before: effigy_containers::exec::RunInodePressure,
+    prune: effigy_containers::exec::HealthCheckPidFilePrune,
+    after: effigy_containers::exec::RunInodePressure,
+    output_json: bool,
+) -> String {
+    let json = json!({
+        "schema": "effigy.container.profile-prune-health-pid-files.v1",
+        "schema_version": 1,
+        "ok": true,
+        "profile": profile,
+        "before": run_inode_pressure_json(&before),
+        "prune": {
+            "before": prune.before,
+            "after": prune.after,
+            "deleted": prune.deleted(),
+        },
+        "after": run_inode_pressure_json(&after),
+        "stale_after_minutes": effigy_containers::exec::HEALTHCHECK_PIDFILE_STALE_MINUTES,
+        "task_root": effigy_containers::exec::HEALTHCHECK_TASK_ROOT,
+    });
+    if output_json {
+        return json.to_string();
+    }
+    format!(
+        "[ok] Colima profile `{profile}`: {}\n/run inodes: {} → {} of {} used ({}% → {}%); {} health-check pid file(s) remain, all younger than {} minutes",
+        prune.summary(),
+        before.inode_used,
+        after.inode_used,
+        after.inode_total,
+        before.inode_use_percent(),
+        after.inode_use_percent(),
+        after.pid_files,
+        effigy_containers::exec::HEALTHCHECK_PIDFILE_STALE_MINUTES,
+    )
+}
+
+fn run_inode_pressure_json(
+    pressure: &effigy_containers::exec::RunInodePressure,
+) -> serde_json::Value {
+    json!({
+        "inode_total": pressure.inode_total,
+        "inode_used": pressure.inode_used,
+        "inode_use_percent": pressure.inode_use_percent(),
+        "pid_files": pressure.pid_files,
+        "stale_pid_files": pressure.stale_pid_files,
+    })
 }
 
 fn profile_status_json(status: &ProfileStatus) -> serde_json::Value {

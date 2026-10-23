@@ -112,6 +112,10 @@ const HELP_TOPIC_DESCRIPTORS: &[HelpTopicDescriptor] = &[
         command: descriptor(HelpTopic::Changelog),
         render: render_changelog,
     },
+    HelpTopicDescriptor {
+        command: descriptor(HelpTopic::Fmt),
+        render: render_fmt,
+    },
 ];
 
 const fn descriptor(topic: HelpTopic) -> &'static CommandDescriptor {
@@ -155,6 +159,10 @@ fn render_bundle(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpR
 
 fn render_changelog(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
     topics::render_changelog_help(renderer)
+}
+
+fn render_fmt(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {
+    topics::render_fmt_help(renderer)
 }
 
 fn render_deploy(renderer: &mut dyn HelpRenderer, _: &BTreeSet<String>) -> HelpResult<()> {

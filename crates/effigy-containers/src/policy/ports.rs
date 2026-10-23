@@ -9,6 +9,25 @@ pub const UNASSIGNED_PORT_LABEL: &str = "unassigned (assigned on first prepare)"
 // Fail closed if an unprepared render is accidentally passed to Compose.
 pub const UNASSIGNED_PORT_EXPRESSION: &str =
     "${EFFIGY_UNASSIGNED_PORT:?unassigned (assigned on first prepare)}";
+/// The variable [`UNASSIGNED_PORT_EXPRESSION`] refuses on.
+pub const UNASSIGNED_PORT_VARIABLE: &str = "EFFIGY_UNASSIGNED_PORT";
+/// The value a teardown interpolates in place of an unassigned port. Teardown
+/// never publishes a port, and `0` is Compose's "no fixed host port".
+const TEARDOWN_UNASSIGNED_PORT: &str = "0";
+
+/// The interpolation values a teardown invocation carries (effigy#286).
+///
+/// A stop never publishes a port, but Compose interpolates the whole render
+/// before it reads the project, so the deliberate refusal above would fail the
+/// stop of an environment whose ports were never assigned — including the
+/// cleanup of a first start that failed. `up` and `prepare` never carry these
+/// values: they keep failing closed until Prepare assigns the ports.
+pub fn teardown_interpolation_env() -> Vec<(String, std::ffi::OsString)> {
+    vec![(
+        UNASSIGNED_PORT_VARIABLE.to_owned(),
+        std::ffi::OsString::from(TEARDOWN_UNASSIGNED_PORT),
+    )]
+}
 
 /// Initialize/import endpoint authority before an effectful Prepare observes
 /// policy. Other engines may have created the shared SQLite file but not yet
@@ -72,6 +91,10 @@ pub fn prepare_container_policy_ports(
         return Ok(loopbacks_changed);
     }
     let mut requests = Vec::new();
+    // Allocation is about to need a range. Under capacity pressure, first
+    // reclaim only provably dead entries, by the same reviewed `--apply` rules,
+    // so one deleted project cannot starve every new one (effigy#294).
+    let registry = reclaim_dead_ranges_under_pressure(&home, registry)?;
     // Preserve the old shared-before-local allocation order.
     for shared in &policy.shared_services {
         let root = crate::policy_support::shared_service_output_dir(&shared.project_name)?;
@@ -97,6 +120,24 @@ pub fn prepare_container_policy_ports(
     prepare_ports(&home.join("ports.json"), &requests)
         .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
     Ok(loopbacks_changed || !requests.is_empty())
+}
+
+/// Reclaim provably dead ranges when this Prepare needs a new range and the
+/// registry is near exhaustion. Returns the registry to plan against: the
+/// reloaded one after a reclaim, otherwise the one it was given.
+fn reclaim_dead_ranges_under_pressure(
+    home: &Path,
+    registry: PortRegistry,
+) -> Result<PortRegistry, ContainerPolicyError> {
+    if registry.capacity().allocatable_ranges > crate::AUTO_RECLAIM_FREE_RANGES {
+        return Ok(registry);
+    }
+    let Some(reclaim) = crate::port_reclaim_under_pressure(home)? else {
+        return Ok(registry);
+    };
+    eprintln!("{}", reclaim.note());
+    PortRegistry::load(&home.join("ports.json"))
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
 }
 
 fn collect_requests(
@@ -158,4 +199,120 @@ fn collect_requests(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    const SHARED_SERVICE_MANIFEST: &str = r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.db]
+catalog = "mariadb"
+shared = true
+version = "10.11"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+"#;
+
+    /// Regression for #411: shared-service ports are allocated against
+    /// `shared_service_output_dir(project)`, so retention must use that same
+    /// lifetime owner. The rendered Compose parent is the object store; using
+    /// it refused the prepare and orphaned the reservation.
+    #[test]
+    fn shared_service_ports_are_retained_against_their_machine_state_dir() {
+        crate::tests::with_temp_effigy_home("shared-port-retention", |home| {
+            let _lock = crate::test_env_lock();
+            let checkout = tempfile::tempdir().expect("private checkout");
+            let root = checkout.path().canonicalize().expect("canonical checkout");
+            fs::write(root.join("effigy.toml"), SHARED_SERVICE_MANIFEST).expect("manifest");
+
+            let prepared = crate::load_container_policy_for_creation(&root, None)
+                .expect("first prepare allocates shared-service ports")
+                .0;
+            assert_eq!(prepared.shared_services.len(), 1);
+            let shared = prepared.shared_services[0].clone();
+            let state_dir = crate::policy_support::shared_service_output_dir(&shared.project_name)
+                .expect("shared service state dir");
+            let render_parent = shared
+                .compose_file
+                .parent()
+                .expect("rendered shared compose parent")
+                .to_path_buf();
+            assert_ne!(
+                render_parent, state_dir,
+                "the render lives in the object store, not the shared state dir"
+            );
+
+            let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
+            let allocated = store
+                .read_ports()
+                .expect("read ports")
+                .get(&shared.project_name)
+                .cloned()
+                .expect("the shared service owns a port allocation");
+            assert_eq!(allocated.project, state_dir.display().to_string());
+
+            store
+                .retain_ports(&shared.project_name, &state_dir.display().to_string())
+                .expect("retain against the shared state dir");
+            assert!(
+                store
+                    .retain_ports(&shared.project_name, &render_parent.display().to_string())
+                    .is_err(),
+                "the rendered object parent is not the lifetime owner"
+            );
+
+            // A later prepare has nothing left to assign, so it takes the
+            // retain path. Before #411 this refused and orphaned the ports.
+            let later = crate::load_container_policy_for_creation(&root, None)
+                .expect("a later prepare retains the shared-service ports")
+                .0;
+            assert!(later
+                .shared_services
+                .iter()
+                .all(|service| service.host_port != 0));
+            assert_eq!(
+                store
+                    .read_ports()
+                    .expect("read ports")
+                    .get(&shared.project_name)
+                    .cloned()
+                    .expect("retained allocation"),
+                allocated
+            );
+        });
+    }
+
+    /// effigy#286: a stop of an environment whose ports were never assigned
+    /// interpolates the same refusal expression the render carries, instead of
+    /// failing on it. `up` and `prepare` supply no such value.
+    #[test]
+    fn teardown_interpolates_the_unassigned_port_the_refusal_names() {
+        use super::{
+            teardown_interpolation_env, UNASSIGNED_PORT_EXPRESSION, UNASSIGNED_PORT_VARIABLE,
+        };
+
+        assert!(UNASSIGNED_PORT_EXPRESSION.contains(&format!("{UNASSIGNED_PORT_VARIABLE}:?")));
+        assert_eq!(
+            teardown_interpolation_env(),
+            vec![(
+                UNASSIGNED_PORT_VARIABLE.to_owned(),
+                std::ffi::OsString::from("0")
+            )]
+        );
+        // `:?` refuses an empty value too, so the teardown value must not be.
+        assert!(!teardown_interpolation_env()[0].1.is_empty());
+    }
 }

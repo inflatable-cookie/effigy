@@ -50,6 +50,31 @@ pub(in crate::runner) fn resolve_active_command_context(
     resolve_command_context_from_cwd(invocation_cwd, repo_override)
 }
 
+/// Resolve the root an execution request runs against.
+///
+/// A request whose effective cwd is already the active runtime context's target
+/// root keeps that context's resolved target. Skill tasks do this: an explicit
+/// `--repo <BARE_DIR>` target has no repository marker of its own, so
+/// re-resolving the bare cwd as a fresh project root would fail even though the
+/// operator named it. Any other request resolves from its cwd as before.
+pub(in crate::runner) fn resolve_execution_context(
+    cwd: std::path::PathBuf,
+    repo_override: Option<std::path::PathBuf>,
+) -> Result<ResolvedCommandContext, super::error::RunnerError> {
+    if repo_override.is_none() {
+        let canonical_cwd = canonicalize_or_original(&cwd);
+        if let Some(active) = active_runtime_context() {
+            if canonical_cwd == active.command_root() {
+                return Ok(ResolvedCommandContext {
+                    invocation_cwd: canonical_cwd,
+                    resolved: active.resolved_target().clone(),
+                });
+            }
+        }
+    }
+    resolve_command_context_from_cwd(cwd, repo_override)
+}
+
 pub(in crate::runner) fn resolve_active_repo_root(
     repo_override: Option<std::path::PathBuf>,
 ) -> Result<effigy_core::resolver::ResolvedTarget, super::error::RunnerError> {

@@ -8,7 +8,7 @@ use effigy_containers::{
 use serde_yaml::{Mapping, Value};
 
 use crate::container_manager::{compose_invocation_plan_from_args, runtime_invocation_plan};
-use crate::signals::{run_compose_plan_capture, run_runtime_plan_capture};
+use crate::signals::{run_compose_plan_capture_with_env, run_runtime_plan_capture};
 use crate::EffigyRuntimeError;
 
 /// An uninitialized scoped checkout has nothing it may stop or reset.
@@ -45,10 +45,16 @@ pub(super) fn prepare_shutdown(
 }
 
 /// The backend effect of a shutdown: the policy's Compose stop commands.
+/// Teardown never publishes a port, but Compose interpolates the whole render
+/// before it reads the project, so a render whose ports were never assigned
+/// carries [`effigy_containers::policy::ports::teardown_interpolation_env`]'s
+/// teardown value instead of failing on its deliberate refusal (effigy#286).
+/// Nothing here assigns, reserves or reclaims a port.
 pub(super) fn run_shutdown_compose(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), EffigyRuntimeError> {
+    let env = effigy_containers::policy::ports::teardown_interpolation_env();
     for (args, label) in shutdown_compose_commands(policy) {
         let plan = compose_invocation_plan_from_args(
             repo_root,
@@ -57,7 +63,7 @@ pub(super) fn run_shutdown_compose(
             ContainerAction::Shutdown,
             label,
         )?;
-        run_compose_plan_capture(policy, &plan)?;
+        run_compose_plan_capture_with_env(policy, &plan, &env)?;
     }
     Ok(())
 }

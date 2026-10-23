@@ -427,6 +427,18 @@ pub(super) fn annotate_data_handover_notes(
     }
 }
 
+/// Bundle or catalog sources this Prepare refreshed, in the JSON envelope's
+/// `notes` (contract 020). The one line per source is already on stderr.
+pub(super) fn annotate_source_update_notes(report: &mut effigy_containers::ContainerCommandReport) {
+    let notes = effigy_manifest::bundle_update_notes();
+    if notes.is_empty() {
+        return;
+    }
+    if let Some(json_object) = report.json.as_object_mut() {
+        json_object.insert("notes".to_owned(), json!(notes));
+    }
+}
+
 pub(super) fn annotate_tcp_alias_host_notes(
     report: &mut effigy_containers::ContainerCommandReport,
     notes: &[String],
@@ -534,7 +546,7 @@ fn run_shared_compose_capture(
         .interrupt_policy(ContainerInterruptPolicy::Forward);
     let mut detection = ContainerBackendDetection::from_env_and_path();
     detection.backend_override = Some(backend);
-    let plan = ContainerManager::defaults()
+    let mut plan = ContainerManager::defaults()
         .compose_invocation_plan(
             &request,
             &detection,
@@ -544,6 +556,22 @@ fn run_shared_compose_capture(
             label,
         )
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    // A VM-hosted backend cannot inherit the host environment, so the shared
+    // transform names the Compose interpolation file its VM can read.
+    let resolved_args = effigy_containers::policy::render::compose_invocation_args(
+        plan.program.as_ref(),
+        &plan.args,
+        &[],
+    )
+    .map_err(|error| RunnerError::TaskCommandLaunch {
+        command: format!(
+            "{label} ({} {})",
+            plan.program.to_string_lossy(),
+            format_args(&plan.args)
+        ),
+        error,
+    })?;
+    plan.args = resolved_args;
     let mut command = std::process::Command::new(&plan.program);
     command.current_dir(repo_root).args(&plan.args);
     effigy_containers::policy::render::apply_environment(&mut command, &plan.args);

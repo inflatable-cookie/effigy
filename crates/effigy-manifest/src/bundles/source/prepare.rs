@@ -1,5 +1,9 @@
 //! The single source updater. Every acquisition runs under a Prepare owner;
 //! one checkout lock selects a complete generation after all sources validate.
+//!
+//! Contract 020: `effigy bundle sync` updates every selected source; the
+//! Prepare paths (`dev`, `bootstrap`, `container up`) also refresh a pin that
+//! is behind its declaration, its path content or its floating Git upstream.
 use super::*;
 use effigy_kernel::{
     ctx::{CleanupContext, EffectContext},
@@ -15,6 +19,7 @@ use effigy_kernel::{
     run::{BeginOpts, Effect, EffectSpec, Fence, Reconciled, Run, Settlement, SettlementAdapter},
     supervise::{Executable, LifecyclePlan},
 };
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::io::Write;
@@ -27,12 +32,59 @@ const BUDGET: Duration = Duration::from_secs(120);
 const MAX_FILE: u64 = 32 * 1024 * 1024;
 const MAX_TREE: u64 = 256 * 1024 * 1024;
 const MAX_ENTRIES: usize = 65_536;
+/// A floating Git source probes its remote at most once per checkout in this
+/// window (contract 020).
+const REMOTE_CHECK_TTL: Duration = Duration::from_secs(10 * 60);
+/// The probe is bounded well below the Prepare budget: a slow network keeps
+/// the current pin instead of holding `dev` or `container up`.
+const REMOTE_CHECK_BUDGET: Duration = Duration::from_secs(5);
+/// Per-checkout record of floating-source remote checks. It sits beside the
+/// lock until the per-checkout state store owns it (#276).
+const UPDATE_STATE_FILE: &str = "sources.update.json";
+const UPDATE_STATE_MAX: u64 = 64 * 1024;
+const UPDATE_STATE_KEEP: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 #[derive(Default)]
 struct SnapshotUsage {
     bytes: u64,
     entries: usize,
 }
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceUpdateState {
+    version: u8,
+    #[serde(default)]
+    checks: BTreeMap<String, u64>,
+}
+
+impl SourceUpdateState {
+    fn empty() -> Self {
+        Self {
+            version: 1,
+            checks: BTreeMap::new(),
+        }
+    }
+}
+
+impl Record for SourceUpdateState {
+    const MAX_BYTES: u64 = UPDATE_STATE_MAX;
+    fn decode(bytes: &[u8]) -> Result<Self, String> {
+        let state: Self = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        if state.version != 1 {
+            return Err("unsupported source update state version".into());
+        }
+        if state.checks.len() > 4096 {
+            return Err("source update state exceeds limit".into());
+        }
+        Ok(state)
+    }
+}
+
+/// The update lines this process selected on a Prepare path, for a JSON
+/// envelope's `notes`. Reading is idempotent: several envelopes in one process
+/// can name the same lines.
+static UPDATE_NOTES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
 #[derive(Debug)]
 pub struct SourcePreparation {
@@ -70,34 +122,75 @@ pub fn sync_bundle_source(
     manifest: &Path,
     preparation: &SourcePreparation,
 ) -> Result<Option<BundleSyncReport>, ManifestError> {
-    prepare(manifest, preparation, true)
+    prepare(manifest, preparation, Mode::Sync)
 }
-/// Bootstrap/first dev only acquire missing sources. Existing pins never move.
+/// Prepare paths acquire a missing source and refresh a pin that is behind, so
+/// `dev`, `bootstrap` and `container up` never need a manual `bundle sync`.
 pub fn prepare_bundle_sources(
     manifest: &Path,
     preparation: &SourcePreparation,
 ) -> Result<Option<BundleSyncReport>, ManifestError> {
-    prepare(manifest, preparation, false)
+    prepare(manifest, preparation, Mode::Refresh)
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// `effigy bundle sync`: re-acquire every selected source.
+    Sync,
+    /// `dev`, `bootstrap`, `container up`: acquire what is missing and refresh
+    /// what is behind.
+    Refresh,
+}
+
+/// Why a pin is about to move (contract 020 §Behaviour).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RefreshReason {
+    Missing,
+    Declaration,
+    Content,
+    Upstream,
+}
+
+impl RefreshReason {
+    fn describe(self) -> &'static str {
+        match self {
+            Self::Missing => "first acquisition",
+            Self::Declaration => "declaration changed",
+            Self::Content => "content changed",
+            Self::Upstream => "upstream moved",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourcePlan {
+    Acquire(RefreshReason),
+    /// A floating Git source whose remote check is due.
+    RemoteCheck,
+    Keep,
+}
+
 fn prepare(
     manifest: &Path,
     preparation: &SourcePreparation,
-    update: bool,
+    mode: Mode,
 ) -> Result<Option<BundleSyncReport>, ManifestError> {
     static TTL_WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if std::env::var_os("EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS").is_some()
         && !TTL_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed)
     {
-        eprintln!("[bundle] EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS is retired; only `effigy bundle sync` updates source pins");
+        eprintln!("[bundle] EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS is retired; a floating source is checked at most once per checkout every 10 minutes");
     }
     let manifest = std::fs::canonicalize(manifest).map_err(|err| io_error(manifest, err))?;
     let (bundle, catalogs) = crate::composition::load_manifest_source_declarations(&manifest)?;
     let mut selections = BTreeMap::new();
+    let mut policies: BTreeMap<String, crate::ManifestSourceUpdate> = BTreeMap::new();
     if let Some(bundle) = &bundle {
         selections.insert(
             "bundle".to_owned(),
             resolve_bundle_selection(&manifest, bundle)?,
         );
+        policies.insert("bundle".to_owned(), bundle.update);
     }
     for (name, spec) in catalogs {
         if name.trim().is_empty() || name.contains('/') || name.contains(':') {
@@ -108,30 +201,42 @@ fn prepare(
         }
         selections.insert(
             format!("catalog:{name}"),
-            BundleSelection::from_spec(&manifest, &spec)?,
+            BundleSelection::from_spec(&manifest, &spec.base)?,
         );
+        policies.insert(format!("catalog:{name}"), spec.update);
     }
     if selections.is_empty() {
         return Ok(None);
     }
-    // No gate, token or file creation for an already prepared first-dev path.
-    if !update
-        && read_lock(&manifest)?.is_some_and(|lock| {
-            selections
-                .keys()
-                .all(|name| lock.sources.contains_key(name))
+    let old = read_lock(&manifest)?.unwrap_or(SourceLock {
+        version: 1,
+        sources: BTreeMap::new(),
+    });
+    let checked = read_update_state(&manifest);
+    let now = unix_seconds();
+    let plans = selections
+        .iter()
+        .map(|(name, selection)| {
+            let plan = match mode {
+                Mode::Sync => SourcePlan::Acquire(RefreshReason::Missing),
+                Mode::Refresh => plan_source(
+                    &manifest,
+                    name,
+                    selection,
+                    old.sources.get(name),
+                    policies.get(name).copied().unwrap_or_default(),
+                    checked.checks.get(name).copied(),
+                    now,
+                )?,
+            };
+            Ok((name.clone(), plan))
         })
-    {
+        .collect::<Result<BTreeMap<_, _>, ManifestError>>()?;
+    // No gate, token or file creation when every selected source is current.
+    if plans.values().all(|plan| *plan == SourcePlan::Keep) {
         return Ok(None);
     }
     if effigy_core::container_detection::process_is_inside_effigy_workspace_container() {
-        if !update
-            && selections
-                .iter()
-                .all(|(name, selection)| resolve_source(&manifest, name, selection).is_ok())
-        {
-            return Ok(None);
-        }
         return Err(error(&manifest, "source acquisition requires host authority; run `effigy bundle sync` on the host before entering the workspace"));
     }
     let deadline = Instant::now()
@@ -231,7 +336,11 @@ fn prepare(
     let result = acquire_and_publish(
         &manifest,
         &selections,
-        update,
+        mode,
+        &plans,
+        &old,
+        &checked,
+        now,
         &cx,
         &mut run,
         &preparation.home,
@@ -241,10 +350,14 @@ fn prepare(
     let cleanup = op
         .cleanup(Duration::from_secs(15))
         .map_err(|err| error(&manifest, format!("{err:?}")))?;
-    let completion = if result.is_ok() {
-        run.finish(WorkloadOutcome::Succeeded)
-    } else {
-        match op.check("source preparation") {
+    let completion = match &result {
+        // A required source command that failed cannot leave the run Succeeded
+        // (K5 obligations); the kept pins are still what the caller uses.
+        Ok(report) if !report.warnings.is_empty() => {
+            run.finish(WorkloadOutcome::Failed { code: 1 })
+        }
+        Ok(_) => run.finish(WorkloadOutcome::Succeeded),
+        Err(_) => match op.check("source preparation") {
             Ok(()) => run.finish(WorkloadOutcome::Failed { code: 1 }),
             Err(effigy_kernel::ctx::Interrupt::TimedOut { phase, .. }) => {
                 run.interrupt(&cleanup, WorkloadOutcome::TimedOut { phase })
@@ -256,7 +369,7 @@ fn prepare(
                     signal: None,
                 },
             ),
-        }
+        },
     };
     let settled = run
         .settle(&cleanup, &mut SourceSettlement)
@@ -279,6 +392,136 @@ fn prepare(
     }
     result.map(Some)
 }
+
+/// One source's place in this Prepare (contract 020 §Behaviour): a missing pin
+/// is acquired, a changed declaration is re-acquired with no TTL, a path source
+/// is re-snapshotted when its content digest moved, and a floating Git source
+/// gets a bounded remote check at most once per checkout per TTL. A full-SHA
+/// `ref`, an OCI pin and a source declared `update = "manual"` never move here.
+fn plan_source(
+    manifest: &Path,
+    name: &str,
+    selection: &BundleSelection,
+    pin: Option<&SourcePin>,
+    policy: crate::ManifestSourceUpdate,
+    checked_at: Option<u64>,
+    now: u64,
+) -> Result<SourcePlan, ManifestError> {
+    let Some(pin) = pin else {
+        return Ok(SourcePlan::Acquire(RefreshReason::Missing));
+    };
+    if policy.is_manual() {
+        return Ok(SourcePlan::Keep);
+    }
+    if !same_declaration(&pin.declaration, selection) {
+        return Ok(SourcePlan::Acquire(RefreshReason::Declaration));
+    }
+    match selection {
+        BundleSelection::Path { path } => match source_digest(path, manifest) {
+            Ok(digest) if digest == pin.version => Ok(SourcePlan::Keep),
+            Ok(_) => Ok(SourcePlan::Acquire(RefreshReason::Content)),
+            // A vanished or unreadable path keeps the pin, like any other
+            // failed update attempt.
+            Err(failure) => {
+                warn(&kept_warning(name, pin, &failure));
+                Ok(SourcePlan::Keep)
+            }
+        },
+        BundleSelection::Git { reference, .. } => {
+            if reference.as_deref().is_some_and(is_full_revision) {
+                return Ok(SourcePlan::Keep);
+            }
+            if checked_at.is_some_and(|at| now.saturating_sub(at) < REMOTE_CHECK_TTL.as_secs()) {
+                return Ok(SourcePlan::Keep);
+            }
+            Ok(SourcePlan::RemoteCheck)
+        }
+        // An OCI pin is its resolved digest; a moving tag still needs sync.
+        BundleSelection::Oci { .. } => Ok(SourcePlan::Keep),
+    }
+}
+
+/// A full commit id is a pinned revision, not a floating one.
+fn is_full_revision(reference: &str) -> bool {
+    matches!(reference.len(), 40 | 64) && reference.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn unix_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0)
+}
+
+/// The last floating-source remote check this checkout recorded per source.
+/// An unreadable or absent record grants no TTL: the check runs again.
+fn read_update_state(manifest: &Path) -> SourceUpdateState {
+    let Ok(dir) = DirFd::open(&parent(manifest).join(".effigy")) else {
+        return SourceUpdateState::empty();
+    };
+    let op = observe_context();
+    let Ok(cx) = op.observe() else {
+        return SourceUpdateState::empty();
+    };
+    let Ok(name) = FileName::new(UPDATE_STATE_FILE) else {
+        return SourceUpdateState::empty();
+    };
+    match read_record::<SourceUpdateState>(&cx, &dir, &name) {
+        Observed::Verified(state, _) => state,
+        Observed::Absent(_) | Observed::Unknown(_) => SourceUpdateState::empty(),
+    }
+}
+
+/// The one line a Prepare path prints when it selects new bytes.
+fn update_note(
+    name: &str,
+    previous: &SourcePin,
+    selected: &SourcePin,
+    reason: RefreshReason,
+) -> String {
+    format!(
+        "{name} updated {} → {} ({})",
+        short_pin(previous),
+        short_pin(selected),
+        reason.describe()
+    )
+}
+
+fn short_pin(pin: &SourcePin) -> String {
+    let value = pin.revision.as_deref().unwrap_or(&pin.version);
+    let value = value.strip_prefix("sha256:").unwrap_or(value);
+    value.chars().take(8).collect()
+}
+
+fn remember_update_notes(notes: &[String]) {
+    if let Ok(mut stored) = UPDATE_NOTES.lock() {
+        stored.extend(notes.iter().cloned());
+    }
+}
+
+/// The update lines this process selected on a Prepare path, for a JSON
+/// envelope's `notes`.
+pub fn bundle_update_notes() -> Vec<String> {
+    UPDATE_NOTES
+        .lock()
+        .map(|stored| stored.clone())
+        .unwrap_or_default()
+}
+
+/// A failed refresh keeps the current pin and says so once (contract 020
+/// §Failure). Only the first acquisition of a declaration that has no usable
+/// pin is a hard error.
+fn kept_warning(name: &str, pin: &SourcePin, failure: &ManifestError) -> String {
+    format!(
+        "{name} update failed: {failure}; keeping {}",
+        short_pin(pin)
+    )
+}
+
+fn warn(message: &str) {
+    eprintln!("[bundle] {message}");
+}
+
 fn source_dir(
     parent: &DirFd,
     name: &str,
@@ -335,18 +578,19 @@ fn publish_lock(
     run.applied(&ticket, serde_json::json!({"sha256":sha256_hex(&bytes)}))
         .map_err(|err| error(manifest, err.to_string()))
 }
+#[allow(clippy::too_many_arguments)]
 fn acquire_and_publish(
     manifest: &Path,
     selections: &BTreeMap<String, BundleSelection>,
-    update: bool,
+    mode: Mode,
+    plans: &BTreeMap<String, SourcePlan>,
+    old: &SourceLock,
+    checked: &SourceUpdateState,
+    now: u64,
     cx: &EffectContext,
     run: &mut Run<'_>,
     home: &Path,
 ) -> Result<BundleSyncReport, ManifestError> {
-    let old = read_lock(manifest)?.unwrap_or(SourceLock {
-        version: 1,
-        sources: BTreeMap::new(),
-    });
     let ticket = retained_intent(run, "sources:generation", parent(manifest), manifest)?;
     let project = DirFd::open(parent(manifest)).map_err(|err| error(manifest, err.to_string()))?;
     let directory = source_dir(&project, ".effigy", cx, manifest)?;
@@ -398,148 +642,110 @@ fn acquire_and_publish(
     let mut pins = imported.clone();
     let mut reports = BTreeMap::new();
     let mut changed = false;
+    let mut notes = Vec::new();
+    let mut warnings = Vec::new();
+    let mut checks = checked.checks.clone();
+    let mut checked_any = false;
     for (name, selection) in selections {
-        if !update {
-            if let Some(pin) = pins.get(name) {
-                reports.insert(name.clone(), pin_report(manifest, selection, pin));
-                continue;
+        let pinned = pins.get(name).cloned();
+        let mut reason = match plans.get(name) {
+            Some(SourcePlan::Acquire(reason)) => Some(*reason),
+            _ => None,
+        };
+        if matches!(plans.get(name), Some(SourcePlan::RemoteCheck)) {
+            let BundleSelection::Git { url, reference } = selection else {
+                return Err(error(manifest, "only a Git source has a remote check"));
+            };
+            checks.insert(name.clone(), now);
+            checked_any = true;
+            match git_remote_revision(
+                manifest,
+                run,
+                cx,
+                home,
+                parent(manifest),
+                url,
+                reference.as_deref(),
+            ) {
+                Ok(Some(revision)) => {
+                    if pinned.as_ref().and_then(|pin| pin.revision.as_deref())
+                        != Some(revision.as_str())
+                    {
+                        reason = Some(RefreshReason::Upstream);
+                    }
+                }
+                Ok(None) => {}
+                Err(failure) => {
+                    if let Some(pin) = &pinned {
+                        let message = kept_warning(name, pin, &failure);
+                        warn(&message);
+                        warnings.push(message);
+                    }
+                }
             }
         }
-        let object = source_dir(&generation, &sha256_hex(name.as_bytes()), cx, manifest)?;
-        let (version, revision) = match selection {
-            BundleSelection::Path { path } => (snapshot(path, &object, cx, manifest)?, None),
-            BundleSelection::Git { url, reference } => {
-                let checkout = source_dir(
-                    &generation,
-                    &format!("git-{}", sha256_hex(name.as_bytes())),
-                    cx,
-                    manifest,
-                )?;
-                command(
-                    manifest,
-                    run,
-                    cx,
-                    home,
-                    parent(manifest),
-                    vec![
-                        "git".into(),
-                        "clone".into(),
-                        "--no-checkout".into(),
-                        "--".into(),
-                        url.into(),
-                        checkout.path().as_os_str().into(),
-                    ],
-                )?;
-                command(
-                    manifest,
-                    run,
-                    cx,
-                    home,
-                    checkout.path(),
-                    vec![
-                        "git".into(),
-                        "fetch".into(),
-                        "--depth".into(),
-                        "1".into(),
-                        "--".into(),
-                        "origin".into(),
-                        reference.as_deref().unwrap_or("main").into(),
-                    ],
-                )?;
-                command(
-                    manifest,
-                    run,
-                    cx,
-                    home,
-                    checkout.path(),
-                    vec![
-                        "git".into(),
-                        "-c".into(),
-                        "core.hooksPath=/dev/null".into(),
-                        "checkout".into(),
-                        "--detach".into(),
-                        "FETCH_HEAD".into(),
-                    ],
-                )?;
-                (
-                    snapshot(checkout.path(), &object, cx, manifest)?,
-                    legacy_version(checkout.path(), selection),
-                )
+        let Some(reason) = reason else {
+            if let Some(pin) = &pinned {
+                reports.insert(name.clone(), pin_report(manifest, selection, pin));
             }
-            BundleSelection::Oci { url } => {
-                let reference = url.trim_start_matches("oci://");
-                let raw = command(
-                    manifest,
-                    run,
-                    cx,
-                    home,
-                    parent(manifest),
-                    vec![
-                        "oras".into(),
-                        "manifest".into(),
-                        "fetch".into(),
-                        "--descriptor".into(),
-                        reference.into(),
-                    ],
-                )?;
-                let descriptor: serde_json::Value = serde_json::from_slice(&raw)
-                    .map_err(|err| error(manifest, format!("invalid OCI descriptor: {err}")))?;
-                let digest = descriptor
-                    .get("digest")
-                    .and_then(|value| value.as_str())
-                    .filter(|digest| {
-                        digest.starts_with("sha256:")
-                            && digest.len() == 71
-                            && digest[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
-                    })
-                    .ok_or_else(|| error(manifest, "OCI source has no valid sha256 digest"))?;
-                let repository = reference.split('@').next().unwrap_or(reference);
-                let repository = match repository.rfind(':') {
-                    Some(colon) if repository.rfind('/').is_some_and(|slash| colon > slash) => {
-                        &repository[..colon]
+            continue;
+        };
+        let object = source_dir(&generation, &sha256_hex(name.as_bytes()), cx, manifest)?;
+        let acquired = acquire_source(
+            manifest,
+            name,
+            selection,
+            run,
+            cx,
+            home,
+            &generation,
+            &object,
+        )
+        .and_then(|(version, revision)| {
+            if name == "bundle" {
+                crate::composition::validate_source_snapshot(manifest, object.path())?;
+            }
+            Ok((version, revision))
+        });
+        let (version, revision) = match acquired {
+            Ok(acquired) => acquired,
+            Err(failure) => {
+                // Contract 020 §Failure: a pin whose declaration is unchanged
+                // survives a failed refresh. A changed declaration with no
+                // usable pin is the acquisition error.
+                let keepable = pinned
+                    .as_ref()
+                    .is_some_and(|pin| same_declaration(&pin.declaration, selection));
+                if mode == Mode::Refresh && keepable {
+                    if let Some(pin) = &pinned {
+                        let message = kept_warning(name, pin, &failure);
+                        warn(&message);
+                        warnings.push(message);
+                        reports.insert(name.clone(), pin_report(manifest, selection, pin));
                     }
-                    _ => repository,
-                };
-                let pull = source_dir(
-                    &generation,
-                    &format!("oci-{}", sha256_hex(name.as_bytes())),
-                    cx,
-                    manifest,
-                )?;
-                command(
-                    manifest,
-                    run,
-                    cx,
-                    home,
-                    parent(manifest),
-                    vec![
-                        "oras".into(),
-                        "pull".into(),
-                        format!("{repository}@{digest}").into(),
-                        "--output".into(),
-                        pull.path().as_os_str().into(),
-                    ],
-                )?;
-                (
-                    snapshot(pull.path(), &object, cx, manifest)?,
-                    Some(digest.into()),
-                )
+                    continue;
+                }
+                return Err(failure);
             }
         };
-        if name == "bundle" {
-            crate::composition::validate_source_snapshot(manifest, object.path())?;
-        }
-        changed |= pins
-            .get(name)
-            .is_none_or(|pin| pin.version != version || pin.declaration != selection.spec());
-        let pin = SourcePin {
+        let selected = SourcePin {
             declaration: selection.spec(),
             object: relative_object(manifest, object.path())?,
             version,
             revision,
         };
-        reports.insert(name.clone(), pin_report(manifest, selection, &pin));
-        pins.insert(name.clone(), pin);
+        changed |= pinned.as_ref().is_none_or(|pin| {
+            pin.version != selected.version || !same_declaration(&pin.declaration, selection)
+        });
+        if mode == Mode::Refresh {
+            if let Some(previous) = &pinned {
+                if previous.version != selected.version || previous.revision != selected.revision {
+                    notes.push(update_note(name, previous, &selected, reason));
+                }
+            }
+        }
+        reports.insert(name.clone(), pin_report(manifest, selection, &selected));
+        pins.insert(name.clone(), selected);
     }
     // Git exclusions are explicit Prepare effects, never a manifest read effect.
     let exclude = retained_intent(run, "sources:git-exclude", parent(manifest), manifest)?;
@@ -619,19 +825,64 @@ fn acquire_and_publish(
     .map_err(|err| error(manifest, err.to_string()))?;
     run.applied(&known_ticket, serde_json::Value::Null)
         .map_err(|err| error(manifest, err.to_string()))?;
-    if update {
+    // The TTL record of this run's remote checks. It is an explicit Prepare
+    // effect beside the lock until the per-checkout state store owns it (#276).
+    if checked_any {
+        checks.retain(|_, at| now.saturating_sub(*at) < UPDATE_STATE_KEEP.as_secs());
+        while checks.len() > 4096 {
+            let Some(oldest) = checks
+                .iter()
+                .min_by_key(|(_, at)| **at)
+                .map(|(name, _)| name.clone())
+            else {
+                break;
+            };
+            checks.remove(&oldest);
+        }
+        let bytes = serde_json::to_vec(&SourceUpdateState { version: 1, checks })
+            .map_err(|err| error(manifest, err.to_string()))?;
+        let state_ticket = retained_intent(
+            run,
+            "sources:update-state",
+            &directory.path().join(UPDATE_STATE_FILE),
+            manifest,
+        )?;
+        let state_name =
+            FileName::new(UPDATE_STATE_FILE).map_err(|err| error(manifest, err.to_string()))?;
+        run.replace_record(
+            &directory,
+            &state_name,
+            &bytes,
+            effigy_kernel::record::ReplaceOpts {
+                mode: 0o644,
+                keep_previous: false,
+            },
+        )
+        .map_err(|err| error(manifest, err.to_string()))?;
+        run.applied(&state_ticket, serde_json::Value::Null)
+            .map_err(|err| error(manifest, err.to_string()))?;
+    }
+    if mode == Mode::Sync {
         pins.retain(|name, _| selections.contains_key(name));
     }
-    // One pointer publication commits bundle and catalog updates together.
-    publish_lock(
-        manifest,
-        &SourceLock {
-            version: 1,
-            sources: pins,
-        },
-        &directory,
-        run,
-    )?;
+    // One pointer publication commits bundle and catalog updates together. A
+    // Prepare that found nothing stale selects the bytes it already had, so it
+    // does not rewrite the lock.
+    if pins != old.sources {
+        publish_lock(
+            manifest,
+            &SourceLock {
+                version: 1,
+                sources: pins.clone(),
+            },
+            &directory,
+            run,
+        )?;
+    }
+    for note in &notes {
+        eprintln!("[bundle] {note}");
+    }
+    remember_update_notes(&notes);
     let primary = reports
         .get("bundle")
         .or_else(|| reports.values().next())
@@ -644,7 +895,206 @@ fn acquire_and_publish(
         changed,
         applicable: true,
         sources: reports,
+        notes,
+        warnings,
     })
+}
+
+/// Acquire one source into its generation directory and return the recorded
+/// version and revision hint.
+#[allow(clippy::too_many_arguments)]
+fn acquire_source(
+    manifest: &Path,
+    name: &str,
+    selection: &BundleSelection,
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    home: &Path,
+    generation: &DirFd,
+    object: &DirFd,
+) -> Result<(String, Option<String>), ManifestError> {
+    match selection {
+        BundleSelection::Path { path } => Ok((snapshot(path, object, cx, manifest)?, None)),
+        BundleSelection::Git { url, reference } => {
+            let checkout = source_dir(
+                generation,
+                &format!("git-{}", sha256_hex(name.as_bytes())),
+                cx,
+                manifest,
+            )?;
+            command(
+                manifest,
+                run,
+                cx,
+                home,
+                parent(manifest),
+                vec![
+                    "git".into(),
+                    "clone".into(),
+                    "--no-checkout".into(),
+                    "--".into(),
+                    url.into(),
+                    checkout.path().as_os_str().into(),
+                ],
+                BUDGET,
+            )?;
+            command(
+                manifest,
+                run,
+                cx,
+                home,
+                checkout.path(),
+                vec![
+                    "git".into(),
+                    "fetch".into(),
+                    "--depth".into(),
+                    "1".into(),
+                    "--".into(),
+                    "origin".into(),
+                    reference.as_deref().unwrap_or("main").into(),
+                ],
+                BUDGET,
+            )?;
+            command(
+                manifest,
+                run,
+                cx,
+                home,
+                checkout.path(),
+                vec![
+                    "git".into(),
+                    "-c".into(),
+                    "core.hooksPath=/dev/null".into(),
+                    "checkout".into(),
+                    "--detach".into(),
+                    "FETCH_HEAD".into(),
+                ],
+                BUDGET,
+            )?;
+            Ok((
+                snapshot(checkout.path(), object, cx, manifest)?,
+                legacy_version(checkout.path(), selection),
+            ))
+        }
+        BundleSelection::Oci { url } => {
+            let reference = url.trim_start_matches("oci://");
+            let raw = command(
+                manifest,
+                run,
+                cx,
+                home,
+                parent(manifest),
+                vec![
+                    "oras".into(),
+                    "manifest".into(),
+                    "fetch".into(),
+                    "--descriptor".into(),
+                    reference.into(),
+                ],
+                BUDGET,
+            )?;
+            let descriptor: serde_json::Value = serde_json::from_slice(&raw)
+                .map_err(|err| error(manifest, format!("invalid OCI descriptor: {err}")))?;
+            let digest = descriptor
+                .get("digest")
+                .and_then(|value| value.as_str())
+                .filter(|digest| {
+                    digest.starts_with("sha256:")
+                        && digest.len() == 71
+                        && digest[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+                .ok_or_else(|| error(manifest, "OCI source has no valid sha256 digest"))?;
+            let repository = reference.split('@').next().unwrap_or(reference);
+            let repository = match repository.rfind(':') {
+                Some(colon) if repository.rfind('/').is_some_and(|slash| colon > slash) => {
+                    &repository[..colon]
+                }
+                _ => repository,
+            };
+            let pull = source_dir(
+                generation,
+                &format!("oci-{}", sha256_hex(name.as_bytes())),
+                cx,
+                manifest,
+            )?;
+            command(
+                manifest,
+                run,
+                cx,
+                home,
+                parent(manifest),
+                vec![
+                    "oras".into(),
+                    "pull".into(),
+                    format!("{repository}@{digest}").into(),
+                    "--output".into(),
+                    pull.path().as_os_str().into(),
+                ],
+                BUDGET,
+            )?;
+            Ok((
+                snapshot(pull.path(), object, cx, manifest)?,
+                Some(digest.into()),
+            ))
+        }
+    }
+}
+
+/// A bounded `git ls-remote` of the floating ref. `Ok(None)` means the remote
+/// listed no ref that could be checked, so the pin stays.
+#[allow(clippy::too_many_arguments)]
+fn git_remote_revision(
+    manifest: &Path,
+    run: &mut Run<'_>,
+    cx: &EffectContext,
+    home: &Path,
+    cwd: &Path,
+    url: &str,
+    reference: Option<&str>,
+) -> Result<Option<String>, ManifestError> {
+    let reference = reference.unwrap_or("main");
+    let raw = command(
+        manifest,
+        run,
+        cx,
+        home,
+        cwd,
+        vec![
+            "git".into(),
+            "ls-remote".into(),
+            "--".into(),
+            url.into(),
+            reference.into(),
+        ],
+        REMOTE_CHECK_BUDGET,
+    )?;
+    Ok(parse_ls_remote(&raw, reference))
+}
+
+fn parse_ls_remote(raw: &[u8], reference: &str) -> Option<String> {
+    let output = String::from_utf8_lossy(raw);
+    let branch = format!("refs/heads/{reference}");
+    let tag = format!("refs/tags/{reference}");
+    let peeled = format!("{tag}^{{}}");
+    let (mut head, mut tag_object, mut commit, mut first) = (None, None, None, None);
+    for line in output.lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(sha), Some(name)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        if !is_full_revision(sha) {
+            continue;
+        }
+        first.get_or_insert_with(|| sha.to_owned());
+        if name == branch {
+            head = Some(sha.to_owned());
+        } else if name == peeled {
+            commit = Some(sha.to_owned());
+        } else if name == tag {
+            tag_object = Some(sha.to_owned());
+        }
+    }
+    head.or(commit).or(tag_object).or(first)
 }
 fn relative_object(manifest: &Path, root: &Path) -> Result<PathBuf, ManifestError> {
     root.strip_prefix(parent(manifest).join(".effigy"))
@@ -661,7 +1111,7 @@ fn pin_report(
         source_path: selection.label(),
         local_path: parent(manifest).join(".effigy").join(&pin.object),
         version_hint: pin.revision.clone().or_else(|| Some(pin.version.clone())),
-        stale: pin.declaration != selection.spec(),
+        stale: !same_declaration(&pin.declaration, selection),
     }
 }
 fn command(
@@ -671,6 +1121,7 @@ fn command(
     home: &Path,
     cwd: &Path,
     mut argv: Vec<OsString>,
+    limit: Duration,
 ) -> Result<Vec<u8>, ManifestError> {
     let program = argv
         .first_mut()
@@ -739,7 +1190,7 @@ fn command(
             cwd: cwd.into(),
             env,
             grace: Duration::from_secs(1),
-            lifetime: Lifetime::Finite(BUDGET),
+            lifetime: Lifetime::Finite(limit),
             terminal: Terminal::None,
             label: "source acquisition".into(),
         },
@@ -776,16 +1227,30 @@ fn snapshot(
     cx: &EffectContext,
     manifest: &Path,
 ) -> Result<String, ManifestError> {
+    digest_tree(source, Some((destination, cx)), manifest)
+}
+
+/// The content digest a snapshot records, without writing one. A path source
+/// is re-snapshotted when this differs from its pin (contract 020 §Behaviour),
+/// so both walks must skip the same entries.
+fn source_digest(source: &Path, manifest: &Path) -> Result<String, ManifestError> {
+    digest_tree(source, None, manifest)
+}
+
+fn digest_tree(
+    source: &Path,
+    sink: Option<(&DirFd, &EffectContext)>,
+    manifest: &Path,
+) -> Result<String, ManifestError> {
     let mut hash = Sha256::new();
     let mut usage = SnapshotUsage::default();
     copy_tree(
         source,
-        destination,
+        sink,
         Path::new(""),
         0,
         &mut usage,
         &mut hash,
-        cx,
         manifest,
     )?;
     Ok(format!(
@@ -796,23 +1261,36 @@ fn snapshot(
             .collect::<String>()
     ))
 }
+
+/// Build output and VCS state are not bundle source bytes.
+fn skipped_source_entry(name: &std::ffi::OsStr, is_dir: bool, depth: usize) -> bool {
+    let name = name.to_string_lossy();
+    if depth == 0
+        && (name == ".git" || name == ".effigy" || name.starts_with(".effigy-bundle-source."))
+    {
+        return true;
+    }
+    is_dir && (name == "target" || name == "node_modules")
+}
+
 #[allow(clippy::too_many_arguments)]
 fn copy_tree(
     source: &Path,
-    destination: &DirFd,
+    sink: Option<(&DirFd, &EffectContext)>,
     relative: &Path,
     depth: usize,
     usage: &mut SnapshotUsage,
     hash: &mut Sha256,
-    cx: &EffectContext,
     manifest: &Path,
 ) -> Result<(), ManifestError> {
     if depth > 32 {
         return Err(error(manifest, "source tree exceeds depth limit"));
     }
-    cx.operation()
-        .check("snapshot source")
-        .map_err(|err| error(manifest, format!("{err:?}")))?;
+    if let Some((_, cx)) = sink {
+        cx.operation()
+            .check("snapshot source")
+            .map_err(|err| error(manifest, format!("{err:?}")))?;
+    }
     let mut entries = std::fs::read_dir(source)
         .map_err(|err| io_error(source, err))?
         .take(MAX_ENTRIES + 1)
@@ -823,23 +1301,21 @@ fn copy_tree(
     }
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
-        cx.operation()
-            .check("snapshot entry")
-            .map_err(|err| error(manifest, format!("{err:?}")))?;
+        if let Some((_, cx)) = sink {
+            cx.operation()
+                .check("snapshot entry")
+                .map_err(|err| error(manifest, format!("{err:?}")))?;
+        }
         usage.entries += 1;
         if usage.entries > MAX_ENTRIES {
             return Err(error(manifest, "source tree exceeds entry limit"));
         }
         let name = entry.file_name();
-        if depth == 0
-            && (name == ".git"
-                || name == ".effigy"
-                || name.to_string_lossy().starts_with(".effigy-bundle-source."))
-        {
-            continue;
-        }
         let path = entry.path();
         let metadata = std::fs::symlink_metadata(&path).map_err(|err| io_error(&path, err))?;
+        if skipped_source_entry(&name, metadata.is_dir(), depth) {
+            continue;
+        }
         let relative = relative.join(&name);
         let name = name
             .to_str()
@@ -848,17 +1324,21 @@ fn copy_tree(
             hash.update([0]);
             hash.update((relative.as_os_str().as_bytes().len() as u64).to_be_bytes());
             hash.update(relative.as_os_str().as_bytes());
-            let child = source_dir(destination, name, cx, manifest)?;
-            copy_tree(
-                &path,
-                &child,
-                &relative,
-                depth + 1,
-                usage,
-                hash,
-                cx,
-                manifest,
-            )?;
+            match sink {
+                Some((destination, cx)) => {
+                    let child = source_dir(destination, name, cx, manifest)?;
+                    copy_tree(
+                        &path,
+                        Some((&child, cx)),
+                        &relative,
+                        depth + 1,
+                        usage,
+                        hash,
+                        manifest,
+                    )?;
+                }
+                None => copy_tree(&path, None, &relative, depth + 1, usage, hash, manifest)?,
+            }
         } else if metadata.is_file() {
             if metadata.len() > MAX_FILE {
                 return Err(error(manifest, "source file exceeds size limit"));
@@ -886,17 +1366,19 @@ fn copy_tree(
             }
             hash.update((bytes.len() as u64).to_be_bytes());
             hash.update(&bytes);
-            let target = destination.path().join(name);
-            let mut output = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(mode)
-                .open(&target)
-                .map_err(|err| io_error(&target, err))?;
-            output
-                .write_all(&bytes)
-                .and_then(|()| output.sync_all())
-                .map_err(|err| io_error(&target, err))?;
+            if let Some((destination, _)) = sink {
+                let target = destination.path().join(name);
+                let mut output = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(mode)
+                    .open(&target)
+                    .map_err(|err| io_error(&target, err))?;
+                output
+                    .write_all(&bytes)
+                    .and_then(|()| output.sync_all())
+                    .map_err(|err| io_error(&target, err))?;
+            }
         } else {
             return Err(error(
                 manifest,
@@ -907,15 +1389,18 @@ fn copy_tree(
             ));
         }
     }
-    std::fs::File::open(destination.path())
-        .and_then(|directory| directory.sync_all())
-        .map_err(|err| io_error(destination.path(), err))?;
+    if let Some((destination, _)) = sink {
+        std::fs::File::open(destination.path())
+            .and_then(|directory| directory.sync_all())
+            .map_err(|err| io_error(destination.path(), err))?;
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn fixture(root: &Path) -> (PathBuf, SourcePreparation) {
         let bundle = root.join("bundle");
         std::fs::create_dir(&bundle).unwrap();
@@ -935,53 +1420,201 @@ mod tests {
                 home,
                 executable: std::env::current_exe().unwrap(),
                 cancel: CancelToken::default(),
-                budget: Duration::from_secs(10),
+                budget: Duration::from_secs(30),
                 next: Invocation::validated(vec!["recover".into()], |args| args == ["recover"])
                     .unwrap(),
             },
         )
     }
+
+    fn lock_bytes(root: &Path) -> Vec<u8> {
+        std::fs::read(root.join(".effigy").join(LOCK_FILE)).unwrap()
+    }
+
+    fn selected(manifest: &Path) -> String {
+        crate::load_task_manifest_with_inspection(manifest)
+            .unwrap()
+            .effective_manifest
+    }
+
+    /// Every path under `root` with its bytes, for proving a read wrote nothing.
+    fn tree(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+        fn visit(root: &Path, path: &Path, entries: &mut BTreeMap<PathBuf, Vec<u8>>) {
+            let metadata = std::fs::symlink_metadata(path).unwrap();
+            let bytes = if metadata.is_dir() {
+                Vec::new()
+            } else {
+                std::fs::read(path).unwrap()
+            };
+            entries.insert(path.strip_prefix(root).unwrap().into(), bytes);
+            if metadata.is_dir() {
+                for entry in std::fs::read_dir(path).unwrap() {
+                    visit(root, &entry.unwrap().path(), entries);
+                }
+            }
+        }
+        let mut entries = BTreeMap::new();
+        visit(root, root, &mut entries);
+        entries
+    }
+
     #[test]
-    fn path_and_catalog_pins_move_only_on_sync_and_failure_keeps_prior_bytes() {
+    fn a_changed_path_bundle_is_resnapshotted_on_prepare() {
         let tmp = tempfile::tempdir().unwrap();
         let (manifest, prep) = fixture(tmp.path());
-        prepare_bundle_sources(&manifest, &prep).unwrap();
-        let original = std::fs::read(tmp.path().join(".effigy").join(LOCK_FILE)).unwrap();
+        let first = prepare_bundle_sources(&manifest, &prep).unwrap().unwrap();
+        assert!(!first.changed);
+        assert!(first.notes.is_empty(), "{:?}", first.notes);
+        assert!(selected(&manifest).contains("echo old"));
         std::fs::write(
             tmp.path().join("bundle/effigy.toml"),
             "[tasks.hello]\nrun = \"echo new\"\n",
         )
         .unwrap();
-        prepare_bundle_sources(&manifest, &prep).unwrap();
-        assert_eq!(
-            original,
-            std::fs::read(tmp.path().join(".effigy").join(LOCK_FILE)).unwrap()
-        );
-        let loaded = crate::load_task_manifest_with_inspection(&manifest).unwrap();
-        assert!(loaded.effective_manifest.contains("echo old"));
-        let report = sync_bundle_source(&manifest, &prep).unwrap().unwrap();
+        let report = prepare_bundle_sources(&manifest, &prep).unwrap().unwrap();
         assert!(report.changed);
-        assert_eq!(report.sources.len(), 2);
-        assert!(crate::load_task_manifest_with_inspection(&manifest)
-            .unwrap()
-            .effective_manifest
-            .contains("echo new"));
-        let previous = std::fs::read(tmp.path().join(".effigy").join(LOCK_FILE)).unwrap();
+        assert!(selected(&manifest).contains("echo new"));
+        assert_eq!(
+            report.notes.len(),
+            2,
+            "bundle and catalog:extra: {:?}",
+            report.notes
+        );
+        for note in &report.notes {
+            assert!(note.ends_with("(content changed)"), "{note}");
+            assert!(note.contains(" updated ") && note.contains(" → "), "{note}");
+        }
+        assert!(report
+            .notes
+            .iter()
+            .any(|note| note.starts_with("bundle updated ")));
+        assert!(report
+            .notes
+            .iter()
+            .any(|note| note.starts_with("catalog:extra updated ")));
+    }
+
+    #[test]
+    fn a_changed_declaration_reacquires_on_prepare() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manifest, prep) = fixture(tmp.path());
+        prepare_bundle_sources(&manifest, &prep).unwrap().unwrap();
+        let second = tmp.path().join("second");
+        std::fs::create_dir(&second).unwrap();
+        std::fs::write(second.join("bundle.toml"), "[bundle]\nname = \"fixture\"\n").unwrap();
         std::fs::write(
-            tmp.path().join("bundle/effigy.toml"),
-            "[tasks.hello]\nrun = 4\n",
+            second.join("effigy.toml"),
+            "[tasks.hello]\nrun = \"echo second\"\n",
         )
         .unwrap();
-        assert!(sync_bundle_source(&manifest, &prep).is_err());
-        assert_eq!(
-            previous,
-            std::fs::read(tmp.path().join(".effigy").join(LOCK_FILE)).unwrap()
+        std::fs::write(
+            &manifest,
+            "[bundle]\nbase = { type = \"path\", dir = \"second\" }\n[catalog.sources.extra]\ntype = \"path\"\ndir = \"bundle\"\n",
+        )
+        .unwrap();
+        let report = prepare_bundle_sources(&manifest, &prep).unwrap().unwrap();
+        assert!(report.changed);
+        assert!(selected(&manifest).contains("echo second"));
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.starts_with("bundle updated ")
+                    && note.ends_with("(declaration changed)")),
+            "{:?}",
+            report.notes
         );
-        assert!(crate::load_task_manifest_with_inspection(&manifest)
-            .unwrap()
-            .effective_manifest
-            .contains("echo new"));
     }
+
+    #[test]
+    fn a_changed_declaration_with_no_usable_pin_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manifest, prep) = fixture(tmp.path());
+        prepare_bundle_sources(&manifest, &prep).unwrap().unwrap();
+        std::fs::write(
+            &manifest,
+            "[bundle]\nbase = { type = \"path\", dir = \"absent\" }\n[catalog.sources.extra]\ntype = \"path\"\ndir = \"bundle\"\n",
+        )
+        .unwrap();
+        assert!(prepare_bundle_sources(&manifest, &prep).is_err());
+    }
+
+    #[test]
+    fn manual_update_keeps_pins_until_sync() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manifest, prep) = fixture(tmp.path());
+        std::fs::write(
+            &manifest,
+            "[bundle]\nupdate = \"manual\"\nbase = { type = \"path\", dir = \"bundle\" }\n[catalog.sources.extra]\ntype = \"path\"\ndir = \"bundle\"\nupdate = \"manual\"\n",
+        )
+        .unwrap();
+        prepare_bundle_sources(&manifest, &prep).unwrap().unwrap();
+        let lock = lock_bytes(tmp.path());
+        std::fs::write(
+            tmp.path().join("bundle/effigy.toml"),
+            "[tasks.hello]\nrun = \"echo manual\"\n",
+        )
+        .unwrap();
+        assert!(prepare_bundle_sources(&manifest, &prep).unwrap().is_none());
+        assert_eq!(lock_bytes(tmp.path()), lock);
+        assert!(selected(&manifest).contains("echo old"));
+        let report = sync_bundle_source(&manifest, &prep).unwrap().unwrap();
+        assert!(report.changed);
+        assert!(selected(&manifest).contains("echo manual"));
+    }
+
+    #[test]
+    fn manual_applies_to_one_catalog_source_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manifest, prep) = fixture(tmp.path());
+        std::fs::write(
+            &manifest,
+            "[bundle]\nbase = { type = \"path\", dir = \"bundle\" }\n[catalog.sources.extra]\ntype = \"path\"\ndir = \"bundle\"\nupdate = \"manual\"\n",
+        )
+        .unwrap();
+        prepare_bundle_sources(&manifest, &prep).unwrap().unwrap();
+        std::fs::write(
+            tmp.path().join("bundle/effigy.toml"),
+            "[tasks.hello]\nrun = \"echo mixed\"\n",
+        )
+        .unwrap();
+        let report = prepare_bundle_sources(&manifest, &prep).unwrap().unwrap();
+        assert!(report.changed);
+        assert_eq!(
+            report
+                .notes
+                .iter()
+                .map(|note| note.split(' ').next().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["bundle"],
+            "the manual catalog source keeps its pin: {:?}",
+            report.notes
+        );
+    }
+
+    #[test]
+    fn read_paths_never_acquire_or_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manifest, prep) = fixture(tmp.path());
+        prepare_bundle_sources(&manifest, &prep).unwrap().unwrap();
+        let lock = lock_bytes(tmp.path());
+        std::fs::write(
+            tmp.path().join("bundle/effigy.toml"),
+            "[tasks.hello]\nrun = \"echo behind\"\n",
+        )
+        .unwrap();
+        let before = tree(&tmp.path().join(".effigy"));
+        // Reads stay local: the source is behind, and only a Prepare moves it.
+        let inspected = crate::inspect_bundle_source(&manifest).unwrap().unwrap();
+        assert!(!inspected.stale);
+        crate::catalog_source_roots(&manifest).unwrap();
+        let loaded = crate::load_task_manifest_with_inspection(&manifest).unwrap();
+        assert!(loaded.effective_manifest.contains("echo old"));
+        assert_eq!(tree(&tmp.path().join(".effigy")), before);
+        assert_eq!(lock_bytes(tmp.path()), lock);
+        assert!(!tmp.path().join(".effigy").join(UPDATE_STATE_FILE).exists());
+    }
+
     #[test]
     fn unsafe_cache_symlink_cannot_write_foreign_directory() {
         let tmp = tempfile::tempdir().unwrap();
@@ -997,5 +1630,21 @@ mod tests {
             "owned by someone else"
         );
         assert_eq!(std::fs::read_dir(&foreign).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn a_failed_sync_keeps_the_prior_bytes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manifest, prep) = fixture(tmp.path());
+        prepare_bundle_sources(&manifest, &prep).unwrap().unwrap();
+        let previous = lock_bytes(tmp.path());
+        std::fs::write(
+            tmp.path().join("bundle/effigy.toml"),
+            "[tasks.hello]\nrun = 4\n",
+        )
+        .unwrap();
+        assert!(sync_bundle_source(&manifest, &prep).is_err());
+        assert_eq!(lock_bytes(tmp.path()), previous);
+        assert!(selected(&manifest).contains("echo old"));
     }
 }

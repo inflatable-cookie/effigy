@@ -24,7 +24,7 @@ use super::participation::{
 };
 use super::process::{
     error_is_timeout, run_command_capture_os, run_command_capture_os_with_env,
-    run_command_capture_with_timeout, run_detached_command_with_env,
+    run_command_capture_with_timeout_and_env, run_detached_command_with_env,
 };
 
 use crate::{
@@ -94,6 +94,11 @@ pub struct RuntimeInventoryFailure {
     pub backend: String,
     pub profile: String,
     pub error: String,
+    /// The profile's VM is stopped rather than broken. Its created or stopped
+    /// containers cannot be listed without starting it, but it publishes no
+    /// host port while it is stopped, so only owners recorded on that profile
+    /// are uncertain (effigy#294).
+    pub stopped_profile: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -110,6 +115,39 @@ impl RunningComposeContainerInventory {
     pub fn failure_summary(&self) -> Option<String> {
         (!self.failures.is_empty()).then(|| {
             self.failures
+                .iter()
+                .map(|failure| {
+                    format!(
+                        "{} profile `{}`: {}",
+                        failure.backend, failure.profile, failure.error
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        })
+    }
+
+    /// Colima profiles whose VM is stopped. Their containers cannot be listed
+    /// without starting the profile, so an owner that may live there is
+    /// uncertain; every other failure makes the inventory incomplete for
+    /// every owner.
+    pub fn stopped_profiles(&self) -> Vec<&str> {
+        self.failures
+            .iter()
+            .filter(|failure| failure.stopped_profile)
+            .map(|failure| failure.profile.as_str())
+            .collect()
+    }
+
+    /// Failures that stop the inventory from proving absence for any owner.
+    pub fn incomplete_failure_summary(&self) -> Option<String> {
+        let failures = self
+            .failures
+            .iter()
+            .filter(|failure| !failure.stopped_profile)
+            .collect::<Vec<_>>();
+        (!failures.is_empty()).then(|| {
+            failures
                 .iter()
                 .map(|failure| {
                     format!(
@@ -151,13 +189,18 @@ pub fn shutdown_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), ContainerExecError> {
+    // Teardown never publishes a port, but Compose interpolates the whole
+    // render before it reads the project. A render whose ports were never
+    // assigned (a failed first start) therefore stops with the teardown value
+    // instead of failing on its deliberate unassigned-port refusal (#286).
+    let teardown_env = crate::policy::ports::teardown_interpolation_env();
     for (args, label) in shutdown_compose_commands(policy) {
         let (program, invocation_args) = compose_invocation_for_repo(repo_root, policy, &args);
         let rendered_args = invocation_args
             .iter()
             .map(|value| value.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        run_command_capture_with_timeout(
+        run_command_capture_with_timeout_and_env(
             repo_root,
             program,
             &rendered_args
@@ -166,6 +209,7 @@ pub fn shutdown_container(
                 .collect::<Vec<_>>(),
             label,
             CONTAINER_SHUTDOWN_TIMEOUT,
+            &teardown_env,
         )?;
     }
     Ok(())
@@ -1711,7 +1755,9 @@ pub fn discover_running_compose_containers() -> RunningComposeContainerInventory
         docker_runtime_participation(),
         list_running_compose_containers_for_docker,
         colima_runtime_participation(),
-        || running_colima_profiles(Path::new(".")),
+        // A running-container inventory only needs the running profiles; a
+        // stopped profile has no running container to report.
+        || running_colima_profiles(Path::new(".")).map(|running| (running, Vec::new())),
         list_running_compose_containers_for_profile,
     )
 }
@@ -1724,7 +1770,7 @@ fn collect_running_compose_container_inventory(
     docker_participation: RuntimeParticipation,
     docker_rows: impl FnOnce() -> Result<Vec<RunningComposeContainer>, ContainerExecError>,
     colima_participation: RuntimeParticipation,
-    colima_profiles: impl FnOnce() -> Result<Vec<String>, ContainerExecError>,
+    colima_profiles: impl FnOnce() -> Result<(Vec<String>, Vec<String>), ContainerExecError>,
     mut profile_rows: impl FnMut(&str) -> Result<Vec<RunningComposeContainer>, ContainerExecError>,
 ) -> RunningComposeContainerInventory {
     let mut inventory = RunningComposeContainerInventory::default();
@@ -1742,13 +1788,22 @@ fn collect_running_compose_container_inventory(
                 backend: "docker".to_owned(),
                 profile: "default".to_owned(),
                 error: error.to_string(),
+                stopped_profile: false,
             }),
         }
     }
     if colima_participation == RuntimeParticipation::Participating {
         match colima_profiles() {
-            Ok(profiles) => {
-                for profile in profiles {
+            Ok((running, stopped)) => {
+                for profile in stopped {
+                    inventory.failures.push(RuntimeInventoryFailure {
+                        backend: "colima".to_owned(),
+                        error: "stopped colima profile cannot be inspected for created or stopped containers without starting it".to_owned(),
+                        profile,
+                        stopped_profile: true,
+                    });
+                }
+                for profile in running {
                     match profile_rows(&profile) {
                         Ok(rows) => inventory.rows.extend(rows.into_iter().map(|row| {
                             RunningComposeContainerProfiled {
@@ -1760,6 +1815,7 @@ fn collect_running_compose_container_inventory(
                             backend: "colima".to_owned(),
                             profile,
                             error: error.to_string(),
+                            stopped_profile: false,
                         }),
                     }
                 }
@@ -1768,6 +1824,7 @@ fn collect_running_compose_container_inventory(
                 backend: "colima".to_owned(),
                 profile: "profile-list".to_owned(),
                 error: error.to_string(),
+                stopped_profile: false,
             }),
         }
     }
@@ -1777,15 +1834,17 @@ fn collect_running_compose_container_inventory(
 /// Inventory every Compose container in every state (running, created,
 /// exited, paused) across participating runtimes.
 ///
-/// Stopped Colima profiles fail the inventory instead of being skipped: their
-/// created or stopped containers cannot be seen without starting the VM, so an
-/// ownership proof that depends on them must stay incomplete.
+/// A stopped Colima profile is recorded as its own stopped-profile failure
+/// instead of failing the whole inventory: its created or stopped containers
+/// cannot be seen without starting the VM, but it publishes no host port
+/// while stopped, so only owners recorded on that profile are uncertain
+/// (effigy#294). Every other failure still makes the inventory incomplete.
 pub fn discover_compose_containers_all_states() -> RunningComposeContainerInventory {
     collect_running_compose_container_inventory(
         docker_runtime_participation(),
         list_all_compose_containers_for_docker,
         colima_runtime_participation(),
-        super::colima_runtime::colima_profiles_for_complete_inventory,
+        super::colima_runtime::colima_profiles_for_all_states_inventory,
         list_all_compose_containers_for_profile,
     )
 }
@@ -2214,7 +2273,7 @@ mod inventory_tests {
             RuntimeParticipation::Participating,
             || {
                 colima_probes.set(colima_probes.get() + 1);
-                Ok(Vec::new())
+                Ok((Vec::new(), Vec::new()))
             },
             |_| Ok(Vec::new()),
         );
@@ -2239,7 +2298,7 @@ mod inventory_tests {
                 ))
             },
             RuntimeParticipation::Participating,
-            || Ok(vec!["effigy".to_owned()]),
+            || Ok((vec!["effigy".to_owned()], Vec::new())),
             |_| Ok(vec![row("live-project", "/tmp/live-project")]),
         );
 
@@ -2297,12 +2356,39 @@ mod inventory_tests {
     }
 
     #[test]
+    fn stopped_profile_is_its_own_failure_instead_of_an_incomplete_inventory() {
+        // effigy#294: a stopped profile cannot be listed, but it publishes no
+        // host port, so it is recorded as a per-profile fact rather than
+        // poisoning every other profile's rows.
+        let inventory = collect_running_compose_container_inventory(
+            RuntimeParticipation::Inactive,
+            || panic!("inactive docker must not be probed"),
+            RuntimeParticipation::Participating,
+            || Ok((vec!["effigy".to_owned()], vec!["effigy-release".to_owned()])),
+            |profile| match profile {
+                "effigy" => Ok(vec![row("live-project", "/tmp/live-project")]),
+                _ => unreachable!("a stopped profile is never probed"),
+            },
+        );
+
+        assert_eq!(inventory.stopped_profiles(), vec!["effigy-release"]);
+        assert_eq!(
+            inventory.incomplete_failure_summary(),
+            None,
+            "a stopped profile is not an incomplete inventory"
+        );
+        assert!(inventory.failure_summary().is_some());
+        assert_eq!(inventory.rows.len(), 1);
+        assert_eq!(inventory.rows[0].profile, "effigy");
+    }
+
+    #[test]
     fn profile_ps_failure_does_not_discard_rows_from_other_profiles() {
         let inventory = collect_running_compose_container_inventory(
             RuntimeParticipation::Inactive,
             || panic!("inactive docker must not be probed"),
             RuntimeParticipation::Participating,
-            || Ok(vec!["broken".to_owned(), "live".to_owned()]),
+            || Ok((vec!["broken".to_owned(), "live".to_owned()], Vec::new())),
             |profile| match profile {
                 "broken" => Err(failure(
                     "colima nerdctl ps",
@@ -2337,7 +2423,7 @@ mod inventory_tests {
                 })
             },
             RuntimeParticipation::Participating,
-            || Ok(vec!["effigy".to_owned()]),
+            || Ok((vec!["effigy".to_owned()], Vec::new())),
             |_| Ok(vec![row("live-project", "/tmp/live-project")]),
         );
 
@@ -2360,7 +2446,7 @@ mod inventory_tests {
             RuntimeParticipation::Inactive,
             || panic!("inactive docker must not be probed"),
             RuntimeParticipation::Participating,
-            || Ok(vec!["effigy".to_owned()]),
+            || Ok((vec!["effigy".to_owned()], Vec::new())),
             |_| Ok(Vec::new()),
         );
 

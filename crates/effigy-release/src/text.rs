@@ -4,7 +4,7 @@ use crate::gate_reports::failed_gate_tail_lines;
 use crate::{
     FileMutationPlan, GateResult, IdentityKind, ReleaseExecutePlan, ReleaseExecuted,
     ReleaseGateRun, ReleaseIdentityPlan, ReleasePipelinePlan, ReleasePreparePlan, ReleasePrepared,
-    ReleaseStatus, ReleaseVerifyInstall,
+    ReleaseStatus,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -1000,6 +1000,24 @@ pub fn render_release_gate_run_text(run: &ReleaseGateRun) -> String {
         format!("  Passed: {}", if run.passed { "yes" } else { "no" }),
     ];
 
+    if !run.gates.is_empty() {
+        lines.push(String::new());
+        lines.push("Configured Gates".to_owned());
+        for (index, gate) in run.gates.iter().enumerate() {
+            lines.push(format!(
+                "  [{}/{}] {} ({}) - {}",
+                index + 1,
+                run.gates.len(),
+                gate.name,
+                gate.stage.stage_name(),
+                gate.command
+            ));
+            if let Some(description) = &gate.description {
+                lines.push(format!("    {description}"));
+            }
+        }
+    }
+
     if !run.gate_results.is_empty() {
         lines.push(String::new());
         lines.push("Gate Results".to_owned());
@@ -1033,74 +1051,6 @@ pub fn render_release_gate_run_text(run: &ReleaseGateRun) -> String {
         lines.push("Blockers".to_owned());
         for blocker in &run.blockers {
             lines.push(format!("  - {blocker}"));
-        }
-    }
-
-    lines.join("\n")
-}
-
-pub fn render_release_verify_install_text(result: &ReleaseVerifyInstall) -> String {
-    let mut lines = vec![
-        if result.verified {
-            "Release Install Verification".to_owned()
-        } else {
-            "Release Install Verification Failed".to_owned()
-        },
-        format!("  Repository: {}", result.repo_root.display()),
-        format!("  Tag: {}", result.tag),
-        format!("  Repo URL: {}", result.repo_url),
-        format!("  Configured checks: {}", result.configured_check_count),
-        format!("  Executed checks: {}", result.executed_check_count),
-        format!(
-            "  Fail-fast stopped early: {}",
-            if result.stopped_early { "yes" } else { "no" }
-        ),
-        format!("  Verified: {}", if result.verified { "yes" } else { "no" }),
-    ];
-
-    if let Some(installed_bin) = &result.installed_bin {
-        lines.push(format!("  Installed binary: {}", installed_bin.display()));
-    }
-
-    if !result.results.is_empty() {
-        lines.push(String::new());
-        lines.push("Verification Steps".to_owned());
-        for (index, step) in result.results.iter().enumerate() {
-            let outcome = if step.passed { "pass" } else { "fail" };
-            let detail = step
-                .exit_code
-                .map(|code| format!("exit {code}"))
-                .or_else(|| step.launch_error.clone())
-                .unwrap_or_else(|| "ok".to_owned());
-            lines.push(format!(
-                "  [{}] {}: {} ({}; {}ms)",
-                index + 1,
-                step.name,
-                outcome,
-                detail,
-                step.duration_ms
-            ));
-            if !step.passed {
-                if !step.stdout.is_empty() {
-                    lines.push(format!("    stdout: {}", step.stdout));
-                }
-                if !step.stderr.is_empty() {
-                    lines.push(format!("    stderr: {}", step.stderr));
-                }
-            }
-        }
-    }
-
-    if !result.blockers.is_empty() {
-        lines.push(String::new());
-        lines.push("Blockers".to_owned());
-        for blocker in &result.blockers {
-            lines.push(format!("  - {blocker}"));
-        }
-        lines.push(String::new());
-        lines.push("Suggested Actions".to_owned());
-        for hint in remediation_hints_for_blockers(&result.blockers, ReleaseBlockedStage::Execute) {
-            lines.push(format!("  - {hint}"));
         }
     }
 
