@@ -123,6 +123,7 @@ impl MemoryGuard {
                 Ok(())
             });
         }
+        super::prepare_helper_exec(&mut command, executable, SENTINEL)?;
         let mut child = command.spawn()?;
         let input = child
             .stdin

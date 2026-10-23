@@ -256,9 +256,14 @@ impl Blocked {
         let inherited = lease.map(|lease| lease.custody_fd(cx)).transpose()?;
         if let Some(lease) = lease {
             env.push(
-                CString::new(format!("{}={}", crate::inheritance::ENV, lease.marker())).map_err(
-                    |_| io::Error::new(io::ErrorKind::InvalidInput, "invalid parent capability"),
-                )?,
+                CString::new(format!(
+                    "{}={}",
+                    crate::inheritance::ENV,
+                    lease.marker_for_slot(crate::inheritance::CHILD_FD)?
+                ))
+                .map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "invalid parent capability")
+                })?,
             );
         }
         let closure_fd = closure

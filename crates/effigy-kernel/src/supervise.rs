@@ -255,6 +255,7 @@ fn helper_not_started(entry: &str, cause: io::Error) -> RunError {
 /// spawn failure are typed, never store I/O. An engine supervisor gets its
 /// client's working directory and environment explicitly, never inherited.
 fn spawn_helper(
+    op: &OperationContext,
     executable: &Executable,
     entry: &str,
     log: &std::fs::File,
@@ -268,9 +269,32 @@ fn spawn_helper(
                 .envs(launch.env.iter().map(|(k, v)| (k, v)))
                 .current_dir(&launch.cwd);
         }
+        if entry == SENTINEL {
+            // A registered sentinel owns fenced recovery, independent of an
+            // ancestor's revocable admission lease. It never starts a workload.
+            command.env_remove(crate::inheritance::ENV);
+        } else if let Some(marker) = launch.and_then(|launch| {
+            launch
+                .env
+                .iter()
+                .find(|(key, _)| key == crate::inheritance::ENV)
+                .map(|(_, value)| value)
+        }) {
+            let marker = marker.to_str().ok_or_else(|| {
+                helper_not_started(
+                    entry,
+                    io::Error::other("invalid helper parent capability selector"),
+                )
+            })?;
+            crate::inheritance::InheritedCapability::capture(op, marker)
+                .and_then(|capability| capability.forward_command(op, &mut command))
+                .map_err(|error| helper_not_started(entry, error))?;
+        }
         command
             .stdout(Stdio::piped())
             .stderr(log.try_clone().map_err(|e| helper_not_started(entry, e))?);
+        prepare_helper_exec(&mut command, executable, entry)
+            .map_err(|error| helper_not_started(entry, error))?;
         match command.spawn() {
             // A just-written image can be briefly busy while another thread's
             // fork still holds its write descriptor.
@@ -384,12 +408,26 @@ pub(crate) fn helper(executable: &Executable, entry: &str) -> io::Result<Command
             }
         });
     }
-    #[cfg(target_os = "linux")]
-    if let Some(fd) = executable.exec_fd {
-        image::exec_held(&mut command, executable, fd, entry)?;
-    }
+
     Ok(command)
 }
+/// Register a held-image exec only after all descriptor and environment
+/// preparation. On Linux execveat never returns on success, so later callbacks
+/// would otherwise be skipped.
+fn prepare_helper_exec(
+    command: &mut Command,
+    executable: &Executable,
+    entry: &str,
+) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    if let Some(fd) = executable.exec_fd {
+        image::exec_held(command, executable, fd, entry)?;
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (command, executable, entry);
+    Ok(())
+}
+
 pub(crate) fn spawn_sentinel(
     run: &Run<'_>,
     root: &StateRoot,
@@ -442,7 +480,13 @@ fn sentinel_attempt(
         cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
         env: std::env::vars_os().collect(),
     });
-    let mut child = spawn_helper(executable, SENTINEL, &log, inherited.as_ref())?;
+    let mut child = spawn_helper(
+        run.operation(),
+        executable,
+        SENTINEL,
+        &log,
+        inherited.as_ref(),
+    )?;
     // The fault driver waits for every helper, registered or not (§12.1).
     #[cfg(all(test, feature = "fault-injection"))]
     crate::fault::note_helper(child.id());
@@ -1161,7 +1205,7 @@ fn launch(
         work,
     };
     let log = helper_log(root)?;
-    let mut child = spawn_helper(executable, SUPERVISOR, &log, engine)?;
+    let mut child = spawn_helper(cx.operation(), executable, SUPERVISOR, &log, engine)?;
     let mut writer = child
         .stdin
         .take()

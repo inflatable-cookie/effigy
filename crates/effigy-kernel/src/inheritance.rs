@@ -98,17 +98,10 @@ impl InheritedCapability {
     /// Successful capture marks the original descriptor CLOEXEC; further
     /// inheritance happens only through Custody's explicit spawn capability.
     pub fn capture(cx: &OperationContext, expected: &str) -> io::Result<Self> {
-        if expected.len() != PREFIX.len() + 64
-            || !expected.starts_with(PREFIX)
-            || !expected[PREFIX.len()..]
-                .bytes()
-                .all(|b| b.is_ascii_hexdigit())
-        {
-            return Err(refused("invalid parent capability selector"));
-        }
+        let inherited_slot = selector_slot(expected)?;
         // SAFETY: fcntl validates the numeric inherited slot without borrowing
         // it. Success returns a fresh CLOEXEC descriptor owned exactly once.
-        let fd = unsafe { libc::fcntl(CHILD_FD, libc::F_DUPFD_CLOEXEC, 128) };
+        let fd = unsafe { libc::fcntl(inherited_slot, libc::F_DUPFD_CLOEXEC, 128) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -117,7 +110,7 @@ impl InheritedCapability {
         let reader = Self::from_descriptor(cx, fd, expected)?;
         // SAFETY: the protocol's original slot is still open in this process.
         // CLOEXEC stops ambient inheritance; the captured copy is independent.
-        if unsafe { libc::fcntl(CHILD_FD, libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
+        if unsafe { libc::fcntl(inherited_slot, libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
             return Err(io::Error::last_os_error());
         }
         Ok(reader)
@@ -132,6 +125,39 @@ impl InheritedCapability {
     }
     pub fn marker(&self) -> &str {
         &self.marker
+    }
+    pub(crate) fn marker_for_slot(&self, slot: i32) -> io::Result<String> {
+        selector_slot(&self.marker)?;
+        let digest = self
+            .marker
+            .rsplit(':')
+            .next()
+            .ok_or_else(|| refused("invalid selector"))?;
+        Ok(format!("memory-v1:{slot}:{digest}"))
+    }
+    /// Give a native helper a fresh reading descriptor, without overwriting
+    /// a descriptor reserved internally by std::process for spawn errors.
+    pub(crate) fn forward_command(
+        &self,
+        cx: &OperationContext,
+        command: &mut std::process::Command,
+    ) -> io::Result<()> {
+        use std::os::unix::process::CommandExt;
+        let descriptor = self.custody_fd(cx)?;
+        command.env(ENV, self.marker_for_slot(descriptor.as_raw_fd())?);
+        // SAFETY: the closure owns this already allocated descriptor for the
+        // entire spawn. The child only calls async-signal-safe fcntl on it;
+        // no allocation, locks or Rust destructors run before exec.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::fcntl(descriptor.as_raw_fd(), libc::F_SETFD, 0) < 0 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
+        Ok(())
     }
     pub fn payload<T: DeserializeOwned>(&self, cx: &OperationContext) -> io::Result<T> {
         serde_json::from_value(self.grant(cx)?.payload).map_err(io::Error::other)
@@ -200,7 +226,8 @@ impl InheritedCapability {
             std::thread::sleep(std::time::Duration::from_millis(1));
         };
         let bytes = &bytes[4..length + 4];
-        if marker(bytes) != self.marker {
+        selector_slot(&self.marker)?;
+        if marker(bytes).rsplit(':').next() != self.marker.rsplit(':').next() {
             return Err(refused("parent capability selector disagrees"));
         }
         let grant: Grant = serde_json::from_slice(bytes)?;
@@ -216,6 +243,23 @@ impl InheritedCapability {
             .map_err(|error| io::Error::other(format!("{error:?}")))?;
         Ok(grant)
     }
+}
+
+fn selector_slot(expected: &str) -> io::Result<i32> {
+    let (slot, digest) = expected
+        .strip_prefix("memory-v1:")
+        .and_then(|selector| selector.split_once(':'))
+        .ok_or_else(|| refused("invalid parent capability selector"))?;
+    let slot: i32 = slot
+        .parse()
+        .map_err(|_| refused("invalid capability slot"))?;
+    if (slot != CHILD_FD && slot < 128)
+        || digest.len() != 64
+        || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(refused("invalid parent capability selector"));
+    }
+    Ok(slot)
 }
 
 fn marker(bytes: &[u8]) -> String {

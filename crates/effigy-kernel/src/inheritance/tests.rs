@@ -168,3 +168,36 @@ fn custody_pipe_pins_close_only_after_the_last_writer_and_check_access_mode() {
     drop(sibling);
     assert_eq!(watch.read(&mut [0]).expect("all writers closed"), 0);
 }
+
+#[test]
+fn native_helper_receives_only_a_fresh_verified_reading_descriptor() {
+    let cx = context(Placement::Host);
+    let payload = serde_json::json!({"admitted": true, "class": "foreground"});
+    let lease = MemoryLease::new(&cx, &payload).unwrap();
+    let path = std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("kernel-custody-fixture")
+        });
+    let mut command = std::process::Command::new(path);
+    command.arg("inheritance-check").env_clear();
+    lease
+        .capability()
+        .forward_command(cx.operation(), &mut command)
+        .unwrap();
+    assert!(command.status().unwrap().success());
+    drop(lease);
+    assert!(
+        !command.status().unwrap().success(),
+        "a queued grant survived peer closure"
+    );
+    for marker in ["memory-v1:0:", "memory-v1:10:", "memory-v1:-128:"] {
+        assert!(selector_slot(&format!("{marker}{}", "0".repeat(64))).is_err());
+    }
+}

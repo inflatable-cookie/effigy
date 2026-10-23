@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Managed supervisors initialize in the selected checkout journal and explicitly
+  forward verified parent capabilities; Linux retained-image helpers prepare
+  descriptors before exec and preserve their explicit environment.
 - Static sequences classify nested task references with the execution resolver,
   including declared built-in overrides and deferrals; diagnostic steps retain
   foreground custody without a journal.

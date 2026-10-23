@@ -407,6 +407,9 @@ impl<'a> Run<'a> {
     ) -> std::io::Result<crate::custody::capture::Log> {
         crate::custody::capture::Log::open(self.root, self.id, sequence, stream, limits)
     }
+    pub(crate) fn operation(&self) -> &crate::ctx::OperationContext {
+        self.cx.operation()
+    }
     /// Capture bounds of the run's own effect context.
     pub(crate) fn limits(&self) -> crate::ctx::Limits {
         self.cx.operation().limits().clone()

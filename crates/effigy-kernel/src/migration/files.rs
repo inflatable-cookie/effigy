@@ -107,7 +107,7 @@ fn copy_tree(
             copy_tree(cx, &source, &target, bytes_left, entries_left, depth - 1)?;
             // Preserve private immutable object modes and executable staging
             // directories, after all children were written and synced.
-            target.chmod(stat.st_mode as u32 & 0o700)?;
+            target.chmod(private_mode(stat.st_mode))?;
             target.sync()?;
         } else {
             let (mut input, stat) = source
@@ -152,7 +152,7 @@ fn copy_tree(
                 ));
             }
             *bytes_left -= copied;
-            fs::fchmod(&output, stat.st_mode as u32 & 0o700)
+            fs::fchmod(&output, private_mode(stat.st_mode))
                 .map_err(|error| FsError::io("migration chmod", destination.path(), &error))?;
             fs::fsync(&output)
                 .map_err(|error| FsError::io("migration fsync", destination.path(), &error))?;
@@ -160,4 +160,12 @@ fn copy_tree(
     }
     destination.sync()?;
     Ok(())
+}
+
+/// Darwin uses a narrower native mode_t than Linux. Preserve only the
+/// source owner's permissions while removing group/other access in staging.
+fn private_mode(mode: libc::mode_t) -> u32 {
+    #[cfg(target_os = "macos")]
+    let mode = u32::from(mode);
+    mode & 0o700
 }

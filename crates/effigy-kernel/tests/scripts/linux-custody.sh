@@ -6,7 +6,7 @@
 set -eu
 proof_mode=${1:-custody}
 case "$proof_mode" in
-    custody|gate-shared|probe|helpers) ;;
+    custody|gate-shared|probe|helpers|runtime-storage) ;;
     *) printf 'Unknown Linux proof mode: %s\n' "$proof_mode" >&2; exit 2 ;;
 esac
 proof_dir=$(mktemp -d /tmp/k208.XXXXXX)
@@ -56,6 +56,12 @@ docker run --rm --init --cpus 2 --memory 2g "$@" \
         rustup component add clippy
         cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture
         cargo clippy -p effigy-kernel --all-targets --features fault-injection -- -D warnings
+        if [ "$KERNEL_PROOF_MODE" = runtime-storage ]; then
+            # Permission refusals must run as the fixture owner, not root.
+            chown -R "$PROOF_UID:$PROOF_GID" /proof /usr/local/cargo/registry
+            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups env EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test migration --test custody --test store --test gate -E "test(/^inheritance::/) | test(/^supervise::/) | test(/^store::/) | test(/^root::/) | binary(migration) | binary(custody) | binary(store) | binary(gate)" --no-fail-fast --retries 0 --no-tests fail
+            exit
+        fi
         if [ "$KERNEL_PROOF_MODE" = helpers ]; then
             EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E "test(/^supervise::tests::/)" --no-fail-fast --retries 0 --no-tests fail
             exit

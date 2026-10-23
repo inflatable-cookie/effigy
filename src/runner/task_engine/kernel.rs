@@ -215,7 +215,7 @@ pub(super) fn known_roots_view(cx: &ObserveContext) -> Result<RootsView, RunnerE
 
 /// Checkout journals are opened independently; the actual user HOME is only
 /// the migration source and shared machine-store location.
-pub(super) fn effects_root(checkout: &Path) -> Result<&'static StateRoot, RunnerError> {
+pub(in crate::runner) fn effects_root(checkout: &Path) -> Result<&'static StateRoot, RunnerError> {
     let checkout = effigy_kernel::fs::DirFd::open(checkout)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let home =

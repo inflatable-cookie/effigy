@@ -246,7 +246,9 @@ are transient exclusion machinery, not durable run records. Task outputs and
 explicit user-requested exports are outside runtime-state accounting.
 
 The kernel's memory parent capability uses an anonymous Unix socket pair.
-Only Custody explicitly exports its reading end to reserved descriptor 9;
+Custody explicitly exports its reading end to reserved descriptor 9;
+native engine helpers receive a fresh allocated descriptor (at least 128),
+selected by the same verified marker, so std spawn-error pipes cannot be overwritten;
 the writing end never reaches a workload or group anchor. A bounded grant is
 peeked without consumption (short/nonblocking contention retries stay within
 25 ms and the caller deadline), checked against its environment selector, native

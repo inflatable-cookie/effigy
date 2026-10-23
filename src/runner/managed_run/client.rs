@@ -20,7 +20,7 @@ use effigy_kernel::id::RunId;
 use effigy_kernel::observe::Observed;
 use effigy_kernel::run::RunError;
 use effigy_kernel::supervise::{
-    start_engine, ClientMode, EngineLaunch, Event, SupervisorClient, OUTPUT_SEQUENCE,
+    start_engine_at, ClientMode, EngineLaunch, Event, SupervisorClient, OUTPUT_SEQUENCE,
 };
 
 use super::control::{self, Addressed};
@@ -76,9 +76,10 @@ pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, Run
     }
     let executable = task_engine::startup_executable()?;
     let cx = task_engine::effect_context(OpenReason::DevServer);
-    let client = start_engine(
+    let root = task_engine::checkout_effects_root(&request.addressed.target.root)?;
+    let client = start_engine_at(
         &cx,
-        &home,
+        root,
         EngineLaunch {
             payload: wire::encode(&payload),
             cwd: request.cwd.clone(),

@@ -253,3 +253,33 @@ fn large_replaced_image_admission_shares_data_and_reports_before_after() {
     run.settle(&cleanup(&cx), &mut Strict).unwrap();
     world.assert_no_residue();
 }
+
+#[test]
+#[cfg(target_os = "linux")]
+fn retained_native_helper_preserves_explicit_capability_after_descriptor_preparation() {
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let path = world.dir.path().join("bin/native-helper");
+    std::fs::copy(fixture(), &path).unwrap();
+    let plan = LifecyclePlan {
+        executable: Executable::capture(&path).unwrap(),
+        placement: crate::supervise::Placement::Inline,
+    };
+    replace(&world, &plan);
+    let pin = private_image(&root, &plan.executable).unwrap().unwrap();
+    let lease = crate::inheritance::MemoryLease::new(
+        &cx,
+        &serde_json::json!({"admitted": true, "class": "foreground"}),
+    )
+    .unwrap();
+    let mut command = helper(&pin.executable, "inheritance-check").unwrap();
+    lease
+        .capability()
+        .forward_command(cx.operation(), &mut command)
+        .unwrap();
+    prepare_helper_exec(&mut command, &pin.executable, "inheritance-check").unwrap();
+    assert!(command.status().unwrap().success());
+    drop(lease);
+    assert!(!command.status().unwrap().success());
+}
