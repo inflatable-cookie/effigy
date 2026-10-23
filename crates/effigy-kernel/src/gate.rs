@@ -164,11 +164,16 @@ impl GateGuard {
     pub fn ids(&self) -> impl Iterator<Item = &ResourceId> {
         self.gates.iter().map(|(id, _)| id)
     }
-    /// Admission releases auxiliary resource gates before any adapter call (K14).
+    /// Admission releases auxiliary resources before adapters (K14), retaining
+    /// every checkout alias of the same logical owner across token creation.
     pub(crate) fn retain_owner(&mut self, owner: &ResourceId) {
-        self.gates.retain(|(id, _)| id == owner);
-        self.scopes
-            .retain(|(scope, _)| *scope == scope_name(owner.scope()));
+        self.gates
+            .retain(|(id, _)| id == owner || id.checkout_alias_of(owner));
+        self.scopes.retain(|(scope, _)| {
+            self.gates
+                .iter()
+                .any(|(id, _)| *scope == scope_name(id.scope()))
+        });
     }
     pub fn covers(&self, id: &ResourceId) -> bool {
         self.gates.iter().any(|(held, _)| held == id)

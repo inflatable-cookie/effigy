@@ -342,6 +342,7 @@ fn sentinel_refusal_reaches_the_parent_stderr_tail() {
     stale.changed.1 = stale.changed.1.wrapping_add(1);
     let config = SentinelConfig {
         home: world.home(),
+        machine: false,
         owner: owner("refusal"),
         run: RunId::new(1, [1; 10]).unwrap(),
         next: vec![b"recover".to_vec()],

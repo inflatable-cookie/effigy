@@ -31,8 +31,10 @@ impl Family {
 #[derive(Debug, Clone)]
 pub struct StateRoot {
     dir: DirFd,
+    owner: DirFd,
     writable: bool,
     database: Database,
+    adoption: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -65,8 +67,10 @@ impl StateRoot {
         dir.require_local()?;
         Ok(Self {
             dir,
+            owner: home,
             writable: true,
             database: Database::Checkout,
+            adoption: true,
         })
     }
     /// Read-only open. Missing is `Absent`; untrusted or unreadable is
@@ -77,16 +81,20 @@ impl StateRoot {
         }
         let opened = DirFd::walk(home, Trust::Operator).and_then(|home| {
             match home.child(".effigy", Trust::Operator, false)? {
-                Some(effigy) => effigy.child("state", Trust::Private, false),
+                Some(effigy) => effigy
+                    .child("state", Trust::Private, false)
+                    .map(|state| state.map(|state| (home, state))),
                 None => Ok(None),
             }
         });
         match opened {
-            Ok(Some(dir)) => Observed::Verified(
+            Ok(Some((owner, dir))) => Observed::Verified(
                 Self {
                     dir,
+                    owner,
                     writable: false,
                     database: Database::Checkout,
+                    adoption: true,
                 },
                 Evidence::new("kernel state root".into(), None).expect("fixed source"),
             ),
@@ -109,6 +117,28 @@ impl StateRoot {
             root
         })
     }
+    /// An explicitly historical, read-only source for migration and fixture
+    /// observation. This never grants authority to mutate a legacy journal.
+    pub fn legacy_observe(cx: &ObserveContext, home: &Path) -> Observed<Self> {
+        Self::observe(cx, home).map(|root| root.legacy_source())
+    }
+    pub(crate) fn legacy_source(&self) -> Self {
+        let mut root = self.unpublished();
+        root.database = Database::Checkout;
+        root
+    }
+    pub(crate) fn unpublished(&self) -> Self {
+        let mut root = self.clone();
+        root.writable = false;
+        root.adoption = false;
+        root
+    }
+    pub(crate) fn requires_adoption(&self) -> bool {
+        self.adoption
+    }
+    pub(crate) fn machine(&self) -> bool {
+        matches!(self.database, Database::Machine)
+    }
     pub(crate) fn database_name(&self) -> &'static str {
         match self.database {
             Database::Checkout => crate::store::DB_NAME,
@@ -116,6 +146,12 @@ impl StateRoot {
         }
     }
     pub(crate) fn verify_binding(&self) -> Result<(), FsError> {
+        if DirFd::walk(self.owner.path(), Trust::Operator)?.identity()? != self.owner.identity()? {
+            return Err(FsError::untrusted(
+                self.owner.path(),
+                "owning checkout directory changed",
+            ));
+        }
         let reopened = DirFd::walk(self.path(), Trust::Private)?;
         if self.dir.identity()? != reopened.identity()? {
             return Err(FsError::untrusted(
@@ -138,9 +174,19 @@ impl StateRoot {
             .expect("created staging directory");
         Ok(Self {
             dir,
+            owner: self.owner.clone(),
             writable: true,
             database: self.database.clone(),
+            adoption: false,
         })
+    }
+    /// Retained filesystem identity of the actual checkout or machine home.
+    pub fn owning_directory(&self) -> &DirFd {
+        &self.owner
+    }
+    /// Kernel file-record operations may use this already verified directory.
+    pub fn state_directory(&self) -> &DirFd {
+        &self.dir
     }
     pub fn path(&self) -> &Path {
         self.dir.path()

@@ -26,7 +26,13 @@ Kill, ENOSPC and EPERM tests cover staging, copying, prepared publication,
 manifest commit and sealing; retries select the committed authority. Production
 callers remain on the legacy route while command admission, local authority
 checks and the acceptance harnesses are connected. These kernel tests do not
-claim the real-store scale or live-backend migration proof.
+claim the real-store scale or live-backend migration proof. Local opens now
+refuse prepared imports and missing or mismatched sealed databases before
+creation; seals bind the opened checkout directory generation. Supervisor
+configuration carries the journal kind so machine helpers cannot silently
+write the legacy database. Checkout-token aliases retain the same owner
+exclusion through closure. These are kernel guarantees; production routing
+and whole-tree classification remain to be connected.
 
 Status: foundation types are implemented in `crates/effigy-kernel/`: identity
 encoding v1, operation contexts and class capabilities, observation and Probe

@@ -25,6 +25,8 @@ pub struct ImportPlan {
 /// still grants no import authority: the importer must fence the source and
 /// revalidate every destination identity before staging.
 pub fn plan(cx: &ObserveContext, root: &StateRoot) -> Result<ImportPlan, MigrationError> {
+    let legacy = root.legacy_source();
+    let root = &legacy;
     let preflight = inspect(cx, root)?;
     if !preflight.ready() {
         return Err(MigrationError::Blocked(preflight));

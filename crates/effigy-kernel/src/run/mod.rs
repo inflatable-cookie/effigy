@@ -269,10 +269,6 @@ impl<'a> Run<'a> {
         parent: Option<RunId>,
     ) -> Result<Self, RunError> {
         crate::fault_point!(BeginBefore)?;
-        // Retention is a bounded, rate-limited pass at admission, never on the
-        // close path: every engine admits runs, and no close holds the store
-        // (K15, §7.4). It takes no gate, so the run's own acquisition is next.
-        crate::retention::sweep(cx, root);
         if cx.operation().placement() != crate::ctx::Placement::Host
             || inv.spec().placement != crate::ctx::Placement::Host
         {
@@ -284,6 +280,16 @@ impl<'a> Run<'a> {
             ));
         }
         cx.operation().check("begin")?;
+        let observe = cx
+            .child(std::time::Duration::from_secs(10))
+            .operation()
+            .observe()
+            .map_err(|_| RunError::Invalid("run publication observation context".into()))?;
+        crate::migration::adoption::check_invocation(&observe, root, inv)?;
+        // #275: one bounded admission sweep, never a close-time scan. Import
+        // authority and placement are verified before maintenance can write.
+        crate::retention::sweep(cx, root);
+
         let mut ids = inv.spec().gates.clone();
         ids.push(inv.spec().owner.clone());
         let mut guard = Gate::acquire(cx, root, &ids, opts.wait)?;

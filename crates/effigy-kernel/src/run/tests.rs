@@ -1798,3 +1798,34 @@ fn run_children_admission_faults_recover_both_sides() {
         assert_eq!(outcome.cleanup(), CleanupOutcome::Complete, "{point:?}");
     }
 }
+
+#[test]
+fn run_checkout_aliases_remain_exclusive_until_the_logical_owner_closes() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let alias = TaskId::new(
+        CheckoutId::new(CheckoutKind::Primary, [2; 16]),
+        "",
+        Surface::Published,
+        "task",
+        None,
+    )
+    .unwrap()
+    .resource();
+    let mut spec = inv(owner()).spec().clone();
+    spec.gates.push(alias.clone());
+    let invocation = ResolvedInvocation::new(spec).unwrap();
+    let mut fake = Fake::new(home.path());
+    let mut run = Run::begin(&cx, &root, &invocation, opts(1), &cleanup(&cx), &mut fake).unwrap();
+    assert!(matches!(
+        Gate::probe(&cx.operation().observe().unwrap(), &root, &alias),
+        Observed::Verified(crate::gate::GateState::Held(_), _)
+    ));
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    assert!(matches!(
+        Gate::probe(&cx.operation().observe().unwrap(), &root, &alias),
+        Observed::Verified(crate::gate::GateState::Free, _)
+    ));
+}

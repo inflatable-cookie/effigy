@@ -1622,3 +1622,84 @@ fn foreground_same_owner_is_busy_and_never_reclaims_a_live_gate() {
     drop(run);
     assert!(!root.path().join("kernel.db").exists());
 }
+
+#[test]
+fn custody_machine_journal_routes_supervisor_requests_and_sentinel_recovery_without_legacy_writes()
+{
+    for killed in [false, true] {
+        let home = home();
+        let cx = context();
+        let legacy = StateRoot::effects(&cx, home.path()).unwrap();
+        drop(effigy_kernel::store::Store::open(&cx, &legacy).unwrap());
+        let legacy_before = std::fs::read(legacy.path().join("kernel.db")).unwrap();
+        let machine = StateRoot::machine_effects(&cx, home.path()).unwrap();
+        let mut coordinates = invocation().spec().clone();
+        coordinates.task = TaskId::new(
+            CheckoutId::new(CheckoutKind::Machine, [0; 16]),
+            "",
+            Surface::Published,
+            "gateway",
+            None,
+        )
+        .unwrap();
+        coordinates.owner = ResourceId::gateway("fixture-machine").unwrap();
+        let invocation = ResolvedInvocation::new(coordinates).unwrap();
+        let mut client = start_detached_at(
+            &cx,
+            &machine,
+            &invocation,
+            id(1),
+            &next(),
+            vec![spec(home.path(), "/bin/sleep 30")],
+            &Executable::capture(&fixture()).unwrap(),
+            ClientMode::Owning,
+        )
+        .unwrap();
+        while !matches!(client.event(cx.operation()).unwrap(), Event::Active) {}
+        if killed {
+            let metadata = metadata(&cx.operation().observe().unwrap(), &machine, id(1));
+            let supervisor = metadata.verified().unwrap().supervisor.as_ref().unwrap();
+            assert_eq!(
+                effigy_kernel::ident::process_identity(supervisor.pid).verified(),
+                Some(supervisor)
+            );
+            // SAFETY: the private fixture's exact newly admitted supervisor is
+            // still owned by this client; its fresh boot/start identity matches.
+            assert_eq!(
+                unsafe { libc::kill(supervisor.pid as i32, libc::SIGKILL) },
+                0
+            );
+        } else {
+            client.stop(&cx, id(2)).unwrap();
+        }
+        eventually(|| {
+            let reader =
+                effigy_kernel::store::Store::read(&cx.operation().observe().unwrap(), &machine);
+            reader.verified().is_some_and(|reader| {
+                matches!(
+                    status(
+                        &cx.operation().observe().unwrap(),
+                        &machine,
+                        reader,
+                        id(1),
+                        next()
+                    ),
+                    Observed::Verified(RunStatus::Closed { complete: true, .. }, _)
+                )
+            })
+        });
+        let waited = client.wait(cx.operation());
+        if killed {
+            assert_eq!(
+                waited.unwrap_err().kind(),
+                std::io::ErrorKind::UnexpectedEof
+            );
+        } else {
+            waited.unwrap();
+        }
+        assert_eq!(
+            std::fs::read(legacy.path().join("kernel.db")).unwrap(),
+            legacy_before
+        );
+    }
+}

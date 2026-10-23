@@ -1,72 +1,17 @@
 //! Cross-filesystem publication has one commit record, followed by local seals.
+use super::adoption::{Seal, FORMAT, MANIFEST, PREPARED, SEALED};
 use super::fence::LegacyFence;
 use super::*;
 use crate::ctx::EffectContext;
-use crate::fs::{DirFd, DirectoryIdentity};
+use crate::fs::DirFd;
 use crate::gate::{Gate, GateGuard, Wait};
 use crate::id::{CheckoutId, Scope};
 use crate::record::{atomic_replace, read_record, Record, ReplaceOpts};
 use rusqlite::OptionalExtension;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-
-const FORMAT: &str = "effigy.runtime-import.v1";
-const PREPARED: &str = "migration-prepared.json";
-const SEALED: &str = "migration-committed.json";
-const MANIFEST: &str = "cutover.json";
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ImportedDestination {
-    pub checkout: Option<CheckoutId>,
-    pub checkout_root: PathBuf,
-    pub directory_identity: DirectoryIdentity,
-    pub database_digest: String,
-    pub rows: BTreeMap<String, u64>,
-    pub unresolved_runs: usize,
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ImportReceipt {
-    pub format: String,
-    pub id: String,
-    pub source_digest: String,
-    pub source_schema: i64,
-    pub source_build: Option<String>,
-    pub writer_build: String,
-    pub destinations: Vec<ImportedDestination>,
-}
-impl Record for ImportReceipt {
-    const MAX_BYTES: u64 = 16 << 20;
-    fn decode(bytes: &[u8]) -> Result<Self, String> {
-        let receipt: Self = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-        if receipt.format != FORMAT || receipt.id != receipt.source_digest {
-            return Err("unsupported import receipt".into());
-        }
-        crate::objects::validate_digest(&receipt.id).map_err(|error| error.to_string())?;
-        if receipt.destinations.len() > 1000 {
-            return Err("too many import destinations".into());
-        }
-        Ok(receipt)
-    }
-}
-#[derive(Debug, Serialize, Deserialize)]
-struct Seal {
-    format: String,
-    id: String,
-    manifest_digest: String,
-    destination: ImportedDestination,
-}
-impl Record for Seal {
-    const MAX_BYTES: u64 = 64 << 10;
-    fn decode(bytes: &[u8]) -> Result<Self, String> {
-        let seal: Self = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-        if seal.format != FORMAT {
-            return Err("unsupported import seal".into());
-        }
-        Ok(seal)
-    }
-}
 
 #[derive(Debug, Serialize)]
 pub struct ImportReport {
@@ -108,6 +53,8 @@ pub fn import(
     cx.operation()
         .check("legacy migration")
         .map_err(StoreError::Interrupted)?;
+    let legacy = source.legacy_source();
+    let source = &legacy;
     let started = Instant::now();
     let observe = cx
         .operation()
@@ -523,7 +470,7 @@ fn discard_prepared(
         .entry(&FileName::new(root.database_name())?)?
         .is_some()
     {
-        let reader = match Store::read_sealed(observe, root) {
+        let reader = match Store::read_sealed(observe, &root.unpublished()) {
             Observed::Verified(reader, _) => reader,
             other => {
                 return Err(StoreError::Corrupt(format!(

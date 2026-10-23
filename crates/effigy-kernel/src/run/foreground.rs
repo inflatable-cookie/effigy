@@ -53,6 +53,12 @@ impl ForegroundRun {
             ));
         }
         cx.operation().check("foreground admission")?;
+        let publication = cx
+            .child(Duration::from_secs(10))
+            .operation()
+            .observe()
+            .map_err(|_| RunError::Invalid("foreground publication context".into()))?;
+        crate::migration::adoption::check_invocation(&publication, root, inv)?;
         let plan = opts
             .custody
             .ok_or_else(|| RunError::Invalid("foreground custody needs a memory guard".into()))?;
@@ -62,7 +68,8 @@ impl ForegroundRun {
         let mut ids = inv.spec().gates.clone();
         ids.push(inv.spec().owner.clone());
         if ids.iter().any(|id| {
-            id.scope() != inv.spec().owner.scope()
+            (id.scope() != inv.spec().owner.scope() && !id.checkout_alias_of(&inv.spec().owner))
+                || !matches!(id.scope(), Scope::Checkout(_))
                 || !matches!(id.kind(), ResourceKind::Task | ResourceKind::Store)
         }) {
             return Err(RunError::Invalid(

@@ -664,3 +664,87 @@ fn migration_missing_checkout_refuses_before_any_destination_state_is_created() 
     assert_eq!(snapshot(source_home.path()), before);
     assert_eq!(snapshot(checkout_root.path()), local_before);
 }
+
+#[cfg(feature = "fault-injection")]
+#[test]
+fn migration_prepared_journals_refuse_read_and_write_without_creating_fresh_state() {
+    let (source_home, source, _) = source();
+    let cx = effects(EffectClass::Mutate);
+    let env = ResourceId::environment(
+        CheckoutId::new(CheckoutKind::LinkedWorktree, [7; 16]),
+        "dev",
+    )
+    .unwrap();
+    let mut store = Store::open(&cx, &source).unwrap();
+    store
+        .txn(&cx, |txn| txn.resource(&env, "environment").map(|_| ()))
+        .unwrap();
+    drop(store);
+    let checkout_root = home();
+    let result = effigy_kernel::fault_injection::with_hook(
+        |point| {
+            if point == "MigrationCommitBefore" {
+                Err(std::io::Error::from_raw_os_error(libc::ENOSPC))
+            } else {
+                Ok(())
+            }
+        },
+        || {
+            migration::import(
+                &cx,
+                &source,
+                source_home.path(),
+                &migration::LegacyQuiescence::launchers_withdrawn(),
+                &mut |_, _, _| Ok(checkout_root.path().to_path_buf()),
+            )
+        },
+    );
+    assert!(result.is_err());
+    let local = StateRoot::effects(&cx, checkout_root.path()).unwrap();
+    let before = snapshot(checkout_root.path());
+    assert!(matches!(
+        Store::read(&observe(), &local),
+        Observed::Unknown(_)
+    ));
+    assert!(matches!(
+        Store::open(&cx, &local),
+        Err(StoreError::MigrationPending(_))
+    ));
+    assert_eq!(snapshot(checkout_root.path()), before);
+    migration::import(
+        &cx,
+        &source,
+        source_home.path(),
+        &migration::LegacyQuiescence::launchers_withdrawn(),
+        &mut |_, _, _| Ok(checkout_root.path().to_path_buf()),
+    )
+    .unwrap();
+    assert!(matches!(
+        Store::read(&observe(), &local),
+        Observed::Verified(..)
+    ));
+}
+
+#[test]
+fn migration_sealed_missing_database_is_unknown_and_mutation_cannot_recreate_it() {
+    let (source_home, source, _) = source();
+    let cx = effects(EffectClass::Mutate);
+    migration::import(
+        &cx,
+        &source,
+        source_home.path(),
+        &migration::LegacyQuiescence::launchers_withdrawn(),
+        &mut |_, _, _| panic!("history-only source has no checkout destination"),
+    )
+    .unwrap();
+    let machine = StateRoot::machine_effects(&cx, source_home.path()).unwrap();
+    std::fs::remove_file(machine.path().join("machine.db")).unwrap();
+    let before = snapshot(source_home.path());
+    assert!(matches!(
+        Store::read(&observe(), &machine),
+        Observed::Unknown(_)
+    ));
+    assert!(Store::open(&cx, &machine).is_err());
+    assert!(!machine.path().join("machine.db").exists());
+    assert_eq!(snapshot(source_home.path()), before);
+}

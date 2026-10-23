@@ -188,6 +188,8 @@ impl SentinelLease {
 #[derive(Serialize, Deserialize)]
 struct SentinelConfig {
     home: PathBuf,
+    #[serde(default)]
+    machine: bool,
     owner: ResourceId,
     run: RunId,
     next: Vec<Vec<u8>>,
@@ -334,6 +336,14 @@ fn release_helper_log() {
         }
     }
 }
+fn helper_root(cx: &EffectContext, home: &Path, machine: bool) -> Result<StateRoot, RunError> {
+    let root = if machine {
+        StateRoot::machine_effects(cx, home)
+    } else {
+        StateRoot::effects(cx, home)
+    };
+    root.map_err(|error| RunError::Store(error.into()))
+}
 fn nonce() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -426,6 +436,7 @@ fn sentinel_attempt(
         .ok_or_else(|| RunError::Invalid("sentinel pipe missing".into()))?;
     let config = SentinelConfig {
         home: home.into(),
+        machine: root.machine(),
         owner: run.fence().resource.clone(),
         run: run.id(),
         next: next.argv().iter().map(|a| a.as_bytes().to_vec()).collect(),
@@ -585,6 +596,7 @@ pub fn internal_entry(
                 adapter,
                 validate_next,
                 config.home,
+                config.machine,
                 config.executable,
                 work,
             ),
@@ -616,6 +628,7 @@ pub fn engine_entry(
                 adapter,
                 validate_next,
                 config.home,
+                config.machine,
                 config.executable,
                 work,
             ),
@@ -696,7 +709,7 @@ fn sentinel(
     let cx = op
         .effects()
         .map_err(|_| RunError::Invalid("sentinel context".into()))?;
-    let root = StateRoot::effects(&cx, &config.home).map_err(crate::store::StoreError::from)?;
+    let root = helper_root(&cx, &config.home, config.machine)?;
     if matches!(
         crate::run::metadata(
             &op.observe()
@@ -822,6 +835,8 @@ impl WireProcess {
 #[derive(Serialize, Deserialize)]
 struct SupervisorConfig {
     home: PathBuf,
+    #[serde(default)]
+    machine: bool,
     executable: Executable,
     work: Work,
 }
@@ -867,7 +882,7 @@ pub struct SupervisorClient {
     buffer: Vec<u8>,
     pub run: RunId,
     pub fence: Fence,
-    home: PathBuf,
+    root: StateRoot,
     active: bool,
     closed: bool,
 }
@@ -929,10 +944,10 @@ impl SupervisorClient {
             .operation()
             .effects()
             .map_err(|_| RunError::Invalid("stop needs effects".into()))?;
-        let root = StateRoot::effects(cx, &self.home).map_err(crate::store::StoreError::from)?;
+        let root = &self.root;
         run::request(
             cx,
-            &root,
+            root,
             &Request {
                 id,
                 run: self.run,
@@ -941,7 +956,7 @@ impl SupervisorClient {
             },
         )?;
         if let Ok(mut socket) = UnixStream::connect(run::control_socket_path(
-            &root,
+            root,
             &self.fence.resource,
             self.run,
         )) {
@@ -974,12 +989,20 @@ impl SupervisorClient {
         Ok(self.run)
     }
     pub fn wait(mut self, cx: &OperationContext) -> io::Result<()> {
+        let mut stream_error = None;
         while !self.closed {
-            self.event(cx)?;
+            if let Err(error) = self.event(cx) {
+                // EOF can precede the recorded child's reap (a killed owner).
+                // Release our owning pipe, then reap that exact child even
+                // when no Closed event can arrive. The journal owns outcome.
+                self.writer.take();
+                stream_error = Some(error);
+                break;
+            }
         }
         loop {
             if self.child.try_wait()?.is_some() {
-                return Ok(());
+                return stream_error.map_or(Ok(()), Err);
             }
             cx.check("supervisor exit")
                 .map_err(|e| io::Error::other(format!("{e:?}")))?;
@@ -1000,18 +1023,40 @@ pub fn start_detached(
     executable: &Executable,
     client: ClientMode,
 ) -> Result<SupervisorClient, RunError> {
+    cx.require(crate::ctx::Capability::AdapterEffect)
+        .map_err(|_| RunError::Invalid("detached spawn needs Mutate".into()))?;
+    let root = StateRoot::effects(cx, home).map_err(crate::store::StoreError::from)?;
+    start_detached_at(cx, &root, inv, id, next, processes, executable, client)
+}
+/// Detached custody with an explicit checkout or machine journal.
+#[allow(clippy::too_many_arguments)]
+pub fn start_detached_at(
+    cx: &EffectContext,
+    root: &StateRoot,
+    inv: &ResolvedInvocation,
+    id: RunId,
+    next: &Invocation,
+    processes: Vec<ProcessSpec>,
+    executable: &Executable,
+    client: ClientMode,
+) -> Result<SupervisorClient, RunError> {
     let work = Work::Processes {
         invocation: serde_json::to_vec(inv)?,
         processes: processes.into_iter().map(WireProcess::encode).collect(),
         run: id,
-        next: next.argv().iter().map(|a| a.as_bytes().to_vec()).collect(),
+        next: next
+            .argv()
+            .iter()
+            .map(|arg| arg.as_bytes().to_vec())
+            .collect(),
     };
     let fence = Fence {
         resource: inv.spec().owner.clone(),
         generation: crate::id::Generation::new(0),
     };
-    launch(cx, home, work, None, (id, fence), executable, client)
+    launch(cx, root, work, None, (id, fence), executable, client)
 }
+
 /// What an engine's detached supervisor is started with besides its binary:
 /// an opaque payload, and the client's working directory and environment,
 /// handed over explicitly at spawn. The engine admits its own run (§5.8).
@@ -1035,6 +1080,19 @@ pub fn start_engine(
     executable: &Executable,
     client: ClientMode,
 ) -> Result<SupervisorClient, RunError> {
+    cx.require(crate::ctx::Capability::AdapterEffect)
+        .map_err(|_| RunError::Invalid("detached spawn needs Mutate".into()))?;
+    let root = StateRoot::effects(cx, home).map_err(crate::store::StoreError::from)?;
+    start_engine_at(cx, &root, launch_spec, executable, client)
+}
+/// Engine custody with an explicit journal, retained by the returned client.
+pub fn start_engine_at(
+    cx: &EffectContext,
+    root: &StateRoot,
+    launch_spec: EngineLaunch,
+    executable: &Executable,
+    client: ClientMode,
+) -> Result<SupervisorClient, RunError> {
     let work = Work::Engine {
         payload: launch_spec.payload.clone(),
     };
@@ -1049,7 +1107,7 @@ pub fn start_engine(
     );
     launch(
         cx,
-        home,
+        root,
         work,
         Some(&launch_spec),
         pending,
@@ -1059,7 +1117,7 @@ pub fn start_engine(
 }
 fn launch(
     cx: &EffectContext,
-    home: &Path,
+    root: &StateRoot,
     work: Work,
     engine: Option<&EngineLaunch>,
     (id, fence): (RunId, Fence),
@@ -1071,13 +1129,20 @@ fn launch(
     cx.require(crate::ctx::Capability::HostAuthority)
         .map_err(|_| RunError::HostAuthorityRequired)?;
     cx.operation().check("start detached")?;
+    let observe = cx
+        .child(Duration::from_secs(10))
+        .operation()
+        .observe()
+        .map_err(|_| RunError::Invalid("detached publication context".into()))?;
+    crate::migration::adoption::access(&observe, root)?;
+
     let config = SupervisorConfig {
-        home: home.into(),
+        home: root.owning_directory().path().into(),
+        machine: root.machine(),
         executable: executable.clone(),
         work,
     };
-    let root = StateRoot::effects(cx, home).map_err(crate::store::StoreError::from)?;
-    let log = helper_log(&root)?;
+    let log = helper_log(root)?;
     let mut child = spawn_helper(executable, SUPERVISOR, &log, engine)?;
     let mut writer = child
         .stdin
@@ -1102,7 +1167,7 @@ fn launch(
         buffer: Vec::new(),
         run: id,
         fence,
-        home: home.into(),
+        root: root.clone(),
         active: false,
         closed: false,
     };
@@ -1551,6 +1616,7 @@ fn supervisor(
     adapter: &mut impl SettlementAdapter,
     validate_next: impl Fn(&[OsString]) -> bool,
     home: PathBuf,
+    machine: bool,
     executable: Executable,
     work: Work,
 ) -> Result<(), RunError> {
@@ -1582,7 +1648,7 @@ fn supervisor(
     let cx = op
         .effects()
         .map_err(|_| RunError::Invalid("supervisor context".into()))?;
-    let root = StateRoot::effects(&cx, &home).map_err(crate::store::StoreError::from)?;
+    let root = helper_root(&cx, &home, machine)?;
     let cleanup = op
         .cleanup(Duration::from_secs(30))
         .map_err(|_| RunError::Invalid("cleanup overflow".into()))?;

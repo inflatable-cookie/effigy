@@ -201,6 +201,14 @@ impl ResourceId {
     fn new(kind: ResourceKind, scope: Scope, key: Vec<Option<String>>) -> Self {
         Self { kind, scope, key }
     }
+    /// Equal coordinates under a persistent token and its filesystem-derived
+    /// checkout alias are the same logical owner, not auxiliary resources.
+    pub(crate) fn checkout_alias_of(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.key == other.key
+            && matches!(self.scope, Scope::Checkout(_))
+            && matches!(other.scope, Scope::Checkout(_))
+    }
     pub fn environment(checkout: CheckoutId, name: &str) -> Result<Self, IdentityError> {
         Ok(Self::new(
             ResourceKind::Env,

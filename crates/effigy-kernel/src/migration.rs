@@ -1,12 +1,12 @@
 //! Legacy-source inspection. Observation never acquires migration authority,
 //! stages a destination, repairs a source, or signals a recorded process.
+pub(crate) mod adoption;
 mod copy;
 mod execute;
 mod fence;
 mod files;
-pub use execute::{
-    committed, import, CheckoutResolver, ImportReceipt, ImportReport, ImportedDestination,
-};
+pub use adoption::{authority, Authority, ImportReceipt, ImportedDestination};
+pub use execute::{committed, import, CheckoutResolver, ImportReport};
 mod plan;
 pub use fence::LegacyQuiescence;
 pub use plan::{plan, ImportPlan, Partition};
@@ -96,6 +96,8 @@ impl Preflight {
 /// This is a preflight snapshot only; import must repeat it under all source
 /// gates, with legacy launchers quiesced, before it creates any destination.
 pub fn inspect(cx: &ObserveContext, root: &StateRoot) -> Result<Preflight, StoreError> {
+    let legacy = root.legacy_source();
+    let root = &legacy;
     cx.check("legacy migration preflight")
         .map_err(StoreError::Interrupted)?;
     let mut report = Preflight {

@@ -98,6 +98,7 @@ pub enum StoreError {
     Identity(IdentityError),
     /// Store waits need a finite deadline (K8, I-CX2).
     Unbounded,
+    MigrationPending(String),
     /// Retention, repair and scope removal run only in Mutate (K15).
     ClassRefused(EffectClass),
     InTransaction,
@@ -118,6 +119,7 @@ pub enum StoreError {
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::MigrationPending(id) => write!(f, "runtime import {id} is prepared but not sealed; finish migration before using this journal"),
             Self::Corrupt(reason) => write!(
                 f,
                 "kernel.db is unreadable ({reason}); the explicit store repair moves it aside"
@@ -249,6 +251,12 @@ impl Store {
                 reason: "state root opened read-only".into(),
             });
         }
+        let observe = cx
+            .child(Duration::from_secs(10))
+            .operation()
+            .observe()
+            .map_err(|_| StoreError::Unbounded)?;
+        let adoption = crate::migration::adoption::access(&observe, root)?;
         let name = FileName::new(root.database_name())?;
         let (_, stat) = root
             .dir()
@@ -266,6 +274,7 @@ impl Store {
                 | OpenFlags::SQLITE_OPEN_NOFOLLOW
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
+        crate::migration::adoption::validate_database(&conn, &adoption)?;
         let mut store = Self {
             conn,
             root: root.clone(),
@@ -341,6 +350,7 @@ impl Store {
             });
         }
         let opened = (|| {
+            let adoption = crate::migration::adoption::access(cx, root)?;
             check_store_files(root)?;
             let name = FileName::new(root.database_name())?;
             let Some(stat) = root.dir().entry(&name)? else {
@@ -351,7 +361,11 @@ impl Store {
                     limit: MAX_DB_BYTES,
                 });
             }
-            read_immutable(root, cx.remaining())
+            let reader = read_immutable(root, cx.remaining())?;
+            if let Some(reader) = &reader {
+                crate::migration::adoption::validate_database(reader.conn(), &adoption)?;
+            }
+            Ok(reader)
         })();
         match opened {
             Ok(Some(reader)) => Observed::Verified(reader, evidence("sealed kernel store")),
@@ -369,6 +383,10 @@ impl Store {
         if let Some(injected) = crate::fault::injected() {
             return injected;
         }
+        let adoption = match crate::migration::adoption::access(cx, root) {
+            Ok(adoption) => adoption,
+            Err(error) => return Observed::Unknown(read_unknown(&error)),
+        };
         let busy = cx.remaining();
         if let Err(error) = check_store_files(root) {
             return Observed::Unknown(crate::root::unknown(&error));
@@ -408,6 +426,12 @@ impl Store {
                 }
             }
         };
+        let opened = opened.and_then(|reader| {
+            if let Some(reader) = &reader {
+                crate::migration::adoption::validate_database(reader.conn(), &adoption)?;
+            }
+            Ok(reader)
+        });
         match opened {
             Ok(Some(reader)) => Observed::Verified(reader, evidence("kernel store")),
             Ok(None) => Observed::Absent(AbsenceProof::NoStore),
@@ -1282,6 +1306,7 @@ fn schema_version(conn: &Connection) -> Result<i64, StoreError> {
 }
 fn read_unknown(error: &StoreError) -> UnknownReason {
     match error {
+        StoreError::Untrusted { reason, .. } => UnknownReason::Untrusted(reason.clone()),
         StoreError::NeedsRecovery => UnknownReason::StoreNeedsRecovery,
         StoreError::Busy { .. } => UnknownReason::TimedOut {
             phase: "store read".into(),
