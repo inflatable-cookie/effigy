@@ -106,17 +106,27 @@ fn spawn_command_inherit_os(
     label: &str,
     env: &[(String, OsString)],
 ) -> Result<std::process::Child, EffigyRuntimeError> {
+    let launch = |error: std::io::Error| EffigyRuntimeError::TaskCommandLaunch {
+        command: format!("{label} ({program} {})", format_args(args)),
+        error,
+    };
+    // A VM-hosted Compose backend cannot inherit the host environment; the
+    // shared transform names a file its VM can read. A host backend keeps the
+    // process environment unchanged.
+    let args =
+        effigy_containers::policy::render::compose_invocation_args(program.as_ref(), args, env)
+            .map_err(launch)?;
     let mut command = Command::new(program);
     command
         .current_dir(repo_root)
-        .args(args)
+        .args(&args)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
     for (key, value) in env {
         command.env(key, value);
     }
-    effigy_containers::policy::render::apply_environment(&mut command, args);
+    effigy_containers::policy::render::apply_environment(&mut command, &args);
     #[cfg(unix)]
     // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
     // where only async-signal-safe work is allowed. `setpgid` is
@@ -131,7 +141,7 @@ fn spawn_command_inherit_os(
     command
         .spawn()
         .map_err(|error| EffigyRuntimeError::TaskCommandLaunch {
-            command: format!("{label} ({program} {})", format_args(args)),
+            command: format!("{label} ({program} {})", format_args(&args)),
             error,
         })
 }

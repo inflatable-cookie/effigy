@@ -519,7 +519,11 @@ starts from prepared volumes.
 
 Detached JSON failures contain bounded structural details: state, phase,
 unverified readiness/exposure, and supported recovery/stop commands. No raw
-backend logs, argv or environment enter these details. Current inspect must
+backend logs, argv or environment enter these details. A failed detached
+backend's output now lives in the checkout's retained runtime record
+(`.effigy/runtime/logs/<project>.compose.log`, bounded to its last 64 KiB) and
+its tail enters the operator-facing error text, which is not part of the JSON
+detail vocabulary. Current inspect must
 verify full ID, project, service, explicit non-oneoff running state, canonical
 checkout ownership and published-port associations. These are fixture-qualified
 production adapters, not evidence of the original consumer incident or real

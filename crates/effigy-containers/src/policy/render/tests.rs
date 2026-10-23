@@ -97,6 +97,40 @@ fn admission_pins_immutable_inputs_and_refuses_a_new_desired_generation() {
     });
 }
 #[test]
+fn a_partial_generation_matches_across_state_home_paths() {
+    let (fixture, checkout, home) = fixture();
+    let other_home = fixture.path().join("other-home/.effigy");
+    std::fs::create_dir_all(&other_home).unwrap();
+    let first = crate::with_test_effigy_home(&home, || {
+        prepare_container_policy(&checkout, Some("one")).unwrap()
+    });
+    let second = crate::with_test_effigy_home(&other_home, || {
+        prepare_container_policy(&checkout, Some("one")).unwrap()
+    });
+    let first_render = first.render.as_ref().unwrap();
+    let second_render = second.render.as_ref().unwrap();
+    // A detached activation recorded as partial under one state home is
+    // reconciled by a plain `container up` from another: the generation
+    // digest never depends on where the state home lives.
+    assert_eq!(
+        first_render.closure.digest(),
+        second_render.closure.digest()
+    );
+    assert_ne!(first_render.path, second_render.path);
+    for bytes in first_render.closure.files().values() {
+        let text = String::from_utf8_lossy(bytes);
+        assert!(
+            !text.contains(&home.display().to_string()),
+            "the immutable closure never embeds the state-home path: {text}"
+        );
+        assert!(
+            !text.contains(&other_home.display().to_string()),
+            "the immutable closure never embeds the state-home path: {text}"
+        );
+    }
+}
+
+#[test]
 fn reset_preserves_sibling_environment_and_immutable_files() {
     let (_fixture, checkout, home) = fixture();
     crate::with_test_effigy_home(&home, || {
