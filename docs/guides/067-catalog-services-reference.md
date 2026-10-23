@@ -91,11 +91,14 @@ dir = "../shared-services"
 
 A source is a directory of fragment directories, exactly like
 `infra/dev/catalog/`. Sources are pinned per checkout in
-`.effigy/sources.lock.json` alongside the bundle, and only `effigy bundle sync`
-on the host moves a pin. Reads never fetch: a source that has not been synced
-is an error naming `effigy bundle sync`, and a changed declaration keeps
-resolving the pinned bytes until you sync. A workspace guest reads the same
-pins through the checkout mount; `bundle sync` refuses inside the guest.
+`.effigy/sources.lock.json` alongside the bundle. The host's Prepare paths
+(`effigy dev`, `effigy bootstrap`, `effigy container up`) acquire a missing pin
+and update a stale one themselves, and `effigy bundle sync` does the same on
+demand; `update = "manual"` in one `[catalog.sources.<name>]` keeps it on
+explicit sync only. Reads never fetch: a source that was never prepared is an
+error naming `effigy bundle sync`, and a changed declaration keeps resolving
+the pinned bytes until a Prepare runs. A workspace guest reads the same pins
+through the checkout mount and has no acquisition authority.
 
 ### Fragment requirements
 

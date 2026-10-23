@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use super::error::RunnerError;
 
 /// Syntax-only classification shared by binary signal setup and dev dispatch.
-/// It does not resolve a manifest or acquire source authority.
+/// It does not resolve a manifest or acquire source authority. `container up`
+/// is a Prepare path too, but it prepares in its own entry point rather than
+/// owning the process signal router from startup.
 pub(crate) fn is_source_prepare_command(command: &effigy_cli::Command) -> bool {
     match command {
         effigy_cli::Command::Bundle(args) => matches!(args.subcommand, BundleSubcommand::Sync),
@@ -175,15 +177,24 @@ fn source_preparation() -> Result<effigy_manifest::SourcePreparation, RunnerErro
         budget: std::time::Duration::from_secs(120),
     })
 }
-/// Acquire missing bundle and catalog sources through the kernel Prepare owner.
+/// Prepare the nearest manifest at or above `root` (contract 020).
+pub(in crate::runner) fn prepare_sources_at(root: &Path) -> Result<(), RunnerError> {
+    let Some(manifest) = root
+        .ancestors()
+        .map(|root| root.join(TASK_MANIFEST_FILE))
+        .find(|manifest| manifest.is_file())
+    else {
+        return Ok(());
+    };
+    prepare_sources_for_manifest(&manifest)
+}
+
+/// Acquire missing bundle and catalog sources and refresh a stale pin through
+/// the kernel Prepare owner (contract 020). Nothing to do is the cheap path:
+/// `prepare_bundle_sources` returns before any gate or file creation.
 pub(in crate::runner) fn prepare_bundle_sources_for_manifest(
     manifest: &Path,
 ) -> Result<(), RunnerError> {
-    if !effigy_manifest::bundle_sources_need_preparation(manifest)
-        .map_err(|err| RunnerError::task_invocation(err.to_string()))?
-    {
-        return Ok(());
-    }
     effigy_manifest::prepare_bundle_sources(manifest, &source_preparation()?)
         .map_err(|err| RunnerError::task_invocation(err.to_string()))?;
     Ok(())

@@ -361,7 +361,8 @@ and resolves the final isolated identity.
 Manifest resolution reads per-checkout source pins and immutable bundle source
 generations (contract 020). Observe never acquires the source cache lock or
 fetches a bundle. Existing materialized bytes remain readable during migration;
-Prepare imports them and `effigy bundle sync` explicitly updates selected pins.
+Prepare imports them, host Prepare paths refresh a stale pin, and
+`effigy bundle sync` explicitly updates selected pins.
 
 The Prepare stage of `up` and other Mutate commands publishes through kernel
 Objects under the environment owner gate. Files are sealed 0400 and directories

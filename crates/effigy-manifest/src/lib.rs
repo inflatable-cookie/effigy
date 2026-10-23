@@ -36,10 +36,10 @@ pub const TASK_DESCRIPTION_MAX_CHARS: usize = 200;
 pub use portfolio::{load_portfolio, Portfolio, PORTFOLIO_FILE};
 
 pub use bundles::{
-    bundle_sources_need_preparation, catalog_source_roots, inspect_bundle_source,
-    prepare_bundle_sources, resolve_catalog_source, sync_bundle_source, BundleInputSpec,
-    BundleInputType, BundleSourceInspectReport, BundleSourceType, BundleSpec, BundleSyncReport,
-    CatalogSourceRoots, SourcePreparation, SourceSettlement,
+    bundle_update_notes, catalog_source_roots, inspect_bundle_source, prepare_bundle_sources,
+    resolve_catalog_source, sync_bundle_source, BundleInputSpec, BundleInputType,
+    BundleSourceInspectReport, BundleSourceType, BundleSpec, BundleSyncReport, CatalogSourceRoots,
+    SourcePreparation, SourceSettlement,
 };
 pub use composition::{
     load_docs_policy_graph_config, load_task_manifest_with_inspection, LoadedTaskManifest,
@@ -47,7 +47,8 @@ pub use composition::{
 };
 pub use config_sections::{
     load_committed_docs_policy_sources, ManifestBootstrapConfig, ManifestBundleBase,
-    ManifestBundleConfig, ManifestContainerConfig, ManifestContainerDataConfig,
+    ManifestBundleConfig, ManifestCatalogSourceConfig, ManifestContainerConfig,
+    ManifestContainerDataConfig,
     ManifestContainerDnsConfig, ManifestContainerDnsDomainDefaults,
     ManifestContainerDnsRouteConfig, ManifestContainerDriver, ManifestContainerExecAliasConfig,
     ManifestContainerExecAliasTableConfig, ManifestContainerHostConfig, ManifestContainerHostMount,
@@ -65,7 +66,7 @@ pub use config_sections::{
     ManifestJsPackageManager, ManifestPackageManagerConfig, ManifestPinnedSourceConfig,
     ManifestReleaseConfig, ManifestScanConfig, ManifestSecretKeyConfig, ManifestSecretTarget,
     ManifestSecretsBackend, ManifestSecretsConfig, ManifestSecretsExternalConfig,
-    ManifestSecretsVaultConfig, ManifestSystemConfig, ManifestSystemMount,
+    ManifestSecretsVaultConfig, ManifestSourceUpdate, ManifestSystemConfig, ManifestSystemMount,
     ManifestSystemMountTable, ManifestSystemsConfig, ManifestTaskDefaultsConfig,
     ManifestWorkspaceConfig, ManifestWorkspaceContainerRef,
 };
@@ -267,7 +268,7 @@ pub struct ManifestCatalog {
     #[serde(default)]
     pub members: BTreeMap<String, String>,
     #[serde(default)]
-    pub sources: BTreeMap<String, ManifestBundleBase>,
+    pub sources: BTreeMap<String, ManifestCatalogSourceConfig>,
 }
 
 fn deserialize_sources<'de, D>(

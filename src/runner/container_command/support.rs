@@ -427,6 +427,18 @@ pub(super) fn annotate_data_handover_notes(
     }
 }
 
+/// Bundle or catalog sources this Prepare refreshed, in the JSON envelope's
+/// `notes` (contract 020). The one line per source is already on stderr.
+pub(super) fn annotate_source_update_notes(report: &mut effigy_containers::ContainerCommandReport) {
+    let notes = effigy_manifest::bundle_update_notes();
+    if notes.is_empty() {
+        return;
+    }
+    if let Some(json_object) = report.json.as_object_mut() {
+        json_object.insert("notes".to_owned(), json!(notes));
+    }
+}
+
 pub(super) fn annotate_tcp_alias_host_notes(
     report: &mut effigy_containers::ContainerCommandReport,
     notes: &[String],

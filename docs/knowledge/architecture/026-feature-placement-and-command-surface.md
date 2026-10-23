@@ -123,7 +123,8 @@ from the compiled baseline only.
 
 Declared sources share the bundle source pin and acquisition code: one
 checkout lock (`.effigy/sources.lock.json`) records the bundle and every
-`catalog:<name>` pin, and only an explicit host `effigy bundle sync` moves
+`catalog:<name>` pin, and a host Prepare (`dev`, `bootstrap`, `container up`)
+or an explicit `effigy bundle sync` moves
 them. Resolution reads the pinned local snapshots and never fetches; an
 unprepared declared source is an error that names `effigy bundle sync`.
 
