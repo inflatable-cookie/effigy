@@ -51,6 +51,7 @@ use effigy_kernel::observe::UnknownReason;
 use effigy_kernel::outcome::WorkloadOutcome;
 use effigy_kernel::run::{EffectTicket, Run, Settlement};
 
+use crate::hosted_evidence::{HostedEvidenceBinding, HostedEvidenceSpec};
 use crate::model::{FileMutationApply, FileMutationPlan};
 use crate::pipeline::{
     plan_release_pipeline, GateStage, IdentityKind, ReleaseIdentityPlan, ReleasePipelinePlan,
@@ -659,27 +660,44 @@ impl<'a, 's> Runner<'a, 's> {
             }
             if let Some(spec) = gate.hosted_evidence.clone() {
                 let commit = self.hosted_evidence_commit(stage)?;
-                match self.effects.hosted_evidence(&gate.name, &spec, &commit)? {
+                let binding = self.open_hosted_wait(&gate.name, &spec, &commit)?;
+                match self
+                    .effects
+                    .hosted_evidence(&gate.name, &spec, &commit, &binding)?
+                {
                     HostedEvidence::Accepted {
-                        url,
                         repository,
                         commit,
+                        run,
                     } => {
+                        // Bind and journal the one run this release dispatched,
+                        // so a resume re-checks it instead of a sibling.
+                        self.record
+                            .bind_hosted_run(&gate.name, run.run_id, &run.url);
                         self.record.gates.push(RecordGate {
                             stage: stage.stage_name().to_owned(),
                             name: gate.name.clone(),
                             passed: true,
-                            hosted_run: Some(url.clone()),
+                            hosted_run: Some(run.url.clone()),
+                            hosted_run_id: run.run_id,
                         });
                         self.messages.push(format!(
-                            "gate `{}` reused hosted evidence {url} for {repository}@{commit}",
-                            gate.name
+                            "gate `{}` reused hosted evidence {} for {repository}@{commit}",
+                            gate.name,
+                            match run.run_id {
+                                Some(id) => format!("run #{id} {}", run.url),
+                                None => run.url.clone(),
+                            }
                         ));
                         continue;
                     }
-                    HostedEvidence::Waiting { detail } => {
+                    HostedEvidence::Waiting { detail, run } => {
                         // The Run holds no process open: a resume re-checks the
-                        // evidence and continues this same gate stage.
+                        // bound run and continues this same gate stage.
+                        if let Some(run) = &run {
+                            self.record
+                                .bind_hosted_run(&gate.name, run.run_id, &run.url);
+                        }
                         let release_id = self.record.release_id.clone();
                         self.wait_for(
                             ReleaseRunStatus::AwaitingHostedEvidence,
@@ -691,12 +709,17 @@ impl<'a, 's> Runner<'a, 's> {
                         );
                         return Ok(());
                     }
-                    HostedEvidence::Failed { detail } => {
+                    HostedEvidence::Failed { detail, run } => {
+                        if let Some(run) = &run {
+                            self.record
+                                .bind_hosted_run(&gate.name, run.run_id, &run.url);
+                        }
                         self.record.gates.push(RecordGate {
                             stage: stage.stage_name().to_owned(),
                             name: gate.name.clone(),
                             passed: false,
-                            hosted_run: None,
+                            hosted_run: run.as_ref().map(|run| run.url.clone()),
+                            hosted_run_id: run.as_ref().and_then(|run| run.run_id),
                         });
                         return Err(ReleaseError::TaskInvocation(detail));
                     }
@@ -709,6 +732,7 @@ impl<'a, 's> Runner<'a, 's> {
                     name: result.name.clone(),
                     passed: result.passed,
                     hosted_run: None,
+                    hosted_run_id: None,
                 });
                 if result.passed {
                     continue;
@@ -730,6 +754,41 @@ impl<'a, 's> Runner<'a, 's> {
                 failed.join("; ")
             )))
         }
+    }
+
+    /// The hosting binding for a gate's evidence: the dispatch window this Run
+    /// opened, and the run it already bound.
+    ///
+    /// The window opens the first time the gate needs evidence and is durable
+    /// from then on, so a later dispatch cannot be mistaken for one that ran
+    /// before this Run was waiting, and `effigy release resume` re-checks the
+    /// same evidence instead of rebinding.
+    fn open_hosted_wait(
+        &mut self,
+        gate: &str,
+        spec: &HostedEvidenceSpec,
+        commit: &str,
+    ) -> Result<HostedEvidenceBinding, ReleaseError> {
+        let fresh = self
+            .record
+            .hosted_wait(gate)
+            .is_none_or(|wait| wait.commit != commit);
+        let opened = self
+            .record
+            .open_hosted_wait(gate, &spec.workflow, commit, &now());
+        let binding = HostedEvidenceBinding {
+            created_after: Some(opened.created_after.clone()),
+            run_id: opened.run_id,
+        };
+        if fresh {
+            self.messages.push(format!(
+                "gate `{gate}` opened its hosted dispatch window at {}: only a `{}` run created after it is this release's evidence",
+                binding.created_after.as_deref().unwrap_or(""),
+                spec.workflow
+            ));
+            self.persist()?;
+        }
+        Ok(binding)
     }
 
     /// The commit a hosted gate's evidence must be for: the candidate once

@@ -632,7 +632,7 @@ fn hosted_error_url(error: &HostedEvidenceError) -> Option<String> {
         | HostedEvidenceError::Failed { url, .. }
         | HostedEvidenceError::WrongRepository { url, .. }
         | HostedEvidenceError::WrongSha { url, .. } => Some(url.clone()),
-        HostedEvidenceError::Missing { .. }
+        HostedEvidenceError::Missing(_)
         | HostedEvidenceError::Ambiguous { .. }
         | HostedEvidenceError::LookupFailed { .. } => None,
     }

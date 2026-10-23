@@ -1574,6 +1574,23 @@ During v0.x, MINOR bumps may include breaking changes.
   `changelog extract` work with prose-bearing consumer changelogs. Prose is
   preserved on format, extraction and release promotion; malformed headings and
   entries are still rejected.
+- A release hosted wait binds the run it dispatched instead of whichever run
+  is newest for the commit (papercut bb47b891). The first check opens and
+  records a dispatch window, accepts only the one matching run created inside
+  it, and journals that run's id on the gate and in the record; every
+  `effigy release resume` re-checks the bound run, so a sibling dispatch or
+  re-run can never certify the release. Several runs inside one window fail
+  the gate closed with the candidates named, and `effigy release gates`
+  refuses more than one match for a commit the same way. The check waits a
+  bounded ten seconds for a just-dispatched run to appear.
+- `scripts/check-release-ci.sh` requires exactly one `workflow_dispatch` run
+  of `ci.yml` for the candidate commit and names the candidates when there are
+  none or several. A sibling dispatch on the same commit no longer passes the
+  `ci` gate as "the" green run.
+- The retired `effigy release preflight` refusal names the `pre-gates` stage
+  and the `effigy release:preflight` repo task it became. It pointed at
+  `certify`, but contract 054 makes preflight a pre-prepare gate (papercut
+  dc4b15af).
 
 ## [0.14.1] - 2026-10-08
 

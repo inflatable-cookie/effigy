@@ -198,6 +198,18 @@ fn parse_release_effigy_only_commands_name_their_repo_task() {
 }
 
 #[test]
+fn parse_release_retired_preflight_names_the_pre_gate_stage() {
+    let error = parse_command(vec!["release".to_owned(), "preflight".to_owned()])
+        .expect_err("the retired subcommand refuses");
+    let message = error.to_string();
+    // Contract 054 makes preflight a pre-prepare gate, so the refusal names
+    // `pre-gates` and the repo task that replaced the command, never `certify`.
+    assert!(message.contains("`pre-gates` stage"), "{message}");
+    assert!(message.contains("effigy release:preflight"), "{message}");
+    assert!(!message.contains("`certify` gate"), "{message}");
+}
+
+#[test]
 fn parse_release_plan_with_repo() {
     let cmd = parse_command(vec![
         "release".to_owned(),

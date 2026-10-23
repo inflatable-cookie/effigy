@@ -27,7 +27,7 @@ where
             "`effigy release validate` is retired in v0.15: Effigy's own release metadata check is the repo task `effigy release:metadata`, which the `metadata` certify gate runs. A project keeps its own checks in `[tasks]` wired as `[release.gates]` or a target's `verify` (contract 054 §4.4). See the v0.15.0 Removed entry in CHANGELOG.md".to_owned(),
         )),
         "preflight" => Err(CliParseError::InvalidArguments(
-            "`effigy release preflight` is retired in v0.15: Effigy's own preflight is the repo task `effigy release:preflight`, a `certify` gate. A project keeps its own checks in `[tasks]` wired as `[release.gates]` or a target's `verify` (contract 054 §4.4). See the v0.15.0 Removed entry in CHANGELOG.md".to_owned(),
+            "`effigy release preflight` is retired in v0.15: Effigy's own preflight is the repo task `effigy release:preflight`, which the `preflight` pre gate runs in the `pre-gates` stage before `prepare` writes a version. A project keeps its own checks in `[tasks]` wired as `[release.gates]` or a target's `verify` (contract 054 §4.4). See the v0.15.0 Removed entry in CHANGELOG.md".to_owned(),
         )),
         "proof" => Err(CliParseError::InvalidArguments(
             "`effigy release proof` is retired in v0.15: Effigy's own artifact proof is the repo task `effigy release:proof`; `effigy release run` certifies the artifacts and `effigy release receipt <run>` records their digests (contract 054 §3, §6, §5). See the v0.15.0 Removed entry in CHANGELOG.md".to_owned(),

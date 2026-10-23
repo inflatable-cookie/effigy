@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::hosted_evidence::{
-    collect_hosted_evidence_at, is_waiting_evidence, GhCliHostedEvidenceLookup, HostedEvidenceSpec,
+    collect_hosted_evidence_at, is_waiting_evidence, BoundRun, GhCliHostedEvidenceLookup,
+    HostedEvidenceBinding, HostedEvidencePolling, HostedEvidenceSpec,
 };
 use crate::ReleaseError;
 
@@ -39,18 +40,26 @@ pub struct TaskResponse {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostedEvidence {
     /// Exact-commit evidence for this commit, from this repository: the gate
-    /// passes without running its command.
+    /// passes without running its command. `run` is the bound run.
     Accepted {
-        url: String,
         repository: String,
         commit: String,
+        run: BoundRun,
     },
     /// No evidence yet, or a run still in progress: the Run waits without
-    /// holding a process open and re-checks when it resumes.
-    Waiting { detail: String },
+    /// holding a process open and re-checks when it resumes. `run` is the one
+    /// dispatched run the check bound, when there is one, so the wait re-checks
+    /// that run and never a sibling.
+    Waiting {
+        detail: String,
+        run: Option<BoundRun>,
+    },
     /// A failed run, the wrong commit or repository, an ambiguous answer or an
     /// unusable lookup: the gate fails closed.
-    Failed { detail: String },
+    Failed {
+        detail: String,
+        run: Option<BoundRun>,
+    },
 }
 
 fn command_error(context: &str, output: &std::process::Output) -> ReleaseError {
@@ -88,14 +97,36 @@ pub trait ReleaseEffects: std::fmt::Debug {
     fn discard_staged(&mut self, paths: &[PathBuf]) -> Result<(), ReleaseError>;
     fn run_task(&mut self, request: &TaskRequest) -> Result<TaskResponse, ReleaseError>;
     /// Exact-commit hosted evidence for one gate (contract 054 §3, §7).
+    ///
+    /// `binding` is the run this release dispatched: a resume re-checks the
+    /// bound run, and a fresh wait accepts only a run created inside its
+    /// dispatch window.
     fn hosted_evidence(
         &mut self,
         gate: &str,
         spec: &HostedEvidenceSpec,
         commit: &str,
+        binding: &HostedEvidenceBinding,
     ) -> Result<HostedEvidence, ReleaseError>;
     /// The identity recorded as an approval's approver.
     fn operator(&mut self) -> Option<String>;
+}
+
+/// The bound run an evidence error names, when the check matched one.
+fn bound_run(error: &crate::hosted_evidence::HostedEvidenceError) -> Option<BoundRun> {
+    use crate::hosted_evidence::HostedEvidenceError;
+    match error {
+        HostedEvidenceError::Pending { url, run_id, .. }
+        | HostedEvidenceError::Failed { url, run_id, .. } => Some(BoundRun {
+            run_id: *run_id,
+            url: url.clone(),
+        }),
+        HostedEvidenceError::Missing(_)
+        | HostedEvidenceError::Ambiguous { .. }
+        | HostedEvidenceError::WrongRepository { .. }
+        | HostedEvidenceError::WrongSha { .. }
+        | HostedEvidenceError::LookupFailed { .. } => None,
+    }
 }
 
 /// The approver recorded on an approval checkpoint.
@@ -352,20 +383,32 @@ impl ReleaseEffects for GitEffects {
         gate: &str,
         spec: &HostedEvidenceSpec,
         commit: &str,
+        binding: &HostedEvidenceBinding,
     ) -> Result<HostedEvidence, ReleaseError> {
-        let evaluated =
-            collect_hosted_evidence_at(&self.repo_root, spec, commit, &GhCliHostedEvidenceLookup);
+        let evaluated = collect_hosted_evidence_at(
+            &self.repo_root,
+            spec,
+            commit,
+            binding,
+            HostedEvidencePolling::DISPATCH,
+            &GhCliHostedEvidenceLookup,
+        );
         Ok(match evaluated {
             Ok(run) => HostedEvidence::Accepted {
-                url: run.url,
                 repository: run.repository,
                 commit: run.head_sha,
+                run: BoundRun {
+                    run_id: run.database_id,
+                    url: run.url,
+                },
             },
             Err(error) if is_waiting_evidence(&error) => HostedEvidence::Waiting {
                 detail: error.diagnostic(gate),
+                run: bound_run(&error),
             },
             Err(error) => HostedEvidence::Failed {
                 detail: error.diagnostic(gate),
+                run: bound_run(&error),
             },
         })
     }
