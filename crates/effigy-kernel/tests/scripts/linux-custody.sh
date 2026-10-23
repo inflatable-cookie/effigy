@@ -6,7 +6,7 @@
 set -eu
 proof_mode=${1:-custody}
 case "$proof_mode" in
-    custody|gate-shared|probe|helpers|runtime-storage|actual-copy) ;;
+    custody|gate-shared|probe|helpers|runtime-storage|actual-copy|qualification|final-runtime) ;;
     *) printf 'Unknown Linux proof mode: %s\n' "$proof_mode" >&2; exit 2 ;;
 esac
 proof_dir=$(mktemp -d /tmp/k208.XXXXXX)
@@ -19,7 +19,7 @@ export XDG_CONFIG_HOME="$proof_dir/config"
 export XDG_CACHE_HOME="$proof_dir/xdg-cache"
 mkdir -p "$DOCKER_CONFIG" "$COLIMA_HOME"
 source_dir=$(mktemp -d "$proof_dir/source.XXXXXX")
-if [ "$proof_mode" = actual-copy ]; then
+if { [ "$proof_mode" = actual-copy ] || [ "$proof_mode" = qualification ]; }; then
     copied_store=${EFFIGY_RUNTIME_MIGRATION_COPY:?explicit private operator-copy fixture required}
     test -f "$copied_store/copy-report.json"
     # Only private, already copied/checkpointed data enters the disposable VM.
@@ -44,7 +44,7 @@ if [ "$proof_mode" = gate-shared ]; then
         --env RUSTUP_TOOLCHAIN=1.97.1 \
         --mount "type=bind,source=$proof_dir/cargo,target=/proof-cargo"
 fi
-if [ "$proof_mode" = actual-copy ]; then
+if { [ "$proof_mode" = actual-copy ] || [ "$proof_mode" = qualification ]; }; then
     set -- "$@" --mount "type=bind,source=$proof_dir/runtime-copy,target=/runtime-copy" \
         --env EFFIGY_RUNTIME_COPY_HOME=/runtime-copy
 fi
@@ -61,11 +61,32 @@ docker run --rm --init --cpus 2 --memory 2g "$@" \
             exit
         fi
         apt-get update -qq
-        apt-get install -y -qq curl procps git > /dev/null
+        apt-get install -y -qq curl procps git python3 strace lld pkg-config libssl-dev > /dev/null
         curl --fail --location --proto "=https" --tlsv1.2 https://get.nexte.st/latest/linux-arm | tar xz -C /usr/local/cargo/bin
         rustup component add clippy
+        if [ "$KERNEL_PROOF_MODE" = qualification ] || [ "$KERNEL_PROOF_MODE" = final-runtime ]; then
+            export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_BUILD_JOBS=2
+            export RUSTFLAGS="-C link-arg=-fuse-ld=lld"
+        fi
         cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture
         cargo clippy -p effigy-kernel --all-targets --features fault-injection -- -D warnings
+        if [ "$KERNEL_PROOF_MODE" = final-runtime ]; then
+            chown -R "$PROOF_UID:$PROOF_GID" /proof /usr/local/cargo/registry
+            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups env EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test probe --lib -E "test(/^probe::/) | binary(probe)" --no-fail-fast --retries 0 --no-tests fail
+            cargo build --bin effigy
+            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups python3 tests/scripts/runtime-write-budget.py target/debug/effigy
+            exit
+        fi
+        if [ "$KERNEL_PROOF_MODE" = qualification ]; then
+            chown -R "$PROOF_UID:$PROOF_GID" /proof /usr/local/cargo/registry /runtime-copy
+            find /runtime-copy -type d -exec chmod 500 {} +
+            find /runtime-copy -type f -exec chmod u-w,go-rwx {} +
+            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups env EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test migration --test custody --test store --test gate --test probe -E "test(/^inheritance::/) | test(/^supervise::/) | test(/^store::/) | test(/^root::/) | binary(migration) | binary(custody) | binary(store) | binary(gate) | binary(probe)" --no-fail-fast --retries 0 --no-tests fail
+            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups env EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test migration_scale --run-ignored only --success-output immediate --no-fail-fast --retries 0 --no-tests fail
+            cargo build --bin effigy
+            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups python3 tests/scripts/runtime-write-budget.py target/debug/effigy
+            exit
+        fi
         if [ "$KERNEL_PROOF_MODE" = actual-copy ]; then
             chown -R "$PROOF_UID:$PROOF_GID" /proof /usr/local/cargo/registry /runtime-copy
             find /runtime-copy -type d -exec chmod 500 {} +

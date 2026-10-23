@@ -1,0 +1,6 @@
+# One immutable journal-crossing plan is split over six owned worker processes.
+# Per-run waits remain bounded in the fixture; this bounds the complete matrix.
+[profile.default]
+slow-timeout = { period = "1200s", terminate-after = 1, grace-period = "5s" }
+leak-timeout = { period = "1s", result = "fail" }
+global-timeout = "1800s"

@@ -340,7 +340,7 @@ pub struct ManifestQaGroupTable {
     #[serde(default)]
     pub expectation_basis: Option<String>,
     /// Parsed only to reject it with the precise prerequisite diagnostic.
-    /// Owned-run supervision (contract 052) has not landed.
+    /// QA-group controls require integration with owned-run supervision (contract 052).
     #[serde(default)]
     pub hard_timeout_ms: Option<u64>,
     pub members: Vec<ManifestQaMemberTable>,
@@ -400,7 +400,7 @@ impl ManifestQaGroupTable {
     ) -> Result<ManifestQaGroup, String> {
         if self.hard_timeout_ms.is_some() {
             return Err(
-                "`hard_timeout_ms` is not supported: owned-run supervision (contract 052) has not landed, so a group deadline could not be enforced safely; remove the field and rely on expected_wall_ms evidence"
+                "`hard_timeout_ms` is not supported: QA-group controls are not integrated with owned-run supervision (contract 052), so a group deadline could not be enforced safely; remove the field and rely on expected_wall_ms evidence"
                     .to_owned(),
             );
         }

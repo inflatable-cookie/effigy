@@ -13,6 +13,10 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::time::Duration;
 
+// Signal grace bounds workload lifetime. Closure verification also scans native
+// identities, reaps and drains buffered output, so it has its own finite budget.
+const CLOSURE_BUDGET: Duration = Duration::from_secs(5);
+
 /// Adapters declare this command non-mutating. A complete environment is passed
 /// explicitly; stdin is EOF and there is no terminal, state root, or journal.
 #[derive(Clone)]
@@ -181,8 +185,9 @@ fn execute(
     })();
     let cleanup = cx
         .operation
-        .cleanup(guard::GRACE)
+        .cleanup(CLOSURE_BUDGET)
         .map_err(|_| UnknownReason::GuardUnavailable)?;
+    let close_fault = crate::fault_point!(ProbeCloseBefore);
     let closed = pin.close(&cleanup, &mut capture);
     let mut warnings = Vec::new();
     if !client.alive() {
@@ -211,6 +216,7 @@ fn execute(
         }
     }
     let exit = work?;
+    close_fault.map_err(failure)?;
     if !closed {
         return Err(UnknownReason::TimedOut {
             phase: "probe closure".into(),

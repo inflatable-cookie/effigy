@@ -663,11 +663,12 @@ fn http_probe(config: &GatewayConfig, cx: &ObserveContext) -> io::Result<()> {
         connect_timeout: cx.remaining(),
         total_timeout: cx.remaining(),
     };
+    let observed = cx.connect(target);
     if !matches!(
-        cx.connect(target),
+        &observed,
         Observed::Verified(ProbeIo::Http { ready: true, .. }, _)
     ) {
-        return Err(error("HTTP self-test failed"));
+        return Err(error(format!("HTTP self-test failed: {observed:?}")));
     }
     if let Some(address) = config.proxy.tls_bind_addr {
         if !matches!(

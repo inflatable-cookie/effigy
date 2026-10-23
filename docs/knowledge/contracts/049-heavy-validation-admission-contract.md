@@ -3,11 +3,10 @@
 Owner: Platform
 Last Updated: 2026-10-22
 
-Q-010 touch-points below are proposed with contract [052](052-runtime-kernel-contract.md)
-§3.1 and §7, approved by planner and Tom (2026-10-22: "Approve") for implementation. The existing
-binary still journals every task in the central store. The amended contract
-distinguishes foreground memory from durable checkout runs; it does not claim
-the cutover has shipped.
+Q-010 follows the storage and custody model approved by planner and Tom
+(2026-10-22: "Approve") in [052 §3.1](052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary).
+Foreground evidence stays in memory; durable runs use checkout journals. The
+foreground-aware task status surface uses v3 envelopes (contract 018).
 
 Effigy offers generic heavy-task controls that any orchestrator may use, with
 no commitment to one workflow (Q-006, answered by Tom on 2026-10-18). A heavy
@@ -107,7 +106,7 @@ which fails closed.
 ## Run control
 
 Every task run is a kernel `Run`. Only durable runs have a journal. The
-following is the proposed Q-010 control boundary (contract 052 §3.1).
+following is the Q-010 control boundary (contract 052 §3.1).
 
 - **`--run-id <key>`.** A caller-chosen key (1–128 of `A–Z a–z 0–9 . _ : -`)
   selects checkout durability before effects. The key is scoped by CheckoutId,

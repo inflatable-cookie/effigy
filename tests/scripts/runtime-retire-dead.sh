@@ -11,6 +11,8 @@ mkdir -p "$COLIMA_HOME" "$DOCKER_CONFIG/cli-plugins"
 cp -L "$(command -v docker-compose)" "$DOCKER_CONFIG/cli-plugins/docker-compose"
 cleanup() {
     result=$?
+    colima stop --profile alternate --force > "$proof_dir/alternate-stop.log" 2>&1 || true
+    colima delete --profile alternate --force > "$proof_dir/alternate-delete.log" 2>&1 || true
     colima stop --force > "$proof_dir/stop.log" 2>&1 || true
     colima delete --force > "$proof_dir/delete.log" 2>&1 || true
     printf 'exit=%s\n' "$result" > "$proof_dir/result.log"
@@ -19,6 +21,9 @@ cleanup() {
 trap cleanup EXIT
 colima start --runtime docker --activate=false --ssh-config=false --template=false --binfmt=false \
     --cpus 2 --memory 3 --disk 10 --root-disk 10 --mount "$proof_dir:w" --mount-type virtiofs
+colima start --profile alternate --runtime docker --activate=false --ssh-config=false --template=false --binfmt=false \
+    --cpus 1 --memory 2 --disk 10 --root-disk 10 --mount "$proof_dir:w" --mount-type virtiofs
+export EFFIGY_PROOF_ALTERNATE_DOCKER="unix://$COLIMA_HOME/alternate/docker.sock"
 export DOCKER_HOST="unix://$COLIMA_HOME/default/docker.sock"
 unset DOCKER_CONTEXT
 python3 tests/scripts/runtime-retire-dead.py "$PWD/target/debug/effigy" "$proof_dir"

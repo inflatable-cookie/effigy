@@ -71,7 +71,8 @@ contexts.
  │ effigy status        observer                │              │   no state, gates or runs │
  │   └─ effigy __kernel-probe-guard (backup)    │              └───────────────────────────┘
  │ effigy gateway daemon  (user-owned, resident)│
- │ ~/.effigy/state/  kernel.db · gates · sock   │
+ │ checkout/.effigy/state/ kernel.db/gates/sock │
+ │ ~/.effigy/state/ machine.db · shared gates   │
  └──────────────────────────────────────────────┘
 ```
 
@@ -79,7 +80,10 @@ contexts.
   live for one run and its settle; a probe guard for its observer's open
   probes. The channel listener lives with its workspace session run.
 - Every per-run process re-execs the binary identified at startup.
-- Guests never see `~/.effigy/state` or the vault. Only immutable object
+- Foreground runs use memory records and checkout lock files. Only retained
+  runs open a checkout journal. The machine store holds the shared facts listed
+  in contract 052 §7.5, with no checkout catalog or task history.
+- Guests never see either writable runtime state root or the vault. Only immutable object
   closures may be mounted, read-only, through a backend.
 - In container mode the guest is a workspace client: local reads against a
   materialised context, every authority request over the host channel, and
@@ -301,12 +305,15 @@ store integrity and pure reads after recovery.
 
 ## Gate and store implementation
 
-`root` opens `~/.effigy/state/` from `$HOME`: for effects it creates the
-root 0700 and refuses guests before any filesystem call, untrusted
-components and network filesystems; for observation it never creates and
-reports absence or `Unknown`. The operator's spelling of `HOME` is resolved
-once; every component from `/` down is then reopened no-follow and
-owner-checked, and everything below `HOME` is descriptor-relative (`fs`).
+`root` separates the owning checkout’s `.effigy/state/` journal from the
+small machine-fact store under `$HOME/.effigy/state/machine.db`. Typed checkout
+roots retain native checkout and Git-directory bindings; aliases never redirect
+to the primary worktree. Effects create private state directories, refusing
+guests, untrusted components and network filesystems. Observe never creates and
+reports absence or `Unknown`. Components are reopened no-follow and checked by
+descriptor (`fs`). The machine root is not consulted for ordinary local gates.
+Legacy central state is a read-only migration input, never a fallback writer.
+
 
 `gate` takes `LOCK_SH` on every scope gate, then `LOCK_EX` on each resource
 gate in canonical order, polling to the earlier of the wait's instant and
@@ -322,9 +329,9 @@ same new name can fail with ENOENT, so creating opens retry briefly.
 and request rows are written by their owning primitives. `record` provides
 `atomic_replace`, bounded `read_record` and `read_cache`, and the one-pointer
 `commit_generation`. `retention` follows §7.4 under a per-call removal
-budget. A tombstoned checkout's own resource rows do not hold its tombstone:
-once nothing unsettled, claimed or attached references it for 30 days, its
-gate scope, settled runs, resources and row are removed together.
+budget, at admission or explicit maintenance rather than task close. Removing a
+checkout removes its journal. No central tombstone or checkout index is kept;
+external resources remain protected by ownership labels and shared claims.
 
 Fault points (`fault-injection`, test builds only) cover gate acquire, store
 commit before and after, and every `atomic_replace` step. `test:kernel:gate`

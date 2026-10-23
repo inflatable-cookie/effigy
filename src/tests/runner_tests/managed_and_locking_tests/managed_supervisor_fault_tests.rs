@@ -4,12 +4,11 @@
 //! in turn and the supervisor SIGKILLed there. Oracles per crossing: a stop
 //! settles the run with complete cleanup, no workload survives, and the next
 //! run starts and stops cleanly.
-use crate::runner::tests::prelude::{
-    lock_test, run_dev, temp_workspace, write_root_manifest, EnvGuard,
-};
+use crate::runner::tests::prelude::{lock_test, run_dev, write_root_manifest, EnvGuard};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -130,29 +129,155 @@ fn crossings(trace: &Path) -> Vec<String> {
     armed
 }
 
+const SHARDS: usize = 6;
+const MATRIX_ROOT: &str = "EFFIGY_TEST_SUPERVISOR_MATRIX_ROOT";
+const MATRIX_SHARD: &str = "EFFIGY_TEST_SUPERVISOR_MATRIX_SHARD";
+const WORKER: &str = "runner::tests::managed_and_locking_tests::managed_supervisor_fault_tests::supervisor_fault_shard";
+const REQUIRED: [&str; 4] = [
+    "BeginAdmitted#0",
+    "IntendAfter#0",
+    "AppliedAfter#0",
+    "SettleBefore#0",
+];
+
 #[test]
 fn supervisor_killed_at_every_journal_crossing_settles_without_orphans() {
     let _guard = lock_test();
-    let root = temp_workspace("supervisor-faults");
+    let fixture = effigy_test_support::Fixture::workspace("effigy-supervisor-faults-")
+        .expect("private matrix root");
+    eprintln!("supervisor matrix fixture: {}", fixture.path().display());
+    let root = fixture.path().join("baseline");
+    fs::create_dir(&root).expect("baseline checkout");
     write_manifest(&root);
-    let scratch = tempfile::tempdir().expect("trace dir");
-    let trace: PathBuf = scratch.path().join("trace");
+    let trace = fixture.path().join("trace");
     {
         let _env = EnvGuard::set_many(&[(TRACE, Some(trace.display().to_string()))]);
         one_run(&root, "trace").expect("a traced run stops cleanly");
     }
     let armed = crossings(&trace);
-    for required in [
-        "BeginAdmitted#0",
-        "IntendAfter#0",
-        "AppliedAfter#0",
-        "SettleBefore#0",
-    ] {
+    for required in REQUIRED {
         assert!(armed.iter().any(|point| point == required), "{armed:?}");
     }
+    fs::write(
+        fixture.path().join("plan.json"),
+        serde_json::to_vec(&armed).expect("crossing plan"),
+    )
+    .expect("write crossing plan");
+    let workers: Vec<_> = (0..SHARDS)
+        .map(|shard| {
+            let child = Command::new(std::env::current_exe().expect("test executable"))
+                .args([
+                    WORKER,
+                    "--exact",
+                    "--ignored",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env(MATRIX_ROOT, fixture.path())
+                .env(MATRIX_SHARD, shard.to_string())
+                .env_remove(FAULT)
+                .env_remove(TRACE)
+                .stdin(Stdio::null())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .expect("matrix worker");
+            eprintln!("supervisor matrix shard {shard}: pid {}", child.id());
+            (shard, child)
+        })
+        .collect();
+    // Reap all exact children before reading results or reporting failures.
+    // Their checkout journals and immutable plan remain available throughout.
+    let outcomes: Vec<_> = workers
+        .into_iter()
+        .map(|(shard, mut worker)| (shard, worker.wait().expect("matrix worker wait")))
+        .collect();
+    let mut failed = Vec::new();
+    for (shard, status) in &outcomes {
+        if !status.success() {
+            failed.push(format!("shard {shard}: {status:?}"));
+        }
+    }
+    for checkout in std::iter::once(root)
+        .chain((0..SHARDS).map(|shard| fixture.path().join(format!("shard-{shard}"))))
+    {
+        if let Err(error) = effigy_test_support::process::wait_kernel_helpers(&checkout) {
+            failed.push(format!("{}: {error}", checkout.display()));
+        }
+    }
+    if !failed.is_empty() {
+        let retained = fixture.path().to_path_buf();
+        // Unknown custody cannot authorize directory deletion. Retain only
+        // this exact fixture for diagnosis if a worker or helper did not close.
+        std::mem::forget(fixture);
+        panic!(
+            "matrix failures: {failed:?}; retained {}",
+            retained.display()
+        );
+    }
     let mut missed = Vec::new();
-    for (case, point) in armed.iter().enumerate() {
-        let case_trace = scratch.path().join(format!("case-{case}"));
+    let mut completed = 0;
+    for (shard, _) in outcomes {
+        let result = fs::read(fixture.path().join(format!("shard-{shard}/result.json")))
+            .expect("worker result");
+        let (count, absent): (usize, Vec<String>) =
+            serde_json::from_slice(&result).expect("worker result JSON");
+        completed += count;
+        missed.extend(absent);
+    }
+    assert_eq!(
+        completed,
+        armed.len(),
+        "every crossing assigned exactly once"
+    );
+    println!(
+        "{} crossings armed across {SHARDS} workers, {} never fired: {missed:?}\n{armed:?}",
+        armed.len(),
+        missed.len()
+    );
+    for required in REQUIRED {
+        assert!(
+            !missed.iter().any(|point| point == required),
+            "{required} never fired"
+        );
+    }
+    // Only timing-dependent poll crossings may vary, as in the unsharded proof.
+    assert!(
+        missed.len() * 10 <= armed.len(),
+        "faults never fired: {missed:?}"
+    );
+}
+
+#[test]
+#[ignore = "owned supervisor matrix worker"]
+fn supervisor_fault_shard() {
+    let _guard = lock_test();
+    let base = PathBuf::from(std::env::var_os(MATRIX_ROOT).expect("matrix root"));
+    let shard: usize = std::env::var(MATRIX_SHARD)
+        .expect("matrix shard")
+        .parse()
+        .expect("matrix shard number");
+    assert!(shard < SHARDS);
+    let armed: Vec<String> =
+        serde_json::from_slice(&fs::read(base.join("plan.json")).expect("read plan"))
+            .expect("crossing plan JSON");
+    let root = base.join(format!("shard-{shard}"));
+    fs::create_dir(&root).expect("worker checkout");
+    write_manifest(&root);
+    let proof = root.join("proof");
+    fs::create_dir(&proof).expect("worker proof directory");
+    let mut missed = Vec::new();
+    let mut completed = 0;
+    for (case, point) in armed
+        .iter()
+        .enumerate()
+        .filter(|(case, _)| case % SHARDS == shard)
+    {
+        eprintln!(
+            "supervisor shard {shard}: crossing {case}/{} {point}",
+            armed.len()
+        );
+        let case_trace = proof.join(format!("case-{case}"));
         {
             let _env = EnvGuard::set_many(&[
                 (FAULT, Some(point.clone())),
@@ -164,7 +289,6 @@ fn supervisor_killed_at_every_journal_crossing_settles_without_orphans() {
         if !fired {
             missed.push(point.clone());
         }
-        // Recovery: nothing the killed supervisor left blocks the next run.
         let recovered = one_run(&root, &format!("{point} recovery"));
         assert!(
             recovered
@@ -172,16 +296,11 @@ fn supervisor_killed_at_every_journal_crossing_settles_without_orphans() {
                 .is_ok_and(|out| out.contains("): stopped")),
             "{point} recovery: {recovered:?}"
         );
+        completed += 1;
     }
-    println!(
-        "{} crossings armed, {} never fired: {missed:?}\n{armed:?}",
-        armed.len(),
-        missed.len()
-    );
-    // A timing-dependent crossing (a poll) may not recur in an armed run;
-    // every journal boundary does.
-    assert!(
-        missed.len() * 10 <= armed.len(),
-        "faults that never fired: {missed:?} of {armed:?}"
-    );
+    fs::write(
+        root.join("result.json"),
+        serde_json::to_vec(&(completed, missed)).expect("worker result JSON"),
+    )
+    .expect("write worker result");
 }

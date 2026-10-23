@@ -4,11 +4,10 @@ Owner: Platform (task engine, Queue lane `v015-task-engine`)
 Created: 2026-05-10
 Rebuilt: 2026-10-19 on the runtime kernel ([052](052-runtime-kernel-contract.md) §5.1, §5.4, §5.6, §10.1)
 
-Q-010 touch-points below are **proposed**, approved by planner and Tom (2026-10-22: "Approve")
-for implementation with [052 §3.1](052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary).
-The existing binary still uses a central journal and the v2 row-based status
-model; [018](018-task-status-query-surface-and-read-model-contract.md) specifies
-the proposed foreground-aware replacement.
+Q-010 follows the storage and custody model approved by planner and Tom
+(2026-10-22: "Approve") in [052 §3.1](052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary).
+Foreground evidence stays in memory; durable runs use checkout journals. The
+foreground-aware task status surface uses v3 envelopes (contract 018).
 
 ## Purpose
 

@@ -741,7 +741,7 @@
 # executable's ancestors, which refuses the removable Builds pool the
 # shared slot lives on (Oxide refused "untrusted /Volumes/Builds"; Cargo
 # passed).
-"test:supervisor:faults" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --features fault-injection --lib --filterset 'test(managed_supervisor_fault_tests::)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail {args}", timeout_ms = 3600000 }] }
+"test:supervisor:faults" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/supervisor-faults-nextest.toml --user-config-file none -p effigy --features fault-injection --lib --filterset 'test(managed_supervisor_fault_tests::)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail {args}", timeout_ms = 3600000 }] }
 # The 108-cell strict-fake lifecycle matrix (front end × prior × stop ×
 # failed children) plus the client-death cases, each a real-binary run
 # against the fake Compose backend with an immediate restart.
@@ -2884,6 +2884,29 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 "test:containers:checkout-binding" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(compose_binding_label_tests::) | test(legacy_admission_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:containers:checkout-binding:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(compose_binding_label_tests::) | test(legacy_admission_tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 
+"proof:runtime-storage:linux" = { visibility = "internal", group = "Maintenance", admission = "heavy", description = "Qualify runtime storage and probe custody, the explicit actual store copy, and syscall write budgets on Linux.", run = [{ run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh qualification", timeout_ms = 3600000 }] }
 
 "lint:release:runtime-storage" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-release -p effigy-secrets --all-targets --features effigy-secrets/fault-injection -- -D warnings", timeout_ms = 900000 }] }
 "lint:release:runtime-storage:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy-release -p effigy-secrets --all-targets --features effigy-secrets/fault-injection -- -D warnings", timeout_ms = 900000 }] }
+
+"test:runtime-storage:surfaces" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-execution --lib --test cli_output_tests -E 'test(qa_group) | test(qa_groups) | test(parse_container_retire)' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1200000 }] }
+"test:runtime-storage:surfaces:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-execution --lib --test cli_output_tests -E 'test(qa_group) | test(qa_groups) | test(parse_container_retire)' --no-fail-fast --retries 0 --no-tests fail -j 2", timeout_ms = 1200000 }] }
+
+"lint:runtime-storage:surfaces" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-execution --all-targets -- -D warnings", timeout_ms = 900000 }] }
+"lint:runtime-storage:surfaces:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy -p effigy-manifest -p effigy-tasks -p effigy-cli -p effigy-execution --all-targets -- -D warnings", timeout_ms = 900000 }] }
+
+
+"proof:runtime-qa-group:cli" = { visibility = "internal", group = "Maintenance", admission = "heavy", description = "Prove durable group members, retained logs and honest owner-loss recovery in a private checkout.", run = [{ run = "python3 tests/scripts/runtime-qa-group-cli.py target/debug/effigy", timeout_ms = 180000 }] }
+
+"proof:runtime-storage:final:linux" = { visibility = "internal", group = "Maintenance", admission = "heavy", description = "Qualify current Linux probe closure and physical foreground, group, named and detached lifecycle writes.", run = [{ run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh final-runtime", timeout_ms = 3600000 }] }
+
+"test:kernel:faults:q010" = { visibility = "internal", group = "Maintenance", description = "Run Q-010 observer and residue-successor fault regressions with full oracle checks.", run = [
+  { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture sh scripts/oxide-selector.sh nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^faults::scenarios::faults_observe_with_guarded_subprocess_and_http_probes$/) | test(/^faults::scenarios::faults_closed_predecessor_with_residue_then_begin$/)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 },
+] }
+"test:kernel:faults:q010:cargo" = { visibility = "internal", group = "Maintenance", run = [
+  { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
+  { run = "EFFIGY_KERNEL_CUSTODY_FIXTURE=$PWD/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/kernel-faults-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(/^faults::scenarios::faults_observe_with_guarded_subprocess_and_http_probes$/) | test(/^faults::scenarios::faults_closed_predecessor_with_residue_then_begin$/)' --success-output immediate --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 1800000 },
+] }
+
+"lint:supervisor:faults" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy --lib --tests --features fault-injection -- -D warnings", timeout_ms = 1200000 }] }

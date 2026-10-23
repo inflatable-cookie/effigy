@@ -57,6 +57,7 @@ points! {
     ProbeGuardAck,
     ProbeBeforeGo,
     ProbeAfterGo,
+    ProbeCloseBefore,
     ProbeConnect,
     ProbeObservation,
     SocketBind,

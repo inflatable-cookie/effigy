@@ -4,10 +4,10 @@ Owner: Platform (task engine)
 Created: 2026-05-10
 Rebuilt: 2026-10-19 on run records ([017](017-task-status-record-and-active-run-model-contract.md), [052](052-runtime-kernel-contract.md) §5.6 status)
 
-Q-010 read model below is **proposed**, approved by planner and Tom (2026-10-22: "Approve") for
-implementation with [052 §3.1](052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary).
-The existing binary still implements the row-based v2 envelopes. Phase 2
-introduces the v3 envelopes specified here; this doc PR changes no JSON output.
+Q-010 follows the storage and custody model approved by planner and Tom
+(2026-10-22: "Approve") in [052 §3.1](052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary).
+Foreground evidence stays in memory; durable runs use checkout journals. The
+foreground-aware task status surface uses v3 envelopes (contract 018).
 
 ## Purpose
 
@@ -86,8 +86,7 @@ include `not-recorded` and `unknown`; no reads create tokens, history or locks.
 The envelopes are `effigy.tasks-status.v3` and
 `effigy.tasks-status-all.v3` (`schema_version = 3`). New absence semantics and
 nullable live-diagnostic fields must not silently change the v2 contract.
-Phase 2 updates the consumers and CLI checks together; there is no v2
-compatibility shim that fabricates foreground history. Foreground inventory is
+Consumers and CLI checks use v3 together; there is no v2 compatibility shim that fabricates foreground history. Foreground inventory is
 bounded to 64 gate-directory entries and 8192 resource entries; exceeding a
 bound or reading unverified held-gate diagnostics produces explicit uncertainty.
 

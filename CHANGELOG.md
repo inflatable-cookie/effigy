@@ -7,6 +7,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Read-only process probes verify closure on a separate finite cleanup budget;
+  signal grace and workload deadlines remain unchanged.
+- QA-group members retain their parent checkout journal, so completed member
+  status and logs remain available even for otherwise local commands.
 - Release Git operations and stage tasks now run under their checkout run’s
   process custody. Owner death triggers cleanup, and output or closure gaps
   refuse completion. Vault locking opens no runtime database.

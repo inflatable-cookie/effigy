@@ -4,3 +4,12 @@
 slow-timeout = { period = "600s", terminate-after = 1, grace-period = "5s" }
 leak-timeout = { period = "1s", result = "fail" }
 global-timeout = "1800s"
+
+# Each scenario starts six fault-shard processes. Bound that expansion to two
+# scenarios (twelve workers), rather than multiplying it by host CPU count.
+[test-groups.kernel-fault-drivers]
+max-threads = 2
+
+[[profile.default.overrides]]
+filter = 'test(/^faults::scenarios::/)'
+test-group = 'kernel-fault-drivers'

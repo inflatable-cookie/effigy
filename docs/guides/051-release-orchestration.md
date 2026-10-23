@@ -628,24 +628,24 @@ Important gate-stage rule:
 
 ## 7) Run State and Safety
 
-A release Run writes Effigy-owned state outside the repo (contract 054 §10
-ruling 2):
+A release Run writes gitignored state in its owning checkout (contract 054 §10
+ruling 2, amended by Q-010):
 
-- `~/.effigy/state/kernel.db` — the kernel journal. Each invocation is one
+- `<checkout>/.effigy/state/kernel.db` — the kernel journal. Each invocation is one
   journalled Run that holds the release gate, journals every irreversible
   publish before it happens, and settles whatever an interrupted invocation
   left behind. The kernel engine record carries the checkpoint pointer: release
   id, invocation id, stage, status and the record's path
-- `~/.effigy/state/release/<owner>/record.json` — the durable record: source
+- `<checkout>/.effigy/state/release/<owner>/record.json` — the durable record: source
   commit, candidate commit, each identity's version and tag, each artifact's
   path and sha256, gate results, approvals, destinations and errors
-- `~/.effigy/state/release/<owner>/receipt.json` — the receipt `release
+- `<checkout>/.effigy/state/release/<owner>/receipt.json` — the receipt `release
   receipt` prints
-- `~/.effigy/state/release/<owner>/candidate/` — the certified artifact copies
+- `<checkout>/.effigy/state/release/<owner>/candidate/` — the certified artifact copies
   publish is allowed to use
 
-There is no state file in the repository. A project that wants a receipt in its
-tree adds a `closeout` task that reads it.
+Runtime state is not tracked in Git. A project that wants a versioned receipt
+adds a `closeout` task that exports it.
 
 Safety rules the Run enforces:
 

@@ -5,10 +5,11 @@ and `src/runner/environment.rs` (runner cutover), effigy#232. The
 `data_from` data claim, retire as a transition, the workspace session run and
 its host authority channel are later work (§9).
 
-Q-010 touch-points: the storage/custody amendment in contract
-[052](052-runtime-kernel-contract.md) §3.1, §7 and §11.1 is **proposed,
-approved by planner and Tom (2026-10-22: "Approve") for implementation**. The current engine
-still uses the central store. The following specifies its required relocation.
+Q-010 storage follows contract [052](052-runtime-kernel-contract.md) §3.1,
+§7 and §11.1, approved by planner and Tom (2026-10-22: "Approve"). Environment
+records, renders and holders use their checkout journal; shared endpoint and
+port facts use the machine store. The later workflows named in §9 remain
+separate from this relocation.
 
 Owner: environment reconciler (Queue lane `v015-environment`)
 Kernel: [052](052-runtime-kernel-contract.md) §5.9, §10.3, §11

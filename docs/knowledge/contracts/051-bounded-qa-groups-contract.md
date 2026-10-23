@@ -4,8 +4,8 @@ Status: active. The grammar, commands, and schemas below are implemented
 through the `tasks qa-group` surfaces. Two reviewed controls remain
 unavailable and are rejected with precise prerequisite diagnostics:
 `hard_timeout_ms` and `qa-group stop` wait on owned-run supervision
-([052](052-runtime-kernel-contract.md), proposed and unavailable until
-implementation). Until that lands, status records incomplete owner loss as
+([052](052-runtime-kernel-contract.md)); their QA-group control integration
+is unavailable. Status records incomplete owner loss as
 `unknown`, never a pass.
 
 Owner: task selection and execution maintainers
@@ -29,10 +29,10 @@ opaque input, stale group, or uncertain dependency returns `needs_planner` with
 the reason. It never instructs a worker to run the full QA board. Full QA stays
 planner-owned through Queue on `main` at milestones and release points.
 
-### Q-010 durability touch-point (proposed)
+### Q-010 durability touch-point
 
 The storage amendment in [052 §3.1](052-runtime-kernel-contract.md#31-q-010-run-classes-and-the-durability-boundary)
-is approved by planner and Tom (2026-10-22: "Approve") for implementation. A group execution
+follows planner and Tom approval (2026-10-22: "Approve"). A group execution
 always selects `CheckoutDurable`, including a temporary group or one whose
 members are all local, light and terminal-bound. Retained evidence is part of
 the group workflow: the definition snapshot, head/worktree context, member
@@ -405,7 +405,7 @@ Current availability after the contract 051 implementation:
 | Admission hook | Implemented. | A heavy group is admitted once through `EFFIGY_ADMISSION_HOOK` under [049](049-heavy-validation-admission-contract.md#admission-hook); a refusal records no group and runs no member. |
 | Task admission | Implemented. | Public and internal tasks share typed admission metadata; legacy task syntax translates under contract 046. |
 | Group run status and logs | Implemented. | Runs persist a definition snapshot, head/worktree context, member ledger, and run-scoped pipeline-redacted logs; `tasks qa-group status/logs` read them live and after completion. |
-| Ordinary process stop | Unavailable. | Parsing exists so the command can refuse before any side effect with the precise prerequisite: the owned-run supervision contract [052](052-runtime-kernel-contract.md), proposed and unavailable until implementation. |
+| Ordinary process stop | Unavailable. | Parsing exists so the command can refuse before any side effect with the precise prerequisite: QA-group integration with the owned-run supervision contract [052](052-runtime-kernel-contract.md). |
 | `hard_timeout_ms` | Unavailable. | Definitions naming it fail validation with the same contract 052 prerequisite diagnostic. |
 | Owner loss and PID reuse | Preserved fail-closed. | A group run is a kernel run (contract 052): its run ID is the kernel run id and its liveness is that run's gate, never a PID, start identity or heartbeat age. A live record whose run is interrupted or closed without a final record reconciles to `unknown`, never a pass. |
 | Owner `SIGKILL` | Honest incomplete evidence. | A dead owner cannot write a final record; status stays `unknown`/incomplete. Never a fabricated complete receipt. |

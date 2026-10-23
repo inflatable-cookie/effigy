@@ -174,17 +174,22 @@ pub(super) fn drive(scenario: &dyn Scenario) {
         })
         .collect();
     let mut tally = Tally::default();
+    let mut failed = Vec::new();
     for (shard, mut child) in shards {
         let status = child.wait().expect("shard wait");
-        assert!(
-            status.success(),
-            "{}: shard {shard} failed: {status:?}",
-            scenario.name()
-        );
+        if !status.success() {
+            failed.push((shard, status));
+            continue;
+        }
         let encoded = std::fs::read_to_string(plan.path().join(format!("tally-{shard}")))
             .expect("shard tally");
         tally.merge(&encoded);
     }
+    assert!(
+        failed.is_empty(),
+        "{}: failed shards: {failed:?}",
+        scenario.name()
+    );
     for point in &trace {
         if scenario.variable().contains(point) {
             continue;
@@ -452,9 +457,9 @@ fn recover(scenario: &dyn Scenario, home: &Path, label: &str) -> World {
             .collect();
         let refused = match super::scenarios::rerun(home, owner, n) {
             Ok(()) => false,
-            Err(true) if !residue.is_empty() => true,
-            Err(residue_refusal) => panic!(
-                "{label}: rerun of {} refused (residue refusal: {residue_refusal}) beside {residue:?}",
+            Err(run::RunError::PredecessorUnsettled { .. }) if !residue.is_empty() => true,
+            Err(error) => panic!(
+                "{label}: rerun of {} refused ({error:?}) beside {residue:?}",
                 owner.label()
             ),
         };
