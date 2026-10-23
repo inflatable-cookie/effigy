@@ -10,6 +10,7 @@ pub use adoption::{authority, Authority, ImportReceipt, ImportedDestination};
 pub use control::{request_legacy_stop, stop_legacy_writer, LegacyStop, WriterTarget};
 pub use execute::{committed, import, CheckoutLocation, CheckoutResolver, ImportReport};
 mod plan;
+pub(crate) use fence::borrow_source_scope;
 pub use fence::LegacyQuiescence;
 pub use fence::{destination_blocker, DestinationBlocker};
 pub use plan::{plan, ImportPlan, Partition};
@@ -267,6 +268,9 @@ pub(crate) fn inspect_gates(
             if let Some((file, _)) =
                 gates.open_file(&FileName::new(scope)?, libc::O_RDONLY, None, Trust::Private)?
             {
+                if name == "machine" && fence::source_scope_owned(&file)? {
+                    continue;
+                }
                 if crate::fs::try_flock(&file, libc::LOCK_SH).map_err(|error| {
                     crate::fs::FsError::io("legacy scope probe", gates.path(), &error)
                 })? {
@@ -308,7 +312,9 @@ pub(crate) fn inspect_gates(
             match gate::probe_names(cx, root, scope, rid) {
                 Observed::Verified(GateState::Free, _) | Observed::Absent(_) => {}
                 Observed::Verified(GateState::Held(holder), _) => {
-                    blockers.push(holder_blocker(scope, rid, *holder));
+                    if !fence::own_import_holder(root, rid, &holder) {
+                        blockers.push(holder_blocker(scope, rid, *holder));
+                    }
                 }
                 Observed::Unknown(reason) => {
                     blockers.push(holder_blocker(scope, rid, Observed::Unknown(reason)))

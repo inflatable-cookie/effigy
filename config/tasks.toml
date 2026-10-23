@@ -251,6 +251,9 @@
   { run = "cargo build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
   { run = "env -u EFFIGY_KERNEL_CUSTODY_FIXTURE cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib -E 'test(replaced_native_image_verifies_in_the_real_sentinel) | test(sentinel_refusal_reaches_the_parent_stderr_tail)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
+"proof:runtime-migration:actual-copy" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh actual-copy", timeout_ms = 2400000 }] }
+"test:kernel:migration:freeze" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test migration -E 'test(migration_source_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 180000 }] }
+"test:kernel:migration-scale:compile" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy-kernel --test migration_scale", timeout_ms = 600000 }] }
 "test:kernel:runtime-storage:linux" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh runtime-storage", timeout_ms = 2400000 }] }
 "test:kernel:helpers:linux" = { visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ id = "linux-helpers", run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh helpers", timeout_ms = 1800000 }] }
 "check:kernel:write-churn" = { visibility = "internal", group = "Maintenance", run = [{ task = "check:kernel" }, { task = "check:doctor:inventory" }] }

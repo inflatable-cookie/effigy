@@ -7,6 +7,8 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Runtime migration freezes the legacy writer scope with bounded descriptors,
+  rechecks old owners before publication, and refuses replaced scope inodes.
 - Managed supervisors initialize in the selected checkout journal and explicitly
   forward verified parent capabilities; Linux retained-image helpers prepare
   descriptors before exec and preserve their explicit environment.

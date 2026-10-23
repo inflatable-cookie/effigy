@@ -298,7 +298,18 @@ impl Gate {
                 .iter()
                 .find(|id| &scope_name(id.scope()) == name)
                 .expect("scope of an id");
-            let file = lock(cx, file, libc::LOCK_SH, deadline, started, wait, first)?;
+            let borrowed = if name == "machine" {
+                crate::migration::borrow_source_scope(&file, &ids)?
+            } else {
+                None
+            };
+            let file = match borrowed {
+                Some(file) => GateFile {
+                    file,
+                    unlock_on_drop: false,
+                },
+                None => lock(cx, file, libc::LOCK_SH, deadline, started, wait, first)?,
+            };
             guard.scopes.push((name.clone(), file));
             // Recreated after a removal; removal cannot run while we hold SH.
             let dir = gates.child(name, Trust::Private, true)?.expect("created");

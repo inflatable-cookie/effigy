@@ -154,9 +154,132 @@ impl LegacyQuiescence {
     }
 }
 
+// One legacy machine scope fences every Store writer before journal go. The
+// historical per-resource inode count must not consume the descriptor budget.
+// Only importer-owned metadata gates may borrow this exclusive description;
+// application gates still acquire their ordinary shared scope.
+use std::cell::RefCell;
+use std::os::unix::fs::MetadataExt;
+use std::sync::{Arc, Weak};
+
+thread_local! {
+    static FROZEN_SOURCES: RefCell<Vec<Weak<FrozenSource>>> = const { RefCell::new(Vec::new()) };
+}
+#[derive(Debug)]
+struct FrozenSource {
+    root: StateRoot,
+    scope: Option<File>,
+    reserved: Vec<String>,
+}
+impl FrozenSource {
+    fn verify(&self) -> Result<(), crate::fs::FsError> {
+        self.root.verify_binding()?;
+        if let Some(scope) = &self.scope {
+            let gates = self.root.read_family(Family::Gates)?.ok_or_else(|| {
+                crate::fs::FsError::untrusted(self.root.path(), "legacy gates disappeared")
+            })?;
+            let current = gates
+                .open_file(
+                    &FileName::new("machine.scope")?,
+                    libc::O_RDONLY,
+                    None,
+                    Trust::Private,
+                )?
+                .ok_or_else(|| {
+                    crate::fs::FsError::untrusted(
+                        self.root.path(),
+                        "legacy writer scope disappeared",
+                    )
+                })?
+                .0;
+            if !same_file(&current, scope, self.root.path())? {
+                return Err(crate::fs::FsError::untrusted(
+                    self.root.path(),
+                    "legacy writer scope changed",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+fn same_file(one: &File, two: &File, path: &std::path::Path) -> Result<bool, crate::fs::FsError> {
+    let metadata = |file: &File| {
+        file.metadata()
+            .map_err(|error| crate::fs::FsError::io("legacy scope identity", path, &error))
+    };
+    let one = metadata(one)?;
+    let two = metadata(two)?;
+    Ok((one.dev(), one.ino()) == (two.dev(), two.ino()))
+}
+fn frozen_sources() -> Vec<Arc<FrozenSource>> {
+    FROZEN_SOURCES.with(|entries| {
+        let mut entries = entries.borrow_mut();
+        entries.retain(|entry| entry.strong_count() != 0);
+        entries.iter().filter_map(Weak::upgrade).collect()
+    })
+}
+pub(crate) fn source_scope_owned(file: &File) -> Result<bool, crate::fs::FsError> {
+    for source in frozen_sources() {
+        if let Some(scope) = &source.scope {
+            if same_file(file, scope, source.root.path())? {
+                source.verify()?;
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+pub(crate) fn borrow_source_scope(
+    file: &File,
+    ids: &[ResourceId],
+) -> Result<Option<File>, crate::fs::FsError> {
+    for source in frozen_sources() {
+        if !ids.iter().all(|id| {
+            id.scope() == crate::id::Scope::Machine
+                && id.kind() == crate::id::ResourceKind::Store
+                && source.reserved.contains(&id.name().to_string())
+        }) {
+            continue;
+        }
+        if let Some(scope) = &source.scope {
+            if same_file(file, scope, source.root.path())? {
+                source.verify()?;
+                return scope.try_clone().map(Some).map_err(|error| {
+                    crate::fs::FsError::io("borrow migration scope", source.root.path(), &error)
+                });
+            }
+        }
+    }
+    Ok(None)
+}
+pub(crate) fn own_import_holder(
+    root: &StateRoot,
+    name: &str,
+    holder: &Observed<HolderDiag>,
+) -> bool {
+    let Observed::Verified(holder, _) = holder else {
+        return false;
+    };
+    let Observed::Verified(current, _) = ident::process_identity(std::process::id()) else {
+        return false;
+    };
+    if holder.pid != current.pid
+        || holder.start != Some(current.start.text())
+        || holder.boot.as_deref() != Some(current.boot.as_str())
+    {
+        return false;
+    }
+    frozen_sources().iter().any(|source| {
+        source.reserved.iter().any(|reserved| reserved == name)
+            && source.verify().is_ok()
+            && matches!((source.root.dir().identity(), root.dir().identity()),
+                (Ok(expected), Ok(current)) if expected == current)
+    })
+}
+
 #[derive(Debug)]
 pub(super) struct LegacyFence {
-    _files: Vec<File>,
+    source: Arc<FrozenSource>,
 }
 impl LegacyFence {
     pub(super) fn acquire(
@@ -164,85 +287,80 @@ impl LegacyFence {
         root: &StateRoot,
         _quiescence: &LegacyQuiescence,
     ) -> Result<Self, MigrationError> {
-        let mut files = Vec::new();
-        if let Some(gates) = root.read_family(Family::Gates).map_err(StoreError::from)? {
-            let mut scopes = gates.list(ENTRY_LIMIT).map_err(StoreError::from)?;
-            scopes.sort();
-            let reserved: Vec<String> = ["migrate:runtime", "migrate:checkout", "migrate:seal"]
+        cx.check("legacy writer fencing")
+            .map_err(StoreError::Interrupted)?;
+        let scope = match root.read_family(Family::Gates)? {
+            Some(gates) => gates
+                .open_file(
+                    &FileName::new("machine.scope")?,
+                    libc::O_RDONLY,
+                    None,
+                    Trust::Private,
+                )?
+                .map(|(file, _)| file),
+            None => None,
+        };
+        if let Some(file) = &scope {
+            if !fs::try_flock(file, libc::LOCK_EX).map_err(|error| {
+                StoreError::Io(IoError::new(
+                    "legacy writer scope lock",
+                    root.path(),
+                    &error,
+                ))
+            })? {
+                let mut report = inspect(cx, root)?;
+                if report.ready() {
+                    let reason = UnknownReason::Inconsistent(
+                        "legacy machine writer scope is held; drain legacy launchers and retry"
+                            .into(),
+                    );
+                    report.blockers.push(Blocker {
+                        scope: "machine".into(),
+                        resource: "machine.scope".into(),
+                        run: None,
+                        role: "writer scope".into(),
+                        process: Observed::Unknown(reason.clone()),
+                        state: Observed::Unknown(reason),
+                    });
+                }
+                return Err(MigrationError::Blocked(report));
+            }
+        }
+        let source = Arc::new(FrozenSource {
+            root: root.clone(),
+            scope,
+            reserved: ["migrate:runtime", "migrate:checkout", "migrate:seal"]
                 .into_iter()
                 .map(|name| {
-                    crate::id::ResourceId::store(crate::id::Scope::Machine, name)
+                    ResourceId::store(crate::id::Scope::Machine, name)
                         .expect("fixed migration identity")
                         .name()
                         .to_string()
                 })
-                .collect();
-            for scope in scopes {
-                cx.check("legacy source fencing")
-                    .map_err(StoreError::Interrupted)?;
-                let scope = scope
-                    .to_str()
-                    .ok_or_else(|| StoreError::Corrupt("non-UTF8 legacy gate scope".into()))?;
-                if let Some(checkout_scope) = scope.strip_suffix(".scope") {
-                    if checkout_scope == "machine" {
-                        continue;
-                    }
-                    let name = FileName::new(scope).map_err(StoreError::from)?;
-                    let (file, _) = gates
-                        .open_file(&name, libc::O_RDONLY, None, Trust::Private)
-                        .map_err(StoreError::from)?
-                        .ok_or_else(|| StoreError::Corrupt("legacy scope disappeared".into()))?;
-                    if !fs::try_flock(&file, libc::LOCK_EX).map_err(|error| {
-                        StoreError::Io(IoError::new("legacy scope lock", root.path(), &error))
-                    })? {
-                        drop(files);
-                        return Err(MigrationError::Blocked(inspect(cx, root)?));
-                    }
-                    files.push(file);
-                    continue;
-                }
-                if scope != "machine" {
-                    continue;
-                }
-                let Some(dir) = gates
-                    .child(scope, Trust::Private, false)
-                    .map_err(StoreError::from)?
-                else {
-                    continue;
-                };
-                let mut names = dir.list(ENTRY_LIMIT).map_err(StoreError::from)?;
-                names.sort();
-                for name in names {
-                    cx.check("legacy resource fencing")
-                        .map_err(StoreError::Interrupted)?;
-                    let name = name
-                        .to_str()
-                        .ok_or_else(|| StoreError::Corrupt("non-UTF8 legacy gate".into()))?;
-                    if scope == "machine"
-                        && name
-                            .strip_suffix(".gate")
-                            .is_some_and(|name| reserved.iter().any(|reserved| reserved == name))
-                    {
-                        continue;
-                    }
-                    let name = FileName::new(name).map_err(StoreError::from)?;
-                    let (file, _) = dir
-                        .open_file(&name, libc::O_RDONLY, None, Trust::Private)
-                        .map_err(StoreError::from)?
-                        .ok_or_else(|| {
-                            StoreError::Corrupt("legacy gate disappeared while fencing".into())
-                        })?;
-                    let held = fs::try_flock(&file, libc::LOCK_EX).map_err(|error| {
-                        StoreError::Io(IoError::new("legacy resource lock", root.path(), &error))
-                    })?;
-                    if !held {
-                        drop(files);
-                        return Err(MigrationError::Blocked(inspect(cx, root)?));
-                    }
-                    files.push(file);
-                }
+                .collect(),
+        });
+        FROZEN_SOURCES.with(|entries| {
+            let mut entries = entries.borrow_mut();
+            entries.retain(|entry| entry.strong_count() != 0);
+            if entries.len() >= 16 {
+                return Err(StoreError::Corrupt(
+                    "nested source freezes exceed 16".into(),
+                ));
             }
+            entries.push(Arc::downgrade(&source));
+            Ok(())
+        })?;
+        let guard = Self { source };
+        // Catch an owner admitted between preflight and the writer freeze.
+        // Old pre-fence launchers remain covered by explicit withdrawal.
+        let report = inspect(cx, root)?;
+        if !report.ready() {
+            return Err(MigrationError::Blocked(report));
         }
-        Ok(Self { _files: files })
+        guard.verify()?;
+        Ok(guard)
+    }
+    pub(super) fn verify(&self) -> Result<(), StoreError> {
+        self.source.verify().map_err(StoreError::from)
     }
 }

@@ -118,7 +118,7 @@ pub fn import(
     if !preflight.ready() {
         return Err(MigrationError::Blocked(preflight));
     }
-    let _source_fence = LegacyFence::acquire(&observe, source, quiescence)?;
+    let source_fence = LegacyFence::acquire(&observe, source, quiescence)?;
 
     let source_digest = files::digest(
         &observe,
@@ -434,6 +434,11 @@ pub fn import(
         return Err(
             StoreError::Corrupt("legacy source changed before cutover commit".into()).into(),
         );
+    }
+    source_fence.verify()?;
+    let preflight = inspect(&observe, source)?;
+    if !preflight.ready() {
+        return Err(MigrationError::Blocked(preflight));
     }
     // The only authority switch. Prepared databases alone are always inert.
     let migration = machine

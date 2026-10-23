@@ -59,10 +59,30 @@ Kill, ENOSPC and EPERM proofs cover preparation, publication and retry. Distinct
 legacy task/environment tokens for one verified checkout coalesce without
 re-encoding resources or runs. Prepared, missing and mismatched publications
 refuse normal mutation. `Store::read_sealed` requires a checkpointed source and
-creates no source files. These proofs do not claim the required real-store
-scale, busy-machine end-to-end acceptance or live-backend qualification.
-Release routing, machine write-budget enforcement, production foreground
-execution and the remaining acceptance harnesses are still task work.
+creates no source files. The read-only actual-copy proof now migrates a
+151,244,800-byte checkpointed copy in 32.891 seconds, with 47 checkout outputs
+and one machine output. It preserves all 11 unresolved runs, 55,470 claims and
+opaque resource payloads; every destination passes integrity and foreign-key
+checks. A second 151,244,800-byte copy with 18,700 runs and 10,800 historical
+gates migrates in 29.572 seconds. Both sources remain unchanged. Original
+files were opened only with `O_RDONLY|O_NOFOLLOW`; committed WAL content was
+checkpointed only in a private copy. Copy qualification runs on a foreign Linux
+boot with explicit private checkout mappings, so no copied receipt can signal
+the operator's processes. These are data-import proofs; live-backend continuity
+and deleted-worktree retirement remain required. Exact per-checkout outputs and
+hashes are retained in the task's validation artifacts. The narrow selector is
+`proof:runtime-migration:actual-copy`, with `EFFIGY_RUNTIME_MIGRATION_COPY`
+pointing to the explicitly prepared private fixture.
+Release routing, machine write-budget enforcement and the remaining
+acceptance harnesses are still task work. Native Linux qualification now
+passes 135 selected migration, store, inheritance, helper, custody and gate
+tests, including unprivileged permission refusals. Managed supervisor bootstrap
+uses its selected checkout journal. Helpers forward only the verified reader
+in a fresh allocated descriptor; retained-image exec follows descriptor setup
+and preserves explicit launch inputs. A private nested headless proof observes
+one admission hook, zero central databases and positive owning-client-death
+cleanup. Shared machine resource gates use the same physical namespace from
+every checkout and helper; internal store/object mutexes remain checkout-local.
 
 Status: foundation types are implemented in `crates/effigy-kernel/`: identity
 encoding v1, operation contexts and class capabilities, observation and Probe
@@ -2749,6 +2769,15 @@ refuses with that command rather than stopping user work automatically.
 Acquire the legacy writer locks/owner gates and migration scope gate in canonical
 order; hold them through publication. Verify no old writer remains; recheck its
 boot/start identity and the legacy snapshot digest immediately before commit.
+The scope-aware legacy store takes `machine.scope` shared before every journal
+write. Migration holds that existing inode exclusively and inventories owner
+gates under it, using a bounded number of descriptors even with thousands of
+historical gate files. Only the importer's three metadata-gate identities may
+borrow the same verified exclusive description, without downgrade or unlock;
+ordinary gates cannot borrow it. The lexical borrowing grant expires with the
+source freeze. Scope-inode replacement refuses publication. Sources predating
+that scope protocol still require withdrawal of unsupported writers; the
+importer never creates or rewrites their source lock files.
 Unknown writers or unavailable quiescence refuse with a diagnostic, never a
 partial import. This is a one-time coordination boundary across the old store,
 not a recurring global task gate. If an unmanaged old binary can still be

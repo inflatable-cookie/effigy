@@ -1569,3 +1569,89 @@ fn runtime_machine_gate_refusal_does_not_make_local_gates_depend_on_machine_form
     Gate::acquire(&cx, &root, &[local], Wait::FailFast).unwrap();
     assert_eq!(snapshot(machine.path()), before);
 }
+
+#[cfg(feature = "fault-injection")]
+#[test]
+fn migration_source_freeze_survives_metadata_borrows_and_releases_after_publication() {
+    use std::os::fd::AsRawFd;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    let (home, root, _) = source();
+    let scope = root.path().join("gates/machine.scope");
+    let checked = Arc::new(AtomicUsize::new(0));
+    let captured = checked.clone();
+    let cx = effects(EffectClass::Mutate);
+    effigy_kernel::fault_injection::with_hook(
+        move |point| {
+            if matches!(
+                point,
+                "MigrationStageBefore" | "MigrationPreparedAfter" | "MigrationSealAfter"
+            ) {
+                let file = std::fs::File::open(&scope)?;
+                // SAFETY: this owned file remains open; flock with LOCK_NB never
+                // waits and cannot affect the importer's separate description.
+                let status =
+                    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) };
+                assert_eq!(status, -1, "metadata gate downgraded the source freeze");
+                assert_eq!(
+                    std::io::Error::last_os_error().raw_os_error(),
+                    Some(libc::EWOULDBLOCK)
+                );
+                captured.fetch_add(1, Ordering::Relaxed);
+            }
+            Ok(())
+        },
+        || {
+            migration::import(
+                &cx,
+                &root,
+                home.path(),
+                &migration::LegacyQuiescence::launchers_withdrawn(),
+                &mut |_, _, _| panic!("no retained checkout"),
+            )
+        },
+    )
+    .unwrap();
+    assert!(checked.load(Ordering::Relaxed) >= 3);
+    let ordinary = ResourceId::store(Scope::Machine, "ordinary-after-import").unwrap();
+    drop(Gate::acquire(&cx, &root, &[ordinary], Wait::FailFast).unwrap());
+}
+
+#[cfg(feature = "fault-injection")]
+#[test]
+fn migration_source_scope_replacement_refuses_the_authority_switch() {
+    let (home, root, _) = source();
+    let scope = root.path().join("gates/machine.scope");
+    let previous = root.path().join("original-scope");
+    let replacement = scope.clone();
+    let saved = previous.clone();
+    let cx = effects(EffectClass::Mutate);
+    let result = effigy_kernel::fault_injection::with_hook(
+        move |point| {
+            if point == "MigrationCopyAfter" {
+                std::fs::rename(&replacement, &saved)?;
+                std::fs::write(&replacement, [])?;
+                std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o600))?;
+            }
+            Ok(())
+        },
+        || {
+            migration::import(
+                &cx,
+                &root,
+                home.path(),
+                &migration::LegacyQuiescence::launchers_withdrawn(),
+                &mut |_, _, _| panic!("no retained checkout"),
+            )
+        },
+    );
+    std::fs::remove_file(&scope).unwrap();
+    std::fs::rename(&previous, &scope).unwrap();
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("legacy writer scope changed"), "{error}");
+    assert!(migration::committed(&observe(), home.path())
+        .unwrap()
+        .is_none());
+}
