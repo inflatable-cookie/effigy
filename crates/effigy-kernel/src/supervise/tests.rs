@@ -343,6 +343,7 @@ fn sentinel_refusal_reaches_the_parent_stderr_tail() {
     let config = SentinelConfig {
         home: world.home(),
         machine: false,
+        machine_gates: None,
         owner: owner("refusal"),
         run: RunId::new(1, [1; 10]).unwrap(),
         next: vec![b"recover".to_vec()],
@@ -466,4 +467,31 @@ fn a_path_replaced_before_spawn_is_typed_not_started() {
     }
     assert!(plan.executable.replaced_image().is_some());
     world.assert_no_residue();
+}
+
+#[test]
+fn helper_restores_machine_resource_gate_domain_instead_of_a_checkout_shadow() {
+    let world = World::new();
+    let checkout = world.dir.path().join("checkout");
+    std::fs::create_dir(&checkout).unwrap();
+    let cx = cx();
+    let root = StateRoot::checkout_effects(
+        &cx,
+        &world.home(),
+        &crate::migration::CheckoutLocation {
+            root: checkout.clone(),
+            git_directory: None,
+        },
+    )
+    .unwrap();
+    let data = ResourceId::data("docker", "private", "shared").unwrap();
+    let _held = crate::gate::Gate::acquire(&cx, &root, std::slice::from_ref(&data), Wait::FailFast)
+        .unwrap();
+    let helper = helper_root(&cx, &checkout, false, root.machine_gate_address()).unwrap();
+    assert!(matches!(
+        crate::gate::Gate::acquire(&cx, &helper, &[data], Wait::FailFast),
+        Err(crate::gate::GateError::Busy { .. })
+    ));
+    assert!(!helper.path().join("gates/machine").exists());
+    assert!(!world.home().join(".effigy/state/machine.db").exists());
 }

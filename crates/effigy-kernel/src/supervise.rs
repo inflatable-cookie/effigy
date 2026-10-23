@@ -190,6 +190,8 @@ struct SentinelConfig {
     home: PathBuf,
     #[serde(default)]
     machine: bool,
+    #[serde(default)]
+    machine_gates: Option<crate::root::MachineGateAddress>,
     owner: ResourceId,
     run: RunId,
     next: Vec<Vec<u8>>,
@@ -336,13 +338,27 @@ fn release_helper_log() {
         }
     }
 }
-fn helper_root(cx: &EffectContext, home: &Path, machine: bool) -> Result<StateRoot, RunError> {
+fn helper_root(
+    cx: &EffectContext,
+    home: &Path,
+    machine: bool,
+    gates: Option<crate::root::MachineGateAddress>,
+) -> Result<StateRoot, RunError> {
     let root = if machine {
         StateRoot::machine_effects(cx, home)
     } else {
         StateRoot::effects(cx, home)
     };
-    root.map_err(|error| RunError::Store(error.into()))
+    let mut root = root.map_err(|error| RunError::Store(error.into()))?;
+    if let Some(address) = gates {
+        let observe = cx
+            .child(Duration::from_secs(10))
+            .operation()
+            .observe()
+            .map_err(|_| RunError::Invalid("helper machine gate observation".into()))?;
+        root = root.restore_machine_gates(&observe, address);
+    }
+    Ok(root)
 }
 fn nonce() -> u128 {
     std::time::SystemTime::now()
@@ -437,6 +453,7 @@ fn sentinel_attempt(
     let config = SentinelConfig {
         home: home.into(),
         machine: root.is_machine(),
+        machine_gates: root.machine_gate_address(),
         owner: run.fence().resource.clone(),
         run: run.id(),
         next: next.argv().iter().map(|a| a.as_bytes().to_vec()).collect(),
@@ -595,8 +612,8 @@ pub fn internal_entry(
                 router,
                 adapter,
                 validate_next,
-                config.home,
-                config.machine,
+                (config.home, config.machine),
+                config.machine_gates,
                 config.executable,
                 work,
             ),
@@ -627,8 +644,8 @@ pub fn engine_entry(
                 &mut router,
                 adapter,
                 validate_next,
-                config.home,
-                config.machine,
+                (config.home, config.machine),
+                config.machine_gates,
                 config.executable,
                 work,
             ),
@@ -709,7 +726,7 @@ fn sentinel(
     let cx = op
         .effects()
         .map_err(|_| RunError::Invalid("sentinel context".into()))?;
-    let root = helper_root(&cx, &config.home, config.machine)?;
+    let root = helper_root(&cx, &config.home, config.machine, config.machine_gates)?;
     if matches!(
         crate::run::metadata(
             &op.observe()
@@ -837,6 +854,8 @@ struct SupervisorConfig {
     home: PathBuf,
     #[serde(default)]
     machine: bool,
+    #[serde(default)]
+    machine_gates: Option<crate::root::MachineGateAddress>,
     executable: Executable,
     work: Work,
 }
@@ -1137,6 +1156,7 @@ fn launch(
     let config = SupervisorConfig {
         home: root.owning_directory().path().into(),
         machine: root.is_machine(),
+        machine_gates: root.machine_gate_address(),
         executable: executable.clone(),
         work,
     };
@@ -1613,8 +1633,8 @@ fn supervisor(
     router: &mut RouterHandle,
     adapter: &mut impl SettlementAdapter,
     validate_next: impl Fn(&[OsString]) -> bool,
-    home: PathBuf,
-    machine: bool,
+    (home, machine): (PathBuf, bool),
+    machine_gates: Option<crate::root::MachineGateAddress>,
     executable: Executable,
     work: Work,
 ) -> Result<(), RunError> {
@@ -1646,7 +1666,7 @@ fn supervisor(
     let cx = op
         .effects()
         .map_err(|_| RunError::Invalid("supervisor context".into()))?;
-    let root = helper_root(&cx, &home, machine)?;
+    let root = helper_root(&cx, &home, machine, machine_gates)?;
     let cleanup = op
         .cleanup(Duration::from_secs(30))
         .map_err(|_| RunError::Invalid("cleanup overflow".into()))?;

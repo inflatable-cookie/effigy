@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Machine-scoped resource locks now exclude across checkout journals, and
+  recovery helpers retain their machine lock domain. Local resource gates
+  stay usable when the machine store is unavailable.
 - Built-in test suites, including the interactive TUI, now run under memory custody when their
   selected commands and task references are local. Plans and help create no
   runtime state. Remote suites and retained scratch use checkout journals;

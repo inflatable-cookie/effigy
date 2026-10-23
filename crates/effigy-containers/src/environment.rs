@@ -61,7 +61,10 @@ pub fn observe_root(
     repo_root: &std::path::Path,
 ) -> effigy_kernel::observe::Observed<effigy_kernel::root::StateRoot> {
     match location(repo_root) {
-        Ok(location) => effigy_kernel::root::StateRoot::checkout_observe(cx, &location),
+        Ok(location) => match state_home() {
+            Ok(home) => effigy_kernel::root::StateRoot::checkout_observe_in(cx, &home, &location),
+            Err(_) => effigy_kernel::root::StateRoot::checkout_observe(cx, &location),
+        },
         Err(error) => effigy_kernel::observe::Observed::Unknown(
             effigy_kernel::observe::UnknownReason::Untrusted(error.to_string()),
         ),

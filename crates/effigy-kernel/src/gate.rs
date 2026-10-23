@@ -271,7 +271,11 @@ impl Gate {
         let mut ids = ids.to_vec();
         ids.sort_by_key(ResourceId::canonical);
         ids.dedup();
-        let gates = root.family(Family::Gates)?.expect("created directory");
+        let machine = if ids.iter().any(|id| id.scope() == Scope::Machine) {
+            root.machine_gate_effects(cx)?
+        } else {
+            None
+        };
         let mut scope_names: Vec<String> = ids.iter().map(|id| scope_name(id.scope())).collect();
         scope_names.sort();
         scope_names.dedup();
@@ -282,6 +286,12 @@ impl Gate {
         };
         let mut scope_dirs = Vec::new();
         for name in &scope_names {
+            let domain = if name == "machine" {
+                machine.as_ref().unwrap_or(root)
+            } else {
+                root
+            };
+            let gates = domain.family(Family::Gates)?.expect("created directory");
             let file =
                 open_gate(&gates, &format!("{name}.scope"), true)?.expect("created gate file");
             let first = ids
@@ -304,6 +314,10 @@ impl Gate {
                 open_gate(dir, &format!("{}.gate", id.name()), true)?.expect("created gate file");
             let file = lock(cx, file, libc::LOCK_EX, deadline, started, wait, id)?;
             guard.gates.push((id.clone(), file));
+        }
+        root.verify_binding()?;
+        if let Some(machine) = &machine {
+            machine.verify_binding()?;
         }
         crate::fault_point!(GateAcquire)
             .map_err(|e| GateError::Io(IoError::new("gate acquire", root.path(), &e)))?;
@@ -427,9 +441,32 @@ pub(crate) fn signal_named_holder(
     if cx.require(Capability::HostAuthority).is_err() {
         return Observed::Unknown(UnknownReason::HostAuthorityRequired);
     }
+    let observe = match cx.child(Duration::from_secs(10)).operation().observe() {
+        Ok(observe) => observe,
+        Err(_) => {
+            return Observed::Unknown(UnknownReason::TimedOut {
+                phase: "machine gate holder signal".into(),
+            })
+        }
+    };
     if let Err(error) = root.verify_binding() {
         return Observed::Unknown(crate::root::unknown(&error));
     }
+    let machine = if scope == "machine" {
+        match root.machine_gate_observe(&observe) {
+            Observed::Verified(root, _) => root,
+            Observed::Absent(proof) => return Observed::Absent(proof),
+            Observed::Unknown(reason) => return Observed::Unknown(reason),
+        }
+    } else {
+        None
+    };
+    if let Some(machine) = &machine {
+        if let Err(error) = machine.verify_binding() {
+            return Observed::Unknown(crate::root::unknown(&error));
+        }
+    }
+    let root = machine.as_ref().unwrap_or(root);
     let gates = match root.family(Family::Gates) {
         Ok(Some(gates)) => gates,
         Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
@@ -567,24 +604,40 @@ pub(crate) fn probe_names(
             phase: "gate probe".into(),
         });
     }
+    if cx.placement() == crate::ctx::Placement::Guest {
+        return Observed::Unknown(UnknownReason::HostAuthorityRequired);
+    }
     if let Err(error) = root.verify_binding() {
         return Observed::Unknown(crate::root::unknown(&error));
     }
-    // No inode: never acquired, so free with `NoGateInode` as its proof.
-    let free = |proof| Observed::Absent(proof);
+    let machine = if scope == "machine" {
+        match root.machine_gate_observe(cx) {
+            Observed::Verified(root, _) => root,
+            Observed::Absent(proof) => return Observed::Absent(proof),
+            Observed::Unknown(reason) => return Observed::Unknown(reason),
+        }
+    } else {
+        None
+    };
+    if let Some(machine) = &machine {
+        if let Err(error) = machine.verify_binding() {
+            return Observed::Unknown(crate::root::unknown(&error));
+        }
+    }
+    let root = machine.as_ref().unwrap_or(root);
     let gates = match root.family(Family::Gates) {
         Ok(Some(gates)) => gates,
-        Ok(None) => return free(AbsenceProof::NoGateInode),
+        Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
         Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
     };
     let dir = match gates.child(scope, Trust::Private, false) {
         Ok(Some(dir)) => dir,
-        Ok(None) => return free(AbsenceProof::NoGateInode),
+        Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
         Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
     };
     let file = match open_gate(&dir, &format!("{rid}.gate"), false) {
         Ok(Some(file)) => file,
-        Ok(None) => return free(AbsenceProof::NoGateInode),
+        Ok(None) => return Observed::Absent(AbsenceProof::NoGateInode),
         Err(error) => return Observed::Unknown(crate::root::unknown(&error)),
     };
     let evidence = Evidence::new("kernel gate probe".into(), None).expect("fixed source");

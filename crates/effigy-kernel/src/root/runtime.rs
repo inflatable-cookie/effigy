@@ -176,7 +176,9 @@ impl StateRoot {
             .map_err(|_| StoreError::HostAuthorityRequired)?;
         let observe = observation(cx)?;
         require_cutover(&observe, machine_home, Some(&location.root))?;
-        let root = Self::effects(cx, &location.root)?.retain_checkout(location)?;
+        let root = Self::effects(cx, &location.root)?
+            .retain_checkout(location)?
+            .route_machine_gates(&observe, machine_home);
         let expected = binding(&root, location)?;
         match authority(&observe, &root) {
             Observed::Verified(Authority::Committed { .. }, _) => {

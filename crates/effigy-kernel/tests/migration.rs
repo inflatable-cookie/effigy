@@ -1459,3 +1459,113 @@ fn runtime_retained_linked_git_pointer_refuses_later_reads_gates_and_writes() {
     // Restore this fixture's pointer before helper-drain observation.
     std::fs::write(checkout.path().join(".git"), "gitdir: git-one\n").unwrap();
 }
+
+#[test]
+fn runtime_machine_resource_gates_exclude_across_checkouts_without_a_database() {
+    use effigy_kernel::gate::{GateError, GateState};
+    use effigy_kernel::id::{Surface, TaskId};
+    let machine = home();
+    let first = home();
+    let second = home();
+    let cx = effects(EffectClass::Mutate);
+    let a = StateRoot::checkout_effects(&cx, machine.path(), &location(first.path())).unwrap();
+    let b = StateRoot::checkout_effects(&cx, machine.path(), &location(second.path())).unwrap();
+    assert!(
+        !machine.path().join(".effigy/state").exists(),
+        "local admission has no machine-state dependency"
+    );
+    let data = ResourceId::data("docker", "private", "shared").unwrap();
+    let held = Gate::acquire(&cx, &a, std::slice::from_ref(&data), Wait::FailFast).unwrap();
+    let task = TaskId::new(
+        StateRoot::filesystem_checkout(&observe(), &location(second.path())).unwrap(),
+        "",
+        Surface::Published,
+        "local",
+        None,
+    )
+    .unwrap()
+    .resource();
+    assert!(matches!(
+        Gate::acquire(&cx, &b, &[task.clone(), data.clone()], Wait::FailFast),
+        Err(GateError::Busy { .. })
+    ));
+    let _local = Gate::acquire(&cx, &b, &[task], Wait::FailFast)
+        .expect("refused mixed acquisition released its local gates");
+    let before = snapshot(machine.path());
+    let read = StateRoot::checkout_observe_in(&observe(), machine.path(), &location(second.path()));
+    assert!(matches!(
+        Gate::probe(&observe(), read.verified().unwrap(), &data),
+        Observed::Verified(GateState::Held(_), _)
+    ));
+    assert_eq!(snapshot(machine.path()), before, "probing is pure");
+    assert!(!a.path().join("gates/machine").exists());
+    assert!(!b.path().join("gates/machine").exists());
+    assert!(!machine.path().join(".effigy/state/machine.db").exists());
+    assert!(!machine.path().join(".effigy/state/kernel.db").exists());
+    drop(held);
+    Gate::acquire(&cx, &b, &[data], Wait::FailFast)
+        .expect("global release admits another checkout");
+}
+
+#[test]
+fn runtime_machine_gate_generation_change_refuses_before_creating_shadow_locks() {
+    let machine = home();
+    let checkout = home();
+    let cx = effects(EffectClass::Mutate);
+    let root =
+        StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path())).unwrap();
+    let data = ResourceId::data("docker", "private", "shared").unwrap();
+    let _held = Gate::acquire(&cx, &root, std::slice::from_ref(&data), Wait::FailFast).unwrap();
+    let state = machine.path().join(".effigy/state");
+    std::fs::rename(&state, machine.path().join(".effigy/old-state")).unwrap();
+    std::fs::create_dir(&state).unwrap();
+    let before = snapshot(&state);
+    assert!(matches!(
+        Gate::probe(&observe(), &root, &data),
+        Observed::Unknown(_)
+    ));
+    assert!(Gate::acquire(
+        &cx,
+        &root,
+        &[ResourceId::data("docker", "private", "other").unwrap()],
+        Wait::FailFast
+    )
+    .is_err());
+    assert_eq!(snapshot(&state), before);
+    let local = ResourceId::store(
+        Scope::Checkout(
+            StateRoot::filesystem_checkout(&observe(), &location(checkout.path())).unwrap(),
+        ),
+        "local",
+    )
+    .unwrap();
+    Gate::acquire(&cx, &root, &[local], Wait::FailFast).expect("local gates stay independent");
+}
+
+#[test]
+fn runtime_machine_gate_refusal_does_not_make_local_gates_depend_on_machine_format() {
+    let machine = home();
+    let checkout = home();
+    let cx = effects(EffectClass::Mutate);
+    let root =
+        StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path())).unwrap();
+    let machine_root = StateRoot::runtime_machine_effects(&cx, machine.path()).unwrap();
+    std::fs::write(machine_root.path().join("machine-format.json"), b"corrupt").unwrap();
+    let before = snapshot(machine.path());
+    assert!(Gate::acquire(
+        &cx,
+        &root,
+        &[ResourceId::data("docker", "private", "shared").unwrap()],
+        Wait::FailFast
+    )
+    .is_err());
+    let local = ResourceId::store(
+        Scope::Checkout(
+            StateRoot::filesystem_checkout(&observe(), &location(checkout.path())).unwrap(),
+        ),
+        "local",
+    )
+    .unwrap();
+    Gate::acquire(&cx, &root, &[local], Wait::FailFast).unwrap();
+    assert_eq!(snapshot(machine.path()), before);
+}

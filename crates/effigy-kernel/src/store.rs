@@ -514,7 +514,7 @@ impl Store {
         cx: &EffectContext,
         window: Duration,
     ) -> Result<Option<GateGuard>, StoreError> {
-        let id = ResourceId::store(Scope::Machine, WRITER_GATE)?;
+        let id = self.root.store_gate(cx, WRITER_GATE)?;
         let name = |guard: GateGuard| {
             if let Some(run) = &self.run {
                 guard.set_run(run);
@@ -673,7 +673,7 @@ impl Store {
         if cx.operation().class() != EffectClass::Mutate {
             return Err(StoreError::ClassRefused(cx.operation().class()));
         }
-        let gate = ResourceId::store(Scope::Machine, "kernel")?;
+        let gate = root.store_gate(cx, WRITER_GATE)?;
         let _guard = Gate::acquire(cx, root, &[gate], Wait::FailFast)?;
         match Self::open(cx, root) {
             Ok(_) => return Err(StoreError::NotCorrupt),

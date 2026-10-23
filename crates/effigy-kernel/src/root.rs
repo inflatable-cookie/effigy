@@ -1,6 +1,8 @@
 //! Verified checkout and machine state roots (§7.1), with separate database
 //! names. A machine root never implicitly opens the legacy central database.
 mod checkout;
+mod gates;
+pub(crate) use gates::MachineGateAddress;
 pub(crate) mod runtime;
 
 use crate::ctx::{Capability, EffectContext, ObserveContext, Placement};
@@ -39,6 +41,7 @@ pub struct StateRoot {
     database: Database,
     adoption: bool,
     checkout: Option<checkout::RetainedCheckout>,
+    machine_gates: Option<std::sync::Arc<gates::MachineGates>>,
 }
 
 #[derive(Debug, Clone)]
@@ -76,6 +79,7 @@ impl StateRoot {
             database: Database::Checkout,
             adoption: true,
             checkout: None,
+            machine_gates: None,
         })
     }
     /// Read-only open. Missing is `Absent`; untrusted or unreadable is
@@ -101,6 +105,7 @@ impl StateRoot {
                     database: Database::Checkout,
                     adoption: true,
                     checkout: None,
+                    machine_gates: None,
                 },
                 Evidence::new("kernel state root".into(), None).expect("fixed source"),
             ),
@@ -196,6 +201,7 @@ impl StateRoot {
             database: self.database.clone(),
             adoption: false,
             checkout: self.checkout.clone(),
+            machine_gates: self.machine_gates.clone(),
         })
     }
     /// Retained filesystem identity of the actual checkout or machine home.

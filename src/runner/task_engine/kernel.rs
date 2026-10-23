@@ -259,13 +259,14 @@ pub(super) fn observe_root(cx: &ObserveContext, checkout: &Path) -> Observed<Sta
         Ok(git) => git,
         Err(error) => return Observed::Unknown(UnknownReason::Untrusted(error.to_string())),
     };
-    StateRoot::checkout_observe(
-        cx,
-        &effigy_kernel::migration::CheckoutLocation {
-            root: checkout.into(),
-            git_directory,
-        },
-    )
+    let location = effigy_kernel::migration::CheckoutLocation {
+        root: checkout.into(),
+        git_directory,
+    };
+    match state_home() {
+        Some(home) => StateRoot::checkout_observe_in(cx, &home, &location),
+        None => StateRoot::checkout_observe(cx, &location),
+    }
 }
 
 /// This binary, identified once for every sentinel this process spawns.

@@ -2072,6 +2072,15 @@ effects are positively resolved, independently of checkout retention.
 
 ### 7.5 Machine store: allowlist and write budget
 
+Machine-scoped resource gates use the single machine `state/gates/machine/`
+namespace even when their owning run journals in a checkout. Ordinary checkout
+gates never consult that domain. First machine-gate use binds its home and
+state-directory generations; observation and recovery helpers retain the same
+domain and refuse a replaced directory. Machine-format or migration refusal
+blocks that machine resource, while local checkout gates remain usable. These
+lock files contain no checkout registry or shared data-claim database. Internal
+database and object mutexes use their owning checkout's filesystem scope.
+
 The allowlist is closed: gateway daemon identity/control and endpoint/route
 claims (including manual routes, loopback addresses and quarantine), the port
 registry (pins/ranges and owning checkout identities), and host admission state
