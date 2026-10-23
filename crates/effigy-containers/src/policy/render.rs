@@ -10,6 +10,8 @@ use crate::{ContainerPolicyError, EffectiveContainerPolicy};
 mod publication;
 pub(crate) use publication::{checkout, recorded_backend, state_home};
 pub use publication::{prepare, reset, verify};
+mod vm;
+pub use vm::compose_invocation_args;
 
 pub const ROOT_VARIABLE: &str = "EFFIGY_RENDER_ROOT";
 const ROOT_EXPRESSION: &str = "${EFFIGY_RENDER_ROOT:?Effigy render root is required}";
@@ -324,6 +326,15 @@ fn relocate(value: &mut serde_yaml::Value, replacements: &[(String, String)]) {
 /// Supply the immutable generation root to Compose without process-global
 /// environment mutation. Both direct and manager-backed adapters use this.
 pub fn apply_environment(command: &mut std::process::Command, args: &[impl AsRef<OsStr>]) {
+    if let Some(root) = render_root(args) {
+        command.env(ROOT_VARIABLE, root);
+    }
+}
+
+/// The immutable generation root this invocation's Compose files live under.
+/// Every `-f` input inside a published closure names one object directory, so
+/// the first `-f` ancestor under `objects` is the root Compose must interpolate.
+fn render_root(args: &[impl AsRef<OsStr>]) -> Option<PathBuf> {
     for pair in args.windows(2) {
         if pair[0].as_ref() != OsStr::new("-f") {
             continue;
@@ -337,11 +348,11 @@ pub fn apply_environment(command: &mut std::process::Command, args: &[impl AsRef
                 && name.bytes().all(|c| c.is_ascii_hexdigit())
                 && root.parent().and_then(Path::file_name) == Some(OsStr::new("objects"))
             {
-                command.env(ROOT_VARIABLE, root);
-                return;
+                return Some(root.to_path_buf());
             }
         }
     }
+    None
 }
 
 #[cfg(test)]

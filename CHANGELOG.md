@@ -972,6 +972,21 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- A rendered Compose stack works on the `colima-nerdctl` (containerd) backend
+  again (effigy#277). #229 keeps every Compose input under
+  `~/.effigy/state/objects/<digest>/` with `${EFFIGY_RENDER_ROOT}` paths, but
+  `colima nerdctl` runs Compose inside the VM, where the host environment never
+  arrives, so interpolation failed before any container was created. Every
+  Compose invocation on that backend now names an interpolation file under the
+  Effigy home that the VM can read, carrying the generation root and the values
+  the plan forwards (container secrets delivered through Compose's own
+  environment). The immutable closure bytes are unchanged, so a generation's
+  digest does not depend on the state-home path, and a detached activation this
+  failure left partial is applied by a plain `effigy container up`. A detached
+  backend's output is no longer discarded: it is retained in
+  `.effigy/runtime/logs/<project>.compose.log`, bounded to its last 64 KiB, and
+  a failure names that file and prints its tail. Detached `--json` failure
+  details still carry no raw backend output.
 - Concurrent Effigy runs no longer refuse each other with `state store: store
   refused: Busy` (effigy#275). The runtime store moved to write-ahead logging,
   serializes its writers on the store's own gate so a refusal names the
