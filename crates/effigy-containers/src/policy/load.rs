@@ -550,8 +550,8 @@ fn build_effective_policy(
     }
     let service_aliases = effective_service_aliases(repo_root, config)?;
     // One apex for generated TCP aliases, Compose extra_hosts and gateway
-    // registration: the declared `base_domain`, else the common suffix of the
-    // HTTP routes (managed listeners included).
+    // registration: the declared `base_domain`, else the shallowest host the
+    // primary service or a managed listener serves.
     let listener_declared_domains = config
         .host_processes
         .iter()

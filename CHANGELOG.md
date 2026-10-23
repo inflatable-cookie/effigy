@@ -974,17 +974,29 @@ During v0.x, MINOR bumps may include breaking changes.
 ### Fixed
 - Container host diagnostics tell the truth about an undeclared apex (papercut
   `dbb81698`). Without `[containers.<name>.dns] base_domain`, the cookie
-  domain, WebAuthn RP ID and TCP alias suffix are inferred from the longest
-  common domain suffix of the HTTP routes (managed host listeners included)
-  instead of the first route, so a bundle whose first route was
-  `s3.acowtancy.test` no longer advertises that subdomain as its apex. Policy
-  load resolves that one apex in the checkout's scope and uses it for the
-  generated TCP aliases, the Compose route-parity `extra_hosts` and gateway
+  domain, WebAuthn RP ID and TCP alias suffix are inferred from the HTTP
+  routes: the shallowest route host served by the primary service (the service
+  of the front route) or by a managed host listener wins, route order breaks a
+  depth tie, and only when neither serves a usable host does the shallowest
+  route host of any service stand in. A wildcard route never becomes the apex,
+  and the answer is always one of the declared route hosts, never a parent
+  domain the routes happen to share. So a bundle whose first route was
+  `s3.acowtancy.test` no longer advertises that subdomain as its apex, and a
+  project whose services already use a deeper name keeps it. Policy load
+  resolves that one apex in the checkout's scope and uses it for the generated
+  TCP aliases, the Compose route-parity `extra_hosts` and gateway
   service-alias registration, so `container hosts`, the gateway and the
   container's own aliases agree. When the inferred base is not a suffix of
   every HTTP route, `container hosts` warns, and its JSON `base_domain` object
   reports `inferred` and the warning. A declared `base_domain` is never
-  inferred or rewritten, and bundles should declare it.
+  inferred or rewritten, and a manifest that needs a different apex declares
+  it.
+- An undeclared base domain no longer shrinks to a shared parent domain when a
+  project routes unrelated hosts beside its own. A site that routes
+  `cbs.legacy.test`, `admin.cbs.legacy.test`, `borderway.legacy.test` and a
+  wildcard tunnel keeps `cbs.legacy.test` as its cookie apex, RP ID and TCP
+  alias suffix, so `mysql.cbs.legacy.test` and its database URL survive the
+  update; only the routes themselves still warn about the disagreement.
 - `container logs` and `container status` say plainly when Compose created no
   container for the project, instead of reporting "expected one container for
   service …, found 0" (papercut `890e2912`). They name the last activation

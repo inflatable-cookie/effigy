@@ -156,23 +156,107 @@ pub fn domain_has_suffix(domain: &str, base: &str) -> bool {
             .all(|(left, right)| left.eq_ignore_ascii_case(right))
 }
 
-/// The candidate HTTP route domains an undeclared base is inferred from: the
-/// declared DNS routes, front first, then the managed listener routes.
-fn base_domain_candidates(
+/// Whether a domain is a host an undeclared apex may be inferred from.
+/// A wildcard label is a route pattern, not a host, so it never becomes the
+/// cookie domain, RP ID or TCP alias suffix.
+fn is_inferable_host(domain: &str) -> bool {
+    let labels = domain_labels(domain);
+    labels.len() >= 2 && !labels.iter().any(|label| label.contains('*'))
+}
+
+/// The shallowest host among `hosts`, keeping the first on a tie. Depth, not
+/// string length: `acme.test` beats `api.acme.test`, and route order decides
+/// between two routes at the same depth. The answer is always one of the
+/// declared hosts, never a parent domain the routes happen to share.
+fn shallowest_host<'a>(hosts: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let mut best: Option<(&str, usize)> = None;
+    for host in hosts {
+        if !is_inferable_host(host) {
+            continue;
+        }
+        let depth = domain_labels(host).len();
+        match best {
+            Some((_, best_depth)) if best_depth <= depth => {}
+            _ => best = Some((host, depth)),
+        }
+    }
+    best.map(|(host, _)| host.to_owned())
+}
+
+fn base_domain_warning(base: &str, http_domains: &[String]) -> Option<String> {
+    let inconsistent = http_domains
+        .iter()
+        .filter(|domain| !domain_has_suffix(domain, base))
+        .map(|domain| format!("`{domain}`"))
+        .collect::<Vec<_>>();
+    (!inconsistent.is_empty()).then(|| {
+        format!(
+            "inferred base domain `{base}` is not a suffix of every HTTP route ({}); declare `[containers.<name>.dns] base_domain` to choose the cookie domain, RP ID and TCP alias apex",
+            inconsistent.join(", ")
+        )
+    })
+}
+
+/// The hosts an undeclared base follows: the HTTP routes the primary service
+/// serves, plus every managed listener route. A managed listener counts
+/// because it publishes the same application on the host, and it is how a
+/// bundle whose front route is `s3.<host>` still names `<host>` as the apex.
+/// Only when neither source has a usable host does the whole route list stand
+/// in, and a wildcard route never does.
+fn base_domain_candidates<'a>(
+    dns_routes: &'a [EffectiveDnsRoute],
+    listener_declared_domains: &'a [String],
+) -> Vec<&'a str> {
+    // The primary service is the one serving the front route, which is the
+    // service whose hosts a bundle means when it declares no DNS block.
+    let primary_service = dns_routes
+        .first()
+        .and_then(|route| route.service.as_deref());
+    let mut candidates = Vec::new();
+    if let Some(service) = primary_service {
+        candidates.extend(
+            dns_routes
+                .iter()
+                .filter(|route| route.service.as_deref() == Some(service))
+                .map(EffectiveDnsRoute::declared),
+        );
+    }
+    candidates.extend(listener_declared_domains.iter().map(String::as_str));
+    if candidates.iter().any(|host| is_inferable_host(host)) {
+        candidates
+    } else {
+        dns_routes.iter().map(EffectiveDnsRoute::declared).collect()
+    }
+}
+
+/// Infer an undeclared base from the routes' own hosts. The shallowest host
+/// the primary service or a managed listener serves wins, so an `s3.` route
+/// listed first no longer names the cookie apex. When nothing is served by
+/// either, the shallowest route host of any service stands in.
+fn infer_route_base_domain(
     dns_routes: &[EffectiveDnsRoute],
     listener_declared_domains: &[String],
-) -> Vec<String> {
-    let mut candidates = dns_routes
+) -> InferredBaseDomain {
+    let http_domains = dns_routes
         .iter()
         .map(|route| route.declared().to_owned())
+        .chain(listener_declared_domains.iter().cloned())
         .collect::<Vec<_>>();
-    candidates.extend(listener_declared_domains.iter().cloned());
-    candidates
+    let Some(base) = shallowest_host(base_domain_candidates(
+        dns_routes,
+        listener_declared_domains,
+    )) else {
+        return InferredBaseDomain::default();
+    };
+    InferredBaseDomain {
+        warning: base_domain_warning(&base, &http_domains),
+        base: Some(base),
+    }
 }
 
 /// Resolve the declared-space apex that generated TCP aliases and gateway
-/// registration use: the declared `base_domain` untouched, else the inferred
-/// common suffix of the HTTP routes and managed listeners. Returning `None`
+/// registration use: the declared `base_domain` untouched, else the shallowest
+/// host the primary service or a managed listener serves. Returning `None`
 /// means the checkout has no usable apex, never that it falls back to the
 /// front route's full domain.
 pub fn resolve_base_domain(
@@ -185,12 +269,9 @@ pub fn resolve_base_domain(
             let declared = declared.trim();
             has_usable_base(declared).then(|| declared.to_owned())
         }
-        None => infer_base_domain(&base_domain_candidates(
-            dns_routes,
-            listener_declared_domains,
-        ))
-        .base
-        .filter(|domain| has_usable_base(domain)),
+        None => infer_route_base_domain(dns_routes, listener_declared_domains)
+            .base
+            .filter(|domain| has_usable_base(domain)),
     }
 }
 
@@ -220,9 +301,10 @@ pub fn route_scope_host_key(dns_routes: &[EffectiveDnsRoute]) -> Option<String> 
 impl EffectiveContainerPolicy {
     /// The apex generated TCP aliases and gateway registration use for this
     /// checkout: `dns.base_domain` when declared (rewritten with the checkout
-    /// host key exactly like the routes), else the inferred common suffix of
-    /// the HTTP routes and managed listeners. `container hosts` reports the
-    /// same apex, so the gateway, Compose aliases and host map never disagree.
+    /// host key exactly like the routes), else the shallowest route host the
+    /// primary service or a managed listener serves. `container hosts` reports
+    /// the same apex, so the gateway, Compose aliases and host map never
+    /// disagree.
     pub fn dns_effective_base_domain(&self) -> Option<String> {
         let listener_declared_domains = self
             .host_processes
@@ -254,58 +336,19 @@ impl EffectiveContainerPolicy {
     }
 }
 
-/// Infer an undeclared base domain from the longest common domain suffix of
-/// the HTTP routes. The front route anchors the answer, which keeps a bundle
-/// that declares a subdomain first (`s3.acme.test`) from naming that subdomain
-/// as its cookie apex, RP ID and TCP alias suffix. When the routes share only a
-/// top-level label, the front route's own apex is used and the routes that
-/// disagree are reported so the operator can declare `base_domain`.
+/// Infer an undeclared base domain from the HTTP route hosts alone: the
+/// shallowest host wins, keeping the first on a tie. Callers that hold the
+/// route list should use [`resolve_base_domain`], which also prefers the hosts
+/// the primary service or a managed listener serves. A host that is not a
+/// suffix of every route is reported so the operator can declare
+/// `base_domain`.
 pub fn infer_base_domain(http_domains: &[String]) -> InferredBaseDomain {
-    let routes = http_domains
-        .iter()
-        .map(|domain| domain_labels(domain))
-        .filter(|labels| !labels.is_empty())
-        .collect::<Vec<_>>();
-    let Some(front) = routes.first() else {
+    let Some(base) = shallowest_host(http_domains.iter().map(String::as_str)) else {
         return InferredBaseDomain::default();
     };
-    let mut common = front.len();
-    for labels in &routes[1..] {
-        let mut matching = 0;
-        while matching < common
-            && matching < labels.len()
-            && front[front.len() - 1 - matching]
-                .eq_ignore_ascii_case(labels[labels.len() - 1 - matching])
-        {
-            matching += 1;
-        }
-        common = matching;
-    }
-    // A single shared top-level label would make every cookie domain the bare
-    // TLD, so prefer the front route's apex and report the disagreement.
-    let base = if common >= 2 {
-        front[front.len() - common..].join(".")
-    } else {
-        front[front.len().saturating_sub(2)..].join(".")
-    };
-    let inconsistent = if common >= 2 {
-        Vec::new()
-    } else {
-        http_domains
-            .iter()
-            .filter(|domain| !domain_has_suffix(domain, &base))
-            .map(|domain| format!("`{domain}`"))
-            .collect::<Vec<_>>()
-    };
-    let warning = (!inconsistent.is_empty()).then(|| {
-        format!(
-            "inferred base domain `{base}` is not a suffix of every HTTP route ({}); declare `[containers.<name>.dns] base_domain` to choose the cookie domain, RP ID and TCP alias apex",
-            inconsistent.join(", ")
-        )
-    });
     InferredBaseDomain {
+        warning: base_domain_warning(&base, http_domains),
         base: Some(base),
-        warning,
     }
 }
 
@@ -346,12 +389,9 @@ pub fn build_host_map_including_listeners(
     let rewrite_key = token
         .filter(|_| !shared_runtime_identity)
         .and_then(host_key);
-    let inferred = base_domain.is_none().then(|| {
-        infer_base_domain(&base_domain_candidates(
-            dns_routes,
-            listener_declared_domains,
-        ))
-    });
+    let inferred = base_domain
+        .is_none()
+        .then(|| infer_route_base_domain(dns_routes, listener_declared_domains));
     let declared_base = resolve_base_domain(dns_routes, listener_declared_domains, base_domain);
     let base_domain_inferred = base_domain.is_none() && declared_base.is_some();
     let base_domain_warning = inferred
@@ -689,12 +729,13 @@ mod tests {
     }
 
     #[test]
-    fn undeclared_base_infers_the_shared_suffix_not_the_front_subdomain() {
+    fn undeclared_base_follows_the_shallowest_primary_service_route() {
         let map = build_host_map(
             &[
-                http("s3.acowtancy.test", true, Some("web")),
-                http("app.s3.acowtancy.test", true, Some("app")),
-                http("admin.acowtancy.test", true, Some("admin")),
+                http("cbs.legacy.test", true, Some("web")),
+                http("pma.cbs.legacy.test", true, Some("pma")),
+                http("admin.cbs.legacy.test", true, Some("web")),
+                http("borderway.legacy.test", true, Some("web")),
             ],
             &[alias()],
             &[],
@@ -703,11 +744,131 @@ mod tests {
             None,
         );
         assert!(map.base_domain_inferred);
+        assert_eq!(map.declared_base.as_deref(), Some("cbs.legacy.test"));
+        assert_eq!(map.cookie_domain(), Some("cbs.legacy.test"));
+        assert_eq!(map.relying_party_id(), Some("cbs.legacy.test"));
+        assert_eq!(map.routes[4].declared, "postgres.cbs.legacy.test");
+    }
+
+    /// The shape #281's regression came from: the site's own front route, its
+    /// helper service routes, routes that share only `legacy.test`, and a
+    /// wildcard tunnel route. The apex stays the primary service's host.
+    #[test]
+    fn cbs_shape_keeps_its_primary_service_apex() {
+        let map = build_host_map(
+            &[
+                http("cbs.legacy.test", true, Some("web")),
+                http("pma.cbs.legacy.test", true, Some("pma")),
+                http("mailpit.cbs.legacy.test", true, Some("mailpit")),
+                http("admin.cbs.legacy.test", true, Some("web")),
+                http("borderway.legacy.test", true, Some("web")),
+                http("cbs-mortcalc.legacy.test", true, Some("web")),
+                http("*.cumberland.co.uk", true, None),
+            ],
+            &[
+                alias(),
+                EffectiveServiceAlias {
+                    service: "mysql".to_owned(),
+                    domain_label: "mysql".to_owned(),
+                    container_port: 3306,
+                },
+            ],
+            &[],
+            None,
+            false,
+            None,
+        );
+        assert!(map.base_domain_inferred);
+        assert_eq!(map.declared_base.as_deref(), Some("cbs.legacy.test"));
+        assert_eq!(map.cookie_domain(), Some("cbs.legacy.test"));
+        assert_eq!(map.relying_party_id(), Some("cbs.legacy.test"));
+        let tcp = map
+            .routes
+            .iter()
+            .filter(|route| route.kind == HostRouteKind::Tcp)
+            .map(|route| route.effective.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tcp,
+            vec!["postgres.cbs.legacy.test", "mysql.cbs.legacy.test"]
+        );
+        let warning = map.base_domain_warning.as_deref().expect("a warning");
+        assert!(warning.contains("borderway.legacy.test"), "{warning}");
+        assert!(warning.contains("*.cumberland.co.uk"), "{warning}");
+    }
+
+    /// The pre-#007 Underlay bundle declared no `base_domain`: the front route
+    /// is the S3 subdomain, and the host listeners publish the apex. The apex
+    /// must stay `<host>` so the S3 route keeps its place without naming it.
+    #[test]
+    fn pre_007_hybrid_shape_infers_the_listener_apex() {
+        let map = build_host_map_including_listeners(
+            &[
+                http("s3.acme.test", true, Some("minio")),
+                http("dbgate.acme.test", true, Some("dbgate")),
+                http("mailpit.acme.test", true, Some("mailpit")),
+                http("minio.acme.test", true, Some("minio")),
+            ],
+            &[alias()],
+            &[],
+            None,
+            false,
+            None,
+            &[
+                "acme.test".to_owned(),
+                "dairy.acme.test".to_owned(),
+                "farmyard.acme.test".to_owned(),
+            ],
+        );
+        assert!(map.base_domain_inferred);
         assert_eq!(map.base_domain_warning, None);
-        assert_eq!(map.declared_base.as_deref(), Some("acowtancy.test"));
-        assert_eq!(map.cookie_domain(), Some("acowtancy.test"));
-        assert_eq!(map.relying_party_id(), Some("acowtancy.test"));
-        assert_eq!(map.routes[3].declared, "postgres.acowtancy.test");
+        assert_eq!(map.declared_base.as_deref(), Some("acme.test"));
+        assert_eq!(map.cookie_domain(), Some("acme.test"));
+        assert_eq!(map.routes[4].declared, "postgres.acme.test");
+    }
+
+    /// The same bundle's `test` profile prefixes every route with `test.`.
+    #[test]
+    fn pre_007_test_shape_infers_the_test_prefixed_apex() {
+        let map = build_host_map_including_listeners(
+            &[
+                http("s3.test.acme.test", true, Some("minio")),
+                http("dbgate.test.acme.test", true, Some("dbgate")),
+                http("mailpit.test.acme.test", true, Some("mailpit")),
+                http("minio.test.acme.test", true, Some("minio")),
+            ],
+            &[alias()],
+            &[],
+            None,
+            false,
+            None,
+            &[
+                "test.acme.test".to_owned(),
+                "dairy.test.acme.test".to_owned(),
+                "farmyard.test.acme.test".to_owned(),
+            ],
+        );
+        assert!(map.base_domain_inferred);
+        assert_eq!(map.base_domain_warning, None);
+        assert_eq!(map.declared_base.as_deref(), Some("test.acme.test"));
+        assert_eq!(map.cookie_domain(), Some("test.acme.test"));
+        assert_eq!(map.routes[4].declared, "postgres.test.acme.test");
+    }
+
+    #[test]
+    fn single_route_project_infers_that_route() {
+        let map = build_host_map(
+            &[http("app.test", true, Some("web"))],
+            &[alias()],
+            &[],
+            None,
+            false,
+            None,
+        );
+        assert!(map.base_domain_inferred);
+        assert_eq!(map.base_domain_warning, None);
+        assert_eq!(map.declared_base.as_deref(), Some("app.test"));
+        assert_eq!(map.routes[1].declared, "postgres.app.test");
     }
 
     #[test]
@@ -730,7 +891,7 @@ mod tests {
     }
 
     #[test]
-    fn routes_without_a_shared_apex_infer_the_front_and_warn() {
+    fn routes_without_a_shared_apex_infer_the_shallowest_primary_route_and_warn() {
         let map = build_host_map(
             &[
                 http("s3.acme.test", true, Some("web")),
@@ -743,7 +904,7 @@ mod tests {
             None,
         );
         assert!(map.base_domain_inferred);
-        assert_eq!(map.declared_base.as_deref(), Some("acme.test"));
+        assert_eq!(map.declared_base.as_deref(), Some("s3.acme.test"));
         let warning = map.base_domain_warning.as_deref().expect("a warning");
         assert!(
             warning.contains("not a suffix of every HTTP route"),
@@ -762,7 +923,7 @@ mod tests {
             None,
             false,
             None,
-            &["cbs.acme.test".to_owned()],
+            &["acme.test".to_owned()],
         );
         assert!(map.base_domain_inferred);
         assert_eq!(map.base_domain_warning, None);
@@ -770,7 +931,8 @@ mod tests {
         assert_eq!(map.routes[1].declared, "postgres.acme.test");
 
         // Without the listener hint a lone subdomain route is all Effigy can
-        // see, which is why bundles are told to declare `base_domain`.
+        // see, which is why bundles are told to declare `base_domain` or
+        // publish a host listener at the apex.
         let without_listener = build_host_map(
             &[http("s3.acme.test", true, Some("web"))],
             &[],
@@ -783,6 +945,37 @@ mod tests {
             without_listener.declared_base.as_deref(),
             Some("s3.acme.test")
         );
+    }
+
+    #[test]
+    fn a_listener_at_the_front_route_depth_does_not_outrank_it() {
+        let map = build_host_map_including_listeners(
+            &[http("s3.acme.test", true, Some("web"))],
+            &[],
+            &[],
+            None,
+            false,
+            None,
+            &["api.acme.test".to_owned()],
+        );
+        assert_eq!(map.declared_base.as_deref(), Some("s3.acme.test"));
+    }
+
+    #[test]
+    fn wildcard_routes_never_become_the_inferred_apex() {
+        let map = build_host_map_including_listeners(
+            &[
+                http("*.acme.test", true, None),
+                http("admin.acme.test", true, Some("web")),
+            ],
+            &[],
+            &[],
+            None,
+            false,
+            None,
+            &[],
+        );
+        assert_eq!(map.declared_base.as_deref(), Some("admin.acme.test"));
     }
 
     #[test]
@@ -802,8 +995,8 @@ mod tests {
     #[test]
     fn resolved_base_domain_prefers_declaration_and_infers_otherwise() {
         let routes = [
-            http("s3.acme.test", true, None),
-            http("admin.acme.test", true, None),
+            http("s3.acme.test", true, Some("minio")),
+            http("admin.acme.test", true, Some("web")),
         ];
         assert_eq!(
             resolve_base_domain(&routes, &[], Some("declared.test")).as_deref(),
@@ -811,14 +1004,14 @@ mod tests {
             "a declared apex is kept untouched"
         );
         assert_eq!(
-            resolve_base_domain(&routes, &[], None).as_deref(),
+            resolve_base_domain(&routes, &["acme.test".to_owned()], None).as_deref(),
             Some("acme.test"),
-            "an undeclared apex is the routes' common suffix"
+            "a managed listener at the apex wins"
         );
         assert_eq!(
-            resolve_base_domain(&routes, &["cbs.other.test".to_owned()], None).as_deref(),
-            Some("acme.test"),
-            "a managed listener that disagrees keeps the front route's apex"
+            resolve_base_domain(&routes, &[], None).as_deref(),
+            Some("s3.acme.test"),
+            "without a listener the primary service's shallowest route stands in"
         );
     }
 
@@ -837,6 +1030,7 @@ mod tests {
         policy.dns_routes = vec![
             scoped_route("s3.acme-wabcdef01.test", "s3.acme.test"),
             scoped_route("admin.acme-wabcdef01.test", "admin.acme.test"),
+            scoped_route("acme-wabcdef01.test", "acme.test"),
         ];
         assert_eq!(
             policy.dns_effective_base_domain().as_deref(),
