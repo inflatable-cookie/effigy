@@ -48,6 +48,8 @@ with tempfile.TemporaryDirectory(prefix="q010-foreground-") as temporary:
         (project / ".git").mkdir()
         text = "\n".join(f'[tasks.short{i}]\nrun = "printf short-{i}"' for i in range(8))
         text += '''
+[tasks.diagnostics]
+run = [{task = "tasks"}, {task = "help test"}]
 [tasks.sequence]
 run = [{run = "printf first"}, {task = "short0"}, {run = "printf last"}]
 [tasks.outer]
@@ -104,6 +106,7 @@ run = "touch suite-ready; sleep 300"
             future.result()
     for project in projects:
         run(project, "sequence")
+        run(project, "diagnostics")
         before = {str(path.relative_to(project)): path.read_bytes()
                   for path in project.rglob("*") if path.is_file()}
         run(project, "test", "--plan")

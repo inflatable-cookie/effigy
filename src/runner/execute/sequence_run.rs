@@ -204,46 +204,12 @@ fn classify_tree(
                 StepAction::Command(_) | StepAction::Noop => {}
                 StepAction::Rhai { .. } => return Ok(false),
                 StepAction::Builtin { parsed, cwd, .. } => {
-                    let Command::Task(task) = parsed.as_ref() else {
+                    if !classify_builtin(&parsed, &cwd, ancestors)? {
                         return Ok(false);
-                    };
-                    let selector = effigy_tasks::parse_task_selector(&task.name)
-                        .map_err(RunnerError::task_invocation)?;
-                    if selector.task_name != "test" {
-                        return Ok(false);
-                    }
-                    let args = effigy_tasks::parse_task_runtime_args(&task.args)
-                        .map_err(RunnerError::task_invocation)?;
-                    match effigy_builtin::test_run_requirement(
-                        &selector,
-                        &args,
-                        &cwd,
-                        &preflight.catalogs,
-                    )? {
-                        effigy_builtin::TestRunRequirement::Observe => {}
-                        effigy_builtin::TestRunRequirement::Local(sources) => {
-                            if !classify_test_sources(preflight, sources, ancestors)? {
-                                return Ok(false);
-                            }
-                        }
-                        _ => return Ok(false),
                     }
                 }
-                StepAction::Task { invocation, .. } => {
-                    let selector = effigy_tasks::parse_task_selector(&invocation.name)
-                        .map_err(RunnerError::task_invocation)?;
-                    let child = select_catalog_and_task(
-                        &selector,
-                        &preflight.catalogs,
-                        &preflight.invocation_cwd,
-                    )
-                    .map_err(RunnerError::from)?;
-                    if invocation
-                        .args
-                        .iter()
-                        .any(|arg| arg == effigy_cli::INTERNAL_RUN_ID_ARG)
-                        || !classify_tree(preflight, &child, &selector.task_name, ancestors)?
-                    {
+                StepAction::Task { invocation, cwd } => {
+                    if !classify_invocation(&invocation, &cwd, ancestors)? {
                         return Ok(false);
                     }
                 }
@@ -253,6 +219,96 @@ fn classify_tree(
     })();
     ancestors.pop();
     result
+}
+
+/// Resolve nested invocations through the same precedence and discovery as
+/// execution. A task named `config` may shadow that builtin, and a remapped
+/// builtin may defer to an adapter with durable effects.
+fn classify_invocation(
+    invocation: &TaskInvocation,
+    cwd: &Path,
+    ancestors: &mut Vec<(PathBuf, String)>,
+) -> Result<bool, RunnerError> {
+    if invocation
+        .args
+        .iter()
+        .any(|arg| arg == effigy_cli::INTERNAL_RUN_ID_ARG)
+    {
+        return Ok(false);
+    }
+    let child = super::preflight::build_execution_preflight(invocation, cwd.into())?;
+    if child.help {
+        return Ok(true);
+    }
+    match super::route::resolve_route(invocation, &child)? {
+        super::route::Route::Task { selection, .. } => {
+            if child.plan {
+                Ok(true)
+            } else {
+                classify_tree(&child, &selection, &child.selector.task_name, ancestors)
+            }
+        }
+        super::route::Route::Builtin if child.selector.task_name == "test" => {
+            match effigy_builtin::test_run_requirement(
+                &child.selector,
+                &child.runtime_args_exec,
+                &child.invocation_cwd,
+                &child.catalogs,
+            )? {
+                effigy_builtin::TestRunRequirement::Observe => Ok(true),
+                effigy_builtin::TestRunRequirement::Local(sources) => {
+                    classify_test_sources(&child, sources, ancestors)
+                }
+                _ => Ok(false),
+            }
+        }
+        _ => Ok(false),
+    }
+}
+
+fn classify_builtin(
+    command: &Command,
+    cwd: &Path,
+    ancestors: &mut Vec<(PathBuf, String)>,
+) -> Result<bool, RunnerError> {
+    use effigy_cli::{RunsAction, TasksQaCommand};
+    Ok(match command {
+        Command::Task(task) => return classify_invocation(task, cwd, ancestors),
+        Command::Version | Command::Help(_) | Command::HelpGroup(_) => true,
+        Command::Doctor(args) => !args.fix && !args.deep && !args.refresh,
+        Command::Tasks(args) => matches!(
+            args.qa,
+            None | Some(
+                TasksQaCommand::GroupsList { .. }
+                    | TasksQaCommand::GroupStatus { .. }
+                    | TasksQaCommand::GroupLogs { .. }
+                    | TasksQaCommand::GroupRun { plan: true, .. }
+            )
+        ),
+        Command::Runs(args) => matches!(
+            args.action,
+            RunsAction::List { .. }
+                | RunsAction::Status { .. }
+                | RunsAction::Logs { .. }
+                | RunsAction::Migrate {
+                    plan: true,
+                    stop: None,
+                    ..
+                }
+        ),
+        Command::Gateway(args) => matches!(args.subcommand, effigy_cli::GatewaySubcommand::Status),
+        Command::Deps(args) => matches!(args.subcommand, effigy_cli::DepsSubcommand::Status { .. }),
+        Command::Bundle(args) => matches!(args.subcommand, effigy_cli::BundleSubcommand::Inspect),
+        Command::Service(args) => matches!(args.subcommand, effigy_cli::ServiceSubcommand::List),
+        Command::Changelog(args) => !matches!(
+            args.subcommand,
+            effigy_cli::ChangelogSubcommand::Format { write: true }
+        ),
+        Command::Skill(args) => {
+            matches!(args.subcommand, effigy_cli::SkillSubcommand::Tasks { .. })
+        }
+        _ => false,
+    })
 }
 
 struct SequenceReport {
@@ -786,6 +842,49 @@ mod tests {
     use effigy_manifest::{LoadedCatalog, TaskManifest, TaskSelection};
     use effigy_tasks::{CatalogSelectionMode, TaskRuntimeArgs, TaskSelector};
     use std::path::{Path, PathBuf};
+
+    fn classify_manifest(body: &str) -> bool {
+        let fixture = effigy_test_support::Fixture::new("q010-classification-").unwrap();
+        std::fs::write(fixture.path().join("effigy.toml"), body).unwrap();
+        let invocation = effigy_cli::TaskInvocation {
+            name: "start".into(),
+            args: Vec::new(),
+        };
+        let preflight =
+            super::super::preflight::build_execution_preflight(&invocation, fixture.path().into())
+                .unwrap();
+        let selection = effigy_routing::select_catalog_and_task(
+            &preflight.selector,
+            &preflight.catalogs,
+            &preflight.invocation_cwd,
+        )
+        .unwrap();
+        super::foreground_tree(&preflight, &selection).unwrap()
+    }
+
+    #[test]
+    fn nested_config_reference_classifies_the_declared_override() {
+        let prefix = "[tasks.start]\nscratch = false\nrun = [{task = 'config'}]\n";
+        assert!(classify_manifest(&format!(
+            "{prefix}[tasks.config]\nscratch = false\nrun = 'true'\n"
+        )));
+        assert!(!classify_manifest(&format!(
+            "{prefix}[tasks.config]\nmode = 'tui'\nrun = 'true'\n"
+        )));
+    }
+
+    #[test]
+    fn deferred_config_reference_stays_durable_before_execution() {
+        assert!(!classify_manifest("[defer]\nrun = 'true'\nbuiltins = ['config']\n[tasks.start]\nscratch = false\nrun = [{task = 'config'}]\n"));
+    }
+
+    #[test]
+    fn diagnostic_builtin_sequence_is_foreground_but_qa_execution_is_durable() {
+        assert!(classify_manifest("[tasks.start]\nscratch = false\nrun = [{task = 'tasks'}, {task = 'help test'}, {task = 'gateway status'}]\n"));
+        assert!(!classify_manifest(
+            "[tasks.start]\nscratch = false\nrun = [{task = 'tasks qa-group run checks'}]\n"
+        ));
+    }
 
     #[test]
     fn parse_builtin_step_command_applies_repo_override_to_builtin_command() {

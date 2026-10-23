@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Static sequences classify nested task references with the execution resolver,
+  including declared built-in overrides and deferrals; diagnostic steps retain
+  foreground custody without a journal.
 - Machine-scoped resource locks now exclude across checkout journals, and
   recovery helpers retain their machine lock domain. Local resource gates
   stay usable when the machine store is unavailable.
