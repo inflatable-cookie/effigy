@@ -1023,3 +1023,53 @@ fn a_bring_up_after_an_earlier_stop_activates() {
     assert_eq!(fake.calls(), ["apply", "stop", "apply"]);
     assert_store_sound(&ctx);
 }
+
+#[test]
+fn checkout_state_routing_keeps_environment_holders_and_objects_local() {
+    let machine = home();
+    let checkout = home();
+    crate::with_test_effigy_home(&machine.path().join(".effigy"), || {
+        let op = reconcile::operation(EffectClass::Mutate, CancelToken::default(), RUN_BUDGET);
+        let cx = op.effects().unwrap();
+        let observe = op.observe().unwrap();
+        assert!(matches!(
+            super::observe_root(&observe, checkout.path()),
+            Observed::Absent(_)
+        ));
+        assert!(!checkout.path().join(".effigy").exists());
+        let root = super::state_root(&cx, checkout.path()).unwrap();
+        let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+        let stack = env("local-routing");
+        let mut task = holder(&ctx, "local-holder", 81);
+        let fake = Fake::new();
+        let render = closure("local");
+        bring_up(
+            &ctx,
+            &stack,
+            &fake,
+            &render,
+            Retention::Held,
+            &[(task.id(), AttachMode::Borrow)],
+        )
+        .unwrap();
+        let current = record(&ctx, &stack);
+        assert!(current.active());
+        assert!(
+            matches!(current.holders, Observed::Verified(ref holders, _) if holders.iter().any(|holder| holder.run == task.id()))
+        );
+        let object = effigy_kernel::objects::Objects::resolve(
+            &observe,
+            &root,
+            &stack.resource,
+            effigy_kernel::objects::Role::Desired,
+        );
+        assert!(object
+            .verified()
+            .unwrap()
+            .path
+            .starts_with(checkout.path().join(".effigy/state/objects")));
+        assert!(!machine.path().join(".effigy/state").exists());
+        task.finish(WorkloadOutcome::Succeeded).unwrap();
+        task.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
+    });
+}

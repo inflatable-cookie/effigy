@@ -93,7 +93,7 @@ impl Discovery {
                 StoreError::Corrupt(format!("checkout identity {}: {error}", path.display()))
             })?;
             if identities.contains(&expected) {
-                let git = super::checkout::git_directory(dir.path())
+                let git = effigy_core::worktree_scope::git_directory(dir.path())
                     .map_err(|error| StoreError::Corrupt(error.to_string()))?
                     .as_deref()
                     .map(effigy_kernel::fs::DirFd::open)

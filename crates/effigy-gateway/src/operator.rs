@@ -230,7 +230,7 @@ pub fn status(config: &GatewayConfig) -> io::Result<Status> {
 }
 fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Option<Status>> {
     let cx = op.observe().map_err(error)?;
-    let Some(root) = observed(StateRoot::observe(&cx, home(config)?))? else {
+    let Some(root) = observed(StateRoot::runtime_machine_observe(&cx, home(config)?))? else {
         return Ok(None);
     };
     let Some(reader) = observed(Store::read(&cx, &root))? else {
@@ -499,16 +499,21 @@ pub fn up_with_executable_within(
     // daemon's self-test.
     let admission = context(budget.admission, EffectClass::Mutate);
     let cx = admission.effects().map_err(error)?;
-    let mut client = match supervise::start_detached(
-        &cx,
-        home,
-        &invocation(owner()),
-        run_id()?,
-        &next(),
-        vec![spec],
-        &executable,
-        ClientMode::Owning,
-    ) {
+    let admitted = (|| {
+        let root = StateRoot::runtime_machine_effects(&cx, home).map_err(error)?;
+        supervise::start_detached_at(
+            &cx,
+            &root,
+            &invocation(owner()),
+            run_id()?,
+            &next(),
+            vec![spec],
+            &executable,
+            ClientMode::Owning,
+        )
+        .map_err(error)
+    })();
+    let mut client = match admitted {
         Ok(client) => client,
         Err(err) if admission.check("gateway admission").is_err() => {
             return Err(error(format!(
@@ -582,7 +587,7 @@ pub fn down(config: &GatewayConfig) -> io::Result<Status> {
     }
     let op = context(Duration::from_secs(15), EffectClass::Mutate);
     let cx = op.effects().map_err(error)?;
-    let root = StateRoot::effects(&cx, home(config)?).map_err(error)?;
+    let root = StateRoot::runtime_machine_effects(&cx, home(config)?).map_err(error)?;
     let observe = op.observe().map_err(error)?;
     let reader =
         observed(Store::read(&observe, &root))?.ok_or_else(|| error("missing gateway store"))?;
@@ -716,7 +721,7 @@ mod tests {
             let op = context(Duration::from_secs(15), EffectClass::Mutate);
             let cx = op.effects().unwrap();
             let cleanup = op.cleanup(Duration::from_secs(5)).unwrap();
-            let root = StateRoot::effects(&cx, &path).unwrap();
+            let root = StateRoot::runtime_machine_effects(&cx, &path).unwrap();
             let mut adapter = Adapter;
             let mut run = run::Run::begin(
                 &cx,

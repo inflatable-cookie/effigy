@@ -1497,7 +1497,20 @@ fn gateway_store_latest_run_tracks_generation_and_absence() {
     ));
     run.settle(&cleanup(&cx), &mut fake).unwrap();
     let run = begin(&cx, &root, resource.clone(), 64, &mut fake);
-    assert_eq!(reader.latest_run(&resource).verified().unwrap().0, id(64));
+    // An observation is a coherent snapshot; a later observation sees the
+    // new generation without keeping a filesystem connection open.
+    assert_eq!(reader.latest_run(&resource).verified().unwrap().0, id(63));
+    let fresh = Store::read(&observe, &root);
+    assert_eq!(
+        fresh
+            .verified()
+            .unwrap()
+            .latest_run(&resource)
+            .verified()
+            .unwrap()
+            .0,
+        id(64)
+    );
     run.settle(&cleanup(&cx), &mut fake).unwrap();
 }
 #[test]

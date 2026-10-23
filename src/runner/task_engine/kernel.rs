@@ -194,7 +194,7 @@ pub(super) fn known_roots(cx: &ObserveContext) -> Result<Vec<StateRoot>, RunnerE
             ),
         }
     }
-    match StateRoot::machine_observe(cx, &home) {
+    match StateRoot::runtime_machine_observe(cx, &home) {
         Observed::Verified(root, _) => roots.push(root),
         Observed::Absent(_) => {}
         Observed::Unknown(reason) => {
@@ -213,7 +213,7 @@ pub(super) fn effects_root(checkout: &Path) -> Result<&'static StateRoot, Runner
         state_home().ok_or_else(|| RunnerError::task_invocation("HOME is unset or relative"))?;
     let location = effigy_kernel::migration::CheckoutLocation {
         root: checkout.path().into(),
-        git_directory: super::checkout::git_directory(checkout.path())
+        git_directory: effigy_core::worktree_scope::git_directory(checkout.path())
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
     };
     // Revalidate before reusing a retained handle: same-path replacement is
@@ -246,7 +246,7 @@ pub(super) fn effects_root(checkout: &Path) -> Result<&'static StateRoot, Runner
 /// A read-only checkout view never creates state, falls back to another
 /// checkout or opens the legacy machine journal.
 pub(super) fn observe_root(cx: &ObserveContext, checkout: &Path) -> Observed<StateRoot> {
-    let git_directory = match super::checkout::git_directory(checkout) {
+    let git_directory = match effigy_core::worktree_scope::git_directory(checkout) {
         Ok(git) => git,
         Err(error) => return Observed::Unknown(UnknownReason::Untrusted(error.to_string())),
     };

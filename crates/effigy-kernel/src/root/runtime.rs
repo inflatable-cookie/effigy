@@ -10,6 +10,24 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 const BINDING: &str = "checkout.json";
+const MACHINE_FORMAT: &str = "machine-format.json";
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MachineFormat {
+    format: String,
+    home: DirectoryIdentity,
+}
+impl Record for MachineFormat {
+    const MAX_BYTES: u64 = 4096;
+    fn decode(bytes: &[u8]) -> Result<Self, String> {
+        let record: Self = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        if record.format != "effigy.machine-state.v1" {
+            return Err("unsupported machine state format".into());
+        }
+        Ok(record)
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -156,13 +174,66 @@ impl StateRoot {
         Ok(root)
     }
 
+    /// Pure production observation. An unmigrated legacy journal is Unknown,
+    /// rather than an empty machine store that hides retained routes or pins.
+    pub fn runtime_machine_observe(cx: &ObserveContext, home: &Path) -> Observed<Self> {
+        if cx.placement() == Placement::Guest {
+            return Observed::Unknown(UnknownReason::HostAuthorityRequired);
+        }
+        match require_cutover(cx, home, None) {
+            Ok(()) => Self::machine_observe(cx, home),
+            Err(error) => Observed::Unknown(UnknownReason::StoreUnreadable(error.to_string())),
+        }
+    }
+
     /// Opens only shared machine facts. An old `kernel.db` is never opened
     /// for writes or silently ignored before explicit migration commits.
     pub fn runtime_machine_effects(cx: &EffectContext, home: &Path) -> Result<Self, StoreError> {
         cx.require(Capability::HostAuthority)
             .map_err(|_| StoreError::HostAuthorityRequired)?;
-        require_cutover(&observation(cx)?, home, None)?;
-        Ok(Self::machine_effects(cx, home)?)
+        let observe = observation(cx)?;
+        require_cutover(&observe, home, None)?;
+        let root = Self::machine_effects(cx, home)?;
+        if matches!(
+            authority(&observe, &root),
+            Observed::Verified(Authority::Committed { .. }, _)
+        ) || machine_format(&observe, &root)?
+        {
+            return Ok(root);
+        }
+        let guard = Gate::acquire(
+            cx,
+            &root,
+            &[format_gate()?],
+            Wait::Until(std::time::Instant::now() + Duration::from_secs(10)),
+        )?;
+        if !machine_format(&observe, &root)? {
+            let bytes = serde_json::to_vec(&MachineFormat {
+                format: "effigy.machine-state.v1".into(),
+                home: root.owner.identity()?,
+            })
+            .map_err(|error| unreadable(error.to_string()))?;
+            atomic_replace(
+                cx,
+                &guard,
+                root.dir(),
+                &FileName::new(MACHINE_FORMAT)?,
+                &bytes,
+                ReplaceOpts::default(),
+            )?;
+        }
+        Ok(root)
+    }
+}
+
+fn format_gate() -> Result<ResourceId, StoreError> {
+    Ok(ResourceId::store(Scope::Machine, "runtime-layout")?)
+}
+fn machine_format(cx: &ObserveContext, root: &StateRoot) -> Result<bool, StoreError> {
+    match read_record::<MachineFormat>(cx, root.dir(), &FileName::new(MACHINE_FORMAT)?) {
+        Observed::Verified(record, _) if record.home == root.owner.identity()? => Ok(true),
+        Observed::Absent(_) => Ok(false),
+        other => Err(unreadable(format!("machine format binding: {other:?}"))),
     }
 }
 
@@ -205,7 +276,18 @@ fn require_cutover(
             Observed::Verified(Authority::Prepared { id }, _) => {
                 return Err(StoreError::MigrationPending(id))
             }
-            Observed::Verified(Authority::Fresh, _) => {}
+            Observed::Verified(Authority::Fresh, _) => {
+                // A published local binding is independent authority. Routine
+                // checkout work never reconsults machine state after bootstrap.
+                if checkout.is_some()
+                    && matches!(
+                        read_record::<Binding>(cx, root.dir(), &FileName::new(BINDING)?),
+                        Observed::Verified(_, _)
+                    )
+                {
+                    return Ok(());
+                }
+            }
             other => return Err(unreadable(format!("runtime publication: {other:?}"))),
         },
         Observed::Absent(_) => {}
@@ -220,9 +302,22 @@ fn require_cutover(
                 .dir()
                 .entry(&FileName::new(crate::store::DB_NAME)?)?
                 .is_some();
+            let initializer = format_gate()?.name().to_string();
+            let source_hints = ResourceId::store(Scope::Machine, "source-hints")?
+                .name()
+                .to_string();
             let pre_run_writer = !database
                 && legacy.dir().entry(&FileName::new("machine.db")?)?.is_none()
-                && !crate::migration::inspect_gates(cx, &legacy)?.is_empty();
+                && !machine_format(cx, &legacy)?
+                && crate::migration::inspect_gates(cx, &legacy)?
+                    .iter()
+                    .any(|blocker| {
+                        // This new-format initializer has no old-binary meaning
+                        // and never opens a database. Concurrent bootstrap waits
+                        // on its gate after the legacy-writer check.
+                        blocker.scope != "machine"
+                            || (blocker.resource != initializer && blocker.resource != source_hints)
+                    });
             if database || pre_run_writer {
                 return Err(StoreError::MigrationPending(
                     "legacy runtime exists; run `effigy run migrate --plan`, stop or drain its exact writers, then `effigy run migrate --legacy-launchers-stopped`".into(),

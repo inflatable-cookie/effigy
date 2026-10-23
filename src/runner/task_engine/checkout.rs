@@ -159,13 +159,6 @@ pub(super) fn identities(
     }
     Ok(ids)
 }
-pub(super) fn git_directory(root: &Path) -> io::Result<Option<std::path::PathBuf>> {
-    if let Some(scope) = worktree_scope::resolve(root)? {
-        return Ok(Some(scope.token_dir));
-    }
-    let git = root.join(".git");
-    Ok(git.is_dir().then_some(git))
-}
 #[derive(Debug)]
 struct Token(String);
 impl effigy_kernel::record::Record for Token {

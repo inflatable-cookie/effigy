@@ -599,6 +599,18 @@ host_ports = ["41001:41001"]
             "[effigy]\n\truntimeScope = ephemeral\n",
         )
         .unwrap();
+        let error = load_prepared_policy(&root.join("clone-one"), None).unwrap_err();
+        assert!(error.to_string().contains("generation changed"), "{error}");
+        // Move the sealed old fixture aside, then replace the whole checkout.
+        // Replacing only Git metadata cannot adopt its existing journal.
+        fs::rename(root.join("clone-one"), root.join("retired-clone-one")).unwrap();
+        fs::create_dir_all(root.join("clone-one/.git")).unwrap();
+        fs::write(
+            root.join("clone-one/.git/config"),
+            "[effigy]\n\truntimeScope = ephemeral\n",
+        )
+        .unwrap();
+        fs::write(root.join("clone-one/effigy.toml"), manifest).unwrap();
         let recreated = load_prepared_policy(&root.join("clone-one"), None).unwrap();
         assert_ne!(recreated.project_name, identities[0].0);
         assert_ne!(recreated.declared_ports, identities[0].1);

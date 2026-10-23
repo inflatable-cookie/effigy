@@ -38,8 +38,6 @@ pub(super) fn prepare_shutdown(
         return Ok(false);
     }
     if policy.render.is_some() {
-        effigy_core::worktree_scope::prepare_checkout_token(repo_root)
-            .map_err(|e| EffigyRuntimeError::task_invocation(e.to_string()))?;
         effigy_containers::policy::render::prepare(policy)
             .map_err(|e| EffigyRuntimeError::task_invocation(e.to_string()))?;
     }

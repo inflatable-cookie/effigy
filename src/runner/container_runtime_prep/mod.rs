@@ -285,7 +285,7 @@ fn activate_container_runtime_plan_for_task_using(
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     // The command's session exists before any bring-up, so the bring-up's
     // activation attaches it and no idle stop can intervene (§5.9).
-    let mut hold = Held::begin(repo_root, policy, activation_label(plan.route));
+    let mut hold = Held::begin(repo_root, policy, activation_label(plan.route))?;
     let holders = hold
         .as_ref()
         .and_then(Held::id)

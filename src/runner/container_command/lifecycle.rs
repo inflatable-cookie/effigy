@@ -2038,7 +2038,7 @@ primary_service = "app"
         effigy_containers::with_test_effigy_home(&home, || {
             let policy = prepared_marker_policy(temp.path());
             let env = crate::runner::environment::env_ref(&policy).unwrap();
-            let ctx = crate::runner::environment::context().unwrap();
+            let ctx = crate::runner::environment::context(&policy.repo_root).unwrap();
             let evidence = effigy_kernel::observe::Evidence::new("fixture".into(), None).unwrap();
             // The apply ran; activation never did: a partial generation.
             effigy_containers::environment::reconcile(

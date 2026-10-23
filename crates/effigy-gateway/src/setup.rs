@@ -202,7 +202,7 @@ pub fn session<T>(
     let op = operator::context(Duration::from_secs(120), EffectClass::Mutate);
     let cx = op.effects().map_err(error)?;
     let cleanup = op.cleanup(Duration::from_secs(15)).map_err(error)?;
-    let root = StateRoot::effects(&cx, home).map_err(error)?;
+    let root = StateRoot::runtime_machine_effects(&cx, home).map_err(error)?;
     let mut adapter = operator::Adapter;
     let mut run = Run::begin(
         &cx,
@@ -895,7 +895,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let op = operator::context(Duration::from_secs(10), EffectClass::Mutate);
         let cx = op.effects().unwrap();
-        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let root = StateRoot::runtime_machine_effects(&cx, home.path()).unwrap();
         let mut adapter = operator::Adapter;
         let mut run = Run::begin(
             &cx,
@@ -955,7 +955,7 @@ mod tests {
         let op = operator::context(Duration::from_secs(30), EffectClass::Mutate);
         let cx = op.effects().unwrap();
         let cleanup = op.cleanup(Duration::from_secs(10)).unwrap();
-        let root = StateRoot::effects(&cx, home.path()).unwrap();
+        let root = StateRoot::runtime_machine_effects(&cx, home.path()).unwrap();
         let mut adapter = operator::Adapter;
         let mut run = Run::begin(
             &cx,
@@ -1069,11 +1069,13 @@ mod tests {
             std::fs::create_dir_all(&gateway).unwrap();
             let state = operator_home.join(".effigy/state");
             std::fs::create_dir_all(&state).unwrap();
-            std::fs::write(
-                state.join("kernel.db"),
-                b"must never be opened by privileged setup",
-            )
-            .unwrap();
+            for name in ["kernel.db", "machine.db"] {
+                std::fs::write(
+                    state.join(name),
+                    b"must never be opened by privileged setup",
+                )
+                .unwrap();
+            }
             std::fs::write(gateway.join("routes.json"), br#"{"routes":{"dev.cumberland.co.uk":{"domain":"dev.cumberland.co.uk","target":"127.0.0.1:8100","project":"/fixture/site","source":"manual","registered":"2026-01-01T00:00:00Z"}}}"#).unwrap();
             let uid = nix::unistd::Uid::effective().as_raw();
             std::fs::write(

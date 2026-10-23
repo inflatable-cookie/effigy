@@ -51,22 +51,6 @@ fn journal_mode(state: &Path) -> String {
     .query_row("PRAGMA journal_mode", [], |row| row.get(0))
     .unwrap()
 }
-/// Every entry except the store's own write-ahead files and the state
-/// directory's timestamps: SQLite's shared-memory index belongs to the store,
-/// not to a record a read could change.
-fn records_only(root: &Path) -> std::collections::BTreeMap<PathBuf, Entry> {
-    snapshot(root)
-        .into_iter()
-        .filter(|(path, _)| {
-            let store_side = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name == "kernel.db-wal" || name == "kernel.db-shm");
-            let state_dir = path.ends_with(".effigy/state");
-            !store_side && !state_dir && path != Path::new(".effigy")
-        })
-        .collect()
-}
 #[derive(Debug)]
 struct Text(String);
 impl Record for Text {
@@ -284,14 +268,14 @@ fn store_reads_are_pure_including_on_a_read_only_root() {
         .unwrap();
     drop(store);
     let state = root.path().to_path_buf();
-    let before = records_only(home.path());
+    let before = snapshot(home.path());
     {
         let reader = reader(home.path());
         let reader = reader.verified().unwrap();
         assert!(reader.resource(&task("a")).verified().is_some());
     }
-    assert_eq!(records_only(home.path()), before, "a read changed state");
-    // Read-only directory and file: the reader drops to an immutable open of
+    assert_eq!(snapshot(home.path()), before, "a read changed state");
+    // Read-only directory and file: the reader takes an in-memory snapshot of
     // the checkpointed store, which creates nothing at all. SQLite's own
     // write-ahead side files go first, so "creates nothing" is measured.
     for suffix in ["-wal", "-shm"] {
@@ -1363,4 +1347,104 @@ fn store_repair_moves_the_write_ahead_log_and_index_aside() {
     store
         .txn(&cx, |txn| txn.resource(&task("a"), "task").map(|_| ()))
         .unwrap();
+}
+
+#[test]
+fn store_closed_snapshot_stays_coherent_after_a_new_writer() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| txn.resource(&task("before"), "task").map(|_| ()))
+        .unwrap();
+    drop(store);
+    let before = snapshot(home.path());
+    let observed = reader(home.path());
+    let snapshot_reader = observed.verified().unwrap();
+    assert_eq!(snapshot(home.path()), before);
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| txn.resource(&task("after"), "task").map(|_| ()))
+        .unwrap();
+    assert!(snapshot_reader
+        .resource(&task("before"))
+        .verified()
+        .is_some());
+    assert!(matches!(
+        snapshot_reader.resource(&task("after")),
+        Observed::Absent(_)
+    ));
+    assert!(reader(home.path())
+        .verified()
+        .unwrap()
+        .resource(&task("after"))
+        .verified()
+        .is_some());
+}
+
+#[test]
+#[ignore]
+fn store_helper_read_live_wal() {
+    if !support::helper_is("store_helper_read_live_wal") {
+        return;
+    }
+    assert!(reader(&stress_home())
+        .verified()
+        .unwrap()
+        .resource(&task("wal-only"))
+        .verified()
+        .is_some());
+    println!("WAL-READ");
+}
+
+#[test]
+fn store_live_wal_observation_never_changes_files() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| {
+            txn.resource(&task("wal-only"), "task").map(|_| ())
+        })
+        .unwrap();
+    let before = snapshot(home.path());
+    let mut helper = support::Helper::spawn(
+        "store_helper_read_live_wal",
+        &[("EFFIGY_STORE_STRESS_HOME", home.path().to_str().unwrap())],
+    );
+    helper.expect("WAL-READ", Duration::from_secs(30));
+    assert!(helper.wait_for_exit().success());
+    assert_eq!(snapshot(home.path()), before);
+}
+
+#[test]
+fn store_observations_preserve_unicode_and_reserved_path_bytes() {
+    let fixture = home();
+    let home = fixture.path().join("checkout-東京 é%?#");
+    std::fs::create_dir(&home).unwrap();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(&home);
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| {
+            txn.resource(&task("unicode"), "task").map(|_| ())
+        })
+        .unwrap();
+    assert!(reader(&home)
+        .verified()
+        .unwrap()
+        .resource(&task("unicode"))
+        .verified()
+        .is_some());
+    drop(store);
+    let before = snapshot(&home);
+    assert!(reader(&home)
+        .verified()
+        .unwrap()
+        .resource(&task("unicode"))
+        .verified()
+        .is_some());
+    assert_eq!(snapshot(&home), before);
 }

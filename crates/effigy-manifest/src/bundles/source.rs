@@ -159,6 +159,20 @@ fn source_key(selection: &BundleSelection) -> Result<String, serde_json::Error> 
     }
     serde_json::to_vec(&spec).map(|bytes| sha256_hex(&bytes))
 }
+fn state_location(
+    manifest: &Path,
+) -> Result<effigy_kernel::migration::CheckoutLocation, ManifestError> {
+    let root = effigy_core::resolver::resolve_target_root(parent(manifest).into(), None)
+        .map_err(|err| error(manifest, err.to_string()))?
+        .resolved_root;
+    let git_directory = effigy_core::worktree_scope::git_directory(&root)
+        .map_err(|err| error(manifest, err.to_string()))?;
+    Ok(effigy_kernel::migration::CheckoutLocation {
+        root,
+        git_directory,
+    })
+}
+
 fn known_version(selection: &BundleSelection) -> Option<String> {
     if effigy_core::container_detection::process_is_inside_effigy_workspace_container() {
         return None;
@@ -166,10 +180,7 @@ fn known_version(selection: &BundleSelection) -> Option<String> {
     let home = effigy_kernel::root::StateRoot::home_from_env()?;
     let op = observe_context();
     let cx = op.observe().ok()?;
-    let Observed::Verified(root, _) = effigy_kernel::root::StateRoot::observe(&cx, &home) else {
-        return None;
-    };
-    let dir = DirFd::open(root.path()).ok()?;
+    let dir = DirFd::open(&home.join(".effigy/cache")).ok()?;
     let Observed::Verified(known, _) =
         read_record::<KnownVersions>(&cx, &dir, &FileName::new("sources-known.json").ok()?)
     else {

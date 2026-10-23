@@ -105,11 +105,13 @@ fn migration_sealed_reader_refuses_hot_wal_without_creating_an_index() {
     std::fs::write(&wal, b"uncheckpointed frames").unwrap();
     std::fs::set_permissions(&wal, std::fs::Permissions::from_mode(0o600)).unwrap();
     let before = snapshot(root.path());
-    assert!(matches!(
-        Store::read_sealed(&observe(), &root),
-        Observed::Unknown(_)
-    ));
-    assert_eq!(snapshot(root.path()), before);
+    let observed = Store::read_sealed(&observe(), &root);
+    let after = snapshot(root.path());
+    // This intentionally malformed WAL is fixture data, never a live writer.
+    // Restore the valid store before the fixture's helper-drain observation.
+    std::fs::remove_file(&wal).unwrap();
+    assert!(matches!(observed, Observed::Unknown(_)));
+    assert_eq!(after, before);
 }
 
 #[test]
@@ -1070,6 +1072,10 @@ fn runtime_checkout_routing_refuses_legacy_before_creating_any_destination() {
     ));
     assert!(!checkout.path().join(".effigy").exists());
     assert!(matches!(
+        StateRoot::runtime_machine_observe(&observe(), machine.path()),
+        Observed::Unknown(_)
+    ));
+    assert!(matches!(
         StateRoot::runtime_machine_effects(&cx, machine.path()),
         Err(StoreError::MigrationPending(_))
     ));
@@ -1156,4 +1162,58 @@ fn runtime_checkout_routing_rejects_unbound_database_and_masks_guest_before_io()
         Err(StoreError::HostAuthorityRequired)
     ));
     assert_eq!(snapshot(fresh.path()), before);
+}
+
+#[test]
+fn runtime_machine_format_distinguishes_new_cache_gates_without_opening_a_database() {
+    let machine = home();
+    let checkout = home();
+    let cx = effects(EffectClass::Prepare);
+    let root = StateRoot::runtime_machine_effects(&cx, machine.path()).unwrap();
+    assert!(root.path().join("machine-format.json").is_file());
+    assert!(!root.path().join("machine.db").exists());
+    assert!(!root.path().join("kernel.db").exists());
+    let hint = ResourceId::store(Scope::Machine, "source-hints").unwrap();
+    let _cache = Gate::acquire(&cx, &root, &[hint], Wait::FailFast).unwrap();
+    let before = snapshot(machine.path());
+    StateRoot::runtime_machine_effects(&cx, machine.path()).unwrap();
+    StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path())).unwrap();
+    assert_eq!(
+        snapshot(machine.path()),
+        before,
+        "warm routing adds no machine writes"
+    );
+}
+
+#[test]
+fn runtime_bound_checkout_survives_unreadable_machine_layout() {
+    let machine = home();
+    let checkout = home();
+    let cx = effects(EffectClass::Mutate);
+    let local =
+        StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path())).unwrap();
+    let machine_root = StateRoot::runtime_machine_effects(&cx, machine.path()).unwrap();
+    std::fs::write(machine_root.path().join("machine-format.json"), b"corrupt").unwrap();
+    assert!(matches!(
+        StateRoot::runtime_machine_observe(&observe(), machine.path()),
+        Observed::Unknown(_)
+    ));
+    let before = snapshot(machine.path());
+    StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path())).unwrap();
+    drop(Store::open(&cx, &local).unwrap());
+    assert_eq!(snapshot(machine.path()), before);
+}
+
+#[test]
+fn runtime_shared_source_cache_gate_is_not_a_legacy_database_writer() {
+    let machine = home();
+    let checkout = home();
+    let cx = effects(EffectClass::Prepare);
+    let cache_root = StateRoot::machine_effects(&cx, machine.path()).unwrap();
+    let hint = ResourceId::store(Scope::Machine, "source-hints").unwrap();
+    let _cache = Gate::acquire(&cx, &cache_root, &[hint], Wait::FailFast).unwrap();
+    let before = snapshot(machine.path());
+    StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path())).unwrap();
+    assert_eq!(snapshot(machine.path()), before);
+    assert!(!cache_root.path().join("machine.db").exists());
 }

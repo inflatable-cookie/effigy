@@ -38,31 +38,42 @@ pub use record::{
 pub use remote::{BackendCli, CliOutput, ComposeRemote, ExecOptions, HostCli, RemoteContainer};
 pub use view::EnvironmentView;
 
-/// The Effigy home whose `.effigy/state` holds environment records and
-/// render objects: `$HOME`, or the crate's private fixture home in tests.
+/// The actual user home: shared facts and legacy migration, never the
+/// location of checkout environment journals or render objects.
 pub fn state_home() -> Result<std::path::PathBuf, EnvError> {
     crate::policy::render::state_home().map_err(|error| EnvError::Invalid(error.to_string()))
 }
 
-/// The host state root for environment records. Library tests use the
-/// crate's private fixture home, never the operator's.
+/// The owning checkout's environment journal, gated by explicit migration.
 pub fn state_root(
     cx: &effigy_kernel::ctx::EffectContext,
+    repo_root: &std::path::Path,
 ) -> Result<effigy_kernel::root::StateRoot, EnvError> {
     let home = crate::policy::render::state_home()
         .map_err(|error| EnvError::Invalid(error.to_string()))?;
-    effigy_kernel::root::StateRoot::effects(cx, &home)
+    effigy_kernel::root::StateRoot::checkout_effects(cx, &home, &location(repo_root)?)
         .map_err(|error| EnvError::Invalid(format!("cannot open the Effigy state root: {error}")))
 }
 
 /// A read-only view of the state root; never creates it (R2).
 pub fn observe_root(
     cx: &effigy_kernel::ctx::ObserveContext,
+    repo_root: &std::path::Path,
 ) -> effigy_kernel::observe::Observed<effigy_kernel::root::StateRoot> {
-    match crate::policy::render::state_home() {
-        Ok(home) => effigy_kernel::root::StateRoot::observe(cx, &home),
+    match location(repo_root) {
+        Ok(location) => effigy_kernel::root::StateRoot::checkout_observe(cx, &location),
         Err(error) => effigy_kernel::observe::Observed::Unknown(
             effigy_kernel::observe::UnknownReason::Untrusted(error.to_string()),
         ),
     }
+}
+
+pub(crate) fn location(
+    repo_root: &std::path::Path,
+) -> Result<effigy_kernel::migration::CheckoutLocation, EnvError> {
+    Ok(effigy_kernel::migration::CheckoutLocation {
+        root: repo_root.into(),
+        git_directory: effigy_core::worktree_scope::git_directory(repo_root)
+            .map_err(|error| EnvError::Invalid(error.to_string()))?,
+    })
 }

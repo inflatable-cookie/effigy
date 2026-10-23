@@ -96,7 +96,7 @@ fn validate_root_entries(path: &Path) -> Result<(), GatewayError> {
                     std::time::Duration::from_secs(3),
                     effigy_kernel::ctx::EffectClass::Observe,
                 );
-                match effigy_kernel::root::StateRoot::observe(
+                match effigy_kernel::root::StateRoot::runtime_machine_observe(
                     &op.observe().expect("Observe context"),
                     path,
                 ) {

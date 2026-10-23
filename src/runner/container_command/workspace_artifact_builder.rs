@@ -145,7 +145,7 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     // while it executes (R4).
     // A builder started outside the reconciler has no active record yet; the
     // build then runs unheld, exactly as before.
-    let mut held = environment::Held::begin(repo_root, &policy, "workspace-artifact-build");
+    let mut held = environment::Held::begin(repo_root, &policy, "workspace-artifact-build")?;
     if let Some(held) = held.as_mut() {
         held.attach_active()?;
     }

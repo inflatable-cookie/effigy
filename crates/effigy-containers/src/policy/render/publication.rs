@@ -10,7 +10,6 @@ use effigy_kernel::id::{
 use effigy_kernel::objects::Objects;
 use effigy_kernel::observe::{AbsenceProof, Observed, UnknownReason};
 use effigy_kernel::outcome::{CleanupOutcome, Invocation};
-use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::{BeginOpts, Effect, Fence, Reconciled, Run, SettlementAdapter};
 use std::io::Read;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -27,20 +26,47 @@ pub(crate) fn state_home() -> Result<PathBuf, ContainerPolicyError> {
     })
 }
 
-pub(super) fn object_directory() -> Result<PathBuf, ContainerPolicyError> {
-    let directory = state_home()?.join(".effigy/state/objects");
-    for ancestor in directory.ancestors() {
-        if let Ok(canonical) = ancestor.canonicalize() {
-            return Ok(canonical.join(directory.strip_prefix(ancestor).map_err(error)?));
-        }
+pub(super) fn object_directory(repo_root: &Path) -> Result<PathBuf, ContainerPolicyError> {
+    let root = effigy_kernel::fs::DirFd::open(repo_root).map_err(error)?;
+    Ok(root.path().join(".effigy/state/objects"))
+}
+
+/// Refuse an unresolved legacy cutover before minting checkout identity or
+/// allocating render inputs. This is Prepare, never an Observe side effect.
+pub(super) fn prepare_identity(
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), ContainerPolicyError> {
+    if effigy_core::container_detection::process_is_inside_effigy_workspace_container() {
+        return Err(error(
+            "host authority is required for checkout runtime state",
+        ));
     }
-    Err(error("no existing parent for the object directory"))
+    let cx = OperationContext::new(
+        Deadline::At(Instant::now() + Duration::from_secs(30)),
+        CancelToken::default(),
+        Limits {
+            capture_tail: 1024,
+            log_rotate: 4096,
+            log_keep: 2,
+            line_max: 512,
+            queue_bytes: 2048,
+            probe_concurrency: 2,
+        },
+        EffectClass::Prepare,
+        Placement::Host,
+    )
+    .effects()
+    .map_err(|_| error("Prepare capability refused"))?;
+    crate::environment::state_root(&cx, &policy.repo_root).map_err(error)?;
+    effigy_core::worktree_scope::prepare_checkout_token(&policy.repo_root).map_err(error)?;
+    Ok(())
 }
 
 pub fn prepare(policy: &EffectiveContainerPolicy) -> Result<(), ContainerPolicyError> {
     let Some(render) = &policy.render else {
         return Ok(());
     };
+    prepare_identity(policy)?;
     // This is the Prepare stage of a Mutate command. Gate(Env) deliberately
     // requires that command class; Observe render never enters this path.
     // The backend is recorded under the same owner gate, before any engine
@@ -89,10 +115,7 @@ pub(crate) fn recorded_backend(
     let Ok(cx) = context.observe() else {
         return Observed::Unknown(UnknownReason::Inconsistent("observe capability".into()));
     };
-    let Ok(home) = state_home() else {
-        return Observed::Absent(AbsenceProof::NoStateRoot);
-    };
-    let root = match StateRoot::observe(&cx, &home) {
+    let root = match crate::environment::observe_root(&cx, repo_root) {
         Observed::Verified(root, _) => root,
         Observed::Absent(proof) => return Observed::Absent(proof),
         Observed::Unknown(reason) => return Observed::Unknown(reason),
@@ -113,7 +136,7 @@ pub fn reset(policy: &EffectiveContainerPolicy) -> Result<(), ContainerPolicyErr
     if policy.render.is_none() {
         return Ok(());
     }
-    effigy_core::worktree_scope::prepare_checkout_token(&policy.repo_root).map_err(error)?;
+    prepare_identity(policy)?;
     with_owner(policy, EffectClass::Mutate, Objects::reset)
 }
 
@@ -161,11 +184,7 @@ fn with_owner(
     let cx = context
         .effects()
         .map_err(|_| error("Prepare capability refused"))?;
-    let home = state_home()?;
-    // A private nonstandard test home is already present; ordinary HOME exists.
-    #[cfg(any(test, feature = "test-support"))]
-    std::fs::create_dir_all(&home).map_err(error)?;
-    let root = StateRoot::effects(&cx, &home).map_err(error)?;
+    let root = crate::environment::state_root(&cx, &policy.repo_root).map_err(error)?;
     let invocation = ResolvedInvocation::new(InvocationSpec {
         task: TaskId::new(checkout, "", Surface::Published, "container-render", None)
             .map_err(error)?,
@@ -277,7 +296,7 @@ pub fn verify(policy: &EffectiveContainerPolicy) -> Result<(), ContainerPolicyEr
     let cx = context
         .observe()
         .map_err(|_| error("Observe capability refused"))?;
-    let root_observation = StateRoot::observe(&cx, &state_home()?);
+    let root_observation = crate::environment::observe_root(&cx, &policy.repo_root);
     let root = root_observation
         .verified()
         .ok_or_else(|| error("object store is absent or unavailable"))?;

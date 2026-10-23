@@ -1148,8 +1148,10 @@ fn ensure_runtime_running_stage_uses_plan_identity_when_runtime_is_stopped() {
 
 #[test]
 fn task_activation_side_effects_skip_gateway_for_plain_task_route() {
-    let repo_root = Path::new("/tmp/demo-repo");
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
+    let fixture = effigy_test_support::Fixture::new("q010-activation-").unwrap();
+    let repo_root = fixture.path();
+    let mut policy = test_policy(PathBuf::from("docker-compose.yml"));
+    policy.repo_root = repo_root.to_owned();
     let events = Arc::new(Mutex::new(Vec::<String>::new()));
 
     let plan = runtime_activation_plan_from_request(
@@ -1245,8 +1247,10 @@ fn exec_preparation_stopped_runtime_gate_returns_explicit_start_guidance() {
 
 #[test]
 fn task_activation_in_a_managed_workspace_keeps_its_stack_without_gateway_readiness() {
-    let repo_root = Path::new("/tmp/demo-repo");
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
+    let fixture = effigy_test_support::Fixture::new("q010-activation-").unwrap();
+    let repo_root = fixture.path();
+    let mut policy = test_policy(PathBuf::from("docker-compose.yml"));
+    policy.repo_root = repo_root.to_owned();
     let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
 
     let plan = runtime_activation_plan_from_request(
@@ -1314,8 +1318,10 @@ fn reused_task_activation_matrix_keeps_gateway_skipped_across_retention_modes() 
             false,
         ),
     ] {
-        let repo_root = Path::new("/tmp/demo-repo");
-        let policy = test_policy(PathBuf::from("docker-compose.yml"));
+        let fixture = effigy_test_support::Fixture::new("q010-activation-").unwrap();
+        let repo_root = fixture.path();
+        let mut policy = test_policy(PathBuf::from("docker-compose.yml"));
+        policy.repo_root = repo_root.to_owned();
         let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
 
         let plan = runtime_activation_plan_from_request(
@@ -1372,8 +1378,10 @@ fn reused_task_activation_matrix_keeps_gateway_skipped_across_retention_modes() 
 
 #[test]
 fn task_activation_surfaces_workspace_permission_failure() {
-    let repo_root = Path::new("/tmp/demo-repo");
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
+    let fixture = effigy_test_support::Fixture::new("q010-activation-").unwrap();
+    let repo_root = fixture.path();
+    let mut policy = test_policy(PathBuf::from("docker-compose.yml"));
+    policy.repo_root = repo_root.to_owned();
     let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
 
     let plan = runtime_activation_plan_from_request(
@@ -1427,8 +1435,10 @@ fn task_activation_surfaces_dependency_volume_failure() {
     // A nonrepairable dependency volume (Composer vendor / JS node_modules)
     // that the resolved workspace user cannot write must block task readiness
     // at the permission stage; the task child never runs.
-    let repo_root = Path::new("/tmp/demo-repo");
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
+    let fixture = effigy_test_support::Fixture::new("q010-activation-").unwrap();
+    let repo_root = fixture.path();
+    let mut policy = test_policy(PathBuf::from("docker-compose.yml"));
+    policy.repo_root = repo_root.to_owned();
     let events = Arc::new(Mutex::new(Vec::<&'static str>::new()));
 
     let plan = runtime_activation_plan_from_request(

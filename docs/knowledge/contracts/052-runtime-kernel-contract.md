@@ -704,14 +704,16 @@ stays small, `auto_vacuum=INCREMENTAL` chosen while the store is empty, and a
 reader and a writer share the store; it replaced the rollback journal in
 effigy#275 after concurrent runs refused each other with `Busy`.
 
-Reads stay pure in the record sense: `Store::read` opens read-only and writes
-no row, schema or journal. SQLite keeps the WAL's shared-memory index
-(`kernel.db-shm`) and its log (`kernel.db-wal`), so a read on a writable root
-may create or map those two store files; they are the store's, not a record.
-On a read-only root the same read is an immutable open (`?immutable=1`) of the
-checkpointed file, which creates nothing, because SQLite cannot create the
-shared-memory index there. A non-empty `-wal` or `-journal` on such a root is
-`Unknown(store needs recovery)`, never an older read.
+Reads create no files: `Store::read` uses SQLite's read-only WAL shared-memory
+index (`readonly_shm=1`) through a Unix VFS that refuses file creation,
+writable opens and deletion. Its live WAL view is copied through SQLite backup
+into memory before closing the filesystem connection. A checkpointed store without that index
+is copied into memory through a verified descriptor. Its identity, size and
+nanosecond modification/change times must remain unchanged across the bounded
+copy, with no hot WAL or rollback journal before or after it. A race is
+`Unknown(store needs recovery)`. The returned reader owns only the detached in-memory snapshot;
+later writers cannot change its snapshot. Migration's sealed source read retains
+its stricter quiescence requirement. Neither route silently ignores live WAL.
 
 Every write takes the store's own writer gate (`Store(kernel)`), then one short
 `BEGIN IMMEDIATE` transaction, and commits it. The gate serializes Effigy's
@@ -1858,6 +1860,7 @@ block; foreground admission and all reads never append it.
 ```text
 <checkout>/.effigy/state/
   kernel.db                         checkout journal (+ kernel.db-wal and -shm while open)
+  checkout.json                     fresh checkout/Git filesystem-generation binding
   gates/<scope>.scope               scope lock
   gates/<scope>/<rid>.gate          per-resource locks, including foreground owners
   sock/<run-id>.sock                durable supervisor socket
@@ -1891,7 +1894,12 @@ store read/write checks those generations. Warm routing only reads that record.
 The first record is serialized by a local filesystem-generation gate. Imported
 checkouts use their migration seal's equivalent binding. A legacy central
 journal requires explicit migration before any fresh durable destination is
-created; a sealed checkout remains usable independently of machine-store health.
+created. A sealed or freshly bound checkout remains usable independently of
+machine-store health; local authority does not consult machine state again.
+A one-time machine `state/machine-format.json` binds the new layout to its home
+directory generation without creating a database. It distinguishes new cache
+locks from old pre-run writers during bootstrap; it contains no checkout or run
+index. Initialization is measured separately from steady-state operations.
 Fresh task and environment identities share one token; both distinct legacy
 primary tokens remain valid when imported. Non-Git durable roots persist a
 random token in `.effigy`; path hashes cannot establish ownership of old state.

@@ -157,8 +157,6 @@ fn discovery_is_write_free_and_cannot_reach_a_hung_source_remote() {
     fixture.write_path_bundle();
     let (ok, output) = fixture.run(&["bundle", "sync"], &[], Duration::from_secs(20));
     assert!(ok, "{output}");
-    let (ok, output) = fixture.run(&["graph", "index"], &[], Duration::from_secs(20));
-    assert!(ok, "{output}");
     // A changed declaration is deliberately behind the pin. Reads still use
     // the selected bytes. The remote executable would record and hang if used.
     fs::write(

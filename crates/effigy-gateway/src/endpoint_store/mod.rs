@@ -104,7 +104,7 @@ impl EndpointStore {
         &self.home
     }
     pub fn database_path(&self) -> PathBuf {
-        self.home.join(".effigy/state/kernel.db")
+        self.home.join(".effigy/state/machine.db")
     }
 
     /// Pure observation: no import, gate, recovery, directory or file creation.
@@ -115,7 +115,7 @@ impl EndpointStore {
         {
             return Observed::Absent(effigy_kernel::observe::AbsenceProof::NoStateRoot);
         }
-        let root = match StateRoot::observe(&cx, &self.home) {
+        let root = match StateRoot::runtime_machine_observe(&cx, &self.home) {
             Observed::Verified(root, _) => root,
             Observed::Absent(proof) => return Observed::Absent(proof),
             Observed::Unknown(reason) => return Observed::Unknown(reason),
@@ -276,7 +276,7 @@ impl EndpointStore {
         let recovery = op
             .cleanup(OPERATION_BUDGET + CLEANUP_BUDGET)
             .map_err(|e| error(format!("{e:?}")))?;
-        let root = StateRoot::effects(&cx, &self.home).map_err(error)?;
+        let root = StateRoot::runtime_machine_effects(&cx, &self.home).map_err(error)?;
         let mut adapter = operator::Adapter;
         let mut run = Run::begin(
             &cx,

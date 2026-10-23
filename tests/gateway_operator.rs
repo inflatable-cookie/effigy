@@ -154,7 +154,7 @@ fn operator_daemon_binds_before_publish_and_settles_without_elevation() {
         effigy_kernel::ctx::EffectClass::Observe,
     );
     let cx = op.observe().unwrap();
-    let root = effigy_kernel::root::StateRoot::observe(&cx, home.path());
+    let root = effigy_kernel::root::StateRoot::runtime_machine_observe(&cx, home.path());
     let root = root.verified().unwrap();
     let reader = effigy_kernel::store::Store::read(&cx, root);
     let reader = reader.verified().unwrap();

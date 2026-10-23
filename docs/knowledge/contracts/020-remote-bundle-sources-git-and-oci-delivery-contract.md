@@ -120,7 +120,9 @@ Observe graph paths never acquire sources, create locks or register Git excludes
 An unprepared remote source returns an actionable preparation error. Static help
 and version remain available while source preparation is unavailable.
 
-Preparation runs as a kernel Prepare operation under `Gate(Store bundles)`.
+Preparation runs as a kernel Prepare operation under the declaring checkout's
+`Gate(Store bundles)` and `.effigy/state/kernel.db`, with a persisted checkout
+identity. It never journals source acquisition in the machine store.
 Gate admission and source acquisition share a 120-second deadline. Git and ORAS
 run through `Custody::spawn_source`, with journalled intent and a registered
 sentinel. Failure and cancellation settle through the kernel. Guests consume
@@ -173,8 +175,9 @@ validation failure preserves the prior selected bytes. No cache is removed to
 make room for its replacement. Git exclude registration occurs only in Prepare
 and Mutate paths, never during manifest composition.
 
-A bounded host-side `sources-known.json` hint records versions learned by explicit
-syncs. A read may emit one `bundle behind: run `effigy bundle sync`` notice per
+A bounded host-side `~/.effigy/cache/sources-known.json` hint records versions
+learned by explicit syncs. A short shared cache gate serializes publishers;
+this derived hint is outside both runtime databases and contains no run index. A read may emit one `bundle behind: run `effigy bundle sync`` notice per
 process when a declaration or known source version differs from its pin. It
 performs no network request and never changes the selection. A missing or
 unreadable hint grants no update authority.

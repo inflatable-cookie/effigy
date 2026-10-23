@@ -103,6 +103,16 @@ pub fn resolve(repo_root: &Path) -> io::Result<Option<RuntimeScope>> {
     }
 }
 
+/// Git metadata belonging to this checkout, never a linked worktree's common
+/// Git directory. Non-Git roots have no Git generation to bind.
+pub fn git_directory(repo_root: &Path) -> io::Result<Option<std::path::PathBuf>> {
+    if let Some(scope) = resolve(repo_root)? {
+        return Ok(Some(scope.token_dir));
+    }
+    let git = repo_root.join(".git");
+    Ok(git.is_dir().then_some(git))
+}
+
 /// Which checkout shape owns the runtime scope, if any.
 pub fn scope_kind(repo_root: &Path) -> io::Result<Option<ScopeKind>> {
     Ok(resolve(repo_root)?.map(|scope| scope.kind))
