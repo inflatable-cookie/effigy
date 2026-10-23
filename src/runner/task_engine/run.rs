@@ -294,7 +294,7 @@ impl TaskRun {
         placement: LifecyclePlacement,
     ) -> Result<Self, RunnerError> {
         let parent = PARENTS.with(|parents| parents.borrow().last().cloned());
-        let root = kernel::effects_root()?;
+        let root = kernel::effects_root(&request.target.root)?;
         let checkout = checkout::mint(&request.target.root)?;
         let owner = request.target.owner(checkout)?;
         let task_id = request.target.task_id(checkout)?;
@@ -314,7 +314,7 @@ impl TaskRun {
         let admission = super::admission::plan(request.admission)?;
         let run_id = match request.key {
             Some(key) => {
-                refuse_bound_key(key, &task_id)?;
+                refuse_bound_key(key, &task_id, &request.target.root)?;
                 key.id()
             }
             None => new_run_id()?,
@@ -448,7 +448,7 @@ impl TaskRun {
         .map_err(|error| match request.key {
             // The racing first invocation with this key holds the gate, or
             // finished between our check and our insert: attach to it.
-            Some(key) if key_run_exists(key) => RunnerError::RunKeyExists {
+            Some(key) if key_run_exists(key, &request.target.root) => RunnerError::RunKeyExists {
                 run: key.id().to_string(),
             },
             _ => begin_error(error, request.target, &owner, request.lock_wait_ms, started),
@@ -917,9 +917,13 @@ fn invocation(
 
 /// A key already naming a run of another task is refused: a key names
 /// exactly one run. A key naming a run of this task attaches to it.
-fn refuse_bound_key(key: &RunKey, task: &TaskId) -> Result<(), RunnerError> {
+fn refuse_bound_key(
+    key: &RunKey,
+    task: &TaskId,
+    checkout: &std::path::Path,
+) -> Result<(), RunnerError> {
     let cx = kernel::observe();
-    let root = match kernel::observe_root(&cx) {
+    let root = match kernel::observe_root(&cx, checkout) {
         Observed::Verified(root, _) => root,
         Observed::Absent(_) => return Ok(()),
         Observed::Unknown(reason) => return Err(unverifiable_key(key, &format!("{reason:?}"))),
@@ -969,11 +973,11 @@ fn unverifiable_key(key: &RunKey, reason: &str) -> RunnerError {
 
 /// Whether the key's run appeared: a racing invocation may hold the gate
 /// before its row commits, so the check waits briefly for the row.
-fn key_run_exists(key: &RunKey) -> bool {
+fn key_run_exists(key: &RunKey, checkout: &std::path::Path) -> bool {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let cx = kernel::observe();
-        if let Observed::Verified(root, _) = kernel::observe_root(&cx) {
+        if let Observed::Verified(root, _) = kernel::observe_root(&cx, checkout) {
             if let Observed::Verified(reader, _) = Store::read(&cx, &root) {
                 if matches!(
                     effigy_kernel::run::summary(&reader, key.id()),
@@ -1076,7 +1080,7 @@ fn conflict(
     started: Instant,
 ) -> RunnerError {
     let diag = holder.verified().cloned();
-    let run_started = holders::holder_run_started_ms(owner);
+    let run_started = holders::holder_run_started_ms(&target.root, owner);
     let scope = match &target.shared_lock {
         Some(name) if owner.kind() == effigy_kernel::id::ResourceKind::Store => {
             shared_scope_label(name)

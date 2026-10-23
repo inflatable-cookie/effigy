@@ -278,7 +278,8 @@ fn a_terminal_run_without_logs_still_reports_its_settled_outcome() {
         5
     );
     // Retention removes a settled run's logs before its row.
-    let logs: PathBuf = crate::runner::task_engine::test_state_home()
+    let logs: PathBuf = root
+        .path()
         .join(".effigy/state/runs")
         .join(key.id().to_string());
     std::fs::remove_dir_all(&logs).expect("remove the run's logs");

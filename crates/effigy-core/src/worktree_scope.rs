@@ -150,11 +150,18 @@ fn identity_dir(repo_root: &Path) -> io::Result<std::path::PathBuf> {
 }
 
 pub fn checkout_token(repo_root: &Path) -> io::Result<Option<String>> {
-    read_token(&identity_dir(repo_root)?)
+    let scope = read_token(&identity_dir(repo_root)?)?;
+    if scope.is_some() || resolve(repo_root)?.is_some() {
+        return Ok(scope);
+    }
+    load_checkout_token(repo_root)
 }
 
 /// Prepare-only identity allocation; callers must resolve again afterward.
 pub fn prepare_checkout_token(repo_root: &Path) -> io::Result<String> {
+    if let Some(token) = checkout_token(repo_root)? {
+        return Ok(token);
+    }
     let dir = identity_dir(repo_root)?;
     fs::create_dir_all(&dir)?;
     load_or_create_token(&dir)
@@ -557,6 +564,22 @@ mod observation_tests {
         assert_eq!(load(&root).unwrap(), Some(token.clone()));
         assert_eq!(checkout_token(&root).unwrap(), Some(token));
     }
+    #[test]
+    fn primary_task_identity_is_reused_without_minting_a_second_token() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        fs::create_dir(root.join(".git")).unwrap();
+        let token = load_or_create_checkout_token(root).unwrap().unwrap();
+        assert_eq!(checkout_token(root).unwrap(), Some(token.clone()));
+        assert_eq!(prepare_checkout_token(root).unwrap(), token);
+        assert!(!root.join(".git").join(SCOPE_FILE).exists());
+        // Already distinct legacy identities remain distinct and valid.
+        let other = "01010101010101010101010101010101";
+        fs::write(root.join(".git").join(SCOPE_FILE), other).unwrap();
+        assert_eq!(checkout_token(root).unwrap().as_deref(), Some(other));
+        assert_eq!(load_checkout_token(root).unwrap(), Some(token));
+    }
+
     #[test]
     fn primary_checkout_identity_never_changes_scope_naming() {
         let fixture = tempfile::tempdir().unwrap();

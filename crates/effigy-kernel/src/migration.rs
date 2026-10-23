@@ -236,7 +236,10 @@ fn inspect_resources(
     Ok(resources)
 }
 
-fn inspect_gates(cx: &ObserveContext, root: &StateRoot) -> Result<Vec<Blocker>, StoreError> {
+pub(crate) fn inspect_gates(
+    cx: &ObserveContext,
+    root: &StateRoot,
+) -> Result<Vec<Blocker>, StoreError> {
     let Some(gates) = root.read_family(Family::Gates)? else {
         return Ok(Vec::new());
     };

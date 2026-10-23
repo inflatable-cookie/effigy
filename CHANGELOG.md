@@ -358,6 +358,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `simulate --version`. The refusal names the replacement.
 
 ### Added
+- Task journals live in the owning checkout's `.effigy/state/`. Durable
+  initialization refuses an unresolved legacy migration and binds checkout
+  and Git directory generations, so same-path replacements cannot adopt old
+  state. Run control reads the local journals without a central run index.
 - `effigy run migrate --plan` inspects legacy runtime state and reports exact
   blocking writers with verified stop commands. Withdraw old launchers, then
   use `--legacy-launchers-stopped` to import retained state into per-checkout

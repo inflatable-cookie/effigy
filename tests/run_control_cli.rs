@@ -568,7 +568,7 @@ fn an_unreadable_journal_is_unknown_and_names_the_run() {
         .run(&["--run-id", "dark-1", "light"])
         .status
         .success());
-    let state = fixture.home.join(".effigy/state");
+    let state = fixture.repo.join(".effigy/state");
     fs::set_permissions(&state, fs::Permissions::from_mode(0o000)).expect("hide journal");
     let status = fixture.run(&["run", "status", "dark-1"]);
     let follow = fixture.run(&["run", "logs", "dark-1", "--follow"]);

@@ -157,11 +157,12 @@ fn sequence_durable_stop_request_cancels_active_custody_and_settles_child() {
     // the durable request. Only the owning thread writes run outcomes.
     let mut parent = run;
     let expected = parent.run_mut().fence().clone();
+    let state = super::kernel::effects_root(root.path()).unwrap();
     let requester = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(100));
         effigy_kernel::run::request(
             &super::kernel::effects(),
-            super::kernel::effects_root().unwrap(),
+            state,
             &effigy_kernel::run::Request {
                 id: effigy_kernel::id::RunId::new(99, [19; 10]).unwrap(),
                 run: id,
@@ -210,7 +211,7 @@ fn sequence_pending_stop_starts_no_next_workload() {
     let expected = parent.run_mut().fence().clone();
     effigy_kernel::run::request(
         &super::kernel::effects(),
-        super::kernel::effects_root().unwrap(),
+        super::kernel::effects_root(root.path()).unwrap(),
         &effigy_kernel::run::Request {
             id: effigy_kernel::id::RunId::new(99, [20; 10]).unwrap(),
             run: parent.id(),
@@ -880,4 +881,36 @@ fn without_a_configured_root_a_host_run_sees_the_inherited_temp_environment() {
         assert_eq!(seen, inherited, "no config changes nothing about the env");
         assert!(run.close(WorkloadOutcome::Succeeded).is_empty());
     });
+}
+
+#[test]
+fn checkout_journals_are_independent_while_another_checkout_writer_is_busy() {
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    let a = TaskTarget::for_catalog(first.path(), "build", &catalog(first.path(), "", "", 0));
+    let b = TaskTarget::for_catalog(second.path(), "build", &catalog(second.path(), "", "", 0));
+    let run_a = begin(&a).unwrap();
+    let state_a = super::kernel::effects_root(first.path()).unwrap();
+    let cx = super::kernel::effects();
+    let mut writer = effigy_kernel::store::Store::open(&cx, state_a).unwrap();
+    writer
+        .txn(&cx, |_| {
+            std::thread::spawn(move || {
+                let run_b =
+                    begin(&b).expect("a peer checkout's writer is not part of this admission");
+                assert!(second.path().join(".effigy/state/kernel.db").is_file());
+                assert!(!super::kernel::test_state_home()
+                    .join(".effigy/state/kernel.db")
+                    .exists());
+                let runs = super::control::list(Some(second.path()), 20).unwrap();
+                assert_eq!(runs.len(), 1);
+                assert_eq!(runs[0].id, run_b.id());
+                assert!(run_b.close(WorkloadOutcome::Succeeded).is_empty());
+            })
+            .join()
+            .unwrap();
+            Ok::<_, effigy_kernel::store::StoreError>(())
+        })
+        .unwrap();
+    assert!(run_a.close(WorkloadOutcome::Succeeded).is_empty());
 }

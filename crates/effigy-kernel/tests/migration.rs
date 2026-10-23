@@ -857,6 +857,14 @@ fn runtime_migration_stopped_pre_run_writer_is_reported_before_staging_and_can_b
     let before = snapshot(home.path());
     let report = migration::inspect(&observe(), &root).unwrap();
     assert!(!report.ready());
+    let destination = support::home();
+    assert!(StateRoot::checkout_effects(
+        &effects(EffectClass::Mutate),
+        home.path(),
+        &location(destination.path())
+    )
+    .is_err());
+    assert!(!destination.path().join(".effigy").exists());
     assert!(report.blockers.iter().any(
         |blocker| blocker.run.is_none() && blocker.process.verified() == Some(&target.process)
     ));
@@ -932,7 +940,9 @@ fn migration_import_coalesces_verified_checkout_aliases_without_reencoding_resou
     assert_eq!(local[0].checkout_aliases.len(), 1);
     assert_eq!(local[0].rows["checkouts"], 2);
     assert_eq!(local[0].rows["resources"], 2);
-    let root = StateRoot::effects(&cx, checkout.path()).unwrap();
+    let root =
+        StateRoot::checkout_effects(&cx, source_home.path(), &location(checkout.path())).unwrap();
+    StateRoot::runtime_machine_effects(&cx, source_home.path()).unwrap();
     {
         let reader = Store::read(&observe(), &root);
         let reader = reader.verified().unwrap();
@@ -1046,4 +1056,104 @@ fn migration_git_directory_replacement_is_unknown_and_cannot_resume_an_old_seal(
     )
     .is_err());
     assert_eq!(snapshot(checkout.path()), before);
+}
+
+#[test]
+fn runtime_checkout_routing_refuses_legacy_before_creating_any_destination() {
+    let (machine, _, _) = source();
+    let checkout = home();
+    let cx = effects(EffectClass::Mutate);
+    let before = snapshot(machine.path());
+    assert!(matches!(
+        StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path())),
+        Err(StoreError::MigrationPending(_))
+    ));
+    assert!(!checkout.path().join(".effigy").exists());
+    assert!(matches!(
+        StateRoot::runtime_machine_effects(&cx, machine.path()),
+        Err(StoreError::MigrationPending(_))
+    ));
+    assert_eq!(snapshot(machine.path()), before);
+}
+
+#[test]
+fn runtime_checkout_routing_is_local_and_rejects_replaced_git_generation() {
+    let machine = home();
+    let checkout = home();
+    let git = checkout.path().join(".git");
+    std::fs::create_dir(&git).unwrap();
+    let location = migration::CheckoutLocation {
+        root: checkout.path().into(),
+        git_directory: Some(git.clone()),
+    };
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::checkout_effects(&cx, machine.path(), &location).unwrap();
+    assert!(!machine.path().join(".effigy").exists());
+    let store = Store::open(&cx, &root).unwrap();
+    drop(store);
+    assert!(matches!(
+        StateRoot::checkout_observe(&observe(), &location),
+        Observed::Verified(_, _)
+    ));
+    // The old Git directory still exists, but a new resolution may not select it.
+    let alternate = checkout.path().join("alternate-git");
+    std::fs::create_dir(&alternate).unwrap();
+    let retargeted = migration::CheckoutLocation {
+        root: checkout.path().into(),
+        git_directory: Some(alternate.clone()),
+    };
+    assert!(matches!(
+        StateRoot::checkout_observe(&observe(), &retargeted),
+        Observed::Unknown(_)
+    ));
+    std::fs::remove_dir(&alternate).unwrap();
+    let before = snapshot(checkout.path());
+    StateRoot::checkout_effects(&cx, machine.path(), &location).unwrap();
+    assert_eq!(
+        snapshot(checkout.path()),
+        before,
+        "warm routing writes nothing"
+    );
+    std::fs::rename(&git, checkout.path().join("old-git")).unwrap();
+    std::fs::create_dir(&git).unwrap();
+    let before = snapshot(checkout.path());
+    assert!(StateRoot::checkout_effects(&cx, machine.path(), &location).is_err());
+    assert!(matches!(
+        Store::read(&observe(), &root),
+        Observed::Unknown(_)
+    ));
+    assert!(Store::open(&cx, &root).is_err());
+    assert_eq!(snapshot(checkout.path()), before);
+}
+
+#[test]
+fn runtime_checkout_routing_rejects_unbound_database_and_masks_guest_before_io() {
+    let machine = home();
+    let checkout = home();
+    let cx = effects(EffectClass::Mutate);
+    let primitive = StateRoot::effects(&cx, checkout.path()).unwrap();
+    drop(Store::open(&cx, &primitive).unwrap());
+    assert!(StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path())).is_err());
+    let guest = effigy_kernel::ctx::OperationContext::new(
+        effigy_kernel::ctx::Deadline::At(
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+        ),
+        effigy_kernel::ctx::CancelToken::default(),
+        limits(),
+        EffectClass::Mutate,
+        effigy_kernel::ctx::Placement::Guest,
+    )
+    .effects()
+    .unwrap();
+    let fresh = home();
+    let before = snapshot(fresh.path());
+    assert!(matches!(
+        StateRoot::checkout_effects(&guest, fresh.path(), &location(fresh.path())),
+        Err(StoreError::HostAuthorityRequired)
+    ));
+    assert!(matches!(
+        StateRoot::runtime_machine_effects(&guest, fresh.path()),
+        Err(StoreError::HostAuthorityRequired)
+    ));
+    assert_eq!(snapshot(fresh.path()), before);
 }

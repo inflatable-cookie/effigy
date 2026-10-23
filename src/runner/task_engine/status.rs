@@ -87,7 +87,7 @@ pub(in crate::runner) fn task_status(target: &TaskTarget, limit: usize) -> TaskS
         }
     };
     let cx = kernel::observe();
-    let root = match kernel::observe_root(&cx) {
+    let root = match kernel::observe_root(&cx, &target.root) {
         Observed::Verified(root, _) => root,
         Observed::Absent(_) => return view,
         Observed::Unknown(reason) => {
@@ -263,10 +263,10 @@ pub(in crate::runner) fn run_liveness(run_id: &str, next: &[&str]) -> RunLivenes
         return RunLiveness::Unknown("invalid recovery command".to_owned());
     };
     let cx = kernel::observe();
-    let root = match kernel::observe_root(&cx) {
-        Observed::Verified(root, _) => root,
-        Observed::Absent(_) => return RunLiveness::NotFound,
-        Observed::Unknown(reason) => return RunLiveness::Unknown(format!("{reason:?}")),
+    let root = match super::control::lookup(id) {
+        super::control::Lookup::Found(record) => record.root,
+        super::control::Lookup::NotFound => return RunLiveness::NotFound,
+        super::control::Lookup::Unknown(reason) => return RunLiveness::Unknown(reason),
     };
     let reader = match Store::read(&cx, &root) {
         Observed::Verified(reader, _) => reader,

@@ -1242,24 +1242,23 @@ fn sweep(root: &Path) {
     if SWEPT.swap(true, std::sync::atomic::Ordering::AcqRel) {
         return;
     }
-    let Some(reader) = crate::runner::task_engine::journal_reader() else {
-        return;
-    };
     sweep_at(root, now_ms(), SWEEP_REMOVE_MAX, |run| {
         let Ok(id) = run.parse::<effigy_kernel::id::RunId>() else {
             return RunState::Unknown;
         };
-        match effigy_kernel::run::summary(&reader, id) {
-            Observed::Verified(summary, _) => match summary.phase {
+        match crate::runner::task_engine::lookup_run(id) {
+            crate::runner::task_engine::Lookup::Found(record) => match record.summary.phase {
                 effigy_kernel::run::Phase::Closed => RunState::Closed {
-                    at_ms: summary.closed_at_ms.or(Some(summary.updated_at_ms)),
+                    at_ms: record
+                        .summary
+                        .closed_at_ms
+                        .or(Some(record.summary.updated_at_ms)),
                 },
                 _ => RunState::Open,
             },
-            // A row the journal's own retention removed is a closed run, with
-            // no close time left: the marker's own clock decides.
-            Observed::Absent(_) => RunState::Closed { at_ms: None },
-            Observed::Unknown(_) => RunState::Unknown,
+            // Absence in a bounded view cannot establish closure of a run
+            // whose checkout may have been deleted or omitted.
+            _ => RunState::Unknown,
         }
     });
 }

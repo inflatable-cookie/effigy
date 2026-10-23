@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use effigy_kernel::custody::Stream;
 use effigy_kernel::gate::Gate;
-use effigy_kernel::id::{ResourceKind, RunId, Scope};
+use effigy_kernel::id::{ResourceKind, RunId};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::run::{Fence, LogRead, Phase, Request, RequestAction, RunSummary};
 use effigy_kernel::store::Store;
@@ -26,6 +26,8 @@ const KERNEL_PROCESS: &str = "kernel:process";
 #[derive(Debug, Clone)]
 pub(in crate::runner) struct RunRecord {
     pub(in crate::runner) id: RunId,
+    /// Bound once by lookup; stop and logs retain this checkout generation.
+    pub(super) root: effigy_kernel::root::StateRoot,
     pub(in crate::runner) summary: RunSummary,
     pub(in crate::runner) view: RunView,
     /// The selector the run was admitted for.
@@ -74,20 +76,69 @@ pub(in crate::runner) fn resolve(selector: &str) -> Result<RunId, RunnerError> {
 
 pub(in crate::runner) fn lookup(id: RunId) -> Lookup {
     let cx = kernel::observe();
-    let root = match kernel::observe_root(&cx) {
-        Observed::Verified(root, _) => root,
-        Observed::Absent(_) => return Lookup::NotFound,
-        Observed::Unknown(reason) => return Lookup::Unknown(format!("{reason:?}")),
+    // Current-checkout authority wins before cross-checkout discovery. An
+    // unreadable cwd journal is Unknown, never permission to select a peer.
+    if let Ok(cwd) = std::env::current_dir() {
+        let current = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
+            .map(|resolved| resolved.resolved_root)
+            .unwrap_or(cwd);
+        match kernel::observe_root(&cx, &current) {
+            Observed::Verified(root, _) => match lookup_at(&cx, &root, id) {
+                Lookup::NotFound => {}
+                result => return result,
+            },
+            Observed::Absent(_) => {}
+            Observed::Unknown(reason) => {
+                return Lookup::Unknown(format!("{}: {reason:?}", current.display()))
+            }
+        }
+    }
+    let roots = match kernel::known_roots(&cx) {
+        Ok(roots) => roots,
+        Err(error) => return Lookup::Unknown(error.to_string()),
     };
-    let reader = match Store::read(&cx, &root) {
+    let mut found: Option<Box<RunRecord>> = None;
+    let mut unknown = Vec::new();
+    for root in roots {
+        match lookup_at(&cx, &root, id) {
+            Lookup::Found(record) => {
+                if let Some(previous) = found {
+                    return Lookup::Unknown(format!("run {id} is ambiguous between {} and {}; run the query in its owning checkout",
+                        previous.root.owning_directory().path().display(), root.owning_directory().path().display()));
+                }
+                found = Some(record);
+            }
+            Lookup::NotFound => {}
+            Lookup::Unknown(reason) => unknown.push(reason),
+        }
+    }
+    if let Some(record) = found {
+        Lookup::Found(record)
+    } else if !unknown.is_empty() {
+        Lookup::Unknown(unknown.join("; "))
+    } else {
+        Lookup::NotFound
+    }
+}
+
+fn lookup_at(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    root: &effigy_kernel::root::StateRoot,
+    id: RunId,
+) -> Lookup {
+    let reader = match Store::read(cx, root) {
         Observed::Verified(reader, _) => reader,
         Observed::Absent(_) => return Lookup::NotFound,
-        Observed::Unknown(reason) => return Lookup::Unknown(format!("{reason:?}")),
+        Observed::Unknown(reason) => {
+            return Lookup::Unknown(format!("{}: {reason:?}", root.path().display()))
+        }
     };
     match effigy_kernel::run::summary(&reader, id) {
-        Observed::Verified(summary, _) => Lookup::Found(Box::new(record(&cx, &root, summary))),
+        Observed::Verified(summary, _) => Lookup::Found(Box::new(record(cx, root, summary))),
         Observed::Absent(_) => Lookup::NotFound,
-        Observed::Unknown(reason) => Lookup::Unknown(format!("{reason:?}")),
+        Observed::Unknown(reason) => {
+            Lookup::Unknown(format!("{}: {reason:?}", root.path().display()))
+        }
     }
 }
 
@@ -114,6 +165,7 @@ fn record(
         .unwrap_or_default();
     RunRecord {
         id: summary.id,
+        root: root.clone(),
         summary,
         view,
         task,
@@ -126,45 +178,67 @@ pub(in crate::runner) fn list(
     root: Option<&Path>,
     limit: usize,
 ) -> Result<Vec<RunRecord>, RunnerError> {
-    let scope = match root {
-        Some(root) => match super::checkout::read(root)
-            .map_err(|error| unreadable(&format!("checkout identity: {error}")))?
-        {
-            Some(checkout) => Some(Scope::Checkout(checkout)),
-            None => return Ok(Vec::new()),
-        },
-        None => None,
-    };
     let cx = kernel::observe();
-    let state = match kernel::observe_root(&cx) {
-        Observed::Verified(state, _) => state,
-        Observed::Absent(_) => return Ok(Vec::new()),
-        Observed::Unknown(reason) => return Err(unreadable(&format!("{reason:?}"))),
+    let roots = match root {
+        Some(path) => match kernel::observe_root(&cx, path) {
+            Observed::Verified(root, _) => vec![root],
+            Observed::Absent(_) => return Ok(Vec::new()),
+            Observed::Unknown(reason) => return Err(unreadable(&format!("{reason:?}"))),
+        },
+        None => kernel::known_roots(&cx)?,
     };
-    let reader = match Store::read(&cx, &state) {
-        Observed::Verified(reader, _) => reader,
-        Observed::Absent(_) => return Ok(Vec::new()),
-        Observed::Unknown(reason) => return Err(unreadable(&format!("{reason:?}"))),
-    };
-    // Lock sections share the scope; read past them to fill the page.
-    let rows = match effigy_kernel::run::recent(&reader, scope, limit.saturating_mul(4).max(64)) {
-        Observed::Verified(rows, _) => rows,
-        Observed::Absent(_) => Vec::new(),
-        Observed::Unknown(reason) => return Err(unreadable(&format!("{reason:?}"))),
-    };
-    Ok(rows
-        .into_iter()
-        .map(|summary| record(&cx, &state, summary))
-        .filter(|record| {
-            let owner_is_task = record
-                .summary
-                .invocation
-                .as_ref()
-                .is_some_and(|invocation| invocation.spec().owner.kind() == ResourceKind::Task);
-            owner_is_task || record.task.starts_with("qa-group:")
-        })
-        .take(limit)
-        .collect())
+    let mut records = Vec::new();
+    for state in roots {
+        let reader = match Store::read(&cx, &state) {
+            Observed::Verified(reader, _) => reader,
+            Observed::Absent(_) => continue,
+            Observed::Unknown(reason) => {
+                return Err(unreadable(&format!(
+                    "{}: {reason:?}",
+                    state.path().display()
+                )))
+            }
+        };
+        let rows = match effigy_kernel::run::recent(&reader, None, limit.saturating_mul(4).max(64))
+        {
+            Observed::Verified(rows, _) => rows,
+            Observed::Absent(_) => Vec::new(),
+            Observed::Unknown(reason) => return Err(unreadable(&format!("{reason:?}"))),
+        };
+        records.extend(
+            rows.into_iter()
+                .map(|summary| record(&cx, &state, summary))
+                .filter(|record| {
+                    record
+                        .summary
+                        .invocation
+                        .as_ref()
+                        .is_some_and(|invocation| {
+                            invocation.spec().owner.kind() == ResourceKind::Task
+                        })
+                        || record.task.starts_with("qa-group:")
+                }),
+        );
+    }
+    records.sort_by_key(|record| {
+        std::cmp::Reverse((record.summary.created_at_ms, record.id.to_string()))
+    });
+    records.truncate(limit);
+    Ok(records)
+}
+
+fn root_for_run(id: RunId) -> Observed<effigy_kernel::root::StateRoot> {
+    match lookup(id) {
+        Lookup::Found(record) => Observed::Verified(
+            record.root,
+            effigy_kernel::observe::Evidence::new("bound checkout journal".into(), None)
+                .expect("fixed source"),
+        ),
+        Lookup::NotFound => Observed::Absent(effigy_kernel::observe::AbsenceProof::NoStateRoot),
+        Lookup::Unknown(reason) => Observed::Unknown(
+            effigy_kernel::observe::UnknownReason::StoreUnreadable(reason),
+        ),
+    }
 }
 
 fn unreadable(reason: &str) -> RunnerError {
@@ -174,7 +248,7 @@ fn unreadable(reason: &str) -> RunnerError {
 /// A run's effects as its journal records them: a pure read (R2).
 pub(in crate::runner) fn effects(id: RunId) -> Observed<Vec<effigy_kernel::run::Effect>> {
     let cx = kernel::observe();
-    let root = match kernel::observe_root(&cx) {
+    let root = match root_for_run(id) {
         Observed::Verified(root, _) => root,
         Observed::Absent(proof) => return Observed::Absent(proof),
         Observed::Unknown(reason) => return Observed::Unknown(reason),
@@ -190,7 +264,7 @@ pub(in crate::runner) fn effects(id: RunId) -> Observed<Vec<effigy_kernel::run::
 /// admission hook or an env-schema command. `None` until it has started.
 pub(in crate::runner) fn workload_process(id: RunId) -> Observed<Option<i64>> {
     let cx = kernel::observe();
-    let root = match kernel::observe_root(&cx) {
+    let root = match root_for_run(id) {
         Observed::Verified(root, _) => root,
         Observed::Absent(proof) => return Observed::Absent(proof),
         Observed::Unknown(reason) => return Observed::Unknown(reason),
@@ -227,7 +301,7 @@ pub(in crate::runner) fn read_log(
     max: usize,
 ) -> Observed<LogRead> {
     let cx = kernel::observe();
-    match kernel::observe_root(&cx) {
+    match root_for_run(id) {
         Observed::Verified(root, _) => {
             effigy_kernel::run::read_log(&cx, &root, id, sequence, stream, offset, max)
         }
@@ -247,6 +321,29 @@ pub(in crate::runner) enum StopStarted {
     Settled,
 }
 
+fn effects_for_record(record: &RunRecord) -> Result<effigy_kernel::root::StateRoot, RunnerError> {
+    let root = if record.root.is_machine() {
+        let home = kernel::state_home()
+            .ok_or_else(|| RunnerError::task_invocation("HOME is unset or relative"))?;
+        effigy_kernel::root::StateRoot::runtime_machine_effects(&kernel::effects(), &home)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+    } else {
+        kernel::effects_root(record.root.owning_directory().path())?.clone()
+    };
+    let identity = |dir: &effigy_kernel::fs::DirFd| {
+        dir.identity()
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))
+    };
+    if identity(root.owning_directory())? != identity(record.root.owning_directory())?
+        || identity(root.state_directory())? != identity(record.root.state_directory())?
+    {
+        return Err(RunnerError::task_invocation(
+            "bound run checkout was replaced before the action",
+        ));
+    }
+    Ok(root)
+}
+
 /// The kernel stop path: a generation-fenced `Stop` request the live owner
 /// acts on, or, when the owner is gone, the one settle under its gate.
 pub(in crate::runner) fn request_stop(record: &RunRecord) -> Result<StopStarted, RunnerError> {
@@ -260,14 +357,14 @@ pub(in crate::runner) fn request_stop(record: &RunRecord) -> Result<StopStarted,
         ))
     })?;
     let owner = invocation.spec().owner.clone();
-    let root = kernel::effects_root()?;
+    let root = effects_for_record(record)?;
     let cx = kernel::effects();
     if record.view.state == "interrupted" {
         let cleanup = kernel::cleanup()?;
         let next = kernel::next_invocation(&record.task)?;
         return effigy_kernel::run::settle_interrupted(
             &cx,
-            root,
+            &root,
             &owner,
             record.id,
             next,
@@ -288,7 +385,7 @@ pub(in crate::runner) fn request_stop(record: &RunRecord) -> Result<StopStarted,
         },
         action: RequestAction::Stop,
     };
-    effigy_kernel::run::request(&cx, root, &request)
+    effigy_kernel::run::request(&cx, &root, &request)
         .map(|()| StopStarted::Requested)
         .map_err(|error| {
             RunnerError::task_invocation(format!(
@@ -306,13 +403,13 @@ pub(in crate::runner) fn signal_owner(record: &RunRecord) -> bool {
     let Some(invocation) = record.summary.invocation.as_ref() else {
         return false;
     };
-    let Ok(root) = kernel::effects_root() else {
+    let Ok(root) = effects_for_record(record) else {
         return false;
     };
     matches!(
         Gate::signal_holder(
             &kernel::effects(),
-            root,
+            &root,
             &invocation.spec().owner,
             &record.id,
             libc::SIGTERM,

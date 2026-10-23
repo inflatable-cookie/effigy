@@ -1884,6 +1884,18 @@ boot identity and boot-monotonic nanoseconds. A different boot ends them.
 The state subtree, secrets and control sockets are masked from workspace guest
 mounts; guests continue through the host authority channel (R1).
 
+A fresh durable checkout publishes `state/checkout.json` before opening its
+journal. This bounded private record binds the checkout's device/inode and
+its resolved per-checkout Git-directory path and device/inode; every subsequent
+store read/write checks those generations. Warm routing only reads that record.
+The first record is serialized by a local filesystem-generation gate. Imported
+checkouts use their migration seal's equivalent binding. A legacy central
+journal requires explicit migration before any fresh durable destination is
+created; a sealed checkout remains usable independently of machine-store health.
+Fresh task and environment identities share one token; both distinct legacy
+primary tokens remain valid when imported. Non-Git durable roots persist a
+random token in `.effigy`; path hashes cannot establish ownership of old state.
+
 Deleting a checkout deletes its journal, logs, objects and local locks. It is
 not a stop or successful settle. Supported `container retire` first settles
 runs, withdraws routes/releases claims and verifies closure under scope locks;

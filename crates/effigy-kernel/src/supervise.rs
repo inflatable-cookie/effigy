@@ -436,7 +436,7 @@ fn sentinel_attempt(
         .ok_or_else(|| RunError::Invalid("sentinel pipe missing".into()))?;
     let config = SentinelConfig {
         home: home.into(),
-        machine: root.machine(),
+        machine: root.is_machine(),
         owner: run.fence().resource.clone(),
         run: run.id(),
         next: next.argv().iter().map(|a| a.as_bytes().to_vec()).collect(),
@@ -1138,7 +1138,7 @@ fn launch(
 
     let config = SupervisorConfig {
         home: root.owning_directory().path().into(),
-        machine: root.machine(),
+        machine: root.is_machine(),
         executable: executable.clone(),
         work,
     };

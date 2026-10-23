@@ -423,9 +423,12 @@ mod tests {
     fn runtime_discovery_does_not_verify_path_hashes_as_checkout_generations() {
         let fixture = effigy_test_support::Fixture::new("q010-no-path-adoption-").unwrap();
         let cx = kernel::observe();
-        let old = super::super::checkout::read(fixture.path())
-            .unwrap()
-            .unwrap();
+        let mut bytes = b"effigy.checkout.path\0".to_vec();
+        bytes.extend_from_slice(fixture.path().as_os_str().as_encoded_bytes());
+        let digest = effigy_kernel::id::Digest::of(&bytes);
+        let mut token = [0; 16];
+        token.copy_from_slice(&digest.0[..16]);
+        let old = CheckoutId::new(effigy_kernel::id::CheckoutKind::Primary, token);
         let found = collect(&cx, fixture.path(), &[]);
         assert!(found.resolve(&cx, old, None).is_err());
         assert!(std::fs::read_dir(fixture.path()).unwrap().next().is_none());

@@ -1,5 +1,7 @@
 //! Verified checkout and machine state roots (§7.1), with separate database
 //! names. A machine root never implicitly opens the legacy central database.
+pub(crate) mod runtime;
+
 use crate::ctx::{Capability, EffectContext, ObserveContext, Placement};
 use crate::fs::{DirFd, FsError, Trust};
 use crate::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
@@ -141,7 +143,8 @@ impl StateRoot {
     pub(crate) fn requires_adoption(&self) -> bool {
         self.adoption
     }
-    pub(crate) fn machine(&self) -> bool {
+    /// Whether this handle routes shared machine facts rather than a checkout journal.
+    pub fn is_machine(&self) -> bool {
         matches!(self.database, Database::Machine)
     }
     pub(crate) fn database_name(&self) -> &'static str {

@@ -4,16 +4,14 @@
 //! remote stop reached it. Real-engine qualification is a separate lane.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use effigy_kernel::ctx::{CleanupContext, EffectContext, OperationContext};
 use effigy_kernel::custody::{ProcessSpec, Terminal};
-use effigy_kernel::id::{CheckoutId, CheckoutKind, ResourceId};
+use effigy_kernel::id::ResourceId;
 use effigy_kernel::observe::Evidence;
 use effigy_kernel::remote::{
     AdapterError, ContainerIdentity, Nonce, RemoteRegistration, SessionState,
 };
-use effigy_kernel::root::StateRoot;
 use effigy_kernel::store::Store;
 
 use super::*;
@@ -147,19 +145,16 @@ impl Model {
     }
 }
 
-static ENVIRONMENTS: AtomicUsize = AtomicUsize::new(1);
-
 /// A fresh environment resource in the engine's test store.
-fn environment() -> ResourceId {
-    let index = ENVIRONMENTS.fetch_add(1, Ordering::Relaxed);
+fn environment(path: &Path) -> ResourceId {
+    let root = kernel::effects_root(path).expect("checkout root");
     let resource = ResourceId::environment(
-        CheckoutId::new(CheckoutKind::EphemeralClone, [index as u8; 16]),
+        super::super::checkout::mint(path).expect("checkout identity"),
         &format!("model-{}", std::process::id()),
     )
     .expect("environment id");
     let cx = kernel::effects().child(Duration::from_secs(10));
-    let root = StateRoot::effects(&cx, &kernel::test_state_home()).expect("root");
-    let mut store = Store::open(&cx, &root).expect("store");
+    let mut store = Store::open(&cx, root).expect("store");
     store
         .txn(&cx, |txn| {
             txn.resource(&resource, "environment")?;
@@ -170,19 +165,19 @@ fn environment() -> ResourceId {
 }
 
 /// Another environment run advances the generation (contract 053 §3).
-fn advance(resource: &ResourceId) {
+fn advance(path: &Path, resource: &ResourceId) {
     let cx = kernel::effects().child(Duration::from_secs(10));
-    let root = StateRoot::effects(&cx, &kernel::test_state_home()).expect("root");
-    let mut store = Store::open(&cx, &root).expect("store");
+    let root = kernel::effects_root(path).expect("checkout root");
+    let mut store = Store::open(&cx, root).expect("store");
     store
         .txn(&cx, |txn| txn.next_generation(resource).map(|_| ()))
         .expect("advance");
 }
 
-fn current(resource: &ResourceId) -> Result<Fence, RunnerError> {
+fn current(path: &Path, resource: &ResourceId) -> Result<Fence, RunnerError> {
     let cx = kernel::effects().child(Duration::from_secs(10));
-    let root = StateRoot::effects(&cx, &kernel::test_state_home()).expect("root");
-    let mut store = Store::open(&cx, &root).expect("store");
+    let root = kernel::effects_root(path).expect("checkout root");
+    let mut store = Store::open(&cx, root).expect("store");
     let record = store
         .txn(&cx, |txn| txn.resource(resource, "environment"))
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
@@ -212,9 +207,9 @@ fn fixture() -> Fixture {
     });
     Fixture {
         _dir: dir,
+        env: environment(&root),
         root,
         model,
-        env: environment(),
     }
 }
 
@@ -272,7 +267,7 @@ fn run(fixture: &Fixture, run: &mut TaskRun, task: RemoteTask<'_>) -> PlainExit 
         task,
         &mut model,
         ContainerTarget(CONTAINER.into()),
-        &mut || current(&env),
+        &mut || current(&fixture.root, &env),
     )
     .expect("remote run")
 }
@@ -356,16 +351,17 @@ fn a_concurrent_environment_bring_up_leaves_the_outcome_truthful() {
         &mut model,
         ContainerTarget(CONTAINER.into()),
         &mut || {
-            let fence = current(&env)?;
+            let fence = current(&fixture.root, &env)?;
             if !fenced {
                 fenced = true;
                 // Between reading the fence and the intent: a clean refusal
                 // the engine retries with the new generation.
-                advance(&env);
+                advance(&fixture.root, &env);
                 let bump = env.clone();
+                let root = fixture.root.clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(Duration::from_millis(300));
-                    advance(&bump);
+                    advance(&root, &bump);
                 });
             }
             Ok(fence)
@@ -615,9 +611,9 @@ fn matrix() -> Matrix {
     });
     Matrix {
         _dir: dir,
+        env: environment(&root),
         root,
         engine,
-        env: environment(),
     }
 }
 
@@ -648,7 +644,7 @@ fn step_under(
         task_args(&matrix.root),
         &mut adapter,
         ContainerTarget(CONTAINER.into()),
-        &mut || current(&env),
+        &mut || current(&matrix.root, &env),
     )
     .expect("remote run");
     perturb.join().expect("perturbation");

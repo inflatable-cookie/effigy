@@ -62,17 +62,20 @@ pub(in crate::runner) fn live_holders(repo_root: &Path) -> Vec<LiveHolder> {
     let mut checkouts = Vec::new();
     for root in roots {
         if let Ok(Some(checkout)) = super::checkout::read(&root) {
-            if !checkouts.contains(&checkout) {
-                checkouts.push(checkout);
+            if !checkouts.iter().any(|(_, id)| *id == checkout) {
+                checkouts.push((root, checkout));
             }
         }
     }
-    checkouts.into_iter().flat_map(checkout_holders).collect()
+    checkouts
+        .into_iter()
+        .flat_map(|(root, checkout)| checkout_holders(&root, checkout))
+        .collect()
 }
 
-fn checkout_holders(checkout: effigy_kernel::id::CheckoutId) -> Vec<LiveHolder> {
+fn checkout_holders(path: &Path, checkout: effigy_kernel::id::CheckoutId) -> Vec<LiveHolder> {
     let cx = kernel::observe();
-    let root = match kernel::observe_root(&cx) {
+    let root = match kernel::observe_root(&cx, path) {
         Observed::Verified(root, _) => root,
         Observed::Absent(_) => return Vec::new(),
         Observed::Unknown(reason) => return vec![unreadable(format!("{reason:?}"))],
@@ -138,9 +141,9 @@ fn holder_kind(owner: &ResourceId) -> HolderKind {
 }
 
 /// When the current holder of `owner` was admitted, for conflict messages.
-pub(in crate::runner) fn holder_run_started_ms(owner: &ResourceId) -> Option<i64> {
+pub(in crate::runner) fn holder_run_started_ms(path: &Path, owner: &ResourceId) -> Option<i64> {
     let cx = kernel::observe();
-    let Observed::Verified(root, _) = kernel::observe_root(&cx) else {
+    let Observed::Verified(root, _) = kernel::observe_root(&cx, path) else {
         return None;
     };
     let Observed::Verified(reader, _) = Store::read(&cx, &root) else {

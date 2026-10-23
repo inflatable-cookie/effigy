@@ -116,6 +116,7 @@ pub fn authority(cx: &ObserveContext, root: &StateRoot) -> Observed<Authority> {
 
 fn inspect_authority(cx: &ObserveContext, root: &StateRoot) -> Result<Authority, StoreError> {
     root.verify_binding()?;
+    crate::root::runtime::verify(cx, root)?;
     if !root.requires_adoption() {
         return Ok(Authority::LegacyEvidence);
     }
@@ -267,6 +268,24 @@ fn verify_seal(root: &StateRoot, seal: &Seal) -> Result<(), StoreError> {
     if (root.database_name() == "machine.db") != seal.destination.checkout.is_none() {
         return Err(StoreError::Corrupt(
             "import seal belongs to a different runtime database".into(),
+        ));
+    }
+    Ok(())
+}
+pub(crate) fn check_git_location(
+    cx: &ObserveContext,
+    root: &StateRoot,
+    git: &Option<(PathBuf, DirectoryIdentity)>,
+) -> Result<(), StoreError> {
+    let seal = optional::<Seal>(cx, root, SEALED)?
+        .ok_or_else(|| StoreError::Corrupt("committed checkout has no local seal".into()))?;
+    let expected = seal
+        .destination
+        .git_directory
+        .zip(seal.destination.git_directory_identity);
+    if &expected != git {
+        return Err(StoreError::Corrupt(
+            "resolved Git directory disagrees with imported checkout".into(),
         ));
     }
     Ok(())
