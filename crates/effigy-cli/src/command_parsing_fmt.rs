@@ -21,6 +21,15 @@ where
     }
 }
 
+/// `effigy fmt-rust <FILE>...`: the explicit spelling of the built-in Rust
+/// formatter, for repositories whose own `fmt` task shadows `effigy fmt`.
+pub(super) fn parse_fmt_rust_command<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    parse_fmt_rust(args)
+}
+
 fn parse_fmt_rust<I>(args: I) -> Result<Command, CliParseError>
 where
     I: IntoIterator<Item = String>,

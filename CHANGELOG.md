@@ -1018,6 +1018,15 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- A repository task named `fmt` runs again for `effigy fmt`, `effigy fmt
+  --check` and `effigy fmt <args>`; the built-in Rust formatter added in #290
+  no longer took that word at parse time (effigy#293). Every built-in
+  top-level name is now classified as shadowable or reserved, so a new
+  built-in cannot silently take a consumer task name, and a reservation must
+  name the contract that owns it (`test`, `help`, `version`). The shadowed
+  formatter stays reachable as `effigy fmt-rust <FILE>...`, `--plan` names
+  that spelling, `fmt` is in shell completion, and the formatter help says
+  relative paths are cwd-relative.
 - A bounded Colima/nerdctl call that times out on a loaded host no longer reads
   as a service failure (effigy#291, papercut `8064c5b9`). Effigy observes the
   host's own load average: on a saturated host (one runnable task per CPU) an
