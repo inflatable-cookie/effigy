@@ -21,6 +21,29 @@ pub(super) struct MachineGates {
 }
 
 impl StateRoot {
+    /// Private derived-file locks have no journal or machine-store layout.
+    /// Only Gate exposes this root, so callers cannot open a database here.
+    pub(crate) fn file_gate_root(cx: &EffectContext, directory: &DirFd) -> Result<Self, FsError> {
+        cx.require(Capability::HostAuthority)
+            .map_err(|_| FsError::HostAuthorityRequired)?;
+        crate::fs::check(
+            &directory.stat()?,
+            Trust::Private,
+            crate::fs::Kind::Dir,
+            directory.path(),
+        )?;
+        directory.require_local()?;
+        Ok(Self {
+            dir: directory.clone(),
+            owner: directory.clone(),
+            writable: true,
+            database: super::Database::Checkout,
+            adoption: false,
+            checkout: None,
+            machine_gates: None,
+        })
+    }
+
     pub(super) fn route_machine_gates(self, cx: &ObserveContext, home: &Path) -> Self {
         self.restore_machine_gates(
             cx,

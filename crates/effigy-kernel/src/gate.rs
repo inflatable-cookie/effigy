@@ -223,6 +223,24 @@ impl std::fmt::Debug for Gate {
     }
 }
 impl Gate {
+    /// A named mutex for derived private files, colocated with their directory.
+    /// Uses the same stable inode, identity diagnostics and bounded waits as
+    /// journal gates, without opening or creating a runtime state root.
+    pub fn files(
+        cx: &EffectContext,
+        directory: &crate::fs::DirFd,
+        name: &str,
+        wait: Wait,
+    ) -> Result<GateGuard, GateError> {
+        let root = StateRoot::file_gate_root(cx, directory)?;
+        let resource =
+            ResourceId::store(Scope::Machine, name).map_err(|error| GateError::Untrusted {
+                path: directory.path().into(),
+                reason: error.to_string(),
+            })?;
+        Self::acquire(cx, &root, &[resource], wait)
+    }
+
     /// Canonical-order, all-or-nothing acquisition (K14). Guest placement is
     /// refused before the state root is touched (R1).
     pub fn acquire(

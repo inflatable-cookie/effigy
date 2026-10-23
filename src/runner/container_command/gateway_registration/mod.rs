@@ -506,9 +506,12 @@ pub(in crate::runner) fn resolve_gateway_tcp_alias_routes_for_container(
 pub(in crate::runner) fn deregister_gateway_routes_for_container(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<String>, RunnerError> {
-    let mut domains = resolve_gateway_routes(policy)?
-        .into_iter()
-        .map(|route| route.domain)
+    // Withdrawal needs declared domain identities and the current ownership
+    // predicate, never a reconstructed target or a newly assigned host port.
+    let mut domains = policy
+        .dns_routes
+        .iter()
+        .map(|route| route.domain.clone())
         .collect::<Vec<_>>();
     let project_alias_domains = declared_gateway_service_alias_domains(policy);
     let shared_alias_domains =
@@ -759,6 +762,7 @@ fn registered_gateway_routes_match_project(
     }))
 }
 
+#[cfg(test)]
 fn resolve_gateway_routes(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {

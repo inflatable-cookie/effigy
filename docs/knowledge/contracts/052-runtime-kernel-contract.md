@@ -756,6 +756,17 @@ pub fn read_record<T: Record>(cx: &ObserveContext, dir: &DirFd, name: &FileName)
     -> Observed<T>;                    // never a default value
 ```
 
+Regular backend output and interpolation-cache retirement use the same record
+boundary: `open_output(cx, guard, dir, name)` checks an operator-owned private,
+single-link regular file before truncating it, and `remove_record` verifies a
+regular entry before unlinking it. Both require host effects and a store gate;
+the caller retains the gate until child output descriptors close. Replacement
+of a retained output tail or interpolation set uses `atomic_replace`. These
+file operations open no database and create no run-history index. A private
+interpolation cache uses `Gate::files` in its own directory: the same stable
+inode locks and identity diagnostics, with only store-file authority and no
+machine journal initialization. Checkout backend logs use their checkout gate.
+
 SQLite settings: `journal_mode=WAL` (persistent), `synchronous=FULL`,
 `foreign_keys=ON`, `journal_size_limit` and `wal_autocheckpoint` so the log
 stays small, `auto_vacuum=INCREMENTAL` chosen while the store is empty, and a

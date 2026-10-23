@@ -1114,6 +1114,11 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- Stopping an empty Compose project still withdraws its owned routes; declared
+  host processes take the normal stop path. Live listener and foreign successor
+  routes remain protected. Backend output and VM interpolation files use checked
+  kernel records, formatting uses foreground custody, and host-load sampling is
+  a bounded read-only probe.
 - A full loopback pool no longer blocks a new stack forever because deleted
   projects kept their `127.1.0.x` addresses (effigy#295). `effigy container
   up`/`dev` and gateway registration now release provably dead owners once when

@@ -12,8 +12,15 @@
 //! `sysctl -n vm.loadavg` on macOS and the BSDs. Nothing here starts a
 //! container, a VM or a runtime command.
 
+use effigy_kernel::{
+    ctx::{CancelToken, EffectClass},
+    custody::EnvValue,
+    observe::Observed,
+    probe::{ProbeCommand, ProbeRuntime},
+    supervise::Executable,
+};
 use std::path::Path;
-use std::process::Command;
+use std::time::Duration;
 
 /// A point-in-time load observation for this host.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -92,15 +99,31 @@ fn read_one_minute_load() -> Option<f64> {
     if let Ok(raw) = std::fs::read_to_string("/proc/loadavg") {
         return parse_one_minute_load(&raw);
     }
-    let output = Command::new("sysctl")
-        .args(["-n", "vm.loadavg"])
-        .current_dir(Path::new("."))
-        .output()
-        .ok()?;
-    if !output.status.success() {
+    let budget = Duration::from_secs(2);
+    let op = crate::environment::operation(EffectClass::Observe, CancelToken::default(), budget);
+    let executable = Executable::current().ok()?;
+    let runtime = ProbeRuntime::install(executable).ok()?;
+    let cx = op.observe().ok()?.with_probes(runtime);
+    let command = ProbeCommand {
+        argv: vec![
+            crate::compose::resolve_host_cli_program("sysctl"),
+            "-n".into(),
+            "vm.loadavg".into(),
+        ],
+        cwd: Path::new(".").canonicalize().ok()?,
+        env: std::env::vars_os()
+            .map(|(key, value)| (key, EnvValue::Plain(value)))
+            .collect(),
+        deadline: budget,
+        max_output: 4096,
+    };
+    let Observed::Verified(output, _) = cx.probe_process(command) else {
+        return None;
+    };
+    if output.exit.code != 0 || output.truncated || !output.warnings.is_empty() {
         return None;
     }
-    parse_one_minute_load(&String::from_utf8_lossy(&output.stdout))
+    parse_one_minute_load(&String::from_utf8_lossy(&output.output))
 }
 
 #[cfg(test)]

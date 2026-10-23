@@ -1494,3 +1494,67 @@ fn store_machine_contents_refuse_checkout_data_and_catalog_rows_atomically() {
         assert_eq!(count, 0, "{table}");
     }
 }
+
+#[test]
+fn store_checked_output_and_cache_retirement_refuse_aliases_before_effects() {
+    use std::io::Write;
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let dir = DirFd::open(root.path()).unwrap();
+    let resource = vault();
+    let guard = Gate::acquire(&cx, &root, &[resource], Wait::FailFast).unwrap();
+    let name = FileName::new("backend.log").unwrap();
+    let wrong = Gate::acquire(&cx, &root, &[task("not-a-store")], Wait::FailFast).unwrap();
+    assert!(matches!(
+        open_output(&cx, &wrong, &dir, &name),
+        Err(StoreError::WrongGuard)
+    ));
+    assert_eq!(
+        remove_record(&cx, &wrong, &dir, &name),
+        Err(StoreError::WrongGuard)
+    );
+    assert!(!dir.path().join(name.as_str()).exists());
+    let mut file = open_output(&cx, &guard, &dir, &name).unwrap();
+    file.write_all(b"old output").unwrap();
+    drop(file);
+    let file = open_output(&cx, &guard, &dir, &name).unwrap();
+    assert_eq!(file.metadata().unwrap().len(), 0);
+    assert_eq!(mode(&dir.path().join(name.as_str())), 0o600);
+    drop(file);
+    remove_record(&cx, &guard, &dir, &name).unwrap();
+    remove_record(&cx, &guard, &dir, &name).unwrap();
+    let victim = home.path().join("victim");
+    std::fs::write(&victim, b"must survive").unwrap();
+    let alias = dir.path().join(name.as_str());
+    std::os::unix::fs::symlink(&victim, &alias).unwrap();
+    assert!(open_output(&cx, &guard, &dir, &name).is_err());
+    assert!(remove_record(&cx, &guard, &dir, &name).is_err());
+    assert_eq!(std::fs::read(&victim).unwrap(), b"must survive");
+    std::fs::remove_file(&alias).unwrap();
+    std::fs::hard_link(&victim, &alias).unwrap();
+    assert!(open_output(&cx, &guard, &dir, &name).is_err());
+    assert_eq!(std::fs::read(&victim).unwrap(), b"must survive");
+}
+
+#[test]
+fn store_private_file_mutex_keeps_the_stable_inode_without_a_database() {
+    let home = home();
+    std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let cx = effects(EffectClass::Mutate);
+    let dir = DirFd::open(home.path()).unwrap();
+    let held = Gate::files(&cx, &dir, "interpolation", Wait::FailFast).unwrap();
+    assert!(matches!(
+        Gate::files(&cx, &dir, "interpolation", Wait::FailFast),
+        Err(GateError::Busy { .. })
+    ));
+    assert!(!home.path().join(".effigy").exists());
+    assert!(!home.path().join("kernel.db").exists());
+    drop(held);
+    drop(Gate::files(&cx, &dir, "interpolation", Wait::FailFast).unwrap());
+    std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(matches!(
+        Gate::files(&cx, &dir, "interpolation", Wait::FailFast),
+        Err(GateError::Untrusted { .. })
+    ));
+}

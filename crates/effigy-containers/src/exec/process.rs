@@ -1,5 +1,5 @@
 use std::ffi::{OsStr, OsString};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -107,7 +107,12 @@ pub(super) fn run_detached_command_with_env(
     // A detached service must never inherit an Effigy-owned log pipe. Its
     // output goes to a regular file in the checkout's retained runtime record:
     // a file has no reader lifetime and remains writable after this CLI exits.
-    let record = DetachedOutputRecord::for_invocation(repo_root, &args);
+    let record = DetachedOutputRecord::for_invocation(repo_root, &args).map_err(|error| {
+        ContainerExecError::Launch {
+            command: label.to_owned(),
+            error,
+        }
+    })?;
     let (stdout, stderr) = record.open().map_err(|error| ContainerExecError::Launch {
         command: label.to_owned(),
         error: std::io::Error::new(
@@ -183,27 +188,78 @@ fn detached_failure(
 /// [`DETACHED_OUTPUT_LIMIT`] bytes, so it stays a record rather than a log.
 struct DetachedOutputRecord {
     path: PathBuf,
+    cx: effigy_kernel::ctx::EffectContext,
+    gate: effigy_kernel::gate::GateGuard,
+    directory: effigy_kernel::fs::DirFd,
+    name: effigy_kernel::fs::FileName,
 }
 
 impl DetachedOutputRecord {
-    fn for_invocation(repo_root: &Path, args: &[OsString]) -> Self {
+    fn for_invocation(repo_root: &Path, args: &[OsString]) -> std::io::Result<Self> {
+        use effigy_kernel::{
+            fs::{DirFd, FileName},
+            gate::{Gate, Wait},
+            id::{ResourceId, Scope},
+            root::StateRoot,
+        };
+        let error = |e| std::io::Error::other(format!("detached output authority: {e}"));
+        let op = crate::environment::operation(
+            effigy_kernel::ctx::EffectClass::Mutate,
+            effigy_kernel::ctx::CancelToken::default(),
+            Duration::from_secs(120),
+        );
+        let cx = op
+            .effects()
+            .map_err(|e| std::io::Error::other(format!("{e:?}")))?;
+        let location = crate::environment::location(repo_root)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let root =
+            StateRoot::foreground_effects(&cx, &location).map_err(|e| error(e.to_string()))?;
         let project = compose_project(args).unwrap_or("compose");
-        Self {
-            path: retained_backend_log_path(repo_root, project),
+        let path = retained_backend_log_path(repo_root, project);
+        let resource = ResourceId::store(
+            Scope::Checkout(
+                StateRoot::filesystem_checkout(
+                    &op.observe().map_err(|e| error(format!("{e:?}")))?,
+                    &location,
+                )
+                .map_err(|e| error(e.to_string()))?,
+            ),
+            &format!("detached-output {}", sanitize(project)),
+        )
+        .map_err(|e| error(e.to_string()))?;
+        let gate = Gate::acquire(
+            &cx,
+            &root,
+            &[resource],
+            Wait::Until(Instant::now() + Duration::from_secs(120)),
+        )
+        .map_err(|e| error(e.to_string()))?;
+        let mut directory = DirFd::open(repo_root).map_err(|e| error(e.to_string()))?;
+        for part in [".effigy", "runtime", "logs"] {
+            directory = directory
+                .prepare_child(&cx, &FileName::new(part).map_err(|e| error(e.to_string()))?)
+                .map_err(|e| error(e.to_string()))?;
         }
+        let name = FileName::new(
+            path.file_name()
+                .and_then(OsStr::to_str)
+                .ok_or_else(|| error("invalid output filename".into()))?,
+        )
+        .map_err(|e| error(e.to_string()))?;
+        Ok(Self {
+            path,
+            cx,
+            gate,
+            directory,
+            name,
+        })
     }
 
     fn open(&self) -> std::io::Result<(Stdio, Stdio)> {
-        let parent = self
-            .path
-            .parent()
-            .ok_or_else(|| std::io::Error::other("detached output record has no parent"))?;
-        std::fs::create_dir_all(parent)?;
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&self.path)?;
+        let file =
+            effigy_kernel::record::open_output(&self.cx, &self.gate, &self.directory, &self.name)
+                .map_err(std::io::Error::other)?;
         Ok((Stdio::from(file.try_clone()?), Stdio::from(file)))
     }
 
@@ -219,18 +275,28 @@ impl DetachedOutputRecord {
             "[effigy] earlier backend output was dropped; keeping the last {} KiB\n",
             DETACHED_OUTPUT_LIMIT / 1024
         );
-        // A same-project rename never crosses into another writer's file: the
-        // temporary name carries this invocation's pid.
-        let temporary = self
-            .path
-            .with_extension(format!("{}.tmp", std::process::id()));
-        {
-            let mut file = std::fs::File::create(&temporary)?;
-            file.write_all(marker.as_bytes())?;
-            file.write_all(&bytes)?;
-            file.sync_all()?;
-        }
-        std::fs::rename(&temporary, &self.path)
+        let mut retained = marker.into_bytes();
+        retained.extend_from_slice(&bytes);
+        // Retention gets a fresh finite cleanup budget after an open backend wait.
+        let cleanup = self
+            .cx
+            .operation()
+            .cleanup(Duration::from_secs(30))
+            .map_err(|e| std::io::Error::other(format!("{e:?}")))?;
+        let effects = cleanup
+            .operation()
+            .effects()
+            .map_err(|e| std::io::Error::other(format!("{e:?}")))?;
+        effigy_kernel::record::atomic_replace(
+            &effects,
+            &self.gate,
+            &self.directory,
+            &self.name,
+            &retained,
+            Default::default(),
+        )
+        .map(|_| ())
+        .map_err(std::io::Error::other)
     }
 
     /// The record's last `limit` bytes, or `None` when the run wrote nothing.
