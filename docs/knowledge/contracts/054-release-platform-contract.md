@@ -321,6 +321,15 @@ surface and the choices §4 left open; §12 records the Run.
   source but no per-identity lockfile, so the configured sync files belong to
   the release, which also means a release with no `semver` identity refuses
   `sync-files`.
+- **A sync file may be nested, but only the declared file is written.** A
+  `Cargo.lock` entry may name a workspace-excluded consumer's lockfile below
+  the release root. `prepare` runs `cargo update -p <package>` for each release
+  package that lockfile records, from the lockfile's own directory, and refuses
+  a lockfile whose owning workspace is anchored elsewhere (a plain member
+  directory's `Cargo.lock` belongs to the enclosing workspace). Absolute paths,
+  `..` components and paths that resolve outside the release root are refused,
+  and a `Cargo.lock` entry must sit beside its own `Cargo.toml`. The primary
+  `Cargo.lock` keeps the `cargo update --workspace` behaviour.
 - **The changelog is a `semver` identity's business.** §4.3 says bump rules
   apply only to `semver`, so a release with no `semver` identity never reads a
   changelog: the file may be absent (`release changelog path does not exist`

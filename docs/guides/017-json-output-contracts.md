@@ -417,9 +417,12 @@ Rule of thumb:
   include additive optional `log_path` on each gate result and
   `environment_path` for the run. Named hosted reuse may add optional
   `reused`, `hosted_run_url`, `hosted_head_sha`, and `hosted_repository` on a
-  gate result, and `gates.reused_gates` on execute/resume payloads. Progress
-  and configured-gate inventory stay on stderr and never on JSON stdout.
-  Schema ids are unchanged.
+  gate result, and `gates.reused_gates` on execute/resume payloads.
+  `effigy.release.gates.v1` also carries `gates[]` (name, stage, command, task,
+  description, `reuse_hosted_evidence`) as the configured inventory it ran, so
+  a JSON reader sees the same gates the progress lines named. Streaming
+  progress lines stay on stderr and never on JSON stdout. Schema ids are
+  unchanged.
 - `effigy.release.plan.v1` is the `effigy release --plan` payload (contract 054
   §5), replacing the retired simulate payload. It reports
   `identities[]` (name, kind, current and next version, tag, `follows`,

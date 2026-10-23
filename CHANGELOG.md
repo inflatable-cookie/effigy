@@ -832,6 +832,11 @@ During v0.x, MINOR bumps may include breaking changes.
   gate; the one missing capability (`loopback-privileged-listener-handoff`)
   is a design boundary, not a supported start path. No operator defaults,
   endpoints, or trust behavior change.
+- `effigy fmt rust <FILE>... [--check]` formats an explicit Rust file set with
+  rustfmt and each file's nearest `rustfmt.toml`, so a format pass never
+  follows a path-linked workspace into unrelated crates (papercut `d988bc52`).
+  Every path must be an existing `.rs` file inside the target repository;
+  `--check` reports without writing.
 
 ### Changed
 - A stale bundle or catalog source updates itself on the next `effigy dev`,
@@ -984,6 +989,18 @@ During v0.x, MINOR bumps may include breaking changes.
   adds the `silo` S3-compatible object storage service. Installed packs from
   1.1.2 or earlier reject 0.15: run `effigy service pack update` to move to
   1.2.0.
+
+- `effigy release gates` prints its configured gate inventory — each gate's
+  name, stage and command — before the first gate starts, then one progress
+  line per gate start and finish with the duration, so a slow gate no longer
+  looks like a hung command (papercut `029ac746`). The JSON payload carries the
+  same inventory as `gates[]`.
+- `release.sync-files` may name a nested `Cargo.lock`, such as a
+  workspace-excluded consumer's `prototypes/*/Cargo.lock`, and `prepare`
+  refreshes it with `cargo update -p <package>` in its own workspace
+  (papercut `a3f1f9f7`). Entries must be repo-relative and stay inside the
+  release root, and a lockfile whose owning workspace is anchored elsewhere is
+  refused instead of writing an undeclared lockfile.
 
 ### Fixed
 - A first `effigy dev` on a fresh Colima VM no longer fails when a nerdctl
@@ -1686,6 +1703,11 @@ During v0.x, MINOR bumps may include breaking changes.
   and the `effigy release:preflight` repo task it became. It pointed at
   `certify`, but contract 054 makes preflight a pre-prepare gate (papercut
   dc4b15af).
+- The changelog parser accepts a CommonMark lazy continuation line as part of
+  the entry it follows, so a hard-wrapped list entry parses instead of being
+  read as release prose. Effigy 0.14.1 refused that shape (papercut
+  `f5d597db`); an unindented paragraph after a blank line is still release
+  prose.
 
 ## [0.14.1] - 2026-10-08
 

@@ -59,6 +59,10 @@ struct Parser<'a> {
     // Whether the last release-level content was a prose paragraph that the
     // next prose line continues. A blank line or structural line resets it.
     prose_paragraph_open: bool,
+    // Whether the last category entry's paragraph is still open, so a
+    // CommonMark lazy continuation line belongs to that entry. A blank line or
+    // structural line closes it.
+    entry_paragraph_open: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -75,6 +79,7 @@ impl<'a> Parser<'a> {
             current_release: None,
             current_category: None,
             prose_paragraph_open: false,
+            entry_paragraph_open: false,
         }
     }
 
@@ -252,12 +257,14 @@ impl<'a> Parser<'a> {
     fn handle_in_category(&mut self, trimmed: &str, line: &str) {
         if trimmed.is_empty() {
             self.prose_paragraph_open = false;
+            self.entry_paragraph_open = false;
             return;
         }
 
         // New release header?
         if let Some(release) = try_parse_release_header(trimmed, self.line_num()) {
             self.prose_paragraph_open = false;
+            self.entry_paragraph_open = false;
             self.finalize_category();
             self.finalize_release();
             self.current_release = Some(release);
@@ -268,6 +275,7 @@ impl<'a> Parser<'a> {
         // New category header?
         if let Some(cat_name) = trimmed.strip_prefix("### ") {
             self.prose_paragraph_open = false;
+            self.entry_paragraph_open = false;
             let cat_name = cat_name.trim();
             if let Some(kind) = CategoryKind::parse_name(cat_name) {
                 self.finalize_category();
@@ -299,6 +307,7 @@ impl<'a> Parser<'a> {
         // Link reference?
         if let Some(link) = try_parse_link_reference(trimmed, self.line_num()) {
             self.prose_paragraph_open = false;
+            self.entry_paragraph_open = false;
             self.finalize_category();
             self.finalize_release();
             self.links.push(link);
@@ -312,6 +321,7 @@ impl<'a> Parser<'a> {
             .or_else(|| trimmed.strip_prefix("* "))
         {
             let ln = self.line_num();
+            self.entry_paragraph_open = true;
             if let Some(ref mut cat) = self.current_category {
                 cat.entries.push(Entry {
                     description: entry_text.to_owned(),
@@ -366,10 +376,25 @@ impl<'a> Parser<'a> {
             return;
         }
 
+        // CommonMark lazy continuation: an unindented paragraph line directly
+        // after an entry continues that entry, because the list item's
+        // paragraph stays open until a blank line or a structural line. This
+        // is the shape a wrapped changelog entry takes after `format` rewraps
+        // prose, and refusing it made a released tag unreadable.
+        if self.entry_paragraph_open {
+            if let Some(ref mut cat) = self.current_category {
+                if let Some(last_entry) = cat.entries.last_mut() {
+                    last_entry.continuation_lines.push(trimmed.to_owned());
+                    return;
+                }
+            }
+        }
+
         // Free prose paragraph between category headings. It belongs to the
         // release, so close the open category before recording it.
         self.finalize_category();
         self.prose_paragraph_open = false;
+        self.entry_paragraph_open = false;
         self.state = State::InRelease;
         self.push_release_prose(trimmed, line);
     }

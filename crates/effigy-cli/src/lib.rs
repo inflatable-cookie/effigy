@@ -24,6 +24,7 @@ pub enum Command {
     Version,
     Bundle(BundleArgs),
     Changelog(ChangelogArgs),
+    Fmt(FmtArgs),
     Deploy(DeployArgs),
     Deps(DepsArgs),
     Secrets(SecretsArgs),
@@ -137,12 +138,25 @@ pub enum HelpTopic {
     Init,
     Uninstall,
     Runs,
+    Fmt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangelogArgs {
     pub subcommand: ChangelogSubcommand,
     pub file: Option<PathBuf>,
+    pub repo_override: Option<PathBuf>,
+    pub output_json: bool,
+}
+
+/// `effigy fmt ...`: format an explicit, declared file set.
+///
+/// The route exists because `cargo fmt --manifest-path` reads a workspace and
+/// can trail path-linked consumers into unrelated crates. An explicit file set
+/// plus rustfmt's `skip_children` keeps a format pass inside the named files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FmtArgs {
+    pub subcommand: FmtSubcommand,
     pub repo_override: Option<PathBuf>,
     pub output_json: bool,
 }
@@ -820,6 +834,14 @@ pub enum ChangelogSubcommand {
     Format { write: bool },
     Analyze,
     Extract { version: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FmtSubcommand {
+    /// Format the named Rust files in place.
+    Rust { files: Vec<PathBuf> },
+    /// Report the named Rust files that are not formatted, writing nothing.
+    RustCheck { files: Vec<PathBuf> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

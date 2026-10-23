@@ -173,6 +173,7 @@ pub fn run_cli(raw_args: Vec<String>) {
         Command::HelpGroup(group) => run_help_group_command(&context, group),
         command @ (Command::Bundle(_)
         | Command::Changelog(_)
+        | Command::Fmt(_)
         | Command::Deploy(_)
         | Command::Deps(_)
         | Command::Defer(_)

@@ -97,6 +97,9 @@ pub struct ReleaseStatus {
 #[derive(Debug, Clone)]
 pub struct ReleaseGateRun {
     pub repo_root: PathBuf,
+    /// The configured gate inventory, so a gate run reports what it intended to
+    /// execute and not only what it managed to start.
+    pub gates: Vec<ResolvedGate>,
     pub configured_gate_count: usize,
     pub executed_gate_count: usize,
     pub stopped_early: bool,
