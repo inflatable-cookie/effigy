@@ -1707,9 +1707,7 @@ fn collect_running_compose_container_inventory(
                 for profile in stopped {
                     inventory.failures.push(RuntimeInventoryFailure {
                         backend: "colima".to_owned(),
-                        error: format!(
-                            "stopped colima profile cannot be inspected for created or stopped containers without starting it"
-                        ),
+                        error: "stopped colima profile cannot be inspected for created or stopped containers without starting it".to_owned(),
                         profile,
                         stopped_profile: true,
                     });

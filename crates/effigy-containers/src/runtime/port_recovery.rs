@@ -254,19 +254,18 @@ pub fn plan_recovery(
                             }
                             Err(_) => RecordedOwnership::default(),
                         };
-                        decide_missing(
+                        let entry = MissingEntry {
                             name,
-                            alloc.base,
-                            alloc.range,
-                            &alloc.project,
-                            facts,
-                            &recorded,
-                            path_counts
+                            base: alloc.base,
+                            range: alloc.range,
+                            project: &alloc.project,
+                            recorded: &recorded,
+                            sharing_path: path_counts
                                 .get(alloc.project.as_str())
                                 .copied()
                                 .unwrap_or(0),
-                            &host_port_hold,
-                        )
+                        };
+                        decide_missing(&entry, facts, &host_port_hold)
                     }
                 },
             };
@@ -408,30 +407,38 @@ fn quoted_list(items: &[&str]) -> String {
         .join(", ")
 }
 
-fn decide_missing(
-    name: &str,
+/// One absent-path entry under decision.
+struct MissingEntry<'a> {
+    name: &'a str,
     base: u16,
     range: u16,
-    project: &str,
-    facts: &PortRecoveryFacts,
-    recorded: &RecordedOwnership,
+    project: &'a str,
+    recorded: &'a RecordedOwnership,
     sharing_path: usize,
+}
+
+fn decide_missing(
+    entry: &MissingEntry<'_>,
+    facts: &PortRecoveryFacts,
     host_port_hold: &impl Fn(u16) -> Option<String>,
 ) -> (Decision, String) {
     let stopped = facts.inventory.stopped_profiles();
-    if let Some(reason) = stopped_profile_hold(recorded, &stopped, &facts.running_profile) {
+    if let Some(reason) = stopped_profile_hold(entry.recorded, &stopped, &facts.running_profile) {
         return (Decision::Hold, reason);
     }
-    if sharing_path > 1 {
+    if entry.sharing_path > 1 {
         return (
             Decision::Hold,
-            format!("{sharing_path} allocations record this project path"),
+            format!(
+                "{} allocations record this project path",
+                entry.sharing_path
+            ),
         );
     }
     // A record that still retains project volumes or routes keeps the hold:
     // retirement clears them, and the stable range stays while the project's
     // own runtime resources are still registered.
-    if let Some(token) = recorded.retaining.first() {
+    if let Some(token) = entry.recorded.retaining.first() {
         return (
             Decision::Hold,
             format!("runtime-scope record {token} still retains volumes or routes for it"),
@@ -441,7 +448,7 @@ fn decide_missing(
         if let Some(route) = table
             .all_routes()
             .into_iter()
-            .find(|route| route.project == name || route.project == project)
+            .find(|route| route.project == entry.name || route.project == entry.project)
         {
             return (
                 Decision::Hold,
@@ -451,8 +458,8 @@ fn decide_missing(
     }
     for row in &facts.inventory.rows {
         let row = &row.row;
-        let owns_by_label = row.project_name.as_deref() == Some(name);
-        let owns_by_path = row.working_dir.as_deref() == Some(project);
+        let owns_by_label = row.project_name.as_deref() == Some(entry.name);
+        let owns_by_path = row.working_dir.as_deref() == Some(entry.project);
         if owns_by_label || owns_by_path {
             return (
                 Decision::Hold,
@@ -464,7 +471,7 @@ fn decide_missing(
         }
         if let Some(port) = published_host_ports(&row.ports)
             .into_iter()
-            .find(|port| port_in_range(*port, base, range))
+            .find(|port| port_in_range(*port, entry.base, entry.range))
         {
             return (
                 Decision::Hold,
@@ -475,7 +482,7 @@ fn decide_missing(
             );
         }
     }
-    for port in u32::from(base)..u32::from(base) + u32::from(range) {
+    for port in u32::from(entry.base)..u32::from(entry.base) + u32::from(entry.range) {
         let Ok(port) = u16::try_from(port) else {
             break;
         };
@@ -483,7 +490,7 @@ fn decide_missing(
             return (Decision::Hold, reason);
         }
     }
-    let attribution = if recorded.profiles.is_empty() {
+    let attribution = if entry.recorded.profiles.is_empty() {
         format!(
             "no runtime-scope record names another profile and the running profile `{}` has none",
             facts.running_profile
@@ -492,7 +499,8 @@ fn decide_missing(
         format!(
             "its runtime-scope record on profile(s) {} still owns no volume, route or container",
             quoted_list(
-                &recorded
+                &entry
+                    .recorded
                     .profiles
                     .iter()
                     .map(String::as_str)
