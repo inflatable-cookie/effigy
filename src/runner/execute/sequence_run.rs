@@ -117,6 +117,53 @@ pub(in crate::runner::execute) fn foreground_tree(
     )
 }
 
+pub(in crate::runner::execute) fn foreground_test_sources(
+    preflight: &ExecutionPreflight,
+    sources: Vec<effigy_builtin::TestRunSource>,
+) -> Result<bool, RunnerError> {
+    classify_test_sources(preflight, sources, &mut Vec::new())
+}
+
+fn classify_test_sources(
+    preflight: &ExecutionPreflight,
+    sources: Vec<effigy_builtin::TestRunSource>,
+    ancestors: &mut Vec<(PathBuf, String)>,
+) -> Result<bool, RunnerError> {
+    for source in sources {
+        let Some(catalog) = preflight
+            .catalogs
+            .iter()
+            .find(|catalog| catalog.catalog_root == source.root)
+        else {
+            // Auto-detected suites outside a manifest are ordinary shell
+            // commands. They have no declared Effigy descendants to resolve.
+            continue;
+        };
+        let task = effigy_manifest::ManifestTask {
+            run: Some(source.run),
+            run_in: Some(effigy_manifest::ManifestTaskRunIn::Host),
+            scratch: Some(false),
+            ..Default::default()
+        };
+        let selection = TaskSelection {
+            catalog,
+            task: &task,
+            mode: effigy_core::task_selection::CatalogSelectionMode::CwdNearest,
+            evidence: Vec::new(),
+            surface: effigy_core::task_selection::TaskSurface::Published,
+        };
+        if !classify_tree(
+            preflight,
+            &selection,
+            &format!("test:{}", source.label),
+            ancestors,
+        )? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 fn classify_tree(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
@@ -155,7 +202,33 @@ fn classify_tree(
                 &preflight.runtime_args_exec.passthrough,
             )? {
                 StepAction::Command(_) | StepAction::Noop => {}
-                StepAction::Rhai { .. } | StepAction::Builtin { .. } => return Ok(false),
+                StepAction::Rhai { .. } => return Ok(false),
+                StepAction::Builtin { parsed, cwd, .. } => {
+                    let Command::Task(task) = parsed.as_ref() else {
+                        return Ok(false);
+                    };
+                    let selector = effigy_tasks::parse_task_selector(&task.name)
+                        .map_err(RunnerError::task_invocation)?;
+                    if selector.task_name != "test" {
+                        return Ok(false);
+                    }
+                    let args = effigy_tasks::parse_task_runtime_args(&task.args)
+                        .map_err(RunnerError::task_invocation)?;
+                    match effigy_builtin::test_run_requirement(
+                        &selector,
+                        &args,
+                        &cwd,
+                        &preflight.catalogs,
+                    )? {
+                        effigy_builtin::TestRunRequirement::Observe => {}
+                        effigy_builtin::TestRunRequirement::Local(sources) => {
+                            if !classify_test_sources(preflight, sources, ancestors)? {
+                                return Ok(false);
+                            }
+                        }
+                        _ => return Ok(false),
+                    }
+                }
                 StepAction::Task { invocation, .. } => {
                     let selector = effigy_tasks::parse_task_selector(&invocation.name)
                         .map_err(RunnerError::task_invocation)?;

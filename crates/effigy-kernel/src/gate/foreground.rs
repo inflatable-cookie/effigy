@@ -4,6 +4,8 @@ use crate::id::TaskId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForegroundDiag {
+    #[serde(default)]
+    pub root: bool,
     pub owner: ResourceId,
     pub task: TaskId,
     pub gate: ResourceId,
@@ -47,10 +49,17 @@ impl ForegroundHolder {
 }
 
 impl GateGuard {
-    pub(crate) fn set_foreground(&self, run: &RunId, owner: &ResourceId, task: &TaskId) {
+    pub(crate) fn set_foreground(
+        &self,
+        run: &RunId,
+        owner: &ResourceId,
+        task: &TaskId,
+        root: bool,
+    ) {
         for (id, file) in &self.gates {
             let mut value = current_body(Some(run.to_string()));
             value.foreground = Some(ForegroundDiag {
+                root,
                 owner: owner.clone(),
                 task: task.clone(),
                 gate: id.clone(),

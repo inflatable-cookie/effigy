@@ -46,7 +46,8 @@ const DECISION_MAX: usize = 4096;
 // run (a sequence step or a QA member) runs on the thread that admitted its
 // parent, so this is per thread and not ambient: two runs that share this
 // process but not a thread never see each other's marker, and neither can
-// suppress the other's hook. `HELD` has the same shape as the lexical
+// suppress the other's hook. Bounded suite workers receive an explicit,
+// freshly verified AdmissionInheritance capsule. `HELD` follows the lexical
 // `PARENTS` stack that nests runs, so admission nesting and run nesting
 // cannot disagree.
 thread_local! {
@@ -151,6 +152,50 @@ fn pop_marker(marker: &str) {
             held.remove(index);
         }
     });
+}
+
+/// Explicitly lends a verified parent hook to a bounded suite worker. Unrelated
+/// threads still have no ambient access to another thread's admission.
+#[derive(Debug)]
+pub(in crate::runner) struct AdmissionInheritance {
+    marker: String,
+    hook: Option<effigy_kernel::ident::ProcessIdentity>,
+}
+
+#[derive(Debug)]
+pub(in crate::runner) struct AdmissionScope {
+    marker: Option<String>,
+    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+impl AdmissionInheritance {
+    pub(in crate::runner) fn capture(run: effigy_kernel::id::RunId) -> Result<Self, RunnerError> {
+        Ok(Self {
+            marker: format!("worker:{run}"),
+            hook: current_hook()?,
+        })
+    }
+    pub(in crate::runner) fn enter(&self) -> Result<AdmissionScope, RunnerError> {
+        let marker = if let Some(hook) = &self.hook {
+            verify_hook(hook)?;
+            push_marker(self.marker.clone(), hook.clone());
+            Some(self.marker.clone())
+        } else {
+            None
+        };
+        Ok(AdmissionScope {
+            marker,
+            _thread: std::marker::PhantomData,
+        })
+    }
+}
+
+impl Drop for AdmissionScope {
+    fn drop(&mut self) {
+        if let Some(marker) = &self.marker {
+            pop_marker(marker);
+        }
+    }
 }
 
 /// A journal row or environment marker never grants nested admission.
@@ -479,6 +524,35 @@ mod tests {
         assert_eq!(parse_decision("admitted"), Decision::Invalid);
         assert_eq!(parse_decision("admit please"), Decision::Invalid);
         assert_eq!(parse_decision(""), Decision::Invalid);
+    }
+
+    #[test]
+    fn a_suite_worker_borrows_only_an_explicitly_captured_live_hook() {
+        let identity = effigy_kernel::ident::process_identity(std::process::id())
+            .verified()
+            .unwrap()
+            .clone();
+        push_marker("parent-fixture".into(), identity.clone());
+        let inherited =
+            AdmissionInheritance::capture(effigy_kernel::id::RunId::new(1, [17; 10]).unwrap())
+                .unwrap();
+        let expected = identity.clone();
+        std::thread::spawn(move || {
+            assert!(held_marker().is_none());
+            {
+                let _scope = inherited.enter().unwrap();
+                assert_eq!(current_hook().unwrap(), Some(expected));
+                assert!(matches!(
+                    plan(Some(ManifestTaskAdmission::Heavy)).unwrap(),
+                    Plan::Nested
+                ));
+            }
+            assert!(held_marker().is_none());
+        })
+        .join()
+        .unwrap();
+        assert_eq!(current_hook().unwrap(), Some(identity));
+        pop_marker("parent-fixture");
     }
 
     #[test]

@@ -61,6 +61,24 @@ admission = "heavy"
 run = "touch ready; sleep 300"
 [tasks.late]
 run = "\\\"$EFFIGY_TEST_BIN\\\" --run-id forbidden short1"
+[tasks.test_ref]
+run = [{task = "test local"}]
+[tasks.outer_test]
+admission = "heavy"
+run = "\\\"$EFFIGY_TEST_BIN\\\" test heavy"
+[tasks.test_loop]
+run = [{task = "test loop"}]
+[test.suites.local]
+run = [{run = "printf suite"}, {task = "short0"}]
+[test.suites.heavy]
+default = false
+run = [{task = "inner"}]
+[test.suites.loop]
+default = false
+run = [{task = "test_loop"}]
+[test.suites.hold]
+default = false
+run = "touch suite-ready; sleep 300"
 '''
         (project / "effigy.toml").write_text(text)
         projects.append(project)
@@ -86,6 +104,16 @@ run = "\\\"$EFFIGY_TEST_BIN\\\" --run-id forbidden short1"
             future.result()
     for project in projects:
         run(project, "sequence")
+        before = {str(path.relative_to(project)): path.read_bytes()
+                  for path in project.rglob("*") if path.is_file()}
+        run(project, "test", "--plan")
+        run(project, "test", "--help")
+        after = {str(path.relative_to(project)): path.read_bytes()
+                 for path in project.rglob("*") if path.is_file()}
+        assert after == before, "builtin test plan/help changed runtime files"
+        run(project, "test", "local")
+        run(project, "test_ref")
+        run(project, "test", "loop", success=False)
     assert_memory_only()
     concurrent_seconds = round(time.monotonic() - started, 3)
 
@@ -98,8 +126,11 @@ exec sleep 300
 ''')
     hook_env = {"EFFIGY_ADMISSION_HOOK": f"/bin/sh '{hook}'"}
     run(project, "outer", extra=hook_env)
+    count = len((project / "hook-pids").read_text().splitlines())
+    assert count == 1, "nested heavy task queued twice"
+    run(project, "outer_test", extra=hook_env)
+    assert len((project / "hook-pids").read_text().splitlines()) == count + 1, "suite worker acquired another heavy slot"
     assert (project / "inner.txt").exists()
-    assert len((project / "hook-pids").read_text().splitlines()) == 1, "nested heavy task queued twice"
     assert_memory_only()
 
     child = subprocess.Popen([str(binary), "hold"], cwd=project, env=env | hook_env,
@@ -191,9 +222,29 @@ exec sleep 300
             child.terminate()
             child.communicate(timeout=30)
     run(project, "short0")
+    project = projects[1]
+    child = subprocess.Popen([str(binary), "test", "hold"], cwd=project, env=env,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.monotonic() + 10
+        while not (project / "suite-ready").exists():
+            assert child.poll() is None, child.communicate()
+            assert time.monotonic() < deadline, "builtin suite did not start"
+            time.sleep(0.02)
+        result = run(project, "runs", "--json")
+        listing = frame(json.loads(result.stdout), "effigy.runs.v1")
+        owned = [row for row in listing["runs"] if row["task"] == "effigy test" and row.get("pid") == child.pid]
+        assert len(owned) == 1, listing
+        run(project, "run", "stop", owned[0]["run_id"], "--wait-ms", "10000", "--json")
+        child.communicate(timeout=15)
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            child.communicate(timeout=30)
     assert_memory_only()
     print(json.dumps({"schema": "q010.foreground-proof.v1", "short_runs": 24,
                       "checkouts": 3, "seconds": concurrent_seconds,
                       "database_files_created": 0, "retained_run_records": 0,
                       "sequence": "passed", "nested_hook_count": 1,
+                      "builtin_suites": "passed", "suite_stop": "released", "suite_hook_count": 1,
                       "hook_loss": "stopped", "checkout_replacement": "stopped", "late_durable_effect": "refused"}, sort_keys=True))

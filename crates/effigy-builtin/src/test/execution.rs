@@ -152,7 +152,9 @@ pub(super) fn run_builtin_test_targets_parallel(
             // child run per suite, moved to the worker that runs it, so the run
             // settles the suite's whole process group. Child evidence is the
             // built-in's own diagnostic spawn, so it keeps the plain path.
-            let custody = if host && !capture_child_evidence {
+            // Remote suites still have a host control client. Its process
+            // group and inherited runtime capability belong to this run too.
+            let custody = if !capture_child_evidence {
                 ports.host_suite_custody(&job.name)?
             } else {
                 None

@@ -34,12 +34,19 @@ impl TaskRun {
     pub(in crate::runner) fn begin_foreground(
         request: TaskRunRequest<'_>,
     ) -> Result<Self, RunnerError> {
+        Self::begin_foreground_with(request, true)
+    }
+
+    pub(super) fn begin_foreground_with(
+        request: TaskRunRequest<'_>,
+        task_gate: bool,
+    ) -> Result<Self, RunnerError> {
         let parent = PARENTS.with(|parents| parents.borrow().last().cloned());
         let inherited = inherited_class()?;
         if parent.as_ref().is_some_and(|parent| parent.run.is_some())
             || inherited.is_some_and(|grant| grant.class != RunClass::Foreground)
         {
-            return Self::begin(request);
+            return Self::begin_with(request, task_gate, LifecyclePlacement::Inline);
         }
         if request.key.is_some() || request.managed_run_token.is_some() {
             return Err(class_error(
@@ -62,7 +69,14 @@ impl TaskRun {
             .map_err(|error| class_error(&error.to_string()))?;
         let root = StateRoot::foreground_effects(&cx, &location)
             .map_err(|error| class_error(&error.to_string()))?;
-        let owner = request.target.owner(checkout)?;
+        let owner = if task_gate {
+            request.target.owner(checkout)?
+        } else {
+            request
+                .target
+                .shared_lock_owner(checkout)?
+                .ok_or_else(|| class_error("standalone foreground owner needs its private gate"))?
+        };
         let task = request.target.task_id(checkout)?;
         let ancestors = parent
             .as_ref()
@@ -106,8 +120,13 @@ impl TaskRun {
                 placement: LifecyclePlacement::Inline,
             }),
         };
-        let aliases = checkout::identities(&kernel::observe(), &request.target.root)
-            .map_err(|error| class_error(&error.to_string()))?;
+        let aliases = if task_gate {
+            checkout::identities(&kernel::observe(), &request.target.root)
+                .map_err(|error| class_error(&error.to_string()))?
+        } else {
+            // Fresh private builtin owners cannot have an old incarnation.
+            Vec::new()
+        };
         let home = kernel::state_home();
         let legacy = LegacyForeground::for_checkout(
             &kernel::observe(),

@@ -76,6 +76,7 @@ impl ForegroundRun {
         opts: BeginOpts,
         legacy: Option<&LegacyForeground>,
     ) -> Result<Self, RunError> {
+        self.verify_custody()?;
         if self.ancestor_owners.contains(&inv.spec().owner)
             || self.record.incarnation().owner == inv.spec().owner
             || matches!(self.record.phase(), Phase::Stopping | Phase::Closed)
@@ -91,6 +92,9 @@ impl ForegroundRun {
             gates.push(crate::gate::duplicate_custody(gate)?);
         }
         let mut child = Self::begin_under(&self.cx, root, inv, opts, gates, ancestors, legacy)?;
+        if child.legacy.is_none() {
+            child.legacy = self.legacy.clone();
+        }
         let completion = Arc::new(Mutex::new(None));
         child.completion = Some(completion.clone());
         self.children.push(completion);
@@ -158,7 +162,12 @@ impl ForegroundRun {
         // Declared shared exclusion gates remain held too; adapter gates
         // cannot reach this local-only path.
         check_predecessors(cx, root, &ids)?;
-        gate.set_foreground(&opts.id, &inv.spec().owner, &inv.spec().task);
+        gate.set_foreground(
+            &opts.id,
+            &inv.spec().owner,
+            &inv.spec().task,
+            ancestor_owners.is_empty(),
+        );
         let guard = MemoryGuard::start(
             &plan.executable,
             &mut gate,

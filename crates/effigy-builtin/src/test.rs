@@ -9,6 +9,8 @@ use effigy_tasks::{TaskRuntimeArgs, TaskSelector};
 mod execution;
 mod planning;
 mod render;
+mod requirement;
+pub use requirement::{test_run_requirement, TestRunRequirement, TestRunSource};
 mod suite_selection;
 
 pub(super) fn try_run_builtin_test(

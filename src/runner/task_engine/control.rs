@@ -311,9 +311,6 @@ fn foreground_records(
     };
     let mut unique = std::collections::BTreeMap::new();
     for row in rows {
-        if row.coordinates.owner.kind() != ResourceKind::Task {
-            continue;
-        }
         let Some(id) = row
             .holder
             .run
@@ -431,7 +428,12 @@ pub(in crate::runner) fn list(
     let mut records = Vec::new();
     for state in roots {
         match foreground_records(&cx, &state) {
-            Ok(rows) => records.extend(rows),
+            Ok(rows) => records.extend(rows.into_iter().filter(|record| match &record.source {
+                RunSource::Foreground(row) => {
+                    row.coordinates.owner.kind() == ResourceKind::Task || row.coordinates.root
+                }
+                RunSource::Journal(_) => false,
+            })),
             Err(reason) => omitted.push(reason),
         }
         let reader = match Store::read(&cx, &state) {

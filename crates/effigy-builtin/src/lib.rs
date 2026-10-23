@@ -47,6 +47,7 @@ pub use ports::{
     HostSuiteCustody, HostSuiteOutcome, LockScope,
 };
 pub use prompt_policy::{PromptDecision, PromptPolicy};
+pub use test::{test_run_requirement, TestRunRequirement, TestRunSource};
 
 pub(crate) use support::{
     ensure_no_unknown_builtin_args, ensure_no_unknown_builtin_args_with_prefix,

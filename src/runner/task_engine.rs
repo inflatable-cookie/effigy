@@ -20,6 +20,7 @@ mod run;
 mod spawn_env;
 mod status;
 
+pub(in crate::runner) use admission::AdmissionInheritance;
 pub(in crate::runner) use control::{
     effects as run_effects, list as list_runs, lookup as lookup_run, lookup_checkout,
     read_log as read_run_log, request_stop, resolve as resolve_run, signal_owner, workload_process,

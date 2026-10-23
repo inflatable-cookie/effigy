@@ -7,6 +7,10 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Noninteractive built-in test suites now run under memory custody when their
+  selected commands and task references are local. Plans and help create no
+  runtime state. Remote suites and retained scratch use checkout journals;
+  suite workers explicitly carry their parent's verified admission hook.
 - Before migration, foreground owners with persisted checkout identities
   also hold their legacy lock-file aliases and read their old predecessors.
   Unresolved legacy evidence refuses before workload start. Compatibility

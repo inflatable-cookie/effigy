@@ -247,6 +247,11 @@ fn owned<T: std::fmt::Debug>(run: Arc<Mutex<T>>) -> T {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+enum Standalone {
+    Memory,
+    Journal { scratch: bool, custody: bool },
+}
+
 impl TaskRun {
     pub(in crate::runner) fn begin(request: TaskRunRequest<'_>) -> Result<Self, RunnerError> {
         Self::begin_with(request, true, LifecyclePlacement::Inline)
@@ -315,7 +320,15 @@ impl TaskRun {
         label: &str,
         admission: Option<effigy_manifest::ManifestTaskAdmission>,
     ) -> Result<Self, RunnerError> {
-        Self::standalone_with(root, label, admission, false, false)
+        Self::standalone_with(
+            root,
+            label,
+            admission,
+            Standalone::Journal {
+                scratch: false,
+                custody: false,
+            },
+        )
     }
 
     /// A standalone run whose host processes may use the configured per-run
@@ -328,15 +341,44 @@ impl TaskRun {
         root: &std::path::Path,
         label: &str,
     ) -> Result<Self, RunnerError> {
-        Self::standalone_with(root, label, None, true, true)
+        Self::standalone_with(
+            root,
+            label,
+            None,
+            Standalone::Journal {
+                scratch: true,
+                custody: true,
+            },
+        )
+    }
+
+    pub(in crate::runner) fn standalone_foreground(
+        root: &std::path::Path,
+        label: &str,
+    ) -> Result<Self, RunnerError> {
+        Self::standalone_with(root, label, None, Standalone::Memory)
+    }
+
+    pub(in crate::runner) fn standalone_custody(
+        root: &std::path::Path,
+        label: &str,
+    ) -> Result<Self, RunnerError> {
+        Self::standalone_with(
+            root,
+            label,
+            None,
+            Standalone::Journal {
+                scratch: false,
+                custody: true,
+            },
+        )
     }
 
     fn standalone_with(
         root: &std::path::Path,
         label: &str,
         admission: Option<effigy_manifest::ManifestTaskAdmission>,
-        scratch: bool,
-        custody: bool,
+        storage: Standalone,
     ) -> Result<Self, RunnerError> {
         let nonce = new_run_id()?;
         let lock = format!("{BUILTIN_LOCK_PREFIX}run:{nonce}");
@@ -349,21 +391,27 @@ impl TaskRun {
             shared_lock: Some(lock),
             label: label.to_owned(),
         };
-        Self::begin_with(
-            TaskRunRequest {
-                target: &target,
-                lock_wait_ms: 0,
-                custody,
-                scratch,
-                managed_run_token: None,
-                args: &[],
-                key: None,
-                admission,
-                cwd: Some(root),
-            },
-            false,
-            LifecyclePlacement::Inline,
-        )
+        let (scratch, custody) = match storage {
+            Standalone::Memory => (false, true),
+            Standalone::Journal { scratch, custody } => (scratch, custody),
+        };
+        let request = TaskRunRequest {
+            target: &target,
+            lock_wait_ms: 0,
+            custody,
+            scratch,
+            managed_run_token: None,
+            args: &[],
+            key: None,
+            admission,
+            cwd: Some(root),
+        };
+        match storage {
+            Standalone::Memory => Self::begin_foreground_with(request, false),
+            Standalone::Journal { .. } => {
+                Self::begin_with(request, false, LifecyclePlacement::Inline)
+            }
+        }
     }
 
     fn begin_with(
