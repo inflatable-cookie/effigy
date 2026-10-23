@@ -8,7 +8,7 @@ mod children;
 mod claims;
 mod foreground;
 mod history;
-pub use foreground::ForegroundRun;
+pub use foreground::{ForegroundRun, LegacyForeground};
 mod journal;
 mod lifecycle;
 mod logs;

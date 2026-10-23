@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Before migration, foreground owners with persisted checkout identities
+  also hold their legacy lock-file aliases and read their old predecessors.
+  Unresolved legacy evidence refuses before workload start. Compatibility
+  locks stay in memory custody and never write the old database; migrated
+  checkout runs no longer consult that source.
 - Runtime migration reports busy destination checkout owners before staging
   and holds checkout directory fences through publication. Existing foreground
   work continues when migration refuses; the report includes stop and drain

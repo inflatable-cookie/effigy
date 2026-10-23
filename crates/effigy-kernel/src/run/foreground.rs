@@ -1,10 +1,12 @@
 //! Checkout-local exclusion and memory-only custody; no writable journal.
+mod legacy;
 use super::*;
 use crate::ctx::{EffectClass, Placement};
 use crate::id::{ExecutionTarget, ResourceKind, Scope};
 use crate::ident::ProcessIdentity;
 use crate::observe::Observed;
 use crate::supervise::{memory::MemoryGuard, Executable};
+pub use legacy::LegacyForeground;
 use std::collections::BTreeMap;
 use std::os::fd::OwnedFd;
 use std::sync::{Arc, Mutex};
@@ -16,6 +18,7 @@ use std::time::Duration;
 #[derive(Debug)]
 pub struct ForegroundRun {
     root: StateRoot,
+    legacy: Option<StateRoot>,
     record: ForegroundRecord,
     cx: EffectContext,
     next: Invocation,
@@ -38,7 +41,18 @@ impl ForegroundRun {
         inv: &ResolvedInvocation,
         opts: BeginOpts,
     ) -> Result<Self, RunError> {
-        Self::begin_under(cx, root, inv, opts, Vec::new(), Vec::new())
+        Self::begin_with_legacy(cx, root, inv, opts, None)
+    }
+
+    /// Pre-cutover compatibility gates join the same memory death guard.
+    pub fn begin_with_legacy(
+        cx: &EffectContext,
+        root: &StateRoot,
+        inv: &ResolvedInvocation,
+        opts: BeginOpts,
+        legacy: Option<&LegacyForeground>,
+    ) -> Result<Self, RunError> {
+        Self::begin_under(cx, root, inv, opts, Vec::new(), Vec::new(), legacy)
     }
 
     /// Each child's memory guard also holds every ancestor's gates. Owner
@@ -50,6 +64,17 @@ impl ForegroundRun {
         root: &StateRoot,
         inv: &ResolvedInvocation,
         opts: BeginOpts,
+    ) -> Result<Self, RunError> {
+        self.begin_child_with_legacy(root, inv, opts, None)
+    }
+
+    /// Local and legacy ancestor descriptions stay held through child cleanup.
+    pub fn begin_child_with_legacy(
+        &mut self,
+        root: &StateRoot,
+        inv: &ResolvedInvocation,
+        opts: BeginOpts,
+        legacy: Option<&LegacyForeground>,
     ) -> Result<Self, RunError> {
         if self.ancestor_owners.contains(&inv.spec().owner)
             || self.record.incarnation().owner == inv.spec().owner
@@ -65,7 +90,7 @@ impl ForegroundRun {
         for gate in &self.ancestor_gates {
             gates.push(crate::gate::duplicate_custody(gate)?);
         }
-        let mut child = Self::begin_under(&self.cx, root, inv, opts, gates, ancestors)?;
+        let mut child = Self::begin_under(&self.cx, root, inv, opts, gates, ancestors, legacy)?;
         let completion = Arc::new(Mutex::new(None));
         child.completion = Some(completion.clone());
         self.children.push(completion);
@@ -79,6 +104,7 @@ impl ForegroundRun {
         opts: BeginOpts,
         ancestor_gates: Vec<OwnedFd>,
         ancestor_owners: Vec<ResourceId>,
+        legacy: Option<&LegacyForeground>,
     ) -> Result<Self, RunError> {
         if cx.operation().placement() != Placement::Host || inv.spec().placement != Placement::Host
         {
@@ -126,33 +152,12 @@ impl ForegroundRun {
         }
         let ids = aliases::gates(&publication, root, &inv.spec().owner, &ids)?;
         let mut gate = Gate::acquire(cx, root, &ids, opts.wait)?;
+        if let Some(legacy) = legacy {
+            gate.extend_custody(legacy.acquire(cx, opts.wait)?);
+        }
         // Declared shared exclusion gates remain held too; adapter gates
         // cannot reach this local-only path.
-        let observe = cx
-            .child(Duration::from_secs(10))
-            .operation()
-            .observe()
-            .map_err(|_| RunError::Invalid("foreground predecessor read context".into()))?;
-        match Store::read(&observe, root) {
-            Observed::Verified(reader, _) => {
-                for owner in &ids {
-                    for previous in journal::predecessors(reader.conn(), owner)? {
-                        if !previous.acknowledged {
-                            return Err(RunError::PredecessorUnsettled {
-                                run: previous.id,
-                                effects: journal::effects(reader.conn(), previous.id)?,
-                            });
-                        }
-                    }
-                }
-            }
-            Observed::Absent(_) => {}
-            Observed::Unknown(reason) => {
-                return Err(RunError::Invalid(format!(
-                    "foreground predecessor evidence unavailable: {reason:?}"
-                )))
-            }
-        }
+        check_predecessors(cx, root, &ids)?;
         gate.set_foreground(&opts.id, &inv.spec().owner, &inv.spec().task);
         let guard = MemoryGuard::start(
             &plan.executable,
@@ -167,6 +172,7 @@ impl ForegroundRun {
         )?;
         Ok(Self {
             root: root.clone(),
+            legacy: legacy.map(|legacy| legacy.root.clone()),
             record: ForegroundRecord::new(opts.id, inv.spec().owner.clone()),
             cx: cx.clone(),
             next: opts.next,
@@ -183,6 +189,9 @@ impl ForegroundRun {
     /// Recheck the filesystem generations retained by this run before continuing work.
     pub fn verify_custody(&self) -> Result<(), RunError> {
         self.root.verify_binding().map_err(StoreError::from)?;
+        if let Some(legacy) = &self.legacy {
+            legacy.verify_binding().map_err(StoreError::from)?;
+        }
         Ok(())
     }
     pub fn record(&self) -> &ForegroundRecord {
@@ -277,6 +286,39 @@ impl ForegroundRun {
         }
         Ok(outcome)
     }
+}
+
+fn check_predecessors(
+    cx: &EffectContext,
+    root: &StateRoot,
+    owners: &[ResourceId],
+) -> Result<(), RunError> {
+    let observe = cx
+        .child(Duration::from_secs(10))
+        .operation()
+        .observe()
+        .map_err(|_| RunError::Invalid("foreground predecessor read context".into()))?;
+    match Store::read(&observe, root) {
+        Observed::Verified(reader, _) => {
+            for owner in owners {
+                for previous in journal::predecessors(reader.conn(), owner)? {
+                    if !previous.acknowledged {
+                        return Err(RunError::PredecessorUnsettled {
+                            run: previous.id,
+                            effects: journal::effects(reader.conn(), previous.id)?,
+                        });
+                    }
+                }
+            }
+        }
+        Observed::Absent(_) => {}
+        Observed::Unknown(reason) => {
+            return Err(RunError::Invalid(format!(
+                "foreground predecessor evidence unavailable: {reason:?}"
+            )))
+        }
+    }
+    Ok(())
 }
 impl Drop for ForegroundRun {
     fn drop(&mut self) {

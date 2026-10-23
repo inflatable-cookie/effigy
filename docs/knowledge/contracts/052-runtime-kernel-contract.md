@@ -32,6 +32,14 @@ handles also check the `.git` locator before new gates or workload release.
 `Filesystem` checkout identities are a separate, memory-only gate domain;
 foreground root preparation creates transient gate state without minting a
 token, writing a checkout binding or consulting machine state.
+Persisted owners that have no published checkout authority first check for a
+legacy source. Until cutover, their legacy gate aliases join local gate custody
+and their predecessor rows are read without a writable database connection.
+The same memory guard and descendants hold both sets of descriptions; source
+directory replacement also revokes ongoing custody. Unresolved or unreadable
+legacy evidence refuses that owner before go and names migration/recovery.
+Token-free owners and published checkout journals bypass this compatibility
+source. Lock-file diagnostics remain transient, including old aliases.
 
 `effigy run migrate` exposes pure planning, exact blocking-writer reports and
 verified stop receipts, including pre-run admission/retention writers. Explicit

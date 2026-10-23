@@ -148,6 +148,9 @@ with tempfile.TemporaryDirectory(prefix="q010-cli-") as temporary:
         legacy_id = seeded.stdout.strip()
         with closing(sqlite3.connect(home / ".effigy/state/kernel.db")) as connection:
             connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        refused_owner = command("noop", succeeds=False, migration=False)
+        assert "legacy foreground predecessor" in refused_owner.stderr, refused_owner.stderr
+        assert not (project / "noop-ran").exists(), "foreground ignored its unimported predecessor"
         before = snapshot(home)
         assert command(*stop_args, "--json", succeeds=False)["state"] == "stop-refused"
         assert snapshot(home) == before, "free gate granted stale stop authority"

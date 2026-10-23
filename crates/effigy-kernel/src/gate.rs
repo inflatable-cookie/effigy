@@ -151,6 +151,12 @@ pub(crate) fn duplicate_custody(
     Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) })
 }
 impl GateGuard {
+    /// Memory custody may span local gates and pre-cutover compatibility
+    /// gates. Every description then reaches the same death guard and children.
+    pub(crate) fn extend_custody(&mut self, mut other: Self) {
+        self.gates.append(&mut other.gates);
+        self.scopes.append(&mut other.scopes);
+    }
     /// Foreground backup custody retains these same open descriptions. Once
     /// shared, closing a custodian must not explicitly unlock the other's
     /// flock. Workload forks still inherit only CLOEXEC copies.

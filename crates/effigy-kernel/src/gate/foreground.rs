@@ -72,6 +72,9 @@ impl Gate {
         root: &StateRoot,
     ) -> Observed<Vec<ForegroundHolder>> {
         let scan = || -> Result<_, String> {
+            if root.is_machine() {
+                return Ok(Vec::new());
+            }
             root.verify_binding().map_err(|error| error.to_string())?;
             let Some(gates) = root
                 .family(Family::Gates)

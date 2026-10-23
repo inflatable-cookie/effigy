@@ -53,6 +53,63 @@ impl Record for Binding {
 }
 
 impl StateRoot {
+    /// Compatibility observation for a persisted owner before relocation.
+    /// Published checkout authority never depends on the machine source again.
+    pub(crate) fn foreground_legacy(
+        cx: &ObserveContext,
+        local: &Self,
+        machine_home: Option<&Path>,
+    ) -> Result<Option<Self>, StoreError> {
+        local.verify_binding()?;
+        match authority(cx, local) {
+            Observed::Verified(Authority::Committed { .. }, _) => return Ok(None),
+            Observed::Verified(Authority::Fresh, _) => {
+                match read_record::<Binding>(cx, local.dir(), &FileName::new(BINDING)?) {
+                    Observed::Verified(_, _) => return Ok(None),
+                    Observed::Absent(_) => {}
+                    other => {
+                        return Err(unreadable(format!(
+                            "foreground checkout authority: {other:?}"
+                        )))
+                    }
+                }
+            }
+            other => {
+                return Err(unreadable(format!(
+                    "foreground checkout publication: {other:?}"
+                )))
+            }
+        }
+        let home = machine_home.ok_or_else(|| {
+            unreadable("HOME is required to verify this persisted owner's legacy predecessor")
+        })?;
+        if crate::migration::committed(cx, home)?.is_some() {
+            return Ok(None);
+        }
+        let legacy = match Self::legacy_observe(cx, home) {
+            Observed::Verified(root, _) => root,
+            Observed::Absent(_) => return Ok(None),
+            other => {
+                return Err(unreadable(format!(
+                    "legacy foreground predecessor source: {other:?}"
+                )))
+            }
+        };
+        let database = legacy
+            .dir()
+            .entry(&FileName::new(crate::store::DB_NAME)?)?
+            .is_some();
+        if !database && machine_format(cx, &legacy)? {
+            return Ok(None);
+        }
+        if legacy.owner.identity()? == local.owner.identity()? {
+            return Err(unreadable(
+                "legacy machine source overlaps the foreground checkout",
+            ));
+        }
+        Ok(Some(legacy))
+    }
+
     /// Pure checkout routing with the current Git resolution supplied by the
     /// engine. A copied token or retargeted `.git` file cannot select an old
     /// journal whose original Git directory still happens to exist.
