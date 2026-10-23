@@ -15,7 +15,7 @@ use effigy_kernel::id::{ResourceId, Scope};
 use effigy_kernel::observe::{Evidence, Observed, UnknownReason};
 use effigy_kernel::outcome::WorkloadOutcome;
 use effigy_kernel::root::StateRoot;
-use effigy_kernel::run::{BeginOpts, Claims, Run};
+use effigy_kernel::run::{BeginOpts, Claims, FactOptions, MachineFacts, Run};
 use effigy_kernel::store::Store;
 
 use crate::{operator, GatewayError};
@@ -174,9 +174,77 @@ impl EndpointStore {
         expected_revision: Option<u64>,
         edit: impl FnOnce(&mut EndpointSnapshot) -> Result<T, E>,
     ) -> Result<T, E> {
-        self.transaction_with_backup(expected_revision, |snapshot| {
-            edit(snapshot).map(|value| (value, None))
-        })
+        self.transact_facts(expected_revision, edit)
+    }
+    fn transact_facts<T, E: From<GatewayError>>(
+        &self,
+        expected_revision: Option<u64>,
+        edit: impl FnOnce(&mut EndpointSnapshot) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let op = operator::context(OPERATION_BUDGET, EffectClass::Mutate);
+        let cx = op
+            .effects()
+            .map_err(|failure| error(format!("{failure:?}")))?;
+        let cleanup = op
+            .cleanup(CLEANUP_BUDGET)
+            .map_err(|failure| error(format!("{failure:?}")))?;
+        let root = StateRoot::runtime_machine_effects(&cx, &self.home).map_err(error)?;
+        let mut facts = MachineFacts::begin(
+            &cx,
+            &root,
+            FactOptions {
+                owner: owner(),
+                wait: Wait::Until(Instant::now() + OPERATION_BUDGET),
+                next: operator::next(),
+            },
+            &cleanup,
+            &mut operator::Adapter,
+        )
+        .map_err(error)?;
+        let state = facts.state().map_err(error)?;
+        let importing = state.is_none();
+        let _legacy_locks = if importing {
+            Some(self.sources.lock(op.remaining().unwrap_or_default())?)
+        } else {
+            None
+        };
+        let mut snapshot = match state {
+            Some(value) => EndpointSnapshot::from_value(value)?,
+            None => self.sources.read()?,
+        };
+        if snapshot.authority != snapshot::Authority::Store {
+            return Err(error("gateway endpoints were exported or export is incomplete; finish `effigy gateway setup --remove`, or re-import after stopping v0.14.1").into());
+        }
+        if expected_revision.is_some_and(|expected| expected != snapshot.revision) {
+            return Err(error(format!(
+                "endpoint revision changed (current {}); read and retry",
+                snapshot.revision
+            ))
+            .into());
+        }
+        let before = snapshot.clone();
+        let before_claims = if importing {
+            Default::default()
+        } else {
+            before.claims()?
+        };
+        let value = edit(&mut snapshot)?;
+        if !importing && snapshot == before {
+            return Ok(value);
+        }
+        let desired = snapshot.claims()?;
+        snapshot.update_quarantine(&before_claims, &desired)?;
+        let generation = facts.next_generation().map_err(error)?;
+        snapshot.revision = generation.get();
+        facts
+            .publish_retained(
+                generation,
+                &desired.into_values().collect::<Vec<_>>(),
+                &serde_json::to_value(snapshot).map_err(error)?,
+                REUSE_QUARANTINE,
+            )
+            .map_err(error)?;
+        Ok(value)
     }
     pub(crate) fn transaction_with_backup<T, E: From<GatewayError>>(
         &self,
@@ -310,7 +378,7 @@ impl EndpointStore {
     pub fn import(&self) -> Result<EndpointSnapshot, GatewayError> {
         // Settle imported claims before a caller can release or republish
         // them. Even a first-command retirement must quarantine old endpoints.
-        self.transact(None, |_| Ok::<_, GatewayError>(((), None)))?;
+        self.transact_facts(None, |_| Ok::<_, GatewayError>(()))?;
         self.read_compatible()
     }
 }

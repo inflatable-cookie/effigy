@@ -73,8 +73,14 @@ and deleted-worktree retirement remain required. Exact per-checkout outputs and
 hashes are retained in the task's validation artifacts. The narrow selector is
 `proof:runtime-migration:actual-copy`, with `EFFIGY_RUNTIME_MIGRATION_COPY`
 pointing to the explicitly prepared private fixture.
-Release routing, machine write-budget enforcement and the remaining
-acceptance harnesses are still task work. Native Linux qualification now
+Pure endpoint/port fact edits now use one atomic publication, with payload,
+claims, quarantine and final disposition together. Measured new pins/releases
+use one transaction; reads, existing-pin lookup, unchanged edit and unchanged
+import use zero. Cold schema initialization contributes one separate commit.
+These edits admit no run and retain no completed history. External-effect
+maintenance and gateway lifecycle still require their remaining budget and
+history work. Release routing and the remaining acceptance harnesses are also
+still task work. Native Linux qualification now
 passes 135 selected migration, store, inheritance, helper, custody and gate
 tests, including unprivileged permission refusals. Managed supervisor bootstrap
 uses its selected checkout journal. Helpers forward only the verified reader

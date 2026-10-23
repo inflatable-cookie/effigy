@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Endpoint and port fact edits publish their complete conflict set in one
+  transaction. Unchanged edits and imports write nothing and create no run
+  history; cold schema initialization is counted separately.
 - Runtime migration freezes the legacy writer scope with bounded descriptors,
   rechecks old owners before publication, and refuses replaced scope inodes.
 - Managed supervisors initialize in the selected checkout journal and explicitly
