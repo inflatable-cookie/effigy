@@ -14,6 +14,7 @@ pub struct Partition {
     pub resources: BTreeSet<String>,
     pub runs: BTreeSet<String>,
     pub objects: BTreeSet<String>,
+    pub release_owners: BTreeSet<String>,
     pub unresolved_runs: usize,
 }
 #[derive(Debug, Serialize)]
@@ -104,6 +105,7 @@ pub(super) fn partitions(
                             resources: BTreeSet::new(),
                             runs: BTreeSet::new(),
                             objects: BTreeSet::new(),
+                            release_owners: BTreeSet::new(),
                             unresolved_runs: 0,
                         },
                     );
@@ -121,6 +123,7 @@ pub(super) fn partitions(
                         resources: BTreeSet::new(),
                         runs: BTreeSet::new(),
                         objects: BTreeSet::new(),
+                        release_owners: BTreeSet::new(),
                         unresolved_runs: 0,
                     });
                 "machine".into()
@@ -172,6 +175,8 @@ pub(super) fn partitions(
             owners.insert(resource.clone(), key);
         }
     }
+    let dropped_releases =
+        super::release::assign(reader, &resources, &mut owners, &mut partitions)?;
     let mut seeds = BTreeSet::new();
     // Opaque engine payloads and immutable object pointers are product state,
     // even when the operation which published them completed long ago.
@@ -220,6 +225,11 @@ pub(super) fn partitions(
         .filter(|(_, (_, _, open))| *open)
         .map(|(id, _)| id.clone())
         .collect();
+    kept_runs.extend(
+        partitions
+            .values()
+            .flat_map(|part| part.runs.iter().cloned()),
+    );
     // Current claim provenance and live attachments cannot dangle. Keep only
     // their required run closure, rather than unrelated completed history.
     for (_, _, _, run) in &claims {
@@ -261,6 +271,9 @@ pub(super) fn partitions(
         seeds.insert(name?);
     }
     for name in seeds {
+        if dropped_releases.contains(&name) {
+            continue;
+        }
         let key = owners.get(&name).ok_or_else(|| {
             StoreError::Corrupt(format!(
                 "legacy live resource {name} has no permitted destination"

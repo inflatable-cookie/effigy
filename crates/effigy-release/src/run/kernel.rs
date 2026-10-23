@@ -315,12 +315,24 @@ impl ReleaseSession {
             .map_err(storage_error)?;
         let checkout =
             checkout(repo_root, true)?.ok_or_else(|| storage_error("checkout identity missing"))?;
+        let observe = op
+            .observe()
+            .map_err(|_| storage_error("import alias observation"))?;
+        let owner = match Store::read(&observe, &root) {
+            Observed::Verified(reader, _) => local_owner(&reader, checkout)?,
+            Observed::Absent(_) => release_owner(checkout),
+            Observed::Unknown(reason) => {
+                return Err(storage_error(format!(
+                    "release owner is unreadable: {reason:?}"
+                )))
+            }
+        };
         Ok(Self {
             cx,
             cleanup,
             root,
             checkout,
-            owner: release_owner(checkout),
+            owner,
             repo_root: repo_root.to_path_buf(),
         })
     }
@@ -444,6 +456,26 @@ fn begin_error(repo_root: &Path, error: effigy_kernel::run::RunError) -> Release
     ReleaseError::TaskInvocation(message)
 }
 
+fn local_owner(reader: &StoreReader, checkout: CheckoutId) -> Result<ResourceId, ReleaseError> {
+    match reader.imported_owner("release") {
+        Observed::Verified(owner, _)
+            if owner.kind() == effigy_kernel::id::ResourceKind::Store
+                && owner.scope() == Scope::Machine
+                && owner
+                    .key()
+                    .first()
+                    .and_then(Option::as_deref)
+                    .is_some_and(|key| key.starts_with("release ")) =>
+        {
+            Ok(owner)
+        }
+        Observed::Absent(_) => Ok(release_owner(checkout)),
+        other => Err(storage_error(format!(
+            "invalid imported release owner: {other:?}"
+        ))),
+    }
+}
+
 fn checkpoint_from_reader(
     reader: &StoreReader,
     owner: &ResourceId,
@@ -513,7 +545,7 @@ pub fn read_release_record(
     };
     let checkout = checkout(repo_root, false)?
         .ok_or_else(|| storage_error("journal exists without its checkout identity"))?;
-    let owner = release_owner(checkout);
+    let owner = local_owner(&reader, checkout)?;
     match checkpoint_from_reader(&reader, &owner)? {
         Some(checkpoint) => {
             let state = ReleaseState::for_owner(root.path(), &owner);
@@ -539,6 +571,12 @@ fn legacy_release_refusal(
     home: &Path,
     repo_root: &Path,
 ) -> Result<Option<ReleaseRecord>, ReleaseError> {
+    if effigy_kernel::migration::committed(observe, home)
+        .map_err(storage_error)?
+        .is_some()
+    {
+        return Ok(None);
+    }
     let root = match StateRoot::legacy_observe(observe, home) {
         Observed::Verified(root, _) => root,
         Observed::Absent(_) => return Ok(None),
@@ -595,5 +633,5 @@ pub fn read_release_record_for_root(
 
 /// A record path is under this release's state directory, never anywhere else.
 pub fn record_path_is_owned(state: &ReleaseState, path: &Path) -> bool {
-    path.parent() == state.record_path.parent()
+    path == state.record_path
 }

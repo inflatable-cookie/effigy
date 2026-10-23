@@ -375,6 +375,16 @@ release owner's gate. Record replacement writes and syncs a private temporary,
 renames it and syncs the directory through the kernel. Cleanup failures are
 projected from the retained journal without a late write after gate release.
 
+Legacy relocation preserves the old release resource's canonical identity and
+run ids in the checkout journal, with a local import alias for subsequent
+invocations. The importer requires that owner's retained checkout identity;
+an unbound owner must finish or drain under the previous binary. It copies the
+record and candidate without following absolute record pointers, re-hashes every
+certified artifact, and rebases only the checkout and candidate paths. A missing
+record, escaped path or mismatched digest prevents publication. Completed
+releases may be dropped with completed history; a committed cutover never
+falls back to the old release record.
+
 **Artifacts.** An artifact `path` is a file, a directory (every file beneath
 it) or a glob matched below its fixed prefix, relative to the release root.
 Certify copies each match into the candidate directory and records path, size

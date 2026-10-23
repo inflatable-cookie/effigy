@@ -190,6 +190,7 @@ pub fn import(
             resources: Default::default(),
             runs: Default::default(),
             objects: Default::default(),
+            release_owners: Default::default(),
             unresolved_runs: 0,
         });
     }
@@ -266,7 +267,7 @@ pub fn import(
         } else {
             let mut names = vec![root.database_name()];
             if part.checkout.is_some() {
-                names.extend(["objects", "runs", "staging"]);
+                names.extend(["objects", "runs", "staging", "release"]);
             }
             for name in names {
                 if root
@@ -329,6 +330,18 @@ pub fn import(
         store.check_integrity()?;
         drop(store); // last connection checkpoints before fingerprint/publication
         copy_files(cx, &observe, source, destination)?;
+        super::release::copy_files(
+            cx,
+            &reader,
+            source,
+            &destination.partition,
+            super::release::Target {
+                stage: &destination.stage,
+                final_state: destination.root.path(),
+                checkout_root: &destination.checkout_root,
+                guard: &destination.gate,
+            },
+        )?;
         let database_digest = files::digest(
             &observe,
             destination.stage.dir(),
@@ -511,7 +524,7 @@ fn copy_files(
 fn publish_prepared(destination: &Destination) -> Result<(), StoreError> {
     let mut names = vec![destination.root.database_name()];
     if destination.partition.checkout.is_some() {
-        names.extend(["objects", "runs", "staging"]);
+        names.extend(["objects", "runs", "staging", "release"]);
     }
     for name in names {
         let name = FileName::new(name)?;
@@ -574,7 +587,7 @@ fn discard_prepared(
     }
     let mut names = vec![root.database_name()];
     if root.database_name() == crate::store::DB_NAME {
-        names.extend(["objects", "runs", "staging"]);
+        names.extend(["objects", "runs", "staging", "release"]);
     }
     for name in names {
         root.dir().remove_tree(&FileName::new(name)?, 40)?;
@@ -765,6 +778,12 @@ fn coalesce(
             previous.resources.extend(part.resources);
             previous.runs.extend(part.runs);
             previous.objects.extend(part.objects);
+            previous.release_owners.extend(part.release_owners);
+            if previous.release_owners.len() > 1 {
+                return Err(StoreError::Corrupt(
+                    "multiple legacy release authorities resolve to one checkout".into(),
+                ));
+            }
             previous.unresolved_runs += part.unresolved_runs;
         } else {
             physical.insert(key, grouped.len());

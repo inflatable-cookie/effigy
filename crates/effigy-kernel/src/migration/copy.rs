@@ -99,9 +99,31 @@ pub(super) fn partition(
                     let index = column(&columns, "path")?;
                     values[index] = Value::Text(path.into());
                 }
+                if table == "resources"
+                    && part
+                        .release_owners
+                        .contains(text(&columns, &values, "name")?)
+                {
+                    let index = column(&columns, "engine")?;
+                    if let Value::Text(engine) = &values[index] {
+                        let mut checkpoint: serde_json::Value = serde_json::from_str(engine)
+                            .map_err(|e| StoreError::Corrupt(e.to_string()))?;
+                        checkpoint["record"] = serde_json::json!(final_state
+                            .join("release")
+                            .join(text(&columns, &values, "name")?)
+                            .join("record.json"));
+                        values[index] = Value::Text(checkpoint.to_string());
+                    }
+                }
                 insert.execute(params_from_iter(values))?;
                 *copied.rows.entry(table.into()).or_default() += 1;
             }
+        }
+        for owner in &part.release_owners {
+            txn.conn().execute(
+                "INSERT INTO meta(key,value) VALUES ('migration_owner:release',?1)",
+                [owner],
+            )?;
         }
         for (key, value) in [
             ("migration_id", migration),

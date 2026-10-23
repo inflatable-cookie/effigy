@@ -961,6 +961,39 @@ impl StoreReader {
             |row| row.get(0),
         )
     }
+    /// An immutable local import alias. The referenced canonical resource must
+    /// still exist; a missing row is corruption, never a fresh owner.
+    pub fn imported_owner(&self, role: &str) -> Observed<ResourceId> {
+        let name: Observed<String> = self.row(
+            "meta",
+            "SELECT value FROM meta WHERE key=?1",
+            [format!("migration_owner:{role}")],
+            |r| r.get(0),
+        );
+        let name = match name {
+            Observed::Verified(name, _) => name,
+            Observed::Absent(proof) => return Observed::Absent(proof),
+            Observed::Unknown(reason) => return Observed::Unknown(reason),
+        };
+        let canonical: Observed<Vec<u8>> = self.row(
+            "resources",
+            "SELECT canonical FROM resources WHERE name=?1",
+            [&name],
+            |r| r.get(0),
+        );
+        match canonical {
+            Observed::Verified(bytes, evidence) => match ResourceId::decode_canonical(&bytes) {
+                Ok(id) if id.name().to_string() == name => Observed::Verified(id, evidence),
+                _ => Observed::Unknown(UnknownReason::Inconsistent(
+                    "invalid imported owner alias".into(),
+                )),
+            },
+            Observed::Unknown(reason) => Observed::Unknown(reason),
+            Observed::Absent(_) => Observed::Unknown(UnknownReason::Inconsistent(
+                "imported owner alias has no resource".into(),
+            )),
+        }
+    }
     pub fn resource(&self, id: &ResourceId) -> Observed<ResourceRecord> {
         let canonical: Observed<Vec<u8>> = self.row(
             "resources",

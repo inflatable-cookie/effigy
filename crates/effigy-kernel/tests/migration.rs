@@ -1655,3 +1655,140 @@ fn migration_source_scope_replacement_refuses_the_authority_switch() {
         .unwrap()
         .is_none());
 }
+
+#[test]
+fn migration_relocates_release_checkpoint_and_certified_artifacts_without_source_changes() {
+    use effigy_kernel::id::RunId;
+    use sha2::{Digest, Sha256};
+    for fault in ["none", "outside", "digest", "missing-identity", "complete"] {
+        let (source_home, source, _) = source();
+        let original_checkout = home();
+        let destination_checkout = home();
+        let destination_home = home();
+        let checkout = CheckoutId::new(CheckoutKind::LinkedWorktree, [7; 16]);
+        let cx = effects(EffectClass::Mutate);
+        let owner = ResourceId::store(
+            Scope::Machine,
+            &format!("release {}", original_checkout.path().display()),
+        )
+        .unwrap();
+        let mut store = Store::open(&cx, &source).unwrap();
+        store
+            .txn(&cx, |txn| {
+                txn.resource(&owner, "release")?;
+                if fault != "missing-identity" {
+                    txn.checkout_seen(&checkout, original_checkout.path().to_str(), None)?;
+                }
+                Ok::<_, StoreError>(())
+            })
+            .unwrap();
+        drop(store);
+        let directory = source.path().join("release").join(owner.name().to_string());
+        std::fs::create_dir_all(directory.join("candidate/dist")).unwrap();
+        let artifact = directory.join("candidate/dist/artifact");
+        let bytes = b"immutable certified candidate";
+        std::fs::write(&artifact, bytes).unwrap();
+        let sha = Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        let run = RunId::new(1, [4; 10]).unwrap().to_string();
+        let record = serde_json::json!({"schema":"effigy.release.record.v1","release_id":run,"run_id":run,"root":original_checkout.path(),"stage":"certify","status":if fault=="complete" {"complete"} else {"paused"},"waiting_on":null,"approvals":[{"stage":"certify","approved_by":"operator","approved_at":"now"}],"artifacts":[{"name":"binary","files":[{"path":artifact,"bytes":bytes.len(),"sha256":if fault=="digest" {"bad"} else {&sha}}]}]});
+        std::fs::write(
+            directory.join("record.json"),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
+        let cp = serde_json::json!({"schema":"effigy.release.checkpoint.v1","release_id":run,"run_id":run,"stage":"certify","status":record["status"],"waiting_on":null,"record":if fault=="outside" {source.path().join("elsewhere/record.json")} else {directory.join("record.json")}});
+        let conn = rusqlite::Connection::open(source.path().join(DB_NAME)).unwrap();
+        conn.execute("INSERT INTO runs(run_id,owner,generation,kind,placement,phase,cleanup_outcome,created_at,updated_at) VALUES (?1,?2,1,'release','host','closed','complete',1,1)",rusqlite::params![run,owner.name().to_string()]).unwrap();
+        conn.execute(
+            "UPDATE resources SET engine=?1 WHERE name=?2",
+            rusqlite::params![cp.to_string(), owner.name().to_string()],
+        )
+        .unwrap();
+        drop(conn);
+        std::fs::set_permissions(
+            source.path().join(DB_NAME),
+            std::fs::Permissions::from_mode(0o400),
+        )
+        .unwrap();
+        let before = snapshot(source_home.path());
+        let mut resolve = |id, _: Option<&std::path::Path>, _: Option<&std::path::Path>| {
+            assert_eq!(id, checkout);
+            Ok(location(destination_checkout.path()))
+        };
+        let result = migration::import(
+            &cx,
+            &source,
+            destination_home.path(),
+            &migration::LegacyQuiescence::launchers_withdrawn(),
+            &mut resolve,
+        );
+        assert_eq!(
+            snapshot(source_home.path()),
+            before,
+            "source changed for {fault}"
+        );
+        if ["outside", "digest", "missing-identity"].contains(&fault) {
+            assert!(result.is_err(), "must refuse {fault}");
+            assert!(migration::committed(&observe(), destination_home.path())
+                .unwrap()
+                .is_none());
+            continue;
+        }
+        result.unwrap();
+        if fault == "complete" {
+            assert!(!destination_checkout
+                .path()
+                .join(".effigy/state/release")
+                .exists());
+            continue;
+        }
+        let local = StateRoot::checkout_observe_in(
+            &observe(),
+            destination_home.path(),
+            &location(destination_checkout.path()),
+        )
+        .verified()
+        .unwrap()
+        .clone();
+        let reader = match Store::read(&observe(), &local) {
+            Observed::Verified(reader, _) => reader,
+            other => panic!("reader: {other:?}"),
+        };
+        assert_eq!(reader.imported_owner("release").verified(), Some(&owner));
+        let resource = reader.resource(&owner).verified().unwrap().clone();
+        let new_record_path = local
+            .path()
+            .join("release")
+            .join(owner.name().to_string())
+            .join("record.json");
+        assert_eq!(
+            resource.engine.unwrap()["record"],
+            serde_json::json!(new_record_path)
+        );
+        let imported: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(new_record_path).unwrap()).unwrap();
+        assert_eq!(imported["release_id"], record["release_id"]);
+        assert_eq!(imported["approvals"], record["approvals"]);
+        assert_eq!(
+            imported["root"],
+            serde_json::json!(destination_checkout.path())
+        );
+        let artifact_path = imported["artifacts"][0]["files"][0]["path"]
+            .as_str()
+            .unwrap();
+        assert!(std::path::Path::new(artifact_path).starts_with(local.path()));
+        assert_eq!(std::fs::read(artifact_path).unwrap(), bytes);
+        migration::import(
+            &cx,
+            &source,
+            destination_home.path(),
+            &migration::LegacyQuiescence::launchers_withdrawn(),
+            &mut resolve,
+        )
+        .unwrap();
+        assert_eq!(snapshot(source_home.path()), before);
+    }
+}

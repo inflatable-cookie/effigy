@@ -10,6 +10,7 @@ pub use adoption::{authority, Authority, ImportReceipt, ImportedDestination};
 pub use control::{request_legacy_stop, stop_legacy_writer, LegacyStop, WriterTarget};
 pub use execute::{committed, import, CheckoutLocation, CheckoutResolver, ImportReport};
 mod plan;
+mod release;
 pub(crate) use fence::borrow_source_scope;
 pub use fence::LegacyQuiescence;
 pub use fence::{destination_blocker, DestinationBlocker};
