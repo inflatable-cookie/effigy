@@ -38,7 +38,7 @@ use changelog::parse_changelog_command;
 use container::parse_container_command;
 use deploy::parse_deploy_command;
 use docs::parse_docs_command;
-use fmt::parse_fmt_command;
+use fmt::{parse_fmt_command, parse_fmt_rust_command};
 use release::parse_release_command;
 use runtime::{
     parse_exec_command, parse_gateway_command, parse_service_command, parse_system_command,
@@ -74,6 +74,7 @@ where
         "deploy" => parse_deploy_command(args),
         "deps" => parse_deps_command(args),
         "fmt" => parse_fmt_command(args),
+        "fmt-rust" => parse_fmt_rust_command(args),
         "secrets" => parse_secrets_command(args),
         "defer" => parse_defer_command(args),
         "exec" => parse_exec_command(args),

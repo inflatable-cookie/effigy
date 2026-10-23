@@ -218,3 +218,132 @@ fn genuine_subcommands_keep_nested_help() {
         assert_no_migration_diagnostics(&output);
     }
 }
+
+/// The #290 regression: a repository `fmt` task owns `effigy fmt`, with every
+/// argument shape, while the built-in formatter keeps an explicit spelling.
+#[test]
+fn fmt_task_shadows_the_builtin_for_every_argument_shape() {
+    let root = temp_workspace("flat-shadow-fmt");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.fmt]\nrun = \"printf 'repo-fmt:%s\\n' {args}\"\n",
+    )
+    .expect("write manifest");
+
+    for args in [
+        vec!["fmt"],
+        vec!["fmt", "--check"],
+        vec!["fmt", "rust", "src/main.rs"],
+    ] {
+        let output = run_cli_command(&root, &args);
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        let stdout = stdout_of(&output);
+        assert!(
+            stdout.contains("repo-fmt:"),
+            "`effigy {}` must run the repository task: {stdout}",
+            args.join(" ")
+        );
+    }
+
+    let check = stdout_of(&run_cli_command(&root, &["fmt", "--check"]));
+    assert!(check.contains("--check"), "{check}");
+    let rust = stdout_of(&run_cli_command(&root, &["fmt", "rust", "src/main.rs"]));
+    assert!(rust.contains("rust"), "{rust}");
+    assert!(rust.contains("src/main.rs"), "{rust}");
+}
+
+/// A shadowed built-in is still reachable, and `--plan` names how.
+#[test]
+fn shadowed_fmt_plan_names_the_explicit_builtin_spelling() {
+    let root = temp_workspace("flat-shadow-fmt-plan");
+    fs::write(
+        root.join("effigy.toml"),
+        "[tasks.fmt]\nrun = \"printf 'repo-fmt\\n'\"\n",
+    )
+    .expect("write manifest");
+
+    let text = stdout_of(&run_cli_command(&root, &["--plan", "fmt"]));
+    assert!(text.contains("Task: fmt"), "{text}");
+    assert!(text.contains("repo-fmt"), "{text}");
+    assert!(
+        text.contains("Built-in shadowed: `fmt`") && text.contains("`effigy fmt-rust`"),
+        "the plan must name the built-in's explicit spelling: {text}"
+    );
+
+    let payload = parse_stdout_json(&run_json_cli_command(&root, &["--plan", "fmt"]));
+    let result = &payload["result"];
+    assert_eq!(result["schema"], "effigy.task.plan.v1", "{payload}");
+    assert_eq!(result["task"], "fmt");
+    assert_eq!(result["shadowed_builtin"]["name"], "fmt");
+    assert_eq!(result["shadowed_builtin"]["escape"], "fmt-rust");
+}
+
+/// With no `fmt` task the built-in keeps handling `fmt rust <FILE>...`.
+#[test]
+fn fmt_builtin_still_checks_rust_files_without_a_fmt_task() {
+    let root = temp_workspace("flat-fmt-builtin");
+    fs::write(root.join("effigy.toml"), "[tasks.build]\nrun = \"true\"\n").expect("write manifest");
+    fs::create_dir_all(root.join("src")).expect("mkdir src");
+    fs::write(root.join("src/main.rs"), "pub fn main( )->u32{1}\n").expect("write source");
+
+    // Paths are cwd-relative, so this fixture names them absolutely rather
+    // than changing the test process's working directory.
+    let source = root.join("src/main.rs");
+    let source_arg = source.display().to_string();
+
+    let direct = run_cli_command(&root, &["fmt", "rust", &source_arg, "--check"]);
+    assert!(!direct.status.success(), "unformatted file: {direct:?}");
+    assert!(
+        stderr_of(&direct).contains("needs formatting"),
+        "{direct:?}"
+    );
+
+    let escaped = run_cli_command(&root, &["fmt-rust", &source_arg, "--check"]);
+    assert!(!escaped.status.success(), "escape spelling: {escaped:?}");
+    assert!(
+        stderr_of(&escaped).contains("needs formatting"),
+        "{escaped:?}"
+    );
+
+    fs::write(&source, "pub fn main() -> u32 {\n    1\n}\n").expect("write formatted source");
+    let clean = run_cli_command(&root, &["fmt", "rust", &source_arg, "--check"]);
+    assert!(clean.status.success(), "formatted file: {clean:?}");
+    assert!(stdout_of(&clean).contains("Rust formatting clean"));
+}
+
+/// Every built-in a repository task may shadow loses to that task, so a new
+/// built-in cannot silently take a consumer's task name.
+#[test]
+fn every_shadowable_builtin_loses_to_a_same_named_manifest_task() {
+    let root = temp_workspace("flat-shadowable-builtins");
+    let names = effigy_cli::builtin_names::shadowable_builtin_names().collect::<Vec<_>>();
+    assert!(
+        names.len() > 20,
+        "the shadowable inventory should cover the whole built-in surface: {names:?}"
+    );
+
+    let mut manifest = String::new();
+    for name in &names {
+        manifest.push_str(&format!(
+            "[tasks.\"{name}\"]\nrun = \"printf 'repo-task-{name}\\n'\"\n"
+        ));
+    }
+    fs::write(root.join("effigy.toml"), manifest).expect("write manifest");
+
+    for name in names {
+        let output = run_json_cli_command(&root, &["--plan", name]);
+        assert!(output.status.success(), "`{name}` plan: {output:?}");
+        let payload = parse_stdout_json(&output);
+        let result = &payload["result"];
+        assert_eq!(
+            result["schema"], "effigy.task.plan.v1",
+            "`effigy {name}` must resolve the repository task: {payload}"
+        );
+        assert_eq!(result["task"], name, "{payload}");
+        let command = result["command"].as_str().unwrap_or_default();
+        assert!(
+            command.contains(&format!("repo-task-{name}")),
+            "`effigy {name}` planned `{command}` instead of the repository task"
+        );
+    }
+}

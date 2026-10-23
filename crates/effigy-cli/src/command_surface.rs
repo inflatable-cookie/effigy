@@ -328,8 +328,15 @@ pub const GENERAL_HELP_ENTRIES: &[GeneralHelpEntry] = &[
         group: HelpGroup::Repo,
         command: "effigy fmt rust <FILE>...",
         description: "Format only the named Rust files with their nearest rustfmt config",
-        deferred_builtin: None,
+        deferred_builtin: Some("fmt"),
         help_argument: Some("fmt"),
+    },
+    GeneralHelpEntry {
+        group: HelpGroup::Repo,
+        command: "effigy fmt-rust <FILE>...",
+        description: "Format named Rust files with the built-in formatter when a repository task owns `effigy fmt`",
+        deferred_builtin: Some("fmt-rust"),
+        help_argument: Some("fmt-rust"),
     },
     // ---- deliver ------------------------------------------------------------
     GeneralHelpEntry {
@@ -458,6 +465,7 @@ pub const HELP_COMMAND_TOPICS: &[(&str, HelpTopic)] = &[
     ("doctor", HelpTopic::Doctor),
     ("exec", HelpTopic::Exec),
     ("fmt", HelpTopic::Fmt),
+    ("fmt-rust", HelpTopic::Fmt),
     ("gateway", HelpTopic::Gateway),
     ("help", HelpTopic::General),
     ("init", HelpTopic::Init),
@@ -525,13 +533,23 @@ pub fn help_command_names() -> impl Iterator<Item = &'static str> {
         .chain(HELP_COMMAND_BUILTIN_ROUTES.iter().copied())
 }
 
-/// The built-in name whose repository deferral hides `effigy help <command>`
-/// for `topic`.
+/// The built-in whose repository deferral hides `effigy help <name>`.
 ///
 /// When a manifest selector or `[defer] builtins` entry owns that name,
 /// `effigy <command> --help` already routes to the repository instead of the
 /// built-in panel, so `effigy help <command>` must not present the panel
-/// either.
+/// either. Resolved by the name an operator typed, not by its help topic:
+/// `fmt` and its escape spelling `fmt-rust` share one panel but defer
+/// independently.
+pub fn deferred_builtin_for_help_argument(name: &str) -> Option<&'static str> {
+    GENERAL_HELP_ENTRIES
+        .iter()
+        .find(|entry| entry.help_argument == Some(name))
+        .and_then(|entry| entry.deferred_builtin)
+}
+
+/// The built-in name whose repository deferral hides `effigy help <command>`
+/// for `topic`, when the topic has one deferring built-in.
 pub fn deferred_builtin_for_help_topic(topic: HelpTopic) -> Option<&'static str> {
     GENERAL_HELP_ENTRIES
         .iter()

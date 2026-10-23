@@ -1018,6 +1018,15 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- A repository task named `fmt` runs again for `effigy fmt`, `effigy fmt
+  --check` and `effigy fmt <args>`; the built-in Rust formatter added in #290
+  no longer took that word at parse time (effigy#293). Every built-in
+  top-level name is now classified as shadowable or reserved, so a new
+  built-in cannot silently take a consumer task name, and a reservation must
+  name the contract that owns it (`test`, `help`, `version`). The shadowed
+  formatter stays reachable as `effigy fmt-rust <FILE>...`, `--plan` names
+  that spelling, `fmt` is in shell completion, and the formatter help says
+  relative paths are cwd-relative.
 - Deleted projects no longer hold generated-port ranges for ever (effigy#294).
   A project path whose parent is gone is now `missing` whenever the nearest
   existing ancestor is a readable directory, instead of `unknown`; only a real

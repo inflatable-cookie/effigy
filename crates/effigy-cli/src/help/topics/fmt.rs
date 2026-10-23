@@ -9,11 +9,14 @@ const FMT_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
     topic: "fmt",
     notices: &[
         "Format only the files you name. Effigy runs rustfmt on each of them with `skip_children`, so a linked or path-dependent workspace is never reformatted.",
+        "Relative file paths are resolved from the directory `effigy` runs in, not from the repository root. Every path must be an existing `.rs` file inside the target repository.",
         "Each file is formatted with the rustfmt configuration nearest to it, not the one nearest your shell.",
+        "A repository task named `fmt` owns `effigy fmt`; the same built-in stays reachable as `effigy fmt-rust <FILE>...`.",
     ],
     usage: &[
         "effigy fmt rust <FILE>... [--repo <PATH>] [--json]",
         "effigy fmt rust <FILE>... --check [--repo <PATH>] [--json]",
+        "effigy fmt-rust <FILE>... [--repo <PATH>] [--json]",
     ],
     leading_common_options: &[CommonOption::Repo],
     options: &[
@@ -28,5 +31,6 @@ const FMT_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy fmt rust src/main.rs",
         "effigy fmt rust $(git diff --name-only -- '*.rs')",
         "effigy fmt rust crates/effigy-release/src/lib.rs --check",
+        "effigy fmt-rust src/main.rs --check",
     ],
 };
