@@ -132,7 +132,7 @@ fn reclaim_dead_ranges_under_pressure(
     if registry.capacity().allocatable_ranges > crate::AUTO_RECLAIM_FREE_RANGES {
         return Ok(registry);
     }
-    let Some(reclaim) = crate::port_reclaim_under_pressure()? else {
+    let Some(reclaim) = crate::port_reclaim_under_pressure(home)? else {
         return Ok(registry);
     };
     eprintln!("{}", reclaim.note());

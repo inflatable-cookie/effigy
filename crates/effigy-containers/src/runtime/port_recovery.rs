@@ -700,11 +700,14 @@ impl PortPressureReclaim {
 ///
 /// It applies exactly the reviewed `--apply` rules: the same decisions, the
 /// same plan digest recomputed under the registry lock, and the same backup
-/// before the write. It returns `None` when capacity is comfortable or when
-/// nothing is provably dead, and it never runs from a read path.
-pub fn port_reclaim_under_pressure() -> Result<Option<PortPressureReclaim>, ContainerPolicyError> {
+/// before the write. `home` is the Effigy home the caller is already preparing
+/// for. It returns `None` when capacity is comfortable or when nothing is
+/// provably dead, and it never runs from a read path.
+pub fn port_reclaim_under_pressure(
+    home: &Path,
+) -> Result<Option<PortPressureReclaim>, ContainerPolicyError> {
     reclaim_under_pressure_at(
-        &live_path()?,
+        &home.join("ports.json"),
         AUTO_RECLAIM_FREE_RANGES,
         PortRecoveryFacts::gather,
         probe_project_path,
