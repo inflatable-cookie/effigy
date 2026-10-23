@@ -73,9 +73,16 @@ effigy --json test --plan
     "name": "build"
   },
   "result": {},
+  "warnings": [],
   "error": null
 }
 ```
+
+`warnings` is always present and holds human-readable notices that explain
+something the command accepted instead of refusing: today, the retired v0.15
+manifest config this invocation read (see
+[guide 085](085-v0.15.0-consumer-migration.md)). A `--json` run never writes
+those notices to stderr, so a machine reader gets one parseable document.
 
 Failure envelope shape:
 
@@ -95,6 +102,7 @@ Failure envelope shape:
     "name": "missing-task"
   },
   "result": null,
+  "warnings": [],
   "error": {
     "kind": "RunnerError",
     "message": "...",

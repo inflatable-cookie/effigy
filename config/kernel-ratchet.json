@@ -130,6 +130,9 @@
       "std.process.Command.new": 2,
       "std.process.Command.output": 2
     },
+    "crates/effigy-manifest/src/retired_notice.rs": {
+      "std::fs::write": 1
+    },
     "crates/effigy-manifest/src/sources.rs": {
       "std.process.Command.new": 1,
       "std.process.Command.output": 1
@@ -606,6 +609,9 @@
     "crates/effigy-manifest/src/config_sections/docs_policy.rs": {
       "std.process.Command.new": 4,
       "std.process.Command.output": 4
+    },
+    "crates/effigy-manifest/src/retired_notice.rs": {
+      "std::fs::write": 1
     },
     "crates/effigy-manifest/src/user_config.rs": {
       "std::fs::write": 10

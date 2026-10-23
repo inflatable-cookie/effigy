@@ -15,9 +15,9 @@
 //!   loading, but only `effigy bootstrap` refuses them, with the migration
 //!   message this module carries.
 //!
-//! One concise notice per manifest names the translation; it is emitted once
-//! per run by [`crate::retired_config::emit_notice`]. The translation is
-//! removed after v0.15.
+//! One concise notice per manifest names the translation; it is emitted by
+//! [`crate::retired_notice`] once per checkout per manifest digest. The
+//! translation is removed after v0.15.
 
 use std::collections::BTreeSet;
 

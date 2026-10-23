@@ -20,6 +20,7 @@ mod qa_groups;
 mod retired_bootstrap;
 mod retired_config;
 mod retired_keys;
+mod retired_notice;
 mod retired_sections;
 pub mod sources;
 mod task_defs;
@@ -84,6 +85,10 @@ pub use qa_groups::{
     QaScopeToken,
 };
 pub use retired_config::RetiredConfigDeclaration;
+pub use retired_notice::{
+    set_delivery as set_retired_notice_delivery, take_pending as take_retired_notices,
+    RetiredNoticeDelivery,
+};
 pub use sources::{
     inspect_pinned_sources, prepare_pinned_sources, resolve_pinned_sources, PinnedSourceReport,
     PinnedSourceSpec, PinnedSourceState,
