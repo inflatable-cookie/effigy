@@ -308,7 +308,7 @@ fn run_container_with(
                         "`effigy container <NAME> retire --dead` is unsupported; `--dead` covers every recorded scope",
                     ));
                 }
-                retire::run_container_retire_dead(yes, args.output_json)
+                retire::run_container_retire_dead(args.repo_override.clone(), yes, args.output_json)
             } else {
                 retire::run_container_retire(
                     args.repo_override.clone(),

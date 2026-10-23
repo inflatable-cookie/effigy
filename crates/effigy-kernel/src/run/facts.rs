@@ -79,6 +79,8 @@ impl<'a> MachineFacts<'a> {
                 sentinel: None,
                 closed_effects: None,
                 machine_startup: None,
+                checkout_custody: None,
+                ancestor_closure: None,
                 processes: Default::default(),
             };
             previous.settle_inner(cleanup, adapter)?;

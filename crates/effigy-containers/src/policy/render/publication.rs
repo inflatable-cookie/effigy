@@ -57,8 +57,11 @@ pub(super) fn prepare_identity(
     )
     .effects()
     .map_err(|_| error("Prepare capability refused"))?;
-    crate::environment::state_root(&cx, &policy.repo_root).map_err(error)?;
-    effigy_core::worktree_scope::prepare_checkout_token(&policy.repo_root).map_err(error)?;
+    let root = crate::environment::state_root(&cx, &policy.repo_root).map_err(error)?;
+    let token =
+        effigy_core::worktree_scope::prepare_checkout_token(&policy.repo_root).map_err(error)?;
+    effigy_kernel::gate::Gate::prepare_checkout_fence(&cx, &root, &token, Wait::FailFast)
+        .map_err(error)?;
     Ok(())
 }
 
@@ -254,7 +257,7 @@ pub(crate) fn checkout(
 }
 
 /// The checkout identity Prepare minted for `repo_root`; never mints one.
-fn checkout_for_root(repo_root: &Path) -> Result<CheckoutId, ContainerPolicyError> {
+pub(crate) fn checkout_for_root(repo_root: &Path) -> Result<CheckoutId, ContainerPolicyError> {
     let token = effigy_core::worktree_scope::checkout_token(repo_root)
         .map_err(error)?
         .ok_or_else(|| error("no checkout runtime state; Prepare must establish identity first"))?;

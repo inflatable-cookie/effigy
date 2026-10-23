@@ -72,8 +72,7 @@ pub fn register_container_runtime_scope(
     );
     let record = ScopeRecord::from_policy(policy, &token, key, &host_map, shared_runtime_identity);
     upsert_scope_record(&record).map_err(|error| ContainerPolicyError::Read {
-        path: crate::runtime::scope::record_path(&token)
-            .unwrap_or_else(|_| policy.repo_root.join(".effigy/runtime-scopes")),
+        path: policy.repo_root.join(".effigy/state/runtime-scopes"),
         error,
     })?;
     Ok(())

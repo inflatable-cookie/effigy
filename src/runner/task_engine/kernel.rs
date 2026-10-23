@@ -134,7 +134,8 @@ pub(in crate::runner) fn observe_context(budget: Duration) -> ObserveContext {
 /// This process's probe guard service (§5.11), installed on first use. When
 /// it cannot be installed, probes observe `GuardUnavailable`; nothing is
 /// guessed.
-fn probe_runtime() -> Option<std::sync::Arc<effigy_kernel::probe::ProbeRuntime>> {
+pub(in crate::runner) fn probe_runtime(
+) -> Option<std::sync::Arc<effigy_kernel::probe::ProbeRuntime>> {
     static RUNTIME: OnceLock<Option<std::sync::Arc<effigy_kernel::probe::ProbeRuntime>>> =
         OnceLock::new();
     RUNTIME

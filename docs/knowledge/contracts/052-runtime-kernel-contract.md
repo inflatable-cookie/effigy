@@ -2038,6 +2038,13 @@ recorded checkout token/path generation and exact container/network/volume
 identity before retirement; inaccessible/ambiguous ownership remains Unknown.
 Only positively dead scopes enter the ordinary fenced retirement path. Backend
 inventory supplies lost-checkout provenance; names or PID/PGID values do not.
+A checkout custody lease is a shared lock file in the machine gate namespace,
+not a journal or checkout index. Environment owners and holders retain it through
+positive process cleanup. Generated backend labels carry its device/inode and the
+checkout directory generation. Dead retirement requires the exact existing lease
+exclusively; missing or replaced lease state refuses cleanup. A missing checkout
+on an unavailable volume remains Unknown. Retry progress lives in the invoking
+checkout, and cannot override live or ambiguous backend ownership.
 
 ### 7.2 Tables and transaction boundaries
 

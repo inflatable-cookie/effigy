@@ -1,0 +1,129 @@
+//! Shared checkout lifetime remains protected through native process cleanup,
+//! even after the checkout and its journal are externally deleted.
+use super::*;
+use crate::gate::{CheckoutFenceGuard, CheckoutFenceIdentity};
+use crate::inheritance::{ClosureIdentity, ClosurePin};
+use crate::supervise::memory::{MemoryGuard, MemoryPurpose};
+
+#[derive(Debug)]
+pub(super) struct CheckoutCustody {
+    lease: CheckoutFenceGuard,
+    backup: Option<MemoryGuard>,
+    token: String,
+}
+impl Run<'_> {
+    pub(crate) fn protect_checkout(
+        &mut self,
+        checkout: crate::id::CheckoutId,
+        wait: Wait,
+    ) -> Result<(), RunError> {
+        if self.checkout_custody.is_some()
+            || !self.root.requires_adoption()
+            || self.root.is_machine()
+        {
+            return Ok(());
+        }
+        let token = crate::store::token(&checkout);
+        let lease = Gate::checkout_custody(&self.cx, self.root, &token, wait)?;
+        self.checkout_custody = Some(CheckoutCustody {
+            lease,
+            backup: None,
+            token,
+        });
+        self.start_checkout_backup()
+    }
+    pub(super) fn start_checkout_backup(&mut self) -> Result<(), RunError> {
+        let Some(custody) = &mut self.checkout_custody else {
+            return Ok(());
+        };
+        if custody.backup.is_some() {
+            return Ok(());
+        }
+        let Some(sentinel) = &self.sentinel else {
+            return Ok(());
+        };
+        custody.backup = Some(MemoryGuard::start(
+            &sentinel.executable,
+            &mut custody.lease.guard,
+            &[],
+            &self.cx,
+            self.id,
+            self.owner.clone(),
+            MemoryPurpose::CheckoutLease,
+        )?);
+        Ok(())
+    }
+    pub(crate) fn acknowledge_checkout_process(
+        &mut self,
+        ticket: &EffectTicket,
+    ) -> Result<(), RunError> {
+        if let Some(backup) = self
+            .checkout_custody
+            .as_mut()
+            .and_then(|c| c.backup.as_mut())
+        {
+            let effect = journal::effect(self.store.conn(), self.id, ticket.sequence)?;
+            backup.register(&effect)?;
+        }
+        Ok(())
+    }
+    pub(crate) fn checkout_closure_pin(&self) -> Result<Option<ClosurePin>, RunError> {
+        match self
+            .checkout_custody
+            .as_ref()
+            .and_then(|c| c.backup.as_ref())
+        {
+            Some(backup) => backup.closure_pin().map(Some),
+            None => Ok(self.ancestor_closure.clone()),
+        }
+    }
+    /// The current anonymous cleanup pin, for authenticated nested grants.
+    pub fn cleanup_closure_identity(&self) -> Result<Option<ClosureIdentity>, RunError> {
+        Ok(self.checkout_closure_pin()?.map(|pin| pin.identity()))
+    }
+    /// Current inode stamp for the environment's external ownership labels.
+    pub fn checkout_fence_identity(&self) -> Option<CheckoutFenceIdentity> {
+        self.checkout_custody.as_ref().map(|c| c.lease.identity())
+    }
+    pub(super) fn verify_checkout_custody(&self) -> Result<(), RunError> {
+        if let Some(custody) = &self.checkout_custody {
+            let cx = self
+                .cx
+                .child(std::time::Duration::from_secs(3))
+                .operation()
+                .observe()
+                .map_err(|_| RunError::Invalid("checkout fence observation context".into()))?;
+            match Gate::checkout_fence_identity(&cx, self.root, &custody.token) {
+                crate::observe::Observed::Verified(actual, _)
+                    if actual == custody.lease.identity() => {}
+                other => {
+                    return Err(RunError::Invalid(format!(
+                        "checkout custody fence changed or is unknown: {other:?}"
+                    )))
+                }
+            }
+        }
+        Ok(())
+    }
+    pub(super) fn close_checkout_custody(
+        &mut self,
+        cleanup: &CleanupContext,
+    ) -> Result<(), RunError> {
+        if let Some(mut custody) = self.checkout_custody.take() {
+            if let Some(mut backup) = custody.backup.take() {
+                backup.close(cleanup)?;
+            }
+        }
+        self.ancestor_closure.take();
+        Ok(())
+    }
+}
+pub(super) fn ancestor_closure(
+    cx: &crate::ctx::OperationContext,
+) -> Result<Option<ClosurePin>, RunError> {
+    crate::inheritance::RuntimeParent::inherited(cx)?
+        .and_then(|parent| parent.closure)
+        .map(ClosurePin::capture)
+        .transpose()
+        .map_err(RunError::from)
+}

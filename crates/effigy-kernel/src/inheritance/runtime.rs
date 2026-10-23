@@ -32,7 +32,7 @@ impl RuntimeParent {
             closure: None,
         }
     }
-    /// Binds the foreground guard's anonymous cleanup pipe into this grant.
+    /// Binds the custody backup's anonymous cleanup pipe into this grant.
     pub fn with_closure(mut self, closure: Option<ClosureIdentity>) -> Self {
         self.closure = closure;
         self

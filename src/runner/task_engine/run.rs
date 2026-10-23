@@ -204,6 +204,7 @@ pub(in crate::runner) struct TaskRun {
     run: Option<Arc<Mutex<Run<'static>>>>,
     memory: Option<Arc<Mutex<effigy_kernel::run::ForegroundRun>>>,
     lease: Option<effigy_kernel::inheritance::MemoryLease>,
+    prior_leases: Vec<effigy_kernel::inheritance::MemoryLease>,
     shared: Option<Run<'static>>,
     target: TaskTarget,
     ancestors: Vec<ResourceId>,
@@ -520,6 +521,7 @@ impl TaskRun {
                 run: shared.map(|run| Arc::new(Mutex::new(run))),
                 memory: None,
                 lease: None,
+                prior_leases: Vec::new(),
                 shared: None,
                 target: request.target.clone(),
                 ancestors,
@@ -595,6 +597,7 @@ impl TaskRun {
             run: Some(Arc::new(Mutex::new(run))),
             memory: None,
             lease: None,
+            prior_leases: Vec::new(),
             shared,
             target: request.target.clone(),
             ancestors,
@@ -644,6 +647,7 @@ impl TaskRun {
                         run: None,
                         memory: None,
                         lease: None,
+                        prior_leases: Vec::new(),
                         shared: None,
                         target,
                         ancestors: Vec::new(),
@@ -702,7 +706,8 @@ impl TaskRun {
                     effigy_kernel::inheritance::RunClass::CheckoutDurable
                 },
                 super::admission::current_hook()?,
-            ),
+            )
+            .with_closure(self.runtime_closure()?),
         )
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
         let mut ancestors = self.ancestors.clone();
@@ -787,6 +792,7 @@ impl TaskRun {
             run: Some(Arc::new(Mutex::new(run))),
             memory: None,
             lease: None,
+            prior_leases: Vec::new(),
             shared: None,
             target,
             ancestors,

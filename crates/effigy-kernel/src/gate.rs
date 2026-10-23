@@ -1,6 +1,8 @@
 //! Gates (§5.4): a never-unlinked `flock` on a stable inode. Holding it is
 //! the holder's liveness (K2); there are no heartbeats, staleness or unlinks.
+mod checkout_fence;
 mod foreground;
+pub use checkout_fence::{CheckoutFenceGuard, CheckoutFenceIdentity};
 pub use foreground::{ForegroundDiag, ForegroundHolder};
 
 use crate::ctx::{Capability, EffectClass, EffectContext, Interrupt, ObserveContext};

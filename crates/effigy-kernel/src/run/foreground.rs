@@ -178,6 +178,7 @@ impl ForegroundRun {
                 resource: inv.spec().owner.clone(),
                 generation: Generation::new(0),
             },
+            crate::supervise::memory::MemoryPurpose::Foreground,
         )?;
         Ok(Self {
             root: root.clone(),

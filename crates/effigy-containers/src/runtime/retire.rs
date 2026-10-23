@@ -216,6 +216,8 @@ mod tests {
             loopback_identities: vec!["project:app-dev-wt-aaaaaaaaaaaa:/tmp/worker".to_owned()],
             retain_loopback_identities: vec![],
             pending_tls_certs: vec![],
+            checkout_fence: None,
+            checkout_generation: None,
         }
     }
 

@@ -40,7 +40,7 @@ enum Message {
 
 fn ancestor_closure(cx: &OperationContext) -> Result<Option<ClosurePin>, RunError> {
     match RuntimeParent::inherited(cx)? {
-        Some(parent) if parent.class == RunClass::Foreground => {
+        Some(parent) if parent.closure.is_some() || parent.class == RunClass::Foreground => {
             let identity = parent.closure.ok_or_else(|| {
                 RunError::Invalid("foreground parent has no custody closure pin".into())
             })?;
@@ -52,6 +52,11 @@ fn ancestor_closure(cx: &OperationContext) -> Result<Option<ClosurePin>, RunErro
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MemoryPurpose {
+    Foreground,
+    CheckoutLease,
+}
 impl MemoryGuard {
     pub(crate) fn start(
         executable: &Executable,
@@ -60,13 +65,19 @@ impl MemoryGuard {
         cx: &EffectContext,
         run: RunId,
         fence: Fence,
+        purpose: MemoryPurpose,
     ) -> Result<Self, RunError> {
         // Memory custody never pins or copies an image into runtime state.
         // A replaced image is a pre-go refusal, not permission to write one.
-        cx.operation().check("foreground guard startup")?;
+        cx.operation()
+            .check(if purpose == MemoryPurpose::Foreground {
+                "foreground guard startup"
+            } else {
+                "checkout lease backup startup"
+            })?;
         executable.verify()?;
         #[cfg(target_os = "linux")]
-        if executable.exec_fd.is_some() {
+        if purpose == MemoryPurpose::Foreground && executable.exec_fd.is_some() {
             return Err(RunError::Invalid(
                 "foreground helper needs the verified startup path".into(),
             ));

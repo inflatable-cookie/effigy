@@ -585,25 +585,7 @@ pub(super) fn run_runtime_volume_capture(
     if command.program == "__effigy_volume_cache_kind_batch" {
         return run_runtime_volume_cache_kind_batch_capture(repo_root, profile, command);
     }
-    let docker_args = runtime_args(&command.args);
-    let request =
-        ContainerManagerRequest::new(repo_root).interrupt_policy(ContainerInterruptPolicy::Forward);
-    // The endpoint carries the exact backend; see `endpoint_backend`.
-    let mut detection = ContainerBackendDetection::from_env_and_path();
-    detection.backend_override = Some(endpoint_backend(profile));
-    let plan = ContainerManager::defaults()
-        .runtime_invocation_plan(
-            &request,
-            &detection,
-            effigy_containers::RuntimeInvocation {
-                profile,
-                docker_program: command.program.as_str().into(),
-                docker_args: &docker_args,
-                action: ContainerAction::Shutdown,
-                label: command.description.clone(),
-            },
-        )
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let plan = runtime_volume_plan(repo_root, profile, command)?;
     std::process::Command::new(&plan.program)
         .current_dir(repo_root)
         .args(&plan.args)
@@ -630,6 +612,33 @@ pub(super) fn run_runtime_volume_capture(
                 )))
             }
         })
+}
+
+/// Resolve one exact backend command without executing it, for kernel custody.
+pub(super) fn runtime_volume_plan(
+    repo_root: &Path,
+    profile: &str,
+    command: &DockerCommand,
+) -> Result<effigy_containers::ContainerRuntimeInvocationPlan, RunnerError> {
+    let docker_args = runtime_args(&command.args);
+    let request =
+        ContainerManagerRequest::new(repo_root).interrupt_policy(ContainerInterruptPolicy::Forward);
+    // The endpoint carries the exact backend; see `endpoint_backend`.
+    let mut detection = ContainerBackendDetection::from_env_and_path();
+    detection.backend_override = Some(endpoint_backend(profile));
+    ContainerManager::defaults()
+        .runtime_invocation_plan(
+            &request,
+            &detection,
+            effigy_containers::RuntimeInvocation {
+                profile,
+                docker_program: command.program.as_str().into(),
+                docker_args: &docker_args,
+                action: ContainerAction::Shutdown,
+                label: command.description.clone(),
+            },
+        )
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
 fn run_runtime_volume_usage_capture(

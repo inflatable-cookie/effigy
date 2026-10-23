@@ -339,6 +339,55 @@ fn main() {
         }
         return;
     }
+    if entry == "checkout-lease-owner" {
+        let home = Path::new(args.get(1).expect("fixture home"));
+        let checkout = home.join("checkout");
+        let machine = home.join("machine");
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::create_dir_all(&machine).unwrap();
+        let op = op(router.root_cancel());
+        let cx = op.effects().unwrap();
+        let cleanup = op.cleanup(Duration::from_secs(10)).unwrap();
+        let root = StateRoot::checkout_effects(
+            &cx,
+            &machine,
+            &effigy_kernel::migration::CheckoutLocation {
+                root: checkout.clone(),
+                git_directory: None,
+            },
+        )
+        .unwrap();
+        let mut spec_inv = invocation().spec().clone();
+        spec_inv.owner =
+            ResourceId::environment(spec_inv.task.checkout(), "lease-fixture").unwrap();
+        let invocation = ResolvedInvocation::new(spec_inv).unwrap();
+        let mut run = Run::begin(
+            &cx,
+            &root,
+            &invocation,
+            BeginOpts {
+                id: RunId::new(1, [9; 10]).unwrap(),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: next(),
+                custody: Some(LifecyclePlan {
+                    executable: Executable::current().unwrap(),
+                    placement: effigy_kernel::supervise::Placement::Inline,
+                }),
+            },
+            &cleanup,
+            &mut Strict,
+        )
+        .unwrap();
+        let mut process_spec = spec(&checkout);
+        process_spec.grace = Duration::from_secs(2);
+        let mut child = Custody::spawn(&mut run, process_spec, &cx).unwrap();
+        run.advance(Phase::Active).unwrap();
+        std::fs::write(home.join("lease-ready.json"),serde_json::to_vec(&serde_json::json!({"identity":run.checkout_fence_identity(),"child":child.identity()})).unwrap()).unwrap();
+        let _ = child.wait(&op);
+        run.settle(&cleanup, &mut Strict).unwrap();
+        return;
+    }
     if entry == "nonce-workload" {
         std::thread::sleep(Duration::from_secs(40));
         return;

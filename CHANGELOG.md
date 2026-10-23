@@ -7,6 +7,9 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Runtime scope inventory lives in each checkout journal. Deleted checkout cleanup
+  discovers ownership on the selected backend and requires the recorded native
+  checkout generation and custody lease; live and uncertain scopes stay protected.
 - The machine store rejects checkout owners, data claims, checkout catalogs
   and immutable payloads. Machine process output remains in memory for every
   lifecycle path.

@@ -150,6 +150,7 @@ impl TaskRun {
             run: None,
             memory: Some(Arc::new(Mutex::new(memory))),
             lease: None,
+            prior_leases: Vec::new(),
             shared: None,
             target: request.target.clone(),
             ancestors,
@@ -164,6 +165,26 @@ impl TaskRun {
         Ok(run)
     }
 
+    pub(super) fn runtime_closure(
+        &self,
+    ) -> Result<Option<effigy_kernel::inheritance::ClosureIdentity>, RunnerError> {
+        match &self.memory {
+            Some(memory) => memory
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .closure_identity()
+                .map(Some)
+                .map_err(|e| class_error(&e.to_string())),
+            None => self
+                .run
+                .as_ref()
+                .ok_or_else(|| class_error("run is closed"))?
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .cleanup_closure_identity()
+                .map_err(|e| class_error(&e.to_string())),
+        }
+    }
     pub(in crate::runner) fn spawn(
         &mut self,
         spec: ProcessSpec,
@@ -171,18 +192,18 @@ impl TaskRun {
     ) -> Result<OwnedProcess, RunnerError> {
         self.verify_admission()?;
         let cx = kernel::effects();
+        let closure = self.runtime_closure()?;
+        if let Some(lease) = &self.lease {
+            let prior: RuntimeParent = lease
+                .capability()
+                .payload(cx.operation())
+                .map_err(|e| class_error(&e.to_string()))?;
+            if prior.closure != closure {
+                self.prior_leases
+                    .push(self.lease.take().expect("existing lease"));
+            }
+        }
         if self.lease.is_none() {
-            let closure = self
-                .memory
-                .as_ref()
-                .map(|memory| {
-                    memory
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .closure_identity()
-                })
-                .transpose()
-                .map_err(|error| class_error(&error.to_string()))?;
             self.lease = Some(
                 MemoryLease::new(
                     &cx,
@@ -333,6 +354,7 @@ impl TaskRun {
             run: None,
             memory: Some(Arc::new(Mutex::new(memory))),
             lease: None,
+            prior_leases: Vec::new(),
             shared: None,
             target,
             ancestors,

@@ -11,6 +11,7 @@ mod foreground;
 pub use facts::{FactOptions, MachineFacts};
 mod history;
 pub use foreground::{ForegroundRun, LegacyForeground};
+mod checkout_custody;
 mod journal;
 mod lifecycle;
 mod logs;
@@ -248,6 +249,8 @@ pub struct Run<'a> {
     completed: std::collections::BTreeMap<i64, crate::outcome::RequiredObligation>,
     sentinel: Option<crate::supervise::SentinelLease>,
     machine_startup: Option<machine::Startup>,
+    checkout_custody: Option<checkout_custody::CheckoutCustody>,
+    ancestor_closure: Option<crate::inheritance::ClosurePin>,
     closed_effects: Option<Vec<Effect>>,
     processes: std::collections::BTreeMap<
         i64,
@@ -348,6 +351,8 @@ impl<'a> Run<'a> {
                 sentinel: None,
                 closed_effects: None,
                 machine_startup: None,
+                checkout_custody: None,
+                ancestor_closure: None,
                 processes: Default::default(),
             };
             previous.settle_inner(cleanup, adapter)?;
@@ -413,8 +418,24 @@ impl<'a> Run<'a> {
             sentinel: None,
             closed_effects: None,
             machine_startup: planned.map(|_| machine::Startup::default()),
+            checkout_custody: None,
+            ancestor_closure: if root.is_machine()
+                || opts
+                    .custody
+                    .as_ref()
+                    .is_some_and(|plan| plan.placement == crate::supervise::Placement::Detached)
+            {
+                None
+            } else {
+                checkout_custody::ancestor_closure(cx.operation())?
+            },
             processes: Default::default(),
         };
+        if inv.spec().owner.kind() == crate::id::ResourceKind::Env {
+            if let crate::id::Scope::Checkout(checkout) = inv.spec().owner.scope() {
+                run.protect_checkout(checkout, opts.wait)?;
+            }
+        }
         if let Some(plan) = opts.custody {
             let registration = crate::supervise::spawn_sentinel(&run, root, &plan, &opts.next);
             match registration.and_then(|registration| run.register_lifecycle(registration, &plan))
@@ -449,7 +470,7 @@ impl<'a> Run<'a> {
     /// Recheck the filesystem generations retained by this run before continuing work.
     pub fn verify_custody(&self) -> Result<(), RunError> {
         self.root.verify_binding().map_err(StoreError::from)?;
-        Ok(())
+        self.verify_checkout_custody()
     }
     pub(crate) fn has_sentinel(&self) -> bool {
         self.sentinel.is_some()

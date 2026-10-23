@@ -1575,7 +1575,7 @@ mod tests {
                 .expect("ephemeral fixture scope");
 
             let error = start_runtime_after_scope_registration::<()>(&policy, || {
-                assert!(effigy_containers::load_scope_record(&token)
+                assert!(effigy_containers::load_scope_record(&checkout, &token)
                     .expect("read registered scope")
                     .is_some());
                 Err(RunnerError::task_invocation("injected start failure"))
@@ -1583,7 +1583,7 @@ mod tests {
             .expect_err("injected start should fail");
 
             assert!(error.to_string().contains("injected start failure"));
-            assert!(effigy_containers::load_scope_record(&token)
+            assert!(effigy_containers::load_scope_record(&checkout, &token)
                 .expect("scope remains readable")
                 .is_some());
         });

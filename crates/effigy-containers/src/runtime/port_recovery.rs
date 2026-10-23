@@ -91,7 +91,29 @@ pub struct PortRecoveryFacts {
 impl PortRecoveryFacts {
     /// Read the live ownership facts for the Effigy home.
     pub fn gather() -> Self {
-        let scopes = scope::load_all().map_err(|error| error.to_string());
+        let scopes = (|| -> Result<Vec<ScopeRecord>, String> {
+            let home = effigy_home_dir().ok_or("cannot resolve Effigy home")?;
+            let registry =
+                PortRegistry::load(&home.join("ports.json")).map_err(|e| e.to_string())?;
+            let roots = registry
+                .allocations
+                .values()
+                .map(|allocation| allocation.project.as_str())
+                .collect::<std::collections::BTreeSet<_>>();
+            if roots.len() > 1000 {
+                return Err("checkout journal discovery exceeds 1000 pinned roots".into());
+            }
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut records = Vec::new();
+            for root in roots {
+                if std::time::Instant::now() >= deadline {
+                    return Err("checkout journal discovery exceeded its five-second budget".into());
+                }
+                records
+                    .extend(scope::load_for_checkout(Path::new(root)).map_err(|e| e.to_string())?);
+            }
+            Ok(records)
+        })();
         let routes = effigy_home_dir()
             .ok_or_else(|| "cannot resolve Effigy home for the gateway route table".to_owned())
             .and_then(|home| {
@@ -322,6 +344,12 @@ fn decide_missing(
         if let Some(reason) = host_port_hold(port) {
             return (Decision::Hold, reason);
         }
+    }
+    if effigy_core::worktree_scope::PROJECT_TAGS
+        .iter()
+        .any(|tag| name.contains(&format!("-{tag}-")))
+    {
+        return (Decision::Hold,"scoped checkout is missing; use `effigy container retire --dead` for verified backend-label retirement".into());
     }
     (
         Decision::Reclaim,

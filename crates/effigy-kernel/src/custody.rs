@@ -316,6 +316,9 @@ trait ProcessOwner {
     fn retain_process(&mut self, sequence: i64, core: Arc<Mutex<ProcessCore>>);
 }
 impl ProcessOwner for Run<'_> {
+    fn closure_pin(&self) -> Result<Option<crate::inheritance::ClosurePin>, RunError> {
+        self.checkout_closure_pin()
+    }
     fn id(&self) -> crate::id::RunId {
         self.id()
     }
@@ -335,8 +338,8 @@ impl ProcessOwner for Run<'_> {
     fn applied(&mut self, ticket: &EffectTicket, receipt: Value) -> Result<(), RunError> {
         self.applied(ticket, receipt)
     }
-    fn ack_process(&mut self, _: &EffectTicket) -> Result<(), RunError> {
-        Ok(())
+    fn ack_process(&mut self, ticket: &EffectTicket) -> Result<(), RunError> {
+        self.acknowledge_checkout_process(ticket)
     }
     fn anchor_image(&self) -> Result<crate::supervise::anchor::Image<'_>, RunError> {
         self.anchor_image()

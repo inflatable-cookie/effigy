@@ -2187,3 +2187,79 @@ fn custody_sentinel_recovery_meets_the_filesystem_gate_alias() {
         ident::process_identity(process.identity.pid).verified() != Some(&process.identity)
     });
 }
+
+#[test]
+fn custody_deleted_checkout_lease_survives_owner_kill_until_positive_group_closure() {
+    let home = home();
+    let mut owner = ChildGuard(
+        Command::new(fixture())
+            .arg("checkout-lease-owner")
+            .arg(home.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    eventually(|| home.path().join("lease-ready.json").is_file());
+    let value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(home.path().join("lease-ready.json")).unwrap())
+            .unwrap();
+    let expected: effigy_kernel::gate::CheckoutFenceIdentity =
+        serde_json::from_value(value["identity"].clone()).unwrap();
+    let process: ProcessReceipt = serde_json::from_value(value["child"].clone()).unwrap();
+    let cx = context();
+    let machine = StateRoot::runtime_machine_effects(&cx, &home.path().join("machine")).unwrap();
+    let token = "04040404040404040404040404040404";
+    assert!(effigy_kernel::gate::Gate::checkout_retirement(
+        &cx,
+        &machine,
+        token,
+        expected,
+        Wait::FailFast
+    )
+    .is_err());
+    std::fs::remove_dir_all(home.path().join("checkout")).unwrap();
+    assert!(effigy_kernel::gate::Gate::checkout_retirement(
+        &cx,
+        &machine,
+        token,
+        expected,
+        Wait::FailFast
+    )
+    .is_err());
+    owner.0.kill().unwrap();
+    owner.0.wait().unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    assert!(
+        effigy_kernel::gate::Gate::checkout_retirement(
+            &cx,
+            &machine,
+            token,
+            expected,
+            Wait::FailFast
+        )
+        .is_err(),
+        "cleanup retains the shared lease through the resistant process grace"
+    );
+    eventually(|| {
+        effigy_kernel::gate::Gate::checkout_retirement(
+            &cx,
+            &machine,
+            token,
+            expected,
+            Wait::FailFast,
+        )
+        .is_ok()
+    });
+    assert!(
+        matches!(
+            effigy_kernel::ident::process_identity(process.identity.pid),
+            Observed::Absent(_)
+        ) || matches!(
+            effigy_kernel::ident::process_state(process.identity.pid),
+            Observed::Verified(effigy_kernel::ident::ProcessState::Zombie, _)
+        )
+    );
+    assert!(!machine.path().join("machine.db").exists());
+    assert!(!machine.path().join("kernel.db").exists());
+}

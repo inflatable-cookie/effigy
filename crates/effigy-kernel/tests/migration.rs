@@ -1792,3 +1792,53 @@ fn migration_relocates_release_checkpoint_and_certified_artifacts_without_source
         assert_eq!(snapshot(source_home.path()), before);
     }
 }
+
+#[test]
+fn runtime_checkout_retirement_requires_the_original_free_lease_inode_without_a_database() {
+    let machine = home();
+    let checkout = home();
+    let cx = effects(EffectClass::Mutate);
+    let root =
+        StateRoot::checkout_effects(&cx, machine.path(), &location(checkout.path())).unwrap();
+    let token = "07070707070707070707070707070707";
+    let before = snapshot(machine.path());
+    assert!(matches!(
+        Gate::checkout_fence_identity(&observe(), &root, token),
+        Observed::Absent(_)
+    ));
+    assert_eq!(snapshot(machine.path()), before);
+    let first = Gate::prepare_checkout_fence(&cx, &root, token, Wait::FailFast).unwrap();
+    let expected = first.identity();
+    let second = Gate::checkout_custody(&cx, &root, token, Wait::FailFast).unwrap();
+    assert_eq!(second.identity(), expected);
+    assert!(matches!(
+        Gate::checkout_retirement(&cx, &root, token, expected, Wait::FailFast),
+        Err(effigy_kernel::gate::GateError::Busy { .. })
+    ));
+    drop(first);
+    assert!(Gate::checkout_retirement(&cx, &root, token, expected, Wait::FailFast).is_err());
+    drop(second);
+    let retirement =
+        Gate::checkout_retirement(&cx, &root, token, expected, Wait::FailFast).unwrap();
+    assert!(Gate::checkout_custody(&cx, &root, token, Wait::FailFast).is_err());
+    drop(retirement);
+    let held = Gate::checkout_custody(&cx, &root, token, Wait::FailFast).unwrap();
+    let path = machine
+        .path()
+        .join(format!(".effigy/state/gates/checkout-{token}.retirement"));
+    std::fs::remove_file(&path).unwrap();
+    let before = snapshot(machine.path());
+    assert!(Gate::checkout_retirement(&cx, &root, token, expected, Wait::FailFast).is_err());
+    assert_eq!(
+        snapshot(machine.path()),
+        before,
+        "missing lease is never recreated for retirement"
+    );
+    std::fs::write(&path, b"").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(Gate::checkout_retirement(&cx, &root, token, expected, Wait::FailFast).is_err());
+    drop(held);
+    assert!(!machine.path().join(".effigy/state/machine.db").exists());
+    assert!(!machine.path().join(".effigy/state/kernel.db").exists());
+    assert!(!root.path().join("kernel.db").exists());
+}

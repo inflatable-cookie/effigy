@@ -390,6 +390,27 @@ impl DirFd {
     }
     /// Create/open a source directory below an already verified descriptor.
     /// Prepare and Mutate only; derived paths never follow a symlink.
+    /// Read an operator-owned child relative to this retained directory.
+    /// Never creates or repairs it, and never follows a symlink.
+    pub fn observe_child(
+        &self,
+        cx: &crate::ctx::ObserveContext,
+        name: &FileName,
+    ) -> Result<Option<Self>, FsError> {
+        cx.check("directory observation")
+            .map_err(|e| FsError::untrusted(self.path(), format!("{e:?}")))?;
+        self.child(name.as_str(), Trust::Operator, false)
+    }
+    /// Bounded, read-only entry names from this retained directory.
+    pub fn observe_entries(
+        &self,
+        cx: &crate::ctx::ObserveContext,
+        max: usize,
+    ) -> Result<Vec<OsString>, FsError> {
+        cx.check("directory inventory")
+            .map_err(|e| FsError::untrusted(self.path(), format!("{e:?}")))?;
+        self.list(max)
+    }
     pub fn prepare_child(
         &self,
         cx: &crate::ctx::EffectContext,

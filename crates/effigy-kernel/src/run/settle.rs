@@ -229,6 +229,7 @@ impl Run<'_> {
         }
         // K4: only Run closes the owner-only sentinel writer, after the Closed
         // transaction and while its owner gate is still held.
+        self.close_checkout_custody(cleanup)?;
         if let Some(mut sentinel) = self.sentinel.take() {
             sentinel.close(cleanup)?;
         }
@@ -418,6 +419,8 @@ pub(crate) fn settle_interrupted_wait(
         sentinel: None,
         closed_effects: None,
         machine_startup: None,
+        checkout_custody: None,
+        ancestor_closure: None,
         processes: Default::default(),
     }
     .settle(cleanup, adapter)
