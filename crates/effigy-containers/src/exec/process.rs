@@ -189,9 +189,7 @@ impl DetachedOutputRecord {
     fn for_invocation(repo_root: &Path, args: &[OsString]) -> Self {
         let project = compose_project(args).unwrap_or("compose");
         Self {
-            path: repo_root
-                .join(".effigy/runtime/logs")
-                .join(format!("{}.compose.log", sanitize(project))),
+            path: retained_backend_log_path(repo_root, project),
         }
     }
 
@@ -277,6 +275,35 @@ fn sanitize(name: &str) -> String {
             }
         })
         .collect()
+}
+
+/// The retained output file of the last detached backend run for one Compose
+/// project. Every activation attempt rewrites it with that run's stdout and
+/// stderr, bounded to its last bytes (effigy#277).
+pub fn retained_backend_log_path(repo_root: &Path, project_name: &str) -> PathBuf {
+    repo_root
+        .join(".effigy/runtime/logs")
+        .join(format!("{}.compose.log", sanitize(project_name)))
+}
+
+/// What to tell an operator when Compose has created no container for a
+/// project. The retained backend record from the last activation attempt is
+/// the only place that attempt's output survives, so name it when it exists
+/// rather than sending the reader back to a backend that shows nothing.
+pub fn no_containers_diagnostic(repo_root: &Path, project_name: &str) -> Vec<String> {
+    let mut lines = vec![format!(
+        "no container exists for compose project `{project_name}`; `effigy container up` creates them"
+    )];
+    let retained = retained_backend_log_path(repo_root, project_name);
+    if retained.is_file() {
+        lines.push(format!(
+            "the last up attempt's retained backend log is at {}",
+            retained.display()
+        ));
+    } else {
+        lines.push("no retained backend log exists for a previous up attempt".to_owned());
+    }
+    lines
 }
 
 /// The one shared Compose invocation transform. A VM-hosted backend cannot
@@ -878,6 +905,30 @@ pub(super) fn error_is_timeout(error: &ContainerExecError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_project_with_no_containers_names_the_retained_up_attempt() {
+        let checkout = tempfile::tempdir().expect("private checkout");
+        let diagnostic = no_containers_diagnostic(checkout.path(), "demo-project");
+        assert!(diagnostic[0].contains("no container exists for compose project `demo-project`"));
+        assert!(diagnostic[1].contains("no retained backend log exists"));
+
+        let retained = retained_backend_log_path(checkout.path(), "demo-project");
+        assert_eq!(
+            retained,
+            checkout
+                .path()
+                .join(".effigy/runtime/logs/demo-project.compose.log")
+        );
+        std::fs::create_dir_all(retained.parent().expect("log parent")).expect("log dir");
+        std::fs::write(&retained, "compose said no").expect("retained log");
+        let diagnostic = no_containers_diagnostic(checkout.path(), "demo-project");
+        assert!(
+            diagnostic[1].contains(&retained.display().to_string()),
+            "{:?}",
+            diagnostic
+        );
+    }
 
     #[test]
     fn command_timeout_message_mentions_elapsed_seconds() {

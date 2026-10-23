@@ -2771,7 +2771,9 @@ Worktree and ephemeral-clone scopes rewrite declared domains the same way.
   },
   "base_domain": {
     "declared": "app.test",
-    "effective": "app-wabcdef01.test"
+    "effective": "app-wabcdef01.test",
+    "inferred": false,
+    "warning": null
   },
   "cookie_domain": "app-wabcdef01.test",
   "relying_party_id": "app-wabcdef01.test",

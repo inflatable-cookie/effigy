@@ -159,3 +159,98 @@ fn collect_requests(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    const SHARED_SERVICE_MANIFEST: &str = r#"
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+version = "8.3"
+
+[containers.web.services.db]
+catalog = "mariadb"
+shared = true
+version = "10.11"
+
+[containers.web.services.web]
+catalog = "nginx"
+variant = "default"
+"#;
+
+    /// Regression for #411: shared-service ports are allocated against
+    /// `shared_service_output_dir(project)`, so retention must use that same
+    /// lifetime owner. The rendered Compose parent is the object store; using
+    /// it refused the prepare and orphaned the reservation.
+    #[test]
+    fn shared_service_ports_are_retained_against_their_machine_state_dir() {
+        crate::tests::with_temp_effigy_home("shared-port-retention", |home| {
+            let _lock = crate::test_env_lock();
+            let checkout = tempfile::tempdir().expect("private checkout");
+            let root = checkout.path().canonicalize().expect("canonical checkout");
+            fs::write(root.join("effigy.toml"), SHARED_SERVICE_MANIFEST).expect("manifest");
+
+            let prepared = crate::load_container_policy_for_creation(&root, None)
+                .expect("first prepare allocates shared-service ports")
+                .0;
+            assert_eq!(prepared.shared_services.len(), 1);
+            let shared = prepared.shared_services[0].clone();
+            let state_dir = crate::policy_support::shared_service_output_dir(&shared.project_name)
+                .expect("shared service state dir");
+            let render_parent = shared
+                .compose_file
+                .parent()
+                .expect("rendered shared compose parent")
+                .to_path_buf();
+            assert_ne!(
+                render_parent, state_dir,
+                "the render lives in the object store, not the shared state dir"
+            );
+
+            let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
+            let allocated = store
+                .read_ports()
+                .expect("read ports")
+                .get(&shared.project_name)
+                .cloned()
+                .expect("the shared service owns a port allocation");
+            assert_eq!(allocated.project, state_dir.display().to_string());
+
+            store
+                .retain_ports(&shared.project_name, &state_dir.display().to_string())
+                .expect("retain against the shared state dir");
+            assert!(
+                store
+                    .retain_ports(&shared.project_name, &render_parent.display().to_string())
+                    .is_err(),
+                "the rendered object parent is not the lifetime owner"
+            );
+
+            // A later prepare has nothing left to assign, so it takes the
+            // retain path. Before #411 this refused and orphaned the ports.
+            let later = crate::load_container_policy_for_creation(&root, None)
+                .expect("a later prepare retains the shared-service ports")
+                .0;
+            assert!(later
+                .shared_services
+                .iter()
+                .all(|service| service.host_port != 0));
+            assert_eq!(
+                store
+                    .read_ports()
+                    .expect("read ports")
+                    .get(&shared.project_name)
+                    .cloned()
+                    .expect("retained allocation"),
+                allocated
+            );
+        });
+    }
+}

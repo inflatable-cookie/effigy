@@ -1336,13 +1336,20 @@ TCP catalog services such as postgres, mariadb, redis, and memcached also get
 deterministic loopback aliases. That means host and container code can use the
 same stable names without hand-written `/etc/hosts` edits.
 
-By default, generated TCP aliases and the `container hosts` cookie apex use
-the first resolved `[containers.<name>.dns]` route's domain. Set `base_domain`
-when that route is a subdomain and service aliases should use a higher apex.
-For example, with a first route of `s3.acme.test`, setting
-`base_domain = "acme.test"` gives the postgres service the alias
-`postgres.acme.test` and reports `acme.test` as `cookie_domain`. This setting
-does not change the declared HTTP routes.
+By default, generated TCP aliases and the `container hosts` cookie apex are
+inferred from the longest common domain suffix of the resolved
+`[containers.<name>.dns]` HTTP routes, so a bundle that lists a subdomain first
+(`s3.acme.test`, `admin.acowtancy.test`) still gets the shared apex
+(`acowtancy.test`). A managed host-listener route counts as an HTTP route for
+that inference. When the inferred apex is not a suffix of every HTTP route,
+`container hosts` warns, and its JSON `base_domain` object carries
+`"inferred": true` with the warning. **Bundles should declare `base_domain`.**
+Set it when the routes do not share the apex you want, or when a single
+subdomain route is all Effigy can see. For example, with routes
+`s3.acme.test` and `app.s3.acme.test`, setting `base_domain = "acme.test"`
+gives the postgres service the alias `postgres.acme.test` and reports
+`acme.test` as `cookie_domain`. A declared value is never inferred or
+rewritten, and it does not change the declared HTTP routes.
 
 ```toml
 [containers.web.dns]

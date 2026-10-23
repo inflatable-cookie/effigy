@@ -29,7 +29,21 @@ pub struct EffectiveHostMap {
     pub shared_runtime_identity: bool,
     pub declared_base: Option<String>,
     pub effective_base: Option<String>,
+    /// True when no `base_domain` was declared and this map inferred one from
+    /// the HTTP routes. A declared value is never inferred or rewritten.
+    pub base_domain_inferred: bool,
+    /// Why an inferred base cannot be a suffix of every HTTP route. `None`
+    /// when the base was declared or the routes agree.
+    pub base_domain_warning: Option<String>,
     pub routes: Vec<EffectiveHostRoute>,
+}
+
+/// The candidate base domain for a checkout that declares none, plus the
+/// operator-facing warning when the routes disagree about their apex.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InferredBaseDomain {
+    pub base: Option<String>,
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +131,86 @@ pub fn apply_scope_to_routes(routes: &mut [EffectiveDnsRoute], host_key: &str) {
     }
 }
 
+/// Split a domain into its non-empty labels.
+fn domain_labels(domain: &str) -> Vec<&str> {
+    domain
+        .split('.')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect()
+}
+
+fn has_usable_base(domain: &str) -> bool {
+    domain_labels(domain).len() >= 2
+}
+
+/// Whether `domain` ends with the labels of `base`.
+pub fn domain_has_suffix(domain: &str, base: &str) -> bool {
+    let domain = domain_labels(domain);
+    let base = domain_labels(base);
+    !base.is_empty()
+        && domain.len() >= base.len()
+        && domain[domain.len() - base.len()..]
+            .iter()
+            .zip(&base)
+            .all(|(left, right)| left.eq_ignore_ascii_case(right))
+}
+
+/// Infer an undeclared base domain from the longest common domain suffix of
+/// the HTTP routes. The front route anchors the answer, which keeps a bundle
+/// that declares a subdomain first (`s3.acme.test`) from naming that subdomain
+/// as its cookie apex, RP ID and TCP alias suffix. When the routes share only a
+/// top-level label, the front route's own apex is used and the routes that
+/// disagree are reported so the operator can declare `base_domain`.
+pub fn infer_base_domain(http_domains: &[String]) -> InferredBaseDomain {
+    let routes = http_domains
+        .iter()
+        .map(|domain| domain_labels(domain))
+        .filter(|labels| !labels.is_empty())
+        .collect::<Vec<_>>();
+    let Some(front) = routes.first() else {
+        return InferredBaseDomain::default();
+    };
+    let mut common = front.len();
+    for labels in &routes[1..] {
+        let mut matching = 0;
+        while matching < common
+            && matching < labels.len()
+            && front[front.len() - 1 - matching]
+                .eq_ignore_ascii_case(labels[labels.len() - 1 - matching])
+        {
+            matching += 1;
+        }
+        common = matching;
+    }
+    // A single shared top-level label would make every cookie domain the bare
+    // TLD, so prefer the front route's apex and report the disagreement.
+    let base = if common >= 2 {
+        front[front.len() - common..].join(".")
+    } else {
+        front[front.len().saturating_sub(2)..].join(".")
+    };
+    let inconsistent = if common >= 2 {
+        Vec::new()
+    } else {
+        http_domains
+            .iter()
+            .filter(|domain| !domain_has_suffix(domain, &base))
+            .map(|domain| format!("`{domain}`"))
+            .collect::<Vec<_>>()
+    };
+    let warning = (!inconsistent.is_empty()).then(|| {
+        format!(
+            "inferred base domain `{base}` is not a suffix of every HTTP route ({}); declare `[containers.<name>.dns] base_domain` to choose the cookie domain, RP ID and TCP alias apex",
+            inconsistent.join(", ")
+        )
+    });
+    InferredBaseDomain {
+        base: Some(base),
+        warning,
+    }
+}
+
 pub fn build_host_map(
     dns_routes: &[EffectiveDnsRoute],
     service_aliases: &[EffectiveServiceAlias],
@@ -125,14 +219,51 @@ pub fn build_host_map(
     shared_runtime_identity: bool,
     base_domain: Option<&str>,
 ) -> EffectiveHostMap {
+    build_host_map_including_listeners(
+        dns_routes,
+        service_aliases,
+        shared_services,
+        token,
+        shared_runtime_identity,
+        base_domain,
+        &[],
+    )
+}
+
+/// Like [`build_host_map`], with the checkout's managed host-listener routes
+/// contributing their declared domains as inference candidates. Listener
+/// routes are appended by [`add_managed_listener_routes`] after this map is
+/// built; naming them here lets an undeclared base follow every HTTP route,
+/// and lets a managed listener alone establish the apex.
+#[allow(clippy::too_many_arguments)]
+pub fn build_host_map_including_listeners(
+    dns_routes: &[EffectiveDnsRoute],
+    service_aliases: &[EffectiveServiceAlias],
+    shared_services: &[SharedServiceBinding],
+    token: Option<&str>,
+    shared_runtime_identity: bool,
+    base_domain: Option<&str>,
+    listener_declared_domains: &[String],
+) -> EffectiveHostMap {
     let rewrite_key = token
         .filter(|_| !shared_runtime_identity)
         .and_then(host_key);
-    let declared_base = base_domain
-        .map(str::trim)
-        .map(str::to_owned)
-        .or_else(|| dns_routes.first().map(|route| route.declared().to_owned()))
-        .filter(|domain| domain.split('.').filter(|part| !part.is_empty()).count() >= 2);
+    let (declared_base, base_domain_inferred, base_domain_warning) = match base_domain {
+        Some(declared) => (Some(declared.trim().to_owned()), false, None),
+        None => {
+            let mut candidates = dns_routes
+                .iter()
+                .map(|route| route.declared().to_owned())
+                .collect::<Vec<_>>();
+            candidates.extend(listener_declared_domains.iter().cloned());
+            let inferred = infer_base_domain(&candidates);
+            let base = inferred.base.filter(|domain| has_usable_base(domain));
+            let inferred_flag = base.is_some();
+            let warning = inferred.warning.filter(|_| inferred_flag);
+            (base, inferred_flag, warning)
+        }
+    };
+    let declared_base = declared_base.filter(|domain| has_usable_base(domain));
     let effective_base = match (declared_base.as_deref(), rewrite_key) {
         (Some(declared), Some(key)) => Some(rewrite_declared_host(declared, key)),
         (Some(declared), None) => Some(declared.to_owned()),
@@ -214,6 +345,8 @@ pub fn build_host_map(
         shared_runtime_identity,
         declared_base,
         effective_base,
+        base_domain_inferred,
+        base_domain_warning,
         routes,
     }
 }
@@ -452,5 +585,118 @@ mod tests {
         assert_eq!(map.kind, HostScopeKind::EphemeralClone);
         assert_eq!(map.routes[0].effective, "app-wabcdef01.test");
         assert_eq!(map.host_key.as_deref(), Some("abcdef01"));
+    }
+
+    fn alias() -> EffectiveServiceAlias {
+        EffectiveServiceAlias {
+            service: "db".to_owned(),
+            domain_label: "postgres".to_owned(),
+            container_port: 5432,
+        }
+    }
+
+    #[test]
+    fn undeclared_base_infers_the_shared_suffix_not_the_front_subdomain() {
+        let map = build_host_map(
+            &[
+                http("s3.acowtancy.test", true, Some("web")),
+                http("app.s3.acowtancy.test", true, Some("app")),
+                http("admin.acowtancy.test", true, Some("admin")),
+            ],
+            &[alias()],
+            &[],
+            None,
+            false,
+            None,
+        );
+        assert!(map.base_domain_inferred);
+        assert_eq!(map.base_domain_warning, None);
+        assert_eq!(map.declared_base.as_deref(), Some("acowtancy.test"));
+        assert_eq!(map.cookie_domain(), Some("acowtancy.test"));
+        assert_eq!(map.relying_party_id(), Some("acowtancy.test"));
+        assert_eq!(map.routes[3].declared, "postgres.acowtancy.test");
+    }
+
+    #[test]
+    fn declared_base_is_never_inferred_or_rewritten() {
+        let map = build_host_map(
+            &[
+                http("s3.acme.test", true, Some("web")),
+                http("acme.test", true, Some("site")),
+            ],
+            &[],
+            &[],
+            None,
+            false,
+            Some("declared.test"),
+        );
+        assert!(!map.base_domain_inferred);
+        assert_eq!(map.base_domain_warning, None);
+        assert_eq!(map.declared_base.as_deref(), Some("declared.test"));
+        assert_eq!(map.cookie_domain(), Some("declared.test"));
+    }
+
+    #[test]
+    fn routes_without_a_shared_apex_infer_the_front_and_warn() {
+        let map = build_host_map(
+            &[
+                http("s3.acme.test", true, Some("web")),
+                http("other.example", true, Some("other")),
+            ],
+            &[alias()],
+            &[],
+            None,
+            false,
+            None,
+        );
+        assert!(map.base_domain_inferred);
+        assert_eq!(map.declared_base.as_deref(), Some("acme.test"));
+        let warning = map.base_domain_warning.as_deref().expect("a warning");
+        assert!(
+            warning.contains("not a suffix of every HTTP route"),
+            "{warning}"
+        );
+        assert!(warning.contains("other.example"), "{warning}");
+        assert!(warning.contains("base_domain"), "{warning}");
+    }
+
+    #[test]
+    fn managed_listener_routes_join_base_domain_inference() {
+        let map = build_host_map_including_listeners(
+            &[http("s3.acme.test", true, Some("web"))],
+            &[alias()],
+            &[],
+            None,
+            false,
+            None,
+            &["cbs.acme.test".to_owned()],
+        );
+        assert!(map.base_domain_inferred);
+        assert_eq!(map.base_domain_warning, None);
+        assert_eq!(map.declared_base.as_deref(), Some("acme.test"));
+        assert_eq!(map.routes[1].declared, "postgres.acme.test");
+
+        // Without the listener hint a lone subdomain route is all Effigy can
+        // see, which is why bundles are told to declare `base_domain`.
+        let without_listener = build_host_map(
+            &[http("s3.acme.test", true, Some("web"))],
+            &[],
+            &[],
+            None,
+            false,
+            None,
+        );
+        assert_eq!(
+            without_listener.declared_base.as_deref(),
+            Some("s3.acme.test")
+        );
+    }
+
+    #[test]
+    fn domain_suffix_matching_is_label_aware() {
+        assert!(domain_has_suffix("s3.acme.test", "acme.test"));
+        assert!(domain_has_suffix("acme.test", "acme.test"));
+        assert!(!domain_has_suffix("evilacme.test", "acme.test"));
+        assert!(!domain_has_suffix("acme.test", "s3.acme.test"));
     }
 }

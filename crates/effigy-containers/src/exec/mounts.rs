@@ -213,10 +213,15 @@ enum HostPoint {
 fn host_point_presence(point: &IsolatedMountPoint) -> Result<HostPoint, ContainerExecError> {
     match std::fs::symlink_metadata(&point.host_path) {
         Ok(metadata) if metadata.is_dir() => Ok(HostPoint::Directory),
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(unavailable(format!(
-            "isolated mount point `{}` is a symlink; refusing to follow it",
-            point.host_path.display()
-        ))),
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            let target = std::fs::read_link(&point.host_path)
+                .map(|target| target.display().to_string())
+                .unwrap_or_else(|error| format!("<unreadable: {error}>"));
+            Err(unavailable(format!(
+                "isolated mount point `{}` is a symlink to `{target}`; refusing to follow it. A host output link sits on a container-isolated path. Keep the path a real directory (the producer detaches its link), or drop it from `isolated_dirs`.",
+                point.host_path.display()
+            )))
+        }
         Ok(_) => Err(unavailable(format!(
             "isolated mount point `{}` is not a directory",
             point.host_path.display()
@@ -565,7 +570,15 @@ mod tests {
             std::os::unix::fs::symlink(fixture.path(), &link).unwrap();
             let error = ensure_points(&[IsolatedMountPoint { host_path: link }])
                 .expect_err("a symlink mount point refuses");
-            assert!(error.to_string().contains("symlink"), "{error}");
+            let error = error.to_string();
+            assert!(error.contains("symlink"), "{error}");
+            assert!(
+                error.contains(&format!("is a symlink to `{}`", fixture.path().display())),
+                "the refusal names the link target: {error}"
+            );
+            assert!(error.contains("container-isolated path"), "{error}");
+            assert!(error.contains("the producer detaches its link"), "{error}");
+            assert!(error.contains("drop it from `isolated_dirs`"), "{error}");
         }
     }
 

@@ -972,6 +972,30 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Container host diagnostics tell the truth about an undeclared apex (papercut
+  `dbb81698`). Without `[containers.<name>.dns] base_domain`, the cookie
+  domain, WebAuthn RP ID and TCP alias suffix are inferred from the longest
+  common domain suffix of the HTTP routes (managed host listeners included)
+  instead of the first route, so a bundle whose first route was
+  `s3.acowtancy.test` no longer advertises that subdomain as its apex. When the
+  inferred base is not a suffix of every HTTP route, `container hosts` warns,
+  and its JSON `base_domain` object reports `inferred` and the warning. A
+  declared `base_domain` is never inferred or rewritten, and bundles should
+  declare it.
+- `container logs` and `container status` say plainly when Compose created no
+  container for the project, instead of reporting "expected one container for
+  service …, found 0" (papercut `890e2912`). They name the last activation
+  attempt's retained backend log when Effigy kept one
+  (`.effigy/runtime/logs/<project>.compose.log`), and say so when it did not.
+- The isolated-mount symlink refusal names the link's target and the conflict —
+  a host output link on a container-isolated path — and lists the owner
+  remedies without Oxide-specific knowledge: keep the path a real directory so
+  the producer detaches its link, or drop it from `isolated_dirs` (papercut
+  `1023b7a7`).
+- Shared-service port reservations are covered by a regression test that
+  allocates them under `shared_service_output_dir(project)` and then retains
+  them against that same machine-level lifetime owner, not the rendered object
+  parent (#411).
 - A rendered Compose stack works on the `colima-nerdctl` (containerd) backend
   again (effigy#277). #229 keeps every Compose input under
   `~/.effigy/state/objects/<digest>/` with `${EFFIGY_RENDER_ROOT}` paths, but
