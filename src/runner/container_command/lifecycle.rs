@@ -186,6 +186,10 @@ fn run_container_up_inner(
     operation: &mut DetachedOperationState,
 ) -> Result<String, RunnerError> {
     reject_conflicting_container_up_modes(attach, detach)?;
+    // `container up` is a Prepare path (contract 020): a checkout whose bundle
+    // or catalog source is behind refreshes it first and this run continues on
+    // the newly selected bytes. Guests keep the pins they were handed.
+    prepare_sources_for_container_up(repo_root)?;
 
     operation.stage = Some("preparation");
     let mut plan = prepare_container_up(repo_root, name, attach, detach, operation)?;
@@ -768,6 +772,13 @@ fn detached_partial_activation_error(
     ))
 }
 
+fn prepare_sources_for_container_up(repo_root: &Path) -> Result<(), RunnerError> {
+    if effigy_core::container_detection::process_is_inside_effigy_workspace_container() {
+        return Ok(());
+    }
+    crate::runner::bundle_command::prepare_sources_at(repo_root)
+}
+
 fn render_container_up_result(
     repo_root: &Path,
     plan: &ContainerUpPlan,
@@ -821,6 +832,7 @@ fn detached_container_up_report(
     annotate_tcp_alias_host_notes(&mut report, &integrations.tcp_alias_host_notes);
     annotate_warning_lines(&mut report, &integrations.warnings);
     annotate_workspace_extra_mount_decisions(&mut report, &plan.workspace_mount_decisions);
+    support::annotate_source_update_notes(&mut report);
     report
 }
 

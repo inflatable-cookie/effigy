@@ -120,7 +120,12 @@ effigy bundle sync
 - `bundle inspect` reports the active source type, local materialized path,
   version hint, and stale state
 - `bundle sync` snapshots path, Git and OCI sources and updates checkout pins
-- after editing a local path bundle, run `bundle sync` to select the new bytes
+- after editing a local path bundle, the next `effigy dev`, `effigy bootstrap`
+  or `effigy container up` re-snapshots it and prints
+  `bundle updated <old> → <new> (content changed)`; `bundle sync` does the same
+  on demand
+- `update = "manual"` in `[bundle]` (or in one `[catalog.sources.<name>]`) keeps
+  the strict rule where only `bundle sync` moves the pin
 - inspection and discovery never fetch or write source state
 
 ## Template Notes

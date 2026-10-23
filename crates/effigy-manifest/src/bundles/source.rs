@@ -17,7 +17,8 @@ use super::BundleSourceType;
 use crate::{ManifestBundleBase, ManifestError};
 mod prepare;
 pub use prepare::{
-    prepare_bundle_sources, sync_bundle_source, SourcePreparation, SourceSettlement,
+    bundle_update_notes, prepare_bundle_sources, sync_bundle_source, SourcePreparation,
+    SourceSettlement,
 };
 
 const LOCK_FILE: &str = "sources.lock.json";
@@ -41,6 +42,14 @@ pub struct BundleSyncReport {
     pub changed: bool,
     pub applicable: bool,
     pub sources: BTreeMap<String, BundleSourceInspectReport>,
+    /// One line per source this Prepare selected new bytes for, also printed on
+    /// stderr and carried into a JSON envelope's `notes`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+    /// A refresh this Prepare could not complete. The pin it kept is still
+    /// selected, so the caller carries on (contract 020 §Failure).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -124,13 +133,13 @@ impl BundleSelection {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct SourceLock {
     version: u8,
     sources: BTreeMap<String, SourcePin>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SourcePin {
     declaration: ManifestBundleBase,
@@ -197,6 +206,26 @@ impl Record for SourceLock {
         Ok(lock)
     }
 }
+/// Declarations match when they select the same source. A path source compares
+/// by its real directory, so a lock written through one alias of the checkout
+/// (a symlinked temp root, say) still matches a read through another.
+fn same_declaration(declaration: &ManifestBundleBase, selection: &BundleSelection) -> bool {
+    let selected = selection.spec();
+    if declaration == &selected {
+        return true;
+    }
+    match (declaration, &selected) {
+        (ManifestBundleBase::Path { dir: pinned }, ManifestBundleBase::Path { dir }) => {
+            real_dir(Path::new(pinned.trim())) == real_dir(Path::new(dir.trim()))
+        }
+        _ => false,
+    }
+}
+
+fn real_dir(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn parent(manifest: &Path) -> &Path {
     manifest.parent().unwrap_or_else(|| Path::new("."))
 }
@@ -283,10 +312,25 @@ fn resolve_source(
                 format!("pinned source `{name}` is unavailable; run `effigy bundle sync`"),
             ));
         }
-        let stale = pin.declaration != selection.spec()
-            || known_version(selection).is_some_and(|version| version != pin.version);
+        let known = known_version(selection);
+        let declaration_changed = !same_declaration(&pin.declaration, selection);
+        let stale = declaration_changed
+            || known
+                .as_ref()
+                .is_some_and(|version| *version != pin.version);
         if stale {
-            notice("bundle behind: run `effigy bundle sync`");
+            // Reads stay network-free and never select new bytes; the notice
+            // names both revisions and the Prepare path that will update
+            // (contract 020 §Read paths, papercut 228e8d43).
+            let locked = short_version(pin.revision.as_deref().unwrap_or(&pin.version));
+            let available = known
+                .as_ref()
+                .filter(|_| !declaration_changed)
+                .map(|version| format!("available {}", short_version(version)))
+                .unwrap_or_else(|| "declaration changed".to_owned());
+            notice(&format!(
+                "{name} behind: locked {locked}, {available}; the next `effigy dev` or `effigy container up` will update"
+            ));
         }
         let selected = BundleSelection::from_spec(manifest, &pin.declaration)?;
         return Ok(ResolvedBundleSource {
@@ -320,20 +364,6 @@ fn inspect(resolved: ResolvedBundleSource) -> BundleSourceInspectReport {
         version_hint: resolved.version_hint,
         stale: resolved.stale,
     }
-}
-/// Pure preflight for bootstrap/dev, before opening any preparation context.
-pub fn bundle_sources_need_preparation(manifest: &Path) -> Result<bool, ManifestError> {
-    let (bundle, catalogs) = crate::composition::load_manifest_source_declarations(manifest)?;
-    if bundle.is_none() && catalogs.is_empty() {
-        return Ok(false);
-    }
-    let lock = read_lock(manifest)?;
-    Ok(lock.is_none_or(|lock| {
-        (bundle.is_some() && !lock.sources.contains_key("bundle"))
-            || catalogs
-                .keys()
-                .any(|name| !lock.sources.contains_key(&format!("catalog:{name}")))
-    }))
 }
 pub fn inspect_bundle_source(
     manifest: &Path,
@@ -389,7 +419,8 @@ pub fn catalog_source_roots(manifest: &Path) -> Result<CatalogSourceRoots, Manif
     let declared = catalogs
         .iter()
         .map(|(name, source)| {
-            resolve_catalog_source(manifest, name, source).map(|pin| (name.clone(), pin.local_path))
+            resolve_catalog_source(manifest, name, &source.base)
+                .map(|pin| (name.clone(), pin.local_path))
         })
         .collect::<Result<_, _>>()?;
     Ok(CatalogSourceRoots { bundle, declared })
@@ -400,6 +431,16 @@ fn notice(message: &str) {
     static EMITTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !EMITTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
         eprintln!("[bundle] {message}");
+    }
+}
+/// A revision or content digest, short enough for one diagnostic line.
+fn short_version(value: &str) -> String {
+    let value = value.strip_prefix("sha256:").unwrap_or(value);
+    let short: String = value.chars().take(8).collect();
+    if short.is_empty() {
+        "unknown".to_owned()
+    } else {
+        short
     }
 }
 fn legacy_root(manifest: &Path, selection: &BundleSelection) -> Option<PathBuf> {

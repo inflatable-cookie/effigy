@@ -8,7 +8,9 @@ mod release;
 mod secrets;
 
 pub use bootstrap::{ManifestBootstrapConfig, ManifestPinnedSourceConfig};
-pub use bundle::{ManifestBundleBase, ManifestBundleConfig};
+pub use bundle::{
+    ManifestBundleBase, ManifestBundleConfig, ManifestCatalogSourceConfig, ManifestSourceUpdate,
+};
 pub use common::{
     ManifestDuplicateBlocksConfig, ManifestEnvSchemaConfig, ManifestGodFilesConfig,
     ManifestIsolationAdoption, ManifestIsolationConfig, ManifestJsPackageManager,

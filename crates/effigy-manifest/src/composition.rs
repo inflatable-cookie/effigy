@@ -215,7 +215,7 @@ pub(crate) fn load_manifest_source_declarations(
 ) -> Result<
     (
         Option<ManifestBundleConfig>,
-        BTreeMap<String, crate::ManifestBundleBase>,
+        BTreeMap<String, crate::ManifestCatalogSourceConfig>,
     ),
     ManifestError,
 > {

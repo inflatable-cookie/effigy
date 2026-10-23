@@ -131,7 +131,7 @@ allow = ["CHANGELOG.md", "crates/effigy-codegraph/src/index.rs", "src/tests/runn
 [[retired]]
 id = "effigy-bundle-read-refresh-ttl"
 retired = "2026-10-19"
-replacement = "Checkout source pins move only through explicit effigy bundle sync; Prepare warns for one release when the old variable is present."
+replacement = "Checkout source pins move through a host Prepare (effigy dev, bootstrap, container up) or explicit effigy bundle sync; the floating-source remote check is fixed at once per checkout per 10 minutes, and Prepare warns for one release when the old variable is present."
 owner = "docs/knowledge/contracts/020-remote-bundle-sources-git-and-oci-delivery-contract.md"
 terms = ["EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS"]
 paths = []

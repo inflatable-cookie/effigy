@@ -88,7 +88,29 @@ pub(in crate::runner) fn run_bootstrap_with_cwd(
     )
     .map_err(map_bootstrap_error)?;
 
-    Ok(crate_render_bootstrap_result(&result, args.output_json))
+    Ok(with_source_update_notes(
+        crate_render_bootstrap_result(&result, args.output_json),
+        args.output_json,
+    ))
+}
+
+/// Bundle or catalog sources this Prepare refreshed, in the JSON envelope's
+/// `notes` (contract 020). The one line per source is already on stderr.
+fn with_source_update_notes(rendered: String, output_json: bool) -> String {
+    if !output_json {
+        return rendered;
+    }
+    let notes = effigy_manifest::bundle_update_notes();
+    if notes.is_empty() {
+        return rendered;
+    }
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&rendered) else {
+        return rendered;
+    };
+    if let Some(object) = value.as_object_mut() {
+        object.insert("notes".to_owned(), serde_json::json!(notes));
+    }
+    value.to_string()
 }
 
 /// Dispatch one `setup` or `start` selector through the same pipeline as

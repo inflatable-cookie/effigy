@@ -458,8 +458,10 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   producer-declared isolation paths into workspace containers
 - `bundle inspect` reports the active repo bundle source only; there is no named
   bundle inspection anymore
-- `bundle sync` is the only updater for checkout bundle and catalog source pins,
-  including local path snapshots; inspection never fetches or writes
+- `bundle sync` re-acquires every checkout bundle and catalog source pin,
+  including local path snapshots; `dev`, `bootstrap` and `container up` update
+  a stale pin themselves (`update = "manual"` opts a source out), and
+  inspection never fetches, checks or writes
 - `deploy model` is intentionally JSON-only and reads the active rendered
   `[deploy.model]` section from the effective manifest
 - `deploy export <PROVIDER>` requires a matching

@@ -834,6 +834,20 @@ During v0.x, MINOR bumps may include breaking changes.
   endpoints, or trust behavior change.
 
 ### Changed
+- A stale bundle or catalog source updates itself on the next `effigy dev`,
+  `effigy bootstrap` or `effigy container up`, so `effigy bundle sync` is no
+  longer needed in normal work (Tom, 2026-10-23). A changed declaration
+  re-acquires immediately, a path bundle re-snapshots when its content changed
+  (`target/`, `node_modules/` and `.git/` are skipped), and a floating Git
+  source gets one bounded `git ls-remote` per checkout every 10 minutes,
+  recorded in `.effigy/sources.update.json`. A full commit id in `ref`, an OCI
+  digest and a tag at its pinned commit never move; `update = "manual"` in
+  `[bundle]` or in one `[catalog.sources.<name>]` restores explicit-sync-only
+  sources. Each update prints one line
+  (`bundle updated <old> → <new> (reason)`) and joins the JSON envelope's
+  `notes`; a failed update keeps the pins and warns once. Read paths stay
+  network-free and now name the locked and available revisions
+  ([contract 020](docs/knowledge/contracts/020-remote-bundle-sources-git-and-oci-delivery-contract.md)).
 - `scan god-files` and `scan duplicate-blocks` are more precise and faster
   (Q-009). `god-files` uses per-language code-line defaults when no explicit
   `warn`/`high`/`critical` is configured (typescript/javascript/vue/svelte and

@@ -113,25 +113,68 @@ ref = "main"
 resolver. Service lookup precedence belongs to the catalog owner (Q-005).
 
 **Ruling (Tom, 2026-10-23):** "I shouldn't need to do that - effigy needs to
-handle this stuff gracefully." Stale sources must update themselves on the
-Prepare paths (`dev`, `bootstrap`, `container up`), not wait for a manual
-`bundle sync`. The rule below is the current behaviour; it is being replaced
-by automatic update on Prepare, with pinned sources never moving and a
-`manual` opt-out.
+handle this stuff gracefully." Stale sources update themselves on the Prepare
+paths (`dev`, `bootstrap`, `container up`), not on a manual `bundle sync`, with
+pinned sources never moving and a `manual` opt-out. It replaces the earlier rule
+that only `effigy bundle sync` moved selected bytes.
 
-Only `effigy bundle sync` updates selected bytes, including path sources.
-Bootstrap and the first `dev` prepare missing pins; subsequent runs retain the
-pins even if the declaration or upstream source changes. `--plan`, inventory,
-help, version, completion, config views, status, doctor, bundle inspection and
-Observe graph paths never acquire sources, create locks or register Git excludes.
-An unprepared remote source returns an actionable preparation error. Static help
-and version remain available while source preparation is unavailable.
+### Who updates selected bytes
+
+- `effigy bundle sync` stays as the explicit command: it re-acquires every
+  declared source, including path sources.
+- The Prepare paths update a stale source themselves, before the command
+  composes the manifest from it: `effigy dev`, `effigy bootstrap`,
+  `effigy container up` and the callers of container up. A task's own ensure
+  reaches the same preparation.
+
+A Prepare path resolves each declared source against its pin:
+
+1. No usable pin for the declaration: acquire it.
+2. The declaration changed (url, ref or path differs from the pin): re-acquire
+   it, with no TTL. A pinned `[sources.<name>]` `rev` is a committed input, not
+   a checkout pin, and never moves automatically.
+3. A path source whose directory content digest differs from the pin:
+   re-snapshot it. That is local and cheap, and the walk skips `target/`,
+   `node_modules/` and `.git/`, so build output is never source state.
+4. A floating Git source (`ref` absent, or a branch or tag): one bounded
+   `git ls-remote` of that ref, at most once per checkout per 10 minutes. The
+   check is recorded in `.effigy/sources.update.json` beside the lock and is
+   bounded to 5 seconds, so a slow network keeps the pin rather than holding
+   `dev` or `container up`. If upstream moved, the new revision is acquired.
+5. Pinned sources never move: a full commit id in `ref` (40 or 64 hex
+   characters), an OCI digest, or a tag still at the pinned commit. An OCI tag
+   is pinned by the digest it resolved to, so changing its upstream bytes means
+   changing the tag or running `effigy bundle sync`.
+6. Opt out per source with `[bundle] update = "manual"`, or
+   `update = "manual"` inside one `[catalog.sources.<name>]` table. That
+   restores strict reproducibility: only `effigy bundle sync` moves the pin.
+   The default is `auto`.
+
+Success prints one line per refreshed source,
+`bundle updated <old-short> → <new-short> (<reason>)` (and the same for
+`catalog:<name>`), and adds it to the JSON envelope's `notes`. The command then
+continues with the newly selected bytes.
+
+A failed attempt (offline, authentication, validation) keeps the current pins
+and warns once with the reason; it never fails the command by itself. The one
+hard error is a changed declaration with no usable pin for it, which fails with
+the acquisition error. Prior bytes are preserved, no cache is deleted, and one
+checkout lock still selects every source.
+
+`--plan`, inventory, help, version, completion, config views, status, doctor,
+bundle inspection and Observe graph paths never acquire sources, run a remote
+check, create locks or register Git excludes. An unprepared remote source
+returns an actionable preparation error. When a source is behind, the read
+notice names the locked and the available revision and says that the next
+`effigy dev` or `effigy container up` will update it. Static help and version
+remain available while source preparation is unavailable.
 
 Preparation runs as a kernel Prepare operation under `Gate(Store bundles)`.
 Gate admission and source acquisition share a 120-second deadline. Git and ORAS
 run through `Custody::spawn_source`, with journalled intent and a registered
 sentinel. Failure and cancellation settle through the kernel. Guests consume
-materialized pins; source acquisition requires host authority.
+materialized pins; source acquisition requires host authority, so a guest with
+a stale pin is told to run `effigy bundle sync` on the host.
 
 ## Pinned extra sources
 
@@ -170,9 +213,12 @@ resolves a digest during sync and pulls that immutable digest, avoiding a tag
 changing between inspection and pull. Path sources are snapshotted by sync too.
 
 Snapshots retain executable file modes, reject symlinks and special files, and
-are bounded to depth 32, 65,536 entries, 32 MiB per file and 256 MiB per source. Source directories
-and the checkout lock remain readable by workspace users; host kernel state
-stays private and outside workspace mounts.
+are bounded to depth 32, 65,536 entries, 32 MiB per file and 256 MiB per source.
+A snapshot and the path-source digest that decides a re-snapshot walk the same
+entries and skip the same ones: `target/` and `node_modules/` directories
+anywhere, and `.git/`, `.effigy/` and `.effigy-bundle-source.*` at the source
+root. Source directories and the checkout lock remain readable by workspace
+users; host kernel state stays private and outside workspace mounts.
 
 All requested source snapshots and the effective bundle manifest are validated
 before one kernel `atomic_replace` publishes the checkout lock. Acquisition or
@@ -180,11 +226,14 @@ validation failure preserves the prior selected bytes. No cache is removed to
 make room for its replacement. Git exclude registration occurs only in Prepare
 and Mutate paths, never during manifest composition.
 
-A bounded host-side `sources-known.json` hint records versions learned by explicit
-syncs. A read may emit one `bundle behind: run `effigy bundle sync`` notice per
-process when a declaration or known source version differs from its pin. It
-performs no network request and never changes the selection. A missing or
-unreadable hint grants no update authority.
+A bounded host-side `sources-known.json` hint records the source bytes each
+checkout selected, written by any Prepare. A read may emit one
+`<source> behind: locked <rev>, available <rev>; the next `effigy dev` or
+`effigy container up` will update` notice per process when a declaration changed
+or a known version differs from the pin. It performs no network request and
+never changes the selection. A missing or unreadable hint grants no update
+authority, and a missing or unreadable update record grants no TTL: the next
+Prepare checks again.
 
 ## v0.14.1 import
 
@@ -195,8 +244,8 @@ before this first Prepare use the existing bytes without changing them.
 The old Git URL/ref and OCI registry/name/version cache layouts are import inputs
 only; their refresh writer and cache lock are removed.
 
-`EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS` no longer controls source selection. For
-one release Prepare warns when it is set and names explicit sync as the updater.
+`EFFIGY_GIT_BUNDLE_REMOTE_CHECK_TTL_SECS` no longer controls source selection:
+the 10-minute floating-source window is fixed. Prepare warns when it is set.
 
 ## Inspection and synchronization
 
@@ -214,5 +263,8 @@ Update this contract when any of these change:
 - supported source-type set
 - shared `ResolvedBundleSource` fields
 - git or OCI cache-key layout
-- stale/update detection ownership
+- stale/update detection ownership: which paths update a pin, the 10-minute
+  floating-source window, the 5-second remote-check bound, the
+  `sources.update.json` record, the `update = "auto" | "manual"` policy and the
+  `bundle updated …` wording
 - `bundle inspect` or `bundle sync` minimum source metadata
