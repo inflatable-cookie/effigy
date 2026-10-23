@@ -938,6 +938,15 @@ Attached mode behavior:
 
 - it tears down the compose environment
 - it does not stop the Colima profile itself
+- on an environment this checkout never prepared whose Compose project owns no
+  container, network or volume, it is a one-line no-op: `nothing to stop for
+  <name>`, with `ok: true` and a `noop` reason in JSON. It renders nothing and
+  calls no Compose, so the unassigned ports of a render that was never
+  prepared never reach interpolation
+- a stop never assigns, reserves or reclaims a port. A generation whose ports
+  were never assigned (a first start that failed) is torn down with a
+  teardown-only interpolation value, so its cleanup succeeds; `up` and
+  `prepare` still fail closed on that render
 
 Cross-project views:
 

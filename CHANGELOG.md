@@ -988,6 +988,15 @@ During v0.x, MINOR bumps may include breaking changes.
   normal readiness and health wait instead of failing it as stale backend
   state; a container that stays stopped keeps the bounded failure and the
   exact-owned transient-unit recovery. Systemd units are still never deleted.
+- `effigy container down` is a clean no-op on an environment this checkout
+  never prepared whose Compose project owns no container, network or volume
+  (effigy#286). It succeeds with one line saying nothing was running instead of
+  failing interpolation of the `EFFIGY_UNASSIGNED_PORT` a never-prepared render
+  deliberately carries; the JSON report keeps `ok: true` and adds `noop` with
+  the reason. When the project does own resources, the stop runs against it
+  with a teardown-only interpolation value, so cleaning up a first start that
+  failed no longer fails too. Teardown never assigns, reserves or reclaims a
+  port, and `up` and `prepare` keep failing closed on an unprepared render.
 - Container host diagnostics tell the truth about an undeclared apex (papercut
   `dbb81698`). Without `[containers.<name>.dns] base_domain`, the cookie
   domain, WebAuthn RP ID and TCP alias suffix are inferred from the HTTP

@@ -448,7 +448,14 @@ admission preserving the desired reference, and reset preserving its sibling.
 
 A *partial* activation (the record's `applying` generation: the apply ran,
 activation did not) reconciles only against its original admission; changed
-inputs refuse until `effigy container down`. With unchanged admitted inputs, a
+inputs refuse until `effigy container down`. That stop renders and interpolates
+like any other teardown, never assigning a port: a generation whose ports were
+never assigned is torn down with a teardown-only interpolation value, so the
+cleanup of a first start that failed cannot fail on the unassigned-port
+refusal. `up` and `prepare` still fail closed on such a render. When the
+record holds no applied and no partial generation and the backend project owns
+no container, network or volume, `container down` is a no-op that renders
+nothing and calls no Compose. With unchanged admitted inputs, a
 missing or stopped primary does not require operator intervention: verify every
 existing project container's checkout and scope ownership, including stopped
 siblings, then recover through ordinary Compose up. Unavailable inventory or
@@ -1492,7 +1499,10 @@ locking or migrating them. Missing bindings report `unassigned (assigned on
 first prepare)` and render a Compose placeholder that refuses execution until
 prepared. Shared-service JSON reports `target_port: null` with that label in
 `allocation` until assigned. Explicit fixed host ports remain usable without
-an allocation.
+an allocation. Teardown is the one exception, and it publishes nothing:
+`container down`, reset and the failed-activation cleanup give that variable a
+teardown-only value so they can stop a generation whose ports were never
+assigned, while `up` and `prepare` keep refusing on the same render.
 
 Prepare calls the existing gateway-domain `ports::prepare_ports` allocator,
 then resolves again before admission and publication. The allocator loads,

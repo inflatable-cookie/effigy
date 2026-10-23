@@ -17,9 +17,9 @@ mod tests;
 mod view;
 
 pub use backend::{
-    effective as effective_backend, parse_inspect, select as select_backend, BackendError,
-    BackendKind, BackendReason, BackendSelection, ColimaBackend, DockerBackend, EnvironmentBackend,
-    RenderRef, Workload,
+    effective as effective_backend, parse_inspect, project_resources, select as select_backend,
+    BackendError, BackendKind, BackendReason, BackendSelection, ColimaBackend, DockerBackend,
+    EnvironmentBackend, ProjectResources, RenderRef, Workload,
 };
 pub use hold::{hold, mode_for, reap_if_idle, Hold, HoldError, Idle, Session};
 pub use import::{
@@ -36,7 +36,7 @@ pub use record::{
     RECORD_SCHEMA,
 };
 pub use remote::{BackendCli, CliOutput, ComposeRemote, ExecOptions, HostCli, RemoteContainer};
-pub use view::EnvironmentView;
+pub use view::{nothing_to_stop, EnvironmentView};
 
 /// The Effigy home whose `.effigy/state` holds environment records and
 /// render objects: `$HOME`, or the crate's private fixture home in tests.

@@ -9,6 +9,25 @@ pub const UNASSIGNED_PORT_LABEL: &str = "unassigned (assigned on first prepare)"
 // Fail closed if an unprepared render is accidentally passed to Compose.
 pub const UNASSIGNED_PORT_EXPRESSION: &str =
     "${EFFIGY_UNASSIGNED_PORT:?unassigned (assigned on first prepare)}";
+/// The variable [`UNASSIGNED_PORT_EXPRESSION`] refuses on.
+pub const UNASSIGNED_PORT_VARIABLE: &str = "EFFIGY_UNASSIGNED_PORT";
+/// The value a teardown interpolates in place of an unassigned port. Teardown
+/// never publishes a port, and `0` is Compose's "no fixed host port".
+const TEARDOWN_UNASSIGNED_PORT: &str = "0";
+
+/// The interpolation values a teardown invocation carries (effigy#286).
+///
+/// A stop never publishes a port, but Compose interpolates the whole render
+/// before it reads the project, so the deliberate refusal above would fail the
+/// stop of an environment whose ports were never assigned — including the
+/// cleanup of a first start that failed. `up` and `prepare` never carry these
+/// values: they keep failing closed until Prepare assigns the ports.
+pub fn teardown_interpolation_env() -> Vec<(String, std::ffi::OsString)> {
+    vec![(
+        UNASSIGNED_PORT_VARIABLE.to_owned(),
+        std::ffi::OsString::from(TEARDOWN_UNASSIGNED_PORT),
+    )]
+}
 
 /// Initialize/import endpoint authority before an effectful Prepare observes
 /// policy. Other engines may have created the shared SQLite file but not yet
@@ -252,5 +271,26 @@ variant = "default"
                 allocated
             );
         });
+    }
+
+    /// effigy#286: a stop of an environment whose ports were never assigned
+    /// interpolates the same refusal expression the render carries, instead of
+    /// failing on it. `up` and `prepare` supply no such value.
+    #[test]
+    fn teardown_interpolates_the_unassigned_port_the_refusal_names() {
+        use super::{
+            teardown_interpolation_env, UNASSIGNED_PORT_EXPRESSION, UNASSIGNED_PORT_VARIABLE,
+        };
+
+        assert!(UNASSIGNED_PORT_EXPRESSION.contains(&format!("{UNASSIGNED_PORT_VARIABLE}:?")));
+        assert_eq!(
+            teardown_interpolation_env(),
+            vec![(
+                UNASSIGNED_PORT_VARIABLE.to_owned(),
+                std::ffi::OsString::from("0")
+            )]
+        );
+        // `:?` refuses an empty value too, so the teardown value must not be.
+        assert!(!teardown_interpolation_env()[0].1.is_empty());
     }
 }

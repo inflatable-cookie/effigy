@@ -2440,4 +2440,305 @@ catalog = "postgres"
             "borrowed volumes are still ensured: {log}"
         );
     }
+
+    /// A checkout whose container environment has never been prepared, plus a
+    /// fake `docker` that records every invocation and refuses Compose
+    /// interpolation exactly as Compose does when a rendered port still holds
+    /// the deliberate `${EFFIGY_UNASSIGNED_PORT:?…}` refusal (effigy#286).
+    struct UnpreparedDownFixture {
+        _temp: tempfile::TempDir,
+        repo_root: PathBuf,
+        parent: PathBuf,
+        home: PathBuf,
+        project: String,
+        _env: crate::contract_test_support::EnvGuard,
+    }
+
+    impl UnpreparedDownFixture {
+        /// A generated (catalog) environment: loaded without Prepare, its
+        /// published port is still unassigned.
+        fn new() -> Self {
+            use std::os::unix::fs::PermissionsExt;
+
+            let temp = tempfile::tempdir().expect("temporary fixture root");
+            let parent = temp.path().to_path_buf();
+            let repo_root = parent.join("repo");
+            fs::create_dir_all(&repo_root).expect("mkdir repo");
+            let project = "effigy-286-fixture".to_owned();
+            fs::write(
+                repo_root.join("effigy.toml"),
+                format!(
+                    "[containers]\ndefault = \"web\"\n\n[containers.web]\nprimary_service = \"app\"\nproject_name = \"{project}\"\n\n[containers.web.services.app]\ncatalog = \"nginx\"\nvariant = \"default\"\n"
+                ),
+            )
+            .expect("write manifest");
+
+            let bin = parent.join("bin");
+            fs::create_dir_all(&bin).expect("mkdir bin");
+            let docker = bin.join("docker");
+            fs::write(
+                &docker,
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$EFFIGY_TEST_DOCKER_LOG\"\ncase \"$*\" in\n  compose*)\n    printf 'teardown-port=%s\\n' \"${EFFIGY_UNASSIGNED_PORT-<unset>}\" >> \"$EFFIGY_TEST_DOCKER_LOG\"\n    if [ -z \"${EFFIGY_UNASSIGNED_PORT-}\" ]; then\n      echo 'level=fatal msg=\"error while interpolating services.app.ports.[]: required variable EFFIGY_UNASSIGNED_PORT is missing a value: unassigned (assigned on first prepare)\"' >&2\n      exit 1\n    fi\n    ;;\nesac\nexit 0\n",
+            )
+            .expect("write fake docker");
+            let mut perms = fs::metadata(&docker)
+                .expect("stat fake docker")
+                .permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&docker, perms).expect("chmod fake docker");
+            // `command_exists("colima")` also probes well-known install
+            // directories, so shadow the host CLI with a fake that reports no
+            // profiles.
+            let colima = bin.join("colima");
+            fs::write(&colima, "#!/bin/sh\nexit 0\n").expect("write fake colima");
+            let mut perms = fs::metadata(&colima)
+                .expect("stat fake colima")
+                .permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&colima, perms).expect("chmod fake colima");
+
+            let home = parent.join("home");
+            fs::create_dir_all(&home).expect("mkdir fake home");
+            let lease_home = parent.join("lease-home");
+            fs::create_dir_all(&lease_home).expect("mkdir lease home");
+            let env = crate::contract_test_support::EnvGuard::set_many(&[
+                ("PATH", Some(bin.display().to_string())),
+                ("HOME", Some(home.display().to_string())),
+                ("DOCKER_HOST", Some("tcp://127.0.0.1:1".to_owned())),
+                ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+                (
+                    "EFFIGY_TEST_HOST_CONTAINER_LEASE_HOME",
+                    Some(lease_home.display().to_string()),
+                ),
+                (
+                    "EFFIGY_TEST_DOCKER_LOG",
+                    Some(parent.join("docker.log").display().to_string()),
+                ),
+            ]);
+            Self {
+                _temp: temp,
+                repo_root,
+                parent,
+                home,
+                project,
+                _env: env,
+            }
+        }
+
+        fn policy(&self) -> EffectiveContainerPolicy {
+            load_container_policy(&self.repo_root, None).expect("fixture policy")
+        }
+
+        fn docker_log(&self) -> String {
+            fs::read_to_string(self.parent.join("docker.log")).unwrap_or_default()
+        }
+
+        /// Every Compose invocation the fake backend served. `compose` is the
+        /// first argument of one, so an empty list proves no Compose ran.
+        fn compose_invocations(&self) -> Vec<String> {
+            self.docker_log()
+                .lines()
+                .filter(|line| line.starts_with("compose"))
+                .map(str::to_owned)
+                .collect()
+        }
+
+        fn ports_registry(&self) -> Option<String> {
+            fs::read_to_string(self.home.join(".effigy/ports.json")).ok()
+        }
+
+        /// The first start ran and failed: its generation was recorded as
+        /// partial and never applied, and its ports were never assigned.
+        fn record_partial_activation(&self, policy: &EffectiveContainerPolicy) {
+            let env = crate::runner::environment::env_ref(policy).expect("fixture environment");
+            let ctx = crate::runner::environment::context().expect("fixture context");
+            let evidence =
+                effigy_kernel::observe::Evidence::new("fixture".into(), None).expect("evidence");
+            effigy_containers::environment::reconcile(
+                &ctx,
+                &env,
+                effigy_containers::environment::Up {
+                    render: policy.render.as_ref().map(|render| &render.closure),
+                    project: &policy.project_name,
+                    backend: &crate::runner::environment::backend(&self.repo_root, policy),
+                    retention: effigy_containers::environment::Retention::Persistent,
+                    running: effigy_kernel::observe::Observed::Verified(false, evidence),
+                    adopt: false,
+                    drifted: false,
+                },
+                || Ok(()),
+            )
+            .expect("a partial generation is recorded");
+            assert!(
+                crate::runner::environment::record(policy)
+                    .expect("fixture record")
+                    .partial()
+                    .is_some(),
+                "the fixture holds a partial generation"
+            );
+        }
+    }
+
+    /// effigy#286: a `down` on an environment this checkout never prepared has
+    /// nothing to stop. It succeeds as one plain line, never rendering and
+    /// never calling Compose, whose interpolation would refuse the unassigned
+    /// ports of a render that was never prepared.
+    #[test]
+    fn container_down_of_a_never_prepared_environment_is_a_noop() {
+        let fixture = UnpreparedDownFixture::new();
+
+        let text = crate::contract_test_support::with_cwd(&fixture.repo_root, || {
+            run_container_down_command(None, None, false, false)
+        })
+        .expect("down of a never-prepared environment succeeds");
+        assert!(
+            text.contains("nothing to stop for `web`"),
+            "one plain line says nothing was running: {text}"
+        );
+        assert!(
+            text.contains(&fixture.project),
+            "the line names the Compose project it proved empty: {text}"
+        );
+        assert_eq!(
+            fixture.compose_invocations(),
+            Vec::<String>::new(),
+            "no Compose ran: {}",
+            fixture.docker_log()
+        );
+
+        let json = crate::contract_test_support::with_cwd(&fixture.repo_root, || {
+            run_container_down_command(None, None, false, true)
+        })
+        .expect("the JSON no-op succeeds");
+        let payload: serde_json::Value = serde_json::from_str(&json).expect("JSON payload");
+        assert_eq!(payload["schema"], "effigy.container.down.v1");
+        assert_eq!(payload["ok"], true);
+        assert!(
+            payload["noop"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("never prepared")),
+            "the no-op states its reason: {json}"
+        );
+        assert_eq!(
+            fixture.compose_invocations(),
+            Vec::<String>::new(),
+            "no Compose ran: {}",
+            fixture.docker_log()
+        );
+    }
+
+    /// effigy#286: a failed first start also cleans up. Its own closeout stops
+    /// the partial stack, and that stop interpolates the unassigned port
+    /// instead of failing on it.
+    #[test]
+    fn a_failed_first_start_cleans_up_without_assigned_ports() {
+        let fixture = UnpreparedDownFixture::new();
+        let policy = fixture.policy();
+        fixture.record_partial_activation(&policy);
+
+        super::lifecycle_cleanup_failed_container_up(&fixture.repo_root, &policy)
+            .expect("the failed start's cleanup succeeds");
+
+        let log = fixture.docker_log();
+        assert!(
+            log.contains("teardown-port=0"),
+            "the cleanup interpolated the unassigned port: {log}"
+        );
+        assert!(
+            fixture
+                .compose_invocations()
+                .iter()
+                .any(|line| line.contains(" down")),
+            "the cleanup stopped the partial stack: {log}"
+        );
+        assert!(
+            fixture
+                .ports_registry()
+                .is_none_or(|registry| !registry.contains(&fixture.project)),
+            "the cleanup assigned no port"
+        );
+    }
+
+    /// effigy#286: a failed first start leaves a partial generation whose
+    /// render still carries the unassigned-port refusal. Its cleanup succeeds
+    /// without assigning, reserving or reclaiming a port, while an `up` of the
+    /// same unprepared render still refuses to interpolate.
+    #[test]
+    fn container_down_of_a_partial_environment_needs_no_port_and_up_still_refuses() {
+        let fixture = UnpreparedDownFixture::new();
+        let policy = fixture.policy();
+        assert!(
+            policy
+                .declared_ports
+                .iter()
+                .any(|port| port
+                    .starts_with(effigy_containers::policy::ports::UNASSIGNED_PORT_LABEL)),
+            "the fixture's ports are unassigned before Prepare: {:?}",
+            policy.declared_ports
+        );
+        fixture.record_partial_activation(&policy);
+
+        let text = crate::contract_test_support::with_cwd(&fixture.repo_root, || {
+            run_container_down_command(None, None, false, false)
+        })
+        .expect("down of a partial environment succeeds");
+        assert!(
+            text.contains("stopped container environment `web`"),
+            "the ordinary stop ran instead of a no-op: {text}"
+        );
+
+        let log = fixture.docker_log();
+        let compose = fixture.compose_invocations();
+        assert_eq!(compose.len(), 1, "one compose down ran: {log}");
+        assert!(
+            compose[0].contains(" down"),
+            "the stop is a compose down: {log}"
+        );
+        assert!(
+            compose[0].contains(&fixture.project),
+            "the stop targets the project: {log}"
+        );
+        assert!(
+            log.contains("teardown-port=0"),
+            "teardown interpolated the unassigned port: {log}"
+        );
+
+        // Teardown never assigns, reserves or reclaims a port.
+        if let Some(registry) = fixture.ports_registry() {
+            assert!(
+                !registry.contains(&fixture.project),
+                "down assigned no port: {registry}"
+            );
+        }
+        assert!(
+            fixture
+                .policy()
+                .declared_ports
+                .iter()
+                .any(|port| port
+                    .starts_with(effigy_containers::policy::ports::UNASSIGNED_PORT_LABEL)),
+            "the environment's ports stay unassigned"
+        );
+
+        // `up` keeps failing closed: its invocation carries no teardown value,
+        // so Compose refuses the same render the stop interpolated.
+        let replayed = fixture.policy();
+        let (program, args) = effigy_containers::compose::compose_invocation_for_repo(
+            &fixture.repo_root,
+            &replayed,
+            &effigy_containers::compose::compose_up_args(&replayed),
+        );
+        let error = effigy_containers::exec::run_compose_invocation_capture(
+            &fixture.repo_root,
+            &replayed,
+            std::ffi::OsStr::new(&program),
+            &args,
+            "compose up",
+        )
+        .expect_err("an unprepared render still refuses to start");
+        assert!(
+            error.to_string().contains("EFFIGY_UNASSIGNED_PORT"),
+            "up still fails closed on the unassigned port: {error}"
+        );
+    }
 }

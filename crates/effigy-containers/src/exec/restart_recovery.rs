@@ -142,6 +142,11 @@ pub fn recover_exited_owned_services_with(
     )
 }
 
+// The recovery seam takes the backend, its inspect/observe/start effects and
+// the timer recovery together, so one call site proves the whole start
+// decision. Splitting them into a struct would only rename the same eight
+// inputs.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn recover_exited_owned_services_with_stale_timer(
     project_name: &str,
     profile: &str,
