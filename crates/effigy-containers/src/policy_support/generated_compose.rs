@@ -1603,26 +1603,44 @@ mod tests {
     }
 
     #[test]
-    fn loopback_allocator_preserves_stopped_owners_and_never_probes_inventory() {
+    fn full_pool_probes_ownership_once_and_preserves_every_live_owner() {
         let _lock = crate::test_env_lock();
         let home = tempfile::tempdir().expect("private state");
         with_test_effigy_home(home.path(), || {
             let path = home.path().join("gateway/loopback-ips.json");
-            let before = full_project_registry();
-            before.save(&path).expect("full registry");
-            let result = load_or_allocate_loopback_ip_with_inventory(
-                "project:new:/tmp/new",
-                None,
-                "/tmp/new",
-                || panic!("inventory cannot release persistent claims"),
-            );
+            // A full pool whose owners all still exist: exhaustion may probe
+            // ownership once, but no live assignment is released.
+            let mut registry = LoopbackRegistry::new();
+            for index in 1..=50 {
+                let checkout = home.path().join(format!("live-{index}"));
+                std::fs::create_dir_all(&checkout).expect("live checkout");
+                let source = checkout.display().to_string();
+                registry
+                    .allocate(
+                        &project_loopback_identity(&format!("live-{index}"), &checkout),
+                        &source,
+                    )
+                    .expect("fill private loopback pool");
+            }
+            registry.save(&path).expect("full registry");
+            let before = registry.assignments.clone();
+            let (result, probes) =
+                with_test_loopback_inventory(RunningComposeContainerInventory::default(), || {
+                    load_or_allocate_loopback_ip_with_inventory(
+                        "project:new:/tmp/new",
+                        None,
+                        "/tmp/new",
+                        discover_loopback_inventory,
+                    )
+                });
             assert!(result
                 .unwrap_err()
                 .to_string()
                 .contains("loopback pool exhausted"));
+            assert_eq!(probes, 1, "an exhausted pool probes ownership once");
             assert_eq!(
                 LoopbackRegistry::load(&path).unwrap().assignments,
-                before.assignments
+                before
             );
         });
     }
