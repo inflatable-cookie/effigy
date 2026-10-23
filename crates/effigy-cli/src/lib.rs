@@ -570,11 +570,17 @@ pub enum BundleSubcommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GatewaySubcommand {
-    Setup { suffixes: Vec<String>, remove: bool },
+    Setup {
+        suffixes: Vec<String>,
+        remove: bool,
+    },
     Up,
     Down,
     Status,
-    Repair { yes: bool },
+    Repair {
+        yes: bool,
+        expect_plan: Option<String>,
+    },
     SetupTls,
 }
 

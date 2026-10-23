@@ -111,8 +111,8 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
         GatewaySubcommand::Up => run_gateway_up_with_config(&config, args.output_json),
         GatewaySubcommand::Down => run_gateway_down_with_config(&config, args.output_json),
         GatewaySubcommand::Status => run_gateway_status_with_config(&config, args.output_json),
-        GatewaySubcommand::Repair { yes } => {
-            run_gateway_repair_with_config(&config, yes, args.output_json)
+        GatewaySubcommand::Repair { yes, expect_plan } => {
+            run_gateway_repair_with_config(&config, yes, expect_plan.as_deref(), args.output_json)
         }
         GatewaySubcommand::SetupTls => run_gateway_setup_tls_with_config(&config, args.output_json),
     }
@@ -923,6 +923,7 @@ fn run_gateway_status_with_config(
 fn run_gateway_repair_with_config(
     config: &GatewayConfig,
     yes: bool,
+    expect_plan: Option<&str>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let store = effigy_gateway::endpoint_store::EndpointStore::for_routes(&config.route_table_path);
@@ -958,6 +959,17 @@ fn run_gateway_repair_with_config(
         removed = plan.repairable_domains.clone();
     }
 
+    // Dead loopback owners: assignments and container routes whose checkout,
+    // containers, runtime scope and listeners are all gone. Preview is
+    // read-only; `--yes` releases the set its locked recomputation still
+    // proves dead, and refuses when a reviewed digest no longer matches.
+    let loopback = if yes {
+        effigy_containers::loopback_reclaim_apply(&store, expect_plan)
+    } else {
+        effigy_containers::loopback_reclaim_preview(&store)
+    }
+    .map_err(RunnerError::task_invocation)?;
+
     let after = if yes {
         gateway_repair_plan(&route_table, detect_active_gateway_projects())
     } else {
@@ -977,6 +989,7 @@ fn run_gateway_repair_with_config(
             "removed_domains": removed,
             "unresolved_count": after.conflicts.len(),
             "tcp_bind_conflicts": render_gateway_tcp_conflicts_json(&after.conflicts),
+            "dead_loopback_owners": effigy_containers::loopback_reclaim_json(&loopback),
         })
         .to_string());
     }
@@ -1009,6 +1022,7 @@ fn run_gateway_repair_with_config(
                     .flat_map(render_gateway_tcp_conflict_lines),
             );
         }
+        lines.extend(render_dead_loopback_preview(&loopback));
         return Ok(lines.join("\n"));
     }
 
@@ -1029,7 +1043,116 @@ fn run_gateway_repair_with_config(
                 .flat_map(render_gateway_tcp_conflict_lines),
         );
     }
+    lines.extend(render_dead_loopback_apply(&loopback));
     Ok(lines.join("\n"))
+}
+
+fn loopback_decision_counts(
+    plan: &effigy_containers::LoopbackRecoveryPlan,
+) -> (usize, usize, usize) {
+    let count = |decision: effigy_containers::Decision| {
+        plan.assignments
+            .iter()
+            .map(|row| row.decision)
+            .chain(plan.routes.iter().map(|row| row.decision))
+            .filter(|candidate| *candidate == decision)
+            .count()
+    };
+    (
+        count(effigy_containers::Decision::Reclaim),
+        count(effigy_containers::Decision::Hold),
+        count(effigy_containers::Decision::Retain),
+    )
+}
+
+fn render_dead_loopback_preview(report: &effigy_containers::LoopbackReclaimReport) -> Vec<String> {
+    let (reclaim, hold, retain) = loopback_decision_counts(&report.plan);
+    let mut lines = vec![format!(
+        "[gateway] dead loopback owners: {reclaim} reclaimable, {hold} held, {retain} retained"
+    )];
+    if let Some(hold) = &report.plan.global_hold {
+        lines.push(format!("[warn] all absent-path entries are held: {hold}"));
+    }
+    if reclaim == 0 {
+        lines.push("[info] no dead loopback owners were identified".to_owned());
+        return lines;
+    }
+    lines.push(format!(
+        "[check] repair would release {} loopback assignment(s) and {} stale container route(s)",
+        report.plan.release_assignments().len(),
+        report.plan.release_routes().len()
+    ));
+    lines.extend(
+        report
+            .plan
+            .assignments
+            .iter()
+            .filter(|row| row.decision != effigy_containers::Decision::Retain)
+            .map(|row| {
+                format!(
+                    "- assignment {} {} ({}, {})",
+                    row.ip,
+                    row.identity,
+                    row.decision.label(),
+                    row.reason
+                )
+            }),
+    );
+    lines.extend(
+        report
+            .plan
+            .routes
+            .iter()
+            .filter(|row| row.decision != effigy_containers::Decision::Retain)
+            .map(|row| {
+                format!(
+                    "- route {} ({}, {})",
+                    row.domain,
+                    row.decision.label(),
+                    row.reason
+                )
+            }),
+    );
+    lines.push(format!(
+        "[info] dead-owner plan digest {}",
+        report.plan.digest
+    ));
+    lines.push(format!(
+        "[next] rerun `effigy gateway repair --yes --expect-plan {}` to release them",
+        report.plan.digest
+    ));
+    lines
+}
+
+fn render_dead_loopback_apply(report: &effigy_containers::LoopbackReclaimReport) -> Vec<String> {
+    let mut lines = vec![format!(
+        "[ok] released {} dead loopback assignment(s) and {} stale container route(s)",
+        report.edit.released_assignments.len(),
+        report.edit.released_routes.len()
+    )];
+    lines.extend(
+        report
+            .edit
+            .released_assignments
+            .iter()
+            .map(|identity| format!("- assignment {identity}")),
+    );
+    lines.extend(
+        report
+            .edit
+            .released_routes
+            .iter()
+            .map(|domain| format!("- route {domain}")),
+    );
+    if let Some(backup) = report.backup() {
+        lines.push(format!(
+            "[info] backup {} (sha256 {} before, {} after); released addresses stay in the endpoint reuse quarantine for about a minute",
+            backup.display(),
+            report.edit.sha256_before.as_deref().unwrap_or("-"),
+            report.edit.sha256_after.as_deref().unwrap_or("-")
+        ));
+    }
+    lines
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

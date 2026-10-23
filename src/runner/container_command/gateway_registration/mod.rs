@@ -1310,14 +1310,21 @@ fn load_or_allocate_loopback_ip_with_inventory(
     legacy_identity: Option<&str>,
     project_path: &str,
     allocate_if_missing: bool,
-    _discover_inventory: impl FnOnce() -> RunningComposeContainerInventory,
+    discover_inventory: impl FnOnce() -> RunningComposeContainerInventory,
 ) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
     let store = EndpointStore::for_routes(&gateway_route_table_path()?);
     if allocate_if_missing {
-        return store
-            .reserve_loopback_importing(identity, legacy_identity, project_path)
-            .map(Some)
-            .map_err(|error| gateway_loopback_error("registry load", error.to_string()));
+        // A full pool releases provably dead owners once, then retries. Live
+        // owners are never touched.
+        return effigy_containers::reserve_loopback_collecting_dead(
+            &store,
+            identity,
+            legacy_identity,
+            project_path,
+            || effigy_containers::LoopbackRecoveryFacts::with_inventory(discover_inventory()),
+        )
+        .map(|(ip, _)| Some(ip))
+        .map_err(|error| gateway_loopback_error("registry load", error.to_string()));
     }
     let registry = store.read_compatible()?.loopback()?;
     Ok(registry

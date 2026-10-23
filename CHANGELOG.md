@@ -1018,6 +1018,23 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- A full loopback pool no longer blocks a new stack forever because deleted
+  projects kept their `127.1.0.x` addresses (effigy#295). `effigy container
+  up`/`dev` and gateway registration now release provably dead owners once when
+  an allocation would otherwise fail, together with the stale container routes
+  that keep their addresses reserved, then retry. `effigy gateway repair` gains
+  the same proof as a preview: it lists every reclaimable and held assignment
+  and container route with its reason and a plan digest, `--yes` applies it
+  under the endpoint Store's owner gate, and `--yes --expect-plan <DIGEST>`
+  refuses when the recomputed plan changed. A write keeps a pre-edit backup of
+  both endpoint documents with SHA-256 evidence. A dead entry is one whose
+  owner checkout is definitely missing and that no runtime-scope record,
+  container in any state, published address, gateway listener or managed
+  listener still uses; an existing path, a running container or an unknown path
+  state never releases anything. Released addresses stay in the endpoint reuse
+  quarantine for about three minutes so a cached DNS answer never reaches a new
+  owner, and a live project's address never changes; an allocation that needed
+  the release therefore succeeds once that window passes.
 - A repository task named `fmt` runs again for `effigy fmt`, `effigy fmt
   --check` and `effigy fmt <args>`; the built-in Rust formatter added in #290
   no longer took that word at parse time (effigy#293). Every built-in

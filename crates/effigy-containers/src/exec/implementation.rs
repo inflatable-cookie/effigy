@@ -1705,6 +1705,25 @@ pub fn discover_compose_containers_all_states() -> RunningComposeContainerInvent
     )
 }
 
+/// Inventory every Compose container in every state on every profile that is
+/// running, without failing over a profile that is not.
+///
+/// A stopped VM binds no host address and cannot start a stack whose checkout
+/// is gone, so it neither holds nor serves a loopback assignment. This is the
+/// loopback proof's inventory; port reclamation keeps
+/// [`discover_compose_containers_all_states`], whose range proof does depend on
+/// a stopped profile's persisted containers.
+pub fn discover_compose_containers_all_states_in_running_profiles(
+) -> RunningComposeContainerInventory {
+    collect_running_compose_container_inventory(
+        docker_runtime_participation(),
+        list_all_compose_containers_for_docker,
+        colima_runtime_participation(),
+        || super::colima_runtime::running_colima_profiles(Path::new(".")),
+        list_all_compose_containers_for_profile,
+    )
+}
+
 fn list_all_compose_containers_for_docker(
 ) -> Result<Vec<RunningComposeContainer>, ContainerExecError> {
     let output = run_runtime_command_capture_for_backend(

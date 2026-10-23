@@ -34,7 +34,7 @@ pub enum PathState {
 }
 
 impl PathState {
-    fn label(&self) -> &'static str {
+    pub fn label(&self) -> &'static str {
         match self {
             Self::Present => "present",
             Self::Missing => "missing",

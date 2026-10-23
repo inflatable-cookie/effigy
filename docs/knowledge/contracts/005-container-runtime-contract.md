@@ -1116,8 +1116,10 @@ assignments for stacks that are not running while their routes stay
 registered, so without this reservation generation could publish a stack on
 an IP a stale route's gateway TCP listener still binds while registration
 reallocated elsewhere, hanging the host alias against a dead or wrong
-upstream while mapped localhost ports stayed ready. Stale-route deletion for
-missing checkouts stays with `effigy container retire --dead` (#305).
+upstream while mapped localhost ports stayed ready. A stale route for a
+missing checkout is deleted by `effigy container retire --dead` when its scope
+record still exists, and by `effigy gateway repair` (and once automatically on
+loopback exhaustion) when it does not.
 Status/doctor alias reporting is static route-table analysis (conflicting
 bind tuples, missing/invalid fallbacks); live OS-level listener bind failures
 remain daemon-log-only.
@@ -1508,6 +1510,41 @@ entry, and the report names the reason. Reclaim never removes runtime
 resources, data, volumes, routes, certificates, profiles, scheduler settings or
 loopback assignments. Writes use the registry's `ports.lock`, the same lock
 generated-compose allocation takes, and preserve unknown registry fields.
+
+## Loopback dead-owner collection
+
+`effigy gateway repair` is the supported way to release loopback assignments and
+container routes whose owner is gone; allocation also self-heals once when the
+pool is full. Preview and JSON output are read-only, listing every assignment and
+container route with `reclaim`, `hold` or `retain` and a reason, plus a plan
+digest over those decisions. `--yes` applies the plan its locked recomputation
+still proves dead; `--yes --expect-plan <DIGEST>` must reproduce the reviewed
+digest or nothing is written. Writes go through the endpoint Store's owner gate,
+release the assignment and its stale container routes in one publication,
+preserve unknown fields and keep a pre-edit copy of both endpoint documents with
+SHA-256 evidence.
+
+A loopback assignment or container route is dead only when its owner checkout
+path is definitely missing (absent with a readable nearest ancestor; an I/O or
+permission error, or an absent parent such as an unmounted volume, is unknown
+and holds it), no runtime-scope record names the identity, checkout path or
+route, no container in any state carries its project label or working directory
+or publishes on its address, no live assignment or live project route keeps the
+address, and no non-gateway process listens on the route's alias tuple. The
+gateway binds its TCP aliases from the Store's route table and stops a listener
+when its route disappears, so its own alias for a dead route is not a hold; a
+same-user process that is not the recorded gateway daemon, or a listener probe
+that cannot answer, is. A shared-service identity is dead only when no consumer
+project that uses it is live. Incomplete inventory or an unreadable scope store
+holds the whole plan and names the reason. A stopped Colima profile does not
+hold a loopback entry: it binds no host address and cannot start a stack whose
+checkout is gone. Present paths, running containers and unknown path states are
+never released, so a live project's address never changes.
+
+The endpoint Store quarantines a released address for one reuse window (the DNS
+TTL plus drain budget and the operation budget), so an allocation that needed a
+release succeeds after that window. Growing the pool beyond `127.1.0.50` is not
+part of this contract; the `lo0` aliases come from `gateway setup`.
 
 ## Handoff contract
 

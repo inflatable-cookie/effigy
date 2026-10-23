@@ -1217,15 +1217,27 @@ fn load_or_allocate_loopback_ip_with_inventory(
     identity: &str,
     legacy_identity: Option<&str>,
     source: &str,
-    _discover_inventory: impl FnOnce() -> RunningComposeContainerInventory,
+    discover_inventory: impl FnOnce() -> RunningComposeContainerInventory,
 ) -> Result<Option<std::net::Ipv4Addr>, ContainerPolicyError> {
     let Some(home) = effigy_home_dir() else {
         return Ok(None);
     };
-    effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home)
-        .reserve_loopback_importing(identity, legacy_identity, source)
-        .map(Some)
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
+    let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
+    // A full pool releases provably dead owners once, then retries. Live
+    // owners are never touched.
+    crate::runtime::loopback_recovery::reserve_loopback_collecting_dead(
+        &store,
+        identity,
+        legacy_identity,
+        source,
+        || {
+            crate::runtime::loopback_recovery::LoopbackRecoveryFacts::with_inventory(
+                discover_inventory(),
+            )
+        },
+    )
+    .map(|(ip, _)| Some(ip))
+    .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
 }
 
 fn parse_port_binding(raw: &str) -> Result<PortBinding, ContainerPolicyError> {
