@@ -812,12 +812,12 @@ tasks. Internal tasks use the ordinary task-run and task-plan payloads.
 }
 ```
 
-### 3) Task Status (`effigy.tasks-status.v2`)
+### 3) Task Status (`effigy.tasks-status.v3`)
 
 ```json
 {
-  "schema": "effigy.tasks-status.v2",
-  "schema_version": 2,
+  "schema": "effigy.tasks-status.v3",
+  "schema_version": 3,
   "task": {
     "selector": "catalog_a/build",
     "catalog": "catalog_a",
@@ -826,6 +826,7 @@ tasks. Internal tasks use the ordinary task-run and task-plan payloads.
   },
   "state": "running",
   "current": {
+    "evidence_source": "checkout-journal",
     "run_id": "agqvgrlm6bercdndodnbeu4tb4",
     "state": "running",
     "phase": "starting",
@@ -833,6 +834,7 @@ tasks. Internal tasks use the ordinary task-run and task-plan payloads.
     "started_at_epoch_ms": 1792398204551
   },
   "latest": {
+    "evidence_source": "checkout-journal",
     "run_id": "agqvgq2xz7c4ytj6fsz3s5s4ka",
     "state": "succeeded",
     "phase": "closed",
@@ -844,14 +846,16 @@ tasks. Internal tasks use the ordinary task-run and task-plan payloads.
   },
   "history": [
     {
-      "run_id": "agqvgrlm6bercdndodnbeu4tb4",
+      "evidence_source": "checkout-journal",
+    "run_id": "agqvgrlm6bercdndodnbeu4tb4",
       "state": "running",
       "phase": "starting",
       "pid": 12345,
       "started_at_epoch_ms": 1792398204551
     },
     {
-      "run_id": "agqvgq2xz7c4ytj6fsz3s5s4ka",
+      "evidence_source": "checkout-journal",
+    "run_id": "agqvgq2xz7c4ytj6fsz3s5s4ka",
       "state": "succeeded",
       "phase": "closed",
       "exit_code": 0,
@@ -862,7 +866,6 @@ tasks. Internal tasks use the ordinary task-run and task-plan payloads.
     }
   ],
   "next": null,
-  "legacy": null,
   "warnings": [],
   "routing": {
     "repo_root": "/workspace/app",
@@ -880,11 +883,11 @@ tasks. Internal tasks use the ordinary task-run and task-plan payloads.
 A run whose owner exited without a result reads `"state": "interrupted"` with
 `"next": "effigy catalog_a/build"`; rerunning the task settles it first.
 
-### 4) Task Status Inventory (`effigy.tasks-status-all.v2`)
+### 4) Task Status Inventory (`effigy.tasks-status-all.v3`)
 
 ```json
 {
-  "schema": "effigy.tasks-status-all.v2",
+  "schema": "effigy.tasks-status-all.v3",
   "schema_version": 2,
   "scope_root": "/workspace/app",
   "catalog_scopes": [

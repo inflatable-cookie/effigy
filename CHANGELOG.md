@@ -169,14 +169,11 @@ During v0.x, MINOR bumps may include breaking changes.
   group (`cmd &` without `setsid`) no longer survive the task.
 - A failed task command now exits with the command's own code instead of 1.
 - `effigy tasks status` reads the run journal and the task's gate
-  (`effigy.tasks-status.v2`, `effigy.tasks-status-all.v2`). A run is `running`
-  while it holds its gate, however long it takes; a run whose owner died reads
-  `interrupted` with the command that settles it; the newest 20 runs are kept.
-  The v0.14 read-only fallback is removed: kernel run rows are the only task
-  status, so a task with no runs reads `never-run`. Old status history under
-  `.effigy/runtime/tasks/` and `.effigy/reports/tasks/` is dropped, never
-  imported or read; it is history, not state, so nothing restarts or unlocks
-  from it, and the files are left untouched.
+  (`effigy.tasks-status.v3`, `effigy.tasks-status-all.v3`). Verified live
+  foreground gates appear without a token or journal; their phase, profile and
+  start time are nullable. Foreground completion retains no runtime record.
+  With no live or unresolved run, state is `not-recorded`; `latest` and history
+  describe only durable runs. v0.14 status families remain retired and untouched.
 - Running from inside a member catalog, however deep, resolves to the root
   that declares it in `[catalog.members]`, so subdirectory and root runs see
   the same catalogs, locks and status.

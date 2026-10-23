@@ -582,6 +582,7 @@ mod controls {
             observed: Observed::Verified(
                 GateState::Held(Box::new(Observed::Verified(
                     HolderDiag {
+                        foreground: None,
                         run: None,
                         pid,
                         start: None,

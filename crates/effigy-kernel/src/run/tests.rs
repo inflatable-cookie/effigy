@@ -1420,6 +1420,36 @@ fn run_log_write_failure_is_reported_as_truncation() {
 }
 
 #[test]
+fn run_control_socket_long_checkout_path_has_bounded_probe_and_exact_cleanup() {
+    let fixture = tempfile::tempdir().unwrap();
+    let path = fixture
+        .path()
+        .join(format!("long-checkout-{}", "x".repeat(180)));
+    std::fs::create_dir(&path).unwrap();
+    let cx = context();
+    let root = StateRoot::effects(&cx, &path).unwrap();
+    let mut fake = Fake::new(&path);
+    let mut run = begin(&cx, &root, owner(), 63, &mut fake);
+    let listener = run.control_socket().unwrap();
+    let address = control_socket_path(&root, &owner(), run.id());
+    assert!(address.as_os_str().len() > 200);
+    let observe = cx
+        .operation()
+        .child(Duration::from_secs(1))
+        .observe()
+        .unwrap();
+    assert_eq!(
+        connect_control_socket(&observe, &root, &owner(), run.id()).verified(),
+        Some(&crate::probe::ProbeIo::UnixOpen)
+    );
+    drop(listener.accept().unwrap());
+    drop(listener);
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    run.settle(&cleanup(&cx), &mut fake).unwrap();
+    assert!(!address.exists());
+}
+
+#[test]
 fn gateway_control_socket_lives_in_trusted_runtime_and_settles_exact_inode() {
     let home = tempfile::Builder::new()
         .prefix("g219-")

@@ -103,6 +103,85 @@ pub(super) fn run_in_process_sequence_steps(
     }
 }
 
+/// Classify the complete declared tree before admission. Dynamic adapters
+/// declare durable capability; static task references resolve exactly as steps do.
+pub(in crate::runner::execute) fn foreground_tree(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+) -> Result<bool, RunnerError> {
+    classify_tree(
+        preflight,
+        selection,
+        &preflight.selector.task_name,
+        &mut Vec::new(),
+    )
+}
+
+fn classify_tree(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+    task_name: &str,
+    ancestors: &mut Vec<(PathBuf, String)>,
+) -> Result<bool, RunnerError> {
+    let identity = (selection.catalog.catalog_root.clone(), task_name.to_owned());
+    if ancestors.len() >= 64 || ancestors.contains(&identity) {
+        return Err(RunnerError::task_invocation(
+            "task tree is cyclic or exceeds 64 declared levels",
+        ));
+    }
+    if selection.task.mode.as_deref() == Some("tui")
+        || !selection.task.concurrent.is_empty()
+        || !super::pipeline::standard::checked_host_binding(preflight, selection, task_name)?
+        || selection.task.uses_scratch() && crate::runner::scratch::wanted()
+    {
+        return Ok(false);
+    }
+    let Some(run) = selection.task.run.as_ref() else {
+        return Ok(false);
+    };
+    ancestors.push(identity);
+    let steps = match run {
+        ManifestManagedRun::Command(command) => {
+            vec![ManifestManagedRunStep::Command(command.clone())]
+        }
+        ManifestManagedRun::Sequence(steps) => steps.clone(),
+    };
+    let result = (|| {
+        for step in &steps {
+            match resolve_step_action(
+                step,
+                preflight,
+                selection,
+                &preflight.runtime_args_exec.passthrough,
+            )? {
+                StepAction::Command(_) | StepAction::Noop => {}
+                StepAction::Rhai { .. } | StepAction::Builtin { .. } => return Ok(false),
+                StepAction::Task { invocation, .. } => {
+                    let selector = effigy_tasks::parse_task_selector(&invocation.name)
+                        .map_err(RunnerError::task_invocation)?;
+                    let child = select_catalog_and_task(
+                        &selector,
+                        &preflight.catalogs,
+                        &preflight.invocation_cwd,
+                    )
+                    .map_err(RunnerError::from)?;
+                    if invocation
+                        .args
+                        .iter()
+                        .any(|arg| arg == effigy_cli::INTERNAL_RUN_ID_ARG)
+                        || !classify_tree(preflight, &child, &selector.task_name, ancestors)?
+                    {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+        Ok(true)
+    })();
+    ancestors.pop();
+    result
+}
+
 struct SequenceReport {
     code: i32,
     stdout: String,

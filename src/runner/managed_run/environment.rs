@@ -11,8 +11,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use effigy_kernel::ctx::{OpenReason, StopCause};
-use effigy_kernel::custody::{Custody, EnvValue, Lifetime, ProcessSpec, Terminal};
+use effigy_kernel::ctx::StopCause;
+use effigy_kernel::custody::{EnvValue, Lifetime, ProcessSpec, Terminal};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::probe::ProbeCommand;
 use effigy_kernel::run::{EffectSpec, Settlement};
@@ -93,7 +93,9 @@ pub(in crate::runner) fn bring_up(
     // kernel releases only once nothing else of the run is open.
     let up = run_up(run, plan, stop);
     let ticket = {
-        let mut kernel = run.run_mut();
+        let mut kernel = run
+            .run_mut()
+            .map_err(|error| NotReady::Failed(error.to_string()))?;
         let target = kernel.fence().clone();
         kernel
             .intend(EffectSpec {
@@ -116,6 +118,7 @@ pub(in crate::runner) fn bring_up(
         Err(NotReady::Stopped(_)) => serde_json::json!({ "up_stopped": true }),
     };
     run.run_mut()
+        .map_err(|error| NotReady::Failed(error.to_string()))?
         .applied(&ticket, receipt)
         .map_err(|error| NotReady::Failed(format!("environment receipt: {error}")))?;
     up?;
@@ -241,12 +244,12 @@ fn run_up(
         label: "environment up".to_owned(),
     };
     let started = Instant::now();
-    let mut process = {
-        let cx = task_engine::effect_context(OpenReason::DevServer);
-        Custody::spawn(&mut run.run_mut(), spec, &cx)
-            .map_err(|error| NotReady::Failed(format!("environment up did not start: {error:?}")))?
-    };
+    let mut process = run
+        .spawn(spec, false)
+        .map_err(|error| NotReady::Failed(format!("environment up did not start: {error}")))?;
     loop {
+        run.verify_admission()
+            .map_err(|error| NotReady::Failed(error.to_string()))?;
         if let Some(cause) = stop(run) {
             return Err(NotReady::Stopped(cause));
         }
@@ -260,7 +263,12 @@ fn run_up(
             )));
         }
         if let Observed::Verified(exit, _) = process.poll() {
-            let _ = process.complete(&mut run.run_mut(), exit);
+            let _ = process.complete(
+                &mut *run
+                    .run_mut()
+                    .map_err(|error| NotReady::Failed(error.to_string()))?,
+                exit,
+            );
             if exit.code != 0 {
                 return Err(NotReady::Failed(format!(
                     "environment `{}` did not come up: `up` exited {} after {}s",

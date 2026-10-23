@@ -455,7 +455,10 @@ fn end_headless_managed_owners(
             continue;
         }
         let label = holder.scope_label();
-        crate::runner::managed_run::stop_run(run).map_err(|error| {
+        let owning_checkout = holder.checkout_root.as_deref().ok_or_else(|| {
+            RunnerError::task_invocation("managed holder has no verified owning checkout")
+        })?;
+        crate::runner::managed_run::stop_run(owning_checkout, run).map_err(|error| {
             RunnerError::task_invocation(format!(
                 "cannot hand over environment `{}`: failed to end managed run {run} (`{label}`) holding it: {error}. The stop the handover requested is already in progress and settles or fails on its own; environment `{}` stays in a state its own `effigy container up` or `effigy container down` recovers",
                 target.environment, target.environment,

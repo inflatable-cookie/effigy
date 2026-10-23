@@ -109,6 +109,7 @@ impl Fixture {
             .env_remove("EFFIGY_ADMISSION_HOOK")
             .env_remove("EFFIGY_ADMISSION_HOOK_TIMEOUT_MS")
             .env_remove("EFFIGY_ADMITTED")
+            .env_remove("EFFIGY_PARENT_CAPABILITY")
             .env_remove("EFFIGY_MANAGED_RUN_TOKEN")
             .env_remove("EFFIGY_CUSTODY_NONCE")
             .env_remove("EFFIGY_LOCK_WAIT_MS")
@@ -185,7 +186,7 @@ fn wait_child(child: &mut OwnedChild) -> std::process::ExitStatus {
 fn an_admitted_heavy_run_holds_the_hook_until_it_ends_and_marks_its_children() {
     let fixture = Fixture::new();
     let hook = fixture.hook("hold.sh", HOLD_HOOK);
-    let output = fixture.with_hook(&hook, &["heavy"]);
+    let output = fixture.with_hook(&hook, &["--run-id", "admitted-1", "heavy"]);
     assert!(output.status.success(), "{}", text(&output));
     assert!(fixture.exists("ran.txt"));
     assert!(
@@ -337,10 +338,7 @@ fn a_root_task_named_run_still_owns_the_word() {
         .iter()
         .map(|run| run["task"].clone())
         .collect();
-    assert_eq!(
-        tasks,
-        vec![serde_json::json!("run"), serde_json::json!("run")]
-    );
+    assert_eq!(tasks, vec![serde_json::json!("run")]);
 }
 
 #[test]

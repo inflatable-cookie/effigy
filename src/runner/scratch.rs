@@ -782,7 +782,7 @@ fn create(run: &mut TaskRun) -> Option<Arc<RunScratch>> {
         dir: dir.clone(),
         run: id,
     });
-    let mut kernel = run.run_mut();
+    let mut kernel = run.run_mut().ok()?;
     let spec = EffectSpec {
         target: kernel.fence().clone(),
         kind: EFFECT.to_owned(),

@@ -125,8 +125,8 @@ Payload examples guide: `026-json-payload-examples.md`
 - `effigy.help.v1`
 - `effigy.tasks.v1`
 - `effigy.tasks.filtered.v1`
-- `effigy.tasks-status.v2`
-- `effigy.tasks-status-all.v2`
+- `effigy.tasks-status.v3`
+- `effigy.tasks-status-all.v3`
 - `effigy.deps.status.v1`
 - `effigy.deps.link.v1`
 - `effigy.deps.unlink.v1`

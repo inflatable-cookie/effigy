@@ -405,12 +405,12 @@ fn tasks_status_json_contract_has_versioned_top_level_shape() {
     .expect("run task status json");
 
     let parsed = parse_json(&out);
-    assert_eq!(parsed["schema"], "effigy.tasks-status.v2");
-    assert_eq!(parsed["schema_version"], 2);
+    assert_eq!(parsed["schema"], "effigy.tasks-status.v3");
+    assert_eq!(parsed["schema_version"], 3);
     assert_eq!(parsed["task"]["selector"], "check");
-    assert_eq!(parsed["state"], "succeeded");
+    assert_eq!(parsed["state"], "not-recorded");
     assert!(parsed["current"].is_null());
-    assert!(parsed["latest"].is_object());
+    assert!(parsed["latest"].is_null());
     assert!(parsed["history"].is_array());
     assert!(parsed["warnings"].is_array());
     assert!(parsed["routing"].is_object());
@@ -445,8 +445,8 @@ fn tasks_status_all_json_contract_has_versioned_top_level_shape() {
     .expect("run task status all json");
 
     let parsed = parse_json(&out);
-    assert_eq!(parsed["schema"], "effigy.tasks-status-all.v2");
-    assert_eq!(parsed["schema_version"], 2);
+    assert_eq!(parsed["schema"], "effigy.tasks-status-all.v3");
+    assert_eq!(parsed["schema_version"], 3);
     assert_eq!(
         parsed["scope_root"],
         fs::canonicalize(&root)

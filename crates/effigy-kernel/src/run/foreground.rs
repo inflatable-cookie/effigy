@@ -153,7 +153,7 @@ impl ForegroundRun {
                 )))
             }
         }
-        gate.set_run(&opts.id);
+        gate.set_foreground(&opts.id, &inv.spec().owner, &inv.spec().task);
         let guard = MemoryGuard::start(
             &plan.executable,
             &mut gate,

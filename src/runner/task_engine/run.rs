@@ -7,6 +7,8 @@
 //! every effect and releases the gate; journal failures become warnings and
 //! never change the task's own result (K10).
 
+pub(super) mod foreground;
+
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -129,6 +131,8 @@ impl RunKey {
 #[derive(Debug)]
 pub(in crate::runner) struct TaskRun {
     run: Option<Arc<Mutex<Run<'static>>>>,
+    memory: Option<Arc<Mutex<effigy_kernel::run::ForegroundRun>>>,
+    lease: Option<effigy_kernel::inheritance::MemoryLease>,
     shared: Option<Run<'static>>,
     target: TaskTarget,
     ancestors: Vec<ResourceId>,
@@ -147,7 +151,8 @@ pub(in crate::runner) struct TaskRun {
 
 #[derive(Clone)]
 struct Parent {
-    run: Arc<Mutex<Run<'static>>>,
+    run: Option<Arc<Mutex<Run<'static>>>>,
+    memory: Option<Arc<Mutex<effigy_kernel::run::ForegroundRun>>>,
     ancestors: Vec<ResourceId>,
     shared_owners: Vec<ResourceId>,
 }
@@ -162,7 +167,7 @@ impl Drop for ParentScope {
         });
     }
 }
-fn owned(run: Arc<Mutex<Run<'static>>>) -> Run<'static> {
+fn owned<T: std::fmt::Debug>(run: Arc<Mutex<T>>) -> T {
     Arc::try_unwrap(run)
         .expect("parent scope ends before run closes")
         .into_inner()
@@ -293,6 +298,8 @@ impl TaskRun {
         task_gate: bool,
         placement: LifecyclePlacement,
     ) -> Result<Self, RunnerError> {
+        foreground::require_durable_parent()?;
+        let admission = super::admission::plan(request.admission)?;
         let parent = PARENTS.with(|parents| parents.borrow().last().cloned());
         let root = kernel::effects_root(&request.target.root)?;
         let checkout = checkout::mint(&request.target.root)?;
@@ -311,7 +318,6 @@ impl TaskRun {
                 "task reference cycle at `{}`: a nested reference cannot reacquire an ancestor's Task gate; remove the recursive reference",
                 request.target.label)));
         }
-        let admission = super::admission::plan(request.admission)?;
         let run_id = match request.key {
             Some(key) => {
                 refuse_bound_key(key, &task_id, &request.target.root)?;
@@ -377,13 +383,7 @@ impl TaskRun {
                     &mut TaskSettlement::default(),
                 )
                 .map_err(|error| {
-                    begin_error(
-                        error,
-                        request.target,
-                        &lock_owner,
-                        request.lock_wait_ms,
-                        started,
-                    )
+                    begin_error(error, request.target, request.lock_wait_ms, started)
                 })?;
                 Some(run)
             }
@@ -392,6 +392,8 @@ impl TaskRun {
         if !task_gate {
             let mut run = Self {
                 run: shared.map(|run| Arc::new(Mutex::new(run))),
+                memory: None,
+                lease: None,
                 shared: None,
                 target: request.target.clone(),
                 ancestors,
@@ -425,6 +427,7 @@ impl TaskRun {
         let run = match parent {
             Some(parent) => parent
                 .run
+                .expect("durable parent checked before effects")
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .begin_child(
@@ -451,7 +454,7 @@ impl TaskRun {
             Some(key) if key_run_exists(key, &request.target.root) => RunnerError::RunKeyExists {
                 run: key.id().to_string(),
             },
-            _ => begin_error(error, request.target, &owner, request.lock_wait_ms, started),
+            _ => begin_error(error, request.target, request.lock_wait_ms, started),
         });
         let run = match run {
             Ok(run) => run,
@@ -464,6 +467,8 @@ impl TaskRun {
         };
         let mut run = Self {
             run: Some(Arc::new(Mutex::new(run))),
+            memory: None,
+            lease: None,
             shared,
             target: request.target.clone(),
             ancestors,
@@ -499,21 +504,10 @@ impl TaskRun {
         };
         let target = self.target.clone();
         let cwd = cwd.unwrap_or(&target.root).to_path_buf();
-        let admitted = match self.run.as_ref() {
-            Some(run) => super::admission::admit(
-                &mut run
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner),
-                &target,
-                class,
-                &command,
-                timeout,
-                &cwd,
-            ),
-            None => return Ok(()),
-        };
+        let admitted = super::admission::admit(self, &target, class, &command, timeout, &cwd);
         match admitted {
             Ok(admission) => {
+                self.lease = None;
                 self.admission = Some(admission);
                 Ok(())
             }
@@ -522,6 +516,8 @@ impl TaskRun {
                     self,
                     Self {
                         run: None,
+                        memory: None,
+                        lease: None,
                         shared: None,
                         target,
                         ancestors: Vec::new(),
@@ -553,29 +549,30 @@ impl TaskRun {
         self.keyed
     }
 
-    pub(in crate::runner) fn run_mut(&mut self) -> MutexGuard<'_, Run<'static>> {
+    pub(in crate::runner) fn run_mut(
+        &mut self,
+    ) -> Result<MutexGuard<'_, Run<'static>>, RunnerError> {
         self.run
             .as_ref()
-            .expect("open run")
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .ok_or_else(|| {
+                RunnerError::task_invocation(
+                    "late durable effect refused: this tree was admitted as foreground",
+                )
+            })
+            .map(|run| {
+                run.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+            })
     }
 
-    /// The lexical parent for nested invocations on this thread. This carries
-    /// handles, never global environment or authority from an untrusted token.
+    /// Lexical nesting carries native handles on this thread.
     pub(in crate::runner) fn enter(&self) -> ParentScope {
-        let run = self.run.as_ref().expect("open run").clone();
         let mut ancestors = self.ancestors.clone();
-        ancestors.push(
-            run.lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .fence()
-                .resource
-                .clone(),
-        );
+        ancestors.push(self.owner());
         PARENTS.with(|parents| {
             parents.borrow_mut().push(Parent {
-                run,
+                run: self.run.clone(),
+                memory: self.memory.clone(),
                 ancestors,
                 shared_owners: self.shared_owners.clone(),
             })
@@ -584,6 +581,9 @@ impl TaskRun {
     }
 
     pub(in crate::runner) fn step(&self, index: usize, label: &str) -> Result<Self, RunnerError> {
+        if self.memory.is_some() {
+            return self.memory_step(index, label);
+        }
         let checkout = checkout::mint(&self.target.root)?;
         let owner = ResourceId::store(
             effigy_kernel::id::Scope::Checkout(checkout),
@@ -647,6 +647,8 @@ impl TaskRun {
         );
         Ok(Self {
             run: Some(Arc::new(Mutex::new(run))),
+            memory: None,
+            lease: None,
             shared: None,
             target,
             ancestors,
@@ -661,6 +663,14 @@ impl TaskRun {
     }
 
     pub(in crate::runner) fn id(&self) -> RunId {
+        if let Some(memory) = &self.memory {
+            return memory
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .record()
+                .incarnation()
+                .run;
+        }
         self.run
             .as_ref()
             .expect("open run")
@@ -686,9 +696,16 @@ impl TaskRun {
         let admission = self.admission.take();
         self.leave_programs();
         let scratch = self.conclude_scratch(&workload);
-        let result = match self.run.take() {
-            Some(run) => close_run_settled(owned(run), workload, kernel::cleanup_context(budget)),
-            None => (None, Vec::new()),
+        let result = match self.memory.take() {
+            Some(memory) => {
+                foreground::close_memory(owned(memory), workload, &kernel::cleanup_context(budget))
+            }
+            None => match self.run.take() {
+                Some(run) => {
+                    close_run_settled(owned(run), workload, kernel::cleanup_context(budget))
+                }
+                None => (None, Vec::new()),
+            },
         };
         drop(admission);
         let (outcome, mut warnings) = result;
@@ -704,6 +721,13 @@ impl TaskRun {
         let admission = self.admission.take();
         self.leave_programs();
         warnings.extend(self.conclude_scratch(&workload));
+        if let Some(memory) = self.memory.take() {
+            match kernel::cleanup() {
+                Ok(cleanup) => warnings
+                    .extend(foreground::close_memory(owned(memory), workload.clone(), &cleanup).1),
+                Err(error) => warnings.push(error.to_string()),
+            }
+        }
         if let Some(run) = self.run.take() {
             warnings.extend(close_run(owned(run), workload.clone()));
         }
@@ -805,6 +829,7 @@ impl Drop for TaskRun {
         if let Some(scratch) = self.scratch.take() {
             crate::runner::scratch::leave(&scratch);
         }
+        drop(self.memory.take());
         let cleanup = kernel::cleanup();
         for run in [self.run.take().map(owned), self.shared.take()]
             .into_iter()
@@ -1029,17 +1054,16 @@ fn run_error(error: &RunError) -> String {
 fn begin_error(
     error: RunError,
     target: &TaskTarget,
-    owner: &ResourceId,
     lock_wait_ms: u64,
     started: Instant,
 ) -> RunnerError {
     match error {
-        RunError::Gate(GateError::Busy { holder, .. }) => {
-            conflict(target, owner, *holder, None, started)
+        RunError::Gate(GateError::Busy { id, holder }) => {
+            conflict(target, &id, *holder, None, started)
         }
-        RunError::Gate(GateError::TimedOut { holder, waited, .. }) => conflict(
+        RunError::Gate(GateError::TimedOut { id, holder, waited }) => conflict(
             target,
-            owner,
+            &id,
             *holder,
             Some((lock_wait_ms, waited.as_millis() as u64)),
             started,
@@ -1197,20 +1221,20 @@ fn age_text(started_ms: i64) -> Option<String> {
 pub(super) fn stop_requested() -> bool {
     PARENTS.with(|parents| {
         parents.borrow().iter().any(|parent| {
-            parent
-                .run
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .requests()
-                .is_ok_and(|requests| {
-                    requests.iter().any(|request| {
-                        matches!(
-                            request.action,
-                            effigy_kernel::run::RequestAction::Stop
-                                | effigy_kernel::run::RequestAction::Escalate
-                        )
+            parent.run.as_ref().is_some_and(|run| {
+                run.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .requests()
+                    .is_ok_and(|requests| {
+                        requests.iter().any(|request| {
+                            matches!(
+                                request.action,
+                                effigy_kernel::run::RequestAction::Stop
+                                    | effigy_kernel::run::RequestAction::Escalate
+                            )
+                        })
                     })
-                })
+            })
         })
     })
 }

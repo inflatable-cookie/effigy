@@ -1,4 +1,4 @@
-//! Task status as a projection of `runs` rows plus a fresh owner-gate probe
+//! Task status from transient foreground gates and durable `runs` rows
 //! (contract 052 §5.6 status). There is no heartbeat and no staleness: a
 //! held gate is a live run, a free gate under a non-closed row is an
 //! interrupted run, and history never stands in for current state.
@@ -18,14 +18,14 @@ pub(in crate::runner) const HISTORY_LIMIT: usize = 20;
 
 #[derive(Debug, Clone, Serialize)]
 pub(in crate::runner) struct RunView {
+    pub(in crate::runner) evidence_source: &'static str,
     pub(in crate::runner) run_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(in crate::runner) step: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(in crate::runner) steps: Vec<RunView>,
     pub(in crate::runner) state: String,
-    pub(in crate::runner) phase: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(in crate::runner) phase: Option<&'static str>,
     pub(in crate::runner) profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(in crate::runner) exit_code: Option<i32>,
@@ -36,7 +36,7 @@ pub(in crate::runner) struct RunView {
     pub(in crate::runner) cleanup: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(in crate::runner) pid: Option<u32>,
-    pub(in crate::runner) started_at_epoch_ms: i64,
+    pub(in crate::runner) started_at_epoch_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(in crate::runner) finished_at_epoch_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -45,7 +45,7 @@ pub(in crate::runner) struct RunView {
 
 #[derive(Debug, Clone, Serialize)]
 pub(in crate::runner) struct TaskStatusView {
-    /// `running`, `stopping`, `interrupted`, a closed outcome, `never-run`
+    /// `running`, `stopping`, `interrupted`, a recorded residue, `not-recorded`
     /// or `unknown`.
     pub(in crate::runner) state: String,
     /// The newest run while it is open (live or interrupted).
@@ -58,10 +58,80 @@ pub(in crate::runner) struct TaskStatusView {
     pub(in crate::runner) warnings: Vec<String>,
 }
 
-/// Pure read (R2): opens nothing for writing and mints no checkout token.
+/// Foreground evidence and durable history are independent read models.
+/// A historical result never claims to be the most recent invocation.
 pub(in crate::runner) fn task_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
+    let mut view = durable_status(target, limit);
+    let cx = kernel::observe();
+    let root = match kernel::observe_root(&cx, &target.root) {
+        Observed::Verified(root, _) => root,
+        _ => return view,
+    };
+    let rows = match Gate::foreground_holders(&cx, &root) {
+        Observed::Verified(rows, _) => rows,
+        Observed::Unknown(reason) => {
+            view.state = "unknown".into();
+            view.warnings
+                .push(format!("foreground custody unavailable: {reason:?}"));
+            return view;
+        }
+        Observed::Absent(_) => return view,
+    };
+    let mut live = std::collections::BTreeMap::new();
+    for row in rows {
+        if row.coordinates.owner.kind() != effigy_kernel::id::ResourceKind::Task
+            || row.coordinates.task.catalog() != target.catalog
+            || row.coordinates.task.task() != target.task
+        {
+            continue;
+        }
+        let Some(run) = row.holder.run.clone() else {
+            continue;
+        };
+        live.entry(run).or_insert(row);
+    }
+    if live.len() > 1 {
+        view.state = "unknown".into();
+        view.warnings
+            .push("conflicting foreground gate bindings".into());
+    } else if let Some((run, row)) = live.into_iter().next() {
+        let verified = matches!(
+            row.holder.state,
+            Observed::Verified(
+                effigy_kernel::ident::ProcessState::Active
+                    | effigy_kernel::ident::ProcessState::Stopped,
+                _
+            )
+        );
+        view.state = if verified { "running" } else { "unknown" }.into();
+        if !verified {
+            view.warnings.push("foreground gate remains held but its invoking owner is unavailable; cleanup or residue cannot be reconstructed".into());
+        }
+        view.current = Some(RunView {
+            evidence_source: "live-foreground",
+            run_id: run,
+            step: None,
+            steps: Vec::new(),
+            state: view.state.clone(),
+            phase: None,
+            profile: None,
+            exit_code: None,
+            signal: None,
+            cleanup: None,
+            pid: verified.then_some(row.holder.pid),
+            started_at_epoch_ms: None,
+            finished_at_epoch_ms: None,
+            duration_ms: None,
+        });
+        view.next = None;
+    }
+    view
+}
+
+/// Pure read (R2): opens nothing for writing and mints no checkout token.
+fn durable_status(target: &TaskTarget, limit: usize) -> TaskStatusView {
     let mut view = TaskStatusView {
-        state: "never-run".to_owned(),
+        state: "not-recorded".to_owned(),
         current: None,
         latest: None,
         history: Vec::new(),
@@ -130,14 +200,20 @@ pub(in crate::runner) fn task_status(target: &TaskTarget, limit: usize) -> TaskS
                 view.warnings.push(reason);
             }
         }
-        if index == 0 {
+        if index == 0 && summary.phase != Phase::Closed {
             view.state = run.state.clone();
-            if summary.phase != Phase::Closed {
-                if run.state == "interrupted" {
-                    view.next = Some(format!("effigy {}", target.label));
-                }
-                view.current = Some(run.clone());
+            if run.state == "interrupted" {
+                view.next = Some(format!("effigy {}", target.label));
             }
+            view.current = Some(run.clone());
+        }
+        if summary.phase == Phase::Closed
+            && summary.cleanup_complete == Some(false)
+            && !summary.acknowledged
+        {
+            view.state = "failed-cleanup".into();
+            view.current = Some(run.clone());
+            view.next = Some(format!("effigy {}", target.label));
         }
         if view.latest.is_none() && summary.phase == Phase::Closed {
             view.latest = Some(run.clone());
@@ -186,6 +262,7 @@ fn project(summary: &RunSummary, gate: Option<&Observed<GateState>>) -> RunView 
         _ => (None, None),
     };
     RunView {
+        evidence_source: "checkout-journal",
         run_id: summary.id.to_string(),
         step: summary
             .parent
@@ -194,7 +271,7 @@ fn project(summary: &RunSummary, gate: Option<&Observed<GateState>>) -> RunView 
             .map(|label| label.to_string_lossy().into_owned()),
         steps: Vec::new(),
         state,
-        phase: phase_name(summary.phase),
+        phase: Some(phase_name(summary.phase)),
         profile,
         exit_code: (summary.phase == Phase::Closed)
             .then_some(exit_code)
@@ -204,7 +281,7 @@ fn project(summary: &RunSummary, gate: Option<&Observed<GateState>>) -> RunView 
             .cleanup_complete
             .map(|complete| if complete { "complete" } else { "incomplete" }),
         pid,
-        started_at_epoch_ms: summary.created_at_ms,
+        started_at_epoch_ms: Some(summary.created_at_ms),
         finished_at_epoch_ms: summary.closed_at_ms,
         duration_ms: summary
             .closed_at_ms

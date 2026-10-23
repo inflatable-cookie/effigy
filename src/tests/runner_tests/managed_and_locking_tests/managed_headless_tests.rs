@@ -248,7 +248,7 @@ fn managed_controls_without_a_run_name_the_task() {
     let root = temp_workspace("managed-headless-no-run");
     write_long_running_headless_manifest(&root);
     let status = run_dev(&root, &["status"]).expect("status without a run");
-    assert!(status.contains("never-run"), "got: {status}");
+    assert!(status.contains("not-recorded"), "got: {status}");
     assert!(status.contains("effigy dev"), "got: {status}");
     let stop = run_dev(&root, &["stop"]).expect("stop without a run");
     assert!(stop.contains("is not running"), "got: {stop}");

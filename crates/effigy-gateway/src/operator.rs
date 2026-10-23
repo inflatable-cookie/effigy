@@ -305,11 +305,7 @@ fn status_once(config: &GatewayConfig, op: &OperationContext) -> io::Result<Opti
                 ));
             }
             if !matches!(
-                cx.connect(ObservationTarget::UnixSocket(run::control_socket_path(
-                    &root,
-                    &owner(),
-                    id
-                ))),
+                run::connect_control_socket(&cx, &root, &owner(), id),
                 Observed::Verified(ProbeIo::UnixOpen, _)
             ) {
                 return Err(error("gateway control socket is unavailable"));
@@ -610,9 +606,13 @@ pub fn down(config: &GatewayConfig) -> io::Result<Status> {
         },
     )
     .map_err(error)?;
-    let address = run::control_socket_path(&root, &owner(), id);
-    // The request is durable; notification is only a wakeup, never authority.
-    let _ = std::os::unix::net::UnixStream::connect(address);
+    // The request is durable; notification is only a bounded wakeup.
+    let _ = run::connect_control_socket(
+        &op.child(Duration::from_secs(1)).observe().map_err(error)?,
+        &root,
+        &owner(),
+        id,
+    );
     loop {
         op.check("gateway settle").map_err(error)?;
         let result = status(config)?;

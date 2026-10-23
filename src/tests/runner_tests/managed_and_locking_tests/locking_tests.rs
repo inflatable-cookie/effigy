@@ -156,7 +156,7 @@ run = "sleep 1"
         .is_some_and(|json| json.contains("effigy.lock-wait.v2")));
 
     let status = run_task_status_from_repo(&root, "dev", true);
-    let parsed = parse_json_output_with_schema_version(&status, "effigy.tasks-status.v2", 2);
+    let parsed = parse_json_output_with_schema_version(&status, "effigy.tasks-status.v3", 3);
     assert_eq!(parsed["state"], "running");
     assert_eq!(
         parsed["current"]["pid"].as_u64(),
@@ -193,7 +193,7 @@ run = "sleep 1"
     );
 
     let status = run_task_status_from_repo(&root, "validate", true);
-    let parsed = parse_json_output_with_schema_version(&status, "effigy.tasks-status.v2", 2);
+    let parsed = parse_json_output_with_schema_version(&status, "effigy.tasks-status.v3", 3);
     assert_eq!(
         parsed["state"], "running",
         "sequence owner missing: {parsed}"
@@ -309,6 +309,6 @@ run = "printf ok"
     );
     assert_eq!(
         crate::runner::task_engine::root_task_state_for_tests(&root, "dev"),
-        "succeeded"
+        "not-recorded"
     );
 }

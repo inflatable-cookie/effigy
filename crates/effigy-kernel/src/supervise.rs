@@ -955,12 +955,8 @@ impl SupervisorClient {
                 action,
             },
         )?;
-        if let Ok(mut socket) = UnixStream::connect(run::control_socket_path(
-            root,
-            &self.fence.resource,
-            self.run,
-        )) {
-            let _ = socket.write_all(&[1]);
+        if let Ok(observe) = cx.operation().child(Duration::from_secs(1)).observe() {
+            let _ = run::connect_control_socket(&observe, root, &self.fence.resource, self.run);
         }
         Ok(())
     }

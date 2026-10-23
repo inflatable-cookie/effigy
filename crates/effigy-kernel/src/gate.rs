@@ -1,5 +1,8 @@
 //! Gates (§5.4): a never-unlinked `flock` on a stable inode. Holding it is
 //! the holder's liveness (K2); there are no heartbeats, staleness or unlinks.
+mod foreground;
+pub use foreground::{ForegroundDiag, ForegroundHolder};
+
 use crate::ctx::{Capability, EffectClass, EffectContext, Interrupt, ObserveContext};
 use crate::fs::{self, FileName, FsError, IoError, Trust, FILE_MODE};
 use crate::id::{ResourceId, ResourceKind, RunId, Scope};
@@ -35,6 +38,7 @@ pub enum GateState {
 /// observation of the named process after its start identity matched.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HolderDiag {
+    pub foreground: Option<ForegroundDiag>,
     pub run: Option<String>,
     pub pid: u32,
     pub start: Option<String>,
@@ -45,6 +49,8 @@ pub struct HolderDiag {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Body {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    foreground: Option<ForegroundDiag>,
     v: u8,
     run: Option<String>,
     pid: u32,
@@ -644,6 +650,9 @@ fn lock(
 }
 
 fn body(run: Option<String>) -> Vec<u8> {
+    serde_json::to_vec(&current_body(run)).expect("serializable body")
+}
+fn current_body(run: Option<String>) -> Body {
     let pid = std::process::id();
     let start = ident::process_identity(pid)
         .verified()
@@ -654,15 +663,15 @@ fn body(run: Option<String>) -> Vec<u8> {
     let argv0 = std::env::args_os()
         .next()
         .map(|arg| arg.to_string_lossy().chars().take(512).collect());
-    serde_json::to_vec(&Body {
+    Body {
+        foreground: None,
         v: 1,
         run,
         pid,
         start,
         boot,
         argv0,
-    })
-    .expect("serializable body")
+    }
 }
 
 /// Reads the diagnostic body. Torn, missing or mismatched: `Unknown`.
@@ -695,6 +704,7 @@ fn holder(file: &File) -> Observed<HolderDiag> {
     };
     Observed::Verified(
         HolderDiag {
+            foreground: body.foreground,
             run: body.run,
             pid: body.pid,
             start: body.start,

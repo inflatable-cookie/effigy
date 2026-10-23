@@ -19,7 +19,7 @@ pub use memory::{ForegroundRecord, Incarnation};
 mod objects;
 mod settle;
 mod socket;
-pub use socket::control_socket_path;
+pub use socket::{connect_control_socket, control_socket_path};
 
 pub use attachments::{
     AttachMode, AttachmentTicket, Attachments, Holder, Liveness, TransitionPermit,

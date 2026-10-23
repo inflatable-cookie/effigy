@@ -35,6 +35,34 @@ pub(in crate::runner) struct RunRecord {
 }
 
 impl RunRecord {
+    pub(in crate::runner) fn refresh(&self) -> Lookup {
+        lookup_at(&kernel::observe(), &self.root, self.id)
+    }
+    pub(in crate::runner) fn effects(&self) -> Observed<Vec<effigy_kernel::run::Effect>> {
+        match Store::read(&kernel::observe(), &self.root) {
+            Observed::Verified(reader, _) => effigy_kernel::run::effects(&reader, self.id),
+            Observed::Absent(proof) => Observed::Absent(proof),
+            Observed::Unknown(reason) => Observed::Unknown(reason),
+        }
+    }
+    pub(in crate::runner) fn read_log(
+        &self,
+        sequence: i64,
+        stream: Stream,
+        offset: u64,
+        max: usize,
+    ) -> Observed<LogRead> {
+        effigy_kernel::run::read_log(
+            &kernel::observe(),
+            &self.root,
+            self.id,
+            sequence,
+            stream,
+            offset,
+            max,
+        )
+    }
+
     /// Closed, or open with a free owner gate: either way it will make no
     /// more progress by itself.
     pub(in crate::runner) fn terminal(&self) -> bool {
@@ -71,6 +99,17 @@ pub(in crate::runner) fn resolve(selector: &str) -> Result<RunId, RunnerError> {
         Err(_) => selector.parse::<RunId>().map_err(|_| {
             RunnerError::task_invocation(format!("`{selector}` is neither a run id nor a run key"))
         }),
+    }
+}
+
+/// A caller already resolved the owning checkout. Absence or uncertainty
+/// there never falls through to another checkout or the machine store.
+pub(in crate::runner) fn lookup_checkout(checkout: &Path, id: RunId) -> Lookup {
+    let cx = kernel::observe();
+    match kernel::observe_root(&cx, checkout) {
+        Observed::Verified(root, _) => lookup_at(&cx, &root, id),
+        Observed::Absent(_) => Lookup::NotFound,
+        Observed::Unknown(reason) => Lookup::Unknown(format!("{}: {reason:?}", checkout.display())),
     }
 }
 

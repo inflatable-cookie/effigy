@@ -17,6 +17,8 @@ pub struct RunSummary {
     pub workload: Option<WorkloadOutcome>,
     /// `None` until settle commits `Closed`.
     pub cleanup_complete: Option<bool>,
+    /// Explicit acknowledgement of recorded cleanup residue.
+    pub acknowledged: bool,
     /// The canonical invocation the run was admitted with, when decodable.
     pub invocation: Option<ResolvedInvocation>,
     pub created_at_ms: i64,
@@ -25,7 +27,7 @@ pub struct RunSummary {
 }
 
 const COLUMNS: &str = "runs.run_id,runs.generation,runs.phase,runs.workload_outcome,\
-    runs.cleanup_outcome,runs.invocation,runs.created_at,runs.updated_at,runs.closed_at,runs.parent_run";
+    runs.cleanup_outcome,runs.invocation,runs.created_at,runs.updated_at,runs.closed_at,runs.parent_run,runs.residue_ack IS NOT NULL";
 
 /// An owner's runs, newest first, at most `limit`.
 pub fn history(
@@ -116,6 +118,7 @@ fn read(
                     row.get::<_, i64>(7)?,
                     row.get::<_, Option<i64>>(8)?,
                     row.get::<_, Option<String>>(9)?,
+                    row.get::<_, bool>(10)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -132,6 +135,7 @@ fn read(
                     updated,
                     closed,
                     parent,
+                    acknowledged,
                 )| {
                     Ok(RunSummary {
                         id: id
@@ -145,6 +149,7 @@ fn read(
                         phase: Phase::parse(&phase)?,
                         workload: workload.map(|s| serde_json::from_str(&s)).transpose()?,
                         cleanup_complete: cleanup.map(|value| value == "complete"),
+                        acknowledged,
                         invocation: invocation
                             .and_then(|text| ResolvedInvocation::decode(text.as_bytes()).ok()),
                         created_at_ms: created,

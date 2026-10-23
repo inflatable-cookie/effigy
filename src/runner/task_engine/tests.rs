@@ -75,7 +75,7 @@ fn equivalent_spellings_serialize_on_one_gate_and_distinct_tasks_do_not() {
 fn status_reports_the_live_run_then_its_outcome_without_staleness() {
     let root = tempfile::tempdir().expect("root");
     let target = TaskTarget::for_catalog(root.path(), "build", &catalog(root.path(), "", "", 0));
-    assert_eq!(task_status(&target, HISTORY_LIMIT).state, "never-run");
+    assert_eq!(task_status(&target, HISTORY_LIMIT).state, "not-recorded");
 
     let run = begin(&target).expect("admitted");
     let live = task_status(&target, HISTORY_LIMIT);
@@ -91,7 +91,7 @@ fn status_reports_the_live_run_then_its_outcome_without_staleness() {
 
     assert!(run.close(WorkloadOutcome::Failed { code: 3 }).is_empty());
     let closed = task_status(&target, HISTORY_LIMIT);
-    assert_eq!(closed.state, "failed");
+    assert_eq!(closed.state, "not-recorded");
     assert!(closed.current.is_none());
     let latest = closed.latest.expect("latest run");
     assert_eq!(latest.exit_code, Some(3));
@@ -113,7 +113,7 @@ fn an_unclosed_run_reads_interrupted_once_its_gate_is_free_and_the_next_run_sett
     let next = begin(&target).expect("the successor settles its predecessor first");
     assert!(next.close(WorkloadOutcome::Succeeded).is_empty());
     let settled = task_status(&target, HISTORY_LIMIT);
-    assert_eq!(settled.state, "succeeded");
+    assert_eq!(settled.state, "not-recorded");
     assert_eq!(settled.history.len(), 2);
     assert_eq!(settled.history[1].state, "interrupted");
 }
@@ -156,7 +156,7 @@ fn sequence_durable_stop_request_cancels_active_custody_and_settles_child() {
     // Read the fence from the live owner handle before another thread posts
     // the durable request. Only the owning thread writes run outcomes.
     let mut parent = run;
-    let expected = parent.run_mut().fence().clone();
+    let expected = parent.run_mut().expect("durable test run").fence().clone();
     let state = super::kernel::effects_root(root.path()).unwrap();
     let requester = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -208,7 +208,7 @@ fn sequence_pending_stop_starts_no_next_workload() {
     let catalog = catalog(root.path(), "", "root", 0);
     let target = TaskTarget::for_catalog(root.path(), "pending-stop-proof", &catalog);
     let mut parent = begin(&target).unwrap();
-    let expected = parent.run_mut().fence().clone();
+    let expected = parent.run_mut().expect("durable test run").fence().clone();
     effigy_kernel::run::request(
         &super::kernel::effects(),
         super::kernel::effects_root(root.path()).unwrap(),
@@ -237,7 +237,12 @@ fn sequence_pending_stop_starts_no_next_workload() {
         .unwrap()
     };
     assert!(!root.path().join("should-not-exist").exists());
-    assert!(child.run_mut().effects().unwrap().is_empty());
+    assert!(child
+        .run_mut()
+        .expect("durable test run")
+        .effects()
+        .unwrap()
+        .is_empty());
     child.close(exit.workload.clone());
     parent.close(exit.workload);
 }
@@ -673,7 +678,7 @@ fn the_builtin_test_routes_run_holds_a_sentinel_so_a_kill_still_settles_it() {
                 .expect("the built-in run is admitted");
             let id = run.id();
             assert!(
-                run.run_mut().owns_sentinel(),
+                run.run_mut().expect("durable test run").owns_sentinel(),
                 "the built-in test route's run must have a sentinel"
             );
             let env = crate::runner::scratch::temp_env();

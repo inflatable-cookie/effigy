@@ -30,6 +30,7 @@ pub(in crate::runner) enum HolderKind {
 #[derive(Debug, Clone)]
 pub(in crate::runner) struct LiveHolder {
     pub(in crate::runner) kind: HolderKind,
+    pub(in crate::runner) checkout_root: Option<std::path::PathBuf>,
     pub(in crate::runner) run: Option<RunId>,
     pub(in crate::runner) catalog: String,
     pub(in crate::runner) task: String,
@@ -59,18 +60,66 @@ pub(in crate::runner) fn live_holders(repo_root: &Path) -> Vec<LiveHolder> {
     {
         roots.push(resolved.resolved_root);
     }
+    roots.sort();
+    roots.dedup();
+    let mut live = Vec::new();
     let mut checkouts = Vec::new();
     for root in roots {
+        let cx = kernel::observe();
+        if let Observed::Verified(state, _) = kernel::observe_root(&cx, &root) {
+            match Gate::foreground_holders(&cx, &state) {
+                Observed::Verified(rows, _) => {
+                    for row in rows {
+                        let coordinates = row.coordinates;
+                        if coordinates.owner.kind() != ResourceKind::Task {
+                            continue;
+                        }
+                        let id = row.holder.run.as_deref().and_then(|run| run.parse().ok());
+                        let kind = holder_kind(&coordinates.gate);
+                        if live
+                            .iter()
+                            .any(|held: &LiveHolder| held.run == id && held.kind == kind)
+                        {
+                            continue;
+                        }
+                        live.push(LiveHolder {
+                            kind,
+                            checkout_root: Some(root.clone()),
+                            run: id,
+                            catalog: coordinates.task.catalog().into(),
+                            task: coordinates.task.task().into(),
+                            profile: None,
+                            pid: matches!(
+                                row.holder.state,
+                                Observed::Verified(
+                                    effigy_kernel::ident::ProcessState::Active
+                                        | effigy_kernel::ident::ProcessState::Stopped,
+                                    _
+                                )
+                            )
+                            .then_some(row.holder.pid),
+                            managed_run: None,
+                        });
+                    }
+                }
+                Observed::Unknown(reason) => {
+                    live.push(unreadable(format!("foreground gates: {reason:?}")))
+                }
+                Observed::Absent(_) => {}
+            }
+        }
         if let Ok(Some(checkout)) = super::checkout::read(&root) {
             if !checkouts.iter().any(|(_, id)| *id == checkout) {
                 checkouts.push((root, checkout));
             }
         }
     }
-    checkouts
-        .into_iter()
-        .flat_map(|(root, checkout)| checkout_holders(&root, checkout))
-        .collect()
+    live.extend(
+        checkouts
+            .into_iter()
+            .flat_map(|(root, checkout)| checkout_holders(&root, checkout)),
+    );
+    live
 }
 
 fn checkout_holders(path: &Path, checkout: effigy_kernel::id::CheckoutId) -> Vec<LiveHolder> {
@@ -103,6 +152,7 @@ fn checkout_holders(path: &Path, checkout: effigy_kernel::id::CheckoutId) -> Vec
                 Observed::Unknown(_) => None,
             };
             Some(LiveHolder {
+                checkout_root: Some(path.into()),
                 kind: holder_kind(&spec.owner),
                 run: Some(summary.id),
                 catalog: spec.task.catalog().to_owned(),
@@ -117,6 +167,7 @@ fn checkout_holders(path: &Path, checkout: effigy_kernel::id::CheckoutId) -> Vec
 
 fn unreadable(reason: String) -> LiveHolder {
     LiveHolder {
+        checkout_root: None,
         kind: HolderKind::Unreadable(reason),
         run: None,
         catalog: String::new(),

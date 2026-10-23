@@ -6,12 +6,15 @@ specify foreground memory, checkout journals and the small machine store.
 The approved amendment and implementation merge together. Remaining API
 sketches and historical adoption notes are subject to these sections.
 
-Implementation is in progress. `ForegroundRecord`, `ForegroundRun` and the
-pipe-only memory sentinel implement memory intents, incarnation fencing,
-ancestor gate custody and positive child completion without databases, logs
-or sockets. Memory parent capabilities export only an explicitly inherited
-reading descriptor. Whole-tree classification, admission integration and
-foreground live views are not yet connected to command execution.
+Implementation is in progress. Local shell tasks and statically resolved local
+sequences now use `ForegroundRun` in production, with ancestor gate custody,
+positive child completion and no writable database. Named, managed and declared
+durable trees use checkout journals. Memory parent grants carry the run class
+and verified hook identity; unknown journal liveness cannot bypass admission.
+The binary proof covers 24 short runs across three checkouts, nested heavy
+admission, live status, hook loss and late named-run refusal. Full workflow
+classification, generic cross-checkout views, migration scale and the remaining
+acceptance proofs are still required before this amendment ships.
 
 Production task journals, environment records, holder sessions, render objects
 and source-acquisition custody use the owning checkout journal. Gateway
@@ -1311,6 +1314,16 @@ after `Admitted` whenever a run's custody is non-empty, in either placement.
 
 Planner ruling (effigy-a6, kernel lane owner, 2026-10-19): admission precedes socket bind, because K3 requires intent before effect.
 
+Long checkout paths do not relocate control state. Socket bind and bounded
+connection use a verified directory descriptor and one component: Linux uses
+its own `/proc/self/fd/` directory reference; Darwin performs the relative
+operation on a fresh joined pthread with a thread-local cwd. The invoking
+thread and process cwd are unchanged, and no helper process can bind after
+owner death. Socket intent, inode receipts and exact-inode settle remain the
+same. The Darwin signature and return contract are pinned in Apple's
+[libpthread header](https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/private/pthread/private.h#L65-L87).
+
+
 #### Proof
 
 - The full supervisor matrix in §12.3, including owning-client SIGKILL, owner
@@ -2437,7 +2450,7 @@ Task engine adoption (effigy#217, 2026-10-19):
 | Row | State |
 | --- | --- |
 | Lock key, lease lock, `tasks unlock`, hostname as namespace | Done. `TaskId` from the one resolver; `Gate(Task)` per run; shared locks are `Store(task-lock:<name>)` runs; holders are host gates only. `tasks unlock` refuses for one minor. |
-| Status rows | Done. `effigy.tasks-status.v2` projects run rows plus a gate probe ([018](018-task-status-query-surface-and-read-model-contract.md)). The one-minor v0.14 read-only fallback (M6) is retired in v0.15: the existing binary uses only kernel rows for task status and no longer reads `.effigy/runtime/tasks/` or `.effigy/reports/tasks/`. Q-010 proposes live foreground gate diagnostics alongside checkout-durable history; contracts [017](017-task-status-record-and-active-run-model-contract.md) and [018](018-task-status-query-surface-and-read-model-contract.md) own that unimplemented change. |
+| Status rows | In progress. `effigy.tasks-status.v3` and `effigy.tasks-status-all.v3` combine transient foreground gate diagnostics with independently labelled durable history ([018](018-task-status-query-surface-and-read-model-contract.md)). Missing current evidence reads `not-recorded`; foreground completion creates no history. v0.14 status families remain retired. Generic run inventory and complete cross-checkout coverage are still required. |
 | Status write failure | Done. Journal failures are warnings; the task's exit code stands (K10). |
 | Process group always; owned-children stop | Local groups retain a recorded anchor before workload go (effigy#252), allowing recovery of nonce-free members after the leader is reaped; lost anchors and old unanchored receipts retain the conservative refusal (§5.7). Done for plain host commands: `Custody::spawn` with `Terminal::Inherit`, a per-run sentinel, the router installed before the first custody spawn. Host sequence steps also use child-run custody (effigy#226). Container task routes, inline workspace tasks, sequence container steps, built-in `exec` steps and named-container managed setup run under remote custody (§5.10, effigy#236). Top-level `effigy exec`, aliases, shells and managed processes keep their current spawners until their owners adopt custody. |
 | Generated sequence script | One typed engine with child Runs for every placement, in text and JSON: host steps (effigy#226) and container steps under remote custody (effigy#236); the `legacy_container_step` seam and the generated named-container setup script are gone. Container setup embedded in a lifecycle-managed process command still runs inside that managed process, so its per-step journals need the run supervisor's custody of managed processes; not done in #236. |

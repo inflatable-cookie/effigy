@@ -1,7 +1,7 @@
 //! A plain task command under kernel custody (contract 052 §5.7, K6, K9).
 //!
 //! The command always gets its own process group behind the spawn barrier,
-//! with a durable custody record before it executes. Signals reach this
+//! with its class-appropriate custody receipt before it executes. Signals reach this
 //! process through the one router and are forwarded to that group only. The
 //! run's settle verifies the group closed, so nothing the task started
 //! outlives the run. Text and JSON differ only in how captured output is
@@ -20,7 +20,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use effigy_kernel::ctx::{OpenReason, StopCause};
-use effigy_kernel::custody::{Custody, EnvValue, Lifetime, ProcessSpec, SecretValue, Terminal};
+use effigy_kernel::custody::{EnvValue, Lifetime, ProcessSpec, SecretValue, Terminal};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::WorkloadOutcome;
 use effigy_kernel::run::{Request, RequestAction};
@@ -108,8 +108,7 @@ pub(in crate::runner) fn run_plain(
         },
         label: run.target().label.clone(),
     };
-    let cx = kernel::effects();
-    let spawned = Custody::spawn(&mut run.run_mut(), spec, &cx);
+    let spawned = run.spawn(spec, false);
     let mut process = match spawned {
         Ok(process) => process,
         Err(error) => {
@@ -156,6 +155,12 @@ pub(in crate::runner) fn run_plain(
     let mut own_request: Option<(Request, Instant)> = None;
     let mut requests_read = Instant::now();
     let exit = loop {
+        if let Err(error) = run.verify_admission() {
+            if let Ok(cleanup) = kernel::cleanup() {
+                process.stop(&cleanup);
+            }
+            return Err(error);
+        }
         if process.expired() {
             timed_out = true;
             break None;
@@ -197,7 +202,7 @@ pub(in crate::runner) fn run_plain(
     let code = exit.map(|exit| exit.code);
     if let Some(exit) = exit {
         // Natural completion is recorded only from the verified exit (R5).
-        let _ = process.complete(&mut run.run_mut(), exit);
+        let _ = run.complete(&process, exit);
     }
     let workload = if timed_out {
         WorkloadOutcome::TimedOut {
@@ -209,7 +214,7 @@ pub(in crate::runner) fn run_plain(
             signal: None,
         }
     } else if let Some((request, _)) = own_request.as_ref().filter(|_| signalled.is_none()) {
-        let _ = run.run_mut().resolve_request(request);
+        let _ = run.run_mut()?.resolve_request(request);
         WorkloadOutcome::Cancelled {
             cause: StopCause::Requested,
             signal: None,
@@ -287,12 +292,18 @@ impl effigy_env::ExecRunner for RunExec<'_> {
             label: ENV_EXEC_LABEL.to_owned(),
         };
         let _waiting = CustodyWait::enter();
-        let cx = kernel::effects();
-        let mut process = Custody::spawn(&mut run.run_mut(), spec, &cx)
+        let mut process = run
+            .spawn(spec, false)
             .map_err(|error| spawn_error(format!("{error:?}")))?;
         let mut stdout = Vec::new();
         let mut stderr = Tail::default();
         let exit = loop {
+            if let Err(error) = run.verify_admission() {
+                if let Ok(cleanup) = kernel::cleanup() {
+                    process.stop(&cleanup);
+                }
+                return Err(spawn_error(error.to_string()));
+            }
             if !kernel::poll_router().is_empty() || process.expired() {
                 break None;
             }
@@ -326,7 +337,7 @@ impl effigy_env::ExecRunner for RunExec<'_> {
                 timeout,
             });
         };
-        let _ = process.complete(&mut run.run_mut(), exit);
+        let _ = run.complete(&process, exit);
         if exit.code != 0 {
             let tail = &stderr.bytes[stderr
                 .bytes
@@ -367,6 +378,7 @@ pub(in crate::runner) fn workload(code: Option<i32>, forwarded: Option<i32>) -> 
 /// A pending `run stop` for this run, read from the journal.
 fn stop_request(run: &mut TaskRun) -> Option<Request> {
     run.run_mut()
+        .ok()?
         .requests()
         .ok()?
         .into_iter()

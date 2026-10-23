@@ -30,7 +30,8 @@ impl Run<'_> {
             if dir.entry(&name).map_err(StoreError::from)?.is_some() {
                 return Err(RunError::Invalid("socket path already exists".into()));
             }
-            let listener = UnixListener::bind(dir.path().join(name.as_str()))?;
+            let listener =
+                crate::socket_at::in_directory(&dir, &name, |name| UnixListener::bind(name))??;
             let stat = dir
                 .entry(&name)
                 .map_err(StoreError::from)?
@@ -130,6 +131,29 @@ pub fn control_socket_path(root: &StateRoot, owner: &ResourceId, run: RunId) -> 
     };
     parent.join(format!("{run}.sock"))
 }
+/// Bounded connection used only for observation or waking a journal request.
+/// The caller's read context and checkout binding remain authoritative.
+pub fn connect_control_socket(
+    cx: &crate::ctx::ObserveContext,
+    root: &StateRoot,
+    owner: &ResourceId,
+    run: RunId,
+) -> crate::observe::Observed<crate::probe::ProbeIo> {
+    let target = (|| -> Result<_, crate::fs::FsError> {
+        root.verify_binding()?;
+        let directory = directory(root, owner)?.ok_or_else(|| crate::fs::FsError::Untrusted {
+            path: root.path().into(),
+            reason: "socket directory absent".into(),
+        })?;
+        let name = FileName::new(&format!("{run}.sock"))?;
+        Ok(crate::probe::ObservationTarget::UnixSocketAt { directory, name })
+    })();
+    match target {
+        Ok(target) => cx.connect(target),
+        Err(error) => crate::observe::Observed::Unknown(crate::root::unknown(&error)),
+    }
+}
+
 fn directory(root: &StateRoot, owner: &ResourceId) -> Result<Option<DirFd>, crate::fs::FsError> {
     if owner.kind() != ResourceKind::Gateway {
         return root.family(Family::Sock);

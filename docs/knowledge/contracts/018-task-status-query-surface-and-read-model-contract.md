@@ -83,11 +83,13 @@ include `not-recorded` and `unknown`; no reads create tokens, history or locks.
 
 ## JSON
 
-The proposed envelopes are `effigy.tasks-status.v3` and
+The envelopes are `effigy.tasks-status.v3` and
 `effigy.tasks-status-all.v3` (`schema_version = 3`). New absence semantics and
 nullable live-diagnostic fields must not silently change the v2 contract.
-Phase 2 updates the schema fixtures, consumers and CLI checks together; there
-is no v2 compatibility shim that fabricates foreground history.
+Phase 2 updates the consumers and CLI checks together; there is no v2
+compatibility shim that fabricates foreground history. Foreground inventory is
+bounded to 64 gate-directory entries and 8192 resource entries; exceeding a
+bound or reading unverified held-gate diagnostics produces explicit uncertainty.
 
 | Field | Meaning |
 | --- | --- |
