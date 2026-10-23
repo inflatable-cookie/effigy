@@ -29,10 +29,48 @@ struct Destination {
     checkout_root: PathBuf,
 }
 
+/// The caller resolves Git metadata; the kernel holds both directory
+/// generations through publication and persists their facts in the local seal.
+#[derive(Debug, Clone)]
+pub struct CheckoutLocation {
+    pub root: PathBuf,
+    pub git_directory: Option<PathBuf>,
+}
+#[derive(Debug)]
+struct Location {
+    root: DirFd,
+    git: Option<DirFd>,
+}
+impl Location {
+    fn open(location: CheckoutLocation) -> Result<Self, StoreError> {
+        Ok(Self {
+            root: DirFd::open(&location.root)?,
+            git: location
+                .git_directory
+                .as_deref()
+                .map(DirFd::open)
+                .transpose()?,
+        })
+    }
+    fn matches(&self, other: &Self) -> Result<bool, StoreError> {
+        Ok(self.root.path() == other.root.path()
+            && self.root.identity()? == other.root.identity()?
+            && self.git_identity()? == other.git_identity()?
+            && self.git.as_ref().map(|dir| dir.path()) == other.git.as_ref().map(|dir| dir.path()))
+    }
+    fn git_identity(&self) -> Result<Option<crate::fs::DirectoryIdentity>, StoreError> {
+        self.git
+            .as_ref()
+            .map(DirFd::identity)
+            .transpose()
+            .map_err(StoreError::from)
+    }
+}
+
 /// Read-only checkout identity resolver. Hints are diagnostic; each call must
 /// verify the token and physical checkout/Git-directory generation itself.
-pub type CheckoutResolver<'a> =
-    dyn FnMut(CheckoutId, Option<&Path>, Option<&Path>) -> Result<PathBuf, StoreError> + 'a;
+pub type CheckoutResolver<'a> = dyn FnMut(CheckoutId, Option<&Path>, Option<&Path>) -> Result<CheckoutLocation, StoreError>
+    + 'a;
 
 /// `resolve` must read and verify the existing checkout token, never mint one.
 /// Its optional path is an untrusted source hint, not placement authority. It
@@ -127,28 +165,19 @@ pub fn import(
                 part.path_hint.as_deref().map(Path::new),
                 part.git_dir_hint.as_deref().map(Path::new),
             )?;
-            let dir = DirFd::open(&path).map_err(StoreError::from)?;
+            let dir = Location::open(path)?;
             locations.push((checkout, dir));
         }
     }
     let machine_dir = DirFd::open(machine_home).map_err(StoreError::from)?;
-    let mut identities = std::collections::BTreeSet::new();
-    for dir in locations
-        .iter()
-        .map(|(_, dir)| dir)
-        .chain(std::iter::once(&machine_dir))
-    {
-        let identity = dir.identity().map_err(StoreError::from)?;
-        if !identities.insert((identity.device, identity.inode)) {
-            return Err(StoreError::Corrupt(
-                "multiple import authorities resolve to one directory".into(),
-            )
-            .into());
-        }
-    }
+    // Older task and environment engines could mint different primary tokens
+    // in one checkout. Only the resolver's verified physical generation can
+    // coalesce them; resource identities and run ids remain unchanged.
+    coalesce(&mut plan.partitions, &locations, &machine_dir)?;
     if plan.partitions.iter().all(|part| part.checkout.is_some()) {
         plan.partitions.push(Partition {
             checkout: None,
+            checkout_aliases: Vec::new(),
             path_hint: None,
             git_dir_hint: None,
             resources: Default::default(),
@@ -183,8 +212,8 @@ pub fn import(
                     .expect("all checkout locations resolved")
                     .1;
                 (
-                    StateRoot::effects(cx, dir.path()).map_err(StoreError::from)?,
-                    dir.path().to_path_buf(),
+                    StateRoot::effects(cx, dir.root.path()).map_err(StoreError::from)?,
+                    dir.root.path().to_path_buf(),
                 )
             }
             None => (machine.clone(), machine_dir.path().to_path_buf()),
@@ -273,8 +302,18 @@ pub fn import(
             &FileName::new(destination.stage.database_name()).map_err(StoreError::from)?,
         )?;
         crate::fault_point!(MigrationCopyAfter).map_err(StoreError::from)?;
+        let location = destination.partition.checkout.and_then(|checkout| {
+            locations
+                .iter()
+                .find(|(id, _)| *id == checkout)
+                .map(|(_, location)| location)
+        });
         receipt.destinations.push(ImportedDestination {
             checkout: destination.partition.checkout,
+            checkout_aliases: destination.partition.checkout_aliases.clone(),
+            git_directory: location
+                .and_then(|location| location.git.as_ref().map(|dir| dir.path().to_owned())),
+            git_directory_identity: location.map(Location::git_identity).transpose()?.flatten(),
             checkout_root: destination.checkout_root.clone(),
             directory_identity: DirFd::open(&destination.checkout_root)
                 .map_err(StoreError::from)?
@@ -306,24 +345,25 @@ pub fn import(
         );
     }
     for destination in &destinations {
-        if let Some(checkout) = destination.partition.checkout {
-            let current = resolve(
+        for checkout in destination
+            .partition
+            .checkout
+            .into_iter()
+            .chain(destination.partition.checkout_aliases.iter().copied())
+        {
+            let current = Location::open(resolve(
                 checkout,
                 Some(&destination.checkout_root),
                 destination.partition.git_dir_hint.as_deref().map(Path::new),
-            )?;
-            let current_dir = DirFd::open(&current).map_err(StoreError::from)?;
+            )?)?;
             let expected = &locations
                 .iter()
                 .find(|(id, _)| *id == checkout)
                 .expect("resolved checkout binding")
                 .1;
-            if current_dir.path() != destination.checkout_root
-                || current_dir.identity().map_err(StoreError::from)?
-                    != expected.identity().map_err(StoreError::from)?
-            {
+            if !current.matches(expected)? {
                 return Err(StoreError::Corrupt(
-                    "checkout resolution changed before migration publication".into(),
+                    "checkout or Git generation changed before migration publication".into(),
                 )
                 .into());
             }
@@ -525,16 +565,26 @@ fn finish_seals(
     for destination in &receipt.destinations {
         let root = match destination.checkout {
             Some(checkout) => {
-                let path = resolve(checkout, Some(&destination.checkout_root), None)?;
-                let dir = DirFd::open(&path)?;
-                if dir.path() != destination.checkout_root
-                    || dir.identity()? != destination.directory_identity
+                for alias in
+                    std::iter::once(checkout).chain(destination.checkout_aliases.iter().copied())
                 {
-                    return Err(StoreError::Corrupt(
-                        "committed checkout binding changed".into(),
-                    ));
+                    let location = Location::open(resolve(
+                        alias,
+                        Some(&destination.checkout_root),
+                        destination.git_directory.as_deref(),
+                    )?)?;
+                    if location.root.path() != destination.checkout_root
+                        || location.root.identity()? != destination.directory_identity
+                        || location.git_identity()? != destination.git_directory_identity
+                        || location.git.as_ref().map(|dir| dir.path())
+                            != destination.git_directory.as_deref()
+                    {
+                        return Err(StoreError::Corrupt(
+                            "committed checkout or Git binding changed".into(),
+                        ));
+                    }
                 }
-                StateRoot::effects(cx, dir.path())?
+                StateRoot::effects(cx, &destination.checkout_root)?
             }
             None => {
                 let dir = DirFd::open(machine_home)?;
@@ -628,5 +678,61 @@ fn replace(
         &bytes,
         ReplaceOpts::default(),
     )?;
+    Ok(())
+}
+
+fn coalesce(
+    parts: &mut Vec<Partition>,
+    locations: &[(CheckoutId, Location)],
+    machine: &DirFd,
+) -> Result<(), StoreError> {
+    let machine = machine.identity()?;
+    let mut grouped: Vec<Partition> = Vec::new();
+    let mut physical = std::collections::BTreeMap::new();
+    for part in std::mem::take(parts) {
+        let Some(checkout) = part.checkout else {
+            grouped.push(part);
+            continue;
+        };
+        let location = &locations
+            .iter()
+            .find(|(id, _)| *id == checkout)
+            .expect("resolved location")
+            .1;
+        let identity = location.root.identity()?;
+        if identity == machine {
+            return Err(StoreError::Corrupt(
+                "checkout and machine authorities resolve to one directory".into(),
+            ));
+        }
+        let key = (identity.device, identity.inode);
+        if let Some(&index) = physical.get(&key) {
+            let previous: &mut Partition = &mut grouped[index];
+            let primary = previous.checkout.expect("grouped checkout");
+            let original = &locations
+                .iter()
+                .find(|(id, _)| *id == primary)
+                .expect("resolved primary")
+                .1;
+            if checkout.kind() != primary.kind() || !location.matches(original)? {
+                return Err(StoreError::Corrupt(
+                    "checkout aliases disagree on physical checkout or Git generation".into(),
+                ));
+            }
+            previous.checkout_aliases.push(checkout);
+            previous.checkout_aliases.extend(part.checkout_aliases);
+            if previous.checkout_aliases.len() > 32 {
+                return Err(StoreError::TooLarge { limit: 32 });
+            }
+            previous.resources.extend(part.resources);
+            previous.runs.extend(part.runs);
+            previous.objects.extend(part.objects);
+            previous.unresolved_runs += part.unresolved_runs;
+        } else {
+            physical.insert(key, grouped.len());
+            grouped.push(part);
+        }
+    }
+    *parts = grouped;
     Ok(())
 }

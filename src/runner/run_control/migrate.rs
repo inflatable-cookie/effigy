@@ -6,6 +6,8 @@ use effigy_kernel::ctx::{Deadline, OpenReason};
 use effigy_kernel::migration::{self, MigrationError};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::root::StateRoot;
+use serde::Serialize;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -115,7 +117,7 @@ pub(super) fn run(
         })
     };
     // Resolve every retained checkout before import can create any state.
-    let mut destinations = Vec::new();
+    let mut destinations = BTreeMap::new();
     for partition in import_plan
         .as_ref()
         .into_iter()
@@ -129,7 +131,13 @@ pub(super) fn run(
                     partition.path_hint.as_deref().map(Path::new),
                 )
                 .map_err(error)?;
-            destinations.push(serde_json::json!({"checkout":checkout,"root":path,"unresolved_runs":partition.unresolved_runs}));
+            add_destination(
+                &mut destinations,
+                checkout,
+                path.root,
+                &[],
+                partition.unresolved_runs,
+            );
         }
     }
     if let Some(receipt) = committed.as_ref() {
@@ -138,7 +146,18 @@ pub(super) fn run(
                 let path = found
                     .resolve(&observe, checkout, Some(&destination.checkout_root))
                     .map_err(error)?;
-                destinations.push(serde_json::json!({"checkout":checkout,"root":path,"unresolved_runs":destination.unresolved_runs}));
+                for alias in &destination.checkout_aliases {
+                    found
+                        .resolve(&observe, *alias, Some(&destination.checkout_root))
+                        .map_err(error)?;
+                }
+                add_destination(
+                    &mut destinations,
+                    checkout,
+                    path.root,
+                    &destination.checkout_aliases,
+                    destination.unresolved_runs,
+                );
             }
         }
     }
@@ -151,13 +170,13 @@ pub(super) fn run(
             "needs-quiescence"
         };
         let mut text=format!("Runtime migration: {state}\n{} retained checkout journal(s); {} legacy resources; {} unresolved runs.\n",destinations.len(),import_plan.as_ref().map_or(0,|plan|plan.preflight.resources),import_plan.as_ref().map_or(0,|plan|plan.preflight.unresolved_runs));
-        for row in &destinations {
-            text.push_str(&format!("  {}\n", row["root"].as_str().unwrap_or_default()));
+        for row in destinations.values() {
+            text.push_str(&format!("  {}\n", row.root.display()));
         }
         if !plan_only {
             text.push_str("Withdraw old Effigy launchers, let the reported writers settle, then run `effigy run migrate --legacy-launchers-stopped`. No destination state has been created.");
         }
-        let payload = serde_json::json!({"schema":SCHEMA,"state":state,"source":source.path(),"plan":import_plan,"committed":committed,"destinations":destinations,"discovery":found});
+        let payload = serde_json::json!({"schema":SCHEMA,"state":state,"source":source.path(),"plan":import_plan,"committed":committed,"destinations":destinations.into_values().collect::<Vec<_>>(),"discovery":found});
         let rendered = render(payload, &text, json);
         return if plan_only {
             Ok(rendered)
@@ -237,4 +256,34 @@ fn blocked<T>(report: &migration::Preflight, json: bool) -> Result<T, RunnerErro
         ),
         json,
     )
+}
+
+#[derive(Debug, Serialize)]
+struct PlannedDestination {
+    checkout: effigy_kernel::id::CheckoutId,
+    checkout_aliases: Vec<effigy_kernel::id::CheckoutId>,
+    root: PathBuf,
+    unresolved_runs: usize,
+}
+fn add_destination(
+    destinations: &mut BTreeMap<PathBuf, PlannedDestination>,
+    checkout: effigy_kernel::id::CheckoutId,
+    root: PathBuf,
+    aliases: &[effigy_kernel::id::CheckoutId],
+    unresolved: usize,
+) {
+    let entry = destinations
+        .entry(root.clone())
+        .or_insert_with(|| PlannedDestination {
+            checkout,
+            checkout_aliases: Vec::new(),
+            root,
+            unresolved_runs: 0,
+        });
+    for id in std::iter::once(checkout).chain(aliases.iter().copied()) {
+        if id != entry.checkout && !entry.checkout_aliases.contains(&id) {
+            entry.checkout_aliases.push(id);
+        }
+    }
+    entry.unresolved_runs += unresolved;
 }

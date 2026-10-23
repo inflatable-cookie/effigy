@@ -138,10 +138,13 @@ fn selected(
     part: &Partition,
 ) -> Result<bool, StoreError> {
     Ok(match table {
-        "checkouts" => match part.checkout {
-            Some(checkout) => text(columns, values, "token")? == crate::store::token(&checkout),
-            None => false,
-        },
+        "checkouts" => {
+            let token = text(columns, values, "token")?;
+            part.checkout
+                .into_iter()
+                .chain(part.checkout_aliases.iter().copied())
+                .any(|checkout| token == crate::store::token(&checkout))
+        }
         "resources" => part.resources.contains(text(columns, values, "name")?),
         "runs" => part.runs.contains(text(columns, values, "run_id")?),
         "events" | "attachments" | "requests" => {

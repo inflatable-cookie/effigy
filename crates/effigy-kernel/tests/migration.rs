@@ -11,6 +11,15 @@ use effigy_kernel::store::{Store, StoreError, DB_NAME};
 use std::os::unix::fs::PermissionsExt;
 use support::*;
 
+fn location(root: &std::path::Path) -> migration::CheckoutLocation {
+    // These kernel model fixtures have no SCM metadata. Engine/CLI tests own
+    // real Git token resolution and supply its separate directory generation.
+    migration::CheckoutLocation {
+        root: root.to_path_buf(),
+        git_directory: None,
+    }
+}
+
 fn source() -> (effigy_test_support::Fixture, StateRoot, ResourceId) {
     let home = home();
     let cx = effects(EffectClass::Mutate);
@@ -223,7 +232,7 @@ fn migration_import_seals_independent_checkout_and_machine_destinations_and_retr
     let source_before = snapshot(source_home.path());
     let mut resolver = |id, _: Option<&std::path::Path>, _: Option<&std::path::Path>| {
         assert_eq!(id, checkout);
-        Ok(checkout_root.path().to_path_buf())
+        Ok(location(checkout_root.path()))
     };
     let report = migration::import(
         &cx,
@@ -317,7 +326,7 @@ fn migration_import_keeps_legacy_families_when_machine_destination_shares_the_so
         &source,
         source_home.path(),
         &migration::LegacyQuiescence::launchers_withdrawn(),
-        &mut |_, _, _| Ok(checkout_root.path().to_path_buf()),
+        &mut |_, _, _| Ok(location(checkout_root.path())),
     )
     .unwrap();
     assert!(!report.resumed);
@@ -378,7 +387,7 @@ fn migration_import_faults_before_and_after_publication_keep_one_authority_and_r
                         &source,
                         source_home.path(),
                         &migration::LegacyQuiescence::launchers_withdrawn(),
-                        &mut |_, _, _| Ok(checkout_root.path().to_path_buf()),
+                        &mut |_, _, _| Ok(location(checkout_root.path())),
                     )
                 },
             );
@@ -404,7 +413,7 @@ fn migration_import_faults_before_and_after_publication_keep_one_authority_and_r
                 &source,
                 source_home.path(),
                 &migration::LegacyQuiescence::launchers_withdrawn(),
-                &mut |_, _, _| Ok(checkout_root.path().to_path_buf()),
+                &mut |_, _, _| Ok(location(checkout_root.path())),
             )
             .unwrap_or_else(|error| panic!("{point}: {error}"));
             assert_eq!(retried.resumed, committed, "{point}");
@@ -454,7 +463,7 @@ fn migration_import_killed_child() {
                 &source,
                 &source_home,
                 &migration::LegacyQuiescence::launchers_withdrawn(),
-                &mut |_, _, _| Ok(checkout_root.clone()),
+                &mut |_, _, _| Ok(location(&checkout_root)),
             )
         },
     )
@@ -518,7 +527,7 @@ fn migration_import_kill_at_each_publication_crossing_resumes_the_committed_auth
             &source,
             source_home.path(),
             &migration::LegacyQuiescence::launchers_withdrawn(),
-            &mut |_, _, _| Ok(checkout_root.path().to_path_buf()),
+            &mut |_, _, _| Ok(location(checkout_root.path())),
         )
         .unwrap_or_else(|error| panic!("{point}: {error}"));
         assert_eq!(recovered.resumed, committed);
@@ -592,7 +601,7 @@ fn migration_import_copies_and_verifies_object_closures_and_relocates_their_path
         &source,
         machine_home.path(),
         &migration::LegacyQuiescence::launchers_withdrawn(),
-        &mut |_, _, _| Ok(checkout_root.path().to_path_buf()),
+        &mut |_, _, _| Ok(location(checkout_root.path())),
     )
     .unwrap();
     assert_eq!(snapshot(source_home.path()), before);
@@ -654,7 +663,7 @@ fn migration_missing_checkout_refuses_before_any_destination_state_is_created() 
         &migration::LegacyQuiescence::launchers_withdrawn(),
         &mut |id, _, _| {
             if id == first {
-                Ok(checkout_root.path().to_path_buf())
+                Ok(location(checkout_root.path()))
             } else {
                 Err(StoreError::Corrupt("fixture checkout is missing".into()))
             }
@@ -695,7 +704,7 @@ fn migration_prepared_journals_refuse_read_and_write_without_creating_fresh_stat
                 &source,
                 source_home.path(),
                 &migration::LegacyQuiescence::launchers_withdrawn(),
-                &mut |_, _, _| Ok(checkout_root.path().to_path_buf()),
+                &mut |_, _, _| Ok(location(checkout_root.path())),
             )
         },
     );
@@ -716,7 +725,7 @@ fn migration_prepared_journals_refuse_read_and_write_without_creating_fresh_stat
         &source,
         source_home.path(),
         &migration::LegacyQuiescence::launchers_withdrawn(),
-        &mut |_, _, _| Ok(checkout_root.path().to_path_buf()),
+        &mut |_, _, _| Ok(location(checkout_root.path())),
     )
     .unwrap();
     assert!(matches!(
@@ -876,4 +885,165 @@ fn runtime_migration_stopped_pre_run_writer_is_reported_before_staging_and_can_b
     child.wait().unwrap();
     assert!(migration::inspect(&observe(), &root).unwrap().ready());
     assert!(!root.path().join("migration-prepared.json").exists());
+}
+
+#[test]
+fn migration_import_coalesces_verified_checkout_aliases_without_reencoding_resources() {
+    use effigy_kernel::ctx::Placement;
+    use effigy_kernel::id::{
+        ExecutionTarget, InvocationSpec, ResolvedInvocation, Route, RunId, Surface, TaskId,
+    };
+    use effigy_kernel::outcome::{Invocation, WorkloadOutcome};
+    use effigy_kernel::run::{BeginOpts, ForegroundRun};
+    use effigy_kernel::supervise::{Executable, LifecyclePlan};
+    let (source_home, source, _) = source();
+    let cx = effects(EffectClass::Mutate);
+    let ids = [
+        CheckoutId::new(CheckoutKind::LinkedWorktree, [7; 16]),
+        CheckoutId::new(CheckoutKind::LinkedWorktree, [8; 16]),
+    ];
+    let envs = ids.map(|id| ResourceId::environment(id, "dev").unwrap());
+    let mut store = Store::open(&cx, &source).unwrap();
+    store
+        .txn(&cx, |txn| {
+            for env in &envs {
+                txn.resource(env, "retained environment")?;
+            }
+            Ok::<_, StoreError>(())
+        })
+        .unwrap();
+    drop(store);
+    let checkout = home();
+    let report = migration::import(
+        &cx,
+        &source,
+        source_home.path(),
+        &migration::LegacyQuiescence::launchers_withdrawn(),
+        &mut |_, _, _| Ok(location(checkout.path())),
+    )
+    .unwrap();
+    let local = report
+        .receipt
+        .destinations
+        .iter()
+        .filter(|entry| entry.checkout.is_some())
+        .collect::<Vec<_>>();
+    assert_eq!(local.len(), 1);
+    assert_eq!(local[0].checkout_aliases.len(), 1);
+    assert_eq!(local[0].rows["checkouts"], 2);
+    assert_eq!(local[0].rows["resources"], 2);
+    let root = StateRoot::effects(&cx, checkout.path()).unwrap();
+    {
+        let reader = Store::read(&observe(), &root);
+        let reader = reader.verified().unwrap();
+        for env in &envs {
+            assert!(matches!(reader.resource(env), Observed::Verified(_, _)));
+        }
+    }
+    let before = std::fs::read(root.path().join(DB_NAME)).unwrap();
+    for (index, checkout) in ids.into_iter().enumerate() {
+        let task = TaskId::new(checkout, "", Surface::Published, "after-migration", None).unwrap();
+        let invocation = ResolvedInvocation::new(InvocationSpec {
+            owner: task.resource(),
+            task,
+            route: Route::Task,
+            argv: vec![],
+            cwd: "".into(),
+            target: ExecutionTarget::Host,
+            env: Default::default(),
+            gates: vec![],
+            attachments: vec![],
+            class: EffectClass::Mutate,
+            placement: Placement::Host,
+            provenance: Default::default(),
+        })
+        .unwrap();
+        let mut run = ForegroundRun::begin(
+            &cx,
+            &root,
+            &invocation,
+            BeginOpts {
+                id: RunId::new(100, [index as u8; 10]).unwrap(),
+                wait: Wait::FailFast,
+                acknowledge: vec![],
+                next: Invocation::validated(vec!["recover".into()], |_| true).unwrap(),
+                custody: Some(LifecyclePlan {
+                    executable: Executable::capture(std::path::Path::new(
+                        &std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE").unwrap(),
+                    ))
+                    .unwrap(),
+                    placement: effigy_kernel::supervise::Placement::Inline,
+                }),
+            },
+        )
+        .unwrap();
+        run.finish(WorkloadOutcome::Succeeded).unwrap();
+        run.settle(
+            &cx.operation()
+                .cleanup(std::time::Duration::from_secs(10))
+                .unwrap(),
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        std::fs::read(root.path().join(DB_NAME)).unwrap(),
+        before,
+        "both admitted aliases keep foreground database writes at zero"
+    );
+}
+
+#[test]
+fn migration_git_directory_replacement_is_unknown_and_cannot_resume_an_old_seal() {
+    let (source_home, source, _) = source();
+    let cx = effects(EffectClass::Mutate);
+    let env = ResourceId::environment(
+        CheckoutId::new(CheckoutKind::LinkedWorktree, [7; 16]),
+        "dev",
+    )
+    .unwrap();
+    let mut store = Store::open(&cx, &source).unwrap();
+    store
+        .txn(&cx, |txn| txn.resource(&env, "retained").map(|_| ()))
+        .unwrap();
+    drop(store);
+    let checkout = home();
+    let git = checkout.path().join(".git");
+    std::fs::create_dir(&git).unwrap();
+    let mut resolve = |_, _: Option<&std::path::Path>, _: Option<&std::path::Path>| {
+        Ok(migration::CheckoutLocation {
+            root: checkout.path().to_owned(),
+            git_directory: Some(git.clone()),
+        })
+    };
+    let report = migration::import(
+        &cx,
+        &source,
+        source_home.path(),
+        &migration::LegacyQuiescence::launchers_withdrawn(),
+        &mut resolve,
+    )
+    .unwrap();
+    assert!(report
+        .receipt
+        .destinations
+        .iter()
+        .any(|entry| entry.git_directory_identity.is_some()));
+    std::fs::rename(&git, checkout.path().join("old-git")).unwrap();
+    std::fs::create_dir(&git).unwrap();
+    let root = StateRoot::effects(&cx, checkout.path()).unwrap();
+    let before = snapshot(checkout.path());
+    assert!(matches!(
+        Store::read(&observe(), &root),
+        Observed::Unknown(_)
+    ));
+    assert!(Store::open(&cx, &root).is_err());
+    assert!(migration::import(
+        &cx,
+        &source,
+        source_home.path(),
+        &migration::LegacyQuiescence::launchers_withdrawn(),
+        &mut resolve
+    )
+    .is_err());
+    assert_eq!(snapshot(checkout.path()), before);
 }

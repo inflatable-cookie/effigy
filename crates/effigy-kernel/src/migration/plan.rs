@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Debug, Serialize)]
 pub struct Partition {
     pub checkout: Option<CheckoutId>,
+    pub checkout_aliases: Vec<CheckoutId>,
     pub path_hint: Option<String>,
     pub git_dir_hint: Option<String>,
     pub resources: BTreeSet<String>,
@@ -92,6 +93,7 @@ pub(super) fn partitions(
                         key.clone(),
                         Partition {
                             checkout: Some(checkout),
+                            checkout_aliases: Vec::new(),
                             path_hint,
                             git_dir_hint,
                             resources: BTreeSet::new(),
@@ -108,6 +110,7 @@ pub(super) fn partitions(
                     .entry("machine".into())
                     .or_insert_with(|| Partition {
                         checkout: None,
+                        checkout_aliases: Vec::new(),
                         path_hint: None,
                         git_dir_hint: None,
                         resources: BTreeSet::new(),

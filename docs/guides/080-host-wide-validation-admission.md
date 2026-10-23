@@ -149,7 +149,12 @@ checkout_roots = ["/work/projects", "/work/task-checkouts"]
 Discovery is bounded and never follows directory symlinks. Omitted roots and
 limits appear in the report. A missing or ambiguous checkout identity refuses
 migration; a path hint never allocates a new identity or redirects a deleted
-checkout. No registration is written at run start.
+checkout. Older task and environment tokens belonging to one verified physical
+checkout share one destination journal, with their original resource IDs kept.
+Checkout and Git-directory generation facts are retained in its seal; copying
+an old token into a replacement directory cannot restore that authority. A
+legacy identity derived only from a path is not verified checkout ownership.
+No registration is written at run start.
 
 Migration preserves retained state and unresolved runs in each owning checkout,
 and reports per-destination row counts and elapsed time. Completed history may

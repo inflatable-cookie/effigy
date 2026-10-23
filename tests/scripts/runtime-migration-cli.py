@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shlex
 import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -61,6 +62,10 @@ with tempfile.TemporaryDirectory(prefix="q010-cli-") as temporary:
     home.mkdir()
     project.mkdir()
     (project / "effigy.toml").write_text("[tasks.noop]\nrun = 'true'\n")
+    git = project / ".git"
+    git.mkdir()
+    (git / "effigy-checkout-id").write_text("07" * 16)
+    (git / "effigy-runtime-scope").write_text("08" * 16)
     env = dict(os.environ, HOME=str(home), NO_COLOR="1")
     # A proof never inherits another run's admission/custody capabilities.
     for key in ["EFFIGY_ADMITTED", "EFFIGY_CUSTODY_NONCE", "EFFIGY_PROBE_NONCE"]:
@@ -82,7 +87,7 @@ with tempfile.TemporaryDirectory(prefix="q010-cli-") as temporary:
         before = snapshot(root)
         assert command("run", "migrate", "--plan", "--json")["state"] == "no-legacy-state"
         assert snapshot(root) == before, "absent planning created state"
-        child = subprocess.Popen([str(fixture_binary), "migration-writer", str(home)],
+        child = subprocess.Popen([str(fixture_binary), "migration-writer", str(home), "seed-aliases"],
                                  cwd=project, env=env, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         end = time.monotonic() + 12
@@ -126,7 +131,10 @@ with tempfile.TemporaryDirectory(prefix="q010-cli-") as temporary:
         before = snapshot(home)
         assert command(*stop_args, "--json", succeeds=False)["state"] == "stop-refused"
         assert snapshot(home) == before, "free gate granted stale stop authority"
-        assert command("run", "migrate", "--plan", "--json")["state"] == "planned"
+        planned = command("run", "migrate", "--plan", "--json")
+        assert planned["state"] == "planned"
+        assert len(planned["destinations"]) == 1
+        assert len(planned["destinations"][0]["checkout_aliases"]) == 1
         before = snapshot(home)
         assert command("run", "migrate", "--json", succeeds=False)["state"] == "needs-quiescence"
         assert snapshot(home) == before, "missing quiescence assertion staged a destination"
@@ -137,13 +145,32 @@ with tempfile.TemporaryDirectory(prefix="q010-cli-") as temporary:
         assert digest(source) == source_digest, "import modified the legacy database"
         machine = home / ".effigy/state/machine.db"
         machine_digest = digest(machine)
+        local = project / ".effigy/state/kernel.db"
+        local_digest = digest(local)
+        destinations = [entry for entry in imported["report"]["receipt"]["destinations"] if entry["checkout"] is not None]
+        assert len(destinations) == 1 and len(destinations[0]["checkout_aliases"]) == 1
+        assert destinations[0]["git_directory"] == str(git)
+        assert destinations[0]["git_directory_identity"] is not None
+        def resources(database):
+            with sqlite3.connect("file:" + str(database) + "?mode=ro&immutable=1", uri=True) as connection:
+                return connection.execute("SELECT name, hex(canonical) FROM resources ORDER BY name").fetchall()
+        assert resources(source) == resources(local) and len(resources(local)) == 2
         retry = command("run", "migrate", "--legacy-launchers-stopped", "--json")
         assert retry["report"]["resumed"] is True
         assert digest(source) == source_digest and digest(machine) == machine_digest
+        assert digest(local) == local_digest
         # Archived writer controls may never regain authority after cutover.
         command(*stop_args, "--json", succeeds=False, migration=False)
         assert digest(source) == source_digest and digest(machine) == machine_digest
-        print(json.dumps({"schema": "q010.cli-proof.v1", "busy_before_staging": True,
+        git.rename(project / ".git.old")
+        git.mkdir()
+        (git / "effigy-checkout-id").write_text("07" * 16)
+        (git / "effigy-runtime-scope").write_text("08" * 16)
+        before = snapshot(root)
+        command("run", "migrate", "--legacy-launchers-stopped", "--json", succeeds=False, migration=False)
+        assert snapshot(root) == before, "copied tokens let a replacement Git generation change sealed state"
+        print(json.dumps({"schema": "q010.cli-proof.v1", "physical_aliases_coalesced": True,
+            "canonical_resource_ids_preserved": True, "replacement_git_generation_refused": True, "busy_before_staging": True,
             "writer_without_run_id": True, "verified_stop_and_resume": True,
             "stale_and_free_refused": True, "json_schema_and_isolated_home": True,
             "source_unchanged": True, "retry_without_reimport": True,

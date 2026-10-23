@@ -113,3 +113,88 @@ mod tests {
         assert_ne!(mint(other.path()).expect("mint other"), minted);
     }
 }
+
+/// Every persisted identity this checkout actually carries. Older primary task
+/// and environment engines used different token files; their coordinates must
+/// survive migration as aliases. A path hash never verifies a generation.
+pub(super) fn identities(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    root: &Path,
+) -> io::Result<Vec<CheckoutId>> {
+    if let Some(scope) = worktree_scope::resolve(root)? {
+        return Ok(
+            read_token(cx, &scope.token_dir, worktree_scope::SCOPE_FILE)?
+                .map(|token| parse(scoped_kind(scope.kind), &token))
+                .transpose()?
+                .into_iter()
+                .collect(),
+        );
+    }
+    let git = root.join(".git");
+    let mut ids = Vec::new();
+    if git.is_dir() {
+        for name in [
+            worktree_scope::CHECKOUT_TOKEN_FILE,
+            worktree_scope::SCOPE_FILE,
+        ] {
+            if let Some(token) = read_token(cx, &git, name)? {
+                let id = parse(CheckoutKind::Primary, &token)?;
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+        }
+    } else {
+        let dir = root.join(".effigy");
+        match std::fs::symlink_metadata(&dir) {
+            Ok(meta) if meta.is_dir() => {
+                if let Some(token) = read_token(cx, &dir, worktree_scope::SCOPE_FILE)? {
+                    ids.push(parse(CheckoutKind::Primary, &token)?);
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "checkout identity directory is not a real directory",
+                ))
+            }
+        }
+    }
+    Ok(ids)
+}
+pub(super) fn git_directory(root: &Path) -> io::Result<Option<std::path::PathBuf>> {
+    if let Some(scope) = worktree_scope::resolve(root)? {
+        return Ok(Some(scope.token_dir));
+    }
+    let git = root.join(".git");
+    Ok(git.is_dir().then_some(git))
+}
+#[derive(Debug)]
+struct Token(String);
+impl effigy_kernel::record::Record for Token {
+    const MAX_BYTES: u64 = 128;
+    fn decode(bytes: &[u8]) -> Result<Self, String> {
+        let value = std::str::from_utf8(bytes)
+            .map_err(|error| error.to_string())?
+            .trim();
+        parse(CheckoutKind::Primary, value).map_err(|error| error.to_string())?;
+        Ok(Self(value.into()))
+    }
+}
+fn read_token(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    dir: &Path,
+    name: &str,
+) -> io::Result<Option<String>> {
+    let dir = effigy_kernel::fs::DirFd::open(dir).map_err(io::Error::other)?;
+    let name = effigy_kernel::fs::FileName::new(name).map_err(io::Error::other)?;
+    match effigy_kernel::record::read_record::<Token>(cx, &dir, &name) {
+        effigy_kernel::observe::Observed::Verified(Token(value), _) => Ok(Some(value)),
+        effigy_kernel::observe::Observed::Absent(_) => Ok(None),
+        effigy_kernel::observe::Observed::Unknown(reason) => Err(io::Error::other(format!(
+            "checkout token is unknown: {reason:?}"
+        ))),
+    }
+}

@@ -8,7 +8,7 @@ mod fence;
 mod files;
 pub use adoption::{authority, Authority, ImportReceipt, ImportedDestination};
 pub use control::{request_legacy_stop, stop_legacy_writer, LegacyStop, WriterTarget};
-pub use execute::{committed, import, CheckoutResolver, ImportReport};
+pub use execute::{committed, import, CheckoutLocation, CheckoutResolver, ImportReport};
 mod plan;
 pub use fence::LegacyQuiescence;
 pub use plan::{plan, ImportPlan, Partition};

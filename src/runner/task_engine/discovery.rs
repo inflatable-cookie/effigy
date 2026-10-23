@@ -6,7 +6,8 @@ use effigy_kernel::observe::Observed;
 use effigy_kernel::record::{read_record, Record};
 use effigy_kernel::store::StoreError;
 use serde::Serialize;
-use std::collections::{BTreeSet, VecDeque};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 const MAX_CHECKOUTS: usize = 1000;
@@ -23,6 +24,28 @@ pub(in crate::runner) struct Discovery {
     pub(in crate::runner) roots_searched: Vec<PathBuf>,
     pub(in crate::runner) checkouts: BTreeSet<PathBuf>,
     pub(in crate::runner) omitted: Vec<Omitted>,
+    #[serde(skip)]
+    bindings: RefCell<BTreeMap<String, Binding>>,
+}
+#[derive(Debug)]
+struct Binding {
+    root: effigy_kernel::fs::DirFd,
+    git: Option<effigy_kernel::fs::DirFd>,
+}
+impl Binding {
+    fn unchanged(&self, other: &Self) -> Result<bool, StoreError> {
+        Ok(self.root.identity()? == other.root.identity()?
+            && self.root.path() == other.root.path()
+            && self.git.as_ref().map(|dir| dir.identity()).transpose()?
+                == other.git.as_ref().map(|dir| dir.identity()).transpose()?
+            && self.git.as_ref().map(|dir| dir.path()) == other.git.as_ref().map(|dir| dir.path()))
+    }
+    fn location(&self) -> effigy_kernel::migration::CheckoutLocation {
+        effigy_kernel::migration::CheckoutLocation {
+            root: self.root.path().to_owned(),
+            git_directory: self.git.as_ref().map(|dir| dir.path().to_owned()),
+        }
+    }
 }
 impl Discovery {
     fn omit(&mut self, path: &Path, reason: impl ToString) {
@@ -54,32 +77,50 @@ impl Discovery {
         cx: &ObserveContext,
         expected: CheckoutId,
         hint: Option<&Path>,
-    ) -> Result<PathBuf, StoreError> {
+    ) -> Result<effigy_kernel::migration::CheckoutLocation, StoreError> {
         let mut candidates = self.checkouts.clone();
         if let Some(hint) = hint.filter(|hint| hint.is_absolute()) {
             candidates.insert(hint.to_owned());
         }
-        let mut matches = BTreeSet::new();
+        let mut matches = BTreeMap::new();
         for path in candidates {
             cx.check("checkout identity lookup")
                 .map_err(StoreError::Interrupted)?;
             let Ok(dir) = effigy_kernel::fs::DirFd::open(&path) else {
                 continue;
             };
-            let identity = super::checkout::read(dir.path()).map_err(|error| {
+            let identities = super::checkout::identities(cx, dir.path()).map_err(|error| {
                 StoreError::Corrupt(format!("checkout identity {}: {error}", path.display()))
             })?;
-            if identity == Some(expected) {
-                matches.insert(dir.path().to_owned());
+            if identities.contains(&expected) {
+                let git = super::checkout::git_directory(dir.path())
+                    .map_err(|error| StoreError::Corrupt(error.to_string()))?
+                    .as_deref()
+                    .map(effigy_kernel::fs::DirFd::open)
+                    .transpose()?;
+                matches.insert(dir.path().to_owned(), Binding { root: dir, git });
             }
         }
+
         if matches.len() != 1 {
             return Err(StoreError::Corrupt(format!(
                 "checkout {expected:?} has {} verified locations: {:?}; supply `--checkout <root>` or configure [runtime].checkout_roots; deleted checkouts are never redirected",
-                matches.len(), matches
+                matches.len(), matches.keys().collect::<Vec<_>>()
             )));
         }
-        Ok(matches.into_iter().next().expect("one verified location"))
+        let (_, binding) = matches.into_iter().next().expect("one verified location");
+        let mut bindings = self.bindings.borrow_mut();
+        let key = expected.resource().name().to_string();
+        if let Some(previous) = bindings.get(&key) {
+            if !binding.unchanged(previous)? {
+                return Err(StoreError::Corrupt(
+                    "checkout or Git directory generation changed during identity lookup".into(),
+                ));
+            }
+        }
+        let location = binding.location();
+        bindings.entry(key).or_insert(binding);
+        Ok(location)
     }
 }
 
@@ -325,7 +366,7 @@ mod tests {
             "08080808080808080808080808080808",
         )
         .unwrap();
-        assert_eq!(found.resolve(&cx, expected, None).unwrap(), a);
+        assert_eq!(found.resolve(&cx, expected, None).unwrap().root, a);
         std::fs::write(
             a.join(".git/effigy-checkout-id"),
             "09090909090909090909090909090909",
@@ -335,5 +376,58 @@ mod tests {
             found.resolve(&cx, expected, Some(&a)).is_err(),
             "a path hint cannot reassign a generation"
         );
+    }
+    #[test]
+    fn runtime_discovery_verifies_both_primary_tokens_and_holds_git_generation() {
+        let fixture = effigy_test_support::Fixture::new("q010-git-binding-").unwrap();
+        let root = fixture.path();
+        let git = root.join(".git");
+        std::fs::create_dir(&git).unwrap();
+        std::fs::write(
+            git.join("effigy-checkout-id"),
+            "07070707070707070707070707070707",
+        )
+        .unwrap();
+        std::fs::write(
+            git.join("effigy-runtime-scope"),
+            "08080808080808080808080808080808",
+        )
+        .unwrap();
+        let cx = kernel::observe();
+        let ids = super::super::checkout::identities(&cx, root).unwrap();
+        assert_eq!(ids.len(), 2);
+        let found = collect(&cx, root, &[]);
+        for id in &ids {
+            assert_eq!(
+                found
+                    .resolve(&cx, *id, None)
+                    .unwrap()
+                    .git_directory
+                    .as_deref(),
+                Some(git.as_path())
+            );
+        }
+        std::fs::rename(&git, root.join("old-git")).unwrap();
+        std::fs::create_dir(&git).unwrap();
+        std::fs::write(
+            git.join("effigy-checkout-id"),
+            "07070707070707070707070707070707",
+        )
+        .unwrap();
+        assert!(
+            found.resolve(&cx, ids[0], Some(root)).is_err(),
+            "copied token cannot replace a held Git generation"
+        );
+    }
+    #[test]
+    fn runtime_discovery_does_not_verify_path_hashes_as_checkout_generations() {
+        let fixture = effigy_test_support::Fixture::new("q010-no-path-adoption-").unwrap();
+        let cx = kernel::observe();
+        let old = super::super::checkout::read(fixture.path())
+            .unwrap()
+            .unwrap();
+        let found = collect(&cx, fixture.path(), &[]);
+        assert!(found.resolve(&cx, old, None).is_err());
+        assert!(std::fs::read_dir(fixture.path()).unwrap().next().is_none());
     }
 }

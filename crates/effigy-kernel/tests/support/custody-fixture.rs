@@ -113,7 +113,23 @@ fn main() {
         let home = Path::new(args.get(1).expect("private fixture home"));
         let cx = op(router.root_cancel()).effects().unwrap();
         let root = StateRoot::effects(&cx, home).unwrap();
-        drop(effigy_kernel::store::Store::open(&cx, &root).unwrap());
+        let mut store = effigy_kernel::store::Store::open(&cx, &root).unwrap();
+        if args.get(2).and_then(|arg| arg.to_str()) == Some("seed-aliases") {
+            store
+                .txn(&cx, |txn| {
+                    for token in [7, 8] {
+                        let env = ResourceId::environment(
+                            CheckoutId::new(CheckoutKind::Primary, [token; 16]),
+                            "dev",
+                        )
+                        .unwrap();
+                        txn.resource(&env, "legacy alias fixture")?;
+                    }
+                    Ok::<_, effigy_kernel::store::StoreError>(())
+                })
+                .unwrap();
+        }
+        drop(store);
         let owner = ResourceId::store(Scope::Machine, "kernel").unwrap();
         let guard = effigy_kernel::gate::Gate::acquire(
             &cx,

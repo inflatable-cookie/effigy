@@ -15,6 +15,12 @@ pub(super) const MANIFEST: &str = "cutover.json";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportedDestination {
     pub checkout: Option<CheckoutId>,
+    #[serde(default)]
+    pub checkout_aliases: Vec<CheckoutId>,
+    #[serde(default)]
+    pub git_directory: Option<PathBuf>,
+    #[serde(default)]
+    pub git_directory_identity: Option<DirectoryIdentity>,
     pub checkout_root: PathBuf,
     pub directory_identity: DirectoryIdentity,
     pub database_digest: String,
@@ -42,6 +48,9 @@ impl Record for ImportReceipt {
         if receipt.destinations.len() > 1000 {
             return Err("too many import destinations".into());
         }
+        for destination in &receipt.destinations {
+            validate_destination(destination)?;
+        }
         Ok(receipt)
     }
 }
@@ -59,6 +68,7 @@ impl Record for Seal {
         if seal.format != FORMAT {
             return Err("unsupported import seal".into());
         }
+        validate_destination(&seal.destination)?;
         Ok(seal)
     }
 }
@@ -73,6 +83,7 @@ pub enum Authority {
     Committed {
         id: String,
         checkout: Option<CheckoutId>,
+        checkout_aliases: Vec<CheckoutId>,
     },
     LegacyEvidence,
 }
@@ -84,6 +95,7 @@ pub(crate) enum Access {
     Committed {
         id: String,
         checkout: Option<CheckoutId>,
+        checkout_aliases: Vec<CheckoutId>,
     },
 }
 
@@ -118,6 +130,7 @@ fn inspect_authority(cx: &ObserveContext, root: &StateRoot) -> Result<Authority,
         Ok(Authority::Committed {
             id: seal.id,
             checkout: seal.destination.checkout,
+            checkout_aliases: seal.destination.checkout_aliases,
         })
     } else if let Some(prepared) = prepared {
         Ok(Authority::Prepared { id: prepared.id })
@@ -131,7 +144,11 @@ pub(crate) fn access(cx: &ObserveContext, root: &StateRoot) -> Result<Access, St
         Authority::Fresh => Ok(Access::Fresh),
         Authority::LegacyEvidence => Ok(Access::Unchecked),
         Authority::Prepared { id } => Err(StoreError::MigrationPending(id)),
-        Authority::Committed { id, checkout } => {
+        Authority::Committed {
+            id,
+            checkout,
+            checkout_aliases,
+        } => {
             if root
                 .dir()
                 .entry(&FileName::new(root.database_name())?)?
@@ -141,7 +158,11 @@ pub(crate) fn access(cx: &ObserveContext, root: &StateRoot) -> Result<Access, St
                     "sealed runtime database is missing; legacy state is not a fallback".into(),
                 ));
             }
-            Ok(Access::Committed { id, checkout })
+            Ok(Access::Committed {
+                id,
+                checkout,
+                checkout_aliases,
+            })
         }
     }
 }
@@ -207,11 +228,16 @@ pub(crate) fn check_invocation(
     root: &StateRoot,
     invocation: &crate::id::ResolvedInvocation,
 ) -> Result<(), StoreError> {
-    if let Access::Committed { checkout, .. } = access(cx, root)? {
+    if let Access::Committed {
+        checkout,
+        checkout_aliases,
+        ..
+    } = access(cx, root)?
+    {
         let actual = invocation.spec().task.checkout();
         if checkout.map_or(
             actual.kind() != crate::id::CheckoutKind::Machine,
-            |expected| actual != expected,
+            |expected| actual != expected && !checkout_aliases.contains(&actual),
         ) {
             return Err(StoreError::Corrupt(
                 "run checkout identity disagrees with its imported journal".into(),
@@ -225,6 +251,18 @@ fn verify_seal(root: &StateRoot, seal: &Seal) -> Result<(), StoreError> {
         return Err(StoreError::Corrupt(
             "runtime checkout directory was replaced after import".into(),
         ));
+    }
+    match (
+        &seal.destination.git_directory,
+        seal.destination.git_directory_identity,
+    ) {
+        (Some(path), Some(expected)) if crate::fs::DirFd::open(path)?.identity()? == expected => {}
+        (None, None) => {}
+        _ => {
+            return Err(StoreError::Corrupt(
+                "runtime Git directory generation changed after import".into(),
+            ))
+        }
     }
     if (root.database_name() == "machine.db") != seal.destination.checkout.is_none() {
         return Err(StoreError::Corrupt(
@@ -247,4 +285,41 @@ fn optional<T: Record>(
         }),
         Observed::Unknown(reason) => Err(inconsistent(reason)),
     }
+}
+
+fn validate_destination(destination: &ImportedDestination) -> Result<(), String> {
+    if destination.checkout_aliases.len() > 32 {
+        return Err("too many checkout aliases".into());
+    }
+    if destination.git_directory.is_some() != destination.git_directory_identity.is_some()
+        || destination
+            .git_directory
+            .as_ref()
+            .is_some_and(|path| !path.is_absolute())
+    {
+        return Err("incomplete Git directory generation".into());
+    }
+    match destination.checkout {
+        None if !destination.checkout_aliases.is_empty() || destination.git_directory.is_some() => {
+            return Err("machine destination has checkout aliases or Git state".into())
+        }
+        Some(primary) => {
+            if primary.kind() == crate::id::CheckoutKind::Machine
+                || destination
+                    .checkout_aliases
+                    .iter()
+                    .any(|alias| alias.kind() != primary.kind())
+            {
+                return Err("checkout alias kind mismatch".into());
+            }
+            let mut ids = std::collections::BTreeSet::new();
+            for id in std::iter::once(primary).chain(destination.checkout_aliases.iter().copied()) {
+                if !ids.insert(id.resource().canonical()) {
+                    return Err("duplicate checkout alias".into());
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }

@@ -37,7 +37,11 @@ now exposes pure planning, explicit launcher-quiescence assertion, bounded
 checkout discovery and exact verified legacy-writer stop receipts, including
 pre-run admission/retention writers. Its JSON payload is
 `effigy.runtime-migration.v1`. This command does not yet switch ordinary engine
-callers away from the legacy route.
+callers away from the legacy route. Distinct legacy task/environment tokens that
+verify the same checkout and Git-directory generation now coalesce into one
+local journal without re-encoding resources or runs. Local seals retain the
+verified aliases and Git-directory facts; replaced directories and path-only
+legacy identities cannot silently adopt that state.
 
 Status: foundation types are implemented in `crates/effigy-kernel/`: identity
 encoding v1, operation contexts and class capabilities, observation and Probe
