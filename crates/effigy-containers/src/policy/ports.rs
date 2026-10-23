@@ -91,6 +91,10 @@ pub fn prepare_container_policy_ports(
         return Ok(loopbacks_changed);
     }
     let mut requests = Vec::new();
+    // Allocation is about to need a range. Under capacity pressure, first
+    // reclaim only provably dead entries, by the same reviewed `--apply` rules,
+    // so one deleted project cannot starve every new one (effigy#294).
+    let registry = reclaim_dead_ranges_under_pressure(&home, registry)?;
     // Preserve the old shared-before-local allocation order.
     for shared in &policy.shared_services {
         let root = crate::policy_support::shared_service_output_dir(&shared.project_name)?;
@@ -116,6 +120,24 @@ pub fn prepare_container_policy_ports(
     prepare_ports(&home.join("ports.json"), &requests)
         .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
     Ok(loopbacks_changed || !requests.is_empty())
+}
+
+/// Reclaim provably dead ranges when this Prepare needs a new range and the
+/// registry is near exhaustion. Returns the registry to plan against: the
+/// reloaded one after a reclaim, otherwise the one it was given.
+fn reclaim_dead_ranges_under_pressure(
+    home: &Path,
+    registry: PortRegistry,
+) -> Result<PortRegistry, ContainerPolicyError> {
+    if registry.capacity().allocatable_ranges > crate::AUTO_RECLAIM_FREE_RANGES {
+        return Ok(registry);
+    }
+    let Some(reclaim) = crate::port_reclaim_under_pressure()? else {
+        return Ok(registry);
+    };
+    eprintln!("{}", reclaim.note());
+    PortRegistry::load(&home.join("ports.json"))
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
 }
 
 fn collect_requests(

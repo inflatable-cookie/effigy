@@ -155,6 +155,7 @@ mod tests {
                 backend: "docker".to_owned(),
                 profile: "default".to_owned(),
                 error: "non-Unicode DOCKER_HOST is not a resolvable endpoint".to_owned(),
+                stopped_profile: false,
             }],
         };
 
