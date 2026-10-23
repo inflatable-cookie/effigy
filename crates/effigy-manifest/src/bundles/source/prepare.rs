@@ -5,7 +5,6 @@
 //! Prepare paths (`dev`, `bootstrap`, `container up`) also refresh a pin that
 //! is behind its declaration, its path content or its floating Git upstream.
 use super::*;
-use serde::{Deserialize, Serialize};
 use effigy_kernel::{
     ctx::{CleanupContext, EffectContext},
     custody::{Custody, EnvValue, Lifetime, ProcessSpec, SecretValue, Terminal},
@@ -20,6 +19,7 @@ use effigy_kernel::{
     run::{BeginOpts, Effect, EffectSpec, Fence, Reconciled, Run, Settlement, SettlementAdapter},
     supervise::{Executable, LifecyclePlan},
 };
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::io::Write;
@@ -394,7 +394,7 @@ fn plan_source(
     if policy.is_manual() {
         return Ok(SourcePlan::Keep);
     }
-    if pin.declaration != selection.spec() {
+    if !same_declaration(&pin.declaration, selection) {
         return Ok(SourcePlan::Acquire(RefreshReason::Declaration));
     }
     match selection {
@@ -412,9 +412,7 @@ fn plan_source(
             if reference.as_deref().is_some_and(is_full_revision) {
                 return Ok(SourcePlan::Keep);
             }
-            if checked_at
-                .is_some_and(|at| now.saturating_sub(at) < REMOTE_CHECK_TTL.as_secs())
-            {
+            if checked_at.is_some_and(|at| now.saturating_sub(at) < REMOTE_CHECK_TTL.as_secs()) {
                 return Ok(SourcePlan::Keep);
             }
             Ok(SourcePlan::RemoteCheck)
@@ -456,7 +454,12 @@ fn read_update_state(manifest: &Path) -> SourceUpdateState {
 }
 
 /// The one line a Prepare path prints when it selects new bytes.
-fn update_note(name: &str, previous: &SourcePin, selected: &SourcePin, reason: RefreshReason) -> String {
+fn update_note(
+    name: &str,
+    previous: &SourcePin,
+    selected: &SourcePin,
+    reason: RefreshReason,
+) -> String {
     format!(
         "{name} updated {} → {} ({})",
         short_pin(previous),
@@ -670,13 +673,22 @@ fn acquire_and_publish(
             continue;
         };
         let object = source_dir(&generation, &sha256_hex(name.as_bytes()), cx, manifest)?;
-        let acquired = acquire_source(manifest, name, selection, run, cx, home, &generation, &object)
-            .and_then(|(version, revision)| {
-                if name == "bundle" {
-                    crate::composition::validate_source_snapshot(manifest, object.path())?;
-                }
-                Ok((version, revision))
-            });
+        let acquired = acquire_source(
+            manifest,
+            name,
+            selection,
+            run,
+            cx,
+            home,
+            &generation,
+            &object,
+        )
+        .and_then(|(version, revision)| {
+            if name == "bundle" {
+                crate::composition::validate_source_snapshot(manifest, object.path())?;
+            }
+            Ok((version, revision))
+        });
         let (version, revision) = match acquired {
             Ok(acquired) => acquired,
             Err(failure) => {
@@ -685,7 +697,7 @@ fn acquire_and_publish(
                 // usable pin is the acquisition error.
                 let keepable = pinned
                     .as_ref()
-                    .is_some_and(|pin| pin.declaration == selection.spec());
+                    .is_some_and(|pin| same_declaration(&pin.declaration, selection));
                 if mode == Mode::Refresh && keepable {
                     if let Some(pin) = &pinned {
                         let message = kept_warning(name, pin, &failure);
@@ -705,7 +717,7 @@ fn acquire_and_publish(
             revision,
         };
         changed |= pinned.as_ref().is_none_or(|pin| {
-            pin.version != selected.version || pin.declaration != selected.declaration
+            pin.version != selected.version || !same_declaration(&pin.declaration, selection)
         });
         if mode == Mode::Refresh {
             if let Some(previous) = &pinned {
@@ -1053,7 +1065,7 @@ fn pin_report(
         source_path: selection.label(),
         local_path: parent(manifest).join(".effigy").join(&pin.object),
         version_hint: pin.revision.clone().or_else(|| Some(pin.version.clone())),
-        stale: pin.declaration != selection.spec(),
+        stale: !same_declaration(&pin.declaration, selection),
     }
 }
 fn command(
@@ -1281,15 +1293,7 @@ fn copy_tree(
                         manifest,
                     )?;
                 }
-                None => copy_tree(
-                    &path,
-                    None,
-                    &relative,
-                    depth + 1,
-                    usage,
-                    hash,
-                    manifest,
-                )?,
+                None => copy_tree(&path, None, &relative, depth + 1, usage, hash, manifest)?,
             }
         } else if metadata.is_file() {
             if metadata.len() > MAX_FILE {
@@ -1426,12 +1430,20 @@ mod tests {
         let report = prepare_bundle_sources(&manifest, &prep).unwrap().unwrap();
         assert!(report.changed);
         assert!(selected(&manifest).contains("echo new"));
-        assert_eq!(report.notes.len(), 2, "bundle and catalog:extra: {:?}", report.notes);
+        assert_eq!(
+            report.notes.len(),
+            2,
+            "bundle and catalog:extra: {:?}",
+            report.notes
+        );
         for note in &report.notes {
             assert!(note.ends_with("(content changed)"), "{note}");
             assert!(note.contains(" updated ") && note.contains(" → "), "{note}");
         }
-        assert!(report.notes.iter().any(|note| note.starts_with("bundle updated ")));
+        assert!(report
+            .notes
+            .iter()
+            .any(|note| note.starts_with("bundle updated ")));
         assert!(report
             .notes
             .iter()
@@ -1463,7 +1475,8 @@ mod tests {
             report
                 .notes
                 .iter()
-                .any(|note| note.starts_with("bundle updated ") && note.ends_with("(declaration changed)")),
+                .any(|note| note.starts_with("bundle updated ")
+                    && note.ends_with("(declaration changed)")),
             "{:?}",
             report.notes
         );
@@ -1524,7 +1537,11 @@ mod tests {
         let report = prepare_bundle_sources(&manifest, &prep).unwrap().unwrap();
         assert!(report.changed);
         assert_eq!(
-            report.notes.iter().map(|note| note.split(' ').next().unwrap()).collect::<Vec<_>>(),
+            report
+                .notes
+                .iter()
+                .map(|note| note.split(' ').next().unwrap())
+                .collect::<Vec<_>>(),
             vec!["bundle"],
             "the manual catalog source keeps its pin: {:?}",
             report.notes
@@ -1545,7 +1562,7 @@ mod tests {
         let before = tree(&tmp.path().join(".effigy"));
         // Reads stay local: the source is behind, and only a Prepare moves it.
         let inspected = crate::inspect_bundle_source(&manifest).unwrap().unwrap();
-        assert_eq!(inspected.stale, false);
+        assert!(!inspected.stale);
         crate::catalog_source_roots(&manifest).unwrap();
         let loaded = crate::load_task_manifest_with_inspection(&manifest).unwrap();
         assert!(loaded.effective_manifest.contains("echo old"));

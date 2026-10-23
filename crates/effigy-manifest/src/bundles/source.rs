@@ -81,15 +81,10 @@ impl BundleSelection {
             ManifestBundleBase::Path { dir } if !dir.trim().is_empty() => {
                 let path = Path::new(dir.trim());
                 Ok(Self::Path {
-                    // Resolve through the real checkout directory so a lock's
-                    // declaration and a read of the same source agree even when
-                    // the manifest path reaches it through a symlink.
                     path: if path.is_absolute() {
                         path.into()
                     } else {
-                        std::fs::canonicalize(parent(manifest))
-                            .unwrap_or_else(|_| parent(manifest).into())
-                            .join(path)
+                        parent(manifest).join(path)
                     },
                 })
             }
@@ -211,6 +206,26 @@ impl Record for SourceLock {
         Ok(lock)
     }
 }
+/// Declarations match when they select the same source. A path source compares
+/// by its real directory, so a lock written through one alias of the checkout
+/// (a symlinked temp root, say) still matches a read through another.
+fn same_declaration(declaration: &ManifestBundleBase, selection: &BundleSelection) -> bool {
+    let selected = selection.spec();
+    if declaration == &selected {
+        return true;
+    }
+    match (declaration, &selected) {
+        (ManifestBundleBase::Path { dir: pinned }, ManifestBundleBase::Path { dir }) => {
+            real_dir(Path::new(pinned.trim())) == real_dir(Path::new(dir.trim()))
+        }
+        _ => false,
+    }
+}
+
+fn real_dir(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn parent(manifest: &Path) -> &Path {
     manifest.parent().unwrap_or_else(|| Path::new("."))
 }
@@ -298,7 +313,7 @@ fn resolve_source(
             ));
         }
         let known = known_version(selection);
-        let declaration_changed = pin.declaration != selection.spec();
+        let declaration_changed = !same_declaration(&pin.declaration, selection);
         let stale = declaration_changed
             || known
                 .as_ref()

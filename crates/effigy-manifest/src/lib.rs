@@ -48,8 +48,7 @@ pub use composition::{
 pub use config_sections::{
     load_committed_docs_policy_sources, ManifestBootstrapConfig, ManifestBundleBase,
     ManifestBundleConfig, ManifestCatalogSourceConfig, ManifestContainerConfig,
-    ManifestContainerDataConfig,
-    ManifestContainerDnsConfig, ManifestContainerDnsDomainDefaults,
+    ManifestContainerDataConfig, ManifestContainerDnsConfig, ManifestContainerDnsDomainDefaults,
     ManifestContainerDnsRouteConfig, ManifestContainerDriver, ManifestContainerExecAliasConfig,
     ManifestContainerExecAliasTableConfig, ManifestContainerHostConfig, ManifestContainerHostMount,
     ManifestContainerHostMountTable, ManifestContainerHostProcess,

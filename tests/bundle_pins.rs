@@ -175,8 +175,16 @@ fn init_git_bundle(root: &Path, home: &Path, run: &str) -> String {
     git_in(root, home, &["init", "--initial-branch=main", "--quiet"]);
     // A pinned full revision is fetched by id, which a local upload-pack
     // serves only when asked.
-    git_in(root, home, &["config", "uploadpack.allowReachableSHA1InWant", "true"]);
-    git_in(root, home, &["config", "uploadpack.allowTipSHA1InWant", "true"]);
+    git_in(
+        root,
+        home,
+        &["config", "uploadpack.allowReachableSHA1InWant", "true"],
+    );
+    git_in(
+        root,
+        home,
+        &["config", "uploadpack.allowTipSHA1InWant", "true"],
+    );
     commit_git_bundle(root, home, run)
 }
 
@@ -593,7 +601,10 @@ fn a_floating_git_ref_updates_on_dev_at_most_once_per_ttl() {
     commit_git_bundle(&source, &fixture.home, "three");
     let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
     assert!(ok, "{output}");
-    assert!(output.contains("two") && !output.contains("three"), "{output}");
+    assert!(
+        output.contains("two") && !output.contains("three"),
+        "{output}"
+    );
     assert!(!output.contains("bundle updated"), "{output}");
     assert_eq!(pinned_revision(&fixture), second);
 
@@ -621,10 +632,7 @@ fn a_pinned_git_revision_never_moves_on_dev() {
     assert!(output.contains("one"), "{output}");
     assert!(!output.contains("bundle updated"), "{output}");
     assert_eq!(fs::read(&pin).unwrap(), lock);
-    assert!(!fixture
-        .repo
-        .join(".effigy/sources.update.json")
-        .exists());
+    assert!(!fixture.repo.join(".effigy/sources.update.json").exists());
 }
 
 #[test]
@@ -651,7 +659,10 @@ fn a_failed_remote_update_keeps_pins_and_warns() {
     commit_git_bundle(&source, &fixture.home, "two");
     let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
     assert!(ok, "{output}");
-    assert!(output.contains("one") && !output.contains("two"), "{output}");
+    assert!(
+        output.contains("one") && !output.contains("two"),
+        "{output}"
+    );
     fs::remove_file(fixture.repo.join(".effigy/sources.update.json")).unwrap();
     let (ok, output) = fixture.run(&["dev"], &[], Duration::from_secs(30));
     assert!(ok, "{output}");
@@ -697,10 +708,7 @@ fn read_paths_never_check_a_floating_remote() {
         );
     }
     assert_eq!(fs::read(&pin).unwrap(), lock);
-    assert!(!fixture
-        .repo
-        .join(".effigy/sources.update.json")
-        .exists());
+    assert!(!fixture.repo.join(".effigy/sources.update.json").exists());
 }
 
 #[test]
