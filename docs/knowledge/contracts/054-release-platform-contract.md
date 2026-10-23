@@ -11,6 +11,13 @@ reconciled, never replayed)
 Ruling: [questions](../questions.md) Q-009, the release platform bullet
 Evidence: the planner's portfolio inventory (2026-10, `release-audits/effigy/release-platform-inventory-2026-10/`). These cover 38 project roots and 101 legacy roots.
 
+Q-010 process custody: Git operations and stage tasks receive the admitted
+checkout run explicitly. Before launch, the run registers its sentinel and each
+process receipt; closure and bounded output are verified before a stage consumes
+the result. Adapter exit codes are interpreted by the stage (a missing tag is
+an observed absence), while unknown closure refuses completion. Workspace guests
+cannot mutate release state through the host-only release API.
+
 ## 1. Purpose
 
 Every project releases through one Effigy protocol. A release is one durable

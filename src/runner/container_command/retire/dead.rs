@@ -28,8 +28,24 @@ fn executable() -> Result<effigy_kernel::supervise::Executable, RunnerError> {
 }
 fn environment() -> BTreeMap<std::ffi::OsString, effigy_kernel::custody::EnvValue> {
     std::env::vars_os()
+        .filter(|(key, _)| {
+            !matches!(
+                key.to_str(),
+                Some("EFFIGY_CUSTODY_NONCE" | "EFFIGY_PROBE_NONCE" | "EFFIGY_PARENT_CAPABILITY")
+            )
+        })
         .map(|(key, value)| (key, effigy_kernel::custody::EnvValue::Plain(value)))
         .collect()
+}
+fn resolved_program(program: &std::ffi::OsStr) -> Result<std::ffi::OsString, RunnerError> {
+    let name = program
+        .to_str()
+        .ok_or_else(|| invalid("backend executable is not UTF-8"))?;
+    let resolved = effigy_containers::compose::resolve_host_cli_program(name);
+    if !Path::new(&resolved).is_absolute() {
+        return Err(invalid("backend executable is unavailable on PATH"));
+    }
+    Ok(resolved)
 }
 fn operation(class: effigy_kernel::ctx::EffectClass) -> effigy_kernel::ctx::OperationContext {
     use effigy_kernel::ctx::*;
@@ -75,7 +91,9 @@ fn capture(root: &Path, profile: &str, args: Vec<String>) -> Result<Vec<u8>, Run
         .map_err(|_| invalid("observe context"))?
         .with_probes(runtime);
     let command = ProbeCommand {
-        argv: std::iter::once(plan.program).chain(plan.args).collect(),
+        argv: std::iter::once(resolved_program(&plan.program)?)
+            .chain(plan.args)
+            .collect(),
         cwd: root.into(),
         env: environment(),
         deadline: std::time::Duration::from_secs(30),
@@ -125,7 +143,9 @@ fn remove(
     let op = operation(effigy_kernel::ctx::EffectClass::Mutate);
     let cx = op.effects().map_err(|_| invalid("mutation context"))?;
     let spec = ProcessSpec {
-        argv: std::iter::once(plan.program).chain(plan.args).collect(),
+        argv: std::iter::once(resolved_program(&plan.program)?)
+            .chain(plan.args)
+            .collect(),
         cwd: root.into(),
         env: environment(),
         grace: std::time::Duration::from_millis(100),

@@ -271,9 +271,10 @@ fn with_run<T, E>(
             id: new_run_id().map_err(error)?,
             wait: Wait::Until(Instant::now() + Duration::from_secs(30)),
             acknowledge: vec![],
-            next: Invocation::validated(vec!["container".into(), "retire".into()], |a| {
-                a == ["container", "retire"]
-            })
+            next: Invocation::validated(
+                vec!["effigy".into(), "container".into(), "retire".into()],
+                |a| a == ["effigy", "container", "retire"],
+            )
             .map_err(|e| error(format!("{e:?}")))?,
             custody,
         },

@@ -101,7 +101,7 @@ fn main() {
             entry,
             router,
             &mut Strict,
-            |a| a == [OsString::from("recover")],
+            |a| a == [OsString::from("recover")] || a == ["effigy", "release", "run"],
             fixture_engine,
         );
         if !matches!(result, Some(Ok(()))) {

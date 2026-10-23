@@ -341,11 +341,29 @@ fn compose_binding_labels(labels: Option<&serde_json::Value>) -> (Option<&str>, 
             .and_then(|labels| labels.get(name))
             .and_then(|value| value.as_str())
     };
-    let working_dir = label("com.docker.compose.project.working_dir")
-        .or_else(|| label(crate::runtime::scope::CHECKOUT_LABEL));
+    let working_dir = checkout_label(
+        label("com.docker.compose.project.working_dir"),
+        label(crate::runtime::scope::CHECKOUT_LABEL),
+        label(crate::runtime::scope::SCOPE_LABEL),
+    );
     let oneoff_ok = label("com.docker.compose.oneoff")
         .is_none_or(|value| matches!(value.to_ascii_lowercase().as_str(), "false" | "0" | "no"));
     (working_dir, oneoff_ok)
+}
+
+// A scoped generation's Compose working directory is the immutable render
+// directory. The explicit checkout label and matching scope locate its owner.
+// Unscoped legacy containers keep the historical working-directory rule.
+fn checkout_label<'a>(
+    working_dir: Option<&'a str>,
+    checkout: Option<&'a str>,
+    scope: Option<&str>,
+) -> Option<&'a str> {
+    if scope.is_some() {
+        checkout.or(working_dir)
+    } else {
+        working_dir.or(checkout)
+    }
 }
 
 #[cfg(test)]
@@ -361,6 +379,22 @@ mod compose_binding_label_tests {
             "com.docker.compose.oneoff": "False",
         });
         assert_eq!(compose_binding_labels(Some(&labels)), (Some("/repo"), true));
+    }
+
+    #[test]
+    fn scoped_render_directory_does_not_replace_the_verified_checkout_label() {
+        let mut labels = json!({
+            "com.docker.compose.project.working_dir": "/repo/.effigy/state/objects/hash/checkout/.effigy/runtime/compose",
+            "com.effigy.checkout": "/repo",
+            "com.effigy.scope": "owned-scope",
+            "com.docker.compose.oneoff": "False",
+        });
+        assert_eq!(compose_binding_labels(Some(&labels)), (Some("/repo"), true));
+        labels["com.effigy.checkout"] = json!("/foreign");
+        assert_eq!(
+            compose_binding_labels(Some(&labels)),
+            (Some("/foreign"), true)
+        );
     }
 
     #[test]
@@ -522,6 +556,17 @@ mod legacy_admission_tests {
             );
         }
         context.scope_token = Some("owned-scope".to_owned());
+        let rendered = format!(
+            "{id}\tacme\t/immutable/render\t{}\towned-scope\n",
+            root.display()
+        );
+        context
+            .verify_shutdown_listing(&policy, rendered.as_bytes())
+            .expect("scoped render uses checkout label");
+        let foreign = format!("{id}\tacme\t{}\t/foreign\towned-scope\n", root.display());
+        assert!(context
+            .verify_shutdown_listing(&policy, foreign.as_bytes())
+            .is_err());
         let row = format!("{id}\tacme\t{}\t\towned-scope\n", root.display());
         context
             .verify_shutdown_listing(&policy, row.as_bytes())
@@ -1185,7 +1230,10 @@ impl OwnershipContext {
                 }
                 if super::healthcheck_timer::parse_full_container_id(id).is_some()
                     && project == policy.project_name
-                    && self.owns(present(working_dir).or(present(checkout)), present(scope))
+                    && self.owns(
+                        checkout_label(present(working_dir), present(checkout), present(scope)),
+                        present(scope),
+                    )
                 {
                     continue;
                 }
@@ -1239,7 +1287,10 @@ impl OwnershipContext {
             || !id.bytes().all(|byte| byte.is_ascii_hexdigit())
             || !super::parse::compose_status_is_running(status)
             || oneoff
-            || !self.owns(present(working_dir).or(present(checkout)), present(scope))
+            || !self.owns(
+                checkout_label(present(working_dir), present(checkout), present(scope)),
+                present(scope),
+            )
         {
             return Err(refuse(
                 "full-ID/oneoff/running/checkout/scope ownership changed or is unknown",

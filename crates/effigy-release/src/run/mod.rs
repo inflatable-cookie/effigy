@@ -130,8 +130,14 @@ pub fn run_release(
         if let Some(record) = &mut existing {
             session.project_record(record)?;
         }
-        let continuation =
-            continue_record(request, existing, checkpoint.as_ref(), &state, effects)?;
+        let continuation = continue_record(
+            request,
+            existing,
+            checkpoint.as_ref(),
+            &state,
+            effects,
+            &mut run,
+        )?;
         Ok::<_, ReleaseError>((plan, continuation))
     })();
     let (plan, continuation) = match prepared {
@@ -235,6 +241,7 @@ fn continue_record(
     checkpoint: Option<&ReleaseCheckpoint>,
     state: &ReleaseState,
     effects: &mut dyn ReleaseEffects,
+    run: &mut Run<'_>,
 ) -> Result<Continuation, ReleaseError> {
     let requested = match &request.action {
         ReleaseAction::Run => None,
@@ -319,7 +326,7 @@ fn continue_record(
             };
             record.approvals.push(RecordApproval {
                 stage: stage.label().to_owned(),
-                approved_by: approver_name(effects),
+                approved_by: approver_name(effects, run),
                 approved_at: now(),
             });
             record.status = ReleaseRunStatus::Paused;
@@ -518,8 +525,8 @@ impl<'a, 's> Runner<'a, 's> {
             )));
         }
 
-        self.record.branch = Some(self.effects.current_branch()?);
-        self.record.source_commit = Some(self.effects.head_commit()?);
+        self.record.branch = Some(self.effects.current_branch(self.run)?);
+        self.record.source_commit = Some(self.effects.head_commit(self.run)?);
         self.record.identities = Vec::new();
         self.record.artifacts = Vec::new();
         self.record.verifications = Vec::new();
@@ -677,7 +684,7 @@ impl<'a, 's> Runner<'a, 's> {
             .iter()
             .map(|mutation| mutation.path.clone())
             .collect();
-        match self.effects.commit_paths(&paths, &message) {
+        match self.effects.commit_paths(self.run, &paths, &message) {
             Ok(commit) => {
                 self.record.candidate_commit = Some(commit);
                 self.persist()
@@ -699,7 +706,7 @@ impl<'a, 's> Runner<'a, 's> {
         let restore: Vec<PathBuf> = prepared.iter().map(|(path, _)| path.clone()).collect();
         let snapshots: BTreeMap<PathBuf, Option<Vec<u8>>> = prepared.into_iter().collect();
         let unrestored = crate::restore_mutation_snapshots(&snapshots);
-        if let Err(error) = self.effects.discard_staged(&restore) {
+        if let Err(error) = self.effects.discard_staged(self.run, &restore) {
             self.messages.push(format!(
                 "prepared release changes could not be unstaged: {error}"
             ));
@@ -948,7 +955,7 @@ impl<'a, 's> Runner<'a, 's> {
             }
             // Reconcile before any retry: an interrupted invocation may have
             // pushed this tag without recording it (contract 054 §7).
-            match self.effects.remote_tag_commit(&tag) {
+            match self.effects.remote_tag_commit(self.run, &tag) {
                 Ok(Some(sha)) if sha == candidate => {
                     self.record_destination(target, &identity, &tag, candidate)?;
                     continue;
@@ -972,7 +979,7 @@ impl<'a, 's> Runner<'a, 's> {
                 }
             }
 
-            match self.effects.local_tag_commit(&tag) {
+            match self.effects.local_tag_commit(self.run, &tag) {
                 Ok(Some(sha)) if sha == candidate => {}
                 Ok(Some(sha)) => {
                     return Err(self.target_failed(
@@ -984,7 +991,7 @@ impl<'a, 's> Runner<'a, 's> {
                 }
                 Ok(None) => {
                     let message = ANNOTATED_TAG_MESSAGE.replace("{tag}", &tag);
-                    self.effects.create_annotated_tag(&tag, candidate, &message)?;
+                    self.effects.create_annotated_tag(self.run, &tag, candidate, &message)?;
                 }
                 Err(error) => {
                     return Err(self.target_failed(
@@ -998,7 +1005,7 @@ impl<'a, 's> Runner<'a, 's> {
                 kernel::TAG_PUSH_EFFECT,
                 serde_json::json!({ "tag": tag, "commit": candidate }),
             )?;
-            match self.effects.push_tag(&tag) {
+            match self.effects.push_tag(self.run, &tag) {
                 Ok(()) => {
                     self.record_applied(&ticket, &tag, candidate)?;
                     self.record_destination(target, &identity, &tag, candidate)?;
@@ -1139,7 +1146,7 @@ impl<'a, 's> Runner<'a, 's> {
                 kernel::COMMIT_PUSH_EFFECT,
                 serde_json::json!({ "commit": commit, "branch": branch }),
             )?;
-            match self.effects.push_commit(&commit, &branch) {
+            match self.effects.push_commit(self.run, &commit, &branch) {
                 Ok(()) => {
                     self.record_applied(&ticket, &branch, &commit)?;
                     self.record.pushed_commit = true;
@@ -1264,12 +1271,15 @@ impl<'a, 's> Runner<'a, 's> {
             self.record.release_id.clone(),
         );
         env.insert("EFFIGY_RELEASE_STAGE".to_owned(), stage.label().to_owned());
-        self.effects.run_task(&TaskRequest {
-            task: task.to_owned(),
-            label: format!("release {} task `{task}`", stage.label()),
-            cwd: self.plan.repo_root.clone(),
-            env,
-        })
+        self.effects.run_task(
+            self.run,
+            &TaskRequest {
+                task: task.to_owned(),
+                label: format!("release {} task `{task}`", stage.label()),
+                cwd: self.plan.repo_root.clone(),
+                env,
+            },
+        )
     }
 }
 

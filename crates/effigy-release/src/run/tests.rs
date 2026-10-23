@@ -206,7 +206,17 @@ struct TestEffects {
 impl TestEffects {
     fn new(root: &Path) -> Self {
         Self {
-            inner: GitEffects::new(root),
+            inner: GitEffects::with_executable(
+                root,
+                effigy_kernel::supervise::Executable::capture(Path::new(
+                    &std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE").unwrap_or_else(|| {
+                        Path::new(env!("CARGO_MANIFEST_DIR"))
+                            .join("../../target/debug/kernel-custody-fixture")
+                            .into_os_string()
+                    }),
+                ))
+                .unwrap(),
+            ),
             pushes: Vec::new(),
             commit_pushes: Vec::new(),
             push_attempts: 0,
@@ -223,43 +233,52 @@ impl TestEffects {
 }
 
 impl ReleaseEffects for TestEffects {
-    fn current_branch(&mut self) -> Result<String, ReleaseError> {
-        self.inner.current_branch()
+    fn current_branch(&mut self, run: &mut Run<'_>) -> Result<String, ReleaseError> {
+        self.inner.current_branch(run)
     }
 
-    fn head_commit(&mut self) -> Result<String, ReleaseError> {
-        self.inner.head_commit()
+    fn head_commit(&mut self, run: &mut Run<'_>) -> Result<String, ReleaseError> {
+        self.inner.head_commit(run)
     }
 
-    fn working_tree_clean(&mut self) -> Result<bool, ReleaseError> {
-        self.inner.working_tree_clean()
+    fn working_tree_clean(&mut self, run: &mut Run<'_>) -> Result<bool, ReleaseError> {
+        self.inner.working_tree_clean(run)
     }
 
-    fn local_tag_commit(&mut self, tag: &str) -> Result<Option<String>, ReleaseError> {
-        self.inner.local_tag_commit(tag)
+    fn local_tag_commit(
+        &mut self,
+        run: &mut Run<'_>,
+        tag: &str,
+    ) -> Result<Option<String>, ReleaseError> {
+        self.inner.local_tag_commit(run, tag)
     }
 
-    fn remote_tag_commit(&mut self, tag: &str) -> Result<Option<String>, ReleaseError> {
-        self.inner.remote_tag_commit(tag)
+    fn remote_tag_commit(
+        &mut self,
+        run: &mut Run<'_>,
+        tag: &str,
+    ) -> Result<Option<String>, ReleaseError> {
+        self.inner.remote_tag_commit(run, tag)
     }
 
     fn create_annotated_tag(
         &mut self,
+        run: &mut Run<'_>,
         tag: &str,
         commit: &str,
         message: &str,
     ) -> Result<(), ReleaseError> {
-        self.inner.create_annotated_tag(tag, commit, message)
+        self.inner.create_annotated_tag(run, tag, commit, message)
     }
 
-    fn push_tag(&mut self, tag: &str) -> Result<(), ReleaseError> {
+    fn push_tag(&mut self, run: &mut Run<'_>, tag: &str) -> Result<(), ReleaseError> {
         self.push_attempts += 1;
         if self.failed_push_on == Some(self.push_attempts) {
             return Err(ReleaseError::TaskInvocation(format!(
                 "simulated unknown push of `{tag}`"
             )));
         }
-        self.inner.push_tag(tag)?;
+        self.inner.push_tag(run, tag)?;
         self.pushes.push(tag.to_owned());
         if self.ambiguous_push_on == Some(self.push_attempts) {
             return Err(ReleaseError::TaskInvocation(format!(
@@ -269,26 +288,40 @@ impl ReleaseEffects for TestEffects {
         Ok(())
     }
 
-    fn push_commit(&mut self, commit: &str, branch: &str) -> Result<(), ReleaseError> {
-        self.inner.push_commit(commit, branch)?;
+    fn push_commit(
+        &mut self,
+        run: &mut Run<'_>,
+        commit: &str,
+        branch: &str,
+    ) -> Result<(), ReleaseError> {
+        self.inner.push_commit(run, commit, branch)?;
         self.commit_pushes.push(commit.to_owned());
         Ok(())
     }
 
-    fn commit_paths(&mut self, paths: &[PathBuf], message: &str) -> Result<String, ReleaseError> {
+    fn commit_paths(
+        &mut self,
+        run: &mut Run<'_>,
+        paths: &[PathBuf],
+        message: &str,
+    ) -> Result<String, ReleaseError> {
         if self.fail_commit {
             return Err(ReleaseError::TaskInvocation(
                 "simulated prepare commit failure".to_owned(),
             ));
         }
-        self.inner.commit_paths(paths, message)
+        self.inner.commit_paths(run, paths, message)
     }
 
-    fn discard_staged(&mut self, paths: &[PathBuf]) -> Result<(), ReleaseError> {
-        self.inner.discard_staged(paths)
+    fn discard_staged(&mut self, run: &mut Run<'_>, paths: &[PathBuf]) -> Result<(), ReleaseError> {
+        self.inner.discard_staged(run, paths)
     }
 
-    fn run_task(&mut self, request: &TaskRequest) -> Result<TaskResponse, ReleaseError> {
+    fn run_task(
+        &mut self,
+        _run: &mut Run<'_>,
+        request: &TaskRequest,
+    ) -> Result<TaskResponse, ReleaseError> {
         self.tasks.push(request.task.clone());
         if self.fail_task.as_deref() == Some(request.task.as_str()) {
             return Ok(TaskResponse {
@@ -311,7 +344,7 @@ impl ReleaseEffects for TestEffects {
         })
     }
 
-    fn operator(&mut self) -> Option<String> {
+    fn operator(&mut self, _run: &mut Run<'_>) -> Option<String> {
         Some("release tests".to_owned())
     }
 }

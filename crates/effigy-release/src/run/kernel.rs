@@ -150,8 +150,12 @@ fn invocation(checkout: CheckoutId, owner: ResourceId) -> ResolvedInvocation {
 
 fn next_invocation() -> Invocation {
     Invocation::validated(
-        vec![OsString::from("release"), OsString::from("resume")],
-        |args| args == ["release", "resume"],
+        vec![
+            OsString::from("effigy"),
+            OsString::from("release"),
+            OsString::from("run"),
+        ],
+        |args| args == ["effigy", "release", "run"],
     )
     .expect("fixed recovery invocation")
 }
@@ -301,6 +305,11 @@ impl std::fmt::Debug for ReleaseSession {
 
 impl ReleaseSession {
     pub fn open(home: &Path, repo_root: &Path) -> Result<Self, ReleaseError> {
+        if effigy_core::container_detection::process_is_inside_effigy_workspace_container() {
+            return Err(ReleaseError::TaskInvocation(
+                "release mutation requires host authority".into(),
+            ));
+        }
         let op = operation();
         let cx = op.effects().map_err(|_| {
             ReleaseError::TaskInvocation("release runs need write capability".into())

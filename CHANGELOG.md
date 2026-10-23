@@ -7,6 +7,11 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Release Git operations and stage tasks now run under their checkout run’s
+  process custody. Owner death triggers cleanup, and output or closure gaps
+  refuse completion. Vault locking opens no runtime database.
+- Scoped Docker services bind to the checkout label and scope token even when
+  Compose reports the immutable render directory as its working directory.
 - Runtime scope inventory lives in each checkout journal. Deleted checkout cleanup
   discovers ownership on the selected backend and requires the recorded native
   checkout generation and custody lease; live and uncertain scopes stay protected.
