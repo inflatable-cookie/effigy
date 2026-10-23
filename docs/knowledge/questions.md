@@ -52,6 +52,17 @@ Settled with Tom on 2026-10-18:
 - The direction is an end-to-end `effigy deploy <env>` that runs the same way
   from a developer machine, CI or an agent (Tom: "Probably all three?").
 
+Settled with Tom on 2026-10-23:
+
+- v0.15 makes `deploy model` and `deploy export` environment-aware (Tom:
+  "Yes"). They take `<ENV>` like `plan`, `apply` and `status`, resolve
+  `[deploy.<env>]` over the shared `[deploy.model]`, and refuse an undeclared
+  environment. They never infer UAT or production values from the dev
+  profile. Acowtancy's Render readiness audit found the model could only
+  describe dev `.test` domains and dev task commands.
+- Previews run without network or secrets (effigy#279): pinned provider
+  revisions, offline plan, and the resolved provider commit in every report.
+
 Open: the full design. The starting shape is in Queue lane `deploy`: a kernel
 run with intent before each effect and explicit obligations (artifacts by
 digest, release gates, state and migrations, provider apply through an
