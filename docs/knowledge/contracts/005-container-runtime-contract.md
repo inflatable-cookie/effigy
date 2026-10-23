@@ -1280,6 +1280,56 @@ exit status. The existing project, service, published-port and host-listener
 ownership checks still gate every route claim. No route is claimed from a
 fallback port while the declared runtime binding is absent.
 
+## Host load and profile VM maintenance
+
+Every bounded Colima/nerdctl call keeps its own bound. A timeout on a loaded
+host is evidence about the host, not about the service, and the contract
+distinguishes the two:
+
+- Before a bounded observation is retried, Effigy reads the host's own load
+  (`/proc/loadavg`, or `sysctl vm.loadavg` on macOS). A host at or above one
+  runnable task per CPU is saturated. The observation is read-only and never
+  starts a container, VM or runtime command.
+- `container up` opens the first exec-readiness window from two seconds to
+  fifteen seconds once when the host is saturated, so the service gets a
+  bounded second attempt before any restart. A host below that threshold keeps
+  the two-second window, and every post-restart window, live-run refusal and
+  failure path is unchanged.
+- An owned inspect that times out on a saturated host is retried at most twice
+  with the same fifteen-second bound before the failure is reported. The
+  failure names the observed load and states that the container's state is
+  unproven and that Effigy did not start, stop or recreate it.
+- A readiness refusal that ran out on a saturated host names the host in the
+  same error. Without an overload observation the error keeps its
+  service-language and its existing meaning.
+- A service observed `Exited (141)` is reported as SIGPIPE (a closed
+  stdout/stderr pipe whose reader went away), not as a health verdict. Detached
+  `container up` keeps backend output in a retained file, so Effigy owns no
+  reader lifetime there.
+
+nerdctl 2.3.1 never deletes the exec process behind a health check, so the
+profile VM accumulates one `health-check-<id>.pid` file per check under
+`/run/containerd/io.containerd.runtime.v2.task/<namespace>/<container>/`.
+`/run` is a finite-inode tmpfs; once it fills, every exec and container create
+in the profile fails with `no space left on device`. nerdctl 2.4.1 deletes the
+exec process and stops the leak; the VM runs whatever nerdctl its Colima image
+ships (Colima 0.10.3 ships 2.3.1), so the doctor warning names the version
+rather than promising an upgrade. Effigy cannot upgrade a running profile's
+runtime, so it:
+
+- reports `/run` inode use and the total and stale pid-file counts for every
+  running Colima profile in `effigy doctor`, with a warning that names the
+  prune and the fixed nerdctl version when inode use reaches 80% or the stale
+  count reaches 10,000;
+- prunes files matching exactly `health-check-*.pid`, directly inside a
+  containerd runtime-v2 task directory and older than ten minutes, on
+  `container up` (bounded, never failing the bring-up) and on
+  `effigy container profile prune-health-pid-files [--profile <NAME>]`, which
+  reports the counts and inode use before and after.
+
+No other path under the task root is read or removed, and a younger file may
+belong to a health check still in flight, so it is kept.
+
 ## Owned service start after Colima restart
 
 A running Colima VM can still leave Effigy-owned Compose containers `Exited`

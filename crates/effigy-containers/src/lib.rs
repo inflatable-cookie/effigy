@@ -5,6 +5,7 @@ pub mod compose;
 pub mod environment;
 pub mod exec;
 pub mod health;
+pub mod host_load;
 pub mod manager;
 mod mount_spec;
 pub mod ops;

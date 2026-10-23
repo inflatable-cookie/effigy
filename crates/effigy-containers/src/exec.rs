@@ -1,4 +1,5 @@
 mod colima_runtime;
+mod healthcheck_pidfiles;
 mod healthcheck_timer;
 mod implementation;
 mod managed_stop;
@@ -15,6 +16,12 @@ pub use colima_runtime::{
     ensure_colima_running, ensure_runtime_backend_running, recover_colima_runtime,
     reset_colima_runtime, running_colima_profiles, runtime_backend_is_running,
     selected_backend_label, ColimaRecoveryReport,
+};
+pub use healthcheck_pidfiles::{
+    inspect_run_inode_pressure, parse_health_check_pidfile_prune, parse_run_inode_pressure,
+    prune_stale_health_check_pidfiles, HealthCheckPidFilePrune, RunInodePressure,
+    HEALTHCHECK_PIDFILE_PATTERN, HEALTHCHECK_PIDFILE_STALE_MINUTES, HEALTHCHECK_TASK_ROOT,
+    RUN_INODE_PRESSURE_PERCENT, STALE_PIDFILE_WARNING_COUNT,
 };
 pub use implementation::{
     capture_compose_ps, capture_running_container_stats,

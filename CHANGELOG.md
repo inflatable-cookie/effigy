@@ -384,6 +384,17 @@ During v0.x, MINOR bumps may include breaking changes.
   `simulate --version`. The refusal names the replacement.
 
 ### Added
+- `effigy container profile prune-health-pid-files [--profile <NAME>]` deletes
+  only the stale nerdctl health-check pid files a running Colima profile leaks
+  into the VM's `/run` (exact `health-check-*.pid` name, directly inside a
+  containerd runtime-v2 task directory, older than ten minutes) and reports the
+  pid-file counts and `/run` inode use before and after
+  (`effigy.container.profile-prune-health-pid-files.v1`). `container up` runs
+  the same bounded prune, which never fails the bring-up, and `effigy doctor`
+  now reports `/run` inode use and the leaked pid-file counts for every running
+  Colima profile, warning at 80% inode use or 10,000 stale files (effigy#291,
+  papercut `03f4e93a`). nerdctl 2.3.1 never deletes the health-check exec
+  process; nerdctl 2.4.1 does, so the warning names the fixed version.
 - `runtime::paths()` exposes `repo_root`, `catalog_root`, `skill_root`,
   `invocation_cwd` and `cwd` to Rhai script functions. The top-level scope
   constants stay as they were, but a function no longer fails with
@@ -1016,6 +1027,18 @@ During v0.x, MINOR bumps may include breaking changes.
   formatter stays reachable as `effigy fmt-rust <FILE>...`, `--plan` names
   that spelling, `fmt` is in shell completion, and the formatter help says
   relative paths are cwd-relative.
+- A bounded Colima/nerdctl call that times out on a loaded host no longer reads
+  as a service failure (effigy#291, papercut `8064c5b9`). Effigy observes the
+  host's own load average: on a saturated host (one runnable task per CPU) an
+  owned inspect that times out is retried with the same bound at most twice
+  before failing, `container up` opens the first exec-readiness window from two
+  to fifteen seconds once before considering any restart, and the resulting
+  error names the observed load (`load average 40.00 over 18 CPU(s)`) and says
+  the service's state is unproven. An idle host keeps exactly one attempt and
+  its existing error. A service observed `Exited (141)` is now reported as
+  SIGPIPE — a closed stdout/stderr pipe whose reader went away — instead of as
+  a health verdict; detached `container up` keeps backend output in a retained
+  file, so Effigy owns no reader lifetime there.
 - Rhai steps receive the same task `args` as a run step's `{args}` template:
   Effigy drops the single leading `--` boundary flag it consumed and keeps
   later `--` tokens, so a direct task and `skill run <task> -- <args>` agree

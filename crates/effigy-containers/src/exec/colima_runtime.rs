@@ -5,6 +5,7 @@ use std::process::{Command, Output};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use super::healthcheck_pidfiles::prune_stale_health_check_pidfiles;
 use super::implementation::ContainerExecError;
 use super::parse::docker_failure_looks_like_colima_runtime_state_loss;
 use super::process::{
@@ -51,7 +52,42 @@ struct ColimaProfileEntry {
     disk: u64,
 }
 
+/// Bound for the `container up` prune of leaked nerdctl health-check pid
+/// files. A profile holding the leak needs a few seconds to walk and delete
+/// its files; a clean profile walks a handful.
+const HEALTHCHECK_PIDFILE_PRUNE_TIMEOUT: Duration = Duration::from_secs(30);
+
 pub fn ensure_colima_running(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<bool, ContainerExecError> {
+    let started = ensure_colima_profile_running(policy, repo_root)?;
+    maintain_health_check_pid_files(policy, repo_root);
+    Ok(started)
+}
+
+/// `container up`'s bounded prune of the pid files nerdctl 2.3.1 health checks
+/// leak into the VM's `/run` (effigy#291). It never fails the bring-up: a
+/// profile that cannot answer the probe keeps whatever state it had, and the
+/// doctor check still reports the pressure.
+fn maintain_health_check_pid_files(policy: &EffectiveContainerPolicy, repo_root: &Path) {
+    let deadline = Instant::now() + HEALTHCHECK_PIDFILE_PRUNE_TIMEOUT;
+    match prune_stale_health_check_pidfiles(&policy.profile, repo_root, deadline) {
+        Ok(prune) if prune.deleted() > 0 => eprintln!(
+            "[info] Colima profile `{}`: {} (`effigy container profile prune-health-pid-files --profile {}` repeats this, and nerdctl 2.4.1 or later stops the leak)",
+            policy.profile,
+            prune.summary(),
+            policy.profile,
+        ),
+        Ok(_) => {}
+        Err(error) => eprintln!(
+            "[warn] Colima profile `{}`: stale nerdctl health-check pid-file prune skipped: {error}",
+            policy.profile
+        ),
+    }
+}
+
+fn ensure_colima_profile_running(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
 ) -> Result<bool, ContainerExecError> {

@@ -490,7 +490,7 @@ where
     let mut args = args.into_iter();
     let Some(subcmd) = args.next() else {
         return Err(CliParseError::InvalidArguments(
-            "`effigy container profile` requires a subcommand; use `status`, `resize`, `purge`, `recreate`, `repair`, or `reset-runtime`"
+            "`effigy container profile` requires a subcommand; use `status`, `resize`, `purge`, `recreate`, `repair`, `reset-runtime`, or `prune-health-pid-files`"
                 .to_owned(),
         ));
     };
@@ -503,6 +503,7 @@ where
         "recreate" => parse_container_profile_recreate(args),
         "repair" => parse_container_profile_runtime_recovery(args, false),
         "reset-runtime" => parse_container_profile_runtime_recovery(args, true),
+        "prune-health-pid-files" => parse_container_profile_prune_health_pid_files(args),
         other => Err(unknown_argument(other)),
     }
 }
@@ -540,6 +541,41 @@ where
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Profile { subcommand },
         repo_override,
+        output_json,
+    }))
+}
+
+/// `prune-health-pid-files` is machine-level runtime maintenance: it takes a
+/// profile and never a repository.
+fn parse_container_profile_prune_health_pid_files<I>(args: I) -> Result<Command, CliParseError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut args = args.into_iter();
+    let mut output_json = false;
+    let mut profile: Option<String> = None;
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--json" => output_json = true,
+            "--profile" => {
+                profile = Some(next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--profile".to_owned(),
+                    },
+                )?)
+            }
+            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
+            other => return Err(unknown_argument(other)),
+        }
+    }
+
+    Ok(Command::Container(ContainerArgs {
+        subcommand: ContainerSubcommand::Profile {
+            subcommand: ContainerProfileSubcommand::PruneHealthPidFiles { profile },
+        },
+        repo_override: None,
         output_json,
     }))
 }

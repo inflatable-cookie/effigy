@@ -851,6 +851,42 @@ fn parse_container_profile_recreate_accepts_profile_and_yes() {
 }
 
 #[test]
+fn parse_container_profile_prune_health_pid_files_takes_a_profile_and_no_repo() {
+    let cmd = parse_command(vec![
+        "container".to_owned(),
+        "profile".to_owned(),
+        "prune-health-pid-files".to_owned(),
+        "--profile".to_owned(),
+        "effigy".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cmd,
+        Command::Container(ContainerArgs {
+            subcommand: ContainerSubcommand::Profile {
+                subcommand: ContainerProfileSubcommand::PruneHealthPidFiles {
+                    profile: Some("effigy".to_owned()),
+                },
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+
+    let error = parse_command(vec![
+        "container".to_owned(),
+        "profile".to_owned(),
+        "prune-health-pid-files".to_owned(),
+        "--repo".to_owned(),
+        "demo".to_owned(),
+    ])
+    .expect_err("the prune is machine-level runtime maintenance");
+    assert!(error.to_string().contains("--repo"), "{error}");
+}
+
+#[test]
 fn parse_container_profile_purge_accepts_profile_and_yes() {
     let cmd = parse_command(vec![
         "container".to_owned(),
