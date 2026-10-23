@@ -44,7 +44,8 @@ pub use parse::{
     RunningComposeContainerProfiled, RunningContainerStats, RunningContainerStatsCapture,
 };
 pub use process::{
-    run_command_capture, run_command_capture_allow_failure, run_input_capture_until,
+    no_containers_diagnostic, retained_backend_log_path, run_command_capture,
+    run_command_capture_allow_failure, run_input_capture_until,
 };
 pub use restart_recovery::{
     recover_exited_owned_compose_services, recover_exited_owned_compose_services_for_project,

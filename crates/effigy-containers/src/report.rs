@@ -1436,6 +1436,8 @@ pub fn hosts_report(
         "base_domain": {
             "declared": host_map.declared_base,
             "effective": host_map.effective_base,
+            "inferred": host_map.base_domain_inferred,
+            "warning": host_map.base_domain_warning,
         },
         "cookie_domain": host_map.cookie_domain(),
         "relying_party_id": host_map.relying_party_id(),
@@ -1462,6 +1464,15 @@ pub fn hosts_report(
             ));
         }
         None => lines.push("[ok] no declared gateway hosts".to_owned()),
+    }
+    if host_map.base_domain_inferred {
+        lines.push(
+            "base_domain_inferred: true (declare `[containers.<name>.dns] base_domain` in the bundle)"
+                .to_owned(),
+        );
+    }
+    if let Some(warning) = host_map.base_domain_warning.as_deref() {
+        lines.push(format!("[warn] {warning}"));
     }
     for route in &host_map.routes {
         let kind = match route.kind {
@@ -1703,5 +1714,62 @@ mod retire_unverified_tests {
         let report = retire_report_unverified(None, None, &[], &[], true, &[]);
         assert_eq!(report.json["ok"], true);
         assert_eq!(report.json["idempotent"], true);
+    }
+}
+
+#[cfg(test)]
+mod hosts_report_tests {
+    use super::hosts_report;
+    use crate::{build_host_map, EffectiveDnsRoute};
+
+    fn route(domain: &str) -> EffectiveDnsRoute {
+        EffectiveDnsRoute {
+            domain: domain.to_owned(),
+            declared_domain: domain.to_owned(),
+            tls: true,
+            port: None,
+            service: None,
+            target_host: None,
+        }
+    }
+
+    #[test]
+    fn an_inferred_base_is_reported_with_its_warning() {
+        let map = build_host_map(
+            &[route("s3.acme.test"), route("other.example")],
+            &[],
+            &[],
+            None,
+            false,
+            None,
+        );
+        let report = hosts_report(std::path::Path::new("/repo"), &map);
+        assert_eq!(report.json["base_domain"]["inferred"], true);
+        let warning = report.json["base_domain"]["warning"]
+            .as_str()
+            .expect("the warning is reported");
+        assert!(warning.contains("other.example"), "{warning}");
+        assert!(report.success_text.contains("base_domain_inferred: true"));
+        assert!(
+            report.success_text.contains("[warn]"),
+            "{}",
+            report.success_text
+        );
+    }
+
+    #[test]
+    fn a_declared_base_is_not_reported_as_inferred() {
+        let map = build_host_map(
+            &[route("s3.acme.test")],
+            &[],
+            &[],
+            None,
+            false,
+            Some("acme.test"),
+        );
+        let report = hosts_report(std::path::Path::new("/repo"), &map);
+        assert_eq!(report.json["base_domain"]["inferred"], false);
+        assert!(report.json["base_domain"]["warning"].is_null());
+        assert!(!report.success_text.contains("base_domain_inferred"));
     }
 }

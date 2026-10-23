@@ -1261,15 +1261,7 @@ fn parse_target_host_port(target: &str) -> Result<u16, RunnerError> {
 }
 
 fn project_base_domain(policy: &EffectiveContainerPolicy) -> Option<String> {
-    let domain = policy.dns_domain.as_deref()?.trim();
-    let labels = domain
-        .split('.')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
-    if labels.len() < 2 {
-        return None;
-    }
-    Some(labels.join("."))
+    policy.dns_effective_base_domain()
 }
 
 fn load_or_allocate_project_loopback_ip(

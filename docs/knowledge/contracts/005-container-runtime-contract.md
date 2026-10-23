@@ -995,9 +995,20 @@ hosts such as `mail.app.test` stay under that apex. The primary checkout keeps
 declared names. `effigy container hosts` returns declared and effective names,
 origins, cookie domain and WebAuthn relying-party id. Effigy registers those
 effective names on the gateway. It does not rewrite application configuration.
-For a container manifest, `dns.base_domain` overrides the first resolved DNS
-route as the declared apex for generated TCP aliases and the reported cookie
-domain; the same checkout-scoping rule applies to that configured apex.
+For a container manifest, `dns.base_domain` declares the apex for generated TCP
+aliases and the reported cookie domain and RP ID; the same checkout-scoping
+rule applies to that configured apex. Without a declaration Effigy infers the
+base from the longest common domain suffix of the HTTP routes (the front route
+or a managed host-listener route breaks a tie), so a bundle whose first route
+is a subdomain no longer names that subdomain as the apex. Policy load resolves
+that one apex (declared or inferred, in the checkout's scope) and passes it to
+the generated TCP aliases, the Compose route-parity `extra_hosts` and gateway
+service-alias registration, so `container hosts` never advertises a different
+apex than the gateway or the container's own aliases. When an inferred
+base is not a suffix of every HTTP route, `container hosts` warns and its JSON
+`base_domain` object carries `"inferred": true` and the `warning`. A bundle
+should declare `base_domain` explicitly. A declared value is never inferred or
+rewritten.
 
 Owned mutable resources for that generation carry `com.effigy.scope`,
 `com.effigy.project`, or the exact Compose project label. `effigy container
