@@ -177,8 +177,17 @@ impl Blocked {
         cx: &OperationContext,
         image: &crate::supervise::anchor::Image<'_>,
         lease: Option<&crate::inheritance::InheritedCapability>,
+        closure: Option<&crate::inheritance::ClosurePin>,
     ) -> io::Result<Self> {
-        Self::fork_inner(spec, "EFFIGY_CUSTODY_NONCE", nonce, cx, Some(image), lease)
+        Self::fork_inner(
+            spec,
+            "EFFIGY_CUSTODY_NONCE",
+            nonce,
+            cx,
+            Some(image),
+            lease,
+            closure,
+        )
     }
     pub(crate) fn fork_with_nonce(
         spec: &ProcessSpec,
@@ -186,7 +195,7 @@ impl Blocked {
         nonce: &str,
         cx: &OperationContext,
     ) -> io::Result<Self> {
-        Self::fork_inner(spec, key, nonce, cx, None, None)
+        Self::fork_inner(spec, key, nonce, cx, None, None, None)
     }
     fn fork_inner(
         spec: &ProcessSpec,
@@ -195,6 +204,7 @@ impl Blocked {
         cx: &OperationContext,
         image: Option<&crate::supervise::anchor::Image<'_>>,
         lease: Option<&crate::inheritance::InheritedCapability>,
+        closure: Option<&crate::inheritance::ClosurePin>,
     ) -> io::Result<Self> {
         if !["EFFIGY_CUSTODY_NONCE", "EFFIGY_PROBE_NONCE"].contains(&key) {
             return Err(io::Error::new(
@@ -251,6 +261,10 @@ impl Blocked {
                 )?,
             );
         }
+        let closure_fd = closure
+            .map(|capability| capability.custody_fd(cx))
+            .transpose()?;
+        let closure_fd_raw = closure_fd.as_ref().map_or(-1, AsRawFd::as_raw_fd);
         let inherited_fd = inherited.as_ref().map_or(-1, AsRawFd::as_raw_fd);
         env.push(
             CString::new(format!("{key}={nonce}"))
@@ -328,8 +342,9 @@ impl Blocked {
         }
         if pid == 0 {
             // SAFETY: every fd below is live in the inherited descriptor table;
-            // source fds are >=10, so dup2 targets cannot overwrite a source.
-            // After descriptor closure only stdio, barrier and status remain. In
+            // stdio/barrier sources are >=10 and mapped before the optional
+            // grant-reader/pin targets 9/10. Their sources are >=128, so neither can
+            // overwrite the other. After closure only explicit slots remain. In
             // particular no sibling's barrier or sentinel writer is inherited.
             unsafe {
                 if libc::fchdir(cwd.raw()) != 0
@@ -358,11 +373,25 @@ impl Blocked {
                 if inherited_fd >= 0 && libc::dup2(inherited_fd, crate::inheritance::CHILD_FD) < 0 {
                     libc::_exit(125);
                 }
+                if closure_fd_raw >= 0
+                    && libc::dup2(closure_fd_raw, crate::inheritance::CLOSURE_FD) < 0
+                {
+                    libc::_exit(125);
+                }
                 let close_from = if anchor_fd >= 0 { 6 } else { 5 };
-                // Keep exactly the optional reader in slot 9. All writing
-                // endpoints close before the anchor forks or workload exec.
+                // Keep only the class reader and write-only cleanup pin in
+                // slots 9/10. Grant writers and sibling barriers always close;
+                // the group anchor closes these two workload slots too.
                 #[cfg(target_os = "linux")]
-                let closed = if inherited_fd >= 0 {
+                let closed = if closure_fd_raw >= 0 {
+                    libc::syscall(
+                        libc::SYS_close_range,
+                        close_from as u32,
+                        if inherited_fd >= 0 { 8u32 } else { 9u32 },
+                        0u32,
+                    ) == 0
+                        && libc::syscall(libc::SYS_close_range, 11u32, u32::MAX, 0u32) == 0
+                } else if inherited_fd >= 0 {
                     libc::syscall(libc::SYS_close_range, close_from as u32, 8u32, 0u32) == 0
                         && libc::syscall(libc::SYS_close_range, 10u32, u32::MAX, 0u32) == 0
                 } else {
@@ -373,7 +402,9 @@ impl Blocked {
                 if !closed {
                     let mut fd = close_from;
                     while fd < fd_limit {
-                        if inherited_fd < 0 || fd != crate::inheritance::CHILD_FD {
+                        if !(inherited_fd >= 0 && fd == crate::inheritance::CHILD_FD
+                            || closure_fd_raw >= 0 && fd == crate::inheritance::CLOSURE_FD)
+                        {
                             libc::close(fd);
                         }
                         fd += 1;

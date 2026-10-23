@@ -16,6 +16,8 @@ pub use runtime::{require_durable, RunClass, RunScope, RuntimeParent};
 
 pub const ENV: &str = "EFFIGY_PARENT_CAPABILITY";
 pub(crate) const CHILD_FD: i32 = 9;
+pub(crate) const CLOSURE_FD: i32 = 10;
+
 const PREFIX: &str = "memory-v1:9:";
 const MAX: usize = 4096;
 
@@ -309,3 +311,90 @@ fn peer_pid(fd: i32) -> io::Result<u32> {
 
 #[cfg(test)]
 mod tests;
+
+/// Identity of an anonymous custody pipe, bound into the native parent grant.
+/// It permits only a cleanup pin; it confers no gate or effect authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClosureIdentity {
+    device: u64,
+    inode: u64,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ClosurePin {
+    writer: Arc<std::fs::File>,
+    identity: ClosureIdentity,
+}
+impl ClosurePin {
+    pub(crate) fn new() -> io::Result<(std::fs::File, Self)> {
+        // The standard pipe keeps both original handles close-on-exec;
+        // only explicit duplicates can reach a workload or guard.
+        let (reader, writer) = std::io::pipe()?;
+        // High CLOEXEC copies never collide with helper stdio/error pipes.
+        let reader = std::fs::File::from(crate::gate::duplicate_custody(&reader)?);
+        let writer = std::fs::File::from(crate::gate::duplicate_custody(&writer)?);
+        let identity = pipe_identity(&writer, libc::O_WRONLY)?;
+        Ok((
+            reader,
+            Self {
+                writer: Arc::new(writer),
+                identity,
+            },
+        ))
+    }
+    pub(crate) fn identity(&self) -> ClosureIdentity {
+        self.identity
+    }
+    pub(crate) fn capture(expected: ClosureIdentity) -> io::Result<Self> {
+        // SAFETY: fcntl validates the reserved inherited slot and returns a
+        // fresh CLOEXEC copy >=128 without consuming or borrowing that slot.
+        let fd = unsafe { libc::fcntl(CLOSURE_FD, libc::F_DUPFD_CLOEXEC, 128) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: successful fcntl transferred this newly owned descriptor.
+        let writer = std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) });
+        if pipe_identity(&writer, libc::O_WRONLY)? != expected {
+            return Err(refused(
+                "custody pipe disagrees with its native parent grant",
+            ));
+        }
+        // SAFETY: the original inherited slot remains live in this process.
+        // This changes only its descriptor flag, preventing ambient exec leaks.
+        if unsafe { libc::fcntl(CLOSURE_FD, libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self {
+            writer: Arc::new(writer),
+            identity: expected,
+        })
+    }
+    pub(crate) fn custody_fd(&self, cx: &OperationContext) -> io::Result<OwnedFd> {
+        cx.check("custody closure pin")
+            .map_err(|error| io::Error::other(format!("{error:?}")))?;
+        if pipe_identity(self.writer.as_ref(), libc::O_WRONLY)? != self.identity {
+            return Err(refused("custody pipe identity changed"));
+        }
+        crate::gate::duplicate_custody(self.writer.as_ref())
+    }
+}
+
+pub(crate) fn pipe_identity(file: &std::fs::File, access: i32) -> io::Result<ClosureIdentity> {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let metadata = file.metadata()?;
+    // SAFETY: file retains the descriptor across this read-only fcntl.
+    let flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFL) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if !metadata.file_type().is_fifo()
+        || metadata.uid() != crate::fs::operator_uid()
+        || flags & libc::O_ACCMODE != access
+    {
+        return Err(refused("untrusted custody pipe or access mode"));
+    }
+    Ok(ClosureIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    })
+}

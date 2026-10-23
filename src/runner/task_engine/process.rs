@@ -393,7 +393,7 @@ pub(in crate::runner) fn spawn_environment(
     environment(cwd, Vec::new())
 }
 
-pub(super) fn environment(
+pub(in crate::runner) fn environment(
     cwd: &Path,
     overrides: Vec<(String, EnvOverride)>,
 ) -> Result<BTreeMap<OsString, EnvValue>, RunnerError> {

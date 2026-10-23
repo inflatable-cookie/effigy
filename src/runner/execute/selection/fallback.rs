@@ -39,15 +39,6 @@ pub(super) fn run_fallback_route<'a>(
             let root = &preflight.resolved.resolved_root;
             let mut suite_run = match requirement {
                 TestRunRequirement::Observe => None,
-                // The interactive adapter is adopted separately; preserve its
-                // existing scratch-owned streaming route in this tranche.
-                TestRunRequirement::Managed => {
-                    if crate::runner::scratch::wanted() {
-                        Some(TaskRun::standalone_scratching(root, &label)?)
-                    } else {
-                        None
-                    }
-                }
                 TestRunRequirement::Checkout => Some(if crate::runner::scratch::wanted() {
                     TaskRun::standalone_scratching(root, &label)?
                 } else {

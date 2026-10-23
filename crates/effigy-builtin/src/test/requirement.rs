@@ -13,8 +13,6 @@ pub struct TestRunSource {
 #[derive(Debug)]
 pub enum TestRunRequirement {
     Observe,
-    /// The existing interactive session adapter owns its execution surface.
-    Managed,
     Checkout,
     /// Routing is local; the engine must classify these declared descendants.
     Local(Vec<TestRunSource>),
@@ -38,9 +36,6 @@ pub fn test_run_requirement(
         Err(_) => return Ok(TestRunRequirement::Observe),
     };
     reject_unusable_suite_runtimes(&selected)?;
-    if execution::should_run_builtin_test_tui(flags.tui, selected.len(), flags.output_json) {
-        return Ok(TestRunRequirement::Managed);
-    }
     if selected.iter().any(|suite| {
         !suite.nested_invocation
             && matches!(

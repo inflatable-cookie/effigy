@@ -10,14 +10,14 @@ use super::{MultiProcessTuiError, MultiProcessTuiOptions, SessionRuntime};
 
 #[cfg(test)]
 pub(super) fn run_event_loop(
-    runtime: &mut SessionRuntime,
+    runtime: &mut SessionRuntime<'_>,
     options: MultiProcessTuiOptions,
 ) -> Result<(), MultiProcessTuiError> {
     run_event_loop_with_control(runtime, options, None).map(|_| ())
 }
 
 pub(super) fn run_event_loop_with_control(
-    runtime: &mut SessionRuntime,
+    runtime: &mut SessionRuntime<'_>,
     options: MultiProcessTuiOptions,
     control: Option<&super::MultiProcessTuiControl<'_>>,
 ) -> Result<bool, MultiProcessTuiError> {
@@ -185,7 +185,7 @@ fn terminal_input_on(fd: libc::c_int, wait: Duration) -> TerminalInput {
     }
 }
 
-fn startup_states_settled(runtime: &SessionRuntime) -> bool {
+fn startup_states_settled(runtime: &SessionRuntime<'_>) -> bool {
     runtime.state.pending_startup == 0
 }
 

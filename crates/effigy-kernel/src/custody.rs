@@ -299,6 +299,9 @@ trait ProcessOwner {
     fn id(&self) -> crate::id::RunId;
     fn fence(&self) -> &crate::run::Fence;
     fn has_sentinel(&self) -> bool;
+    fn closure_pin(&self) -> Result<Option<crate::inheritance::ClosurePin>, RunError> {
+        Ok(None)
+    }
     fn verify_custody(&self) -> Result<(), RunError>;
     fn intend_process(&mut self, spec: EffectSpec) -> Result<EffectTicket, RunError>;
     fn applied(&mut self, ticket: &EffectTicket, receipt: Value) -> Result<(), RunError>;
@@ -351,6 +354,9 @@ impl ProcessOwner for Run<'_> {
     }
 }
 impl ProcessOwner for crate::run::ForegroundRun {
+    fn closure_pin(&self) -> Result<Option<crate::inheritance::ClosurePin>, RunError> {
+        self.closure_pin().map(Some)
+    }
     fn id(&self) -> crate::id::RunId {
         self.record().incarnation().run
     }
@@ -574,7 +580,16 @@ impl Custody {
         })?;
         let nonce = format!("{}:{}", run.id(), ticket.sequence());
         let image = run.anchor_image()?;
-        let mut pending = spawn::Blocked::fork(&spec, &nonce, cx.operation(), &image, lease)?;
+        let closure = run.closure_pin()?;
+        let mut pending = spawn::Blocked::fork(
+            &spec,
+            &nonce,
+            cx.operation(),
+            &image,
+            lease,
+            closure.as_ref(),
+        )?;
+        drop(closure);
         drop(image); // helper verified the image before acknowledging the barrier
         let result = (|| {
             crate::fault_point!(SpawnFork)?;

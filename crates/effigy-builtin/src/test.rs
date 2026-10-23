@@ -68,7 +68,7 @@ pub(super) fn try_run_builtin_test(
     // The TUI spawns its own processes, so it cannot put suites behind the
     // caller's process custody. A caller that owns host suites runs them
     // through that custody instead, and streams their output.
-    let should_tui = !ports.custody_holds_host_suites()
+    let should_tui = (!ports.custody_holds_host_suites() || ports.has_test_tui_source())
         && execution::should_run_builtin_test_tui(flags.tui, runnable.len(), flags.output_json);
     let results = if should_tui {
         execution::run_builtin_test_targets_tui(ports, runnable)?

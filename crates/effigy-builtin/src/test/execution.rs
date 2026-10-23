@@ -9,7 +9,10 @@ use effigy_core::shell::{shell_quote, with_local_node_bin_path};
 use effigy_managed::run_spec::wrap_command_with_env;
 use effigy_manifest::ManifestTestSuiteTeardownPolicy;
 use effigy_process::ProcessSpec;
-use effigy_tui::multiprocess::{run_multiprocess_tui, MultiProcessTuiOptions};
+use effigy_tui::multiprocess::{
+    run_multiprocess_tui, run_multiprocess_tui_with_source, MultiProcessTuiControl,
+    MultiProcessTuiOptions, SessionProcesses, SessionTab,
+};
 
 use super::planning::{BuiltinTargetRuntime, BuiltinTestRunnable};
 use super::{BuiltinError, BuiltinTestExecResult};
@@ -70,14 +73,36 @@ pub(super) fn run_builtin_test_targets_tui(
             })
         })
         .collect::<Result<Vec<ProcessSpec>, BuiltinError>>()?;
-    let outcome = run_multiprocess_tui(
-        ports.current_working_dir()?,
-        specs,
-        tab_order,
-        MultiProcessTuiOptions {
-            esc_quit_on_complete: true,
-        },
-    )
+    let options = MultiProcessTuiOptions {
+        esc_quit_on_complete: true,
+    };
+    let outcome = if let Some(source) = ports.test_tui_source(specs.clone())? {
+        let tabs = specs
+            .iter()
+            .map(|spec| SessionTab {
+                name: spec.name.clone(),
+                pty: spec.pty,
+                shutdown_on_exit: spec.shutdown_on_exit,
+            })
+            .collect();
+        let poll = |source: &dyn SessionProcesses| Ok(source.close_requested());
+        let none = |_: &dyn SessionProcesses| Ok(());
+        let control = MultiProcessTuiControl {
+            poll: &poll,
+            before_shutdown: &none,
+            after_shutdown: &none,
+        };
+        run_multiprocess_tui_with_source(
+            ports.current_working_dir()?,
+            source,
+            tabs,
+            tab_order,
+            options,
+            Some(&control),
+        )
+    } else {
+        run_multiprocess_tui(ports.current_working_dir()?, specs, tab_order, options)
+    }
     .map_err(|error| BuiltinError::Ui(format!("builtin test tui runtime failed: {error}")))?;
     let failures = outcome
         .non_zero_exits

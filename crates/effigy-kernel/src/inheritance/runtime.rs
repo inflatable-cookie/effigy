@@ -19,6 +19,8 @@ pub struct RuntimeParent {
     pub run: RunId,
     pub class: RunClass,
     pub hook: Option<ProcessIdentity>,
+    #[serde(default)]
+    pub closure: Option<ClosureIdentity>,
 }
 impl RuntimeParent {
     pub fn new(run: RunId, class: RunClass, hook: Option<ProcessIdentity>) -> Self {
@@ -27,7 +29,13 @@ impl RuntimeParent {
             run,
             class,
             hook,
+            closure: None,
         }
+    }
+    /// Binds the foreground guard's anonymous cleanup pipe into this grant.
+    pub fn with_closure(mut self, closure: Option<ClosureIdentity>) -> Self {
+        self.closure = closure;
+        self
     }
     /// Text selects the inherited descriptor; only a live native capability
     /// supplies the grant. Invalid or unknown grants are errors, never absence.

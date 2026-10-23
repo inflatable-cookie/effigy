@@ -212,6 +212,19 @@ impl ForegroundRun {
     pub fn guard_identity(&self) -> Option<&ProcessIdentity> {
         self.guard.as_ref().and_then(|g| g.identity.as_ref())
     }
+    /// The native parent grant binds this pipe identity before any child go.
+    pub fn closure_identity(&self) -> Result<crate::inheritance::ClosureIdentity, RunError> {
+        self.guard
+            .as_ref()
+            .ok_or_else(|| RunError::Invalid("foreground guard unavailable".into()))?
+            .closure_identity()
+    }
+    pub(crate) fn closure_pin(&self) -> Result<crate::inheritance::ClosurePin, RunError> {
+        self.guard
+            .as_ref()
+            .ok_or_else(|| RunError::Invalid("foreground guard unavailable".into()))?
+            .closure_pin()
+    }
     pub(crate) fn has_guard(&self) -> bool {
         self.guard.is_some()
     }

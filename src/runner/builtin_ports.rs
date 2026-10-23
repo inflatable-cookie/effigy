@@ -5,6 +5,7 @@
 //! `doctor`, `execute`, `command_context`, and `tasks_command`
 //! modules, converting `RunnerError` to `BuiltinError` at the port
 //! boundary so the built-in layer only speaks its own error type.
+mod test_session;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -144,6 +145,21 @@ impl BuiltinRuntimePorts for RunnerBuiltinPorts<'_> {
 
     fn custody_holds_host_suites(&self) -> bool {
         self.suite_parent.is_some()
+    }
+
+    fn has_test_tui_source(&self) -> bool {
+        self.suite_parent.is_some()
+    }
+
+    fn test_tui_source(
+        &self,
+        specs: Vec<effigy_process::ProcessSpec>,
+    ) -> Result<Option<Box<dyn effigy_tui::multiprocess::SessionProcesses + '_>>, BuiltinError>
+    {
+        self.suite_parent
+            .as_ref()
+            .map(|parent| test_session::source(parent, specs))
+            .transpose()
     }
 
     fn host_suite_custody(

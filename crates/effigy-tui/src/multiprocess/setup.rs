@@ -15,7 +15,7 @@ pub(super) fn prepare_runtime_session(
     repo_root: PathBuf,
     mut processes: Vec<ProcessSpec>,
     tab_order: Vec<String>,
-) -> Result<SessionRuntime, MultiProcessTuiError> {
+) -> Result<SessionRuntime<'static>, MultiProcessTuiError> {
     let mut terminal = init_terminal()?;
     let size = match terminal.size() {
         Ok(size) => size,
@@ -84,12 +84,12 @@ pub(super) fn prepare_runtime_session(
 
 /// A session over processes another supervisor owns: the same state, with
 /// tabs from `tabs` instead of local specs.
-pub(super) fn prepare_source_session(
+pub(super) fn prepare_source_session<'a>(
     repo_root: PathBuf,
-    supervisor: Box<dyn super::SessionProcesses>,
+    supervisor: Box<dyn super::SessionProcesses + 'a>,
     tabs: Vec<super::SessionTab>,
     tab_order: Vec<String>,
-) -> Result<SessionRuntime, MultiProcessTuiError> {
+) -> Result<SessionRuntime<'a>, MultiProcessTuiError> {
     let terminal = init_terminal()?;
     let default_tabs = tabs.iter().map(|tab| tab.name.clone()).collect();
     let process_names = select_process_tabs(default_tabs, tab_order);

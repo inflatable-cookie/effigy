@@ -2,8 +2,10 @@
 use super::*;
 use crate::gate::GateGuard;
 use crate::ident::{self, ProcessIdentity};
+use crate::inheritance::{ClosureIdentity, ClosurePin, RunClass, RuntimeParent};
 use crate::run::{Effect, EffectState};
 use std::os::fd::{FromRawFd, OwnedFd};
+
 use std::process::ChildStdout;
 
 const GATE_FD: RawFd = 20;
@@ -17,6 +19,7 @@ pub(crate) struct MemoryGuard {
     pub(crate) identity: Option<ProcessIdentity>,
     cx: EffectContext,
     close_deadline: Option<Instant>,
+    closure: Option<ClosurePin>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,10 +30,26 @@ struct Config {
     gates: usize,
     run: RunId,
     fence: Fence,
+    watch: RawFd,
+    ancestor: Option<RawFd>,
 }
 #[derive(Serialize, Deserialize)]
 enum Message {
     Register(Effect),
+}
+
+fn ancestor_closure(cx: &OperationContext) -> Result<Option<ClosurePin>, RunError> {
+    match RuntimeParent::inherited(cx)? {
+        Some(parent) if parent.class == RunClass::Foreground => {
+            let identity = parent.closure.ok_or_else(|| {
+                RunError::Invalid("foreground parent has no custody closure pin".into())
+            })?;
+            ClosurePin::capture(identity)
+                .map(Some)
+                .map_err(RunError::from)
+        }
+        _ => Ok(None),
+    }
 }
 
 impl MemoryGuard {
@@ -63,6 +82,13 @@ impl MemoryGuard {
         if copies.len() > GATE_MAX {
             return Err(RunError::Invalid("too many foreground gates".into()));
         }
+        let (watch, closure) = ClosurePin::new()?;
+        let ancestor = ancestor_closure(cx.operation())?
+            .map(|capability| capability.custody_fd(cx.operation()))
+            .transpose()?;
+        let inherited: Vec<_> = std::iter::once(watch.as_raw_fd())
+            .chain(ancestor.as_ref().map(AsRawFd::as_raw_fd))
+            .collect();
         let config = Config {
             memory: true,
             executable: executable.clone(),
@@ -70,6 +96,8 @@ impl MemoryGuard {
             gates: copies.len(),
             run,
             fence,
+            watch: watch.as_raw_fd(),
+            ancestor: ancestor.as_ref().map(AsRawFd::as_raw_fd),
         };
         let mut command = helper(executable, SENTINEL)?;
         command.stdout(Stdio::piped());
@@ -82,6 +110,13 @@ impl MemoryGuard {
             command.pre_exec(move || {
                 for (index, source) in raw.iter().enumerate() {
                     if libc::dup2(*source, GATE_FD + index as RawFd) < 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                }
+                // These live descriptors are already allocated >=128 in the
+                // parent. Clearing CLOEXEC cannot overwrite std's error pipe.
+                for fd in &inherited {
+                    if libc::fcntl(*fd, libc::F_SETFD, 0) < 0 {
                         return Err(io::Error::last_os_error());
                     }
                 }
@@ -107,6 +142,7 @@ impl MemoryGuard {
             identity: identity.clone(),
             cx: cx.clone(),
             close_deadline: None,
+            closure: Some(closure),
         };
         nonblocking(
             guard
@@ -130,6 +166,18 @@ impl MemoryGuard {
         Ok(guard)
     }
 
+    pub(crate) fn closure_identity(&self) -> Result<ClosureIdentity, RunError> {
+        self.closure
+            .as_ref()
+            .map(ClosurePin::identity)
+            .ok_or_else(|| RunError::Invalid("foreground custody pipe is closed".into()))
+    }
+    pub(crate) fn closure_pin(&self) -> Result<ClosurePin, RunError> {
+        self.closure
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| RunError::Invalid("foreground custody pipe is closed".into()))
+    }
     pub(crate) fn register(&mut self, effect: &Effect) -> Result<(), RunError> {
         if self.child.try_wait()?.is_some() {
             return Err(RunError::Invalid(
@@ -178,6 +226,7 @@ impl MemoryGuard {
         Ok(())
     }
     pub(crate) fn close(&mut self, cx: &CleanupContext) -> Result<(), RunError> {
+        self.closure.take();
         self.input.take();
         self.close_deadline = Some(Instant::now() + cx.operation().remaining().unwrap_or_default());
         loop {
@@ -195,6 +244,7 @@ impl MemoryGuard {
 }
 impl Drop for MemoryGuard {
     fn drop(&mut self) {
+        self.closure.take();
         self.input.take();
         // EOF starts bounded guard cleanup. Do not kill a custodian or unlock
         // its gates just because the caller's cleanup budget has expired.
@@ -251,6 +301,20 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
             "invalid foreground guard owner or gates".into(),
         ));
     }
+    if config.watch < 128
+        || config
+            .ancestor
+            .is_some_and(|fd| fd < 128 || fd == config.watch)
+    {
+        return Err(RunError::Invalid(
+            "invalid foreground closure descriptors".into(),
+        ));
+    }
+    let mut watch = inherited_pipe(config.watch, libc::O_RDONLY)?;
+    let ancestor = config
+        .ancestor
+        .map(|fd| inherited_pipe(fd, libc::O_WRONLY))
+        .transpose()?;
     let mut gates: Vec<OwnedFd> = Vec::new();
     for index in 0..config.gates {
         let raw = GATE_FD + index as RawFd;
@@ -342,7 +406,28 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         let (state, _) = crate::custody::settle_effect(effect, None, &cleanup, || false);
         residue |= state != EffectState::Released;
     }
-    drop(gates); // cleanup completed or residue is explicit; no numeric replay
+    // Each delegated guard retains a pipe writer until its own cleanup completes.
+    // An absent/stopped owner is never permission to release an ancestor early.
+    // Like the owner EOF above, this is a liveness wait, not a fresh effect or
+    // numeric replay. Unknown closure keeps these checkout gates held.
+    let mut bytes = [0u8; 4096];
+    loop {
+        match watch.read(&mut bytes) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) =>
+            {
+                std::thread::sleep(Duration::from_millis(5))
+            }
+            Err(_) => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+    drop(ancestor);
+    drop(gates); // positive delegated closure; no numeric replay
     if residue {
         return Err(RunError::Invalid("foreground guard left residue".into()));
     }
@@ -350,4 +435,53 @@ pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<
         return Err(error);
     }
     Ok(())
+}
+
+fn inherited_pipe(fd: RawFd, access: i32) -> io::Result<std::fs::File> {
+    // Reject malformed descriptors before adopting ownership. In particular,
+    // an invalid frame cannot close one of this helper's regular image files.
+    let stat = crate::fs::fstat(fd)?;
+    if stat.st_mode & libc::S_IFMT != libc::S_IFIFO || stat.st_uid != crate::fs::operator_uid() {
+        return Err(io::Error::other("untrusted foreground custody pipe"));
+    }
+    // SAFETY: read-only fcntl on the descriptor just validated by fstat;
+    // it accepts no pointer and a closed descriptor returns EBADF.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if flags & libc::O_ACCMODE != access {
+        return Err(io::Error::other(
+            "foreground custody pipe has the wrong access mode",
+        ));
+    }
+    // SAFETY: the private startup frame names a distinct inherited pipe fd
+    // allocated >=128 by the parent. It cannot alias gate/stdio slots and
+    // no other owner has been constructed for it in this helper.
+    let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+    let file = std::fs::File::from(owned);
+    // SAFETY: file retains this live descriptor across fcntl; only its own
+    // descriptor flag changes, so future execs cannot inherit the pin.
+    if unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if access == libc::O_RDONLY {
+        nonblocking(fd)?;
+    }
+    Ok(file)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_closure_descriptor_never_adopts_a_closed_or_regular_handle() {
+        assert!(inherited_pipe(1_000_000, libc::O_RDONLY).is_err());
+        let fixture = tempfile::tempdir().expect("private fixture");
+        let file = std::fs::File::create(fixture.path().join("image")).expect("regular handle");
+        let duplicate = crate::gate::duplicate_custody(&file).expect("private duplicate");
+        assert!(inherited_pipe(duplicate.as_raw_fd(), libc::O_WRONLY).is_err());
+        crate::fs::fstat(duplicate.as_raw_fd()).expect("refusal did not consume the handle");
+    }
 }

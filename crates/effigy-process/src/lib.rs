@@ -141,6 +141,11 @@ pub struct ProcessEvent {
 
 #[derive(Debug)]
 pub enum ProcessManagerError {
+    Control {
+        process: String,
+        operation: &'static str,
+        reason: String,
+    },
     Spawn {
         process: String,
         command: String,
@@ -161,6 +166,11 @@ pub enum ProcessManagerError {
 impl std::fmt::Display for ProcessManagerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ProcessManagerError::Control {
+                process,
+                operation,
+                reason,
+            } => write!(f, "cannot {operation} process `{process}`: {reason}"),
             ProcessManagerError::Spawn {
                 process,
                 command,

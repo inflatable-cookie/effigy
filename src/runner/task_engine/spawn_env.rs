@@ -72,7 +72,7 @@ pub(in crate::runner) fn spawn_plain_env() -> BTreeMap<String, String> {
         .collect()
 }
 
-pub(super) fn remaining() -> Option<Duration> {
+pub(in crate::runner) fn remaining() -> Option<Duration> {
     SCOPES.with(|scopes| {
         scopes
             .borrow()

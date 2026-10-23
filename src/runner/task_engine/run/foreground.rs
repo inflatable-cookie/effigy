@@ -172,6 +172,17 @@ impl TaskRun {
         self.verify_admission()?;
         let cx = kernel::effects();
         if self.lease.is_none() {
+            let closure = self
+                .memory
+                .as_ref()
+                .map(|memory| {
+                    memory
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .closure_identity()
+                })
+                .transpose()
+                .map_err(|error| class_error(&error.to_string()))?;
             self.lease = Some(
                 MemoryLease::new(
                     &cx,
@@ -186,7 +197,8 @@ impl TaskRun {
                             .as_ref()
                             .map(|admission| admission.identity())
                             .or(super::super::admission::current_hook()?),
-                    ),
+                    )
+                    .with_closure(closure),
                 )
                 .map_err(|error| class_error(&error.to_string()))?,
             );

@@ -42,6 +42,9 @@ pub struct MultiProcessTuiOutcome {
 /// the workloads of a run another process supervises. The TUI reads events
 /// and sends input and stop requests; it never changes what runs.
 pub trait SessionProcesses {
+    fn close_requested(&self) -> bool {
+        false
+    }
     fn next_event_timeout(&self, timeout: std::time::Duration) -> Option<ProcessEvent>;
     fn send_input(&self, process: &str, input: &str) -> Result<(), ProcessManagerError>;
     fn terminate_process(&self, process: &str) -> Result<(), ProcessManagerError>;
@@ -121,8 +124,8 @@ pub struct MultiProcessTuiOptions {
     pub esc_quit_on_complete: bool,
 }
 
-struct SessionRuntime {
-    supervisor: Box<dyn SessionProcesses>,
+struct SessionRuntime<'a> {
+    supervisor: Box<dyn SessionProcesses + 'a>,
     terminal: TuiTerminal,
     state: SessionState,
     diagnostics: RuntimeDiagnostics,
@@ -192,9 +195,9 @@ pub fn run_multiprocess_tui_with_control(
 }
 
 /// A TUI over processes `source` supervises; `tabs` name them in order.
-pub fn run_multiprocess_tui_with_source(
+pub fn run_multiprocess_tui_with_source<'a>(
     repo_root: PathBuf,
-    source: Box<dyn SessionProcesses>,
+    source: Box<dyn SessionProcesses + 'a>,
     tabs: Vec<SessionTab>,
     tab_order: Vec<String>,
     options: MultiProcessTuiOptions,
@@ -208,7 +211,7 @@ pub fn run_multiprocess_tui_with_source(
 }
 
 fn run_session(
-    mut runtime: SessionRuntime,
+    mut runtime: SessionRuntime<'_>,
     options: MultiProcessTuiOptions,
     control: Option<&MultiProcessTuiControl<'_>>,
 ) -> Result<MultiProcessTuiOutcome, MultiProcessTuiError> {

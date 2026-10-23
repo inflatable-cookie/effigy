@@ -140,3 +140,31 @@ fn concurrent_peeks_keep_one_complete_grant_for_every_reader() {
         }
     });
 }
+
+#[test]
+fn custody_pipe_pins_close_only_after_the_last_writer_and_check_access_mode() {
+    use std::io::Read;
+    let (mut watch, pin) = ClosurePin::new().expect("anonymous custody pipe");
+    assert!(pipe_identity(&watch, libc::O_RDONLY).is_ok());
+    assert!(pipe_identity(&watch, libc::O_WRONLY).is_err());
+    assert!(pipe_identity(pin.writer.as_ref(), libc::O_RDONLY).is_err());
+    let sibling = pin.clone();
+    // SAFETY: watch owns this live descriptor across both fcntl calls.
+    let flags = unsafe { libc::fcntl(watch.as_raw_fd(), libc::F_GETFL) };
+    assert!(flags >= 0);
+    // SAFETY: only O_NONBLOCK changes on this test's own pipe description.
+    assert_eq!(
+        unsafe { libc::fcntl(watch.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) },
+        0
+    );
+    drop(pin);
+    assert_eq!(
+        watch
+            .read(&mut [0])
+            .expect_err("sibling still pins cleanup")
+            .kind(),
+        io::ErrorKind::WouldBlock
+    );
+    drop(sibling);
+    assert_eq!(watch.read(&mut [0]).expect("all writers closed"), 0);
+}
