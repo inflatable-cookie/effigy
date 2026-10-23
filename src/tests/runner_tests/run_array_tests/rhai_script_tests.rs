@@ -296,6 +296,53 @@ run = "printf %s {args} > ../installed.txt"
 }
 
 #[test]
+fn run_and_rhai_steps_receive_the_same_task_args_after_the_boundary() {
+    let _guard = lock_test();
+    let root = temp_workspace("rhai-step-args-boundary");
+    fs::create_dir_all(root.join("scripts")).expect("mkdir script dir");
+    fs::write(
+        root.join("scripts/args.rhai"),
+        r#"
+for value in args {
+    fs::append_file("rhai-args.txt", value + "\n");
+}
+"#,
+    )
+    .expect("write rhai script");
+    write_manifest(
+        &root.join("effigy.toml"),
+        r#"[tasks.parity]
+run = [
+  { run = "printf '%s\\n' {args} > run-args.txt" },
+  { rhai = "scripts/args.rhai" },
+]
+"#,
+    );
+
+    // The CLI hands both a direct task and `skill run ... -- <args>` the same
+    // passthrough: one leading `--` Effigy consumed as its own flag boundary,
+    // then the task's arguments, where a second `--` belongs to the task.
+    run_manifest_task_with_cwd(
+        &TaskInvocation {
+            name: "parity".to_owned(),
+            args: vec![
+                "--".to_owned(),
+                "--flag".to_owned(),
+                "value".to_owned(),
+                "--".to_owned(),
+                "tail".to_owned(),
+            ],
+        },
+        root.clone(),
+    )
+    .expect("run and rhai steps should both receive the task arguments");
+
+    let expected = "--flag\nvalue\n--\ntail\n";
+    assert_file_text_equals(&root.join("run-args.txt"), expected);
+    assert_file_text_equals(&root.join("rhai-args.txt"), expected);
+}
+
+#[test]
 fn run_manifest_task_run_array_rejects_conflicting_rhai_step_keys() {
     let _guard = lock_test();
     let root = temp_workspace("run-array-invalid-rhai-step");

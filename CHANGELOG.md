@@ -384,6 +384,10 @@ During v0.x, MINOR bumps may include breaking changes.
   `simulate --version`. The refusal names the replacement.
 
 ### Added
+- `runtime::paths()` exposes `repo_root`, `catalog_root`, `skill_root`,
+  `invocation_cwd` and `cwd` to Rhai script functions. The top-level scope
+  constants stay as they were, but a function no longer fails with
+  `Variable not found` when it needs a host path (papercut `d8e1d7b0`).
 - The checkpointed release Run (contract 054 §3, §5, §7). `effigy release run
   [--to <stage>]` runs one durable kernel Run through validate → [pre-gates] →
   prepare → certify → publish → verify → closeout, with a checkpoint after
@@ -986,6 +990,19 @@ During v0.x, MINOR bumps may include breaking changes.
   1.2.0.
 
 ### Fixed
+- Rhai steps receive the same task `args` as a run step's `{args}` template:
+  Effigy drops the single leading `--` boundary flag it consumed and keeps
+  later `--` tokens, so a direct task and `skill run <task> -- <args>` agree
+  (papercut `19d7b6fe`).
+- Rhai's `Expression exceeds maximum complexity` now names Effigy's configured
+  expression depths and suggests splitting the expression into smaller
+  functions or statements (papercut `1a140ffe`). The Rhai guide also documents
+  the mutating-method/`()` boundary and the value-returning `str::*` pattern
+  (papercut `eb53ef2b`).
+- The Rhai surface catalog lists `container.workspace_artifact_build` once with
+  its host signature, and the workspace artifact streaming policy regression
+  runs against the current typed helper again (papercuts `e86ef33a`,
+  `38acb0f4`).
 - A first `effigy dev` on a fresh Colima VM no longer fails when a nerdctl
   health-check timer collides. nerdctl runs each container health check from
   the transient systemd unit `{full_id}.timer` and leaves it loaded when the

@@ -45,7 +45,7 @@ Policy:
 
 | Surface | Rhai helpers | Status |
 | --- | --- | --- |
-| Runtime context | `runtime::context` backed by `EffigyRuntimeContext` | Exposed |
+| Runtime context | `runtime::context` backed by `EffigyRuntimeContext`; `runtime::paths` for the `repo_root`/`catalog_root`/`skill_root`/`cwd`/`invocation_cwd` host paths | Exposed |
 | Execution request | `exec::run` backed by Effigy's routed execution helpers | Exposed |
 | Config | `config::raw`, `config::effective`, `config::get`, `config::get_or`, `config::user_path`, `config::user_get`, `config::user_set`, `config::user_unset` | Exposed |
 | Tasks | `task::run`, `task::run_json`, `task::list`, `task::resolve`, `task::info`, `catalog::tasks` | Exposed |

@@ -116,6 +116,43 @@ pub struct ScriptContext {
     pub stop_requested: Arc<std::sync::atomic::AtomicBool>,
 }
 
+/// Host paths a task receives.
+///
+/// Effigy pushes these into the script scope as `cwd`, `repo_root`,
+/// `catalog_root`, `skill_root` and `invocation_cwd`, and exposes the same
+/// values to script functions through `runtime::paths()`. Scope constants do
+/// not cross a function boundary, so reusable helpers read the host API.
+#[derive(Debug, Clone)]
+pub(crate) struct RhaiHostPaths {
+    pub cwd: String,
+    pub repo_root: String,
+    pub catalog_root: String,
+    pub invocation_cwd: String,
+}
+
+impl RhaiHostPaths {
+    fn new(context: &ScriptContext, catalog_root: &Path, invocation_cwd: &Path) -> Self {
+        Self {
+            cwd: context.cwd.display().to_string(),
+            repo_root: context.repo_root.display().to_string(),
+            catalog_root: catalog_root.display().to_string(),
+            invocation_cwd: invocation_cwd.display().to_string(),
+        }
+    }
+
+    /// The `runtime::paths()` map. `skill_root` stays an alias of
+    /// `catalog_root` so both documented scope names keep working.
+    pub(crate) fn to_rhai_map(&self) -> Map {
+        let mut value = Map::new();
+        value.insert("cwd".into(), self.cwd.clone().into());
+        value.insert("repo_root".into(), self.repo_root.clone().into());
+        value.insert("catalog_root".into(), self.catalog_root.clone().into());
+        value.insert("skill_root".into(), self.catalog_root.clone().into());
+        value.insert("invocation_cwd".into(), self.invocation_cwd.clone().into());
+        value
+    }
+}
+
 #[derive(Clone)]
 pub struct HostCallbacks {
     pub run_task: TaskRunner,
@@ -297,7 +334,8 @@ fn execute_rhai_script_inner(
         .unwrap_or_else(|| resolve_context_path(EFFIGY_RHAI_CATALOG_ROOT, &context.cwd));
     let invocation_cwd = resolve_invocation_cwd(&context);
     engine.set_module_resolver(FileModuleResolver::new_with_path(&catalog_root));
-    register_host_api(&mut engine, context.clone(), callbacks);
+    let host_paths = RhaiHostPaths::new(&context, &catalog_root, &invocation_cwd);
+    register_host_api(&mut engine, context.clone(), callbacks, host_paths);
 
     let mut scope = Scope::new();
     scope.push_constant(
@@ -316,10 +354,29 @@ fn execute_rhai_script_inner(
     scope.push("task_name", context.task_name.clone());
 
     with_rhai_secret_store(secret_store, || {
-        engine
-            .run_with_scope(&mut scope, script)
-            .map_err(|error| RhaiHostError::new(redact_active_rhai_secrets(&error.to_string())))
+        engine.run_with_scope(&mut scope, script).map_err(|error| {
+            RhaiHostError::new(redact_active_rhai_secrets(
+                &explain_expression_complexity_error(&error.to_string()),
+            ))
+        })
     })
+}
+
+/// Name Effigy's configured Rhai expression limits and point at decomposition.
+///
+/// Rhai's bare `Expression exceeds maximum complexity` names no figure and no
+/// next step, so authors discover the envelope by trial and error. The limits
+/// come from the same constants [`configured_rhai_engine`] applies.
+pub fn explain_expression_complexity_error(message: &str) -> String {
+    const MARKER: &str = "Expression exceeds maximum complexity";
+    if !message.contains(MARKER) {
+        return message.to_owned();
+    }
+    format!(
+        "{message}\nhint: Effigy's Rhai host allows expression depth {RHAI_MAX_EXPR_DEPTH} and \
+         function-body expression depth {RHAI_MAX_FUNCTION_EXPR_DEPTH}; split the expression into \
+         smaller functions or statements and pass intermediate values through variables"
+    )
 }
 
 /// Compile `script` and call `function` without evaluating top-level statements.
@@ -344,7 +401,8 @@ pub(crate) fn call_rhai_function(
     let catalog_root = resolve_context_path(EFFIGY_RHAI_CATALOG_ROOT, &context.cwd);
     let invocation_cwd = resolve_invocation_cwd(&context);
     engine.set_module_resolver(FileModuleResolver::new_with_path(&catalog_root));
-    register_host_api(&mut engine, context.clone(), callbacks);
+    let host_paths = RhaiHostPaths::new(&context, &catalog_root, &invocation_cwd);
+    register_host_api(&mut engine, context.clone(), callbacks, host_paths);
 
     let mut scope = Scope::new();
     scope.push_constant("args", Array::new());
@@ -356,9 +414,9 @@ pub(crate) fn call_rhai_function(
     scope.push("task_name", context.task_name.clone());
 
     with_rhai_secret_store(secret_store, || {
-        let ast = engine
-            .compile(script)
-            .map_err(|error| RhaiHostError::new(error.to_string()))?;
+        let ast = engine.compile(script).map_err(|error| {
+            RhaiHostError::new(explain_expression_complexity_error(&error.to_string()))
+        })?;
         engine
             .call_fn_with_options::<()>(
                 CallFnOptions::new().eval_ast(false),

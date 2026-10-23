@@ -390,6 +390,39 @@ fn skill_run_forwards_arguments_after_the_passthrough_delimiter() {
 }
 
 #[test]
+fn skill_run_args_match_run_and_rhai_steps_after_the_boundary() {
+    let fixtures = fixture_root();
+    let output = run_skill(
+        &fixtures.join("consumer-one"),
+        &[
+            "skill",
+            "run",
+            "--path",
+            "../source",
+            "args-parity",
+            "--json",
+            "--",
+            "--repo",
+            "literal-task-arg",
+            "--",
+            "tail",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let stdout = json(&output)["result"]["task_output"]["stdout"]
+        .as_str()
+        .expect("task stdout")
+        .to_owned();
+
+    // One leading `--` is Effigy's own boundary; later `--` tokens stay the
+    // task's. A `{args}` run step and a Rhai step see exactly the same list.
+    let expected = "run-arg=--repo\nrun-arg=literal-task-arg\nrun-arg=--\nrun-arg=tail\n";
+    assert!(stdout.contains(expected), "{stdout}");
+    let rhai_expected = "rhai-arg=--repo\nrhai-arg=literal-task-arg\nrhai-arg=--\nrhai-arg=tail\n";
+    assert!(stdout.contains(rhai_expected), "{stdout}");
+}
+
+#[test]
 fn skill_member_source_fails_before_side_effects() {
     let fixtures = fixture_root();
     let consumer = fixtures.join("consumer-one");

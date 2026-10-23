@@ -97,3 +97,32 @@ fn first_party_rhai_scripts_compile_on_configured_engine() {
         failures.join("\n")
     );
 }
+
+#[test]
+fn over_limit_error_names_the_configured_limits_and_decomposition() {
+    let error = crate::explain_expression_complexity_error(
+        "Expression exceeds maximum complexity (line 2, position 12)",
+    );
+
+    assert!(
+        error.starts_with("Expression exceeds maximum complexity"),
+        "the underlying Rhai diagnostic must stay first: {error}"
+    );
+    assert!(
+        error.contains(&format!("expression depth {RHAI_MAX_EXPR_DEPTH}")),
+        "must name the global limit: {error}"
+    );
+    assert!(
+        error.contains(&format!(
+            "function-body expression depth {RHAI_MAX_FUNCTION_EXPR_DEPTH}"
+        )),
+        "must name the function-body limit: {error}"
+    );
+    assert!(
+        error.contains("split the expression into smaller functions or statements"),
+        "must suggest decomposition: {error}"
+    );
+
+    let unrelated = crate::explain_expression_complexity_error("Function not found: nope");
+    assert_eq!(unrelated, "Function not found: nope");
+}

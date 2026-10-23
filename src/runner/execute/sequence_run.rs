@@ -359,10 +359,13 @@ fn execute_step(
                 ));
             }
             if matches!(action, StepAction::Rhai { .. }) {
+                // Rhai `args` must match what a run step's `{args}` template
+                // receives: Effigy consumes one leading `--` boundary flag of
+                // its own, and later `--` tokens stay the task's.
                 for (key, value) in [
                     (
                         "EFFIGY_RHAI_ARGS_JSON",
-                        serde_json::to_string(passthrough)
+                        serde_json::to_string(effigy_tasks::command_passthrough_args(passthrough))
                             .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
                     ),
                     (
