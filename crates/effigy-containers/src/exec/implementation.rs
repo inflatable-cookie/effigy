@@ -24,7 +24,8 @@ use super::participation::{
 };
 use super::process::{
     error_is_timeout, run_command_capture_os, run_command_capture_os_with_env,
-    run_command_capture_with_timeout_and_env, run_detached_command_with_env,
+    run_command_capture_with_timeout_and_env, run_detached_command_streaming_with_env,
+    run_detached_command_with_env,
 };
 
 use crate::{
@@ -1909,6 +1910,61 @@ pub fn run_compose_invocation_capture_with_env(
                     other => other,
                 }
             })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Run one Compose invocation whose progress a person is watching.
+///
+/// The command's output still lands in the checkout's retained backend
+/// record, exactly as a detached invocation does; every complete line is
+/// reported to `on_line` as it is written, so the caller can name what the
+/// runtime is doing while it does it (effigy#313). A stop request ends the
+/// invocation's whole process group and returns its status.
+pub fn run_compose_invocation_streaming_with_env(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    program: &OsStr,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+    stop_requested: Option<&std::sync::atomic::AtomicBool>,
+    on_line: &mut dyn FnMut(&str),
+) -> Result<Output, ContainerExecError> {
+    let program = program.to_string_lossy();
+    match run_detached_command_streaming_with_env(
+        repo_root,
+        &program,
+        args,
+        label,
+        env,
+        stop_requested,
+        on_line,
+    ) {
+        Ok(output) => Ok(output),
+        // The same one-retry repair the capturing path takes, so a Colima DNS
+        // or runtime-state outage is repaired rather than reported as the
+        // stack's failure. Report events are idempotent, so the retry's
+        // repeated lines only rewrite steps that already exist.
+        Err(ContainerExecError::Failure {
+            command: _,
+            code: _,
+            stdout,
+            stderr,
+        }) if docker_failure_looks_like_colima_dns_outage(&stdout, &stderr)
+            || docker_failure_looks_like_colima_runtime_state_loss(&stdout, &stderr) =>
+        {
+            repair_colima_runtime(policy, repo_root)?;
+            run_detached_command_streaming_with_env(
+                repo_root,
+                &program,
+                args,
+                label,
+                env,
+                stop_requested,
+                on_line,
+            )
         }
         Err(error) => Err(error),
     }

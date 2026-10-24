@@ -1,3 +1,4 @@
+mod down_steps;
 mod planning;
 mod report;
 
@@ -15,6 +16,7 @@ use crate::container_manager::{compose_invocation_plan, lifecycle_operation_repo
 use crate::read::{discover_running_environments, filter_running_environments_for_scope};
 use crate::signals::run_compose_plan_capture;
 use crate::EffigyRuntimeError;
+use down_steps::DownSteps;
 pub use planning::select_generated_service_image_refs;
 use planning::{
     can_prepare_shutdown, prepare_shutdown, remove_generated_service_images, run_shutdown_compose,
@@ -62,12 +64,23 @@ where
     let runtime_running = runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let prepared = runtime_running && prepare_shutdown(repo_root, &policy)?;
-    transition(repo_root, &policy, &|| {
+    // One step per service, live while the runtime stops it and closed with
+    // what the runtime reports afterwards (effigy#313).
+    let down_steps = if prepared {
+        Some(DownSteps::observe(repo_root, &policy))
+    } else {
+        None
+    };
+    let stopped = transition(repo_root, &policy, &|| {
         if prepared {
             run_shutdown_compose(repo_root, &policy)?;
         }
         Ok(())
-    })?;
+    });
+    if let Some(down_steps) = &down_steps {
+        down_steps.finish(repo_root, &policy);
+    }
+    stopped?;
     let _manager_report = lifecycle_operation_report(
         repo_root,
         &policy,

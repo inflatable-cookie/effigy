@@ -59,10 +59,21 @@ pub(super) fn repo_root_has_effigy_manifest(repo_root: &Path) -> bool {
     has_task_manifest(repo_root)
 }
 
+/// Wait until the environment is ready, naming each service as it waits.
+///
+/// Every service's own health check decides first (effigy#313), because that
+/// is what tells a person which service is wrong. The environment's declared
+/// `[containers.<name>.health]` check is still the final gate when it declares
+/// one; an environment whose services the runtime cannot see keeps exactly
+/// the old behaviour.
 pub(super) fn wait_for_container_ready(
     policy: &EffectiveContainerPolicy,
     stop_requested: Option<&std::sync::atomic::AtomicBool>,
 ) -> Result<Option<&'static str>, RunnerError> {
+    match super::readiness::await_services_ready(&policy.repo_root, policy, stop_requested)? {
+        super::readiness::ReadinessEnd::Interrupted => return Ok(Some("interrupted")),
+        super::readiness::ReadinessEnd::Ready | super::readiness::ReadinessEnd::NothingToAwait => {}
+    }
     wait_for_ready(
         &policy.name,
         policy.health_check.as_deref(),

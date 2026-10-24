@@ -1278,17 +1278,24 @@ fn conflict(
         }
         _ => format!("task:{}", target.label),
     };
-    // A shared or built-in lock's holder may be another task or command:
-    // the inventory names every live holder. A built-in section has no
-    // selector to re-run with a wait.
+    // A shared or built-in lock's holder may be another task or command. The
+    // exact commands below are the CLI's own grammar: a run is read by its run
+    // id (`effigy run status <id>`), listed with `effigy runs`, and stopped
+    // through its own owner (`effigy run stop <id>`). A built-in section has
+    // no selector to re-run with a wait.
     let builtin = target
         .shared_lock
         .as_deref()
         .is_some_and(|lock| lock.starts_with(BUILTIN_LOCK_PREFIX));
-    let status_command = match target.shared_lock {
-        Some(_) => "effigy tasks status --all".to_owned(),
-        None => format!("effigy tasks status {}", target.label),
+    let holder_run = diag.as_ref().and_then(|diag| diag.run.clone());
+    let status_command = match holder_run.as_deref() {
+        Some(run) => format!("effigy run status {run}"),
+        None => "effigy runs".to_owned(),
     };
+    let stop_command = holder_run
+        .as_ref()
+        .map(|run| format!("effigy run stop {run}"));
+    let attached_to_terminal = diag.as_ref().is_some_and(|diag| diag.foreground.is_some());
     let holder_text = match &diag {
         Some(diag) => {
             let mut parts = vec![format!("pid {} on this host", diag.pid)];
@@ -1298,6 +1305,11 @@ fn conflict(
             if let Some(age) = run_started.and_then(age_text) {
                 parts.push(format!("started {age} ago"));
             }
+            parts.push(if attached_to_terminal {
+                "attached to a terminal".to_owned()
+            } else {
+                "not attached to a terminal".to_owned()
+            });
             if matches!(diag.state, Observed::Verified(ProcessState::Stopped, _)) {
                 parts.push("stopped (SIGSTOP); it keeps its lock until resumed".to_owned());
             }
@@ -1312,22 +1324,31 @@ fn conflict(
             format!("`{}` is already running", target.label)
         };
     let wait_flag = (!builtin).then(|| format!("effigy --lock-wait-ms 600000 {}", target.label));
+    let stop_text = match (stop_command.as_deref(), attached_to_terminal) {
+        (Some(stop), true) => {
+            format!("stop that run with `{stop}`, or press Ctrl-C in its terminal")
+        }
+        (Some(stop), false) => format!("stop it with `{stop}`"),
+        (None, _) => "stop that run through its own owner".to_owned(),
+    };
     let remediation = match (wait, &wait_flag) {
         (Some((timeout, waited)), Some(wait_flag)) => format!(
             "{what} ({holder_text}); waited {waited}ms of {timeout}ms. Inspect it with \
-             `{status_command}`, wait longer with `{wait_flag}`, or stop that run"
+             `{status_command}` (or list every run with `effigy runs`), wait longer with \
+             `{wait_flag}`, or {stop_text}"
         ),
         (Some((timeout, waited)), None) => format!(
             "{what} ({holder_text}); waited {waited}ms of {timeout}ms. Inspect it with \
-             `{status_command}`, let it finish, or stop that run"
+             `{status_command}` (or list every run with `effigy runs`), let it finish, or \
+             {stop_text}"
         ),
         (None, Some(wait_flag)) => format!(
-            "{what} ({holder_text}). Inspect it with `{status_command}`, wait for it with \
-             `{wait_flag}`, or stop that run"
+            "{what} ({holder_text}). Inspect it with `{status_command}` (or list every run with \
+             `effigy runs`), wait for it with `{wait_flag}`, or {stop_text}"
         ),
         (None, None) => format!(
-            "{what} ({holder_text}). Inspect it with `{status_command}`, let it finish, or \
-             stop that run"
+            "{what} ({holder_text}). Inspect it with `{status_command}` (or list every run with \
+             `effigy runs`), let it finish, or {stop_text}"
         ),
     };
     let details_json = serde_json::json!({
@@ -1353,6 +1374,7 @@ fn conflict(
         "status_command": status_command,
         "next": std::iter::once(format!("inspect the live run with `{status_command}`"))
             .chain(wait_flag.iter().map(|flag| format!("wait for it with `{flag}`")))
+            .chain(stop_command.iter().map(|stop| format!("stop it with `{stop}`")))
             .collect::<Vec<_>>(),
     })
     .to_string();

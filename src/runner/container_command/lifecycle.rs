@@ -20,6 +20,7 @@ use super::shell_prep::{
     append_container_exec_env, maybe_refresh_workspace_effigy_for_shell,
     resolve_container_exec_working_dir_for_operation, resolve_container_shell_session,
 };
+use super::steps::{self, ComposeSteps};
 use super::support;
 use super::support::{
     annotate_registered_gateway_routes, annotate_shared_service_notes,
@@ -43,8 +44,9 @@ use effigy_containers::{
     effective_attach_mode,
     exec::{
         colima_profile_warnings, ensure_runtime_backend_running, inspect_colima_ssh_agent_socket,
-        recover_exited_owned_compose_services, shutdown_container as shutdown_container_via_exec,
-        SshAgentSocketHealth,
+        parse_compose_step_event, recover_exited_owned_compose_services,
+        run_compose_invocation_streaming_with_env,
+        shutdown_container as shutdown_container_via_exec, SshAgentSocketHealth,
     },
     load_container_exec_working_dir, load_container_policy, load_container_policy_for_creation,
     up_detached_report, validate_compose_backend_runtime, validate_container_policy,
@@ -64,9 +66,7 @@ use effigy_runtime::read::{
 };
 use effigy_runtime::session::run_attached_container_session_with_hook;
 use effigy_runtime::shell::run_container_shell_with_resolved_session;
-use effigy_runtime::signals::{
-    install_stop_requested_flag, run_compose_plan_inherit_with_stop_flag_and_env, ComposeRunOutcome,
-};
+use effigy_runtime::signals::install_stop_requested_flag;
 use effigy_runtime::write::{
     run_container_down, run_container_down_all_with_hook, run_container_down_under_path_with_hook,
     run_container_reset,
@@ -329,8 +329,10 @@ fn run_container_up_inner(
     let attached_end = std::cell::RefCell::new(None);
     let detached_failure = std::cell::RefCell::new(None);
     let composed = std::cell::Cell::new(false);
+    let compose_steps =
+        std::cell::RefCell::new(ComposeSteps::new(plan.policy.project_name.clone()));
     let reconciled = environment::reconcile(repo_root, &plan.policy, retention, || {
-        match run_container_up_compose(&plan) {
+        match run_container_up_compose(&plan, &mut compose_steps.borrow_mut()) {
             Ok(None) => composed.set(true),
             Ok(Some(end)) => {
                 let message = match &end {
@@ -384,6 +386,9 @@ fn run_container_up_inner(
     };
     operation.admitted = true;
     operation.partial = plan.attach_mode == EffectiveAttachMode::Detached;
+    compose_steps
+        .borrow()
+        .finish_unfinished(true, "the runtime reported the stack as reconciled");
 
     if container_up_stop_requested(&plan) {
         return render_container_up_interrupted(repo_root, &plan);
@@ -396,12 +401,23 @@ fn run_container_up_inner(
     }
 
     operation.stage = Some("runtime_integrations");
-    let integrations = complete_container_up_runtime_integrations(repo_root, &plan)?;
+    let integrations = steps::during(
+        "registering routes",
+        "routes and host listeners registered",
+        || complete_container_up_runtime_integrations(repo_root, &plan),
+    )?;
 
     // Activation promotes the generation and attaches any requesting runs.
     // The stage keeps its documented name (closed JSON vocabulary).
     operation.stage = Some("persistent_owner");
-    environment::activate(&bring_up, holders)?;
+    let settling = steps::phase("settling the environment");
+    match environment::activate(&bring_up, holders) {
+        Ok(()) => settling.succeed("environment settled"),
+        Err(error) => {
+            settling.fail(&error.to_string());
+            return Err(error);
+        }
+    }
 
     render_container_up_result(
         repo_root,
@@ -454,11 +470,24 @@ fn prepare_container_up(
                 }));
     operation.active = declared_detached;
     operation.preparation_step = Some("policy");
-    effigy_containers::policy::ports::prepare_endpoint_store()?;
-    // Allocation is a Prepare effect, before admission captures the render.
-    let prepared = effigy_containers::policy::render::prepare_inputs(&load_container_policy(
-        repo_root, name,
-    )?)?;
+    let ports_step = steps::phase("preparing ports and loopback");
+    let prepared = match (|| -> Result<_, RunnerError> {
+        effigy_containers::policy::ports::prepare_endpoint_store()?;
+        // Allocation is a Prepare effect, before admission captures the render.
+        Ok(effigy_containers::policy::render::prepare_inputs(
+            &load_container_policy(repo_root, name)?,
+        )?)
+    })() {
+        Ok(prepared) => {
+            ports_step.succeed("ports and loopback prepared");
+            prepared
+        }
+        Err(error) => {
+            ports_step.fail(&error.to_string());
+            return Err(error);
+        }
+    };
+    let rendering_step = steps::phase("rendering the stack");
     operation.preparation_step = Some("admission");
     let (mut policy, mut preparation_admission) = if declared_detached {
         let (policy, admission) =
@@ -468,6 +497,10 @@ fn prepare_container_up(
         effigy_containers::policy::render::prepare(&prepared)?;
         (prepared, None)
     };
+    rendering_step.succeed(format!(
+        "stack rendered from {}",
+        policy.compose_file_display
+    ));
     let mut admitted_context = if let Some(admission) = &preparation_admission {
         Some(super::admission::AdmissionContext::from_materialization(
             &policy, admission,
@@ -528,7 +561,9 @@ fn prepare_container_up(
     operation.preparation_step = Some("mounts");
     effigy_containers::policy::mounts::prepare_container_mount_sources(&policy)?;
     let shared_service_notes =
-        ensure_shared_services_running(&policy, preparation_admission.as_ref())?;
+        steps::during("starting shared services", "shared services ready", || {
+            ensure_shared_services_running(&policy, preparation_admission.as_ref())
+        })?;
     if let Some(context) = &admitted_context {
         context.verify(repo_root, &policy)?;
     }
@@ -639,32 +674,57 @@ fn refuse_changed_partial_activation(
 
 /// Runs the Compose activation. Attached interrupts and failures return
 /// their end; the caller cleans up once the reconcile run has closed.
+/// Run the Compose activation, naming each service as the runtime moves it.
+///
+/// The runtime's own progress lines drive the per-service steps, so `pulling
+/// web`, `creating db` and `starting web` appear while they happen in both
+/// attached and detached mode. A stop request ends the invocation, exactly as
+/// before; the steps then end with what the runtime did.
 fn run_container_up_compose(
     plan: &ContainerUpPlan,
+    compose_steps: &mut ComposeSteps,
 ) -> Result<Option<AttachedComposeEnd>, RunnerError> {
     if let Some(context) = &plan.admitted_context {
         context.verify(&plan.policy.repo_root, &plan.policy)?;
     }
-    if plan.attach_mode == EffectiveAttachMode::Attached {
-        match run_compose_plan_inherit_with_stop_flag_and_env(
-            &plan.up_plan,
-            &plan.stop_flag,
-            &plan.compose_secret_env,
-        )? {
-            ComposeRunOutcome::Succeeded => {}
-            ComposeRunOutcome::Interrupted => return Ok(Some(AttachedComposeEnd::Interrupted)),
-            ComposeRunOutcome::Failed(status) => {
-                return Ok(Some(AttachedComposeEnd::Failed(status.to_string())))
-            }
+    // A runtime whose progress this parser does not recognise still gets one
+    // honest step instead of a silent wait.
+    let whole_stack = steps::phase(format!("starting the `{}` stack", plan.policy.name));
+    let mut observe = |line: &str| {
+        if let Some(event) = parse_compose_step_event(line) {
+            compose_steps.observe(&event);
         }
-    } else {
-        effigy_runtime::signals::run_compose_plan_capture_with_env(
-            &plan.policy,
-            &plan.up_plan,
-            &plan.compose_secret_env,
-        )?;
+    };
+    let output = run_compose_invocation_streaming_with_env(
+        &plan.policy.repo_root,
+        &plan.policy,
+        &plan.up_plan.program,
+        &plan.up_plan.args,
+        &plan.up_plan.label,
+        &plan.compose_secret_env,
+        Some(&plan.stop_flag),
+        &mut observe,
+    );
+    match output {
+        Ok(_) => {
+            if compose_steps.touched() == 0 {
+                whole_stack.succeed("the stack is up");
+            } else {
+                whole_stack.finish_clear();
+            }
+            Ok(None)
+        }
+        Err(_) if container_up_stop_requested(plan) => {
+            compose_steps.finish_unfinished(false, "the activation was interrupted");
+            whole_stack.finish_clear();
+            Ok(Some(AttachedComposeEnd::Interrupted))
+        }
+        Err(error) => {
+            compose_steps.finish_unfinished(false, "the runtime reported the stack as failed");
+            whole_stack.fail(&format!("the stack did not start: {error}"));
+            Ok(Some(AttachedComposeEnd::Failed(error.to_string())))
+        }
     }
-    Ok(None)
 }
 
 fn container_up_stop_requested(plan: &ContainerUpPlan) -> bool {

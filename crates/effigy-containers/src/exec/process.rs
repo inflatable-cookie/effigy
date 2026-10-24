@@ -153,6 +153,112 @@ pub(super) fn run_detached_command_with_env(
     })
 }
 
+/// [`run_detached_command_with_env`], reporting each line as it arrives.
+///
+/// The child still writes to the retained record file, never to an
+/// Effigy-owned pipe (a detached service must not inherit one). While the
+/// child runs, this reads the bytes it has appended so the caller can show
+/// what is happening; nothing is retried and no line is invented.
+pub(super) fn run_detached_command_streaming_with_env(
+    repo_root: &Path,
+    program: &str,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+    stop_requested: Option<&std::sync::atomic::AtomicBool>,
+    on_line: &mut dyn FnMut(&str),
+) -> Result<Output, ContainerExecError> {
+    let args = compose_invocation_args(program.as_ref(), args, env)?;
+    let record = DetachedOutputRecord::for_invocation(repo_root, &args).map_err(|error| {
+        ContainerExecError::Launch {
+            command: label.to_owned(),
+            error,
+        }
+    })?;
+    let (stdout, stderr) = record.open().map_err(|error| ContainerExecError::Launch {
+        command: label.to_owned(),
+        error: std::io::Error::new(
+            error.kind(),
+            format!("{} ({})", error, record.path.display()),
+        ),
+    })?;
+    let mut command = Command::new(resolve_host_cli_program(program));
+    command
+        .current_dir(repo_root)
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(stdout)
+        .stderr(stderr);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    crate::policy::render::apply_environment(&mut command, &args);
+    let mut child = command
+        .spawn()
+        .map_err(|error| ContainerExecError::Launch {
+            command: label.to_owned(),
+            error,
+        })?;
+    let mut offset = 0_u64;
+    let status = loop {
+        if stop_requested.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
+            let _ = terminate_child_group(&mut child);
+            break child.wait().map_err(|error| ContainerExecError::Launch {
+                command: label.to_owned(),
+                error,
+            })?;
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                record.report_new_lines(&mut offset, on_line);
+                thread::sleep(Duration::from_millis(60));
+            }
+            Err(error) => {
+                return Err(ContainerExecError::Launch {
+                    command: label.to_owned(),
+                    error,
+                })
+            }
+        }
+    };
+    // The last bytes may land after the child exits; report them once more.
+    record.report_new_lines(&mut offset, on_line);
+    let retained = record.retain_tail();
+    if !status.success() {
+        return Err(ContainerExecError::Failure {
+            command: label.to_owned(),
+            code: status.code(),
+            stdout: String::new(),
+            stderr: detached_failure(&record, status.code(), retained.err()),
+        });
+    }
+    Ok(Output {
+        status,
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+    })
+}
+
+/// End a streaming child's whole process group, so a Compose invocation that
+/// already spawned helpers does not outlive the interrupt.
+fn terminate_child_group(child: &mut std::process::Child) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let _ = kill(Pid::from_raw(-(child.id() as i32)), Signal::SIGTERM);
+        let deadline = Instant::now() + Duration::from_millis(800);
+        while Instant::now() < deadline {
+            if child.try_wait().ok().flatten().is_some() {
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(40));
+        }
+        let _ = kill(Pid::from_raw(-(child.id() as i32)), Signal::SIGKILL);
+    }
+    let _ = child.kill();
+    Ok(())
+}
+
 /// The bounded failure text: the retained file's name and its own tail. No
 /// raw backend bytes enter a JSON failure detail; this text belongs to the
 /// operator-facing error only.
@@ -307,6 +413,37 @@ impl DetachedOutputRecord {
         }
         let bytes = self.read_tail(limit)?;
         Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+    }
+
+    /// Report the complete lines this run has appended since `offset`.
+    ///
+    /// Only newline-terminated lines are reported: a half-written line is
+    /// read again on the next poll rather than shown truncated.
+    fn report_new_lines(&self, offset: &mut u64, on_line: &mut dyn FnMut(&str)) {
+        let Ok(mut file) = std::fs::File::open(&self.path) else {
+            return;
+        };
+        let Ok(length) = file.metadata().map(|metadata| metadata.len()) else {
+            return;
+        };
+        if length <= *offset {
+            return;
+        }
+        if file.seek(SeekFrom::Start(*offset)).is_err() {
+            return;
+        }
+        let mut bytes = Vec::new();
+        if file.read_to_end(&mut bytes).is_err() {
+            return;
+        }
+        let Some(last_newline) = bytes.iter().rposition(|byte| *byte == b'\n') else {
+            return;
+        };
+        let complete = String::from_utf8_lossy(&bytes[..=last_newline]).into_owned();
+        *offset += (last_newline + 1) as u64;
+        for line in complete.lines() {
+            on_line(line);
+        }
     }
 
     fn read_tail(&self, limit: usize) -> std::io::Result<Vec<u8>> {

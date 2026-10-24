@@ -14,6 +14,8 @@ mod gateway_option_tests;
 mod help_and_flag_tests;
 #[path = "lib_tests_parse_tests/qa_group_option_tests.rs"]
 mod qa_group_option_tests;
+#[path = "lib_tests_parse_tests/refusal_command_tests.rs"]
+mod refusal_command_tests;
 #[path = "lib_tests_parse_tests/release_option_tests.rs"]
 mod release_option_tests;
 #[path = "lib_tests_parse_tests/rhai_option_tests.rs"]

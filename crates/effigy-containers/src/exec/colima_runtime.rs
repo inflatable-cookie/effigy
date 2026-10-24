@@ -5,7 +5,7 @@ use std::process::{Command, Output};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::healthcheck_pidfiles::prune_stale_health_check_pidfiles;
+use super::healthcheck_pidfiles::{inspect_run_inode_pressure, prune_stale_health_check_pidfiles};
 use super::implementation::ContainerExecError;
 use super::parse::docker_failure_looks_like_colima_runtime_state_loss;
 use super::process::{
@@ -65,6 +65,26 @@ struct ColimaProfileEntry {
 /// files. A profile holding the leak needs a few seconds to walk and delete
 /// its files; a clean profile walks a handful.
 const HEALTHCHECK_PIDFILE_PRUNE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The one line a routine activation says about the `/run` pid-file leak, or
+/// nothing.
+///
+/// The prune itself is always silent: it is Effigy's own housekeeping inside a
+/// VM tmpfs, and its counts and the nerdctl upgrade note live in
+/// `effigy doctor` and the explicit prune command (effigy#313). A profile the
+/// doctor threshold calls pressured is different: the next `exec` may fail, so
+/// that one is said here, during the activation that just made room.
+fn health_check_pid_file_prune_notice(
+    profile: &str,
+    prune: &super::healthcheck_pidfiles::HealthCheckPidFilePrune,
+    pressure: &super::healthcheck_pidfiles::RunInodePressure,
+) -> Option<String> {
+    let warning = pressure.warning(profile)?;
+    Some(format!(
+        "{warning} This activation pruned {} stale file(s); `effigy doctor` reports the current counts and /run inode use.",
+        prune.deleted()
+    ))
+}
 
 /// What one managed-profile ensure did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -170,18 +190,33 @@ fn reconcile_owned_containers_after_profile_transition(
 /// leak into the VM's `/run` (effigy#291). It never fails the bring-up: a
 /// profile that cannot answer the probe keeps whatever state it had, and the
 /// doctor check still reports the pressure.
+///
+/// A routine `up` says nothing about it. The counts and the nerdctl upgrade
+/// note belong to `effigy doctor` and to the explicit
+/// `container profile prune-health-pid-files`, because the VM's nerdctl is
+/// whatever Colima ships and the reader can do nothing about it mid-activation
+/// (effigy#313). The one thing a routine run still says is that the VM is
+/// close to running out of `/run` inodes: that is actionable now.
 fn maintain_health_check_pid_files(policy: &EffectiveContainerPolicy, repo_root: &Path) {
     let deadline = Instant::now() + HEALTHCHECK_PIDFILE_PRUNE_TIMEOUT;
     match prune_stale_health_check_pidfiles(&policy.profile, repo_root, deadline) {
-        Ok(prune) if prune.deleted() > 0 => eprintln!(
-            "[info] Colima profile `{}`: {} (`effigy container profile prune-health-pid-files --profile {}` repeats this, and nerdctl 2.4.1 or later stops the leak)",
-            policy.profile,
-            prune.summary(),
-            policy.profile,
-        ),
-        Ok(_) => {}
+        Ok(prune) => {
+            if prune.deleted() == 0 {
+                return;
+            }
+            let pressure_deadline = Instant::now() + HEALTHCHECK_PIDFILE_PRUNE_TIMEOUT;
+            let Ok(pressure) =
+                inspect_run_inode_pressure(&policy.profile, repo_root, pressure_deadline)
+            else {
+                return;
+            };
+            if let Some(notice) = health_check_pid_file_prune_notice(&policy.profile, &prune, &pressure)
+            {
+                eprintln!("[warn] {notice}");
+            }
+        }
         Err(error) => eprintln!(
-            "[warn] Colima profile `{}`: stale nerdctl health-check pid-file prune skipped: {error}",
+            "[warn] Colima profile `{}`: stale nerdctl health-check pid-file prune skipped: {error}. `effigy doctor` reports /run inode use and the pid-file counts",
             policy.profile
         ),
     }
@@ -1230,6 +1265,44 @@ mod tests {
         ManifestContainerShutdownMode, ManifestContainerStartup,
     };
     use std::path::PathBuf;
+
+    /// A routine activation says nothing about the pid-file prune: it is
+    /// Effigy's own housekeeping, and the counts and nerdctl note belong to
+    /// `effigy doctor` and the explicit prune (effigy#313). Only a profile the
+    /// doctor threshold calls pressured is reported during a run.
+    #[test]
+    fn a_routine_prune_says_nothing_until_run_inodes_are_pressured() {
+        let prune = super::super::healthcheck_pidfiles::HealthCheckPidFilePrune {
+            before: 540,
+            after: 404,
+        };
+        let calm = super::super::healthcheck_pidfiles::RunInodePressure {
+            inode_total: 819_200,
+            inode_used: 1_912,
+            pid_files: 404,
+            stale_pid_files: 0,
+        };
+        assert_eq!(
+            health_check_pid_file_prune_notice("effigy", &prune, &calm),
+            None,
+            "a routine prune prints nothing"
+        );
+
+        let pressured = super::super::healthcheck_pidfiles::RunInodePressure {
+            inode_total: 819_200,
+            inode_used: 700_000,
+            pid_files: 404,
+            stale_pid_files: 0,
+        };
+        let notice = health_check_pid_file_prune_notice("effigy", &prune, &pressured)
+            .expect("a pressured profile is reported");
+        assert!(notice.contains("nerdctl 2.4.1"), "{notice}");
+        assert!(notice.contains("pruned 136 stale file(s)"), "{notice}");
+        assert!(
+            notice.contains("`effigy container profile prune-health-pid-files --profile effigy`"),
+            "{notice}"
+        );
+    }
 
     #[test]
     fn default_runtime_profile_honors_user_global_preference() {

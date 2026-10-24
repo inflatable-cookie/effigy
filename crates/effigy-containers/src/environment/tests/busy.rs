@@ -335,6 +335,7 @@ fn busy_diagnostics_stay_distinct_from_held_by_and_journal_contention() {
     assert!(held_by.to_string().contains("while runs hold it"));
     // Kernel journal contention keeps the kernel's own error.
     let contention = EnvError::from_run(
+        None,
         "stack",
         RunError::Store(StoreError::Busy {
             waited: std::time::Duration::from_millis(5),

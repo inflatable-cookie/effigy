@@ -60,8 +60,8 @@ pub use report::{
     workspace_extra_mount_decision_lines, AllocatedPortsSummary, ContainerCacheGlobalEntry,
     ContainerCachePruneEntry, ContainerCacheVolumeEntry, ContainerCommandReport,
     ContainerDataHookResult, ContainerDataTransferAction, ContainerDataVolumeEntry,
-    ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
-    ContainerVolumeGlobalEntry, ContainerVolumePruneEntry,
+    ContainerServiceHealth, ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry,
+    ContainerStatusService, ContainerVolumeGlobalEntry, ContainerVolumePruneEntry,
 };
 pub use runtime::loopback::{
     prune_loopback_assignments, prune_loopback_assignments_with_rows, warn_skipped_reclamation,

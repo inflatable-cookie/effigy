@@ -185,6 +185,26 @@ const SECRET_MARKERS: [&str; 8] = [
     "credential",
 ];
 
+/// A duration as a person reads it: `800ms`, `12s`, `4m08s`, `1h02m`.
+///
+/// A finished step says how long it ran (effigy#313); both the runner's steps
+/// and the runtime's teardown steps use this one spelling.
+pub fn human_duration(elapsed: std::time::Duration) -> String {
+    let millis = elapsed.as_millis();
+    if millis < 1_000 {
+        return format!("{millis}ms");
+    }
+    let seconds = elapsed.as_secs_f64().round() as u64;
+    if seconds < 60 {
+        return format!("{seconds}s");
+    }
+    let minutes = seconds / 60;
+    if minutes < 60 {
+        return format!("{minutes}m{:02}s", seconds % 60);
+    }
+    format!("{}h{:02}m", minutes / 60, minutes % 60)
+}
+
 /// Replace values that look like credentials. Evidence comes from command
 /// output and environment records, so it is redacted before it is stored,
 /// not only before it is printed.
@@ -223,6 +243,24 @@ fn redact_word(word: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_duration_names_the_scale_a_person_reads() {
+        assert_eq!(human_duration(std::time::Duration::from_millis(0)), "0ms");
+        assert_eq!(
+            human_duration(std::time::Duration::from_millis(800)),
+            "800ms"
+        );
+        assert_eq!(human_duration(std::time::Duration::from_secs(12)), "12s");
+        assert_eq!(
+            human_duration(std::time::Duration::from_millis(247_800)),
+            "4m08s"
+        );
+        assert_eq!(
+            human_duration(std::time::Duration::from_secs(3_720)),
+            "1h02m"
+        );
+    }
 
     #[test]
     fn text_form_names_the_failure_the_evidence_and_the_next_action() {

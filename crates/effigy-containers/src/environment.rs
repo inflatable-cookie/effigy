@@ -29,8 +29,8 @@ pub use import::{
 };
 pub use ops::{activate, down, reconcile, repair, reset, up, Applied, Pending, Up};
 pub use reconcile::{
-    BusyDiagnostics, BusyRecord, EnvContext, EnvError, EnvRef, EnvRun, EnvSettlement, Operation,
-    APPLY_EFFECT, GATE_WAIT, RUN_BUDGET, STOP_EFFECT,
+    BusyDiagnostics, BusyRecord, EnvContext, EnvError, EnvRef, EnvRun, EnvSettlement, HeldHolder,
+    Operation, APPLY_EFFECT, GATE_WAIT, RUN_BUDGET, STOP_EFFECT,
 };
 pub use record::{
     EngineRecord, EnvRecord, EnvState, ImportedMarker, LabelEvidence, LegacyImport, Retention,

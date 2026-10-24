@@ -123,6 +123,7 @@ fn status_global_report_renders_environment_inventory() {
             container_name: "demo-app-1".to_owned(),
             status: "Up 2 minutes".to_owned(),
             ports: vec!["0.0.0.0:18080->80/tcp".to_owned()],
+            health: None,
         }],
     }]);
 
@@ -897,6 +898,7 @@ primary_service = "app"
         container_name: "demo-app-1".to_owned(),
         status: "Up 2 minutes".to_owned(),
         ports: vec!["0.0.0.0:8080->80/tcp".to_owned()],
+        health: None,
     }];
 
     let report = status_report(
@@ -945,6 +947,7 @@ primary_service = "app"
         container_name: "demo-postgres-1".to_owned(),
         status: "Exited (255) 2 minutes ago".to_owned(),
         ports: Vec::new(),
+        health: None,
     }];
 
     let report = status_report(
