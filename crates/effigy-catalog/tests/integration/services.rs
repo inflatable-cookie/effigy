@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::process::Command;
 
 use effigy_catalog::assembly::{ComposeAssembler, ServiceDeclaration};
@@ -624,6 +625,245 @@ fn phpmyadmin_inherits_mariadb_password() {
         "phpmyadmin should inherit the mariadb root password:\n{}",
         result.compose_yaml
     );
+}
+
+// --- Catalog health checks use tools their images ship -------------------
+
+/// The executable names each embedded catalog image is known to ship.
+///
+/// Every entry was confirmed against the pinned image with a throwaway
+/// `nerdctl run --rm --network none --entrypoint …` on 2026-10-24, or against
+/// the image's published Dockerfile where the tag can no longer be pulled:
+/// `minio` records the `COPY --from=build /go/bin/mc* /usr/bin/` line of its
+/// `Dockerfile.release`, and `workspace-rust-bun` is built from the Dockerfile
+/// in this catalog. Only the tools a health check may name are listed, so a
+/// fragment that starts naming a new one has to add the evidence here first,
+/// instead of depending on a binary its image lacks (effigy#454, #323).
+const IMAGE_TOOLS: &[(&str, &[&str])] = &[
+    // node:bookworm-slim base: no wget, no curl.
+    ("dbgate", &["node"]),
+    // Ubuntu base with curl.
+    ("elasticsearch", &["curl"]),
+    // Alpine base with BusyBox wget.
+    ("mailpit", &["wget"]),
+    ("mariadb", &["healthcheck.sh"]),
+    // ubi-micro plus the MinIO server, `mc` and a static curl.
+    ("minio", &["mc"]),
+    // Alpine base with BusyBox wget and grep.
+    ("nginx", &["wget", "grep"]),
+    // Debian base with curl; no wget.
+    ("pgweb", &["curl"]),
+    ("phpmyadmin", &["php"]),
+    ("postgres", &["pg_isready"]),
+    // PGSTY Silo, a MinIO fork, ships the MinIO client.
+    ("silo", &["mc"]),
+    // Built from this catalog's Dockerfile: Rust toolchain and bun.
+    ("workspace-rust-bun", &["cargo", "bun"]),
+];
+
+/// Every embedded fragment's health check may only name a tool its image
+/// ships. A new fragment must declare its image's tools in [`IMAGE_TOOLS`].
+#[test]
+fn every_catalog_healthcheck_names_only_tools_its_image_ships() {
+    let catalog_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("catalog");
+    let mut checked: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(&catalog_root)
+        .unwrap_or_else(|error| panic!("read {}: {error}", catalog_root.display()))
+    {
+        let entry = entry.unwrap();
+        if !entry.file_type().unwrap().is_dir() {
+            continue;
+        }
+        let catalog = entry.file_name().into_string().unwrap();
+        let Some(healthcheck) = fragment_healthcheck(&catalog) else {
+            continue;
+        };
+        let test = healthcheck
+            .get("test")
+            .unwrap_or_else(|| panic!("{catalog} declares a healthcheck with no `test`"));
+        let binaries = healthcheck_binaries(test);
+        assert!(
+            !binaries.is_empty(),
+            "{catalog} health check names no program the test can see: {test:?}"
+        );
+        let tools = IMAGE_TOOLS
+            .iter()
+            .find(|(name, _)| *name == catalog)
+            .map(|(_, tools)| *tools)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{catalog} declares a healthcheck but IMAGE_TOOLS has no entry for its \
+                     image. Confirm which binaries the pinned image ships and add them"
+                )
+            });
+        for binary in &binaries {
+            assert!(
+                tools.contains(&binary.as_str()),
+                "{catalog} health check names `{binary}`, which its image is not known to \
+                 ship (known: {tools:?}). Use a tool the image ships, or add the evidence for \
+                 `{binary}` to IMAGE_TOOLS"
+            );
+        }
+        checked.push(catalog);
+    }
+    for (catalog, _) in IMAGE_TOOLS {
+        assert!(
+            checked.iter().any(|name| name == catalog),
+            "IMAGE_TOOLS lists `{catalog}`, but its fragment declares no healthcheck"
+        );
+    }
+    assert!(
+        !checked.is_empty(),
+        "no catalog fragment healthcheck was found under {}",
+        catalog_root.display()
+    );
+}
+
+/// Read the `healthcheck` block of one catalog fragment.
+///
+/// Fragments are templates, but a health check is plain Compose YAML: its
+/// command is fixed, and those bytes are what a person reviews. Reading the
+/// block directly judges the fragment before any parameter fills it in.
+fn fragment_healthcheck(catalog: &str) -> Option<serde_yaml::Value> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("catalog")
+        .join(catalog)
+        .join("compose.fragment.yml");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    let mut block = String::from("healthcheck:\n");
+    let mut found = false;
+    for line in source.lines() {
+        if !found {
+            if line.trim_end() == "    healthcheck:" {
+                found = true;
+            }
+            continue;
+        }
+        if line.trim().is_empty() {
+            block.push('\n');
+            continue;
+        }
+        // Service keys sit at four spaces; the block ends when one starts.
+        if !line.starts_with("     ") {
+            break;
+        }
+        block.push_str(&line[4..]);
+        block.push('\n');
+    }
+    if !found {
+        return None;
+    }
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&block).unwrap_or_else(|error| {
+        panic!(
+            "{} healthcheck block is not YAML: {error}\n{block}",
+            path.display()
+        )
+    });
+    parsed.get("healthcheck").cloned()
+}
+
+/// The executable names a Compose health check invokes.
+fn healthcheck_binaries(test: &serde_yaml::Value) -> Vec<String> {
+    match test {
+        serde_yaml::Value::Sequence(parts) => {
+            let words: Vec<&str> = parts
+                .iter()
+                .map(|part| {
+                    part.as_str().unwrap_or_else(|| {
+                        panic!("healthcheck test entry is not a string: {part:?}")
+                    })
+                })
+                .collect();
+            match words.first().copied() {
+                Some("CMD") => words
+                    .get(1)
+                    .map(|binary| {
+                        let binary = *binary;
+                        vec![binary.rsplit('/').next().unwrap_or(binary).to_string()]
+                    })
+                    .unwrap_or_default(),
+                Some("CMD-SHELL") => {
+                    let command = words
+                        .get(1)
+                        .unwrap_or_else(|| panic!("CMD-SHELL without a command: {test:?}"));
+                    shell_command_binaries(command)
+                }
+                Some(other) => {
+                    panic!(
+                        "unknown healthcheck form `{other}`, expected CMD or CMD-SHELL: {test:?}"
+                    )
+                }
+                None => Vec::new(),
+            }
+        }
+        serde_yaml::Value::String(command) => shell_command_binaries(command),
+        other => panic!("healthcheck test is neither a sequence nor a string: {other:?}"),
+    }
+}
+
+#[test]
+fn a_healthcheck_test_is_read_into_the_programs_it_names() {
+    let shell: serde_yaml::Value = serde_yaml::from_str(
+        r#"["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1"]"#,
+    )
+    .unwrap();
+    assert_eq!(healthcheck_binaries(&shell), ["wget"]);
+
+    let pipeline: serde_yaml::Value = serde_yaml::from_str(
+        r#"["CMD-SHELL", "wget -S --spider http://127.0.0.1:80/ 2>&1 | grep -q 'HTTP/'"]"#,
+    )
+    .unwrap();
+    assert_eq!(healthcheck_binaries(&pipeline), ["wget", "grep"]);
+
+    let direct: serde_yaml::Value =
+        serde_yaml::from_str(r#"["CMD", "node", "-e", "process.exit(0)"]"#).unwrap();
+    assert_eq!(healthcheck_binaries(&direct), ["node"]);
+
+    let probe: serde_yaml::Value = serde_yaml::from_str(
+        r#"["CMD-SHELL", "command -v cargo >/dev/null && command -v bun >/dev/null"]"#,
+    )
+    .unwrap();
+    assert_eq!(healthcheck_binaries(&probe), ["cargo", "bun"]);
+}
+
+/// The programs a shell health check runs: the command word of every pipeline
+/// or list segment, where `command -v <name>` names `<name>` instead.
+fn shell_command_binaries(command: &str) -> Vec<String> {
+    let mut programs = Vec::new();
+    let normalized = command.replace("&&", "\n").replace("||", "\n");
+    for segment in normalized.split(['|', ';', '\n']) {
+        let words: Vec<&str> = segment.split_whitespace().collect();
+        let Some(first) = words.first().copied() else {
+            continue;
+        };
+        let first = first.trim_start_matches('(');
+        if first.is_empty() {
+            continue;
+        }
+        // Shell builtins are not images' binaries.
+        if matches!(
+            first,
+            "exit" | "true" | "false" | "test" | "[" | "return" | "echo" | ":"
+        ) {
+            continue;
+        }
+        if matches!(first, "command" | "exec" | "env") {
+            if let Some(name) = words.iter().skip(1).find(|word| !word.starts_with('-')) {
+                programs.push(name.trim_matches(['\'', '"']).to_string());
+            }
+            continue;
+        }
+        programs.push(
+            first
+                .trim_matches(['\'', '"'])
+                .rsplit('/')
+                .next()
+                .unwrap_or(first)
+                .to_string(),
+        );
+    }
+    programs
 }
 
 #[test]

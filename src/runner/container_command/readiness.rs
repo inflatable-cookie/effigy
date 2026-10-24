@@ -34,6 +34,11 @@ const PROBE_STARTING_WINDOW: Duration = Duration::from_secs(4);
 /// wait's whole budget, and an unresponsive runtime is reported rather than
 /// waited on.
 const PROBE_BUDGET: Duration = Duration::from_secs(15);
+/// The smallest budget a probe gets. The wait's last probe is what produces
+/// the readiness diagnostic, so it must still have time to answer when it
+/// starts at the deadline; otherwise the diagnostic ends with a "timed out
+/// after 0s" read that never happened.
+const PROBE_BUDGET_MINIMUM: Duration = Duration::from_secs(5);
 /// How many trailing log lines one exited service is read for.
 const EXITED_LOG_TAIL: u32 = 5;
 
@@ -77,7 +82,7 @@ pub(super) fn await_services_ready(
             parent.finish_clear();
             return Ok(ReadinessEnd::Interrupted);
         }
-        let probe_deadline = deadline.min(Instant::now() + PROBE_BUDGET);
+        let probe_deadline = probe_budget_deadline(Instant::now(), deadline);
         match inspect_project_health(repo_root, policy, Some(probe_deadline)) {
             Ok(services) if services.is_empty() => {
                 for step in steps.values() {
@@ -145,6 +150,16 @@ pub(super) fn await_services_ready(
         return Ok(ReadinessEnd::NothingToAwait);
     }
     readiness_failure(policy, &last_services, last_probe_error, &steps)
+}
+
+/// When one probe must give up: at most [`PROBE_BUDGET`] away, but never less
+/// than [`PROBE_BUDGET_MINIMUM`] even at the wait's deadline. A probe that
+/// starts at the deadline is the last diagnostic read, not a reason to report
+/// the runtime as silent.
+fn probe_budget_deadline(now: Instant, deadline: Instant) -> Instant {
+    deadline
+        .min(now + PROBE_BUDGET)
+        .max(now + PROBE_BUDGET_MINIMUM)
 }
 
 /// Build the failure for a wait that ran out of time.
@@ -277,5 +292,27 @@ mod tests {
         );
         // The healthy service has no waiting step.
         assert!(!steps.contains_key("db"));
+    }
+
+    #[test]
+    fn the_last_probe_keeps_a_budget_after_the_wait_deadline() {
+        let now = Instant::now();
+        let deadline = now + Duration::from_secs(60);
+        // Before the deadline, a probe is bounded by its own budget.
+        assert_eq!(probe_budget_deadline(now, deadline), now + PROBE_BUDGET);
+        // A probe that starts at the deadline still gets the minimum, so the
+        // diagnostic never says a read timed out after 0s.
+        let at_deadline = now + Duration::from_secs(60);
+        assert_eq!(
+            probe_budget_deadline(at_deadline, at_deadline),
+            at_deadline + PROBE_BUDGET_MINIMUM
+        );
+        // A probe just before the deadline also gets the minimum, not the
+        // sliver of time left.
+        let nearly = deadline - Duration::from_millis(1);
+        assert_eq!(
+            probe_budget_deadline(nearly, deadline),
+            nearly + PROBE_BUDGET_MINIMUM
+        );
     }
 }
