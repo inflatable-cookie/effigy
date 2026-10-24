@@ -10,6 +10,11 @@ use std::sync::{Mutex, OnceLock};
 const INTERNAL_SECRET_PASSPHRASE_ENV: &str = "EFFIGY_INTERNAL_SECRET_PASSPHRASE";
 const TEST_SECRET_PASSPHRASE_ENV: &str = "EFFIGY_TEST_SECRETS_PASSPHRASE";
 const LOCAL_DEV_SECRET_ACCESS_ENV: &str = "EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS";
+/// The passphrase a caller (an operator at a shell, or an agent driving a
+/// headless session) supplies for one invocation instead of typing it on a
+/// terminal. It is a source, not a credential: nothing is sealed or written
+/// (contract 032).
+const SESSION_SECRET_PASSPHRASE_ENV: &str = "EFFIGY_SECRET_PASSPHRASE";
 
 static SECRET_PASSPHRASE_CACHE: OnceLock<Mutex<Option<SecretValue>>> = OnceLock::new();
 
@@ -35,13 +40,22 @@ fn cache_secret_passphrase(value: &SecretValue) {
 }
 
 /// The passphrase this invocation already holds: read once in this process,
-/// or handed to it by its parent's spawn environment.
+/// handed to it by its parent's spawn environment, or supplied for this one
+/// invocation by the caller.
 pub(in crate::runner) fn session_passphrase() -> Option<SecretValue> {
-    cached_secret_passphrase().or_else(|| {
-        std::env::var(INTERNAL_SECRET_PASSPHRASE_ENV)
-            .ok()
-            .map(SecretValue::new)
-    })
+    cached_secret_passphrase()
+        .or_else(|| env_secret_passphrase(INTERNAL_SECRET_PASSPHRASE_ENV))
+        .or_else(|| env_secret_passphrase(SESSION_SECRET_PASSPHRASE_ENV))
+}
+
+fn env_secret_passphrase(key: &str) -> Option<SecretValue> {
+    std::env::var(key).ok().map(SecretValue::new)
+}
+
+/// The public name of the caller-supplied passphrase source, for the refusals
+/// that name what to do next.
+pub(in crate::runner) const fn session_secret_passphrase_env() -> &'static str {
+    SESSION_SECRET_PASSPHRASE_ENV
 }
 
 /// Forgets the passphrase this test process read, as a new invocation would.
@@ -103,6 +117,11 @@ pub(in crate::runner) fn read_secret_passphrase(
         cache_secret_passphrase(&secret);
         return Ok(Some(secret));
     }
+    if let Ok(value) = std::env::var(SESSION_SECRET_PASSPHRASE_ENV) {
+        let secret = SecretValue::new(value);
+        cache_secret_passphrase(&secret);
+        return Ok(Some(secret));
+    }
     if let Some(secret) = cached_secret_passphrase() {
         return Ok(Some(secret));
     }
@@ -130,6 +149,10 @@ pub(in crate::runner) fn read_vault_passphrase(
         if let Some(passphrase) = effigy_secrets::read_local_unlock_passphrase(vault_path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?
         {
+            // The sealed command credential is this session's factor from
+            // here on: caching it is what lets everything the session starts
+            // resolve without a prompt (032, Q-007).
+            cache_secret_passphrase(&passphrase);
             return Ok(Some(passphrase));
         }
     }
@@ -181,15 +204,13 @@ pub(in crate::runner) fn secret_passphrase_child_env() -> Vec<(OsString, OsStrin
             OsString::from(value),
         ));
     }
-    if let Some(secret) = cached_secret_passphrase() {
+    // One route for every way this invocation holds the passphrase - read
+    // here, inherited from a parent, or supplied by the caller - so a child
+    // never has to know which source answered.
+    if let Some(secret) = session_passphrase() {
         env.push((
             OsString::from(INTERNAL_SECRET_PASSPHRASE_ENV),
             OsString::from(secret.expose()),
-        ));
-    } else if let Ok(value) = std::env::var(INTERNAL_SECRET_PASSPHRASE_ENV) {
-        env.push((
-            OsString::from(INTERNAL_SECRET_PASSPHRASE_ENV),
-            OsString::from(value),
         ));
     }
     if local_dev_secret_access_active() {

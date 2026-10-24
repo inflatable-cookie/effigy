@@ -504,6 +504,38 @@ fn spawn_supervisor(
     hp: &EffectiveHostProcess,
     spec_file: &Path,
 ) -> Result<(), RunnerError> {
+    let mut child = supervisor_command(repo_root, container_name, dir, hp, spec_file)?;
+    // Detach into a new session so the supervisor outlives the
+    // bring-up command.
+    // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
+    // where only async-signal-safe work is allowed. `setsid` is
+    // async-signal-safe. Failure is ignored when the child is already a
+    // session leader, and the callback returns `Ok(())` without allocating,
+    // formatting, logging, or reading the environment.
+    unsafe {
+        child.pre_exec(|| {
+            let _ = nix::unistd::setsid();
+            Ok(())
+        });
+    }
+    child
+        .spawn()
+        .map_err(|error| RunnerError::TaskCommandLaunch {
+            command: "__host-process-supervise".to_owned(),
+            error,
+        })?;
+    Ok(())
+}
+
+/// The supervisor's spawn command: argv, its quiet stdio, and the vault access
+/// this bring-up resolved.
+fn supervisor_command(
+    repo_root: &Path,
+    container_name: &str,
+    dir: &Path,
+    hp: &EffectiveHostProcess,
+    spec_file: &Path,
+) -> Result<ProcessCommand, RunnerError> {
     let executable = std::env::current_exe().map_err(|error| {
         RunnerError::task_invocation(format!(
             "failed to resolve current executable for host-process supervisor: {error}"
@@ -536,26 +568,13 @@ fn spawn_supervisor(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    // Detach into a new session so the supervisor outlives the
-    // bring-up command.
-    // SAFETY: `pre_exec` runs this closure in the forked child before `exec`,
-    // where only async-signal-safe work is allowed. `setsid` is
-    // async-signal-safe. Failure is ignored when the child is already a
-    // session leader, and the callback returns `Ok(())` without allocating,
-    // formatting, logging, or reading the environment.
-    unsafe {
-        child.pre_exec(|| {
-            let _ = nix::unistd::setsid();
-            Ok(())
-        });
-    }
-    child
-        .spawn()
-        .map_err(|error| RunnerError::TaskCommandLaunch {
-            command: "__host-process-supervise".to_owned(),
-            error,
-        })?;
-    Ok(())
+    // The vault access this bring-up resolved rides onto the supervisor, and
+    // from it to every process it restarts and every nested Effigy run inside
+    // them, on the internal env route (K12). It is set explicitly rather than
+    // left to inheritance, so a wrapper that trims the environment cannot take
+    // the route away and reintroduce a tab prompt.
+    crate::runner::secret_session::apply_secret_passphrase_to_child(&mut child);
+    Ok(child)
 }
 
 fn reap_stale_supervisor(dir: &Path, hp: &EffectiveHostProcess) -> Result<(), RunnerError> {
@@ -4433,6 +4452,95 @@ mod tests {
             parse_signal_name(HostProcessSignal::Sigkill.as_str()),
             Signal::SIGKILL
         ));
+    }
+
+    /// A host-process supervisor starts with the vault access its bring-up
+    /// resolved, so every process it restarts - and every nested Effigy run
+    /// inside them - uses that access instead of asking (032, K12; Q-007).
+    #[test]
+    fn host_process_supervisor_spawns_with_the_session_secret_route() {
+        struct ScopedPassphrase {
+            previous: Option<std::ffi::OsString>,
+            _lock: crate::contract_test_support::ReentrantTestLockGuard,
+        }
+        impl ScopedPassphrase {
+            fn set(value: Option<&str>) -> Self {
+                let guard = crate::contract_test_support::lock_test();
+                let previous = std::env::var_os("EFFIGY_INTERNAL_SECRET_PASSPHRASE");
+                match value {
+                    Some(value) => unsafe {
+                        std::env::set_var("EFFIGY_INTERNAL_SECRET_PASSPHRASE", value)
+                    },
+                    None => unsafe { std::env::remove_var("EFFIGY_INTERNAL_SECRET_PASSPHRASE") },
+                }
+                crate::runner::secret_session::forget_session_passphrase_for_tests();
+                Self {
+                    previous,
+                    _lock: guard,
+                }
+            }
+        }
+        impl Drop for ScopedPassphrase {
+            fn drop(&mut self) {
+                match &self.previous {
+                    Some(value) => unsafe {
+                        std::env::set_var("EFFIGY_INTERNAL_SECRET_PASSPHRASE", value)
+                    },
+                    None => unsafe { std::env::remove_var("EFFIGY_INTERNAL_SECRET_PASSPHRASE") },
+                }
+                crate::runner::secret_session::forget_session_passphrase_for_tests();
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let hp = EffectiveHostProcess {
+            name: "app".to_owned(),
+            run: "printf app".to_owned(),
+            cwd: dir.path().to_path_buf(),
+            env: Vec::new(),
+            depends_on: Vec::new(),
+            listener: None,
+            restart: effigy_containers::HostProcessRestart::Never,
+            restart_delay_ms: 100,
+            shutdown_signal: HostProcessSignal::Sigterm,
+            shutdown_grace_secs: 5,
+        };
+        let supervisor_env = |passphrase: Option<&str>| {
+            let _passphrase = ScopedPassphrase::set(passphrase);
+            let command = supervisor_command(
+                dir.path(),
+                "web",
+                dir.path(),
+                &hp,
+                &dir.path().join("app.spec.json"),
+            )
+            .expect("build the supervisor command");
+            command
+                .get_envs()
+                .map(|(key, value)| {
+                    (
+                        key.to_string_lossy().into_owned(),
+                        value.map(|value| value.to_string_lossy().into_owned()),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let env = supervisor_env(Some("session-passphrase"));
+        assert!(
+            env.iter().any(|(key, value)| {
+                key == crate::runner::secret_session::internal_secret_passphrase_env()
+                    && value.as_deref() == Some("session-passphrase")
+            }),
+            "the supervisor must receive the session's vault access: {env:?}"
+        );
+        // A route the session does not hold is never invented.
+        let env = supervisor_env(None);
+        assert!(
+            env.iter()
+                .all(|(key, _)| key
+                    != crate::runner::secret_session::internal_secret_passphrase_env()),
+            "an absent passphrase is not invented: {env:?}"
+        );
     }
 
     #[test]

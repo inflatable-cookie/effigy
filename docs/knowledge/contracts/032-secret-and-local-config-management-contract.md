@@ -204,10 +204,29 @@ Injection rules:
 - resolved `dev` tasks use the local-dev payload without prompting; after an
   explicit `secrets unlock`, other task names and direct vault commands use the
   sealed local command credential without prompting
-- every child Effigy process a `dev` session starts resolves secrets through
-  that session's local-dev access and passphrase, carried on the internal env
-  route rather than this process's global environment (052 K12): the managed
-  environment `up`, the run's supervisor, and a seeded workspace task
+- a managed session resolves the secret scope it needs **once**, before any
+  front end renders (TUI, headless or detach), in this order: what the
+  invocation already holds, the sealed command credential `effigy secrets
+  unlock` leaves, or one prompt on the real terminal (Tom 2026-10-23, recorded
+  in Q-007 "Secrets before the TUI"). With no terminal and no other source it
+  refuses before starting anything, naming what is locked and the next
+  command: `effigy secrets unlock`, or `EFFIGY_SECRET_PASSPHRASE`
+- everything the session starts then uses that access on the internal env route
+  (052 K12), never this process's global environment: the managed environment
+  `up`, the run's supervisor, every workload, shell and lifecycle tab,
+  host-process supervisors and the processes they restart, and a seeded
+  workspace task. A nested Effigy process that inherits the route uses it
+  whatever its task name, and never prompts
+- the session never writes a sealed credential for itself: sharing is not an
+  implicit `secrets unlock`, and no value reaches argv, a rendered shell string
+  or a log; a value a child echoes is redacted like any other resolved secret
+- `EFFIGY_SECRET_PASSPHRASE` names the passphrase a caller supplies for one
+  invocation, which is what a headless session with no terminal uses. It is a
+  source, not a credential: nothing is sealed or written
+- the local-dev key keeps its reach. Prompt-free use of it without a passphrase
+  stays limited to a resolved `dev` session (below); a session whose vault
+  holds only that key asks once before it renders rather than inside a tab, and
+  the key is never handed to another task's children
 - a declared container key that is not delivered is reported once, naming the
   key, the reason and the fix, and recorded under `warnings` in the bring-up's
   JSON envelope; required keys still fail the bring-up, and no bring-up writes

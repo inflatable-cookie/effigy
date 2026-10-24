@@ -31,6 +31,8 @@ mod sequence_run;
 #[path = "execute/workspace_seeded.rs"]
 mod workspace_seeded;
 
+#[cfg(test)]
+pub(in crate::runner) use pipeline::managed::resolve_managed_session_secret_access;
 pub(in crate::runner) use pipeline::managed::{
     inline_managed_policy, release_inline_managed_environment,
 };

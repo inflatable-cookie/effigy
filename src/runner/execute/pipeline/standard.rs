@@ -702,6 +702,25 @@ fn task_secret_targets(extra_targets: &[String]) -> Result<Vec<ManifestSecretTar
     Ok(targets)
 }
 
+/// The built-in vault this checkout's manifest declares and that exists on
+/// disk: the vault a managed session resolves access to once, before any
+/// front end renders (032, Q-007). A checkout without `[secrets]`, or without
+/// a vault file yet, has nothing locked to resolve, so a session starts
+/// without asking.
+pub(in crate::runner::execute) fn managed_session_vault_path(
+    repo_root: &Path,
+) -> Result<Option<PathBuf>, RunnerError> {
+    let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
+    let Some(secrets) = manifest.secrets.as_ref() else {
+        return Ok(None);
+    };
+    if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
+        return Ok(None);
+    }
+    let vault_path = resolve_task_secret_vault_path(repo_root, secrets)?;
+    Ok(vault_path.exists().then_some(vault_path))
+}
+
 fn resolve_task_secret_vault_path(
     repo_root: &Path,
     secrets: &ManifestSecretsConfig,
