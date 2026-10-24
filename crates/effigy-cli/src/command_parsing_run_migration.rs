@@ -14,7 +14,7 @@ pub(super) fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, 
             other => return Err(unknown_argument(other)),
         }
     }
-    // The current-main importer is retired (contract 052 §11.2), so this
+    // The current-main importer is retired (contract 052 §11.1), so this
     // surface only reports. Any mutating intent fails before any effect.
     if !plan {
         return Err(CliParseError::InvalidArguments(

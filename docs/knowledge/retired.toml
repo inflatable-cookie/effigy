@@ -370,7 +370,7 @@ allow = ["CHANGELOG.md"]
 [[retired]]
 id = "effigy-run-journal-on-admission-store"
 retired = "2026-10-18"
-replacement = "The kernel store is ~/.effigy/state/kernel.db (contract 052, store layout). No run journal reuses the retired heavy-admission store or a host-wide coordinator, and runs carry no capacity kind."
+replacement = "The checkout journal is <checkout>/.effigy/state/kernel.db and shared machine facts are ~/.effigy/state/machine.db (contract 052 §7). No run journal reuses the retired heavy-admission store or a host-wide coordinator, and runs carry no capacity kind."
 owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
 terms = ["host-wide coordinator", "capacity_lease", "evidence_only"]
 paths = []
@@ -1173,7 +1173,7 @@ allow = [
 [[retired]]
 id = "effigy-central-runtime-journal"
 retired = "2026-10-23"
-replacement = "Contract 052 §3.1/§7: short foreground runs use memory and lock files; retained runs journal in their checkout; machine.db contains gateway endpoints/routes, ports and admission only. Built-in migration reads the old kernel.db without changing it. Scope inventory is checkout-local and dead-checkout retirement uses verified backend ownership and custody leases, without an index. Close-time retention scans and their environment-variable stopgap are removed."
+replacement = "Contract 052 §3.1/§7: short foreground runs use memory and lock files; retained runs journal in their checkout; machine.db contains gateway endpoints/routes, ports and admission only. The one-minor built-in migration read an unreleased-main central kernel.db without changing it; that importer is itself retired (effigy#307), so v0.15 ships only the v0.14.1 importers. Scope inventory is checkout-local and dead-checkout retirement uses verified backend ownership and custody leases, without an index. Close-time retention scans and their environment-variable stopgap are removed."
 owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
 terms = ["EFFIGY_RETENTION_ON_CLOSE", "machine-wide runtime journal", "~/.effigy/runtime-scopes/"]
 paths = []

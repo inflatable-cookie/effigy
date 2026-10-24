@@ -49,7 +49,7 @@ pub(in crate::runner) fn state_home_path() -> Option<PathBuf> {
 }
 
 /// Refuse once, before any run starts, when this machine still holds the
-/// retired current-main central store (contract 052 §11.2).
+/// retired current-main central store (contract 052 §11.1).
 pub(in crate::runner) fn refuse_unreleased_main() -> Result<(), RunnerError> {
     let home =
         state_home().ok_or_else(|| RunnerError::task_invocation("HOME is unset or relative"))?;

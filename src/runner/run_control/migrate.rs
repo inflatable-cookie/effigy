@@ -2,7 +2,7 @@
 //!
 //! v0.15 ships only the v0.14.1 importers, which read legacy files on first
 //! use. The importer for the central `~/.effigy/state/kernel.db` is gone
-//! (contract 052 §11.2), so this command never stages, stops or imports
+//! (contract 052 §11.1), so this command never stages, stops or imports
 //! anything. A committed manifest is provenance; a store without one is
 //! refused with the exact upgrade path.
 use crate::runner::error::RunnerError;

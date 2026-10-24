@@ -2,7 +2,7 @@
 //!
 //! v0.15 ships one migration path: the v0.14.1 importers, which read legacy
 //! files on first use. The importer for the current-main central
-//! `~/.effigy/state/kernel.db` is retired (contract 052 §11.2). A machine which
+//! `~/.effigy/state/kernel.db` is retired (contract 052 §11.1). A machine which
 //! still holds that store has to be migrated with Effigy main 7b82d26 before it
 //! upgrades; this module only recognises the store and refuses once.
 pub(crate) mod adoption;

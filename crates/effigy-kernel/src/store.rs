@@ -104,7 +104,7 @@ pub enum StoreError {
     Unbounded,
     MigrationPending(String),
     /// The retired current-main central store is present and no migration
-    /// manifest committed this machine (contract 052 §11.2).
+    /// manifest committed this machine (contract 052 §11.1).
     UnreleasedMainRuntime,
     /// Retention, repair and scope removal run only in Mutate (K15).
     ClassRefused(EffectClass),
