@@ -1020,6 +1020,19 @@
 "test:install:previous-binary-preservation" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "install-previous-binary-preservation", run = "sh scripts/oxide-selector.sh test -p effigy -p effigy-rhai --lib previous_binary_preservation -- --nocapture", timeout_ms = 120000 },
 ] }
+# Local installer contract (task 303): the optimized release artifact is built
+# through Oxide and its exact uplifted output is activated; customized launchers
+# and custom symlinks are preserved byte-for-byte; activated paths are staged
+# and renamed so a failed build, copy or rename cannot truncate the active
+# binary or its receipt. Each fixture is a private mktemp HOME and checkout with
+# stub oxide/cargo/cp/mv/chmod programs; no host install, no ~/.local/bin write
+# and no real release build.
+"test:install:local" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { id = "install-local-fixture", run = "sh tests/scripts/install-local-bin.sh", timeout_ms = 900000 },
+] }
+# Plain-Cargo escape for the fixture route, exactly as `EFFIGY_OXIDE_ESCAPE=cargo
+# effigy <selector>` documents it.
+"test:install:local:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = "EFFIGY_OXIDE_ESCAPE=cargo effigy test:install:local" }
 "test:container:fake-runtime-lease-isolation" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh test --test cli_output_tests cli_container_data_seed_json_reports_seed_contract -- --nocapture",
   "sh scripts/oxide-selector.sh test --test cli_output_tests cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child -- --nocapture",
