@@ -259,7 +259,10 @@ pub fn plan_recovery(
                 PathState::Present => (Decision::Retain, "project path exists".to_owned()),
                 PathState::Unknown(error) => (
                     Decision::Hold,
-                    format!("project path state is unknown: {error}"),
+                    format!(
+                        "project path {}: the state is unknown ({error}); make the path readable, then rerun `effigy container ports status`",
+                        alloc.project
+                    ),
                 ),
                 PathState::Missing => match global_hold.as_ref() {
                     Some(reason) => (Decision::Hold, format!("global hold: {reason}")),
@@ -606,6 +609,25 @@ pub struct PortRecoveryReport {
 }
 
 /// Read-only report for one registry file and one fact source.
+/// Run one step of the command's own work. The label names what is happening,
+/// and the step ends with one line: what now holds, or what is wrong.
+fn step_through<T>(
+    label: &str,
+    work: impl FnOnce(&effigy_ui::Step) -> Result<T, ContainerPolicyError>,
+) -> Result<T, ContainerPolicyError> {
+    let step = effigy_ui::steps::step(label);
+    match work(&step) {
+        Ok(value) => {
+            step.succeed("");
+            Ok(value)
+        }
+        Err(error) => {
+            step.fail(&error.to_string());
+            Err(error)
+        }
+    }
+}
+
 fn report_at(
     path: &Path,
     mode: &'static str,
@@ -615,14 +637,33 @@ fn report_at(
 ) -> Result<PortRecoveryReport, ContainerPolicyError> {
     let store = effigy_gateway::endpoint_store::EndpointStore::for_ports(path);
     let present = path.exists() || store.read().verified().is_some();
-    let snapshot = store.read_compatible().map_err(registry_error)?;
-    let registry_bytes =
-        serde_json::to_string_pretty(snapshot.document("ports").map_err(registry_error)?)
-            .map(|content| format!("{content}\n").into_bytes())
-            .map_err(registry_error)?;
-    let registry = snapshot.ports().map_err(registry_error)?;
-    let facts = gather();
-    let plan = plan_recovery(&registry, &facts, probe_path, host_hold);
+    let (snapshot, registry_bytes, registry) = step_through(
+        &format!("reading the port registry at {}", path.display()),
+        |step| {
+            step.set_label(&format!("reading the port registry at {}", path.display()));
+            let snapshot = store.read_compatible().map_err(registry_error)?;
+            let registry_bytes =
+                serde_json::to_string_pretty(snapshot.document("ports").map_err(registry_error)?)
+                    .map(|content| format!("{content}\n").into_bytes())
+                    .map_err(registry_error)?;
+            let registry = snapshot.ports().map_err(registry_error)?;
+            Ok((snapshot, registry_bytes, registry))
+        },
+    )?;
+    let facts = step_through("collecting container, scope and listener facts", |step| {
+        step.set_label("reading the container inventory and each checkout's scope records");
+        Ok(gather())
+    })?;
+    let plan = step_through(
+        &format!("deciding {} port allocation(s)", registry.allocations.len()),
+        |step| {
+            step.set_label(&format!(
+                "deciding {} port allocation(s)",
+                registry.allocations.len()
+            ));
+            Ok(plan_recovery(&registry, &facts, probe_path, host_hold))
+        },
+    )?;
     Ok(PortRecoveryReport {
         mode,
         registry_path: path.to_path_buf(),
@@ -821,13 +862,23 @@ pub fn port_reclaim_dry_run() -> Result<PortRecoveryReport, ContainerPolicyError
 /// The locked recomputation must produce the same digest, otherwise nothing
 /// is written and the caller is told to re-plan.
 pub fn port_reclaim_apply(expect_digest: &str) -> Result<PortRecoveryReport, ContainerPolicyError> {
-    apply_at(
-        &live_path()?,
-        expect_digest,
-        PortRecoveryFacts::gather(),
-        probe_project_path,
-        host_port_hold,
-    )
+    let path = live_path()?;
+    let facts = step_through("collecting container, scope and listener facts", |step| {
+        step.set_label("reading the container inventory and each checkout's scope records");
+        Ok(PortRecoveryFacts::gather())
+    })?;
+    step_through("applying the port reclaim", |step| {
+        step.set_label("recomputing the reviewed plan under the registry lock");
+        let report = apply_at(
+            &path,
+            expect_digest,
+            facts,
+            probe_project_path,
+            host_port_hold,
+        )?;
+        step.set_label(&format!("released {} allocation(s)", report.removed.len()));
+        Ok(report)
+    })
 }
 
 #[cfg(test)]

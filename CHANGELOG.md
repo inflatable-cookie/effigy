@@ -497,6 +497,28 @@ During v0.x, MINOR bumps may include breaking changes.
   `config/human-error-debug-ratchet.json`. The label and error style for
   contributors is in `docs/guides/011-output-widgets-and-colour-modes.md`.
 
+- Live steps and the what/evidence/next rubric now cover the remaining command
+  planes (effigy#314). `effigy gateway setup` shows each stage — verifying the
+  operator, trusting mkcert's local CA, applying platform setup (DNS,
+  certificate trust, broker; approve the administrator prompt if it appears),
+  importing endpoint state, recording the receipt and starting the gateway —
+  and `gateway up`, `gateway down`, `gateway repair` and `gateway status`
+  report what they are reading, stopping, planning and applying. `effigy
+  container ports` names the registry it reads, the facts it gathers and the
+  allocations it decides, and `effigy run migrate` shows each read of the
+  runtime state. Kernel, store, gateway, container port/loopback and runner
+  refusals now name the object (the checkout path rather than a token, the
+  domain, the stale and successor owners, the recorded project path), the
+  evidence, and the exact next command: a stale domain reservation names both
+  owners and `effigy gateway repair --owner-checkout <PATH>`, an untrusted
+  state root names the path and its `chmod 700`, a hold on an unreadable
+  project path names the path and the command that shows it again, a
+  foreground child refusal says why it could not start, and kernel `Debug`
+  trees (`Unknown(StoreUnreadable(…))`, `Untrusted("…")`,
+  `CheckoutId { token: […] }`) no longer reach a person. `tests` carry the
+  before/after text for each rewrite, and the Debug-format ratchet falls
+  accordingly.
+
 - Task journals live in the owning checkout's `.effigy/state/`. Durable
   initialization refuses an unresolved legacy migration and binds checkout
   and Git directory generations, so same-path replacements cannot adopt old

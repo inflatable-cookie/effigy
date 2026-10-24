@@ -69,6 +69,34 @@ fn a_cancelled_run_names_the_signal() {
 }
 
 #[test]
+fn a_corrupt_journal_says_what_is_wrong_and_the_next_command() {
+    // Before: `kernel.db is unreadable (bad page); the explicit store repair
+    // moves it aside` — no next command, and a publication refusal was still
+    // called a database fault.
+    assert_eq!(
+        StoreError::Corrupt("bad page".into()).to_string(),
+        "the runtime journal is unusable (bad page); nothing was changed. \
+         Run `effigy doctor` to inspect the state root, then retry"
+    );
+}
+
+#[test]
+fn an_untrusted_state_root_names_the_path_and_the_chmod() {
+    // Before: `legacy runtime state is unknown: Untrusted("group- or
+    // other-accessible mode")` — no path, no chmod.
+    let reason = UnknownReason::Untrusted(
+        "/repo/.effigy/state is readable by other users; run `chmod 700 /repo/.effigy/state`"
+            .to_owned(),
+    );
+    assert_eq!(
+        reason.to_string(),
+        "could not tell: the state root is not trusted (/repo/.effigy/state is readable by other \
+         users; run `chmod 700 /repo/.effigy/state`); Effigy only reads state it owns, so fix the \
+         mode or ownership it names and retry"
+    );
+}
+
+#[test]
 fn no_human_rendering_falls_back_to_a_debug_tree() {
     let refusals = [
         Stream::Store(StoreError::NeedsRecovery),

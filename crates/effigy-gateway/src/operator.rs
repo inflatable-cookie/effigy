@@ -23,8 +23,10 @@ use serde::Serialize;
 
 use crate::server::GatewayConfig;
 
-pub(crate) fn error(reason: impl std::fmt::Debug) -> io::Error {
-    io::Error::other(format!("{reason:?}"))
+/// A gateway refusal as a person reads it: the reason's own sentence, never a
+/// `Debug` quotation.
+pub(crate) fn error(reason: impl std::fmt::Display) -> io::Error {
+    io::Error::other(reason.to_string())
 }
 pub fn context(budget: Duration, class: EffectClass) -> OperationContext {
     context_until(Deadline::At(Instant::now() + budget), class)
@@ -410,7 +412,10 @@ pub fn self_test(config: &GatewayConfig, budget: Duration) -> io::Result<()> {
         {
             Ok(())
         }
-        other => Err(error(format!("DNS self-test failed: {other:?}"))),
+        other => Err(error(format!(
+            "DNS self-test failed: {}; check that the gateway is running and that its DNS port is not taken",
+            other.unproven()
+        ))),
     }
 }
 
@@ -706,8 +711,9 @@ fn http_probe(config: &GatewayConfig, cx: &ObserveContext) -> io::Result<()> {
         // The typed class names the owner of the failure; the observation is
         // preserved verbatim so the historical cause is never discarded.
         return Err(error(format!(
-            "HTTP self-test failed ({}): {observed:?}",
-            classify_http_self_test(&observed).as_str()
+            "HTTP self-test failed ({}): {}; run `effigy gateway status` for the recorded diagnosis",
+            classify_http_self_test(&observed).as_str(),
+            observed.unproven()
         )));
     }
     if let Some(address) = config.proxy.tls_bind_addr {

@@ -538,7 +538,11 @@ fn decide_assignment(
         PathState::Present => (Decision::Retain, "owner path exists".to_owned()),
         PathState::Unknown(error) => (
             Decision::Hold,
-            format!("owner path state is unknown: {error}"),
+            format!(
+                "owner path {}: the state is unknown ({error}); make the checkout readable, or release it with `effigy gateway repair --owner-checkout {}` once it is gone",
+                path.as_deref().unwrap_or("(no recorded checkout path)"),
+                path.as_deref().unwrap_or("<checkout path>")
+            ),
         ),
         PathState::Missing => match global_hold {
             Some(reason) => (Decision::Hold, format!("global hold: {reason}")),
@@ -674,7 +678,10 @@ fn decide_route(
         PathState::Present => (Decision::Retain, "project path exists".to_owned()),
         PathState::Unknown(error) => (
             Decision::Hold,
-            format!("project path state is unknown: {error}"),
+            format!(
+                "route {}: the project path {} state is unknown ({error}); make the checkout readable, or release it with `effigy gateway repair --owner-checkout {}` once it is gone",
+                route.domain, route.project, route.project
+            ),
         ),
         PathState::Missing => match global_hold {
             Some(reason) => (Decision::Hold, format!("global hold: {reason}")),
@@ -717,7 +724,10 @@ fn decide_claim(
         PathState::Present => (Decision::Retain, "owner path exists".to_owned()),
         PathState::Unknown(error) => (
             Decision::Hold,
-            format!("owner path state is unknown: {error}"),
+            format!(
+                "domain {}: the project path {} state is unknown ({error}); make the checkout readable, or release it with `effigy gateway repair --owner-checkout {}` once it is gone",
+                claim.domain, claim.project, claim.project
+            ),
         ),
         PathState::Missing => match global_hold {
             Some(reason) => (Decision::Hold, format!("global hold: {reason}")),
@@ -835,7 +845,9 @@ fn decide_missing_route(
             effigy_kernel::observe::Observed::Unknown(error) => {
                 return (
                     Decision::Hold,
-                    format!("managed listener ownership is unproven: {error:?}"),
+                    format!(
+                        "managed listener ownership is unproven ({error}); stop that listener or wait for it to exit, then rerun `effigy gateway repair`"
+                    ),
                 )
             }
         }

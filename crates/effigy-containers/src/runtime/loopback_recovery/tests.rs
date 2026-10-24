@@ -269,9 +269,14 @@ fn an_unknown_path_never_reads_as_dead() {
     );
 
     assert_eq!(assignment_row(&plan, "127.1.0.4").decision, Decision::Hold);
-    assert!(assignment_row(&plan, "127.1.0.4")
-        .reason
-        .contains("permission denied"));
+    let held = &assignment_row(&plan, "127.1.0.4").reason;
+    assert!(held.contains("permission denied"), "{held}");
+    // The hold names the owner checkout and the exact release command.
+    assert!(held.contains("owner path /gone"), "{held}");
+    assert!(
+        held.contains("`effigy gateway repair --owner-checkout /gone`"),
+        "{held}"
+    );
     assert_eq!(route_row(&plan, "gone.test").decision, Decision::Hold);
     assert!(plan.is_empty());
 }
@@ -969,9 +974,13 @@ fn an_unknown_owner_path_holds_its_http_route() {
     );
 
     assert_eq!(route_row(&plan, "api.acme.test").decision, Decision::Hold);
-    assert!(route_row(&plan, "api.acme.test")
-        .reason
-        .contains("permission denied"));
+    let held = &route_row(&plan, "api.acme.test").reason;
+    assert!(held.contains("permission denied"), "{held}");
+    assert!(held.contains("route api.acme.test"), "{held}");
+    assert!(
+        held.contains("`effigy gateway repair --owner-checkout"),
+        "{held}"
+    );
 }
 
 #[test]

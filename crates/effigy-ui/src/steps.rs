@@ -21,6 +21,7 @@
 //! [`suspend_terminal`] silences the sink so the two never draw over each
 //! other.
 
+use std::cell::RefCell;
 use std::io::{IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
@@ -111,7 +112,7 @@ impl std::fmt::Debug for Step {
 impl Step {
     fn new(sink: Arc<Sink>, parent: Option<&Step>, label: &str) -> Self {
         let mode = sink.mode();
-        let bar = (mode == StepMode::Spinner).then(|| sink.start_bar(label));
+        let bar = (mode == StepMode::Spinner && !is_capturing()).then(|| sink.start_bar(label));
         let step = Self {
             inner: Arc::new(StepInner {
                 label: Mutex::new(label.to_owned()),
@@ -193,6 +194,9 @@ impl Step {
         };
         if let Some(bar) = self.inner.bar.as_ref() {
             bar.finish_and_clear();
+        }
+        if capture_finish(ok, &summary) {
+            return;
         }
         self.inner.sink.write_finish(self.inner.mode, ok, &summary);
     }
@@ -327,6 +331,42 @@ impl Sink {
 
 static MODE: AtomicU8 = AtomicU8::new(0);
 static SINK: OnceLock<Arc<Sink>> = OnceLock::new();
+
+thread_local! {
+    /// Finish lines a test asked this thread to record instead of draw.
+    static CAPTURE: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+}
+
+fn is_capturing() -> bool {
+    CAPTURE.with(|capture| capture.borrow().is_some())
+}
+
+fn capture_finish(ok: bool, summary: &str) -> bool {
+    let mark = if ok { SUCCESS } else { FAILURE };
+    CAPTURE.with(|capture| {
+        let mut capture = capture.borrow_mut();
+        let Some(lines) = capture.as_mut() else {
+            return false;
+        };
+        lines.push(format!("{mark} {summary}"));
+        true
+    })
+}
+
+/// Record the step lines this thread finishes instead of drawing them.
+///
+/// Tests use it to prove a command's step sequence and wording: `work` runs
+/// with every step drawing into the returned lines, so nothing reaches the
+/// terminal and no spinner is started. Production never calls this.
+#[doc(hidden)]
+pub fn capture_lines<T>(work: impl FnOnce() -> T) -> (T, Vec<String>) {
+    CAPTURE.with(|capture| *capture.borrow_mut() = Some(Vec::new()));
+    let value = work();
+    let lines = CAPTURE
+        .with(|capture| capture.borrow_mut().take())
+        .unwrap_or_default();
+    (value, lines)
+}
 
 fn global_sink() -> &'static Arc<Sink> {
     SINK.get_or_init(|| {
@@ -573,6 +613,39 @@ mod tests {
         let after = Step::new(sink, None, "starting web");
         after.succeed("web is healthy");
         assert_eq!(buffer.text(), "✓ web is healthy\n");
+    }
+
+    #[test]
+    fn capturing_records_the_finished_lines_and_draws_nothing() {
+        let (value, lines) = capture_lines(|| {
+            let step = step("starting gateway");
+            step.set_label("waiting for gateway to answer");
+            step.succeed("gateway is running");
+            let failed = step.step("starting DNS");
+            failed.fail("DNS refused to bind port 53");
+            let cleared = step.step("starting proxy");
+            cleared.finish_clear();
+            let unfinished = step.step("starting broker");
+            drop(unfinished);
+            7
+        });
+        assert_eq!(value, 7);
+        assert_eq!(
+            lines,
+            vec![
+                "✓ gateway is running".to_owned(),
+                "✗ DNS refused to bind port 53".to_owned(),
+            ]
+        );
+        assert_eq!(mode(), StepMode::Silent);
+    }
+
+    #[test]
+    fn capturing_is_per_thread_and_ends_with_the_closure() {
+        let (_, first) = capture_lines(|| step("starting web").succeed("web is healthy"));
+        assert_eq!(first, vec!["✓ web is healthy".to_owned()]);
+        let (_, second) = capture_lines(|| step("starting web").fail("web is unhealthy"));
+        assert_eq!(second, vec!["✗ web is unhealthy".to_owned()]);
     }
 
     fn suspend_terminal_with(sink: &Arc<Sink>) -> TerminalGuard {

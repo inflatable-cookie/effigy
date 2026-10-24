@@ -21,6 +21,7 @@ mod environment;
 mod error;
 mod exec_command;
 mod execute;
+mod feedback;
 mod format_command;
 mod gateway_command;
 mod host_process;

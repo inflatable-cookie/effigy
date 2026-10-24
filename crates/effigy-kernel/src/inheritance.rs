@@ -57,7 +57,7 @@ impl MemoryLease {
             .map_err(|_| refused("parent capability requires host authority"))?;
         cx.operation()
             .check("parent capability")
-            .map_err(|error| io::Error::other(format!("{error:?}")))?;
+            .map_err(|error| io::Error::other(format!("{error}")))?;
         let owner = match ident::process_identity(std::process::id()) {
             Observed::Verified(owner, _) => owner,
             _ => return Err(refused("parent identity unavailable")),
@@ -171,7 +171,7 @@ impl InheritedCapability {
     }
     fn grant(&self, cx: &OperationContext) -> io::Result<Grant> {
         cx.check("inherited parent capability")
-            .map_err(|error| io::Error::other(format!("{error:?}")))?;
+            .map_err(|error| io::Error::other(format!("{error}")))?;
         let fd = self.stream.as_raw_fd();
         if socket_option(fd, libc::SOL_SOCKET, libc::SO_TYPE)? != libc::SOCK_STREAM {
             return Err(refused("parent capability is not a stream socket"));
@@ -181,7 +181,7 @@ impl InheritedCapability {
         let length = loop {
             live_socket(fd)?;
             cx.check("parent capability peek")
-                .map_err(|error| io::Error::other(format!("{error:?}")))?;
+                .map_err(|error| io::Error::other(format!("{error}")))?;
             // SAFETY: live owned socket and this exclusively writable initialized
             // allocation of exactly bytes.len(). PEEK preserves sibling grants;
             // DONTWAIT prevents a substituted blocking descriptor from waiting.
@@ -240,7 +240,7 @@ impl InheritedCapability {
         }
         live_socket(fd)?;
         cx.check("inherited parent capability")
-            .map_err(|error| io::Error::other(format!("{error:?}")))?;
+            .map_err(|error| io::Error::other(format!("{error}")))?;
         Ok(grant)
     }
 }
@@ -415,7 +415,7 @@ impl ClosurePin {
     }
     pub(crate) fn custody_fd(&self, cx: &OperationContext) -> io::Result<OwnedFd> {
         cx.check("custody closure pin")
-            .map_err(|error| io::Error::other(format!("{error:?}")))?;
+            .map_err(|error| io::Error::other(format!("{error}")))?;
         if pipe_identity(self.writer.as_ref(), libc::O_WRONLY)? != self.identity {
             return Err(refused("custody pipe identity changed"));
         }

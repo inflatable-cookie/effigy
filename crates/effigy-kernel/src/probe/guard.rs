@@ -216,7 +216,7 @@ struct Registration {
     group: Option<OwnedFd>,
 }
 fn uncertain(reason: UnknownReason) -> io::Error {
-    io::Error::other(format!("{reason:?}"))
+    io::Error::other(format!("{reason}"))
 }
 fn verified<T>(value: Observed<T>) -> io::Result<T> {
     match value {

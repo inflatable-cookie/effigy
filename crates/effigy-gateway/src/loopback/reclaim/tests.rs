@@ -230,9 +230,10 @@ fn a_withdrawn_domain_claim_cannot_be_published_over_by_a_successor() {
         })
         .expect_err("a successor cannot take an unreleased claim");
     assert!(
-        refused
-            .to_string()
-            .contains("belongs to another persistent owner"),
+        refused.to_string().contains(
+            "domain gone.test belongs to checkout /gone/project; retire that owner explicitly, \
+             or release it with `effigy gateway repair --owner-checkout /gone/project`"
+        ),
         "{refused}"
     );
 }

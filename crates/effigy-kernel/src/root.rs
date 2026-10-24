@@ -214,7 +214,17 @@ impl StateRoot {
 pub(crate) fn unknown(error: &FsError) -> UnknownReason {
     match error {
         FsError::HostAuthorityRequired => UnknownReason::HostAuthorityRequired,
-        FsError::Untrusted { reason, .. } => UnknownReason::Untrusted(reason.clone()),
+        FsError::Untrusted { path, reason } if reason == crate::fs::OPEN_MODE_REASON => {
+            UnknownReason::Untrusted(format!(
+                "{} is readable by other users; run `chmod 700 {}`",
+                path.display(),
+                path.display()
+            ))
+        }
+        FsError::Untrusted { path, reason } => UnknownReason::Untrusted(format!(
+            "{} is not trusted store state ({reason}); fix its ownership and permissions",
+            path.display()
+        )),
         FsError::Io(io) if io.is_permission() => UnknownReason::PermissionDenied,
         other => UnknownReason::Inconsistent(other.to_string()),
     }
@@ -231,6 +241,13 @@ pub(crate) fn unknown(error: &FsError) -> UnknownReason {
 pub(crate) fn is_open_mode_only(reason: &UnknownReason) -> bool {
     matches!(
         reason,
-        UnknownReason::Untrusted(reason) if reason == crate::fs::OPEN_MODE_REASON
+        UnknownReason::Untrusted(detail) if names_open_mode_only(detail)
     )
+}
+
+/// A leftover open mode, either as the bare reason or as the rendered
+/// sentence that names the path and the `chmod` that fixes it.
+fn names_open_mode_only(detail: &str) -> bool {
+    detail == crate::fs::OPEN_MODE_REASON
+        || detail.ends_with("is readable by other users; run `chmod 700")
 }
