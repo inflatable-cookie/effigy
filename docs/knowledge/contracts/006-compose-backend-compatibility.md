@@ -451,8 +451,15 @@ bounded retention and no reader threads. Success requires client exit and both
 EOFs; overflow or unverified settlement refuses. Cancellation owns only the
 client process group and positively reaps its direct child. Remote engine
 cancellation and historical SIGPIPE sender/pipe provenance remain unverified.
-Non-Unix bounded pipe capture requires a missing nonblocking adapter and
-returns an explicit unsupported error.
+The private exit-141 controls (`test:containers:exit141`, effigy#300) add what
+this checkout does own: a detached launch gives the client one regular file on
+stdout and stderr, so a writer that outlives the client never loses a reader;
+a cancelled capture signals only the client's group, and a writer that
+inherited the capture pipe dies of SIGPIPE only when Effigy gives up its own
+read end. Those controls do not identify the original nerdctl reader, so the
+papercut stays open for that observation. Non-Unix bounded pipe capture
+requires a missing nonblocking adapter and returns an explicit unsupported
+error.
 
 The private CLI matrix runs three overlapping scoped stacks through production
 adapters, maintains persistent exec sentinel connections, tests partial/warm

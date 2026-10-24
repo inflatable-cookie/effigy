@@ -1309,7 +1309,40 @@ distinguishes the two:
 - A service observed `Exited (141)` is reported as SIGPIPE (a closed
   stdout/stderr pipe whose reader went away), not as a health verdict. Detached
   `container up` keeps backend output in a retained file, so Effigy owns no
-  reader lifetime there.
+  reader lifetime there; see
+  [Detached activation and exit-141 writer ownership](#detached-activation-and-exit-141-writer-ownership).
+
+### Detached activation and exit-141 writer ownership
+
+`Exited (141)` names a SIGPIPE death in the container's own leader: a write to
+a pipe whose read end was closed. It does not name the reader. The private
+fault controls for effigy#300 (selector `test:containers:exit141`) establish,
+with native pipes and processes and a strict fake runtime, exactly what this
+checkout owns and what it does not:
+
+- Detached activation opens one regular file
+  (`.effigy/runtime/logs/<project>.compose.log`) before spawn and gives the
+  client that file on both stdout and stderr. A service writer that inherits it
+  and outlives the reaped client has no reader to lose: it keeps writing after
+  the client exits and never receives SIGPIPE.
+- A bounded inventory or inspect capture does own a pipe. Cancelling it signals
+  only the client's process group and positively reaps that direct child; it
+  gives up its read end only after its post-exit drain grace. An independent
+  writer that inherited the pipe and outlived the client survives the
+  cancellation and then dies of SIGPIPE: 141 = 128 + 13.
+- An exhausted absolute deadline never spawns the observation. A pending
+  inventory fails as an unavailable observation and is never restart
+  authority: no activation runs after it. A foreign checkout label or an
+  inspect with no canonical identity is refused, and a live holder still
+  forbids recreating a service under an active run.
+- A genuine non-zero service exit is reported as a service failure; the SIGPIPE
+  explanation is never manufactured for it.
+
+What remains unproven is the identity of the reader in the original report. No
+retained nerdctl log, process or pipe evidence names the writer, the pipe, or
+the process whose read end closed, and this checkout's detached launch path
+creates no pipe at all. The original papercut therefore stays open for that
+observation; these controls do not claim it.
 
 nerdctl 2.3.1 never deletes the exec process behind a health check, so the
 profile VM accumulates one `health-check-<id>.pid` file per check under
