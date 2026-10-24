@@ -281,3 +281,27 @@ kernel HOME; corrupt real HOMEs still retain their files and ledger when helper
 custody cannot be observed. The selector runs all Store cases in ordinary and
 shared modes as well as the gateway failure and matrix parent-death cases with
 the external helper environment removed.
+
+## Process environment and secrets
+
+The process environment is one shared slot per key, not per fixture. A crate's
+environment guard serialises *writers* inside that crate's test binary, but a
+secret reader is ordinary product code and is not covered by that guard: a
+fixture that leaves a vault passphrase in `EFFIGY_TEST_SECRETS_PASSPHRASE` shares
+it with every other test in the binary, so a neighbouring fixture's restore can
+remove the value between the write and the read and the reader then reports a
+locked vault. That is papercut 8de0a24a's macOS shared-process failure. Contract
+[052](contracts/052-runtime-kernel-contract.md) K12 therefore keeps secrets out
+of the global environment.
+
+In-process Rhai secret fixtures inject the passphrase with
+`install_test_rhai_secret_passphrase` from `effigy-rhai`'s `rhai_secrets` module.
+The value lives in the calling thread's memory for the guard's scope, is read
+before the environment, and is cleared on success and on unwinding; the seam is
+compiled only in test builds. `test:rhai:linked-worktree-shared` runs the
+linked-worktree vault mutation in one shared libtest with the rest of the Rhai
+secrets family while both passphrase keys are absent from the environment, and
+`rhai_secret_passphrase_in_the_process_environment_belongs_to_the_whole_process`
+records the environment boundary as a deterministic control. Fixtures that
+launch a child process still pass a passphrase through the child's own spawn
+environment; that is the boundary K12 permits.

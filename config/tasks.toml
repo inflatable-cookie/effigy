@@ -1382,6 +1382,16 @@
   "sh scripts/oxide-selector.sh clippy -p effigy-rhai --all-targets -- -D warnings",
 ] }
 
+# Rhai linked-worktree secrets (papercut 8de0a24a): the mutation of the shared
+# primary vault runs in one shared-process libtest with the rest of the Rhai
+# secrets family, including the missing and locked controls, while every
+# passphrase environment slot is owned by a neighbouring fixture. The
+# passphrase reaches the reader through the test thread's memory, never the
+# process environment (contract 052 K12).
+"test:rhai:linked-worktree-shared" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh exec -- bash tests/scripts/vault-validation.sh env -u EFFIGY_PARENT_CAPABILITY cargo test -p effigy-rhai --lib --no-fail-fast -- --test-threads=8 secrets::", timeout_ms = 900000 }] }
+"check:rhai:linked-worktree" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh check -p effigy-rhai --all-targets" }
+"lint:rhai:linked-worktree" = { visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh clippy -p effigy-rhai --all-targets -- -D warnings" }
+
 # Publication-race fixtures: cover both complete changed test modules, then
 # exercise their shared-process model with the same bounded task lifetime.
 "test:fixtures:publication" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(/^runner::managed_listener_readiness::tests::/)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
@@ -2003,6 +2013,9 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
   "cargo check -p effigy-rhai --lib --tests --profile test",
   "cargo clippy -p effigy-rhai --all-targets -- -D warnings",
 ] }
+"test:rhai:linked-worktree-shared:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' bash tests/scripts/vault-validation.sh env -u EFFIGY_PARENT_CAPABILITY cargo test -p effigy-rhai --lib --no-fail-fast -- --test-threads=8 secrets::", timeout_ms = 900000 }] }
+"check:rhai:linked-worktree:cargo" = { visibility = "internal", group = "Maintenance", run = "cargo check -p effigy-rhai --all-targets" }
+"lint:rhai:linked-worktree:cargo" = { visibility = "internal", group = "Maintenance", run = "cargo clippy -p effigy-rhai --all-targets -- -D warnings" }
 "check:rhai:storage-retirement:cargo" = { visibility = "internal", group = "Maintenance", run = "cargo check -p effigy-rhai -p effigy --lib --bin effigy" }
 "check:run-control:cargo" = { visibility = "internal", group = "Maintenance", run = [
   { run = "cargo check -p effigy --features fault-injection --lib --tests --profile test", timeout_ms = 900000 },

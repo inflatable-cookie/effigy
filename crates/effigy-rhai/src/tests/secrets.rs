@@ -1,5 +1,14 @@
 use super::*;
-use crate::rhai_secrets::rhai_script_consumes_secrets;
+use crate::rhai_secrets::{
+    active_test_rhai_secret_passphrase, install_test_rhai_secret_passphrase,
+    read_rhai_secret_passphrase, rhai_script_consumes_secrets,
+};
+
+/// The two passphrase keys the Rhai reader consults before the local unlock
+/// state. Both are process-global environment slots, shared with every other
+/// fixture in a shared libtest process.
+const TEST_SECRET_PASSPHRASE_ENV: &str = "EFFIGY_TEST_SECRETS_PASSPHRASE";
+const INTERNAL_SECRET_PASSPHRASE_ENV: &str = "EFFIGY_INTERNAL_SECRET_PASSPHRASE";
 
 #[test]
 fn rhai_script_consumes_secrets_detects_the_secrets_module() {
@@ -411,13 +420,52 @@ fn execute_rhai_script_can_use_deploy_target_secret_when_allowed() {
     assert_eq!(fs::read_to_string(marker).expect("marker"), "deploy_secret");
 }
 
-/// A linked worktree must mutate the primary checkout's vault, not fork a
-/// partial local one. Resolving reads and writes differently would let
-/// `secrets::set` create a worktree vault holding only the written record,
-/// which then shadows every primary-only record on the next read.
+/// A fixture whose passphrase lives in the process environment does not own
+/// it (papercut 8de0a24a).
+///
+/// `ScopedTestEnv` serialises *writers*, but the reader is production code and
+/// is not covered by that guard: any writer outside this crate's guard — the
+/// pre-#215 fixtures, or the unsynchronised `setenv` a shared macOS process
+/// performs — can take the value away between the fixture's write and its
+/// read. The shared-process job then reported `Rhai secrets require an
+/// unlocked vault passphrase and secret input requires an interactive TTY`
+/// even though the fixture had just set the key.
+///
+/// A neighbour scope's restore is the whole interleaving, so this control is
+/// deterministic: the value is one process-global slot, not the fixture's.
 #[test]
-fn rhai_secret_set_from_a_linked_worktree_mutates_the_shared_vault() {
-    let root = temp_root("rhai-secret-set-worktree");
+fn rhai_secret_passphrase_in_the_process_environment_belongs_to_the_whole_process() {
+    let root = temp_root("rhai-secret-env-boundary");
+    let vault_path = root.join(".effigy/secrets/local.vault");
+    {
+        let _fixture_scope = ScopedTestEnv::set_many(&[(
+            TEST_SECRET_PASSPHRASE_ENV,
+            "fixture-passphrase".to_owned(),
+        )]);
+        assert_eq!(
+            read_rhai_secret_passphrase(&vault_path, true)
+                .expect("read")
+                .map(|value| value.expose().to_owned())
+                .as_deref(),
+            Some("fixture-passphrase")
+        );
+    }
+    {
+        // The neighbour's scope owns the same slot and restores the absence
+        // this process started with when it ends.
+        let _neighbour_scope = ScopedTestEnv::unset_many(&[TEST_SECRET_PASSPHRASE_ENV]);
+        assert!(
+            read_rhai_secret_passphrase(&vault_path, true)
+                .expect("read")
+                .is_none(),
+            "the fixture's passphrase is process state, not the fixture's own"
+        );
+    }
+}
+
+/// The linked worktree fixture: one version-controlled manifest in both
+/// checkouts, and a vault only the primary checkout has.
+fn linked_worktree_secret_fixture(root: &Path) -> (PathBuf, PathBuf) {
     let primary = root.join("primary");
     let worktree = root.join("worktrees/feature");
     let worktree_git_dir = primary.join(".git/worktrees/feature");
@@ -454,19 +502,10 @@ targets = ["tasks", "rhai"]
         "vault-passphrase",
         &[("api_token", "primary_token"), ("oauth_key", "primary_key")],
     );
-    let _env = ScopedTestEnv::set_many(&[(
-        "EFFIGY_TEST_SECRETS_PASSPHRASE",
-        "vault-passphrase".to_owned(),
-    )]);
+    (primary, worktree)
+}
 
-    execute_rhai_script(
-        &script_context(&worktree),
-        r#"secrets::set("api_token", "worktree_token");"#,
-        &[],
-        &callbacks(),
-    )
-    .expect("execute");
-
+fn assert_shared_vault_mutation(primary: &Path, worktree: &Path) {
     assert!(
         !worktree.join(".effigy/secrets/local.vault").exists(),
         "the worktree must not fork its own vault"
@@ -493,5 +532,229 @@ targets = ["tasks", "rhai"]
             .value
             .expose(),
         "primary_key"
+    );
+}
+
+/// A linked worktree must mutate the primary checkout's vault, not fork a
+/// partial local one. Resolving reads and writes differently would let
+/// `secrets::set` create a worktree vault holding only the written record,
+/// which then shadows every primary-only record on the next read.
+#[test]
+fn rhai_secret_set_from_a_linked_worktree_mutates_the_shared_vault() {
+    let root = temp_root("rhai-secret-set-worktree");
+    let (primary, worktree) = linked_worktree_secret_fixture(&root);
+    let passphrase_scope = install_test_rhai_secret_passphrase("vault-passphrase");
+
+    execute_rhai_script(
+        &script_context(&worktree),
+        r#"secrets::set("api_token", "worktree_token");"#,
+        &[],
+        &callbacks(),
+    )
+    .expect("execute");
+
+    assert_shared_vault_mutation(&primary, &worktree);
+    drop(passphrase_scope);
+    assert!(
+        active_test_rhai_secret_passphrase().is_none(),
+        "the injected passphrase is cleaned up after success"
+    );
+}
+
+/// The shared-process proof for papercut 8de0a24a: the linked-worktree
+/// mutation mutates the shared vault while every passphrase slot in the
+/// process environment is absent and other threads keep observing it, because
+/// the passphrase reaches the reader through this thread's memory instead of
+/// the global environment (contract 052 K12).
+#[test]
+fn rhai_secret_set_from_a_linked_worktree_is_isolated_from_shared_process_environment_activity() {
+    let root = temp_root("rhai-secret-set-worktree-shared-process");
+    let (primary, worktree) = linked_worktree_secret_fixture(&root);
+    // Neighbouring fixtures own both passphrase slots for the whole mutation.
+    // This is the state the shared-process job reported: the old fixture had
+    // lost its passphrase and the reader refused the vault.
+    let _conflicting_scopes =
+        ScopedTestEnv::unset_many(&[TEST_SECRET_PASSPHRASE_ENV, INTERNAL_SECRET_PASSPHRASE_ENV]);
+    let (observing_tx, observing_rx) = std::sync::mpsc::channel::<()>();
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+    let observer = std::thread::spawn(move || {
+        let mut reads = 0usize;
+        let mut saw_passphrase = false;
+        observing_tx.send(()).expect("observing");
+        loop {
+            reads += 1;
+            saw_passphrase |= std::env::var_os(TEST_SECRET_PASSPHRASE_ENV).is_some();
+            saw_passphrase |= std::env::var_os(INTERNAL_SECRET_PASSPHRASE_ENV).is_some();
+            match stop_rx.recv_timeout(std::time::Duration::from_millis(1)) {
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                _ => break,
+            }
+        }
+        (reads, saw_passphrase)
+    });
+    observing_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("observer started");
+
+    let passphrase_scope = install_test_rhai_secret_passphrase("vault-passphrase");
+    execute_rhai_script(
+        &script_context(&worktree),
+        r#"secrets::set("api_token", "worktree_token");"#,
+        &[],
+        &callbacks(),
+    )
+    .expect("execute");
+    stop_tx.send(()).expect("stop observer");
+    let (reads, saw_passphrase) = observer.join().expect("observer");
+
+    assert!(
+        reads >= 2,
+        "the observer read the shared environment while the mutation ran: {reads}"
+    );
+    assert!(
+        !saw_passphrase,
+        "the mutation must not publish its passphrase to the shared environment"
+    );
+    assert!(
+        std::env::var_os(TEST_SECRET_PASSPHRASE_ENV).is_none()
+            && std::env::var_os(INTERNAL_SECRET_PASSPHRASE_ENV).is_none(),
+        "the fixture leaves the neighbour's passphrase slots untouched"
+    );
+    assert_shared_vault_mutation(&primary, &worktree);
+    assert!(
+        active_test_rhai_secret_passphrase().is_some(),
+        "the passphrase stays in the mutating thread"
+    );
+    drop(passphrase_scope);
+    assert!(
+        active_test_rhai_secret_passphrase().is_none(),
+        "the injected passphrase is cleaned up after success"
+    );
+}
+
+/// A failed mutation must still clear the injected passphrase, keep it off the
+/// shared environment and out of the error it returns.
+#[test]
+fn rhai_secret_passphrase_seam_clears_after_a_failed_mutation_without_leaking() {
+    let root = temp_root("rhai-secret-seam-error");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+
+[secrets.keys.api_token]
+required = false
+targets = ["rhai"]
+"#,
+    )
+    .expect("write manifest");
+    write_test_vault(&root, "vault-passphrase", &[("api_token", "primary_token")]);
+    let _conflicting_scopes =
+        ScopedTestEnv::unset_many(&[TEST_SECRET_PASSPHRASE_ENV, INTERNAL_SECRET_PASSPHRASE_ENV]);
+
+    {
+        let passphrase_scope = install_test_rhai_secret_passphrase("wrong-passphrase");
+        let sibling_sees_seam =
+            std::thread::spawn(|| active_test_rhai_secret_passphrase().is_some())
+                .join()
+                .expect("sibling thread");
+        assert!(!sibling_sees_seam, "the seam is thread-local");
+        assert!(active_test_rhai_secret_passphrase().is_some());
+
+        let error = execute_rhai_script(
+            &script_context(&root),
+            r#"secrets::set("api_token", "should_not_persist");"#,
+            &[],
+            &callbacks(),
+        )
+        .expect_err("the wrong passphrase must not open the vault");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("failed to decrypt vault payload"),
+            "got: {rendered}"
+        );
+        assert!(
+            !rendered.contains("wrong-passphrase"),
+            "the passphrase leaked: {rendered}"
+        );
+        assert!(
+            !rendered.contains("should_not_persist"),
+            "the secret leaked: {rendered}"
+        );
+
+        drop(passphrase_scope);
+        assert!(
+            active_test_rhai_secret_passphrase().is_none(),
+            "the injected passphrase is cleaned up after an error"
+        );
+    }
+
+    let payload = effigy_secrets::storage::read_envelope(&root.join(".effigy/secrets/local.vault"))
+        .expect("parse vault")
+        .decrypt_with_passphrase("vault-passphrase")
+        .expect("decrypt vault");
+    assert_eq!(
+        payload
+            .records
+            .get("api_token")
+            .expect("retained secret")
+            .value
+            .expose(),
+        "primary_token",
+        "a failed mutation must leave the vault unchanged"
+    );
+}
+
+/// The ordinary locked-vault refusal stays in place: with no injected
+/// passphrase, no passphrase environment and no local unlock state, the vault
+/// exposes nothing. A script-only read takes the optional path, which is the
+/// one that never prompts; the required-secret refusal is covered with an
+/// unlocked vault by the missing-required control above.
+#[test]
+fn rhai_secrets_leave_a_locked_vault_unexposed() {
+    let root = temp_root("rhai-secret-locked-vault");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+
+[secrets.keys.api_token]
+required = false
+targets = ["rhai"]
+"#,
+    )
+    .expect("write manifest");
+    write_test_vault(&root, "vault-passphrase", &[("api_token", "tok_secret")]);
+    let _locked_scopes =
+        ScopedTestEnv::unset_many(&[TEST_SECRET_PASSPHRASE_ENV, INTERNAL_SECRET_PASSPHRASE_ENV]);
+
+    let marker = root.join("locked.out");
+    let script = format!(
+        r#"if secrets::has("api_token") {{ fs::write_file("{}", "unlocked"); }}"#,
+        marker.display()
+    );
+    execute_rhai_script(&script_context(&root), &script, &[], &callbacks()).expect("execute");
+
+    assert!(
+        !marker.exists(),
+        "a locked vault must not expose its records"
+    );
+    assert!(
+        read_rhai_secret_passphrase(&root.join(".effigy/secrets/local.vault"), true)
+            .expect("read")
+            .is_none(),
+        "no passphrase is available to a locked vault"
+    );
+    assert!(
+        active_test_rhai_secret_passphrase().is_none(),
+        "the seam is not a globally permissive passphrase"
     );
 }
