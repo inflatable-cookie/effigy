@@ -792,7 +792,24 @@ fn read_task_secret_vault_payload(
     vault_path: &Path,
     passphrase: &str,
 ) -> Result<VaultPlaintextPayload, RunnerError> {
-    crate::runner::secret_vault::read_effigy_vault_payload(vault_path, passphrase)
+    // Decrypting the vault is the slowest part of resolving a task's secrets,
+    // and a wrong passphrase or an unreadable vault is the failure a person
+    // most needs described.
+    let step = effigy_ui::steps::step("unlocking vault");
+    match crate::runner::secret_vault::read_effigy_vault_payload(vault_path, passphrase) {
+        Ok(payload) => {
+            step.succeed("vault unlocked");
+            Ok(payload)
+        }
+        Err(error) => {
+            step.fail(&format!(
+                "could not unlock the vault at {}: {}",
+                vault_path.display(),
+                error.human_error().what_failed()
+            ));
+            Err(error)
+        }
+    }
 }
 
 fn task_secret_env_name(name: &str) -> String {

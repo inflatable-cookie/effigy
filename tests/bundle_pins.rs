@@ -811,6 +811,7 @@ fn consumer_effective_manifests_match_after_importing_their_actual_cached_bytes(
                 args == ["recover"]
             })
             .unwrap(),
+            progress: effigy_manifest::SourceProgress::silent(),
         };
         effigy_manifest::prepare_bundle_sources(&manifest, &prep).unwrap();
         let after = effigy_manifest::load_task_manifest_with_inspection(&manifest).unwrap();

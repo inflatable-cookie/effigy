@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use effigy_bootstrap::{
@@ -11,8 +10,7 @@ use effigy_bootstrap::{
 };
 use effigy_cli::{BootstrapArgs, TaskInvocation};
 use effigy_execution::ExecutionSurface;
-use effigy_ui::theme::{is_ci_environment, resolve_color_enabled, Theme};
-use effigy_ui::{style_text, OutputMode, PlainRenderer, Renderer, SpinnerHandle};
+use effigy_ui::steps::Step;
 
 use crate::runner::execute::api::run_manifest_task_with_surface;
 use crate::runner::manifest::load_task_manifest;
@@ -132,7 +130,16 @@ fn run_bootstrap_selector(
         )
         .map(|_| ())
         .map_err(|err| {
-            RunnerError::task_invocation(format!("{phase} task `{selector}` failed: {err}"))
+            // The wrapper names the phase and the selector, quotes the child's
+            // own failure (its exit code and the tail of its output) and says
+            // what to run next. A person should not have to guess which of
+            // several setup selectors failed or why.
+            let text = crate::runner::error::child_failure_text(
+                &format!("{phase} task `{selector}` failed"),
+                &err.human_error(),
+                &format!("run `effigy {selector}` on its own to see it fail"),
+            );
+            RunnerError::task_invocation(text)
         })
     })
 }
@@ -148,56 +155,59 @@ pub(in crate::runner) fn bootstrap_runtime_session_context(phase: &str) -> Runti
     }
 }
 
+/// The spinner label while a `setup` selector runs: present tense, and it
+/// names the selector so a multi-selector `setup` list is never a mystery.
+pub(in crate::runner) fn running_setup_label(selector: &str) -> String {
+    format!("running setup {selector}")
+}
+
+/// The spinner label while the `start` selector runs.
+pub(in crate::runner) fn starting_label(selector: &str) -> String {
+    format!("starting {selector}")
+}
+
+/// Draws bootstrap's phases as live steps: one spinner for the phase that is
+/// running, labelled with what is happening (`running setup record-one`), and
+/// one line when it ends. `--json`, pipes and CI draw nothing, which is what
+/// the step sink decides.
 struct BootstrapProgressReporter {
-    spinner: Option<Box<dyn SpinnerHandle>>,
+    running: Option<Step>,
     enabled: bool,
-    color_enabled: bool,
-    emitted_output: bool,
 }
 
 impl BootstrapProgressReporter {
     fn new(output_json: bool) -> Self {
-        let stderr_is_tty = std::io::stderr().is_terminal();
-        let enabled = !output_json && stderr_is_tty && !is_ci_environment();
-        let color_enabled =
-            !output_json && resolve_color_enabled(OutputMode::from_env(), stderr_is_tty);
         Self {
-            spinner: None,
-            enabled,
-            color_enabled,
-            emitted_output: false,
+            running: None,
+            enabled: !output_json,
         }
     }
 
     fn handle(&mut self, event: BootstrapProgressEvent) {
+        if !self.enabled {
+            return;
+        }
         match event {
             BootstrapProgressEvent::RootCheckoutStarted {
                 repo_url,
                 destination,
             } => {
                 let repo_url = repo_url.unwrap_or_else(|| "(existing checkout)".to_owned());
-                self.start(&format!(
-                    "[bootstrap] pulling {} -> {}",
-                    repo_url,
-                    destination.display()
-                ));
+                self.start(format!("pulling {repo_url} into {}", destination.display()));
             }
             BootstrapProgressEvent::RootCheckoutFinished {
                 repo_state,
                 destination,
             } => {
-                self.finish_success(&format!(
-                    "[ok] root repo {repo_state}: {}",
-                    destination.display()
-                ));
+                self.finish(format!("root repo {repo_state}: {}", destination.display()));
             }
             BootstrapProgressEvent::SourcesPrepared {
                 destination,
                 cloned,
                 drift,
             } => {
-                self.finish_success(&format!(
-                    "[ok] pinned sources prepared for {} ({cloned} cloned, {drift} drift)",
+                self.note(format!(
+                    "pinned sources prepared for {} ({cloned} cloned, {drift} drift)",
                     destination.display()
                 ));
             }
@@ -207,97 +217,62 @@ impl BootstrapProgressReporter {
                 drift,
             } => {
                 let suffix = if applied { "applied" } else { "nothing to do" };
-                self.finish_success(&format!(
-                    "[ok] submodules {suffix} for {} ({drift} drift)",
+                self.note(format!(
+                    "submodules {suffix} for {} ({drift} drift)",
                     destination.display()
                 ));
             }
             BootstrapProgressEvent::SetupTaskStarted { selector, .. } => {
-                self.start_command_phase(&format!("[bootstrap] setup: {selector}"));
+                self.start(running_setup_label(&selector));
             }
             BootstrapProgressEvent::SetupTaskFinished { selector, .. } => {
-                self.finish_success(&format!("[ok] setup complete ({selector})"));
+                self.finish(format!("setup complete ({selector})"));
             }
             BootstrapProgressEvent::StartTaskStarted { selector, .. } => {
-                self.start_command_phase(&format!("[bootstrap] starting {selector}"));
+                self.start(starting_label(&selector));
             }
             BootstrapProgressEvent::StartTaskFinished { selector, .. } => {
-                self.finish_success(&format!("[ok] start task complete ({selector})"));
+                self.finish(format!("start task complete ({selector})"));
             }
         }
     }
 
-    fn start(&mut self, label: &str) {
-        self.finish_clear();
-        if self.enabled {
-            let mut renderer = PlainRenderer::stderr(OutputMode::from_env());
-            self.spinner = renderer.spinner(label).ok();
-        } else {
-            self.print_line(label);
+    fn start(&mut self, label: String) {
+        self.clear();
+        self.running = Some(effigy_ui::steps::step(&label));
+    }
+
+    fn finish(&mut self, summary: String) {
+        match self.running.take() {
+            Some(step) => step.succeed(&summary),
+            None => self.note(summary),
         }
     }
 
-    fn start_command_phase(&mut self, label: &str) {
-        self.finish_clear();
-        self.print_group_break();
-        self.print_line(label);
-    }
-
-    fn finish_success(&mut self, message: &str) {
-        self.finish_clear();
-        self.print_line(message);
-    }
-
-    fn finish_clear(&mut self) {
-        if let Some(spinner) = self.spinner.take() {
-            spinner.finish_clear();
+    /// A phase that has no spinner: its one line is the whole story.
+    fn note(&mut self, summary: String) {
+        match self.running.take() {
+            Some(step) => step.succeed(&summary),
+            None => {
+                let step = effigy_ui::steps::step(&summary);
+                step.succeed(&summary);
+            }
         }
     }
 
-    fn print_group_break(&mut self) {
-        if self.emitted_output {
-            eprintln!();
+    fn clear(&mut self) {
+        if let Some(step) = self.running.take() {
+            step.finish_clear();
         }
-    }
-
-    fn print_line(&mut self, message: &str) {
-        eprintln!(
-            "{}",
-            render_bootstrap_progress_message(message, self.color_enabled)
-        );
-        self.emitted_output = true;
     }
 }
 
-fn render_bootstrap_progress_message(message: &str, color_enabled: bool) -> String {
-    message
-        .split_inclusive('\n')
-        .map(|line| render_bootstrap_progress_line(line, color_enabled))
-        .collect()
-}
-
-fn render_bootstrap_progress_line(line: &str, color_enabled: bool) -> String {
-    type StatusPrefix = (&'static str, fn(&Theme) -> anstyle::Style);
-    const STATUS_PREFIXES: [StatusPrefix; 6] = [
-        ("[ok]", |theme| theme.success),
-        ("[warn]", |theme| theme.warning),
-        ("[info]", |theme| theme.label),
-        ("[next]", |theme| theme.accent),
-        ("[gateway]", |theme| theme.label),
-        ("[bootstrap]", |theme| theme.label),
-    ];
-
-    for (prefix, style) in STATUS_PREFIXES {
-        if let Some(rest) = line.strip_prefix(prefix) {
-            return format!(
-                "{}{}",
-                style_text(color_enabled, style(&Theme::default()), prefix),
-                rest
-            );
-        }
+impl Drop for BootstrapProgressReporter {
+    fn drop(&mut self) {
+        // A phase still running when bootstrap returns must not leave a stale
+        // spinner on the terminal.
+        self.clear();
     }
-
-    line.to_owned()
 }
 
 fn map_bootstrap_error(error: BootstrapError) -> RunnerError {

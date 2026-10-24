@@ -401,6 +401,7 @@ fn run_steps(
         failed_step: None,
         outcome: WorkloadOutcome::Succeeded,
     };
+    let total = planned.len();
     for (index, (action, env, label, timeout)) in planned.into_iter().enumerate() {
         if report.code != 0 {
             report
@@ -417,6 +418,10 @@ fn run_steps(
                 .push(serde_json::json!({"index":index, "step":label, "state":"not_started"}));
             continue;
         }
+        // A step can run for minutes, so each one is a live step that names
+        // which step of how many is running.
+        let position = index + 1;
+        let step = effigy_ui::steps::step(&sequence_step_label(task_name, position, total, &label));
         let mut child = run.step(index, &label)?;
         let child_id = child.id();
         let result = {
@@ -478,6 +483,13 @@ fn run_steps(
                 )
             }
         };
+        if code == 0 {
+            step.succeed(&format!("step {position}/{total} `{label}` finished"));
+        } else {
+            step.fail(&format!(
+                "step {position}/{total} `{label}` failed with exit code {code}"
+            ));
+        }
         for warning in child.close(workload.clone()) {
             eprintln!("warning: step `{label}`: {warning}");
         }
@@ -491,6 +503,16 @@ fn run_steps(
         }
     }
     Ok(report)
+}
+
+/// `running dev step 2/4 `build``: which step is running, out of how many.
+pub(in crate::runner::execute) fn sequence_step_label(
+    task_name: &str,
+    position: usize,
+    total: usize,
+    step: &str,
+) -> String {
+    format!("running {task_name} step {position}/{total} `{step}`")
 }
 
 type StepExit = (i32, String, String, WorkloadOutcome);
@@ -846,7 +868,7 @@ fn parse_builtin_step_command(
 #[cfg(test)]
 mod tests {
     use super::parse_builtin_step_command;
-    use super::{resolve_task_step, StepAction};
+    use super::{resolve_task_step, sequence_step_label, StepAction};
     use crate::runner::execute::preflight::ExecutionPreflight;
     use effigy_cli::Command;
     use effigy_core::resolver::{ResolutionMode, ResolvedTarget};
@@ -854,6 +876,14 @@ mod tests {
     use effigy_manifest::{LoadedCatalog, TaskManifest, TaskSelection};
     use effigy_tasks::{CatalogSelectionMode, TaskRuntimeArgs, TaskSelector};
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn a_sequence_step_names_the_task_its_position_and_its_label() {
+        assert_eq!(
+            sequence_step_label("dev", 2, 4, "build"),
+            "running dev step 2/4 `build`"
+        );
+    }
 
     fn classify_manifest(body: &str) -> bool {
         let fixture = effigy_test_support::Fixture::new("q010-classification-").unwrap();
