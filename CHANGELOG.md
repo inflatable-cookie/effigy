@@ -1180,6 +1180,10 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- The documented `effigy.completion.v2` payload lists the `fmt` and `fmt-rust`
+  commands. The completion contract test compares that example with live
+  output, so the example now carries the builtin formatter rows it had
+  drifted past.
 - `effigy contracts check-json` fixture commands no longer inherit the
   invoking task tree's runtime capability, so `qa:json` inside `effigy qa`
   stops failing the qa-group contract fixtures (`fixture group run failed
