@@ -63,6 +63,7 @@ pub(super) fn environment_status_entry(
                 container_name: service.container_name.clone(),
                 status: service.status.clone(),
                 ports: service.ports.clone(),
+                health: None,
             })
             .collect(),
     }

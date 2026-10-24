@@ -12,12 +12,14 @@ use effigy_containers::{
         runtime_backend_is_running, selected_backend_label, ContainerExecError,
     },
     health::probe_health_status,
+    health::readiness::{inspect_project_health, ServiceHealth},
     load_container_exec_working_dir, load_container_policy, logs_report, status_report,
     validate_compose_backend_runtime, validate_container_policy,
 };
 use effigy_containers::{
-    port_capacity_note, stats_global_report, status_global_report, ContainerStatsAllEntry,
-    ContainerStatsService, ContainerStatusService, EffectiveContainerPolicy,
+    port_capacity_note, stats_global_report, status_global_report, ContainerServiceHealth,
+    ContainerStatsAllEntry, ContainerStatsService, ContainerStatusService,
+    EffectiveContainerPolicy,
 };
 use effigy_containers::{ContainerAction, ContainerRuntimeState};
 use effigy_containers::{
@@ -65,11 +67,14 @@ pub fn run_container_status(
         },
         None,
     )?;
-    let services = if runtime_running {
+    let mut services = if runtime_running {
         discover_running_services_for_policy(repo_root, &policy)?
     } else {
         Vec::new()
     };
+    if runtime_running {
+        annotate_service_health(repo_root, &policy, &mut services);
+    }
     let compose_ps = if runtime_running && services.is_empty() && policy.render.is_none() {
         let plan = compose_invocation_plan(
             repo_root,
@@ -437,6 +442,48 @@ fn read_backend_id(policy: &EffectiveContainerPolicy) -> &'static str {
     }
 }
 
+/// A status line says a service is unhealthy; the service's own check says
+/// why (effigy#313). Only an unhealthy or still-starting service is inspected,
+/// so a healthy stack pays nothing for a diagnostic it does not need.
+fn annotate_service_health(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    services: &mut [ContainerStatusService],
+) {
+    let needs_evidence = services.iter().any(|service| {
+        let status = service.status.to_ascii_lowercase();
+        status.contains("(unhealthy)") || status.contains("(health: starting)")
+    });
+    if !needs_evidence {
+        return;
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let Ok(observed) = inspect_project_health(repo_root, policy, Some(deadline)) else {
+        return;
+    };
+    for service in services.iter_mut() {
+        let Some(health) = observed
+            .iter()
+            .find(|candidate| candidate.container == service.container_name)
+            .filter(|candidate| !candidate.is_ready())
+        else {
+            continue;
+        };
+        service.health = Some(container_service_health(health));
+    }
+}
+
+fn container_service_health(health: &ServiceHealth) -> ContainerServiceHealth {
+    ContainerServiceHealth {
+        status: health
+            .health
+            .map(|state| state.as_str().to_owned())
+            .unwrap_or_else(|| health.state.clone()),
+        failing_streak: health.failing_streak,
+        last_output: health.last_output.clone(),
+    }
+}
+
 fn discover_running_services_for_policy(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -463,6 +510,7 @@ fn discover_running_services_for_policy(
             container_name: service.container_name,
             status: service.status,
             ports: service.ports,
+            health: None,
         })
         .collect())
 }
@@ -640,6 +688,7 @@ mod tests {
             container_name: "acme-app-1".to_owned(),
             status: "Up".to_owned(),
             ports: Vec::new(),
+            health: None,
         }];
         assert!(should_probe_primary_service_exec(true, &services));
 
@@ -648,6 +697,7 @@ mod tests {
             container_name: "acme-postgres-1".to_owned(),
             status: "Exited (255) 2 minutes ago".to_owned(),
             ports: Vec::new(),
+            health: None,
         }];
         assert!(!should_probe_primary_service_exec(true, &exited));
     }

@@ -21,7 +21,7 @@ run = "sleep 1"
 "#,
     );
 
-    assert_live_dev_lock_conflict(&root, "task:dev", "effigy tasks status dev");
+    assert_live_dev_lock_conflict(&root, "task:dev", "effigy runs");
 }
 
 #[test]
@@ -97,7 +97,7 @@ lock = "dev-stack"
         err,
         "shared:dev-stack",
         // The holder is `dev`, not `build`: the inventory names it.
-        "effigy tasks status --all",
+        "effigy runs",
     );
 
     owner.join().expect("first run should complete");
@@ -124,7 +124,9 @@ lock = "dev-stack"
     wait_for_live_task_owner(&root, "tasks");
 
     // `effigy tasks` runs the repository's own task here, so the conflict must
-    // not suggest the built-in inventory (effigy#318).
+    // not suggest the built-in inventory (effigy#318). The holder's run id is
+    // the handle a repository task cannot shadow, so that is what it suggests
+    // (effigy#313).
     let err = run_task_with_repo(&root, "build", &[]).expect_err("shared lock should conflict");
     let RunnerError::TaskLockConflict(details) = &err else {
         panic!("expected a lock conflict, got {err:?}");
@@ -134,11 +136,21 @@ lock = "dev-stack"
         !rendered.contains("effigy tasks status"),
         "the built-in inventory is routed away here: {rendered}"
     );
+    let run = details
+        .holder_run
+        .as_deref()
+        .expect("the refusal names the holding run");
     assert!(
-        rendered.contains("this repository's own task owns `effigy tasks`"),
+        rendered.contains(&format!("`effigy run status {run}`")),
         "{rendered}"
     );
-    assert_eq!(details.status_command, None);
+    assert!(
+        details
+            .status_command
+            .as_deref()
+            .is_some_and(|command| command == format!("effigy run status {run}")),
+        "{details:?}"
+    );
 
     owner.join().expect("first run should complete");
 }
@@ -167,6 +179,84 @@ run = "printf other-ok"
         .expect("`a:b` and `a-b` never share a gate");
 
     owner.join().expect("first run should complete");
+}
+
+/// Every command the already-running refusal suggests is a command this CLI
+/// actually accepts. Before (effigy#313, the inventors report):
+///
+/// ```text
+/// `dev` is already running (pid 99290 on this host, run
+/// agqw465rcnc7zpo22ry62fmtnq, started 1h6m ago). Inspect it with `effigy tasks
+/// status dev`, wait for it with `effigy --lock-wait-ms 600000 dev`, or stop
+/// that run
+/// ```
+///
+/// `effigy tasks status dev` fails when `dev` is a managed profile rather than
+/// a declared task, and nothing says which command stops the run. After: the
+/// run id, pid, age and terminal attachment, then the exact
+/// `` `effigy run stop <id>` ``, `` `effigy run status <id>` `` and
+/// `` `effigy runs` ``.
+#[test]
+fn the_already_running_refusal_suggests_only_parseable_commands() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-conflict-suggested-commands");
+    write_root_manifest(
+        &root,
+        r#"[tasks.dev]
+run = "sleep 1"
+"#,
+    );
+    let owner = start_held_dev_owner(&root);
+
+    let error = run_dev(&root, &[]).expect_err("second run should conflict on the gate");
+    let RunnerError::TaskLockConflict(details) = &error else {
+        panic!("expected a lock conflict, got {error:?}");
+    };
+    let remediation = &details.remediation;
+    let run = details
+        .holder_run
+        .as_deref()
+        .expect("the refusal names the holding run");
+    assert!(remediation.contains(run), "{remediation}");
+    assert!(
+        remediation.contains("attached to a terminal"),
+        "{remediation}"
+    );
+    assert!(
+        remediation.contains(&format!("`effigy run stop {run}`")),
+        "{remediation}"
+    );
+    assert!(
+        remediation.contains(&format!("`effigy run status {run}`")),
+        "{remediation}"
+    );
+    assert!(remediation.contains("`effigy runs`"), "{remediation}");
+    assert!(
+        !remediation.contains("effigy tasks status"),
+        "{remediation}"
+    );
+
+    for command in suggested_commands(remediation) {
+        effigy_cli::parse_command(
+            command
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<String>>(),
+        )
+        .unwrap_or_else(|error| panic!("`{command}` does not parse: {error}"));
+    }
+
+    owner.release_and_join().expect("first run should complete");
+}
+
+/// The `effigy …` commands a refusal suggests, in backticks.
+fn suggested_commands(text: &str) -> Vec<String> {
+    text.split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|span| span.starts_with("effigy "))
+        .map(str::to_owned)
+        .collect()
 }
 
 #[test]
@@ -226,11 +316,7 @@ run = "sleep 1"
 
     let err = run_task_with_repo(&root, "validate", &["--lock-wait-ms", "150"])
         .expect_err("live sequence owner should survive a bounded wait");
-    crate::runner::tests::prelude::assert_lock_conflict(
-        err,
-        "task:validate",
-        "effigy tasks status validate",
-    );
+    crate::runner::tests::prelude::assert_lock_conflict(err, "task:validate", "effigy runs");
 
     let status = run_task_status_from_repo(&root, "validate", true);
     let parsed = parse_json_output_with_schema_version(&status, "effigy.tasks-status.v3", 3);

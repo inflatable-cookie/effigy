@@ -123,6 +123,7 @@ fn status_global_report_renders_environment_inventory() {
             container_name: "demo-app-1".to_owned(),
             status: "Up 2 minutes".to_owned(),
             ports: vec!["0.0.0.0:18080->80/tcp".to_owned()],
+            health: None,
         }],
     }]);
 
@@ -131,6 +132,95 @@ fn status_global_report_renders_environment_inventory() {
     assert!(report.success_text.contains("allocated_ports: base=8100"));
     assert_eq!(report.json["environment_count"], 1);
     assert_eq!(report.json["environments"][0]["container"], "web");
+}
+
+/// `container status` names why a service is unhealthy, not only that it is
+/// (effigy#313). Before this, `- web: Up 3 minutes (unhealthy)` was the whole
+/// answer and the health check's own message never reached the operator.
+#[test]
+fn status_report_shows_an_unhealthy_services_last_check_output() {
+    let root = temp_repo("status-unhealthy-health");
+    fs::write(
+        root.join("effigy.toml"),
+        r#"
+[containers]
+default = "web"
+
+[containers.web]
+compose_file = "infra/dev/docker-compose.yml"
+primary_service = "app"
+"#,
+    )
+    .expect("write manifest");
+    fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
+    fs::write(
+        root.join("infra/dev/docker-compose.yml"),
+        "services:\n  app:\n    image: example\n",
+    )
+    .expect("compose");
+
+    let policy = load_container_policy(&root, None).expect("policy");
+    let health = ContainerServiceHealth {
+        status: "unhealthy".to_owned(),
+        failing_streak: 12,
+        last_output: Some("GET / HTTP/1.1 404".to_owned()),
+    };
+    assert_eq!(
+        health.text(),
+        "unhealthy after 12 failed checks; its last check said: `GET / HTTP/1.1 404`"
+    );
+    let services = vec![
+        ContainerStatusService {
+            name: "web".to_owned(),
+            container_name: "demo-web-1".to_owned(),
+            status: "Up 3 minutes (unhealthy)".to_owned(),
+            ports: vec!["0.0.0.0:8080->80/tcp".to_owned()],
+            health: Some(health),
+        },
+        ContainerStatusService {
+            name: "db".to_owned(),
+            container_name: "demo-db-1".to_owned(),
+            status: "Up 3 minutes (healthy)".to_owned(),
+            ports: Vec::new(),
+            health: None,
+        },
+    ];
+
+    let report = status_report(
+        &policy,
+        "containerd",
+        true,
+        None,
+        None,
+        Some(services.as_slice()),
+        None,
+    );
+
+    assert!(
+        report
+            .success_text
+            .contains("- web: Up 3 minutes (unhealthy)"),
+        "{}",
+        report.success_text
+    );
+    assert!(
+        report.success_text.contains(
+            "  health: unhealthy after 12 failed checks; its last check said: `GET / HTTP/1.1 404`"
+        ),
+        "{}",
+        report.success_text
+    );
+    // A healthy service carries no health line, and the field stays out of
+    // its JSON row.
+    assert_eq!(
+        report.json["services"][1]["health"],
+        serde_json::Value::Null
+    );
+    assert_eq!(report.json["services"][0]["health"]["failing_streak"], 12);
+    assert_eq!(
+        report.json["services"][0]["health"]["last_output"],
+        "GET / HTTP/1.1 404"
+    );
 }
 
 #[test]
@@ -897,6 +987,7 @@ primary_service = "app"
         container_name: "demo-app-1".to_owned(),
         status: "Up 2 minutes".to_owned(),
         ports: vec!["0.0.0.0:8080->80/tcp".to_owned()],
+        health: None,
     }];
 
     let report = status_report(
@@ -945,6 +1036,7 @@ primary_service = "app"
         container_name: "demo-postgres-1".to_owned(),
         status: "Exited (255) 2 minutes ago".to_owned(),
         ports: Vec::new(),
+        health: None,
     }];
 
     let report = status_report(

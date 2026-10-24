@@ -111,12 +111,44 @@ fn bounded_workspace_mount_path(value: &str) -> String {
     rendered
 }
 
+/// What a service's own health check last reported, for a service that is
+/// not healthy. A status line says "unhealthy"; this says why (effigy#313).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ContainerServiceHealth {
+    /// `unhealthy` or `starting`.
+    pub status: String,
+    /// Consecutive failed checks.
+    pub failing_streak: u64,
+    /// The last check's own output, bounded to one line.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_output: Option<String>,
+}
+
+impl ContainerServiceHealth {
+    /// `unhealthy after 12 failed checks; its last check said: `GET / 404``
+    pub fn text(&self) -> String {
+        let mut text = format!(
+            "{} after {} failed check{}",
+            self.status,
+            self.failing_streak,
+            if self.failing_streak == 1 { "" } else { "s" }
+        );
+        if let Some(output) = self.last_output.as_deref() {
+            text.push_str(&format!("; its last check said: `{output}`"));
+        }
+        text
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ContainerStatusService {
     pub name: String,
     pub container_name: String,
     pub status: String,
     pub ports: Vec<String>,
+    /// Present only for a service whose own check is not healthy.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health: Option<ContainerServiceHealth>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -520,6 +552,9 @@ pub fn status_report(
                     format!(" [{}]", service.ports.join(", "))
                 };
                 lines.push(format!("- {}: {}{}", service.name, service.status, ports));
+                if let Some(health) = service.health.as_ref() {
+                    lines.push(format!("  health: {}", health.text()));
+                }
             }
         }
     } else if let Some(compose_ps) = compose_ps {

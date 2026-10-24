@@ -1,0 +1,281 @@
+//! Waiting for an environment's services to report ready, with the evidence.
+//!
+//! A bring-up is not finished when Compose returns: it is finished when every
+//! service says it is ready. This wait names each service while it waits, and
+//! when it cannot finish it says which service is wrong, what its own health
+//! check said, and what to run next (effigy#313). A stack whose unready
+//! services all fail the same way is diagnosed instead of waited out.
+
+use std::collections::BTreeMap;
+use std::path::Path;
+use std::sync::atomic::AtomicBool;
+use std::time::{Duration, Instant};
+
+use effigy_containers::exec::container_last_log_line_for_policy;
+use effigy_containers::health::readiness::{
+    inspect_project_health, readiness_diagnostic, repeated_failure_diagnostic, unready,
+    ServiceHealth, SharedFailureTracker,
+};
+use effigy_containers::EffectiveContainerPolicy;
+
+use crate::runner::error::RunnerError;
+
+use super::steps::TimedStep;
+
+/// How often the wait reads the services' own health while a stack is still
+/// starting. Every probe is two runtime calls, so the wait backs off to
+/// [`PROBE_INTERVAL_SETTLED`] once the stack has had a moment to come up.
+const PROBE_INTERVAL_STARTING: Duration = Duration::from_millis(400);
+/// The probe interval after [`PROBE_STARTING_WINDOW`].
+const PROBE_INTERVAL_SETTLED: Duration = Duration::from_millis(1_500);
+/// How long the wait keeps the fast probe.
+const PROBE_STARTING_WINDOW: Duration = Duration::from_secs(4);
+/// How long one probe may take. A probe is a read, so it never consumes the
+/// wait's whole budget, and an unresponsive runtime is reported rather than
+/// waited on.
+const PROBE_BUDGET: Duration = Duration::from_secs(15);
+/// How many trailing log lines one exited service is read for.
+const EXITED_LOG_TAIL: u32 = 5;
+
+/// How the wait ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ReadinessEnd {
+    /// Every service reported ready.
+    Ready,
+    /// No service reported ready either: the environment declares no Compose
+    /// services this runtime can see, so the caller's declared check decides.
+    NothingToAwait,
+    /// A stop was requested.
+    Interrupted,
+}
+
+/// Wait until every service of `policy`'s environment reports ready.
+///
+/// The wait is bounded by the environment's own `health` timeout, and one
+/// step per service says what is happening: `waiting for web to report healthy
+/// (attempt 4, last: HTTP 404)`.
+pub(super) fn await_services_ready(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    stop_requested: Option<&AtomicBool>,
+) -> Result<ReadinessEnd, RunnerError> {
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(policy.health_timeout_secs.max(1));
+    let parent = TimedStep::new("waiting for services to report healthy");
+    let mut steps = BTreeMap::<String, TimedStep>::new();
+    let mut attempts = BTreeMap::<String, u32>::new();
+    let mut tracker = SharedFailureTracker::default();
+    let mut last_services: Vec<ServiceHealth> = Vec::new();
+    let mut last_probe_error: Option<String> = None;
+    let mut observed = false;
+
+    loop {
+        if stop_requested.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
+            for step in steps.values() {
+                step.finish_clear();
+            }
+            parent.finish_clear();
+            return Ok(ReadinessEnd::Interrupted);
+        }
+        let probe_deadline = deadline.min(Instant::now() + PROBE_BUDGET);
+        match inspect_project_health(repo_root, policy, Some(probe_deadline)) {
+            Ok(services) if services.is_empty() => {
+                for step in steps.values() {
+                    step.finish_clear();
+                }
+                parent.finish_clear();
+                return Ok(if observed && last_probe_error.is_some() {
+                    readiness_failure(policy, &last_services, last_probe_error, &steps)?
+                } else {
+                    ReadinessEnd::NothingToAwait
+                });
+            }
+            Ok(services) => {
+                observed = true;
+                last_probe_error = None;
+                last_services = services.clone();
+                let ready = report_services(&services, &mut steps, &mut attempts);
+                if ready.is_empty() {
+                    for step in steps.values() {
+                        step.finish_clear();
+                    }
+                    parent.succeed(format!(
+                        "{} service{} ready",
+                        services.len(),
+                        if services.len() == 1 { "" } else { "s" }
+                    ));
+                    return Ok(ReadinessEnd::Ready);
+                }
+                // A stack whose unready services all fail the same way will
+                // not fix itself: stop the wait with that diagnosis.
+                if let Some(failure) = tracker.observe(&services, started.elapsed()) {
+                    let diagnosis = repeated_failure_diagnostic(&failure);
+                    for service in unready(&services) {
+                        if let Some(step) = steps.get(&service.service) {
+                            step.fail(service.problem());
+                        }
+                    }
+                    parent.fail(&diagnosis);
+                    return Err(RunnerError::task_invocation(diagnosis));
+                }
+            }
+            Err(error) => {
+                last_probe_error = Some(error.to_string());
+            }
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        let interval = if started.elapsed() < PROBE_STARTING_WINDOW {
+            PROBE_INTERVAL_STARTING
+        } else {
+            PROBE_INTERVAL_SETTLED
+        };
+        std::thread::sleep(interval.min(deadline.saturating_duration_since(Instant::now())));
+    }
+
+    if !observed {
+        // No service's health could be read at all, so the environment's own
+        // declared check is the only evidence there is. This is exactly the
+        // behaviour before per-service readiness, never a new refusal.
+        for step in steps.values() {
+            step.finish_clear();
+        }
+        parent.finish_clear();
+        return Ok(ReadinessEnd::NothingToAwait);
+    }
+    readiness_failure(policy, &last_services, last_probe_error, &steps)
+}
+
+/// Build the failure for a wait that ran out of time.
+fn readiness_failure(
+    policy: &EffectiveContainerPolicy,
+    services: &[ServiceHealth],
+    probe_error: Option<String>,
+    steps: &BTreeMap<String, TimedStep>,
+) -> Result<ReadinessEnd, RunnerError> {
+    let logs = exited_logs(&policy.repo_root, policy, services);
+    let mut diagnostic =
+        readiness_diagnostic(&policy.name, services, policy.health_timeout_secs, &logs);
+    if let Some(error) = probe_error {
+        diagnostic.push_str(&format!(
+            "\nThe last health read itself failed: {error}. Inspect the backend with `effigy doctor`"
+        ));
+    }
+    for service in unready(services) {
+        if let Some(step) = steps.get(&service.service) {
+            step.fail(service.problem());
+        }
+    }
+    Err(RunnerError::task_invocation(diagnostic))
+}
+
+/// The last log line of every service that stopped instead of starting.
+///
+/// Only exited services are read: a healthy stack pays nothing for a
+/// diagnostic it does not need, and an unhealthy one gets the evidence its
+/// health check could not give.
+fn exited_logs(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    services: &[ServiceHealth],
+) -> BTreeMap<String, String> {
+    let mut logs = BTreeMap::new();
+    for service in services.iter().filter(|service| service.has_exited()) {
+        let Ok(line) = container_last_log_line_for_policy(
+            repo_root,
+            policy,
+            &service.container,
+            EXITED_LOG_TAIL,
+        ) else {
+            continue;
+        };
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(bounded) = effigy_containers::health::readiness::bounded_last_output(&line) {
+            logs.insert(service.service.clone(), bounded);
+        }
+    }
+    logs
+}
+
+/// Update one step per service and return the ones that are not ready.
+fn report_services(
+    services: &[ServiceHealth],
+    steps: &mut BTreeMap<String, TimedStep>,
+    attempts: &mut BTreeMap<String, u32>,
+) -> Vec<String> {
+    let mut not_ready = Vec::new();
+    for service in services {
+        if service.is_ready() {
+            if let Some(step) = steps.get(&service.service) {
+                step.succeed(format!("{} is healthy", service.service));
+            }
+            continue;
+        }
+        let attempt = attempts.entry(service.service.clone()).or_insert(0);
+        *attempt += 1;
+        let label = match service.last_output.as_deref() {
+            Some(output) => format!(
+                "waiting for {} to report healthy (attempt {attempt}, last: {output})",
+                service.service
+            ),
+            None => format!(
+                "waiting for {} to report healthy (attempt {attempt}, {})",
+                service.service, service.state
+            ),
+        };
+        match steps.get(&service.service) {
+            Some(step) => step.set_label(label),
+            None => {
+                steps.insert(service.service.clone(), TimedStep::new(label));
+            }
+        }
+        not_ready.push(service.service.clone());
+    }
+    not_ready
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use effigy_containers::health::readiness::HealthState;
+
+    #[test]
+    fn a_waiting_step_names_the_service_the_attempt_and_the_last_check_output() {
+        let services = vec![
+            ServiceHealth {
+                service: "web".to_owned(),
+                container: "demo-web-1".to_owned(),
+                state: "running".to_owned(),
+                health: Some(HealthState::Unhealthy),
+                failing_streak: 4,
+                last_output: Some("GET / HTTP/1.1 404".to_owned()),
+                exit_code: None,
+            },
+            ServiceHealth {
+                service: "db".to_owned(),
+                container: "demo-db-1".to_owned(),
+                state: "running".to_owned(),
+                health: Some(HealthState::Healthy),
+                failing_streak: 0,
+                last_output: None,
+                exit_code: None,
+            },
+        ];
+        let mut steps = BTreeMap::new();
+        let mut attempts = BTreeMap::new();
+        let not_ready = report_services(&services, &mut steps, &mut attempts);
+        assert_eq!(not_ready, vec!["web"]);
+        assert_eq!(attempts.get("web"), Some(&1));
+        let step = steps.get("web").expect("web is waiting");
+        // The drawing is silent under test; the label is what a terminal shows.
+        assert_eq!(
+            step.label(),
+            "waiting for web to report healthy (attempt 1, last: GET / HTTP/1.1 404)"
+        );
+        // The healthy service has no waiting step.
+        assert!(!steps.contains_key("db"));
+    }
+}

@@ -332,9 +332,18 @@ fn busy_diagnostics_stay_distinct_from_held_by_and_journal_contention() {
     assert!(matches!(held_by, EnvError::HeldBy { .. }), "{held_by:?}");
     assert!(!matches!(held_by, EnvError::Busy(_)));
     assert!(held_by.busy_details().is_none());
-    assert!(held_by.to_string().contains("while runs hold it"));
+    // Before (effigy#313): `refused to stop, restart or recreate environment
+    // `stack` while runs hold it: run <id>. End those runs through their own
+    // stop first (`effigy tasks status --all` lists them)`. After: the holder
+    // is named with its run, and the commands are ones this CLI accepts.
+    let held_text = held_by.to_string();
+    assert!(held_text.contains("while 1 run holds it"), "{held_text}");
+    assert!(held_text.contains("`effigy run stop "), "{held_text}");
+    assert!(held_text.contains("`effigy runs`"), "{held_text}");
+    assert!(!held_text.contains("effigy tasks status"), "{held_text}");
     // Kernel journal contention keeps the kernel's own error.
     let contention = EnvError::from_run(
+        None,
         "stack",
         RunError::Store(StoreError::Busy {
             waited: std::time::Duration::from_millis(5),

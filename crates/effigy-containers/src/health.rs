@@ -3,6 +3,8 @@
 //! Extracted from `src/runner/container_command.rs` — these are
 //! container-domain health check operations, not CLI shell behavior.
 
+pub mod readiness;
+
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};

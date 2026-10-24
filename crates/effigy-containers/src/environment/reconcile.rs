@@ -139,6 +139,10 @@ impl<'r> EnvContext<'r> {
         Ok(Self { root, cx, cleanup })
     }
 
+    fn holder_facts(&self) -> HolderFacts {
+        HolderFacts::observe(&self.observe(), self.root)
+    }
+
     pub fn observe(&self) -> effigy_kernel::ctx::ObserveContext {
         operation(
             EffectClass::Observe,
@@ -399,7 +403,7 @@ pub enum EnvError {
     /// Live, interrupted or unknown holders protect the environment (R4).
     HeldBy {
         env: String,
-        holders: Vec<Holder>,
+        holders: Vec<HeldHolder>,
     },
     /// A guest never holds host authority (R1).
     HostAuthorityRequired,
@@ -415,27 +419,28 @@ impl std::fmt::Display for EnvError {
         match self {
             Self::Busy(diagnostics) => f.write_str(&diagnostics.text()),
             Self::HeldBy { env, holders } => {
-                let runs = holders
-                    .iter()
-                    .map(|holder| {
-                        // A permit refuses on the attachment alone; it does
-                        // not probe liveness, so none is shown unless known.
-                        match &holder.liveness {
-                            Observed::Verified(effigy_kernel::run::Liveness::Live, _) => {
-                                format!("run {} (live)", holder.run)
-                            }
-                            Observed::Verified(effigy_kernel::run::Liveness::Interrupted, _) => {
-                                format!("run {} (interrupted)", holder.run)
-                            }
-                            _ => format!("run {}", holder.run),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let count = holders.len();
                 write!(
                     f,
-                    "refused to stop, restart or recreate environment `{env}` while runs hold it: {runs}. End those runs through their own stop first (`effigy tasks status --all` lists them)"
-                )
+                    "refused to stop, restart or recreate environment `{env}` while {count} run{} hold{} it:",
+                    if count == 1 { "" } else { "s" },
+                    if count == 1 { "s" } else { "" },
+                )?;
+                for holder in holders {
+                    write!(f, "\n- {}", holder.text())?;
+                }
+                if let Some(first) = holders.first() {
+                    write!(
+                        f,
+                        "\nInspect it with `effigy run status {}`, or list every run with `effigy runs`; then retry the command",
+                        first.run
+                    )?;
+                } else {
+                    f.write_str(
+                        "\nList every run with `effigy runs`; then retry the command",
+                    )?;
+                }
+                Ok(())
             }
             Self::HostAuthorityRequired => f.write_str(
                 "environment changes need host authority: run this on the host, not inside the workspace container",
@@ -464,7 +469,11 @@ impl EnvError {
 
     /// A refusal that retained no gate evidence still keeps its own variant,
     /// distinct from `HeldBy` and from kernel journal contention.
-    pub(crate) fn from_run(env: &str, error: RunError) -> Self {
+    ///
+    /// Without a context the holders are named by run and liveness only; the
+    /// admission path supplies one, which adds the task, pid, age and whether
+    /// the run is attached to a terminal (effigy#313).
+    pub(crate) fn from_run(facts: Option<&HolderFacts>, env: &str, error: RunError) -> Self {
         match error {
             RunError::Gate(GateError::Busy { .. } | GateError::TimedOut { .. }) => {
                 Self::Busy(Box::new(BusyDiagnostics::unobserved(env)))
@@ -474,7 +483,13 @@ impl EnvError {
             }
             RunError::HeldBy(holders) => Self::HeldBy {
                 env: env.to_owned(),
-                holders,
+                holders: match facts {
+                    Some(facts) => holders
+                        .into_iter()
+                        .map(|holder| facts.holder(holder))
+                        .collect(),
+                    None => holders.into_iter().map(HeldHolder::unobserved).collect(),
+                },
             },
             RunError::PredecessorUnsettled { run, effects } => Self::Unsettled(format!(
                 "run {run} left {} unresolved effect(s)",
@@ -513,8 +528,155 @@ fn admission_error(
         RunError::Gate(GateError::TimedOut { holder, waited, .. }) => {
             EnvError::Busy(Box::new(diagnostics(holder, Some(waited))))
         }
-        other => EnvError::from_run(&env.name, other),
+        other => EnvError::from_run(Some(&ctx.holder_facts()), &env.name, other),
     }
+}
+
+/// What the refusal may read to name a holder: the same observation context
+/// and state root the transition already holds. No second probe is taken.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct HolderFacts {
+    /// Every run holding a foreground (terminal) gate: its task and pid.
+    foreground: BTreeMap<String, (Option<String>, u32)>,
+    /// When each journaled run started.
+    started: BTreeMap<String, i64>,
+}
+
+impl HolderFacts {
+    /// One pure read of the foreground gates and the run journal. Never
+    /// probes a process and never decides anything.
+    pub(crate) fn observe(cx: &effigy_kernel::ctx::ObserveContext, root: &StateRoot) -> Self {
+        use effigy_kernel::gate::Gate;
+        let mut facts = Self::default();
+        if let Observed::Verified(rows, _) = Gate::foreground_holders(cx, root) {
+            for row in rows {
+                let Some(run) = row.holder.run.clone() else {
+                    continue;
+                };
+                let coordinates = &row.coordinates.task;
+                let task = if coordinates.catalog().is_empty() {
+                    coordinates.task().to_owned()
+                } else {
+                    format!("{}/{}", coordinates.catalog(), coordinates.task())
+                };
+                facts.foreground.insert(run, (Some(task), row.holder.pid));
+            }
+        }
+        if let Observed::Verified(reader, _) = effigy_kernel::store::Store::read(cx, root) {
+            for (run, summary) in facts
+                .foreground
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .filter_map(|run| {
+                    let id: RunId = run.parse().ok()?;
+                    match effigy_kernel::run::summary(&reader, id) {
+                        Observed::Verified(summary, _) => Some((run, summary)),
+                        _ => None,
+                    }
+                })
+            {
+                facts.started.insert(run, summary.created_at_ms);
+            }
+        }
+        facts
+    }
+
+    fn holder(&self, holder: Holder) -> HeldHolder {
+        let key = holder.run.to_string();
+        let foreground = self.foreground.get(&key);
+        HeldHolder {
+            run: holder.run,
+            liveness: holder.liveness,
+            task: foreground.and_then(|(task, _)| task.clone()),
+            pid: foreground.map(|(_, pid)| *pid),
+            started_at_ms: self.started.get(&key).copied(),
+            foreground: foreground.is_some(),
+        }
+    }
+}
+
+/// One run holding the environment, named for a person.
+///
+/// A refusal names the run, and — when the journal and the foreground gate can
+/// be read — its task, pid, age and whether it was started from a terminal,
+/// because that is the difference between `Ctrl-C` and `effigy run stop`
+/// (effigy#313). Every field is a fact from a pure read; an unreadable one is
+/// simply absent, never guessed.
+#[derive(Debug, Clone)]
+pub struct HeldHolder {
+    pub run: RunId,
+    pub liveness: Observed<effigy_kernel::run::Liveness>,
+    pub task: Option<String>,
+    pub pid: Option<u32>,
+    pub started_at_ms: Option<i64>,
+    /// The run holds a foreground (terminal) gate of its own.
+    pub foreground: bool,
+}
+
+impl HeldHolder {
+    /// The holder as the kernel named it, with nothing observed about it.
+    fn unobserved(holder: Holder) -> Self {
+        Self {
+            run: holder.run,
+            liveness: holder.liveness,
+            task: None,
+            pid: None,
+            started_at_ms: None,
+            foreground: false,
+        }
+    }
+
+    /// One line: `run abc (`dev`, pid 99290, started 1h06m ago, attached to a
+    /// terminal); stop it with `effigy run stop abc` or Ctrl-C in its terminal`.
+    pub fn text(&self) -> String {
+        let mut facts = Vec::new();
+        if let Some(task) = self.task.as_deref() {
+            facts.push(format!("`{task}`"));
+        }
+        if let Some(pid) = self.pid {
+            facts.push(format!("pid {pid}"));
+        }
+        if let Some(age) = self.started_at_ms.and_then(age_text) {
+            facts.push(format!("started {age} ago"));
+        }
+        facts.push(if self.foreground {
+            "attached to a terminal".to_owned()
+        } else {
+            "not attached to a terminal".to_owned()
+        });
+        let liveness = match &self.liveness {
+            Observed::Verified(effigy_kernel::run::Liveness::Interrupted, _) => {
+                " (interrupted)".to_owned()
+            }
+            _ => String::new(),
+        };
+        let mut line = format!("run {}{liveness}", self.run);
+        if !facts.is_empty() {
+            line.push_str(&format!(" ({})", facts.join(", ")));
+        }
+        if self.foreground {
+            line.push_str(&format!(
+                "; press Ctrl-C in that terminal, or run `effigy run stop {}`",
+                self.run
+            ));
+        } else {
+            line.push_str(&format!("; stop it with `effigy run stop {}`", self.run));
+        }
+        line
+    }
+}
+
+fn age_text(started_at_ms: i64) -> Option<String> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis() as i64;
+    let elapsed = now.saturating_sub(started_at_ms).max(0) as u64;
+    Some(effigy_ui::human::human_duration(Duration::from_millis(
+        elapsed,
+    )))
 }
 
 /// One pure read of the exact environment record (R2): no row, gate or
@@ -749,7 +911,13 @@ impl<'r> EnvRun<'r> {
             ) {
                 // A successor holds the owner gate and settles it first (K5).
                 Ok(_) | Err(RunError::Gate(_)) => {}
-                Err(error) => return Err(EnvError::from_run(&self.env.name, error)),
+                Err(error) => {
+                    return Err(EnvError::from_run(
+                        Some(&self.holder_facts()),
+                        &self.env.name,
+                        error,
+                    ))
+                }
             }
         }
         Ok(())
@@ -868,9 +1036,10 @@ impl<'r> EnvRun<'r> {
     ) -> Result<(), EnvError> {
         let env = self.env.name.clone();
         self.settle_interrupted_holders()?;
+        let facts = self.holder_facts();
         let mut permit = permit(&mut self.run, exempt).map_err(|error| {
             self.failed = true;
-            EnvError::from_run(&env, error)
+            EnvError::from_run(Some(&facts), &env, error)
         })?;
         let spec = EffectSpec {
             target: permit.fence().clone(),
@@ -881,7 +1050,7 @@ impl<'r> EnvRun<'r> {
         };
         let ticket = permit
             .intend(spec)
-            .map_err(|error| EnvError::from_run(&env, error));
+            .map_err(|error| EnvError::from_run(Some(&facts), &env, error));
         let ticket = match ticket {
             Ok(ticket) => {
                 self.transitioned = true;
@@ -923,7 +1092,7 @@ impl<'r> EnvRun<'r> {
         };
         if let Err(error) = recorded {
             self.failed = true;
-            return Err(EnvError::from_run(&env, error));
+            return Err(EnvError::from_run(Some(&facts), &env, error));
         }
         outcome.map_err(|error| {
             self.failed = true;
@@ -997,17 +1166,33 @@ impl<'r> EnvRun<'r> {
         };
         // A poisoned run cannot record its outcome; settle still closes it.
         let _ = self.run.finish(workload);
+        let facts = self.holder_facts();
+        let env = self.env.name.clone();
         let outcome = self
             .run
             .settle(&self.cleanup, &mut EnvSettlement)
-            .map_err(|error| EnvError::from_run(&self.env.name, error))?;
+            .map_err(|error| EnvError::from_run(Some(&facts), &env, error))?;
         Ok(outcome.cleanup())
+    }
+
+    /// The run journal and foreground gates this transition can read, so a
+    /// refusal names its holders without a second probe.
+    fn holder_facts(&self) -> HolderFacts {
+        HolderFacts::observe(
+            &self
+                .cx
+                .operation()
+                .clone()
+                .observe()
+                .expect("observe context"),
+            self.root,
+        )
     }
 
     pub(super) fn kernel<T>(&mut self, result: Result<T, RunError>) -> Result<T, EnvError> {
         result.map_err(|error| {
             self.failed = true;
-            EnvError::from_run(&self.env.name, error)
+            EnvError::from_run(Some(&self.holder_facts()), &self.env.name, error)
         })
     }
 }

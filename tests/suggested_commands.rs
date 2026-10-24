@@ -163,8 +163,11 @@ fn every_suggested_effigy_command_parses_under_this_grammar() {
         failures.join("\n")
     );
 
+    // effigy#313 replaced the held-environment refusal's inventory suggestion
+    // with the holder's run commands, so the run forms are the anchors there.
     for anchor in [
-        "effigy tasks status --all",
+        "effigy run stop sample",
+        "effigy run status sample",
         "effigy tasks status sample",
         "effigy doctor",
         "effigy container sample up",

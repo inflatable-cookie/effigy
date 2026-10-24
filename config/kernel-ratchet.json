@@ -37,8 +37,7 @@
       "nix::sys::signal::kill": 2,
       "std.process.Command.new": 4,
       "std.process.Command.output": 1,
-      "std.process.Command.spawn": 2,
-      "std.process.Command.status": 1
+      "std.process.Command.spawn": 3
     },
     "crates/effigy-containers/src/workspace/host_integration.rs": {
       "std.process.Command.new": 1,

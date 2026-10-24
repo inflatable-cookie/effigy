@@ -18,6 +18,7 @@ use crate::EffigyRuntimeError;
 pub use planning::select_generated_service_image_refs;
 use planning::{
     can_prepare_shutdown, prepare_shutdown, remove_generated_service_images, run_shutdown_compose,
+    run_shutdown_compose_watched,
 };
 
 /// The caller's environment transition around one shutdown: it receives the
@@ -62,12 +63,59 @@ where
     let runtime_running = runtime_backend_is_running(&policy, repo_root)
         .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     let prepared = runtime_running && prepare_shutdown(repo_root, &policy)?;
-    transition(repo_root, &policy, &|| {
+    // One step per service, created and moved by the runtime's own stopping and
+    // removing lines while it works, so a slow stop names the service holding
+    // it up (effigy#313). A runtime that narrates nothing still gets one honest
+    // step, and a step it never finished is closed from what the inventory
+    // still holds.
+    let compose_steps = std::cell::RefCell::new(effigy_containers::exec::ComposeSteps::new(
+        policy.project_name.clone(),
+    ));
+    // A runtime that narrates nothing this parser recognises still gets one
+    // live step, so an operator is never looking at a silent teardown.
+    let whole_stack = prepared
+        .then(|| effigy_containers::exec::phase(format!("stopping the `{}` stack", policy.name)));
+    let stopped = transition(repo_root, &policy, &|| {
         if prepared {
-            run_shutdown_compose(repo_root, &policy)?;
+            run_shutdown_compose_watched(repo_root, &policy, &mut |line| {
+                if let Some(event) = effigy_containers::exec::parse_compose_step_event(line) {
+                    compose_steps.borrow_mut().observe(&event);
+                }
+            })?;
         }
         Ok(())
-    })?;
+    });
+    match (compose_steps.borrow().touched(), whole_stack) {
+        // The runtime printed nothing this parser recognises. The teardown's
+        // own result is the only evidence, so one step says what happened.
+        (0, Some(whole_stack)) => match &stopped {
+            Ok(()) => whole_stack.succeed("the runtime reported the stack stopped"),
+            Err(error) => whole_stack.fail(format!("the stack did not stop: {error}")),
+        },
+        // The per-service steps carry the story; the fallback had none.
+        (_, Some(whole_stack)) => whole_stack.finish_clear(),
+        (_, None) => {}
+    }
+
+    // A step the runtime never closed is closed from the post-teardown
+    // inventory: gone means removed; still listed means still present.
+    if prepared {
+        let remaining =
+            effigy_containers::exec::list_compose_containers_for_policy_including_stopped(
+                repo_root, &policy,
+            )
+            .ok()
+            .map(|rows| {
+                rows.into_iter()
+                    .filter(|row| !row.oneoff)
+                    .map(|row| row.container_name)
+                    .collect::<Vec<_>>()
+            });
+        compose_steps
+            .borrow()
+            .finish_unfinished_teardown(remaining.as_deref());
+    }
+    stopped?;
     let _manager_report = lifecycle_operation_report(
         repo_root,
         &policy,

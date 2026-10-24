@@ -540,6 +540,43 @@ During v0.x, MINOR bumps may include breaking changes.
   before/after text for each rewrite, and with this lane's removals the
   Debug-format ratchet stands at 184 specifiers in 67 files.
 
+- Container commands say what is happening per service, and a readiness
+  failure names the service that is wrong (effigy#313). `container up`
+  (attached and `--detach`) and `container down` draw one step per service
+  from the runtime's own progress lines, created and moved while it works:
+  `up` reads `pulling postgres:16`, `building web`, `creating web` and
+  `starting web`, `down` reads `stopping web`, `stopped web`, `removing web`
+  and `removed web`. Each step ends with ✓/✗ and its duration, a step the
+  runtime never finished is closed from the post-teardown inventory (still
+  listed means still present), and a runtime that narrates nothing still gets
+  one live `stopping the <name> stack` step. The phases around them are named
+  too (`rendering the stack`, `preparing ports and loopback`,
+  `starting shared services`, `registering routes`,
+  `settling the environment`). Readiness waits poll every service's own
+  health check: the label reads
+  `waiting for web to report healthy (attempt 4, last: GET / 404)`, and a
+  timeout reports each unready service with its status, failing streak and
+  bounded last check output, plus each exited service's exit code and last log
+  line, then the next commands (`effigy container logs --service <service>`,
+  `effigy container status`). A stack whose unready services all fail the same
+  way (for example every check reporting `command not found`) is diagnosed
+  after a few observations instead of waiting out the deadline. The
+  environment's declared health check stays the final gate, and
+  `container status` now shows an unhealthy service's last check output.
+- The pid-file prune after the nerdctl 2.3.1 health-check leak is silent in a
+  normal run. It still runs on `container up` and on a task that starts an
+  environment (the managed-profile ensure), but nothing is printed unless
+  `/run` inode use reaches the doctor threshold or the prune fails; the counts,
+  the prune command and the nerdctl 2.4.1 upgrade note live in `effigy doctor`
+  and `effigy container profile prune-health-pid-files`.
+- The held-environment and already-running refusals name the run holding the
+  work and give commands that exist. `refused to stop, restart or recreate
+  environment <name> while runs hold it` now lists each holder's run id, task,
+  pid, age and whether a terminal is attached, then
+  `effigy run stop <id>` (or Ctrl-C in that terminal) and
+  `effigy run status <id>` / `effigy runs`; the `already running` refusal names
+  the same facts and no longer suggests `effigy tasks status <profile>`, which
+  does not parse for a managed profile.
 - A command an Effigy message suggests is a command this checkout accepts
   (effigy#318). A mistyped or unknown argument now answers with the nearest
   command's own usage — one or two `Usage` lines, the words that command accepts

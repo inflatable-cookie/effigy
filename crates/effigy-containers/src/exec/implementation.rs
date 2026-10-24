@@ -24,7 +24,8 @@ use super::participation::{
 };
 use super::process::{
     error_is_timeout, run_command_capture_os, run_command_capture_os_with_env,
-    run_command_capture_with_timeout_and_env, run_detached_command_with_env,
+    run_command_capture_with_timeout_and_env, run_detached_command_streaming_with_env,
+    run_detached_command_with_env,
 };
 
 use crate::{
@@ -1710,6 +1711,62 @@ pub fn list_compose_containers_for_policy_including_stopped_with_timeout(
     )
 }
 
+/// `runtime inspect` for the named containers of one policy's backend.
+///
+/// A readiness wait reads every service's own state and health check from
+/// here; the bounded deadline is the wait's, so a slow runtime cannot extend
+/// it (effigy#313).
+pub fn inspect_containers_for_policy(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    names: &[String],
+    deadline: Option<Instant>,
+) -> Result<Output, ContainerExecError> {
+    let mut args = vec![OsString::from("inspect")];
+    args.extend(names.iter().map(OsString::from));
+    run_runtime_command_capture_with_repair(
+        repo_root,
+        policy,
+        &args,
+        "runtime inspect",
+        Some(COMPOSE_PS_TIMEOUT),
+        deadline,
+    )
+}
+
+/// The last line a container logged, read on demand for one failure
+/// diagnostic. Only exited or unhealthy services are read this way, so a
+/// healthy stack pays nothing.
+pub fn container_last_log_line_for_policy(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    container: &str,
+    tail: u32,
+) -> Result<String, ContainerExecError> {
+    let args = vec![
+        OsString::from("logs"),
+        OsString::from("--tail"),
+        OsString::from(tail.to_string()),
+        OsString::from(container),
+    ];
+    let output = run_runtime_command_capture_for_policy_with_timeout(
+        repo_root,
+        policy,
+        &args,
+        "runtime logs",
+        COMPOSE_PS_TIMEOUT,
+    )?;
+    let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
+    combined.push('\n');
+    combined.push_str(&String::from_utf8_lossy(&output.stderr));
+    Ok(combined
+        .lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())
+        .unwrap_or_default()
+        .to_owned())
+}
+
 fn run_runtime_command_capture_with_repair(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -1852,6 +1909,65 @@ pub fn run_compose_invocation_capture_with_env(
                     other => other,
                 }
             })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Run one Compose invocation whose progress a person is watching.
+///
+/// The command's output still lands in the checkout's retained backend
+/// record, exactly as a detached invocation does; every complete line is
+/// reported to `on_line` as it is written, so the caller can name what the
+/// runtime is doing while it does it (effigy#313). A stop request ends the
+/// invocation's whole process group and returns its status.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one invocation needs its policy, argv, env, stop flag and line sink"
+)]
+pub fn run_compose_invocation_streaming_with_env(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    program: &OsStr,
+    args: &[OsString],
+    label: &str,
+    env: &[(String, OsString)],
+    stop_requested: Option<&std::sync::atomic::AtomicBool>,
+    on_line: &mut dyn FnMut(&str),
+) -> Result<Output, ContainerExecError> {
+    let program = program.to_string_lossy();
+    match run_detached_command_streaming_with_env(
+        repo_root,
+        &program,
+        args,
+        label,
+        env,
+        stop_requested,
+        on_line,
+    ) {
+        Ok(output) => Ok(output),
+        // The same one-retry repair the capturing path takes, so a Colima DNS
+        // or runtime-state outage is repaired rather than reported as the
+        // stack's failure. Report events are idempotent, so the retry's
+        // repeated lines only rewrite steps that already exist.
+        Err(ContainerExecError::Failure {
+            command: _,
+            code: _,
+            stdout,
+            stderr,
+        }) if docker_failure_looks_like_colima_dns_outage(&stdout, &stderr)
+            || docker_failure_looks_like_colima_runtime_state_loss(&stdout, &stderr) =>
+        {
+            repair_colima_runtime(policy, repo_root)?;
+            run_detached_command_streaming_with_env(
+                repo_root,
+                &program,
+                args,
+                label,
+                env,
+                stop_requested,
+                on_line,
+            )
         }
         Err(error) => Err(error),
     }

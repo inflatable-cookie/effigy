@@ -350,26 +350,32 @@ Fix:
 ### Symptom: `<task>` is already running
 
 A task's lock is its run's gate, held exactly while that run's Effigy process
-lives. The error names the holder (pid on this host, run id, age, and
-`stopped` for a SIGSTOPped holder). Nothing reclaims or unlocks a live gate,
-and a crashed or killed holder has already released it.
+lives. The error names the holder: pid on this host, run id, age, whether it is
+attached to a terminal, and `stopped` for a SIGSTOPped holder. Nothing
+reclaims or unlocks a live gate, and a crashed or killed holder has already
+released it.
 
-Diagnosis:
+Diagnosis, by the holder's run id (a managed profile or a catalog-scoped
+selector has no `tasks status` row of its own, so the run is the reliable
+handle):
 
 ```sh
-effigy tasks status <selector>
+effigy run status <run>
+effigy runs            # every run of this checkout, newest first
 ```
 
-Fix: wait for the run, or stop it.
+Fix: wait for the run, stop it through its own owner, or press Ctrl-C in its
+terminal when the error says one is attached.
 
 ```sh
 effigy --lock-wait-ms 600000 <selector>
+effigy run stop <run>
 ```
 
 A shared `lock = "<name>"` or a built-in section can be held by another task or
-command: the error then
-points at `effigy tasks status --all`, which lists every live holder. Stop the
-holder, or let it finish, to release it.
+command: the same run id, pid, age and terminal facts name it, and
+`effigy runs` lists every holder. Stop the holder, or let it finish, to
+release it.
 
 ### Symptom: the error says an environment is busy
 
@@ -403,10 +409,13 @@ With `--json` the refusal carries `error.details`
 
 The environment still has runs attached (task holders, `exec` sessions or an
 attached dev session). That is a different refusal from a busy gate: it names
-the runs, and each ends through its own stop.
+each holding run with its task, pid, age and whether a terminal is attached,
+and each ends through its own stop.
 
 ```sh
-effigy tasks status --all
+effigy run status <run>
+effigy run stop <run>
+effigy runs
 ```
 
 ### Symptom: `<task>` status reads `interrupted`
