@@ -1114,6 +1114,17 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- `effigy gateway setup` migrates a v0.14.1 gateway the operator started, not
+  only a root one: when the recorded version is v0.14.1 the same
+  exact-generation stop runs as for the root case, and a current-generation
+  operator gateway is still left alone. A recorded gateway whose PID the kernel
+  confirms absent is now treated as an absent record and removed through the
+  byte-compared removal, instead of reporting an unknown identity and leaving
+  the files in place. A PID whose identity is not matched is still never
+  signalled. Absolute mkcert resolution, the dev-size staged-executable bound,
+  the elevation argv's operator environment, the macOS broker socket parent
+  check, its activation-path comparison and its stderr log path now each have a
+  regression test (effigy#392, effigy#403, effigy#405, effigy#406, effigy#408).
 - Stopping an empty Compose project still withdraws its owned routes; declared
   host processes take the normal stop path. Live listener and foreign successor
   routes remain protected. Backend output and VM interpolation files use checked

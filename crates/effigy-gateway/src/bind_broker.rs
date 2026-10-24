@@ -206,6 +206,34 @@ fn receive_reply(
     stream.write_all(b"A")?;
     Ok(listeners)
 }
+/// The activated socket's parent directory must be root-owned and must not be
+/// writable by anyone outside a root system group. macOS ships
+/// `/private/var/run` as root:daemon 0775, so group write is accepted only for
+/// wheel (0) or daemon (1); world write is always refused. The peer-UID check
+/// below remains the authentication.
+fn socket_parent_trusted(owner_uid: u32, group: u32, mode: u32, is_dir: bool) -> bool {
+    is_dir && owner_uid == 0 && mode & 0o002 == 0 && (mode & 0o020 == 0 || matches!(group, 0 | 1))
+}
+
+/// launchd may report the activated socket as `/var/run/...` (`/var` is a
+/// symlink to `/private/var`) or with the whole NUL-padded `sun_path` buffer;
+/// the root-owned plist pins the path. Cut the address at its first NUL and
+/// compare canonical paths.
+#[cfg(any(target_os = "macos", test))]
+fn activated_socket_path(raw: &Path) -> &Path {
+    use std::os::unix::ffi::OsStrExt;
+    let bytes = raw.as_os_str().as_bytes();
+    let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
+    Path::new(std::ffi::OsStr::from_bytes(&bytes[..end]))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn activated_socket_matches(raw: &Path, expected: &Path) -> bool {
+    let path = activated_socket_path(raw);
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    canonical(path) == canonical(expected)
+}
+
 /// Connect only to setup's root-owned socket under the root-owned run directory.
 pub fn request(addresses: [SocketAddr; 2]) -> io::Result<HandedListeners> {
     let uid = nix::unistd::Uid::effective().as_raw();
@@ -213,14 +241,7 @@ pub fn request(addresses: [SocketAddr; 2]) -> io::Result<HandedListeners> {
     let path = socket_path(uid);
     let parent = std::fs::symlink_metadata(Path::new("/private/var/run"))?;
     let metadata = std::fs::symlink_metadata(&path)?;
-    // macOS ships /private/var/run as root:daemon 0775. Group write is safe
-    // only for a root system group (wheel or daemon); never world write. The
-    // peer-UID check below remains the authentication.
-    let parent_group_safe = parent.mode() & 0o020 == 0 || matches!(parent.gid(), 0 | 1);
-    if !parent.is_dir()
-        || parent.uid() != 0
-        || parent.mode() & 0o002 != 0
-        || !parent_group_safe
+    if !socket_parent_trusted(parent.uid(), parent.gid(), parent.mode(), parent.is_dir())
         || !metadata.file_type().is_socket()
         || metadata.uid() != 0
         || metadata.mode() & 0o007 != 0
@@ -256,22 +277,12 @@ pub fn entry(uid: u32) -> io::Result<()> {
         .try_into()
         .map_err(|_| error("expected one broker socket"))?;
     let listener = UnixListener::from(fd);
-    // launchd may report the activated socket as /var/run/... (/var is a
-    // symlink to /private/var) or as unnamed; the root-owned plist pins the
-    // path. Compare canonical paths when a name is present.
     if let Some(raw) = listener.local_addr()?.as_pathname() {
-        // launchd's activated socket can report the whole NUL-padded
-        // sun_path buffer; the address ends at the first NUL.
-        use std::os::unix::ffi::OsStrExt;
-        let bytes = raw.as_os_str().as_bytes();
-        let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
-        let path = Path::new(std::ffi::OsStr::from_bytes(&bytes[..end]));
         let expected = socket_path(uid);
-        let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-        if canonical(path) != canonical(&expected) {
+        if !activated_socket_matches(raw, &expected) {
             eprintln!(
                 "effigy bind broker: unexpected socket {:?} (expected {})",
-                path,
+                activated_socket_path(raw),
                 expected.display()
             );
             return Err(error("unexpected broker socket"));
@@ -288,6 +299,56 @@ pub fn entry(uid: u32) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn broker_socket_parent_accepts_macos_run_directory_and_refuses_world_write() {
+        // macOS ships /private/var/run as root:daemon 0775, so a group-writable
+        // root system directory must not refuse every connection (#405).
+        assert!(socket_parent_trusted(0, 1, 0o40775, true));
+        assert!(socket_parent_trusted(0, 0, 0o40775, true));
+        assert!(socket_parent_trusted(0, 1, 0o40755, true));
+        // World write stays refused, and group write is safe only for wheel or
+        // daemon.
+        assert!(!socket_parent_trusted(0, 1, 0o40777, true));
+        assert!(!socket_parent_trusted(0, 1, 0o40776, true));
+        assert!(!socket_parent_trusted(0, 20, 0o40775, true));
+        // Not root-owned, and not a directory.
+        assert!(!socket_parent_trusted(501, 20, 0o40755, true));
+        assert!(!socket_parent_trusted(0, 1, 0o100775, false));
+    }
+    #[test]
+    fn activated_broker_socket_path_is_nul_trimmed_and_canonicalised() {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+        let root = tempfile::tempdir().unwrap();
+        let run = root.path().join("private/var/run");
+        std::fs::create_dir_all(&run).unwrap();
+        let socket = run.join("dev.effigy.gateway.bind-broker.501.sock");
+        // A real entry: launchd activation reports the path of the pinned
+        // socket, so canonicalisation must resolve existing names.
+        std::fs::write(&socket, b"").unwrap();
+        std::os::unix::fs::symlink(&run, root.path().join("var-run")).unwrap();
+        // launchd may report the symlinked /var/run form of the pinned path.
+        let via_link = root
+            .path()
+            .join("var-run")
+            .join(socket.file_name().unwrap());
+        assert!(activated_socket_matches(&via_link, &socket));
+        // ... and it may hand back the whole NUL-padded sun_path buffer.
+        let mut padded = socket.clone().into_os_string().into_vec();
+        padded.extend_from_slice(&[0u8; 24]);
+        let padded = Path::new(std::ffi::OsStr::from_bytes(&padded));
+        assert!(activated_socket_matches(padded, &socket));
+        // A different socket is still refused.
+        assert!(!activated_socket_matches(
+            &run.join("foreign.sock"),
+            &socket
+        ));
+        // The production pairing: macOS's /var is a symlink to /private/var.
+        #[cfg(target_os = "macos")]
+        assert!(activated_socket_matches(
+            Path::new("/var/run"),
+            Path::new("/private/var/run")
+        ));
+    }
     #[test]
     fn broker_refuses_wrong_uid_address_range_and_port_before_binding() {
         let good = [
