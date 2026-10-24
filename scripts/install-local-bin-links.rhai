@@ -1,3 +1,14 @@
+// Maintain the launcher on PATH for this checkout's stable local install.
+//
+// A fresh install writes the maintained wrapper. Anything already at the
+// launcher path that install:local did not generate is left byte-for-byte
+// alone and explained: a customized launcher or a custom symlink is the
+// operator's, and this task never clobbers, executes or reinterprets it.
+//
+// Only a regular file that positively matches the maintained wrapper format
+// and a recognised stable target (`<checkout>/.local-install/bin/effigy`) is
+// refreshed, and then only by writing a staged file and renaming it over the
+// old one.
 let link_dir = if env("EFFIGY_LOCAL_BIN_DIR") == "" {
     path::join(env("HOME"), ".local/bin")
 } else {
@@ -6,10 +17,14 @@ let link_dir = if env("EFFIGY_LOCAL_BIN_DIR") == "" {
 
 let stable_target = path::join(repo_root, ".local-install/bin/effigy");
 let stable_link = path::join(link_dir, "effigy");
+let staged_link = path::join(link_dir, ".effigy-wrapper.new");
 
-fn ensure_file(path, label) {
-    if !fs::is_file(path) {
+fn require_regular_file(path, label) {
+    if !fs::exists(path) || !fs::is_file(path) {
         throw `[error] missing ${label}: ${path}`;
+    }
+    if fs::is_symlink(path) {
+        throw `[error] refusing symlink ${label}: ${path}`;
     }
 }
 
@@ -26,34 +41,83 @@ fn run_check(label, program, process_args) {
         + "\nstdout:\n" + stdout + "\nstderr:\n" + stderr;
 }
 
-fn replace_symlink(target, link_path) {
-    if fs::exists(link_path) || fs::is_symlink(link_path) {
-        if !fs::is_symlink(link_path) {
-            throw `[error] refusing to replace non-symlink path: ${link_path}`;
-        }
-        fs::remove(link_path);
-    }
-    fs::create_symlink(target, link_path);
+fn wrapper_script(target) {
+    "#!/usr/bin/env bash\nset -euo pipefail\nexec \"" + target + "\" \"$@\"\n"
 }
 
-fn replace_wrapper(target, wrapper_path) {
-    if fs::exists(wrapper_path) || fs::is_symlink(wrapper_path) {
-        if !fs::is_symlink(wrapper_path) && !fs::is_file(wrapper_path) {
-            throw `[error] refusing to replace unsupported path: ${wrapper_path}`;
-        }
-        fs::remove(wrapper_path);
+// Read a regular file only when it is valid UTF-8 text. Unreadable or binary
+// content is reported as unknown, never as a wrapper to overwrite.
+fn read_text_or_none(path) {
+    try {
+        return fs::read_file(path);
+    } catch (error) {
+        return ();
     }
-    let script = "#!/usr/bin/env bash\nset -euo pipefail\nexec \"" + target + "\" \"$@\"\n";
-    fs::write_file(wrapper_path, script);
-    run_check("mark wrapper executable", "chmod", ["0755", wrapper_path]);
 }
 
-ensure_file(stable_target, "stable effigy binary");
+// Return the target when `contents` is exactly the maintained wrapper for a
+// recognised stable target, otherwise (). Both the format and the target have
+// to be positively known before anything is refreshed.
+fn recognised_generated_target(contents) {
+    let prefix = "#!/usr/bin/env bash\nset -euo pipefail\nexec \"";
+    let suffix = "\" \"$@\"\n";
+    if !str::starts_with(contents, prefix) || !str::ends_with(contents, suffix) {
+        return ();
+    }
+
+    let candidate = str::replace(str::replace(contents, prefix, ""), suffix, "");
+    if candidate == "" || candidate == contents {
+        return ();
+    }
+    if !str::starts_with(candidate, "/") {
+        return ();
+    }
+    if str::contains(candidate, "\"") || str::contains(candidate, "\n") {
+        return ();
+    }
+    if !str::ends_with(candidate, "/.local-install/bin/effigy") {
+        return ();
+    }
+
+    candidate
+}
+
+fn write_wrapper(target, wrapper_path, staged_path) {
+    fs::write_file(staged_path, wrapper_script(target));
+    run_check("mark wrapper executable", "chmod", ["0755", staged_path]);
+    run_check("activate stable channel wrapper", "mv", [staged_path, wrapper_path]);
+}
+
+fn explain_preserved(predicate, link_path) {
+    log_warn(`[warn] preserved existing ${predicate}: ${link_path}`);
+    log_warn("       it is not the wrapper install:local generates, so it was left untouched");
+    log_warn("       to adopt the maintained wrapper, move it aside and re-run `effigy install:local`");
+}
+
+require_regular_file(stable_target, "stable effigy binary");
 
 fs::create_dir(link_dir);
-replace_wrapper(stable_target, stable_link);
 
-log(`[ok] wrote stable channel wrapper: ${stable_link} -> ${stable_target}`);
+if fs::is_symlink(stable_link) {
+    explain_preserved("symlink launcher", stable_link);
+} else if !fs::exists(stable_link) {
+    write_wrapper(stable_target, stable_link, staged_link);
+    log(`[ok] wrote stable channel wrapper: ${stable_link} -> ${stable_target}`);
+} else if !fs::is_file(stable_link) {
+    throw `[error] refusing to replace unsupported path: ${stable_link}`;
+} else {
+    let contents = read_text_or_none(stable_link);
+    let recognised = if contents == () { () } else { recognised_generated_target(contents) };
+    if recognised == () {
+        explain_preserved("custom launcher", stable_link);
+    } else if recognised == stable_target {
+        log(`[ok] stable channel wrapper already current: ${stable_link} -> ${stable_target}`);
+    } else {
+        write_wrapper(stable_target, stable_link, staged_link);
+        log(`[ok] refreshed generated stable channel wrapper: ${stable_link} -> ${stable_target}`);
+        log(`[ok] replaced previous generated target: ${recognised}`);
+    }
+}
 
 let path_value = ":" + env("PATH") + ":";
 let rendered_link_dir = ":" + link_dir + ":";

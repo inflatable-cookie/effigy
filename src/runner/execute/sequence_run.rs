@@ -181,6 +181,11 @@ fn classify_tree(
         || !selection.task.concurrent.is_empty()
         || !super::pipeline::standard::checked_host_binding(preflight, selection, task_name)?
         || selection.task.uses_scratch() && crate::runner::scratch::wanted()
+        // The declared vault generation hook runs during `secrets =
+        // "required"` startup, before this task's body. It is a durable
+        // descendant the manifest names, so the tree class must include it
+        // before admission rather than refuse it mid-flight.
+        || super::pipeline::standard::startup_can_run_vault_generate_hook(preflight, selection)?
     {
         return Ok(false);
     }
@@ -898,6 +903,50 @@ mod tests {
     #[test]
     fn deferred_config_reference_stays_durable_before_execution() {
         assert!(!classify_manifest("[defer]\nrun = 'true'\nbuiltins = ['config']\n[tasks.start]\nscratch = false\nrun = [{task = 'config'}]\n"));
+    }
+
+    fn vault_generate_prelude(generate: Option<&str>) -> String {
+        let generate = generate.map(|line| format!("{line}\n")).unwrap_or_default();
+        format!(
+            "[secrets]\nbackend = 'effigy-vault'\n[secrets.vault]\npath = '.effigy/secrets/local.vault'\n{generate}[secrets.keys.api_token]\nrequired = true\ntargets = ['tasks']\n"
+        )
+    }
+
+    #[test]
+    fn declared_vault_generate_hook_selects_durability_before_task_startup() {
+        let hook = vault_generate_prelude(Some("generate = { task = 'secrets:generate-dev' }"));
+        let start = "[tasks.start]\nscratch = false\nsecrets = 'required'\nrun = 'true'\n";
+        assert!(
+            !classify_manifest(&format!("{hook}{start}")),
+            "a task whose required-secret startup can run the declared hook is durable"
+        );
+        assert!(
+            classify_manifest(&format!(
+                "{hook}[tasks.start]\nscratch = false\nrun = 'true'\n"
+            )),
+            "without `secrets = 'required'` startup never resolves the hook"
+        );
+        assert!(
+            classify_manifest(&format!(
+                "{hook}[tasks.start]\nscratch = false\nsecrets = 'required'\nrun = [{{task = 'other'}}]\n[tasks.other]\nscratch = false\nrun = 'true'\n"
+            )),
+            "a task reference is not a direct shell, so secret startup never runs"
+        );
+        assert!(
+            classify_manifest(&format!(
+                "{}[tasks.start]\nscratch = false\nsecrets = 'required'\nrun = 'true'\n",
+                vault_generate_prelude(None)
+            )),
+            "a manifest without a declared hook earns no durable admission"
+        );
+        assert!(
+            classify_manifest(&format!(
+                "{}[tasks.start]\nscratch = false\nsecrets = 'required'\nrun = 'true'\n",
+                vault_generate_prelude(Some("generate = { task = 'secrets:generate-dev' }"))
+                    .replace("targets = ['tasks']", "targets = ['containers']")
+            )),
+            "a key outside the task targets never reaches the hook"
+        );
     }
 
     #[test]

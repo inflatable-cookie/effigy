@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 mod adapters;
+mod busy;
 mod faults;
 mod importer;
 
