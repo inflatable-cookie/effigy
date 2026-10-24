@@ -52,5 +52,6 @@ pub use paths::{
     resolve_repo_relative_path, safe_path_component, state_capture_set_report_write_paths,
     state_report_write_paths, write_state_context_file, write_state_report,
     StateCaptureContextRequest, StateContextFile, StateIoError, StateReportWritePaths,
+    STATE_SURFACE_ROOT,
 };
 pub use validation::{validate_state_stack, StateStackParseError, StateStackValidationError};

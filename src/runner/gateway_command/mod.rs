@@ -1104,6 +1104,14 @@ fn render_dead_loopback_preview(report: &effigy_containers::LoopbackReclaimRepor
     if let Some(hold) = &report.plan.global_hold {
         lines.push(format!("[warn] all absent-path entries are held: {hold}"));
     }
+    // A foreign checkout whose own journal is unreadable holds nothing
+    // machine-wide (papercut 9e5134a4): name it so the operator can repair it.
+    for checkout in &report.plan.unreadable_checkouts {
+        lines.push(format!(
+            "[warn] runtime-scope records are unreadable for {}; only its own entries are affected: {}",
+            checkout.checkout, checkout.reason
+        ));
+    }
     if reclaim == 0 {
         lines.push("[info] no dead owners were identified".to_owned());
         return lines;

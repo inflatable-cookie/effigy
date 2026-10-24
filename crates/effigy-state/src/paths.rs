@@ -10,6 +10,18 @@ use crate::{
     STATE_STACK_APPLY_CONTEXT_SCHEMA, STATE_STACK_CAPTURE_CONTEXT_SCHEMA,
 };
 
+/// Checkout-relative root for everything the `effigy state` surface writes.
+///
+/// This is deliberately *not* `.effigy/state/`: that path is the runtime
+/// kernel's private (0700) checkout state root, so a capture artefact there
+/// either refused the whole kernel root or was refused by it (papercut
+/// 9e5134a4). The state surface owns its own folder beside it.
+pub const STATE_SURFACE_ROOT: &str = ".effigy/state-captures";
+
+fn state_surface_path(kind: &str) -> PathBuf {
+    PathBuf::from(STATE_SURFACE_ROOT).join(kind)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateReportWritePaths {
     pub compatibility_path: Option<PathBuf>,
@@ -126,9 +138,7 @@ pub fn build_state_capture_task_context(
         source,
         destination_ref,
     } = request;
-    let relative_path = PathBuf::from(".effigy")
-        .join("state")
-        .join("capture-context")
+    let relative_path = state_surface_path("capture-context")
         .join(safe_path_component(stack_name))
         .join(format!("{}.json", safe_path_component(&key)));
     StateContextFile {
@@ -156,9 +166,7 @@ pub fn build_state_apply_hook_context(
     role: String,
     apply_mode: String,
 ) -> StateContextFile<StateApplyHookContext> {
-    let relative_path = PathBuf::from(".effigy")
-        .join("state")
-        .join("apply-context")
+    let relative_path = state_surface_path("apply-context")
         .join(safe_path_component(stack_name))
         .join(format!("{}.json", safe_path_component(&layer.key)));
     StateContextFile {

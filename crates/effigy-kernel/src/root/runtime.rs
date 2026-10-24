@@ -118,7 +118,8 @@ impl StateRoot {
         cx.require(Capability::HostAuthority)
             .map_err(|_| StoreError::HostAuthorityRequired)?;
         let observe = observation(cx)?;
-        require_cutover(&observe, machine_home, Some(&location.root))?;
+        let local = cutover_root(cx, &observe, machine_home, Some(&location.root))?;
+        require_cutover(&observe, local, machine_home, Some(&location.root))?;
         let root = Self::effects(cx, &location.root)?
             .retain_checkout(location)?
             .route_machine_gates(&observe, machine_home);
@@ -190,7 +191,7 @@ impl StateRoot {
         if cx.placement() == Placement::Guest {
             return Observed::Unknown(UnknownReason::HostAuthorityRequired);
         }
-        match require_cutover(cx, home, None) {
+        match require_cutover(cx, StateRoot::machine_observe(cx, home), home, None) {
             Ok(()) => Self::machine_observe(cx, home),
             Err(error) => Observed::Unknown(UnknownReason::StoreUnreadable(error.to_string())),
         }
@@ -205,7 +206,8 @@ impl StateRoot {
         cx.require(Capability::HostAuthority)
             .map_err(|_| StoreError::HostAuthorityRequired)?;
         let observe = observation(cx)?;
-        require_cutover(&observe, home, None)?;
+        let local = cutover_root(cx, &observe, home, None)?;
+        require_cutover(&observe, local, home, None)?;
         let root = Self::machine_effects(cx, home)?;
         if matches!(
             authority(&observe, &root),
@@ -292,15 +294,12 @@ fn observation(cx: &EffectContext) -> Result<ObserveContext, StoreError> {
 
 fn require_cutover(
     cx: &ObserveContext,
+    local: Observed<StateRoot>,
     machine_home: &Path,
     checkout: Option<&Path>,
 ) -> Result<(), StoreError> {
     // A sealed checkout remains independently usable even when the machine
     // store is unavailable. A partial import remains a refusal everywhere.
-    let local = match checkout {
-        Some(path) => StateRoot::observe(cx, path),
-        None => StateRoot::machine_observe(cx, machine_home),
-    };
     match local {
         Observed::Verified(root, _) => match authority(cx, &root) {
             Observed::Verified(Authority::Committed { .. }, _) => return Ok(()),
@@ -344,6 +343,39 @@ fn require_cutover(
         other => return Err(unreadable(format!("legacy runtime root: {other:?}"))),
     }
     Ok(())
+}
+
+/// The local root an effect decides the cutover from.
+///
+/// A leftover group/other-readable mode on `.effigy/state/` (v0.14
+/// `effigy state`, papercut 9e5134a4) is not a fact about the journal. The same
+/// adoption an effect performs, which only tightens a directory that already
+/// exists, resolves it, so the cutover is decided on the real root instead of
+/// refusing every task in the checkout. No new destination is created before
+/// the cutover decision, and pure observation keeps such a root `Unknown`.
+fn cutover_root(
+    cx: &EffectContext,
+    observe: &ObserveContext,
+    machine_home: &Path,
+    checkout: Option<&Path>,
+) -> Result<Observed<StateRoot>, StoreError> {
+    let local = match checkout {
+        Some(path) => StateRoot::observe(observe, path),
+        None => StateRoot::machine_observe(observe, machine_home),
+    };
+    match local {
+        Observed::Unknown(reason) if crate::root::is_open_mode_only(&reason) => {
+            let adopted = match checkout {
+                Some(path) => StateRoot::effects(cx, path),
+                None => StateRoot::machine_effects(cx, machine_home),
+            }?;
+            Ok(Observed::Verified(
+                adopted,
+                Evidence::new("adopted state root mode".into(), None).expect("fixed source"),
+            ))
+        }
+        other => Ok(other),
+    }
 }
 
 pub(crate) fn verify(cx: &ObserveContext, root: &StateRoot) -> Result<(), StoreError> {

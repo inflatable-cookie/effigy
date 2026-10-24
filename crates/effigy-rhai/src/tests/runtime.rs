@@ -88,7 +88,8 @@ fn execute_rhai_script_resolves_imports_from_catalog_root() {
 #[test]
 fn execute_rhai_script_exposes_state_capture_context_helpers() {
     let root = temp_root("state-capture-context");
-    let context_path = root.join(".effigy/state/capture-context/acowtancy-uat/new-content.json");
+    let context_path =
+        root.join(".effigy/state-captures/capture-context/acowtancy-uat/new-content.json");
     fs::create_dir_all(context_path.parent().expect("context dir")).expect("context dir");
     fs::write(
         &context_path,
@@ -99,7 +100,7 @@ fn execute_rhai_script_exposes_state_capture_context_helpers() {
   "capture_role": "uat-capture",
   "source_environment": "uat",
   "key": "new-content",
-  "source": ".effigy/state/captures/new-content.json",
+  "source": ".effigy/state-captures/captures/new-content.json",
   "destination_ref": "oci://ghcr.io/acowtancy/state:new-content"
 }
 "#,
@@ -114,11 +115,11 @@ fn execute_rhai_script_exposes_state_capture_context_helpers() {
     let _env = crate::ScopedHostEnvOverrides::set_many(&[
         (
             "EFFIGY_STATE_CAPTURE_CONTEXT",
-            ".effigy/state/capture-context/acowtancy-uat/new-content.json".to_owned(),
+            ".effigy/state-captures/capture-context/acowtancy-uat/new-content.json".to_owned(),
         ),
         (
             "EFFIGY_STATE_CAPTURE_SOURCE",
-            ".effigy/state/captures/new-content.json".to_owned(),
+            ".effigy/state-captures/captures/new-content.json".to_owned(),
         ),
         (
             "EFFIGY_STATE_CAPTURE_DESTINATION_REF",
@@ -129,8 +130,8 @@ fn execute_rhai_script_exposes_state_capture_context_helpers() {
         let context = state::capture_context();
         if context["stack_name"] != "acowtancy-uat" { throw("stack"); }
         if context["key"] != "new-content" { throw("key"); }
-        if !str::ends_with(state::capture_context_path(), "/.effigy/state/capture-context/acowtancy-uat/new-content.json") { throw("context path"); }
-        if state::capture_source() != ".effigy/state/captures/new-content.json" { throw("source"); }
+        if !str::ends_with(state::capture_context_path(), "/.effigy/state-captures/capture-context/acowtancy-uat/new-content.json") { throw("context path"); }
+        if state::capture_source() != ".effigy/state-captures/captures/new-content.json" { throw("source"); }
         if state::capture_destination_ref() != "oci://ghcr.io/acowtancy/state:new-content" { throw("ref"); }
     "#;
 
@@ -141,7 +142,8 @@ fn execute_rhai_script_exposes_state_capture_context_helpers() {
 #[test]
 fn execute_rhai_script_exposes_state_capture_set_in_capture_hook_context() {
     let root = temp_root("state-capture-set-context");
-    let context_path = root.join(".effigy/state/capture-context/acowtancy-uat/new-content.json");
+    let context_path =
+        root.join(".effigy/state-captures/capture-context/acowtancy-uat/new-content.json");
     fs::create_dir_all(context_path.parent().expect("context dir")).expect("context dir");
     fs::write(
         &context_path,
@@ -152,7 +154,7 @@ fn execute_rhai_script_exposes_state_capture_set_in_capture_hook_context() {
   "capture_role": "uat-capture",
   "source_environment": "uat",
   "key": "new-content",
-  "source": ".effigy/state/captures/new-content.json",
+  "source": ".effigy/state-captures/captures/new-content.json",
   "destination_ref": "oci://ghcr.io/acowtancy/state:new-content"
 }
 "#,
@@ -167,11 +169,11 @@ fn execute_rhai_script_exposes_state_capture_set_in_capture_hook_context() {
     let _env = crate::ScopedHostEnvOverrides::set_many(&[
         (
             "EFFIGY_STATE_CAPTURE_CONTEXT",
-            ".effigy/state/capture-context/acowtancy-uat/new-content.json".to_owned(),
+            ".effigy/state-captures/capture-context/acowtancy-uat/new-content.json".to_owned(),
         ),
         (
             "EFFIGY_STATE_CAPTURE_SOURCE",
-            ".effigy/state/captures/new-content.json".to_owned(),
+            ".effigy/state-captures/captures/new-content.json".to_owned(),
         ),
         (
             "EFFIGY_STATE_CAPTURE_DESTINATION_REF",
@@ -204,7 +206,8 @@ fn execute_rhai_script_exposes_state_capture_set_in_capture_hook_context() {
 #[test]
 fn execute_rhai_script_exposes_state_apply_context_helpers() {
     let root = temp_root("state-apply-context");
-    let context_path = root.join(".effigy/state/apply-context/acowtancy-uat/legacy-media.json");
+    let context_path =
+        root.join(".effigy/state-captures/apply-context/acowtancy-uat/legacy-media.json");
     fs::create_dir_all(context_path.parent().expect("context dir")).expect("context dir");
     fs::write(
         &context_path,
@@ -232,14 +235,14 @@ fn execute_rhai_script_exposes_state_apply_context_helpers() {
     };
     let _env = crate::ScopedHostEnvOverrides::set_many(&[(
         "EFFIGY_STATE_APPLY_CONTEXT",
-        ".effigy/state/apply-context/acowtancy-uat/legacy-media.json".to_owned(),
+        ".effigy/state-captures/apply-context/acowtancy-uat/legacy-media.json".to_owned(),
     )]);
     let script = r#"
         let context = state::apply_context();
         if context["stack_name"] != "acowtancy-uat" { throw("stack"); }
         if context["layer"]["key"] != "legacy-media" { throw("layer"); }
         if context["layer"]["artifact_report"]["metadata"]["primary_files"][0] != "/tmp/media.oci" { throw("artifact"); }
-        if !str::ends_with(state::apply_context_path(), "/.effigy/state/apply-context/acowtancy-uat/legacy-media.json") { throw("context path"); }
+        if !str::ends_with(state::apply_context_path(), "/.effigy/state-captures/apply-context/acowtancy-uat/legacy-media.json") { throw("context path"); }
     "#;
 
     execute_rhai_script_with_runtime_context(&context, None, script, &[], &callbacks())

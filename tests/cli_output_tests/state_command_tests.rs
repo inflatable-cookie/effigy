@@ -949,7 +949,7 @@ fn cli_state_capture_yes_runs_task_before_staging() {
         .expect("context path");
     assert_eq!(
         context_path,
-        ".effigy/state/capture-context/acowtancy-uat/uat-capture-2026-05-08.json"
+        ".effigy/state-captures/capture-context/acowtancy-uat/uat-capture-2026-05-08.json"
     );
     assert_eq!(
         result["capture_artifacts"][0]["operation"],
@@ -1027,6 +1027,75 @@ fn cli_state_capture_named_profile_accepts_inline_rhai_task() {
         fs::read_to_string(root.join("captures/inline-2026-05-13.txt")).expect("read capture"),
         "inline-2026-05-13"
     );
+}
+
+/// Papercut 9e5134a4: v0.14 `effigy state` left `.effigy/state/` at the
+/// process umask, which Q-010 made the kernel's private root. A capture must
+/// still run in that checkout: the effect path adopts the root (tightening it
+/// to 0700) instead of refusing every nested task with an unreadable journal.
+#[cfg(unix)]
+#[test]
+fn cli_state_capture_adopts_a_legacy_open_state_root_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = temp_execution_workspace("state-capture-legacy-open-mode");
+    fs::create_dir_all(root.join("scripts")).expect("mkdir scripts");
+    fs::write(
+        root.join("scripts/capture.rhai"),
+        r#"fs::create_dir("captures"); fs::write_file(state::capture_source(), state::capture_context()["key"].to_string());"#,
+    )
+    .expect("write rhai");
+    fs::write(
+        root.join("effigy.toml"),
+        manifest_state_inline_capture_task_fixture(),
+    )
+    .expect("write effigy manifest");
+    let state = root.join(".effigy/state");
+    let legacy = state.join("capture-context/acme/uat/legacy.json");
+    fs::create_dir_all(legacy.parent().expect("legacy parent")).expect("mkdir legacy context");
+    fs::write(&legacy, b"{}\n").expect("write legacy context");
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o755)).expect("legacy mode");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .arg("--repo")
+        .arg(&root)
+        .arg("--json")
+        .args([
+            "state",
+            "capture",
+            "uat",
+            "new-content",
+            "--key",
+            "legacy-open-mode",
+            "--yes",
+        ])
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run effigy");
+
+    assert!(
+        output.status.success(),
+        "state capture failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let payload = parse_stdout_json(&output);
+    assert_eq!(payload["result"]["ok"], true);
+    assert_eq!(payload["result"]["tasks"][0]["status"], "executed");
+    assert_eq!(
+        payload["result"]["tasks"][0]["context_path"],
+        ".effigy/state-captures/capture-context/acowtancy-uat/legacy-open-mode.json"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("captures/legacy-open-mode.txt")).expect("read capture"),
+        "legacy-open-mode"
+    );
+    let mode = fs::symlink_metadata(&state)
+        .expect("state root")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o700, "the effect adopts the leftover mode");
+    assert!(legacy.is_file(), "adoption keeps the legacy content");
 }
 
 #[test]

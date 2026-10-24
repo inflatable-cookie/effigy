@@ -15,7 +15,7 @@ use super::{
 use crate::exec::{
     RunningComposeContainer, RunningComposeContainerInventory, RunningComposeContainerProfiled,
 };
-use crate::runtime::scope::ScopeRecord;
+use crate::runtime::scope::{ScopeObservations, ScopeRecord};
 
 const MISSING: &str = "/effigy-test/definitely/missing/checkout";
 
@@ -37,7 +37,7 @@ fn registry_with(entries: &[(&str, u16, &str)]) -> PortRegistry {
 
 fn clean_facts() -> PortRecoveryFacts {
     PortRecoveryFacts {
-        scopes: Ok(Vec::new()),
+        scopes: readable_scopes(Vec::new()),
         routes: Ok(RouteTable::new()),
         inventory: RunningComposeContainerInventory::default(),
         running_profile: "effigy".to_owned(),
@@ -129,6 +129,10 @@ impl ScopeRecordProfile for ScopeRecord {
     }
 }
 
+fn readable_scopes(records: Vec<ScopeRecord>) -> Result<ScopeObservations, String> {
+    Ok(ScopeObservations::readable(records))
+}
+
 #[test]
 fn borrowing_environment_record_holds_the_owner_port_allocation() {
     // A `data_from` borrower shares its checkout (and therefore its scope
@@ -141,7 +145,7 @@ fn borrowing_environment_record_holds_the_owner_port_allocation() {
         &["acowtancy-dev-hybrid"],
     );
     let mut facts = clean_facts();
-    facts.scopes = Ok(vec![record]);
+    facts.scopes = readable_scopes(vec![record]);
     let registry = registry_with(&[
         ("acowtancy-dev", 8100, MISSING),
         ("acowtancy-dev-hybrid", 8300, MISSING),
@@ -206,7 +210,7 @@ fn scope_record_with_volumes(token: &str, checkout: &str, projects: &[&str]) -> 
 fn runtime_scope_record_retaining_volumes_holds_missing_allocation() {
     let registry = registry_with(&[("owned", 8100, MISSING)]);
     let facts = PortRecoveryFacts {
-        scopes: Ok(vec![scope_record_with_volumes(
+        scopes: readable_scopes(vec![scope_record_with_volumes(
             "tok1",
             "/elsewhere",
             &["owned"],
@@ -225,7 +229,7 @@ fn runtime_scope_record_retaining_volumes_holds_missing_allocation() {
 fn scope_checkout_match_retaining_volumes_holds_without_project_name() {
     let registry = registry_with(&[("renamed", 8100, MISSING)]);
     let facts = PortRecoveryFacts {
-        scopes: Ok(vec![scope_record_with_volumes("tok2", MISSING, &[])]),
+        scopes: readable_scopes(vec![scope_record_with_volumes("tok2", MISSING, &[])]),
         ..clean_facts()
     };
     let plan = plan_recovery(&registry, &facts, missing_everywhere, no_bound_ports);
@@ -241,7 +245,7 @@ fn scope_record_on_an_observed_profile_with_nothing_left_is_reclaimed() {
     // reclaimable.
     let registry = registry_with(&[("bare", 8100, MISSING)]);
     let facts = PortRecoveryFacts {
-        scopes: Ok(vec![scope_record("tok3", MISSING, &["bare"])]),
+        scopes: readable_scopes(vec![scope_record("tok3", MISSING, &["bare"])]),
         ..clean_facts()
     };
     let plan = plan_recovery(&registry, &facts, missing_everywhere, no_bound_ports);
@@ -261,7 +265,7 @@ fn scope_record_naming_a_stopped_profile_holds_its_own_entry() {
         ("gone", 8200, "/effigy-test/elsewhere/gone"),
     ]);
     let facts = PortRecoveryFacts {
-        scopes: Ok(vec![
+        scopes: readable_scopes(vec![
             scope_record("tok4", MISSING, &["release-proof"]).with_profile("effigy-release")
         ]),
         inventory: RunningComposeContainerInventory {
@@ -390,6 +394,36 @@ fn unreadable_scope_store_is_a_global_hold_not_an_empty_store() {
 }
 
 #[test]
+fn unreadable_checkout_holds_only_its_own_entry() {
+    // Papercut 9e5134a4: one checkout's unreadable journal used to hold the
+    // whole registry. It is reported per checkout, and another missing
+    // project's allocation is still reclaimed.
+    let registry = registry_with(&[("gone", 8100, MISSING), ("here", 8200, "/effigy-test/live")]);
+    let facts = PortRecoveryFacts {
+        scopes: Ok(ScopeObservations::default()
+            .with_unreadable("/effigy-test/live", "group- or other-accessible mode")),
+        ..clean_facts()
+    };
+    let probe = |path: &Path| {
+        if path == Path::new("/effigy-test/live") {
+            PathState::Present
+        } else {
+            PathState::Missing
+        }
+    };
+    let plan = plan_recovery(&registry, &facts, probe, no_bound_ports);
+
+    assert_eq!(plan.global_hold, None);
+    assert_eq!(decision_for(&plan, "gone").0, Decision::Reclaim);
+    assert_eq!(decision_for(&plan, "here").0, Decision::Retain);
+    assert_eq!(plan.unreadable_checkouts.len(), 1);
+    assert_eq!(
+        plan.unreadable_checkouts[0].checkout,
+        "/effigy-test/live".to_owned()
+    );
+}
+
+#[test]
 fn shared_project_path_holds_every_allocation_on_it() {
     let registry = registry_with(&[("a", 8100, MISSING), ("b", 8200, MISSING)]);
     let plan = plan_recovery(
@@ -448,7 +482,7 @@ fn capacity_reports_free_ranges_before_and_after_reclaim() {
     let plan = plan_recovery(
         &registry,
         &PortRecoveryFacts {
-            scopes: Ok(Vec::new()),
+            scopes: readable_scopes(Vec::new()),
             routes: Ok(RouteTable::new()),
             inventory: RunningComposeContainerInventory::default(),
             running_profile: "effigy".to_owned(),
@@ -479,7 +513,7 @@ fn plan_digest_changes_when_a_decision_changes() {
     let held = plan_recovery(
         &registry,
         &PortRecoveryFacts {
-            scopes: Ok(vec![scope_record_with_volumes("tok", "/x", &["gone"])]),
+            scopes: readable_scopes(vec![scope_record_with_volumes("tok", "/x", &["gone"])]),
             ..clean_facts()
         },
         missing_everywhere,

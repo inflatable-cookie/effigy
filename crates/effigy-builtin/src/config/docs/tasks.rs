@@ -337,7 +337,7 @@ pub(super) fn state_lines(profile: ConfigDocProfile) -> Vec<&'static str> {
         "[state.uat.captures.new-content]",
         "role = \"uat-capture\"",
         "source_env = \"uat\"",
-        "source = \".effigy/state/captures/{key}.tar\"",
+        "source = \".effigy/state-captures/captures/{key}.tar\"",
         "ref = \"oci://ghcr.io/acme/state:{key}\"",
         "task = \"state:capture-new-content\"",
         "",

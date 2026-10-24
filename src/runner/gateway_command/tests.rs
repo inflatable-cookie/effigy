@@ -2034,6 +2034,7 @@ fn dead_loopback_report(
         domain_claims: vec![claim],
         owner_checkout: applied.then(|| "/gone".to_owned()),
         global_hold: None,
+        unreadable_checkouts: Vec::new(),
         digest: "digest".to_owned(),
     };
     let reclaiming = assignment_decision == effigy_containers::Decision::Reclaim;

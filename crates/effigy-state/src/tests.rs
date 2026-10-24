@@ -192,7 +192,9 @@ fn capture_and_apply_env_helpers_expose_expected_keys() {
             destination_ref: Some("oci://example.test/acowtancy:uat"),
             capture_role: StateLayerRole::UatCapture,
             capture_mode: StateCaptureMode::UatOverlay,
-            context_path: Some(".effigy/state/capture-context/acowtancy-uat/uat-content.json"),
+            context_path: Some(
+                ".effigy/state-captures/capture-context/acowtancy-uat/uat-content.json",
+            ),
         },
     );
     assert_eq!(
@@ -239,7 +241,7 @@ fn write_state_context_file_returns_repo_relative_path() {
     let repo = temp_state_repo("state-context");
     let context = StateContextFile {
         relative_path: std::path::PathBuf::from(
-            ".effigy/state/capture-context/acowtancy-uat/uat.json",
+            ".effigy/state-captures/capture-context/acowtancy-uat/uat.json",
         ),
         context: serde_json::json!({ "schema": STATE_STACK_CAPTURE_CONTEXT_SCHEMA }),
     };
@@ -254,7 +256,7 @@ fn write_state_context_file_returns_repo_relative_path() {
 
     assert_eq!(
         written,
-        ".effigy/state/capture-context/acowtancy-uat/uat.json"
+        ".effigy/state-captures/capture-context/acowtancy-uat/uat.json"
     );
     assert!(repo.join(&written).exists());
 }

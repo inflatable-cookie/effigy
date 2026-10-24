@@ -15,6 +15,8 @@ use std::path::{Component, Path, PathBuf};
 
 pub(crate) const DIR_MODE: u32 = 0o700;
 pub(crate) const FILE_MODE: u32 = 0o600;
+/// Reason reported when a trusted object carries group or other bits.
+pub(crate) const OPEN_MODE_REASON: &str = "group- or other-accessible mode";
 
 /// Fixed-shape error facts. `errno` lets callers tell ENOSPC from EPERM.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -76,6 +78,11 @@ impl FsError {
     }
     pub(crate) fn is_not_found(&self) -> bool {
         matches!(self, Self::Io(error) if error.errno == Some(libc::ENOENT))
+    }
+    /// The only defect was a group/other-accessible mode on an otherwise
+    /// trusted, operator-owned object.
+    pub(crate) fn is_open_mode(&self) -> bool {
+        matches!(self, Self::Untrusted { reason, .. } if reason == OPEN_MODE_REASON)
     }
 }
 impl fmt::Display for FsError {
@@ -211,6 +218,43 @@ impl DirFd {
         match self.descend(name.as_bytes(), trust, create.then_some(DIR_MODE)) {
             Ok(dir) => Ok(Some(dir)),
             Err(error) if error.is_not_found() && !create => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+    /// A private child directory whose *only* acceptable repair is tightening
+    /// an existing one's group/other bits to 0700.
+    ///
+    /// v0.14's `effigy state` created `.effigy/state/` with the process umask
+    /// (0755), which Q-010 later made the kernel's private checkout state root
+    /// (papercut 9e5134a4). For one release a checkout whose root already
+    /// exists operator-owned, local and not writable by another user is
+    /// adopted by tightening its mode; nothing looser is ever adopted, and the
+    /// strict check still runs on the result. Observation paths never call
+    /// this, so a foreign checkout's bad mode stays `Unknown` there.
+    pub(crate) fn private_child_adopt(&self, name: &str) -> Result<Self, FsError> {
+        match self.child(name, Trust::Private, true) {
+            Ok(Some(dir)) => Ok(dir),
+            Ok(None) => Err(FsError::untrusted(
+                &self.join(name),
+                "private directory was not created",
+            )),
+            Err(error) if error.is_open_mode() => {
+                // `Trust::Operator` rejects a foreign owner and any
+                // group/other *write* bit before the mode is tightened.
+                let Some(existing) = self.child(name, Trust::Operator, false)? else {
+                    return Err(error);
+                };
+                existing.require_local()?;
+                existing.chmod(DIR_MODE)?;
+                existing.sync()?;
+                existing.check(
+                    &existing.stat()?,
+                    Trust::Private,
+                    Kind::Dir,
+                    existing.path(),
+                )?;
+                Ok(existing)
+            }
             Err(error) => Err(error),
         }
     }
@@ -720,7 +764,7 @@ pub(crate) fn check(
         Trust::Private => mode & 0o077 == 0,
     };
     if !mode_ok {
-        return Err(FsError::untrusted(path, "group- or other-accessible mode"));
+        return Err(FsError::untrusted(path, OPEN_MODE_REASON));
     }
     if kind == Kind::File && trust == Trust::Private && stat.st_nlink as u64 > 1 {
         return Err(FsError::untrusted(path, "hard-linked file"));
