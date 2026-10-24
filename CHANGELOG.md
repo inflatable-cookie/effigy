@@ -519,6 +519,17 @@ During v0.x, MINOR bumps may include breaking changes.
   bounded, redacted output instead of `(code=Some(2))` and the whole streams,
   and the Debug ratchet baseline drops from 239 to 226.
 
+- A deleted or stopped Colima profile is no longer a dead end: the next command
+  that needs it creates the profile with Effigy's managed arguments (SSH agent
+  forwarding, DNS fallbacks, managed resources, platform overrides) or starts
+  it, and says which happened in one line. `effigy-release`, the Linux workspace
+  artifact builder's profile, is recreated the same way. A running profile whose
+  managed config drifted (for example `forwardAgent: false`) is restarted with
+  the managed arguments instead of failing later with a broken SSH-agent mount.
+  Owned containers a profile creation or restart left with an unreadable
+  identity are stopped and recreated on the next activation under the existing
+  exact-owner rules; foreign and unknown owners still refuse. Nothing needs a
+  manual `colima start` or `effigy container down`.
 - Task journals live in the owning checkout's `.effigy/state/`. Durable
   initialization refuses an unresolved legacy migration and binds checkout
   and Git directory generations, so same-path replacements cannot adopt old

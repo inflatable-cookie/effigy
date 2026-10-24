@@ -17,9 +17,10 @@ mod ssh_agent_preflight;
 
 pub use colima_runtime::{
     colima_is_running, colima_is_running_with_deadline, colima_profile_warnings,
-    ensure_colima_running, ensure_runtime_backend_running, recover_colima_runtime,
-    reset_colima_runtime, running_colima_profiles, runtime_backend_is_running,
-    selected_backend_label, ColimaRecoveryReport,
+    ensure_colima_running, ensure_colima_running_report, ensure_runtime_backend_running,
+    ensure_runtime_backend_running_report, recover_colima_runtime, reset_colima_runtime,
+    running_colima_profiles, runtime_backend_is_running, selected_backend_label,
+    ColimaEnsureReport, ColimaRecoveryReport,
 };
 pub use healthcheck_pidfiles::{
     inspect_run_inode_pressure, parse_health_check_pidfile_prune, parse_run_inode_pressure,
@@ -40,12 +41,13 @@ pub use implementation::{
     list_running_compose_containers_for_policy_with_timeout,
     list_running_compose_containers_for_profile,
     list_running_compose_containers_for_project_with_deadline,
-    list_running_compose_containers_profiled, owned_service_listing_args, run_backend_invocation,
+    list_running_compose_containers_profiled, owned_service_listing_args,
+    reconcile_stale_owned_containers, remove_stale_owned_containers, run_backend_invocation,
     run_compose_capture, run_compose_invocation_capture, run_compose_invocation_capture_with_env,
     run_docker_capture, running_stack_admits_reactivation, shutdown_container,
     verify_owned_running_compose_identities, verify_owned_running_compose_rows,
     verify_workspace_artifact_builder, verify_workspace_artifact_builder_declaration,
-    ContainerExecError, OwnershipContext, RunningComposeContainerInventory,
+    ContainerExecError, OwnershipContext, ReactivationAdmission, RunningComposeContainerInventory,
     RuntimeInventoryFailure, VerifiedComposeContainer,
 };
 pub use managed_stop::{end_owned_container_process_group, verify_owned_stack_for_shutdown};

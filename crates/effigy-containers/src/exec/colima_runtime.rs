@@ -17,7 +17,8 @@ use super::process::{
 use crate::{
     colima::{
         colima_start_command, colima_status_command, colima_stop_command,
-        managed_colima_profile_resources, parse_colima_running, prepare_managed_colima_profile,
+        managed_colima_profile_drift, managed_colima_profile_resources, parse_colima_running,
+        prepare_managed_colima_profile,
     },
     compose::{resolve_compose_backend_for_repo, resolve_host_cli_program, ComposeBackend},
     user_global_backend_preference, user_global_colima_profile, BackendId,
@@ -26,6 +27,11 @@ use crate::{
 };
 
 const COLIMA_START_TIMEOUT: Duration = Duration::from_secs(90);
+/// A profile that does not exist yet pays for the VM image, its boot and the
+/// boot provisioning, so creating it is bounded further out than starting a
+/// stopped one. Without this a deleted profile could never finish its first
+/// boot inside the start bound.
+const COLIMA_CREATE_TIMEOUT: Duration = Duration::from_secs(300);
 const COLIMA_RUNTIME_READY_TIMEOUT: Duration = Duration::from_secs(90);
 const COLIMA_RUNNING_PROFILE_GRACE: Duration = Duration::from_secs(30);
 const COLIMA_RUNTIME_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -33,6 +39,9 @@ const COLIMA_RUNTIME_PROBE_INTERVAL: Duration = Duration::from_millis(500);
 const COLIMA_STATUS_TIMEOUT: Duration = Duration::from_secs(30);
 const COLIMA_STOP_TIMEOUT: Duration = Duration::from_secs(45);
 const COLIMA_STOP_SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Bound for the stale owned-container reconcile that follows a profile
+/// creation or restart: one project inventory plus an inspect per row.
+const OWNED_CONTAINER_RECONCILE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Bound for starting stopped runtime units inside a running VM, and for the
 /// readiness re-check that follows, before falling back to a VM restart.
 const COLIMA_UNIT_START_TIMEOUT: Duration = Duration::from_secs(30);
@@ -57,13 +66,104 @@ struct ColimaProfileEntry {
 /// its files; a clean profile walks a handful.
 const HEALTHCHECK_PIDFILE_PRUNE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// What one managed-profile ensure did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ColimaEnsureReport {
+    /// The profile was not running, so this call started it.
+    pub started: bool,
+    /// The profile was created or restarted by this call. Every owned
+    /// container admitted against the previous profile is gone or stale, so a
+    /// retained container admission recorded earlier is void.
+    pub profile_created_or_restarted: bool,
+    /// Owned containers stopped and removed because the transition left their
+    /// canonical identity unreadable. The next activation recreates them.
+    pub reconciled_containers: Vec<String>,
+}
+
 pub fn ensure_colima_running(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
 ) -> Result<bool, ContainerExecError> {
-    let started = ensure_colima_profile_running(policy, repo_root)?;
+    Ok(ensure_colima_running_report(policy, repo_root)?.started)
+}
+
+/// The one entry point for a managed Colima profile: create it when it does not
+/// exist, start it when stopped, restart it when its managed settings drifted,
+/// and reconcile the owned containers the transition left stale.
+pub fn ensure_colima_running_report(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<ColimaEnsureReport, ContainerExecError> {
+    let action = ensure_colima_profile_running(policy, repo_root)?;
+    let mut report = ColimaEnsureReport {
+        started: action != ColimaProfileAction::Reused,
+        profile_created_or_restarted: action.recreates_profile(),
+        reconciled_containers: Vec::new(),
+    };
+    // A profile Effigy just created or restarted can hold owned containers
+    // whose canonical identity the transition left unreadable. Reconcile them
+    // under the exact-owner rules now, so no run is left asking for a manual
+    // `down` (contract 005, "A deleted Colima profile is recreated").
+    if action.recreates_profile() {
+        report.reconciled_containers =
+            reconcile_owned_containers_after_profile_transition(policy, repo_root);
+    }
     maintain_health_check_pid_files(policy, repo_root);
-    Ok(started)
+    Ok(report)
+}
+
+/// What the one managed-profile entry point did to reach a running profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColimaProfileAction {
+    /// The profile was already running with Effigy's managed settings.
+    Reused,
+    /// The profile did not exist: first use, or the user deleted it.
+    Created,
+    /// The profile existed but its VM was stopped.
+    Started,
+    /// The profile was running without a managed setting and was restarted.
+    Restarted,
+}
+
+impl ColimaProfileAction {
+    /// Whether this call replaced the profile the previous generation ran on.
+    /// A created profile keeps nothing, and a restarted one can still carry
+    /// containers whose identity the restart left unreadable, so either way any
+    /// earlier container admission is void and the owned containers must be
+    /// reconciled.
+    fn recreates_profile(self) -> bool {
+        matches!(self, Self::Created | Self::Restarted)
+    }
+}
+
+/// The stale-container reconcile a profile transition owns. It never fails the
+/// bring-up: the activation that follows reports its own precise refusal when
+/// a container it needs is still unverifiable, and a foreign or unknown owner
+/// is refused there by the same rules.
+fn reconcile_owned_containers_after_profile_transition(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Vec<String> {
+    let deadline = Instant::now() + OWNED_CONTAINER_RECONCILE_TIMEOUT;
+    match crate::exec::reconcile_stale_owned_containers(repo_root, policy, deadline) {
+        Ok(reconciled) if !reconciled.is_empty() => {
+            eprintln!(
+                "[info] Colima profile `{}`: stopped and removed {} owned container(s) left stale by the profile transition ({}); the next activation recreates them",
+                policy.profile,
+                reconciled.len(),
+                reconciled.join(", "),
+            );
+            reconciled
+        }
+        Ok(_) => Vec::new(),
+        Err(error) => {
+            eprintln!(
+                "[warn] Colima profile `{}`: stale owned container reconcile skipped: {error}",
+                policy.profile
+            );
+            Vec::new()
+        }
+    }
 }
 
 /// `container up`'s bounded prune of the pid files nerdctl 2.3.1 health checks
@@ -90,14 +190,74 @@ fn maintain_health_check_pid_files(policy: &EffectiveContainerPolicy, repo_root:
 fn ensure_colima_profile_running(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
-) -> Result<bool, ContainerExecError> {
+) -> Result<ColimaProfileAction, ContainerExecError> {
     if colima_is_running(policy, repo_root)? {
-        return ensure_running_profile_runtime_ready(
-            policy.profile.as_str(),
-            COLIMA_RUNNING_PROFILE_GRACE,
-            |timeout| wait_for_colima_runtime_ready(policy, repo_root, timeout),
-            || start_colima_runtime_units(policy, repo_root),
-        );
+        return ensure_running_managed_profile_ready(policy, repo_root);
+    }
+    // A profile that is not running is either stopped or gone. Only the
+    // inventory can tell them apart, and both take the same managed start; the
+    // user is told which one it was.
+    if colima_profile_exists(policy, repo_root)? {
+        start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Started)
+    } else {
+        // First use, or the user deleted it.
+        start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Created)
+    }
+}
+
+/// Whether `colima list` knows the profile at all. An inventory that cannot be
+/// read is not proof of absence, so it takes the stopped-profile start path.
+fn colima_profile_exists(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<bool, ContainerExecError> {
+    let Ok(entries) = list_colima_profiles(repo_root) else {
+        return Ok(true);
+    };
+    Ok(entries
+        .into_iter()
+        .any(|entry| entry.name == policy.profile))
+}
+
+/// A running profile is only reusable when it carries Effigy's managed
+/// settings. Observed drift restarts it with the managed arguments and says so
+/// in one line; the user's profile is never deleted.
+fn ensure_running_managed_profile_ready(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<ColimaProfileAction, ContainerExecError> {
+    if let Some(drift) = managed_colima_profile_drift(&policy.profile) {
+        eprintln!("[info] {}", drift.restart_notice(&policy.profile));
+        stop_colima_profile_for_repair(policy, repo_root)?;
+        return start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Restarted);
+    }
+    ensure_running_profile_runtime_ready(
+        policy.profile.as_str(),
+        COLIMA_RUNNING_PROFILE_GRACE,
+        |timeout| wait_for_colima_runtime_ready(policy, repo_root, timeout),
+        || start_colima_runtime_units(policy, repo_root),
+    )?;
+    Ok(ColimaProfileAction::Reused)
+}
+
+/// The only place a managed Colima profile is created or started: Effigy's
+/// managed config is written first, then `colima start` runs with the managed
+/// arguments (SSH agent, DNS fallbacks, managed resources, platform overrides).
+fn start_managed_colima_profile(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+    action: ColimaProfileAction,
+) -> Result<ColimaProfileAction, ContainerExecError> {
+    match action {
+        ColimaProfileAction::Created => eprintln!(
+            "[info] {}",
+            crate::colima::colima_profile_creation_notice(&policy.profile)
+        ),
+        ColimaProfileAction::Started => eprintln!(
+            "[info] {}",
+            crate::colima::colima_profile_start_notice(&policy.profile)
+        ),
+        ColimaProfileAction::Reused | ColimaProfileAction::Restarted => {}
     }
     prepare_managed_colima_profile(policy).map_err(|error| ContainerExecError::Failure {
         command: "colima profile config".to_owned(),
@@ -107,16 +267,22 @@ fn ensure_colima_profile_running(
     })?;
     let cmd = colima_start_command(policy);
     let args: Vec<&str> = cmd.args.iter().map(|s| s.as_str()).collect();
-    run_command_capture_with_timeout(
-        repo_root,
-        &cmd.program,
-        &args,
-        &cmd.label,
-        COLIMA_START_TIMEOUT,
-    )?;
+    // A profile that does not exist pays for its first VM image and boot.
+    let start_timeout = if action == ColimaProfileAction::Created {
+        COLIMA_CREATE_TIMEOUT
+    } else {
+        COLIMA_START_TIMEOUT
+    };
+    run_command_capture_with_timeout(repo_root, &cmd.program, &args, &cmd.label, start_timeout)?;
+    if action == ColimaProfileAction::Created {
+        eprintln!(
+            "[info] {}",
+            crate::colima::colima_profile_recreated_notice(&policy.profile)
+        );
+    }
     wait_for_colima_runtime_ready(policy, repo_root, COLIMA_RUNTIME_READY_TIMEOUT)
         .map_err(|error| runtime_readiness_error(&error))?;
-    Ok(true)
+    Ok(action)
 }
 
 fn ensure_running_profile_runtime_ready(
@@ -204,6 +370,16 @@ pub fn ensure_runtime_backend_running(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
 ) -> Result<bool, ContainerExecError> {
+    Ok(ensure_runtime_backend_running_report(policy, repo_root)?.started)
+}
+
+/// [`ensure_runtime_backend_running`] with the profile transition reported, so
+/// a caller holding a container admission can tell that the profile it was
+/// recorded against was created or restarted.
+pub fn ensure_runtime_backend_running_report(
+    policy: &EffectiveContainerPolicy,
+    repo_root: &Path,
+) -> Result<ColimaEnsureReport, ContainerExecError> {
     match resolve_compose_backend_for_repo(repo_root, policy) {
         ComposeBackend::Docker => {
             let output = run_runtime_command_capture_for_policy_allow_failure(
@@ -212,7 +388,7 @@ pub fn ensure_runtime_backend_running(
                 &[OsString::from("ps")],
             )?;
             if output.status.success() {
-                Ok(false)
+                Ok(ColimaEnsureReport::default())
             } else {
                 Err(ContainerExecError::Failure {
                     command: "docker ps".to_owned(),
@@ -222,7 +398,7 @@ pub fn ensure_runtime_backend_running(
                 })
             }
         }
-        ComposeBackend::ColimaNerdctl => ensure_colima_running(policy, repo_root),
+        ComposeBackend::ColimaNerdctl => ensure_colima_running_report(policy, repo_root),
     }
 }
 
@@ -1286,6 +1462,253 @@ mod tests {
                 "debug",
                 "workers"
             ]
+        );
+    }
+
+    /// Fake `colima` for the managed-profile entry point: `listed` is the
+    /// profile's presence in `colima list`, `running` its VM state, and every
+    /// invocation is recorded in order.
+    const MANAGED_PROFILE_FAKE_COLIMA: &str = r#"#!/bin/sh
+set -eu
+root="$EFFIGY_MANAGED_PROFILE_FIXTURE"
+printf '%s\n' "$*" >> "$root/colima-calls"
+case "$1" in
+  status)
+    if [ -f "$root/running" ]; then
+      printf 'INFO[0000] colima is running\n'
+    else
+      printf 'time="now" level=fatal msg="colima [profile=effigy] is not running"\n'
+      exit 1
+    fi
+    ;;
+  list)
+    if [ -f "$root/listed" ]; then
+      if [ -f "$root/running" ]; then state=Running; else state=Stopped; fi
+      printf '{"name":"effigy","status":"%s","cpus":2,"memory":34359738368,"disk":322122547200}\n' "$state"
+    fi
+    ;;
+  start) : > "$root/running"; : > "$root/listed"; printf 'started\n' ;;
+  stop) rm -f "$root/running"; printf 'stopped\n' ;;
+  nerdctl) exit 0 ;;
+  ssh) exit 0 ;;
+  *) printf 'unexpected colima invocation: %s\n' "$*" >&2; exit 1 ;;
+esac
+"#;
+
+    struct EnvRestore(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+    impl EnvRestore {
+        fn set(vars: &[(&'static str, std::ffi::OsString)]) -> Self {
+            let saved = vars
+                .iter()
+                .map(|(key, _)| (*key, std::env::var_os(key)))
+                .collect();
+            for (key, value) in vars {
+                unsafe {
+                    std::env::set_var(key, value);
+                }
+            }
+            Self(saved)
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            for (key, value) in self.0.drain(..) {
+                match value {
+                    Some(value) => unsafe {
+                        std::env::set_var(key, value);
+                    },
+                    None => unsafe {
+                        std::env::remove_var(key);
+                    },
+                }
+            }
+        }
+    }
+
+    struct ManagedProfileFixture {
+        _dir: tempfile::TempDir,
+        root: std::path::PathBuf,
+        home: std::path::PathBuf,
+        _env: EnvRestore,
+    }
+
+    impl ManagedProfileFixture {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let root = dir.path().canonicalize().expect("canonical fixture");
+            let bin = root.join("bin");
+            let home = root.join("home");
+            std::fs::create_dir_all(&bin).expect("mkdir bin");
+            std::fs::create_dir_all(&home).expect("mkdir home");
+            let colima = bin.join("colima");
+            std::fs::write(&colima, MANAGED_PROFILE_FAKE_COLIMA).expect("write fake colima");
+            let mut permissions = std::fs::metadata(&colima).expect("metadata").permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+            std::fs::set_permissions(&colima, permissions).expect("chmod fake colima");
+            let path = format!(
+                "{}:{}",
+                bin.display(),
+                std::env::var("PATH").unwrap_or_default()
+            );
+            let env = EnvRestore::set(&[
+                ("PATH", path.into()),
+                ("HOME", home.clone().into_os_string()),
+                ("EFFIGY_COMPOSE_BACKEND", "colima".into()),
+                (
+                    "EFFIGY_MANAGED_PROFILE_FIXTURE",
+                    root.clone().into_os_string(),
+                ),
+                ("EFFIGY_INTERNAL_HOST_MEMORY_BYTES", "137438953472".into()),
+            ]);
+            Self {
+                _dir: dir,
+                root,
+                home,
+                _env: env,
+            }
+        }
+
+        fn policy(&self) -> EffectiveContainerPolicy {
+            let mut policy = test_policy();
+            policy.repo_root = self.root.clone();
+            policy
+        }
+
+        fn state(&self, name: &str) {
+            std::fs::write(self.root.join(name), "").expect("fixture state");
+        }
+
+        fn has_state(&self, name: &str) -> bool {
+            self.root.join(name).is_file()
+        }
+
+        fn write_colima_config(&self, body: &str) {
+            let profile = self.root.join("home/.colima/effigy");
+            std::fs::create_dir_all(&profile).expect("mkdir profile");
+            std::fs::write(profile.join("colima.yaml"), body).expect("write colima config");
+        }
+
+        fn calls(&self) -> Vec<String> {
+            std::fs::read_to_string(self.root.join("colima-calls"))
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        }
+    }
+
+    #[test]
+    fn absent_managed_profile_is_created_with_the_managed_arguments() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        let policy = fixture.policy();
+
+        let report = ensure_colima_running_report(&policy, &fixture.root).expect("create profile");
+
+        assert!(report.started);
+        assert!(report.profile_created_or_restarted);
+        assert!(fixture.has_state("running"));
+        let calls = fixture.calls();
+        let starts = calls
+            .iter()
+            .filter(|call| call.starts_with("start "))
+            .collect::<Vec<_>>();
+        assert_eq!(starts.len(), 1, "one managed start: {calls:#?}");
+        let start = starts[0];
+        for expected in [
+            "--profile effigy",
+            "--ssh-agent",
+            "--dns 1.1.1.1",
+            "--dns 8.8.8.8",
+            "--memory 32",
+            "--disk 300",
+        ] {
+            assert!(start.contains(expected), "{expected} missing from {start}");
+        }
+        assert!(
+            !calls.iter().any(|call| call.starts_with("stop ")),
+            "a missing profile is created, never stopped: {calls:#?}"
+        );
+    }
+
+    #[test]
+    fn stopped_managed_profile_is_started_without_being_recreated() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        let policy = fixture.policy();
+
+        let report = ensure_colima_running_report(&policy, &fixture.root).expect("start profile");
+
+        assert!(report.started);
+        assert!(!report.profile_created_or_restarted);
+        assert!(fixture.has_state("running"));
+        let calls = fixture.calls();
+        assert!(
+            calls
+                .iter()
+                .any(|call| call.starts_with("start --profile effigy")),
+            "{calls:#?}"
+        );
+        assert!(
+            !calls.iter().any(|call| call.starts_with("stop ")),
+            "{calls:#?}"
+        );
+    }
+
+    #[test]
+    fn running_managed_profile_with_drifted_config_is_restarted_with_managed_arguments() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        fixture.write_colima_config("forwardAgent: false\n");
+        let policy = fixture.policy();
+
+        let report = ensure_colima_running_report(&policy, &fixture.root).expect("restart profile");
+
+        assert!(report.started);
+        assert!(report.profile_created_or_restarted);
+        let calls = fixture.calls();
+        let rendered = calls.join(" | ");
+        let stop = calls
+            .iter()
+            .position(|call| call.starts_with("stop --profile effigy"))
+            .unwrap_or_else(|| panic!("the drifted profile is stopped first: {rendered}"));
+        let start = calls
+            .iter()
+            .position(|call| call.starts_with("start --profile effigy"))
+            .unwrap_or_else(|| {
+                panic!("the drifted profile is started with managed args: {rendered}")
+            });
+        assert!(stop < start, "stop precedes start: {rendered}");
+        assert!(calls[start].contains("--ssh-agent"), "{rendered}");
+        let config = std::fs::read_to_string(fixture.home.join(".colima/effigy/colima.yaml"))
+            .expect("managed config");
+        assert!(config.contains("forwardAgent: true"), "{config}");
+    }
+
+    #[test]
+    fn configured_running_managed_profile_is_reused_without_a_restart() {
+        let _lock = crate::test_env_lock();
+        let fixture = ManagedProfileFixture::new();
+        fixture.state("listed");
+        fixture.state("running");
+        fixture.write_colima_config("forwardAgent: true\n");
+        let policy = fixture.policy();
+
+        let report = ensure_colima_running_report(&policy, &fixture.root).expect("reuse profile");
+
+        assert!(!report.started);
+        assert!(!report.profile_created_or_restarted);
+        let calls = fixture.calls();
+        assert!(
+            !calls
+                .iter()
+                .any(|call| call.starts_with("start ") || call.starts_with("stop ")),
+            "a configured running profile is not restarted: {calls:#?}"
         );
     }
 

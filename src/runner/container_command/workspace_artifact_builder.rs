@@ -74,8 +74,31 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     // this does not publish or replace the retained environment generation.
     policy = effigy_containers::policy::render::prepare_inputs(&policy)?;
     let mut context = AdmissionContext::workspace_builder(&policy)?;
+    // The builder's profile is a managed Colima profile like any other
+    // environment: create it when the user deleted it, start it when stopped
+    // and restart it when its managed settings drifted. A runtime inventory
+    // cannot even run against a missing profile, so this comes before the first
+    // one (effigy#316).
+    let runtime =
+        effigy_containers::exec::ensure_runtime_backend_running_report(&policy, repo_root)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    // A builder whose canonical identity cannot be read - what a deleted or
+    // restarted profile leaves behind - is stopped and recreated here by the
+    // exact-owner rules, never refused for a manual `down`. A foreign or
+    // unknown owner is refused by the admission below, unchanged.
+    let reconciled = match effigy_containers::exec::reconcile_stale_owned_containers(
+        repo_root,
+        &policy,
+        Instant::now() + Duration::from_secs(30),
+    ) {
+        Ok(reconciled) => reconciled,
+        Err(error) => {
+            eprintln!("[warn] workspace artifact builder: stale owned container reconcile skipped: {error}");
+            Vec::new()
+        }
+    };
     // Preserve the existing runtime drift guard; this operation grants no
-    // authority to change backend or profile, start a VM, or repair runtime.
+    // authority to change backend, profile or the owned builder's generation.
     let mut deadline = Instant::now() + Duration::from_secs(15);
     let running = list_running_compose_containers_for_policy_with_deadline(
         repo_root,
@@ -93,6 +116,13 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     environment::import_legacy(repo_root, &policy)?;
     deadline = Instant::now() + Duration::from_secs(15);
     let mut retained = retained_admission(&policy);
+    // A profile Effigy just created or restarted, or a stale owned builder it
+    // removed, discards the container the retained admission was recorded
+    // against. Recreating the builder is the repair that transition owns; the
+    // retained record is void, not a reason to demand a manual `down`.
+    if runtime.profile_created_or_restarted || !reconciled.is_empty() {
+        retained = None;
+    }
     let mut rows = list_compose_containers_for_policy_including_stopped_with_deadline(
         repo_root,
         &policy,
