@@ -967,11 +967,25 @@ During v0.x, MINOR bumps may include breaking changes.
   `--check` reports without writing.
 
 ### Changed
-- `effigy install:local` builds this checkout through `oxide build --bin effigy`
-  and installs `target/debug/effigy`, so the local binary comes from Oxide's
-  shared slot instead of a private `target/bootstrap-local/` directory. The
-  plain-Cargo escape is `effigy install:local:cargo`, and a machine without
-  Oxide needs `oxide` on `PATH` (or that escape) to install this checkout.
+- `effigy install:local` now installs this checkout's **optimized release**
+  binary: it builds once through `oxide build --release --bin effigy` and
+  activates the exact release binary Oxide uplifts to `target/release/effigy`,
+  with no silent fallback to another profile or to plain Cargo. Activation is
+  staged and byte-verified, and the version receipt is published by rename, so
+  a failed build, copy or rename leaves the previously active binary and
+  receipt intact. `effigy install:local` also preserves an existing launcher it
+  did not generate: a customized `~/.local/bin/effigy` script or a custom
+  symlink is left byte-for-byte alone and explained instead of clobbered, while
+  a fresh install still writes the maintained wrapper and a recognised
+  generated wrapper is refreshed only for a known stable target. A new
+  `test:install:local` fixture suite (private HOME and checkout, stubbed
+  build/copy/activation programs) covers release selection, launcher
+  disposition, rollback and version receipts.
+- `effigy install:local` builds this checkout through Oxide, so the local binary
+  comes from Oxide's shared slot instead of a private `target/bootstrap-local/`
+  directory. The plain-Cargo escape is `effigy install:local:cargo`, and a
+  machine without Oxide needs `oxide` on `PATH` (or that escape) to install this
+  checkout.
 - Every Effigy route that runs Cargo is now either routed through `oxide` or
   recorded with its rule and reason in
   [cargo routes](docs/knowledge/cargo-routes.md): the fixture-hygiene and
@@ -1167,6 +1181,17 @@ During v0.x, MINOR bumps may include breaking changes.
   reported as unknown rather than as a live owner, and `--json` carries the same
   facts as `effigy.environment-busy.v1`. The refusal itself is unchanged: no
   backend call, no release, no retry, no second wait.
+- `effigy gateway setup` migrates a v0.14.1 gateway the operator started, not
+  only a root one: when the recorded version is v0.14.1 the same
+  exact-generation stop runs as for the root case, and a current-generation
+  operator gateway is still left alone. A recorded gateway whose PID the kernel
+  confirms absent is now treated as an absent record and removed through the
+  byte-compared removal, instead of reporting an unknown identity and leaving
+  the files in place. A PID whose identity is not matched is still never
+  signalled. Absolute mkcert resolution, the dev-size staged-executable bound,
+  the elevation argv's operator environment, the macOS broker socket parent
+  check, its activation-path comparison and its stderr log path now each have a
+  regression test (effigy#392, effigy#403, effigy#405, effigy#406, effigy#408).
 - Stopping an empty Compose project still withdraws its owned routes; declared
   host processes take the normal stop path. Live listener and foreign successor
   routes remain protected. Backend output and VM interpolation files use checked

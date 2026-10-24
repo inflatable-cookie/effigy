@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
@@ -1975,6 +1976,53 @@ enum GatewayUpState {
 #[cfg(test)]
 mod tests;
 
+/// Elevated setup argv. The elevated child must authenticate the operator who
+/// owns the gateway directory (identity.rs `authenticated_elevated_operator`):
+/// the escalation marker, the operator UID claim, and HOME equal to that
+/// operator's passwd home. `sudo` strips the environment and `-H` would
+/// replace HOME, so all three are passed through `env`, as the elevated
+/// identity reader does.
+fn setup_elevation_argv(
+    executable: &std::path::Path,
+    operator_uid: u32,
+    operator_home: &std::path::Path,
+    remove: bool,
+    suffixes: &[String],
+) -> Vec<OsString> {
+    let mut home_assignment = OsString::from("HOME=");
+    home_assignment.push(operator_home.as_os_str());
+    let mut argv: Vec<OsString> = vec![
+        "/usr/bin/sudo".into(),
+        "--".into(),
+        "/usr/bin/env".into(),
+        home_assignment,
+        format!("{GATEWAY_ESCALATED_ENV}=1").into(),
+        format!("EFFIGY_GATEWAY_OPERATOR_UID={operator_uid}").into(),
+        executable.into(),
+        "gateway".into(),
+        "setup".into(),
+    ];
+    if remove {
+        argv.push("--remove".into());
+    }
+    for suffix in suffixes {
+        argv.extend(["--suffix".into(), suffix.into()]);
+    }
+    argv
+}
+
+/// Custody spawns only absolute programs, so resolve mkcert the same way the
+/// TLS layer does (explicit override or a trusted install prefix) rather than
+/// passing a bare name (#392).
+fn mkcert_install_argv() -> std::io::Result<Vec<OsString>> {
+    let mkcert = effigy_gateway::tls::resolved_mkcert_program().ok_or_else(|| {
+        std::io::Error::other(
+            "mkcert was found on PATH but not in a trusted install prefix; set EFFIGY_GATEWAY_MKCERT_BIN to its absolute path, then run `effigy gateway setup`",
+        )
+    })?;
+    Ok(vec![mkcert.into(), "-install".into()])
+}
+
 fn run_gateway_setup(
     extra: &[String],
     remove: bool,
@@ -2030,46 +2078,20 @@ fn run_gateway_setup(
                 ));
             }
             if !remove {
-                // Custody spawns only absolute programs, so resolve mkcert the
-                // same way the TLS layer does (explicit override or a trusted
-                // install prefix) rather than passing a bare name.
-                let mkcert = effigy_gateway::tls::resolved_mkcert_program().ok_or_else(|| {
-                    std::io::Error::other(
-                        "mkcert was found on PATH but not in a trusted install prefix; set EFFIGY_GATEWAY_MKCERT_BIN to its absolute path, then run `effigy gateway setup`",
-                    )
-                })?;
-                setup::command(run, cx, vec![mkcert.into(), "-install".into()], true)?;
+                setup::command(run, cx, mkcert_install_argv()?, true)?;
             }
-            // The elevated child must authenticate the operator who owns the
-            // gateway directory (identity.rs `authenticated_elevated_operator`):
-            // the escalation marker, the operator UID claim, and HOME equal to
-            // that operator's passwd home. `sudo` strips the environment and
-            // `-H` would replace HOME, so pass all three through `env`, as the
-            // elevated identity reader does.
             let operator_uid = nix::unistd::Uid::current();
             let operator_home = nix::unistd::User::from_uid(operator_uid)
                 .map_err(std::io::Error::other)?
                 .ok_or_else(|| std::io::Error::other("operator account is missing"))?
                 .dir;
-            let mut home_assignment = std::ffi::OsString::from("HOME=");
-            home_assignment.push(operator_home.as_os_str());
-            let mut argv: Vec<std::ffi::OsString> = vec![
-                "/usr/bin/sudo".into(),
-                "--".into(),
-                "/usr/bin/env".into(),
-                home_assignment,
-                "EFFIGY_GATEWAY_ESCALATED=1".into(),
-                format!("EFFIGY_GATEWAY_OPERATOR_UID={}", operator_uid.as_raw()).into(),
-                std::env::current_exe()?.into(),
-                "gateway".into(),
-                "setup".into(),
-            ];
-            if remove {
-                argv.push("--remove".into());
-            }
-            for suffix in &suffixes {
-                argv.extend(["--suffix".into(), suffix.into()]);
-            }
+            let argv = setup_elevation_argv(
+                &std::env::current_exe()?,
+                operator_uid.as_raw(),
+                &operator_home,
+                remove,
+                &suffixes,
+            );
             setup::command(run, cx, argv, true)?;
             if remove {
                 return setup::remove_receipt(run, cx, &home);

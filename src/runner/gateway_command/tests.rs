@@ -2090,3 +2090,81 @@ fn gateway_repair_preview_reports_nothing_reclaimable_when_every_owner_is_live()
     assert!(lines.contains("dead loopback owners: 0 reclaimable, 0 held, 2 retained"));
     assert!(lines.contains("no dead loopback owners were identified"));
 }
+
+#[test]
+fn setup_elevation_passes_the_operator_environment_through_sudo() {
+    // The elevated child authenticates the operator from the escalation
+    // marker, the UID claim and HOME equal to the operator's passwd home.
+    // `sudo` strips the environment, so all three travel through `env` (#403).
+    let argv = setup_elevation_argv(
+        std::path::Path::new("/opt/fixture/bin/effigy"),
+        501,
+        std::path::Path::new("/Users/fixture"),
+        false,
+        &["test".to_owned(), "acowtancy.test".to_owned()],
+    );
+    let expected: Vec<std::ffi::OsString> = vec![
+        "/usr/bin/sudo".into(),
+        "--".into(),
+        "/usr/bin/env".into(),
+        "HOME=/Users/fixture".into(),
+        "EFFIGY_GATEWAY_ESCALATED=1".into(),
+        "EFFIGY_GATEWAY_OPERATOR_UID=501".into(),
+        "/opt/fixture/bin/effigy".into(),
+        "gateway".into(),
+        "setup".into(),
+        "--suffix".into(),
+        "test".into(),
+        "--suffix".into(),
+        "acowtancy.test".into(),
+    ];
+    assert_eq!(argv, expected);
+
+    // Teardown names its mode before the suffixes.
+    let removing = setup_elevation_argv(
+        std::path::Path::new("/opt/fixture/bin/effigy"),
+        501,
+        std::path::Path::new("/Users/fixture"),
+        true,
+        &["test".to_owned()],
+    );
+    assert_eq!(
+        removing[9..],
+        [
+            std::ffi::OsString::from("--remove"),
+            std::ffi::OsString::from("--suffix"),
+            std::ffi::OsString::from("test"),
+        ]
+    );
+}
+
+#[test]
+fn setup_installs_mkcert_from_an_absolute_program_path() {
+    // Custody spawns only absolute programs: a bare `mkcert` name made
+    // `effigy gateway setup` fail before the elevated child ran (#392).
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let mkcert = dir.path().join("mkcert");
+    std::fs::write(&mkcert, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&mkcert, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let _env = crate::contract_test_support::EnvGuard::set_many(&[(
+        effigy_gateway::tls::MKCERT_BIN_ENV,
+        Some(mkcert.display().to_string()),
+    )]);
+    let argv = mkcert_install_argv().expect("fixture mkcert resolves");
+    assert_eq!(argv, vec![mkcert.into_os_string(), "-install".into()]);
+    assert!(std::path::Path::new(&argv[0]).is_absolute());
+    // A relative override is never handed to custody as-is.
+    drop(_env);
+    let _relative = crate::contract_test_support::EnvGuard::set_many(&[(
+        effigy_gateway::tls::MKCERT_BIN_ENV,
+        Some("mkcert".to_owned()),
+    )]);
+    if let Ok(argv) = mkcert_install_argv() {
+        assert!(
+            std::path::Path::new(&argv[0]).is_absolute(),
+            "{:?}",
+            argv[0]
+        );
+    }
+}

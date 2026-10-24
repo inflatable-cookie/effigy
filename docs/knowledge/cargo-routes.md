@@ -42,9 +42,16 @@ routes and never need a row.
   literal.
 - Final outputs stay in `<workspace>/target/<profile>/` whatever pool holds
   the intermediates, so a route may keep reading `target/debug/effigy`.
-- `install:local` builds this checkout through `oxide build --bin effigy` and
-  installs `target/debug/effigy`. Its escape is `install:local:cargo`
-  (`EFFIGY_OXIDE_ESCAPE=cargo effigy install:local`).
+- `install:local` builds this checkout's optimized release binary through
+  `oxide build --release --bin effigy` and installs the exact release binary
+  Oxide uplifts to `target/release/effigy`; a missing release output fails
+  instead of falling back to another profile or to Cargo. Its escape is
+  `install:local:cargo` (`EFFIGY_OXIDE_ESCAPE=cargo effigy install:local`),
+  which produces the same `target/release/effigy`.
+- `test:install:local` runs the installer's private fixture suite. The fixture
+  builds the driver through the same selector and then stubs `oxide` inside the
+  fixture, so the suite exercises release-artifact selection without a real
+  release build. Its escape is `test:install:local:cargo`.
 - The scan covers every repository-relative script path a catalog route names,
   including a crate-owned one
   (`crates/effigy-kernel/tests/scripts/linux-custody.sh`); `./scripts/x.sh` and
@@ -69,6 +76,7 @@ routes and never need a row.
 | `scripts/rehearse-linux-release-container.rhai` | genuine exception | 8 | Container build: same release container rehearse, and it runs the built binary inside it. |
 | `scripts/worktree-lifecycle.sh` | genuine exception | 8 | Paseo worktree setup/teardown hook (a warm-merge-style hook) pins `CARGO_TARGET_DIR=target/worktree-hooks` so `CARGO_TARGET_DIR` and `.cargo/config.toml` cannot move the staged binary between the two shells. |
 | `tests/scripts/worktree-lifecycle-hooks.sh` | genuine exception | 8 | Cargo is the subject: every case runs against a stub `cargo` that records the pinned target directory and the arguments. |
+| `tests/scripts/install-local-bin.sh` | genuine exception | 8 | Cargo is the subject: a stub `cargo` records and refuses any fallback so the fixture can prove `install:local` uses the Oxide-routed release build, and the assertions name that stub. |
 | `tests/scripts/assurance-boundary-tests.sh` | genuine exception | 8 | Cargo is the subject: `cargo nextest list --message-format json` is the membership oracle the proof asserts against. |
 | `tests/scripts/doctor-fixture-scheduling.py` | genuine exception | 8 | Cargo is the subject: it supervises `cargo nextest` runs to prove scheduling controls, and gives each fixture crate a private `CARGO_TARGET_DIR`. |
 | `tests/scripts/gateway-linux-adapter.sh` | genuine exception | 8 | Container/VM guest build: the proof deliberately builds and executes inside a Linux container, with a container-local target directory. |
