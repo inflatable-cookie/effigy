@@ -1181,6 +1181,16 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- A managed listener's declared readiness budget now starts at the supervisor's
+  own activation record instead of at supervision admission, and the supervisor
+  publishes that record before it waits on dependencies or spawns a child. A
+  slow supervisor start is admission, not readiness, so a detached `container
+  up` reports the supervisor's terminal readiness failure (with its phase
+  diagnostic) rather than its own deadline (effigy#299).
+- A failed gateway HTTP self-test names its class — `(deadline)`, `(protocol)`
+  or `(listener)` — and preserves the original bounded observation, so a
+  bounded probe deadline, a peer's malformed answer and a listener that never
+  answered are distinguishable without a quiet-machine retry (effigy#299).
 - A detached `container up --json` failure keeps the underlying refusal as
   `cause` with the activation stage, preparation step and environment/checkout
   `identity`, redacting secret-shaped values and bounding the text, instead of

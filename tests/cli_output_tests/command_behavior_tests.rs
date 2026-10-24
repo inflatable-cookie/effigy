@@ -5334,19 +5334,42 @@ detach_timeout_secs = 1
             .find_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
             .unwrap_or(Value::Null)
     };
+    // The owner's readiness is an observable journal barrier: the projection
+    // publishes the environment as `up` and the task's declared host child as
+    // running. The lifecycle role itself is the environment effect, not a
+    // process view. The handover starts only after that publication, so a slow
+    // owner start is never mistaken for an owner exit (papercut cfb4cd89).
+    let owner_ready = |owner_status: &Value| -> bool {
+        owner_status["state"] == "running"
+            && owner_status["environment"]["state"] == "up"
+            && owner_status["processes"]
+                .as_array()
+                .is_some_and(|processes| {
+                    processes
+                        .iter()
+                        .any(|entry| entry["name"] == "watch" && entry["state"] == "running")
+                })
+    };
     let start_deadline = Instant::now() + Duration::from_secs(120);
-    while {
+    loop {
         let owner_status = status("devc");
-        owner_status["state"] != "running" || owner_status["environment"]["state"] != "up"
-    } {
+        if owner_ready(&owner_status) {
+            break;
+        }
         assert!(
             Instant::now() < start_deadline,
-            "the stack owner did not reach ready"
+            "the stack owner did not reach ready: {owner_status}"
         );
-        assert!(
-            owner.try_wait().expect("poll owner").is_none(),
-            "the stack owner exited before the handover"
-        );
+        if let Some(exit) = owner.try_wait().expect("poll owner") {
+            // `wait(2)` on this test's own child is the exact exit observation.
+            // The run journal supplies the phase, cleanup and closed reason that
+            // ended the owner, so an early exit is reported with its cause
+            // rather than as a bare assertion.
+            panic!(
+                "the stack owner exited before the handover: {exit:?}; run journal={}",
+                status("devc")
+            );
+        }
         std::thread::sleep(Duration::from_millis(200));
     }
 

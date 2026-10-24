@@ -59,6 +59,18 @@ const HOST_LISTENER_BIND_ENV: &str = "EFFIGY_MANAGED_HOST_LISTENER_BIND";
 const HOST_LISTENER_REPORT_ENV: &str = "EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE";
 const HOST_LISTENER_GENERATION_ENV: &str = "EFFIGY_MANAGED_HOST_LISTENER_GENERATION";
 
+/// Bounded wait for a supervisor to publish its own activation record. This is
+/// a supervision admission bound, not a readiness budget: the listener's
+/// declared readiness budget starts once this record exists (papercut
+/// b1bf877f).
+const SUPERVISOR_ACTIVATION_PUBLICATION_BOUND: Duration = Duration::from_secs(10);
+/// Bounded allowance for a supervisor to publish the terminal state it observed
+/// after its own declared readiness deadline expired. It covers publication
+/// only; readiness was already measured from the activation record.
+const TERMINAL_PUBLICATION_ALLOWANCE: Duration = Duration::from_secs(2);
+#[cfg(debug_assertions)]
+const START_PUBLICATION_DELAY_ENV: &str = "EFFIGY_TEST_HOST_PROCESS_START_PUBLICATION_DELAY_MS";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HostProcessRuntimeSpec {
@@ -368,11 +380,25 @@ pub(in crate::runner) fn start_host_processes_for_container(
                 Duration::from_secs(5),
             )?;
             if let Some(listener) = &hp.listener {
-                let state = wait_for_listener_state(
-                    &host_process_state_path(&dir, &hp.name),
+                let owner = managed_host_process_owner(&project_path, policy, hp)?;
+                let state_path = host_process_state_path(&dir, &hp.name);
+                // Supervision admission is a separate phase: wait for the
+                // supervisor's own activation record, then measure the declared
+                // readiness budget from there. A slow activation publication is
+                // therefore never charged to readiness, and the supervisor's own
+                // terminal publication wins the race deterministically.
+                wait_for_listener_activation(
+                    &state_path,
                     &hp.name,
-                    &managed_host_process_owner(&project_path, policy, hp)?,
-                    Duration::from_secs(listener.readiness_timeout_secs.saturating_add(5)),
+                    &spec.runtime_generation,
+                    SUPERVISOR_ACTIVATION_PUBLICATION_BOUND,
+                )?;
+                let state = wait_for_listener_state(
+                    &state_path,
+                    &hp.name,
+                    &owner,
+                    Duration::from_secs(listener.readiness_timeout_secs)
+                        .saturating_add(TERMINAL_PUBLICATION_ALLOWANCE),
                     route_table.as_deref().ok_or_else(|| {
                         RunnerError::task_invocation(
                             "managed host listener has no gateway route table",
@@ -863,6 +889,37 @@ fn write_private_json(path: &Path, value: &impl Serialize) -> Result<(), RunnerE
             .map_err(|error| RunnerError::task_invocation_failed_write(&temp, error))?;
     }
     fs::rename(&temp, path).map_err(|error| RunnerError::task_invocation_failed_write(path, error))
+}
+
+/// Wait until the supervisor publishes the activation record for this spec.
+/// That record is the barrier between supervision admission and the listener's
+/// declared readiness budget. A previous activation of the same process keeps
+/// its own `runtime_generation`, so a stale record never satisfies the wait.
+fn wait_for_listener_activation(
+    path: &Path,
+    process_name: &str,
+    runtime_generation: &str,
+    timeout: Duration,
+) -> Result<(), RunnerError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Ok(raw) = fs::read(path) {
+            if let Ok(state) = serde_json::from_slice::<HostListenerState>(&raw) {
+                if state.schema == HOST_LISTENER_STATE_SCHEMA
+                    && state.runtime_generation == runtime_generation
+                {
+                    return Ok(());
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(RunnerError::task_invocation(format!(
+                "timed out after {}s waiting for managed host listener `{process_name}` to publish its activation",
+                timeout.as_secs()
+            )));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn wait_for_listener_state(
@@ -1452,6 +1509,20 @@ impl Drop for ListenerReportCleanup {
     }
 }
 
+/// Fixture barrier for proofs about the activation-publication seam. Debug
+/// builds only, and inert unless the suite asks for it, so production startup
+/// never sleeps here.
+#[cfg(debug_assertions)]
+fn hold_start_publication() {
+    let Some(millis) = std::env::var(START_PUBLICATION_DELAY_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+    else {
+        return;
+    };
+    thread::sleep(Duration::from_millis(millis.min(30_000)));
+}
+
 fn supervise_managed_host_listener(
     args: &InternalHostProcessSuperviseArgs,
     spec: &HostProcessRuntimeSpec,
@@ -1469,6 +1540,8 @@ fn supervise_managed_host_listener(
         .ok_or_else(|| RunnerError::task_invocation("listener state path has no parent"))?;
     let log_path = args.log_file.clone();
     let mut outcome: Option<i32> = None;
+    #[cfg(debug_assertions)]
+    hold_start_publication();
 
     loop {
         if shutdown.load(Ordering::SeqCst) {
@@ -1480,17 +1553,10 @@ fn supervise_managed_host_listener(
             )?;
             break;
         }
-        let Some((dependency_env, dependency_generations)) =
-            wait_for_dependency_environment(spec, &shutdown)?
-        else {
-            write_listener_state(
-                &spec.listener_state_file,
-                listener_state(
-                    spec, supervisor, "stopped", None, None, None, None, None, None, None,
-                ),
-            )?;
-            break;
-        };
+        // Publish this activation's record before waiting on dependencies or
+        // spawning a child. Callers wait for it as the barrier between
+        // supervision admission and the declared readiness budget; publishing
+        // it after the dependency wait would charge that wait to readiness.
         let generation = random_token()?;
         let mut diagnostic = HostListenerDiagnostic::default();
         let report_path = report_dir.join(format!(
@@ -1514,6 +1580,17 @@ fn supervise_managed_host_listener(
                 None,
             ),
         )?;
+        let Some((dependency_env, dependency_generations)) =
+            wait_for_dependency_environment(spec, &shutdown)?
+        else {
+            write_listener_state(
+                &spec.listener_state_file,
+                listener_state(
+                    spec, supervisor, "stopped", None, None, None, None, None, None, None,
+                ),
+            )?;
+            break;
+        };
         let log_handle = open_log(&log_path)?;
         let mut command = ProcessCommand::new("/bin/sh");
         command
@@ -3610,6 +3687,57 @@ fn nix_signal_child_group_kill_after(
 mod tests {
     use super::*;
     use std::os::unix::process::ExitStatusExt;
+
+    fn published_listener_state(runtime_generation: &str, status: &str) -> serde_json::Value {
+        let identity = read_live_process_identity(std::process::id()).unwrap();
+        serde_json::json!({
+            "schema": HOST_LISTENER_STATE_SCHEMA,
+            "owner": "fixture|web|app",
+            "runtime_generation": runtime_generation,
+            "generation": "generation",
+            "status": status,
+            "address": null,
+            "internal_url": null,
+            "public_url": null,
+            "route_domain": null,
+            "supervisor_pid": std::process::id(),
+            "supervisor_boot_identity": identity.boot_identity,
+            "supervisor_start_identity": identity.start_identity,
+            "child_pid": null,
+            "child_boot_identity": null,
+            "child_start_identity": null,
+            "listener_pid": null,
+            "listener_boot_identity": null,
+            "listener_start_identity": null,
+            "route_owner": null,
+        })
+    }
+
+    /// The activation record is the readiness barrier: a previous activation's
+    /// terminal record (b1bf877f's delayed failed state) never satisfies the
+    /// wait for this activation, and the wait fails honestly at its bound.
+    #[test]
+    fn listener_activation_barrier_waits_for_this_activation_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.listener.json");
+        write_private_json(
+            &path,
+            &published_listener_state("previous-activation", "failed"),
+        )
+        .unwrap();
+        assert!(
+            wait_for_listener_activation(&path, "app", "current-activation", Duration::ZERO)
+                .is_err(),
+            "a previous activation's state must not satisfy this activation's barrier"
+        );
+        write_private_json(
+            &path,
+            &published_listener_state("current-activation", "starting"),
+        )
+        .unwrap();
+        wait_for_listener_activation(&path, "app", "current-activation", Duration::from_secs(1))
+            .expect("a published activation record satisfies the barrier");
+    }
 
     #[test]
     fn host_process_listener_root_accepts_shared_gateway_and_checks_private_roots() {

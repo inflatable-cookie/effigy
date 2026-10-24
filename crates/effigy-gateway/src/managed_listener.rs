@@ -246,6 +246,11 @@ fn verify_process_identity(
     expected_boot: &str,
     expected_start: &GatewayStartIdentity,
 ) -> Result<(), io::Error> {
+    // Proof seam for an unobservable identity: macOS can refuse a process
+    // identity read with EPERM (papercut 2ecdcaff). The injected control below
+    // shows the refusal can never become an absence waiver.
+    #[cfg(feature = "endpoint-store-faults")]
+    effigy_kernel::fault_injection::point("gateway.managed-listener.identity")?;
     let current = read_live_process_identity(pid)?;
     if current.boot_identity != expected_boot || &current.start_identity != expected_start {
         return Err(io::Error::new(
@@ -254,4 +259,76 @@ fn verify_process_identity(
         ));
     }
     Ok(())
+}
+
+#[cfg(all(test, feature = "endpoint-store-faults"))]
+mod tests {
+    use super::*;
+    use effigy_kernel::observe::Observed;
+    use std::path::Path;
+
+    /// A route whose identity observation is refused by the kernel. The
+    /// recorded process is this live test process, so nothing about the
+    /// generation is absent: only the observation failed.
+    fn refused_identity_owner(dir: &Path) -> ManagedListenerRouteOwner {
+        let pid = std::process::id();
+        let identity = read_live_process_identity(pid).expect("fixture identity");
+        let availability_file = dir.join("listener.json");
+        fs::write(
+            &availability_file,
+            serde_json::json!({
+                "schema": AVAILABILITY_SCHEMA,
+                "owner": "fixture|web|app",
+                "runtime_generation": "runtime-generation",
+                "generation": "generation",
+                "status": "ready",
+            })
+            .to_string(),
+        )
+        .expect("write availability record");
+        ManagedListenerRouteOwner {
+            owner: "fixture|web|app".to_owned(),
+            runtime_generation: "runtime-generation".to_owned(),
+            generation: "generation".to_owned(),
+            supervisor_pid: pid,
+            supervisor_boot_identity: identity.boot_identity.clone(),
+            supervisor_start_identity: identity.start_identity.clone(),
+            root_pid: pid,
+            root_boot_identity: identity.boot_identity.clone(),
+            root_start_identity: identity.start_identity.clone(),
+            listener_pid: pid,
+            listener_boot_identity: identity.boot_identity,
+            listener_start_identity: identity.start_identity,
+            address: "127.0.0.1:9".to_owned(),
+            route_tls: false,
+            availability_file: availability_file.display().to_string(),
+        }
+    }
+
+    fn with_permission_denied<T>(run: impl FnOnce() -> T) -> T {
+        effigy_kernel::fault_injection::with_hook(
+            |point| {
+                assert_eq!(point, "gateway.managed-listener.identity");
+                Err(io::Error::from_raw_os_error(libc::EPERM))
+            },
+            run,
+        )
+    }
+
+    /// An unobservable listener identity stays an unknown refusal. It is never
+    /// an absence proof, so it can never license another owner to replace the
+    /// listener (papercut 2ecdcaff).
+    #[test]
+    fn unobservable_listener_identity_refuses_and_stays_unknown() {
+        let dir = tempfile::tempdir().expect("fixture dir");
+        let owner = refused_identity_owner(dir.path());
+        let error = with_permission_denied(|| verify_managed_listener_owner(&owner))
+            .expect_err("an unobservable identity must refuse");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied, "{error}");
+
+        match with_permission_denied(|| observe_managed_listener_owner(&owner)) {
+            Observed::Unknown(_) => {}
+            other => panic!("an unobservable identity must stay Unknown, got {other:?}"),
+        }
+    }
 }

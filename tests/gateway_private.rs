@@ -677,10 +677,6 @@ fn private_gateway_cli_serves_verified_https_and_isolates_concurrent_instances()
 }
 
 #[test]
-#[cfg_attr(
-    effigy_shared_process,
-    ignore = "known v0.15 rebuild defect: papercut b1bf877f-972f-484b-b3d5-69ad73156245; owner lane v015-gateway"
-)]
 fn managed_host_dependent_replacement_preserves_routes_and_scope_teardown() {
     managed_host_dependent_replacement_proof(true);
 }
@@ -1122,6 +1118,16 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         "restart must publish the successor's dynamic port"
     );
     assert_ne!(new_state["generation"], old_state["generation"]);
+    // The superseded generation is settled before the successor is accepted:
+    // no published route still names its generation or endpoint, while the
+    // successor keeps the same scoped domain (a841af96/b1bf877f).
+    assert_generation_withdrawn(
+        &private_gateway.join("routes.json"),
+        primary_domain,
+        old_state,
+        &new_state,
+        "app restart",
+    );
     assert_eq!(
         curl_https(https_address, &ca_path, primary_domain, "/"),
         format!(
@@ -1149,6 +1155,16 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     );
     assert_ne!(dependent_successor["child_pid"], old_dependent["child_pid"]);
     assert_eq!(dependent_successor["status"], "ready");
+    // Handover success is only observed here once the losing dependent scope is
+    // settled: the published table no longer names its generation or endpoint,
+    // and the successor owns the dependent domain.
+    assert_generation_withdrawn(
+        &private_gateway.join("routes.json"),
+        &format!("dependent.{primary_domain}"),
+        &old_dependent,
+        &dependent_successor,
+        "dependent replacement",
+    );
     println!("published dependent replacement: predecessor={} old_child={} successor={} new_child={} dependency_generation={} selected_phase=published native_exit_and_group_settlement=true",
         old_dependent["generation"], old_dependent["child_pid"], dependent_successor["generation"], dependent_successor["child_pid"], new_state["generation"]);
     let websocket = curl_websocket_for_hostname(https_address, &ca_path, primary_domain);
@@ -1338,29 +1354,43 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         never_ready: true,
         report_mode: "",
     });
-    let delayed = run_container_cli(
+    let delayed = run_container_cli_with_env(
         primary_checkout,
         &container_cleanup,
         &["up", "--detach", "--json"],
+        &[(
+            "EFFIGY_TEST_HOST_PROCESS_START_PUBLICATION_DELAY_MS",
+            "7000",
+        )],
     );
     assert!(
         !delayed.status.success(),
         "a listener that never becomes ready must fail startup"
     );
+    // The caller's readiness budget starts at the supervisor's own activation
+    // record, so a slow publication is supervision admission, not readiness.
+    // The failure the caller reports is therefore the supervisor's typed
+    // readiness observation, never the caller's own deadline (b1bf877f).
+    let delayed_stdout = String::from_utf8_lossy(&delayed.stdout);
+    let delayed_stderr = String::from_utf8_lossy(&delayed.stderr);
+    let delayed_report = format!("{delayed_stdout}{delayed_stderr}");
+    assert!(
+        delayed_report.contains("failed before readiness"),
+        "the caller must report the supervisor's own terminal readiness failure: {delayed_report}"
+    );
+    assert!(
+        !delayed_report.contains("timed out after"),
+        "the caller substituted its own readiness deadline for the supervisor's terminal record: {delayed_report}"
+    );
     let delayed_state_path = listener_state_path(primary_checkout, primary_profile, "app");
-    let delayed_deadline = Instant::now() + Duration::from_secs(10);
-    let delayed_state = loop {
-        let state = read_json_file(&delayed_state_path);
-        if state["route_domain"] == "delayed.host.test" && state["status"] == "failed" {
-            break state;
-        }
-        assert!(
-            Instant::now() < delayed_deadline,
-            "timed out waiting for delayed listener startup to finish: {state}"
-        );
-        thread::sleep(Duration::from_millis(25));
-    };
-    assert_eq!(delayed_state["status"], "failed");
+    // The detached `up` returns only after the losing scope is settled, so the
+    // terminal publication is read as a settled record, not polled against a
+    // fixture clock.
+    let delayed_state = read_json_file(&delayed_state_path);
+    assert_eq!(
+        delayed_state["status"], "failed",
+        "the failing startup must settle as a published failure: {delayed_state}; output={delayed_report}"
+    );
     assert_ne!(delayed_state["generation"], collision_generation);
     assert_eq!(delayed_state["route_domain"], "delayed.host.test");
     assert!(
@@ -1840,10 +1870,6 @@ fn start_managed_listener_gateway(
 /// worktrees must each publish their checkout's scoped name. A shared-identity
 /// sibling keeps the declared name and is refused before any child starts.
 #[test]
-#[cfg_attr(
-    target_os = "macos",
-    ignore = "known v0.15 rebuild defect: papercut a841af96; owner lane v015-supervisor"
-)]
 fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
     const DECLARED_HOST: &str = "api.acme.test";
     let fixture = managed_host_fixture();
@@ -2097,6 +2123,15 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
     );
     assert_ne!(new_state["address"], old_state["address"]);
     let new_generation = new_state["generation"].as_str().unwrap();
+    // The scoped successor keeps the worktree's domain published while the
+    // superseded generation's route and endpoint are withdrawn (a841af96).
+    assert_generation_withdrawn(
+        &routes_path,
+        &effective[1],
+        &old_state,
+        &new_state,
+        "scoped successor",
+    );
     assert_eq!(
         curl_https(https_address, &ca_path, &effective[1], "/"),
         format!("{restart_body}@{new_generation}")
@@ -2809,10 +2844,65 @@ fn spawn_container_cli(
 }
 
 fn run_container_cli(checkout: &Path, cleanup: &ManagedContainerCleanup, args: &[&str]) -> Output {
+    run_container_cli_with_env(checkout, cleanup, args, &[])
+}
+
+fn run_container_cli_with_env(
+    checkout: &Path,
+    cleanup: &ManagedContainerCleanup,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> Output {
     container_command(checkout, cleanup)
         .args(args)
+        .envs(env.iter().copied())
         .output_owned()
         .expect("run public container CLI")
+}
+
+/// No published route may still name a superseded generation or its endpoint,
+/// while the successor keeps the same scoped domain published.
+fn assert_generation_withdrawn(
+    route_table_path: &Path,
+    domain: &str,
+    state: &Value,
+    successor: &Value,
+    label: &str,
+) {
+    let table = RouteTable::load(route_table_path).expect("load published route table");
+    let old_generation = state["generation"].as_str().expect("recorded generation");
+    let old_address = state["address"]
+        .as_str()
+        .expect("recorded listener address");
+    for route in table.routes.values() {
+        assert!(
+            route
+                .managed_listener
+                .as_ref()
+                .is_none_or(|owner| owner.generation != old_generation),
+            "{label}: a published route still records the superseded generation {old_generation}: {route:?}"
+        );
+        assert!(
+            route.target.as_deref() != Some(old_address),
+            "{label}: a published route still targets the superseded listener {old_address}: {route:?}"
+        );
+    }
+    let current = table
+        .lookup(domain)
+        .expect("the successor keeps the scoped domain published");
+    assert_eq!(
+        current
+            .managed_listener
+            .as_ref()
+            .map(|owner| owner.generation.as_str()),
+        successor["generation"].as_str(),
+        "{label}: the published route names the successor generation"
+    );
+    assert_eq!(
+        current.target.as_deref(),
+        successor["address"].as_str(),
+        "{label}: the published route targets the successor listener"
+    );
 }
 
 fn read_json_file(path: &Path) -> Value {

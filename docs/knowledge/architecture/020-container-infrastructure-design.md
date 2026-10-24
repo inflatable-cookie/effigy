@@ -374,6 +374,14 @@ teardown; a later rollback signal cannot turn a failed startup into stopped.
 Generic route cleanup preserves failed status and its bounded phase diagnostic.
 An incomplete pre-publication cleanup retains the exact child generation as
 unavailable, rather than claiming that startup continues or teardown succeeded.
+Supervision admission and listener readiness are separate phases: the supervisor
+publishes this activation's `starting` record before it waits on dependencies or
+spawns a child, and the caller measures the declared readiness budget from that
+publication. A slow supervisor start or a slow activation publication is
+supervision admission, never readiness, so the supervisor's own terminal
+`failed` publication is what the caller observes. The caller adds only a bounded
+terminal-publication allowance, and its refusal keeps the supervisor's phase
+diagnostic.
 
 For a directly spawned child, the supervisor observes kernel exit state without
 reaping the leader. It stops surviving group members before reaping that leader

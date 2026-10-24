@@ -653,6 +653,41 @@ pub(crate) fn http_test(config: &GatewayConfig, budget: Duration) -> io::Result<
     let op = context(budget, EffectClass::Observe);
     http_probe(config, &op.observe().map_err(error)?)
 }
+/// Class of an HTTP self-test failure, derived from the bounded observation.
+/// The token is stable: diagnostics name it instead of leaving an operator to
+/// decode a raw observation, and each class points at a different owner (the
+/// probe budget, the answering peer's protocol, or the listener itself).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpSelfTestFault {
+    /// The bounded probe deadline expired before the peer answered.
+    Deadline,
+    /// A peer answered, but not with a usable readiness status.
+    Protocol,
+    /// Nothing usable answered on the listener (refused, closed or unobservable).
+    Listener,
+}
+impl HttpSelfTestFault {
+    /// Stable token carried in the failure message.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Deadline => "deadline",
+            Self::Protocol => "protocol",
+            Self::Listener => "listener",
+        }
+    }
+}
+/// Classify a failed HTTP self-test observation without discarding it. A
+/// deadline is only a deadline when the probe observed one; a malformed or
+/// unready answer is the peer's protocol; everything else means nothing usable
+/// answered on the listener, including an unobservable peer.
+pub fn classify_http_self_test(observed: &Observed<ProbeIo>) -> HttpSelfTestFault {
+    match observed {
+        Observed::Unknown(UnknownReason::TimedOut { .. }) => HttpSelfTestFault::Deadline,
+        Observed::Unknown(UnknownReason::Unparsable(_)) => HttpSelfTestFault::Protocol,
+        Observed::Verified(ProbeIo::Http { ready: false, .. }, _) => HttpSelfTestFault::Protocol,
+        _ => HttpSelfTestFault::Listener,
+    }
+}
 fn http_probe(config: &GatewayConfig, cx: &ObserveContext) -> io::Result<()> {
     let target = ObservationTarget::Http {
         address: config.proxy.bind_addr,
@@ -668,7 +703,12 @@ fn http_probe(config: &GatewayConfig, cx: &ObserveContext) -> io::Result<()> {
         &observed,
         Observed::Verified(ProbeIo::Http { ready: true, .. }, _)
     ) {
-        return Err(error(format!("HTTP self-test failed: {observed:?}")));
+        // The typed class names the owner of the failure; the observation is
+        // preserved verbatim so the historical cause is never discarded.
+        return Err(error(format!(
+            "HTTP self-test failed ({}): {observed:?}",
+            classify_http_self_test(&observed).as_str()
+        )));
     }
     if let Some(address) = config.proxy.tls_bind_addr {
         if !matches!(
@@ -769,6 +809,106 @@ mod tests {
         let before = Instant::now();
         assert!(self_test(&config, Duration::from_millis(80)).is_err());
         assert!(before.elapsed() < Duration::from_secs(2));
+    }
+    fn self_test_error(bind_addr: std::net::SocketAddr, budget: Duration) -> String {
+        let home = tempfile::tempdir().unwrap();
+        let mut config = GatewayConfig::standard(home.path().join(".effigy/gateway"));
+        config.proxy.bind_addr = bind_addr;
+        self_test(&config, budget).unwrap_err().to_string()
+    }
+    /// A peer that accepts the probe but never answers is a probe deadline,
+    /// not a missing listener or a protocol fault.
+    #[test]
+    fn http_self_test_names_a_deadline_fault_and_preserves_the_observation() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let silence = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            std::thread::sleep(Duration::from_secs(5));
+            drop(stream);
+        });
+        let error = self_test_error(address, Duration::from_millis(300));
+        assert!(error.contains("(deadline)"), "{error}");
+        assert!(
+            error.contains("TimedOut"),
+            "the original deadline observation is preserved: {error}"
+        );
+        let _ = silence.join();
+    }
+    /// A peer that answers with something that is not HTTP is a protocol
+    /// fault: the listener was there, so neither deadline nor listener fits.
+    #[test]
+    fn http_self_test_names_a_protocol_fault_and_preserves_the_observation() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let peer = std::thread::spawn(move || {
+            use std::io::Write;
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.write_all(b"not-http\r\n\r\n");
+            let _ = stream.flush();
+        });
+        let error = self_test_error(address, Duration::from_secs(2));
+        assert!(error.contains("(protocol)"), "{error}");
+        assert!(
+            error.contains("Unparsable"),
+            "the original protocol observation is preserved: {error}"
+        );
+        peer.join().unwrap();
+    }
+    /// Nothing answering on the port is a listener fault, and the refusal is
+    /// preserved rather than reported as a deadline.
+    #[test]
+    fn http_self_test_names_a_listener_fault_and_preserves_the_observation() {
+        let address = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap()
+        };
+        let error = self_test_error(address, Duration::from_secs(2));
+        assert!(error.contains("(listener)"), "{error}");
+        assert!(
+            error.contains("Unknown(") || error.contains("Absent("),
+            "the original listener observation is preserved: {error}"
+        );
+    }
+    /// The classification is a property of the observation, not of timing: a
+    /// slow probe is only a deadline, an unready or malformed answer is the
+    /// peer's protocol, and everything unobserved stays with the listener.
+    #[test]
+    fn http_self_test_classification_covers_every_observed_class() {
+        let evidence = Evidence::new("fixture".into(), None).unwrap();
+        assert_eq!(
+            classify_http_self_test(&Observed::Unknown(UnknownReason::TimedOut {
+                phase: "HTTP response".into()
+            })),
+            HttpSelfTestFault::Deadline
+        );
+        assert_eq!(
+            classify_http_self_test(&Observed::Unknown(UnknownReason::Unparsable(
+                "HTTP version".into()
+            ))),
+            HttpSelfTestFault::Protocol
+        );
+        assert_eq!(
+            classify_http_self_test(&Observed::Verified(
+                ProbeIo::Http {
+                    status: 503,
+                    ready: false
+                },
+                evidence.clone()
+            )),
+            HttpSelfTestFault::Protocol
+        );
+        for unobserved in [
+            Observed::Unknown(UnknownReason::PermissionDenied),
+            Observed::Unknown(UnknownReason::Inconsistent("connection refused".into())),
+            Observed::Absent(AbsenceProof::NoSuchProcess { pid: 42 }),
+        ] {
+            assert_eq!(
+                classify_http_self_test(&unobserved),
+                HttpSelfTestFault::Listener,
+                "{unobserved:?}"
+            );
+        }
     }
     #[cfg(feature = "endpoint-store-faults")]
     fn owner_transition_during_status(close: bool) {
