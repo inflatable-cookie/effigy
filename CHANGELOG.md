@@ -1180,6 +1180,11 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- `effigy dev` no longer refuses the Linux workspace artifact with `build
+  succeeded but did not produce a current artifact` when a no-op rebuild
+  reproduces bytes that were already built for this exact version (for example
+  after a direct `effigy workspace:linux:artifact`). Touched bytes from another
+  version are still refused.
 - Catalog `nginx` and `phpmyadmin` health checks no longer leave a running
   stack unhealthy until `effigy dev` times out (`environment record: run
   refused: Interrupted(TimedOut { phase: "settle", … })`). nginx counts any HTTP
