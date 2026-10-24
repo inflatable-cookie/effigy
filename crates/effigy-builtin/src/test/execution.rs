@@ -13,6 +13,8 @@ use effigy_process::ProcessSpec;
 /// The kernel's inherited-capability variable (`effigy_kernel::inheritance::ENV`).
 /// Test suites start outside the invoking tree's grant.
 const PARENT_CAPABILITY_ENV: &str = "EFFIGY_PARENT_CAPABILITY";
+/// The explicit-effigy selector `effigy_core::effigy_invocation` reads first.
+const EXECUTABLE_ENV: &str = "EFFIGY_EXECUTABLE";
 use effigy_tui::multiprocess::{
     run_multiprocess_tui, run_multiprocess_tui_with_source, MultiProcessTuiControl,
     MultiProcessTuiOptions, SessionProcesses, SessionTab,
@@ -52,7 +54,7 @@ pub(super) fn run_builtin_test_targets_tui(
         .iter()
         .map(|suite| suite.name.clone())
         .collect::<Vec<String>>();
-    let host_env = host_scratch_env(ports);
+    let host_env = suite_host_env(ports);
     let specs = runnable
         .iter()
         .map(|suite| {
@@ -152,7 +154,7 @@ pub(super) fn run_builtin_test_targets_parallel(
     };
     // The suites run on worker threads, which cannot see the caller's thread
     // scope: read the run's host environment here and carry it across.
-    let host_env = host_scratch_env(ports);
+    let host_env = suite_host_env(ports);
     let jobs = runnable
         .into_iter()
         .map(|job| {
@@ -458,6 +460,40 @@ fn host_scratch_env(ports: &dyn BuiltinRuntimePorts) -> std::collections::BTreeM
         .into_iter()
         .map(|(key, value)| (key, value.to_string_lossy().into_owned()))
         .collect()
+}
+
+/// A host suite's environment: its scratch variables plus the invoking Effigy.
+///
+/// A task step that invokes Effigy falls back to `cargo run --bin effigy` from
+/// a test harness, and every one of those builds can replace the uplifted
+/// binary while another suite's process is still running. The kernel refuses a
+/// foreground memory guard whose startup image was replaced (`I-SV4`), so a
+/// suite shares the stable binary that started the test run instead. An
+/// operator's explicit value wins.
+fn suite_host_env(ports: &dyn BuiltinRuntimePorts) -> std::collections::BTreeMap<String, String> {
+    let mut env = host_scratch_env(ports);
+    if let Some(executable) = suite_effigy() {
+        env.insert(EXECUTABLE_ENV.to_owned(), executable);
+    }
+    env
+}
+
+/// The Effigy binary a suite's nested invocations use: the operator's
+/// inherited choice, else this process's binary when it is not a library test
+/// harness (which re-execs itself only for `__kernel-*` entries).
+fn suite_effigy() -> Option<String> {
+    if let Some(explicit) = std::env::var_os(EXECUTABLE_ENV) {
+        if !explicit.is_empty() {
+            return Some(explicit.to_string_lossy().into_owned());
+        }
+    }
+    let executable = std::env::current_exe().ok()?;
+    let is_test_harness = executable
+        .parent()
+        .and_then(std::path::Path::file_name)
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "deps");
+    (!is_test_harness).then(|| executable.display().to_string())
 }
 
 /// Whether this suite runs as a host process of the calling run: a host-scoped

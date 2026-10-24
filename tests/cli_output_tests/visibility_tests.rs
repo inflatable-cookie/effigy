@@ -89,8 +89,13 @@ fn internal_and_referenced_tasks_run_directly() {
         assert_eq!(fs::read_to_string(marker).expect("task executed"), stdout);
     }
     let status = json(root.path(), &["tasks", "status", "internal", "--json"]);
-    let serialized = status["result"].to_string();
-    assert!(serialized.contains("succeeded"), "{serialized}");
+    // A direct CLI task is a foreground run, and v0.15 keeps no durable
+    // incarnation for one (`effigy-kernel` foreground custody, card 272), so
+    // `tasks status` reports no record instead of a run row. The v0.14 record
+    // fallback was retired with the draft routes (card 254).
+    assert_eq!(status["result"]["state"], "not-recorded");
+    assert!(status["result"]["current"].is_null());
+    assert_eq!(status["result"]["task"]["name"], "internal");
 }
 
 #[test]

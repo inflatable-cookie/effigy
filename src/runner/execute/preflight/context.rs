@@ -53,12 +53,22 @@ pub(in crate::runner) fn build_execution_preflight(
     task: &TaskInvocation,
     cwd: PathBuf,
 ) -> Result<ExecutionPreflight, RunnerError> {
-    build_execution_preflight_from_input(ExecutionPreflightInput::new(
+    let mut input = ExecutionPreflightInput::new(
         task.name.clone(),
         task.args.clone(),
         cwd,
         ExecutionSurface::DirectCli,
-    ))
+    );
+    // A selector resolved inside an external skill task stays in that task's
+    // source catalog, exactly as the execution path re-resolves it. Without
+    // the source, tree classification looks the selector up in the consumer's
+    // catalogs and refuses a reference the run would have accepted.
+    if let Some(source) = crate::runner::command_context::active_runtime_context()
+        .and_then(|context| context.task_source().cloned())
+    {
+        input = input.with_task_source(Some(source));
+    }
+    build_execution_preflight_from_input(input)
 }
 
 pub(in crate::runner) fn build_execution_preflight_from_input(

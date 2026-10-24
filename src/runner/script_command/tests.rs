@@ -110,7 +110,9 @@ fn container_exec_operation_from_options_preserves_cwd_env_and_stdin_file() {
 #[test]
 fn run_rhai_feature_dispatches_deploy_model_for_fixture_repo() {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/render-provider-smoke");
-    let output = run_rhai_feature(&repo_root, FEATURE_DEPLOY_MODEL, json!({}))
+    // The fixture declares `uat` and `production`, so v0.15's environment rule
+    // (card 284) requires the caller to name one.
+    let output = run_rhai_feature(&repo_root, FEATURE_DEPLOY_MODEL, json!({"env": "uat"}))
         .expect("deploy model feature should dispatch");
     let payload: serde_json::Value = serde_json::from_str(&output).expect("json payload");
 
