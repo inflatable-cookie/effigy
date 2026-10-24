@@ -36,6 +36,44 @@ pub struct ImportReceipt {
     pub source_build: Option<String>,
     pub writer_build: String,
     pub destinations: Vec<ImportedDestination>,
+    /// History-only partitions whose checkout had no verified location.
+    #[serde(default)]
+    pub dropped_history: DroppedHistory,
+}
+
+/// Completed history the importer dropped instead of blocking on (Q-010).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DroppedHistory {
+    pub checkouts: u64,
+    pub resources: u64,
+    pub runs: u64,
+    /// A bounded sample, for the operator to recognise what was dropped.
+    pub sample: Vec<DroppedCheckout>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DroppedCheckout {
+    pub checkout: String,
+    pub path_hint: Option<String>,
+}
+
+pub(crate) const DROPPED_SAMPLE: usize = 20;
+
+impl DroppedHistory {
+    pub fn record(&mut self, part: &super::plan::Partition) {
+        self.checkouts += 1;
+        self.resources += part.resources.len() as u64;
+        self.runs += part.runs.len() as u64;
+        if self.sample.len() < DROPPED_SAMPLE {
+            self.sample.push(DroppedCheckout {
+                checkout: part
+                    .checkout
+                    .map(|id| crate::store::token(&id))
+                    .unwrap_or_default(),
+                path_hint: part.path_hint.clone(),
+            });
+        }
+    }
 }
 impl Record for ImportReceipt {
     const MAX_BYTES: u64 = 16 << 20;

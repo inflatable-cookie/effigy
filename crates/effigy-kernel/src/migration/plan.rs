@@ -16,6 +16,12 @@ pub struct Partition {
     pub objects: BTreeSet<String>,
     pub release_owners: BTreeSet<String>,
     pub unresolved_runs: usize,
+    /// Holds current authority: an unreleased claim's resource or holder, or a
+    /// run reachable from an open run, a claim's run or an unreleased
+    /// attachment. A partition that is not live is completed history (Q-010:
+    /// "Completed history may be dropped"), so an unresolvable checkout that
+    /// owns only history is dropped rather than blocking the cutover.
+    pub live: bool,
 }
 #[derive(Debug, Serialize)]
 pub struct ImportPlan {
@@ -101,6 +107,7 @@ pub(super) fn partitions(
                             objects: BTreeSet::new(),
                             release_owners: BTreeSet::new(),
                             unresolved_runs: 0,
+                            live: false,
                         },
                     );
                 }
@@ -119,6 +126,7 @@ pub(super) fn partitions(
                         objects: BTreeSet::new(),
                         release_owners: BTreeSet::new(),
                         unresolved_runs: 0,
+                        live: false,
                     });
                 "machine".into()
             }
@@ -193,7 +201,25 @@ pub(super) fn partitions(
         seeds.extend(holder.clone());
     }
     let mut runs = BTreeMap::new();
-    let mut query = conn.prepare("SELECT run_id,owner,parent_run,phase<>'closed' OR cleanup_outcome IS NULL OR cleanup_outcome<>'complete' FROM runs")?;
+    // A run whose every recorded process identity belongs to an earlier boot,
+    // or which recorded none and predates this boot, has no process left that
+    // could hold authority. It is still imported when its checkout resolves;
+    // it just never makes an unlocatable partition live.
+    let current_boot = prior_boot_reference();
+    let column = |name: &'static str| -> rusqlite::Result<&'static str> {
+        Ok(if has_column(conn, "runs", name)? {
+            name
+        } else {
+            "NULL"
+        })
+    };
+    let (owner_identity, supervisor_identity, sentinel_identity) = (
+        column("owner_identity")?,
+        column("supervisor_identity")?,
+        column("sentinel_identity")?,
+    );
+    let mut dead_runs = BTreeSet::new();
+    let mut query = conn.prepare(&format!("SELECT run_id,owner,parent_run,phase<>'closed' OR cleanup_outcome IS NULL OR cleanup_outcome<>'complete',{owner_identity},{supervisor_identity},{sentinel_identity},created_at FROM runs"))?;
     let mut rows = query.query([])?;
     while let Some(row) = rows.next()? {
         cx.check("legacy closure planning")
@@ -205,6 +231,16 @@ pub(super) fn partitions(
         }
         let id: String = row.get(0)?;
         id.parse::<crate::id::RunId>()?;
+        if let Some((boot, boot_wall_ms)) = current_boot.as_ref() {
+            let identities = [
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+            ];
+            if from_prior_boot(&identities, row.get::<_, i64>(7)?, boot, *boot_wall_ms) {
+                dead_runs.insert(id.clone());
+            }
+        }
         runs.insert(
             id,
             (
@@ -219,6 +255,14 @@ pub(super) fn partitions(
         .filter(|(_, (_, _, open))| *open)
         .map(|(id, _)| id.clone())
         .collect();
+    // Current authority, before history and release ownership widen the set.
+    let mut live_runs: BTreeSet<String> = kept_runs.difference(&dead_runs).cloned().collect();
+    let mut live_resources = BTreeSet::new();
+    for (resource, holder, _, run) in &claims {
+        live_resources.insert(resource.clone());
+        live_resources.extend(holder.clone());
+        live_runs.extend(run.clone());
+    }
     kept_runs.extend(
         partitions
             .values()
@@ -231,27 +275,12 @@ pub(super) fn partitions(
     }
     let mut query = conn.prepare("SELECT run_id FROM attachments WHERE state<>'released'")?;
     for id in query.query_map([], |r| r.get::<_, String>(0))? {
-        kept_runs.insert(id?);
+        let id = id?;
+        live_runs.insert(id.clone());
+        kept_runs.insert(id);
     }
-    loop {
-        let before = kept_runs.len();
-        for (id, (_, parent, _)) in &runs {
-            if kept_runs.contains(id) {
-                kept_runs.extend(parent.clone());
-            }
-            if parent
-                .as_ref()
-                .is_some_and(|parent| kept_runs.contains(parent))
-            {
-                kept_runs.insert(id.clone());
-            }
-        }
-        if kept_runs.len() == before {
-            break;
-        }
-        cx.check("legacy child closure planning")
-            .map_err(StoreError::Interrupted)?;
-    }
+    close_runs(cx, &runs, &mut live_runs)?;
+    close_runs(cx, &runs, &mut kept_runs)?;
     for id in &kept_runs {
         let (owner, _, _) = runs.get(id).ok_or_else(|| {
             StoreError::Corrupt(format!("legacy closure references missing run {id}"))
@@ -305,10 +334,89 @@ pub(super) fn partitions(
             .objects
             .insert(digest);
     }
+    for part in partitions.values_mut() {
+        part.live = !part.release_owners.is_empty()
+            || part.runs.iter().any(|run| live_runs.contains(run))
+            || part
+                .resources
+                .iter()
+                .any(|resource| live_resources.contains(resource));
+    }
     Ok(partitions
         .into_values()
         .filter(|p| !p.resources.is_empty() || !p.runs.is_empty())
         .collect())
+}
+
+type RunRows = BTreeMap<String, (String, Option<String>, bool)>;
+
+/// This boot's identity and its wall-clock start, or `None` when either is
+/// unknown (then no run is treated as dead).
+fn prior_boot_reference() -> Option<(String, i64)> {
+    let crate::observe::Observed::Verified(clock, _) = crate::ident::boot_clock() else {
+        return None;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    let boot_wall_ms = now.checked_sub(clock.elapsed.as_millis())?;
+    Some((
+        clock.boot.as_str().to_owned(),
+        i64::try_from(boot_wall_ms).ok()?,
+    ))
+}
+
+/// Margin for clock adjustment between a run's wall-clock creation time and
+/// this boot's derived start.
+const BOOT_MARGIN_MS: i64 = 60_000;
+
+pub(super) fn from_prior_boot(
+    identities: &[Option<String>],
+    created_at_ms: i64,
+    current_boot: &str,
+    boot_wall_ms: i64,
+) -> bool {
+    let boots: Vec<Option<String>> = identities
+        .iter()
+        .flatten()
+        .map(|text| {
+            serde_json::from_str::<serde_json::Value>(text)
+                .ok()
+                .and_then(|value| value.get("boot")?.as_str().map(str::to_owned))
+        })
+        .collect();
+    if boots.is_empty() {
+        return created_at_ms < boot_wall_ms - BOOT_MARGIN_MS;
+    }
+    // Any unreadable identity, or any from this boot, keeps the run live.
+    boots
+        .iter()
+        .all(|boot| boot.as_deref().is_some_and(|boot| boot != current_boot))
+}
+
+/// Close a run set over parent and child links, so no kept run dangles.
+fn close_runs(
+    cx: &ObserveContext,
+    runs: &RunRows,
+    kept: &mut BTreeSet<String>,
+) -> Result<(), StoreError> {
+    loop {
+        let before = kept.len();
+        for (id, (_, parent, _)) in runs {
+            if kept.contains(id) {
+                kept.extend(parent.clone());
+            }
+            if parent.as_ref().is_some_and(|parent| kept.contains(parent)) {
+                kept.insert(id.clone());
+            }
+        }
+        if kept.len() == before {
+            return Ok(());
+        }
+        cx.check("legacy child closure planning")
+            .map_err(StoreError::Interrupted)?;
+    }
 }
 
 pub(super) fn has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
@@ -317,4 +425,59 @@ pub(super) fn has_column(conn: &Connection, table: &str, column: &str) -> rusqli
         [table, column],
         |row| row.get(0),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::from_prior_boot;
+
+    const BOOT: &str = "20a888e4-10fc-4798-a139-fe8e08758c34";
+    const OLD: &str = "bd26e49d-3769-45f6-a60e-c19276638748";
+    const BOOT_WALL: i64 = 1_000_000_000;
+
+    fn identity(boot: &str) -> Option<String> {
+        Some(format!(
+            r#"{{"boot":"{boot}","pid":7,"start":{{"MacOs":{{"seconds":1,"microseconds":2}}}}}}"#
+        ))
+    }
+
+    #[test]
+    fn a_run_is_from_a_prior_boot_only_when_every_identity_says_so() {
+        assert!(from_prior_boot(
+            &[identity(OLD), None, identity(OLD)],
+            BOOT_WALL,
+            BOOT,
+            BOOT_WALL
+        ));
+        assert!(!from_prior_boot(
+            &[identity(OLD), identity(BOOT)],
+            0,
+            BOOT,
+            BOOT_WALL
+        ));
+        assert!(!from_prior_boot(
+            &[Some("not json".into())],
+            0,
+            BOOT,
+            BOOT_WALL
+        ));
+    }
+
+    #[test]
+    fn a_run_without_identities_is_prior_only_when_created_before_this_boot() {
+        assert!(from_prior_boot(
+            &[None, None, None],
+            BOOT_WALL - 120_000,
+            BOOT,
+            BOOT_WALL
+        ));
+        // Within the clock margin, or after boot, it may be this boot's run.
+        assert!(!from_prior_boot(
+            &[None, None, None],
+            BOOT_WALL - 30_000,
+            BOOT,
+            BOOT_WALL
+        ));
+        assert!(!from_prior_boot(&[], BOOT_WALL + 1, BOOT, BOOT_WALL));
+    }
 }

@@ -31,6 +31,13 @@ routes and never need a row.
   selector as plain Cargo, and `GITHUB_ACTIONS=true` does the same on hosted
   runners that have no Oxide. A local run without `oxide` fails loudly and
   names the escape; it never falls back silently.
+- The same script owns the private-HOME pool pass-through: when `OXIDE_POOL` is
+  unset and `$HOME` is not the account's real home, it resolves the real pool
+  from `oxide status` under that home and exports `OXIDE_POOL` before
+  `exec oxide`. A review or fixture harness can therefore set a temporary HOME
+  without creating a cold pool under it (3.3-3.8 GB per run on the internal
+  SSD). It covers every selector and the `exec -- <tool>` route; an unresolved
+  pool warns once, naming `OXIDE_POOL`, and the run continues.
 - Custom Cargo profiles reach Cargo through the tool: `cargo nextest run
   --cargo-profile <name>` passes through unchanged, and a *modelled* command
   with a custom profile (`cargo test --profile <name>`, `cargo build --profile
@@ -65,7 +72,7 @@ routes and never need a row.
 
 | Route | Kind | Rule | Reason |
 | --- | --- | --- | --- |
-| `scripts/oxide-selector.sh` | transitioned | — | The one place that spells a plain Cargo command: it owns the `EFFIGY_OXIDE_ESCAPE=cargo` and `GITHUB_ACTIONS=true` escapes for every routed selector. |
+| `scripts/oxide-selector.sh` | transitioned | — | The one place that spells a plain Cargo command: it owns the `EFFIGY_OXIDE_ESCAPE=cargo` and `GITHUB_ACTIONS=true` escapes and the private-HOME `OXIDE_POOL` pass-through for every routed selector. |
 | `release.gates.format` | genuine exception | 8 | `config/release.toml` stays on Cargo until formal v0.15: release workflow callers, and hosted runners have no Oxide. |
 | `release.gates.test` | genuine exception | 8 | Same: `config/release.toml` gate caller. |
 | `release.gates.qa` | genuine exception | 8 | Same: `config/release.toml` gate caller. |

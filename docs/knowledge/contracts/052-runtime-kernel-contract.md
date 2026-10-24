@@ -2748,6 +2748,22 @@ requiring legacy state enters this protocol. Unrelated new foreground owners
 can run without a machine store, but must refuse unresolved or unreadable legacy
 evidence for their own owner until imported.
 
+**Unlocatable checkouts (2026-10-24).** Each retained checkout partition is
+*live* when it holds an unreleased claim's resource or holder, a release owner,
+or a run reachable from an open run, a claim's run or an unreleased attachment.
+An open run is not live authority when every recorded owner, supervisor and
+sentinel identity names an earlier boot, or it recorded none and was created
+more than a minute before this boot. A partition that isn't live is completed
+history. When its checkout has no verified location (`CheckoutUnlocated`, never
+a duplicate, changed or interrupted lookup), the importer drops it and records
+the count, resources, runs and a bounded sample in the receipt's
+`dropped_history`. Live partitions with no verified location refuse together,
+before staging, each named with its remedy. A broken discovery candidate (for
+example a linked worktree whose metadata is gone) never matches and never fails
+the lookup for other checkouts. On Tom's machine this dropped 50 fixture and
+deleted-worktree partitions (56 resources, 7 earlier-boot runs) out of 6,292
+recorded checkouts.
+
 **Busy-machine preflight (Tom, 2026-10-22).** Before creating staging files or
 changing any destination, migration reports every legacy writer that blocks
 cutover: verified pid, boot/start identity, checkout, run/resource id, owner type

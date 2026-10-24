@@ -1,5 +1,5 @@
 //! Cross-filesystem publication has one commit record, followed by local seals.
-use super::adoption::{Seal, FORMAT, MANIFEST, PREPARED, SEALED};
+use super::adoption::{DroppedHistory, Seal, FORMAT, MANIFEST, PREPARED, SEALED};
 use super::fence::{DestinationFence, LegacyFence};
 use super::*;
 use crate::ctx::EffectContext;
@@ -152,6 +152,37 @@ pub fn import(
         )
         .into());
     }
+    // Resolve every checkout before the size bound: an unlocatable checkout
+    // that owns only completed history is dropped (Q-010), and every
+    // unlocatable live partition is reported together, never just the first.
+    let mut locations = Vec::new();
+    let mut dropped = DroppedHistory::default();
+    let mut unlocated_live = Vec::new();
+    let mut kept = Vec::with_capacity(plan.partitions.len());
+    for part in std::mem::take(&mut plan.partitions) {
+        let Some(checkout) = part.checkout else {
+            kept.push(part);
+            continue;
+        };
+        match resolve(
+            checkout,
+            part.path_hint.as_deref().map(Path::new),
+            part.git_dir_hint.as_deref().map(Path::new),
+        ) {
+            Ok(path) => {
+                locations.push((checkout, Location::open(path)?));
+                kept.push(part);
+            }
+            Err(StoreError::CheckoutUnlocated(_)) if !part.live => dropped.record(&part),
+            Err(StoreError::CheckoutUnlocated(_)) => unlocated_live.push(part),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    if !unlocated_live.is_empty() {
+        let refs: Vec<&Partition> = unlocated_live.iter().collect();
+        return Err(StoreError::Corrupt(unlocated_live_report(&refs)).into());
+    }
+    plan.partitions = kept;
     if plan.partitions.len() > 1000 {
         return Err(StoreError::TooLarge { limit: 1000 }.into());
     }
@@ -162,19 +193,6 @@ pub fn import(
         .is_some_and(|build| build.len() > 512)
     {
         return Err(StoreError::Corrupt("legacy writer build exceeds its bound".into()).into());
-    }
-    // Resolve and trust-check every destination before creating any state.
-    let mut locations = Vec::new();
-    for part in &plan.partitions {
-        if let Some(checkout) = part.checkout {
-            let path = resolve(
-                checkout,
-                part.path_hint.as_deref().map(Path::new),
-                part.git_dir_hint.as_deref().map(Path::new),
-            )?;
-            let dir = Location::open(path)?;
-            locations.push((checkout, dir));
-        }
     }
     let machine_dir = DirFd::open(machine_home).map_err(StoreError::from)?;
     // Older task and environment engines could mint different primary tokens
@@ -192,6 +210,7 @@ pub fn import(
             objects: Default::default(),
             release_owners: Default::default(),
             unresolved_runs: 0,
+            live: true,
         });
     }
     // Deterministic destination order; no gate is acquired under a transaction.
@@ -292,6 +311,7 @@ pub fn import(
             source_build: plan.preflight.writer_build.clone(),
             writer_build: concat!("effigy-kernel ", env!("CARGO_PKG_VERSION")).into(),
             destinations: Vec::new(),
+            dropped_history: DroppedHistory::default(),
         };
         replace(cx, &gate, root.dir(), PREPARED, &receipt)?;
         let stage = root
@@ -314,6 +334,7 @@ pub fn import(
         source_build: plan.preflight.writer_build.clone(),
         writer_build: concat!("effigy-kernel ", env!("CARGO_PKG_VERSION")).into(),
         destinations: Vec::new(),
+        dropped_history: dropped,
     };
     for destination in &destinations {
         crate::fault_point!(MigrationCopyBefore).map_err(StoreError::from)?;
@@ -792,4 +813,28 @@ fn coalesce(
     }
     *parts = grouped;
     Ok(())
+}
+
+/// Every live partition whose checkout has no verified location, at once.
+pub fn unlocated_live_report(parts: &[&Partition]) -> String {
+    let mut text = format!(
+        "{} recorded checkout(s) hold live runtime state but have no verified location; restore each checkout or pass `--checkout <root>`:",
+        parts.len()
+    );
+    for part in parts.iter().take(50) {
+        text.push_str(&format!(
+            "\n  {} path hint {} ({} resources, {} runs, {} unresolved)",
+            part.checkout
+                .map(|id| crate::store::token(&id))
+                .unwrap_or_default(),
+            part.path_hint.as_deref().unwrap_or("none"),
+            part.resources.len(),
+            part.runs.len(),
+            part.unresolved_runs
+        ));
+    }
+    if parts.len() > 50 {
+        text.push_str(&format!("\n  … and {} more", parts.len() - 50));
+    }
+    text
 }

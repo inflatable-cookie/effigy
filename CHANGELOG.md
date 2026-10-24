@@ -1181,6 +1181,24 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- Selectors reuse the real Oxide pool when a harness overrides `HOME`.
+  `scripts/oxide-selector.sh` resolves the pool the way a normal run does — the
+  account's real home from a passwd lookup, then the first `pool:` line of
+  `oxide status` under that home — and exports `OXIDE_POOL` before `exec oxide`,
+  covering every selector and the `exec -- <tool>` route. A private HOME no
+  longer creates a cold pool under itself: 3.3-3.8 GB per run on the internal
+  SSD. An unresolved pool warns once, naming `OXIDE_POOL`, and the run
+  continues. The local-installer fixture names a pool explicitly, the Effigy
+  skill's footguns record the rule for harnesses that call `oxide` directly,
+  and `effigy test:oxide:selector-pool` proves the resolution against a stub
+  `oxide` that answers `status`.
+- `effigy run migrate` no longer refuses the whole Q-010 cutover because one
+  recorded checkout no longer exists. A deleted checkout that holds only
+  completed history (no unreleased claim, release owner or run that could still
+  be live; runs from an earlier boot don't count) is dropped and counted in the
+  plan and the receipt's `dropped_history`. Deleted checkouts that still hold
+  live state are all listed at once with their remedy, and a broken worktree
+  among the discovery roots no longer fails every lookup.
 - A managed listener's declared readiness budget now starts at the supervisor's
   own activation record instead of at supervision admission, and the supervisor
   publishes that record before it waits on dependencies or spawns a child. A
