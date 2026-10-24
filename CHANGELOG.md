@@ -1333,6 +1333,19 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- A health check written as a Compose `CMD` exec form runs as written on
+  `nerdctl compose`. nerdctl does not support the exec form: it joins the argv
+  with spaces, unquoted, into one `/bin/sh -c` command, so an argument holding
+  a space or a shell metacharacter changed meaning or failed to parse — the
+  dbgate and phpMyAdmin probes exited `sh: Syntax error: "(" unexpected` on
+  every interval and no stack containing them ever became healthy. A nerdctl
+  render now writes the shell form itself, quoting every argument, for catalog,
+  extracted and project fragments alike; `CMD-SHELL`, `NONE` and string checks
+  are left as written, and a Docker render keeps the exec form Docker honours.
+  The dbgate and phpMyAdmin catalog checks are written as shell form with their
+  own quoting, so they are right on any backend. A nerdctl render digest
+  changes for a stack whose checks use the exec form; the next `container up`
+  recreates those containers with the corrected check.
 - Every embedded catalog health check runs a tool its image ships, now that
   `container up` waits for every service's own check. `dbgate/dbgate:7.2.3` is
   built on `node:22-bookworm-slim`, which drops `wget` and `curl`, so its probe
