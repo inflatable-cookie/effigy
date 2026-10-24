@@ -88,12 +88,10 @@ impl ServiceHealth {
             )
     }
 
-    /// A container that stopped instead of starting.
+    /// A container that started and then stopped. A `created` container was
+    /// never started, so it is reported as not running, not as an exit.
     pub fn has_exited(&self) -> bool {
-        matches!(
-            self.state.to_ascii_lowercase().as_str(),
-            "exited" | "dead" | "created"
-        )
+        matches!(self.state.to_ascii_lowercase().as_str(), "exited" | "dead")
     }
 
     /// What is wrong, in words: `web is unhealthy after 12 failed checks`.

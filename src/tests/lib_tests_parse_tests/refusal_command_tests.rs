@@ -1,5 +1,19 @@
 //! The commands a refusal suggests are commands this CLI accepts.
 //!
+//! Before (effigy#313, the inventors report):
+//!
+//! ```text
+//! refused to stop, restart or recreate environment `web` while runs hold it:
+//! run agqw465xzsu66h77ejdxon3hde. End those runs through their own stop first
+//! (`effigy tasks status --all` lists them)
+//! ```
+//!
+//! `effigy tasks status --all` parses, but it lists declared tasks and never
+//! the run the refusal named; nothing in the text says which command stops it.
+//! After: each holder names its task, pid, age and whether a terminal is
+//! attached, and the exact commands are `` `effigy run stop <id>` ``,
+//! `` `effigy run status <id>` `` and `` `effigy runs` ``.
+//!
 //! A refusal that points at `effigy tasks status --all` or
 //! `effigy tasks status <name>` is worse than no advice: neither form parses
 //! for a managed profile, and the person is left guessing (effigy#313). Each

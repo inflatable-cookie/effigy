@@ -1270,6 +1270,19 @@ mod tests {
     /// Effigy's own housekeeping, and the counts and nerdctl note belong to
     /// `effigy doctor` and the explicit prune (effigy#313). Only a profile the
     /// doctor threshold calls pressured is reported during a run.
+    ///
+    /// Before, every `up` and `dev` printed:
+    ///
+    /// ```text
+    /// [info] Colima profile `effigy`: removed 540 stale nerdctl health-check
+    /// pid file(s); 404 remain (`effigy container profile
+    /// prune-health-pid-files --profile effigy` repeats this, and nerdctl
+    /// 2.4.1 or later stops the leak)
+    /// ```
+    ///
+    /// which reads as an instruction the operator cannot carry out: Colima
+    /// 0.10.3 ships nerdctl 2.3.1, so the upgrade note names a version no
+    /// current Colima provides.
     #[test]
     fn a_routine_prune_says_nothing_until_run_inodes_are_pressured() {
         let prune = super::super::healthcheck_pidfiles::HealthCheckPidFilePrune {

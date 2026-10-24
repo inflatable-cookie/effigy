@@ -5,9 +5,9 @@ use super::{
     resolve_inline_workspace_exec_working_dir, stats_global_report, status_global_report,
     status_report, with_test_compose_backend, with_test_effigy_home, with_test_host_composer_home,
     AllocatedPortsSummary, ContainerDataTransferAction, ContainerDataVolumeEntry,
-    ContainerPolicyError, ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry,
-    ContainerStatusService, EffectiveAttachMode, EffectiveComposeSource, SharedServiceBinding,
-    WorkspaceExtraMountDecisionKind,
+    ContainerPolicyError, ContainerServiceHealth, ContainerStatsAllEntry, ContainerStatsService,
+    ContainerStatusAllEntry, ContainerStatusService, EffectiveAttachMode, EffectiveComposeSource,
+    SharedServiceBinding, WorkspaceExtraMountDecisionKind,
 };
 use crate::compose::ComposeBackend;
 use effigy_catalog::volumes::VolumeClassification;

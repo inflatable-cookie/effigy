@@ -519,6 +519,39 @@ During v0.x, MINOR bumps may include breaking changes.
   bounded, redacted output instead of `(code=Some(2))` and the whole streams,
   and the Debug ratchet baseline drops from 239 to 226.
 
+- Container commands say what is happening per service, and a readiness
+  failure names the service that is wrong (effigy#313). `container up`
+  (attached and `--detach`) and `container down` draw one step per service
+  from the runtime's own progress lines (`pulling postgres:16`,
+  `creating web`, `starting web`, `stopping web`, `removing web`), and each
+  step ends with its duration; the phases around them are named too
+  (`rendering the stack`, `preparing ports and loopback`,
+  `starting shared services`, `registering routes`,
+  `settling the environment`). Readiness waits poll every service's own
+  health check: the label reads
+  `waiting for web to report healthy (attempt 4, last: GET / 404)`, and a
+  timeout reports each unready service with its status, failing streak and
+  bounded last check output, plus each exited service's exit code and last log
+  line, then the next commands (`effigy container logs <service>`,
+  `effigy container status`). A stack whose unready services all fail the same
+  way (for example every check reporting `command not found`) is diagnosed
+  after a few observations instead of waiting out the deadline. The
+  environment's declared health check stays the final gate, and
+  `container status` now shows an unhealthy service's last check output.
+- The pid-file prune after the nerdctl 2.3.1 health-check leak is silent in a
+  normal run. It still runs on container commands, but nothing is printed
+  unless `/run` inode use reaches the doctor threshold or the prune fails; the
+  counts, the prune command and the nerdctl 2.4.1 upgrade note live in
+  `effigy doctor` and `effigy container profile prune-health-pid-files`.
+- The held-environment and already-running refusals name the run holding the
+  work and give commands that exist. `refused to stop, restart or recreate
+  environment <name> while runs hold it` now lists each holder's run id, task,
+  pid, age and whether a terminal is attached, then
+  `effigy run stop <id>` (or Ctrl-C in that terminal) and
+  `effigy run status <id>` / `effigy runs`; the `already running` refusal names
+  the same facts and no longer suggests `effigy tasks status <profile>`, which
+  does not parse for a managed profile.
+
 - A deleted or stopped Colima profile is no longer a dead end: the next command
   that needs it creates the profile with Effigy's managed arguments (SSH agent
   forwarding, DNS fallbacks, managed resources, platform overrides) or starts

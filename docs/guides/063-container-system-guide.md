@@ -849,8 +849,18 @@ Use this with `effigy.local.toml` for per-machine mounts.
    Compose project before registering its route
 6. either return immediately or attach, based on startup mode
 
-These waits are bounded. A timeout names the runtime or gateway readiness
-stage; a stopped Compose service is reported with its exit status. Effigy
+These waits are bounded. A readiness wait polls every service's own health
+check and names it while it waits:
+`waiting for web to report healthy (attempt 4, last: GET / 404)`. A timeout
+lists each service that is not ready with its health status, failing streak and
+bounded last check output, plus each exited service's exit code and last log
+line, and then the next commands (`effigy container logs <service>`,
+`effigy container status`). A stack whose unready services all fail the same
+way — every check reporting `command not found`, for example — is diagnosed
+after a few observations rather than waited out. `container status` shows an
+unhealthy service's last check output next to its status. An environment that
+declares `[containers.<name>.health]` keeps that check as its final gate.
+A stopped Compose service is reported with its exit status. Effigy
 never starts a container that is already running or that the backend is
 still acting on: immediately before each recovery start it inspects that one
 container and starts it only when the observation proves a stopped
@@ -1803,8 +1813,15 @@ effigy container profile prune-health-pid-files --profile effigy
 `effigy doctor` prints an evidence line for every running profile
 (`colima-profile `effigy` /run: 270087/819200 inodes used (32%), 269082
 health-check pid file(s) (268182 older than 10m)`) and warns once inode use
-reaches 80% or 10,000 stale files accumulate. `container up` runs the same
-bounded prune automatically. The prune removes only files whose name matches
+reaches 80% or 10,000 stale files accumulate. Container commands (`container
+up`, `container down` and a task that uses an environment) run the same bounded
+prune automatically and say nothing about it in a normal run: it is Effigy's
+own housekeeping in a VM tmpfs, and Colima 0.10.3 ships nerdctl 2.3.1, so a
+routine nerdctl upgrade note is advice the reader cannot act on. An activation
+prints the doctor warning only when `/run` inode use is at the doctor
+threshold, and names the prune failure if the prune itself could not run. The
+counts and the upgrade note stay in `effigy doctor` and in the explicit prune
+command. No command that does not touch containers runs the prune. The prune removes only files whose name matches
 exactly `health-check-*.pid`, that sit directly inside a containerd runtime-v2
 task directory, and that are older than ten minutes; a younger file may belong
 to a check still in flight, so it is kept. Nothing else under `/run` is read or

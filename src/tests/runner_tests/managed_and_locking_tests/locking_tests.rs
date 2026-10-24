@@ -130,9 +130,20 @@ run = "printf other-ok"
 }
 
 /// Every command the already-running refusal suggests is a command this CLI
-/// actually accepts. The suggestions used to be `effigy tasks status --all`
-/// and `effigy tasks status <task>`, and neither parses for a managed profile
-/// or a catalog-scoped selector (effigy#313).
+/// actually accepts. Before (effigy#313, the inventors report):
+///
+/// ```text
+/// `dev` is already running (pid 99290 on this host, run
+/// agqw465rcnc7zpo22ry62fmtnq, started 1h6m ago). Inspect it with `effigy tasks
+/// status dev`, wait for it with `effigy --lock-wait-ms 600000 dev`, or stop
+/// that run
+/// ```
+///
+/// `effigy tasks status dev` fails when `dev` is a managed profile rather than
+/// a declared task, and nothing says which command stops the run. After: the
+/// run id, pid, age and terminal attachment, then the exact
+/// `` `effigy run stop <id>` ``, `` `effigy run status <id>` `` and
+/// `` `effigy runs` ``.
 #[test]
 fn the_already_running_refusal_suggests_only_parseable_commands() {
     let _guard = lock_test();
