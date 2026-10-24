@@ -1,4 +1,5 @@
 mod colima_runtime;
+mod compose_progress;
 mod healthcheck_pidfiles;
 mod healthcheck_timer;
 mod implementation;
@@ -22,6 +23,9 @@ pub use colima_runtime::{
     running_colima_profiles, runtime_backend_is_running, selected_backend_label,
     ColimaEnsureReport, ColimaRecoveryReport,
 };
+pub use compose_progress::{
+    parse_compose_step_event, service_from_container_name, ComposeStepEvent,
+};
 pub use healthcheck_pidfiles::{
     inspect_run_inode_pressure, parse_health_check_pidfile_prune, parse_run_inode_pressure,
     prune_stale_health_check_pidfiles, HealthCheckPidFilePrune, RunInodePressure,
@@ -31,8 +35,9 @@ pub use healthcheck_pidfiles::{
 pub use implementation::{
     capture_compose_ps, capture_running_container_stats,
     capture_running_container_stats_for_profile, compose_stack_is_running,
-    discover_compose_containers_all_states, discover_running_compose_containers,
-    infer_host_working_dir_for_container, list_compose_containers_for_policy_including_stopped,
+    container_last_log_line_for_policy, discover_compose_containers_all_states,
+    discover_running_compose_containers, infer_host_working_dir_for_container,
+    inspect_containers_for_policy, list_compose_containers_for_policy_including_stopped,
     list_compose_containers_for_policy_including_stopped_with_deadline,
     list_compose_containers_for_policy_including_stopped_with_timeout,
     list_compose_containers_for_project_including_stopped, list_running_compose_containers,

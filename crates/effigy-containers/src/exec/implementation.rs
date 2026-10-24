@@ -1710,6 +1710,63 @@ pub fn list_compose_containers_for_policy_including_stopped_with_timeout(
     )
 }
 
+/// `runtime inspect` for the named containers of one policy's backend.
+///
+/// A readiness wait reads every service's own state and health check from
+/// here; the bounded deadline is the wait's, so a slow runtime cannot extend
+/// it (effigy#313).
+pub fn inspect_containers_for_policy(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    names: &[String],
+    deadline: Option<Instant>,
+) -> Result<Output, ContainerExecError> {
+    let mut args = vec![OsString::from("inspect")];
+    args.extend(names.iter().map(OsString::from));
+    run_runtime_command_capture_with_repair(
+        repo_root,
+        policy,
+        &args,
+        "runtime inspect",
+        Some(COMPOSE_PS_TIMEOUT),
+        deadline,
+    )
+}
+
+/// The last line a container logged, read on demand for one failure
+/// diagnostic. Only exited or unhealthy services are read this way, so a
+/// healthy stack pays nothing.
+pub fn container_last_log_line_for_policy(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    container: &str,
+    tail: u32,
+) -> Result<String, ContainerExecError> {
+    let args = vec![
+        OsString::from("logs"),
+        OsString::from("--tail"),
+        OsString::from(tail.to_string()),
+        OsString::from(container),
+    ];
+    let output = run_runtime_command_capture_for_policy_with_timeout(
+        repo_root,
+        policy,
+        &args,
+        "runtime logs",
+        COMPOSE_PS_TIMEOUT,
+    )?;
+    let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
+    combined.push('\n');
+    combined.push_str(&String::from_utf8_lossy(&output.stderr));
+    Ok(combined
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .next_back()
+        .unwrap_or_default()
+        .to_owned())
+}
+
 fn run_runtime_command_capture_with_repair(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
