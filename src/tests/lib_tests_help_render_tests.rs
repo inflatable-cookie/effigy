@@ -32,7 +32,7 @@ fn render_help_writes_structured_sections() {
     assert!(rendered.contains("effigy config completion"));
     assert!(rendered.contains("supports <catalog>/test targeting"));
     assert!(!rendered.contains("effigy test --plan"));
-    assert!(rendered.contains("Use `effigy <built-in-task> --help`"));
+    assert!(rendered.contains("Use `effigy <task> --help`"));
     assert!(rendered.contains("--env-schema <PATH>"));
     assert!(rendered.contains("<task> --plan"));
     assert!(rendered.contains("never a planning or safety flag"));

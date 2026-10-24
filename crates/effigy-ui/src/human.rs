@@ -11,7 +11,7 @@
 //!
 //! let error = HumanError::new("container `web` never became healthy")
 //!     .evidence("health check http://localhost:8080/healthz answered HTTP 404 (attempt 12, 60s)")
-//!     .next_action("run `effigy container logs web`");
+//!     .next_action("run `effigy container web logs`");
 //! println!("{}", error.render_text());
 //! ```
 
@@ -125,7 +125,7 @@ impl HumanError {
     /// ```text
     /// [error] container `web` never became healthy
     ///   cause: health check answered HTTP 404 (attempt 12, 60s)
-    ///   next: run `effigy container logs web`
+    ///   next: run `effigy container web logs`
     /// ```
     pub fn render_text(&self) -> String {
         format!("[error] {}", self.render_text_body())
@@ -268,12 +268,12 @@ mod tests {
             .evidence(
                 "health check http://localhost:8080/healthz answered HTTP 404 (attempt 12, 60s)",
             )
-            .next_action("run `effigy container logs web`");
+            .next_action("run `effigy container web logs`");
         assert_eq!(
             error.render_text(),
             "[error] container `web` never became healthy\n  \
              cause: health check http://localhost:8080/healthz answered HTTP 404 (attempt 12, 60s)\n  \
-             next: run `effigy container logs web`"
+             next: run `effigy container web logs`"
         );
     }
 
@@ -310,14 +310,14 @@ mod tests {
     fn json_form_carries_the_same_three_facts() {
         let error = HumanError::new("container `web` never became healthy")
             .evidence("health check answered HTTP 404 (attempt 12, 60s)")
-            .next_action("run `effigy container logs web`");
+            .next_action("run `effigy container web logs`");
         let json = error.to_json();
         assert_eq!(json["what_failed"], "container `web` never became healthy");
         assert_eq!(
             json["evidence"][0],
             "health check answered HTTP 404 (attempt 12, 60s)"
         );
-        assert_eq!(json["next_action"], "run `effigy container logs web`");
+        assert_eq!(json["next_action"], "run `effigy container web logs`");
         assert_eq!(json.as_object().map(|object| object.len()), Some(3));
     }
 

@@ -15,6 +15,7 @@ pub mod command_surface;
 mod global_json;
 pub mod header;
 pub mod help;
+pub mod usage_hint;
 mod value_parsing;
 
 pub use command_surface::HelpGroup;

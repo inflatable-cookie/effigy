@@ -179,7 +179,7 @@ impl RunKey {
             other => {
                 return Err(unverifiable_key(
                     self,
-                    &format!("import authority: {other:?}"),
+                    &format!("import authority: {}", describe_authority(&other)),
                 ))
             }
         };
@@ -1095,12 +1095,12 @@ fn refuse_bound_key(
     let root = match kernel::observe_root(&cx, checkout) {
         Observed::Verified(root, _) => root,
         Observed::Absent(_) => return Ok(()),
-        Observed::Unknown(reason) => return Err(unverifiable_key(key, &format!("{reason:?}"))),
+        Observed::Unknown(reason) => return Err(unverifiable_key(key, &format!("{reason}"))),
     };
     let reader = match Store::read(&cx, &root) {
         Observed::Verified(reader, _) => reader,
         Observed::Absent(_) => return Ok(()),
-        Observed::Unknown(reason) => return Err(unverifiable_key(key, &format!("{reason:?}"))),
+        Observed::Unknown(reason) => return Err(unverifiable_key(key, &format!("{reason}"))),
     };
     let namespace = key.namespace(&cx, &root)?;
     for id in namespace.ids {
@@ -1151,7 +1151,27 @@ fn check_bound_key(
                 )))
             }
         }
-        Observed::Unknown(reason) => Err(unverifiable_key(key, &format!("{reason:?}"))),
+        Observed::Unknown(reason) => Err(unverifiable_key(key, &format!("{reason}"))),
+    }
+}
+
+/// The import authority in words: a state a person can act on, never a
+/// `Debug` tree of the enum.
+fn describe_authority(observed: &Observed<effigy_kernel::migration::Authority>) -> String {
+    use effigy_kernel::migration::Authority;
+    match observed {
+        Observed::Verified(Authority::Prepared { id }, _) => {
+            format!("import {id} is prepared but not sealed")
+        }
+        Observed::Verified(Authority::Committed { id, .. }, _) => {
+            format!("import {id} is committed")
+        }
+        Observed::Verified(Authority::LegacyEvidence, _) => {
+            "the journal carries legacy evidence only".to_owned()
+        }
+        Observed::Verified(Authority::Fresh, _) => "the journal is fresh".to_owned(),
+        Observed::Absent(_) => "the journal has no import authority".to_owned(),
+        Observed::Unknown(reason) => reason.to_string(),
     }
 }
 
@@ -1214,7 +1234,7 @@ fn run_error(error: &RunError) -> String {
         RunError::Store(error) => format!("state store: {error}"),
         RunError::Gate(error) => format!("gate: {error}"),
         RunError::HelperExited { .. } => error.to_string(),
-        other => format!("{other:?}"),
+        other => format!("{other}"),
     }
 }
 
@@ -1261,6 +1281,24 @@ fn begin_error(
     }
 }
 
+/// The run-inventory command this repository actually reaches, if any.
+///
+/// A repository task named `tasks` owns the word (contract 043), so suggesting
+/// `effigy tasks status …` there would start the repository's own task instead
+/// of the inventory. A message never suggests a command this checkout routes
+/// elsewhere (effigy#318).
+fn run_inventory_command(target: &TaskTarget) -> Option<String> {
+    if crate::runner::deferred_builtins_for_root(&target.root).contains("tasks") {
+        return None;
+    }
+    Some(match target.shared_lock {
+        // A shared or built-in lock's holder may be another task or command,
+        // so the inventory of every live holder is the answer.
+        Some(_) => "effigy tasks status --all".to_owned(),
+        None => format!("effigy tasks status {}", target.label),
+    })
+}
+
 /// A busy gate names its live holder from the gate probe and the holder's
 /// own run row. It never suggests breaking the lock: holding is liveness.
 fn conflict(
@@ -1288,9 +1326,13 @@ fn conflict(
         .as_deref()
         .is_some_and(|lock| lock.starts_with(BUILTIN_LOCK_PREFIX));
     let holder_run = diag.as_ref().and_then(|diag| diag.run.clone());
+    // A run id is the one handle a repository task cannot shadow, so it is the
+    // inspect command whenever the gate names its holder. Without one, the
+    // built-in inventory is suggested only when this repository has not
+    // declared its own `tasks` task (contract 043).
     let status_command = match holder_run.as_deref() {
-        Some(run) => format!("effigy run status {run}"),
-        None => "effigy runs".to_owned(),
+        Some(run) => Some(format!("effigy run status {run}")),
+        None => run_inventory_command(target),
     };
     let stop_command = holder_run
         .as_ref()
@@ -1324,6 +1366,18 @@ fn conflict(
             format!("`{}` is already running", target.label)
         };
     let wait_flag = (!builtin).then(|| format!("effigy --lock-wait-ms 600000 {}", target.label));
+    // `tasks` is a shadowable built-in (contract 043): when this repository
+    // declares a task of that name, `effigy tasks status …` runs the
+    // repository's task instead of the inventory, so it is not suggested.
+    let inspect = match (&status_command, holder_run.is_some()) {
+        (Some(status_command), true) => {
+            format!("Inspect it with `{status_command}` (or list every run with `effigy runs`)")
+        }
+        (Some(status_command), false) => format!("Inspect it with `{status_command}`"),
+        (None, _) => "this repository's own task owns `effigy tasks`, so the built-in run \
+                      inventory cannot show it"
+            .to_owned(),
+    };
     let stop_text = match (stop_command.as_deref(), attached_to_terminal) {
         (Some(stop), true) => {
             format!("stop that run with `{stop}` (or press Ctrl-C in its terminal)")
@@ -1333,23 +1387,19 @@ fn conflict(
     };
     let remediation = match (wait, &wait_flag) {
         (Some((timeout, waited)), Some(wait_flag)) => format!(
-            "{what} ({holder_text}); waited {waited}ms of {timeout}ms. Inspect it with \
-             `{status_command}` (or list every run with `effigy runs`), wait longer with \
-             `{wait_flag}`, or {stop_text}"
+            "{what} ({holder_text}); waited {waited}ms of {timeout}ms. {inspect}, wait longer \
+             with `{wait_flag}`, or {stop_text}"
         ),
         (Some((timeout, waited)), None) => format!(
-            "{what} ({holder_text}); waited {waited}ms of {timeout}ms. Inspect it with \
-             `{status_command}` (or list every run with `effigy runs`), let it finish, or \
-             {stop_text}"
+            "{what} ({holder_text}); waited {waited}ms of {timeout}ms. {inspect}, let it \
+             finish, or {stop_text}"
         ),
         (None, Some(wait_flag)) => format!(
-            "{what} ({holder_text}). Inspect it with `{status_command}` (or list every run with \
-             `effigy runs`), wait for it with `{wait_flag}`, or {stop_text}"
+            "{what} ({holder_text}). {inspect}, wait for it with `{wait_flag}`, or {stop_text}"
         ),
-        (None, None) => format!(
-            "{what} ({holder_text}). Inspect it with `{status_command}` (or list every run with \
-             `effigy runs`), let it finish, or {stop_text}"
-        ),
+        (None, None) => {
+            format!("{what} ({holder_text}). {inspect}, let it finish, or {stop_text}")
+        }
     };
     let details_json = serde_json::json!({
         "schema": "effigy.lock-wait.v2",
@@ -1372,7 +1422,9 @@ fn conflict(
             Some(started.elapsed().as_millis() as u64)
         }),
         "status_command": status_command,
-        "next": std::iter::once(format!("inspect the live run with `{status_command}`"))
+        "next": status_command
+            .iter()
+            .map(|command| format!("inspect the live run with `{command}`"))
             .chain(wait_flag.iter().map(|flag| format!("wait for it with `{flag}`")))
             .chain(stop_command.iter().map(|stop| format!("stop it with `{stop}`")))
             .collect::<Vec<_>>(),
@@ -1386,7 +1438,7 @@ fn conflict(
         holder_started_at_epoch_ms: run_started,
         wait_timeout_ms: wait.map(|(timeout, _)| timeout),
         waited_ms: wait.map(|(_, waited)| waited),
-        status_command: Some(status_command),
+        status_command,
         details_json: Some(details_json),
         remediation,
     }))

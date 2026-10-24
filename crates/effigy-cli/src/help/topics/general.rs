@@ -19,7 +19,7 @@ pub(crate) fn render_general_help<R: HelpRenderer + ?Sized>(
     }
     renderer.notice(
         NoticeLevel::Info,
-        "Use `effigy <built-in-task> --help`, `effigy tasks <helper> --help`, or `effigy config completion --help` for task-specific flags and examples.",
+        "Use `effigy <task> --help` or `effigy config completion --help` for task-specific flags and examples.",
     )?;
     renderer.notice(
         NoticeLevel::Info,

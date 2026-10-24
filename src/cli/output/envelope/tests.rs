@@ -55,7 +55,7 @@ fn parse_json_or_string_parses_and_falls_back_to_text() {
 fn build_json_envelope_error_with_human_keeps_the_machine_fields() {
     let human = effigy_ui::HumanError::new("container `web` never became healthy")
         .evidence("health check answered HTTP 404 (attempt 12, 60s)")
-        .next_action("run `effigy container logs web`")
+        .next_action("run `effigy container web logs`")
         .to_json();
     let payload = build_json_envelope_error_with_human(
         "container",
@@ -85,6 +85,6 @@ fn build_json_envelope_error_with_human_keeps_the_machine_fields() {
     );
     assert_eq!(
         payload["error"]["human"]["next_action"],
-        "run `effigy container logs web`"
+        "run `effigy container web logs`"
     );
 }

@@ -800,7 +800,7 @@ fn verified_service_binding(
         .collect::<Vec<_>>();
     if selected.is_empty() {
         return Err(RunnerError::task_invocation(format!(
-            "container service `{service}` is not running; start it with `effigy container up {}`",
+            "container service `{service}` is not running; start it with `effigy container {} up`",
             policy.name
         )));
     }

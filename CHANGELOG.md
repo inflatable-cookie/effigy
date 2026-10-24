@@ -577,6 +577,26 @@ During v0.x, MINOR bumps may include breaking changes.
   `effigy run status <id>` / `effigy runs`; the `already running` refusal names
   the same facts and no longer suggests `effigy tasks status <profile>`, which
   does not parse for a managed profile.
+- A command an Effigy message suggests is a command this checkout accepts
+  (effigy#318). A mistyped or unknown argument now answers with the nearest
+  command's own usage — one or two `Usage` lines, the words that command accepts
+  where the typed word failed, and a "did you mean" for a near miss or for a
+  command that lives elsewhere (`effigy container exec app -- …` names
+  `effigy exec …`) — instead of the whole help panel, and `effigy <command>
+  --help` is the pointer for the rest. The same facts reach `--json` as `hint`,
+  `usage`, `supported` and `did_you_mean`. `effigy secrets doctor` text lists the
+  stored key names, the required keys the vault is missing, the stored keys
+  `[secrets.keys]` does not declare, and the factor that opened the vault
+  (`passphrase` or `local-dev key`), and never a value; `--json` carries the same
+  facts as `vault_state.unlock` and `vault_state.stored_keys`. A lock conflict no longer suggests
+  the built-in run inventory where the repository's own task owns the word
+  `tasks`, the container messages that named a container start it as
+  `effigy container <NAME> up|status` instead of `effigy container up <NAME>`,
+  and the release hints that still named the retired `release prepare` and
+  `release execute` point at `effigy release run` and `effigy release --plan`.
+  `effigy test:feedback:suggestions` parses every backtick-quoted `effigy …`
+  form in `src/` and `crates/` with this checkout's grammar and fails on a
+  suggestion that does not.
 
 - A deleted or stopped Colima profile is no longer a dead end: the next command
   that needs it creates the profile with Effigy's managed arguments (SSH agent

@@ -1694,8 +1694,8 @@
   { run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::error::tests::) | test(cli::output::envelope::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
   { run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(health::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
-"lint:feedback" = { visibility = "internal", group = "Maintenance", description = "Lint the crates that carry human-facing feedback.", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-ui -p effigy-kernel -p effigy-containers -p effigy-doctor -p effigy-manifest -p effigy-release -p effigy-secrets --all-targets -- -D warnings", timeout_ms = 900000 }] }
-"lint:feedback:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy -p effigy-ui -p effigy-kernel -p effigy-containers -p effigy-doctor --all-targets -- -D warnings", timeout_ms = 900000 }] }
+"lint:feedback" = { visibility = "internal", group = "Maintenance", description = "Lint the crates that carry human-facing feedback.", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-cli -p effigy-ui -p effigy-kernel -p effigy-containers -p effigy-doctor -p effigy-manifest -p effigy-release -p effigy-secrets --all-targets -- -D warnings", timeout_ms = 900000 }] }
+"lint:feedback:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy -p effigy-cli -p effigy-ui -p effigy-kernel -p effigy-containers -p effigy-doctor --all-targets -- -D warnings", timeout_ms = 900000 }] }
 # Human-facing feedback on the remaining command planes (effigy#315): live
 # steps for bootstrap/setup, bundle and catalog sources, secrets, release
 # gates, deploy provider resolution and task-run steps, plus the error texts
@@ -1711,6 +1711,23 @@
   { id = "manifest-sources", run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest --lib -E 'test(bundles::source::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "secrets-vault", run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-secrets --lib --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "release-gates", run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-release --lib -E 'test(gate_helpers) | test(gate_run_reports) | test(gate_observer) | test(gate_persist) | test(gate_json) | test(failing_and_passing_gates) | test(prepare_text_shows_failed_gate) | test(named_hosted_reuse)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+]}
+# Argument errors and suggested commands (effigy#318): the targeted usage a
+# mistyped argument gets, a guard that parses every `effigy …` form a message
+# suggests, and the key names `secrets doctor` prints.
+"test:feedback:suggestions" = { durable = true, visibility = "internal", group = "Maintenance", description = "Prove the targeted usage of an argument error and that every suggested command parses under this checkout's grammar.", run = [
+  { id = "suggested-commands", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test suggested_commands --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { id = "argument-error-text", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(cli::parse_error::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { id = "parse-error-output", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(core_output_tests::cli_parse_error)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { id = "usage-hint", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-cli --lib -E 'test(usage_hint::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { id = "secrets-doctor-text", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(doctor_text_tests)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+]}
+"test:feedback:suggestions:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { id = "suggested-commands", run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test suggested_commands --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { id = "argument-error-text", run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(cli::parse_error::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { id = "parse-error-output", run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(core_output_tests::cli_parse_error)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { id = "usage-hint", run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-cli --lib -E 'test(usage_hint::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { id = "secrets-doctor-text", run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(doctor_text_tests)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
 ]}
 "qa:docs" = { visibility = "public", group = "Validation", description = "Check documentation links, examples, agent defaults, knowledge and the changelog.", run = [
   { task = "qa:docs:links" },

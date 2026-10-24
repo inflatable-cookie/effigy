@@ -56,7 +56,24 @@ fn cli_parse_error_includes_usage_in_stderr() {
     assert!(stderr.contains("EFFIGY"));
     assert!(stderr.contains("╭"));
     assert!(stderr.contains("Invalid command arguments"));
-    assert!(stderr.contains("Commands"));
+    // After (effigy#318): the nearest command's own usage lines and a pointer
+    // to its help, instead of the whole `Commands` panel. Before: the error
+    // block followed by ~95 lines of general help.
+    assert!(stderr.contains("hint: Run `effigy tasks --help` for every form"));
+    assert!(stderr.contains("Usage"));
+    assert!(stderr.contains("effigy tasks [--all] [--repo <PATH>]"));
+    assert!(
+        !stderr.contains("Work Commands"),
+        "an argument error never prints the whole help panel: {stderr}"
+    );
+    let usage_lines = stderr
+        .lines()
+        .filter(|line| line.starts_with("effigy "))
+        .count();
+    assert!(
+        (1..=2).contains(&usage_lines),
+        "one or two usage lines, saw {usage_lines}: {stderr}"
+    );
     assert!(!stderr.contains('\u{1b}'));
 }
 
@@ -82,6 +99,15 @@ fn cli_parse_error_json_mode_emits_machine_readable_payload() {
     assert!(parsed["error"]["message"]
         .as_str()
         .is_some_and(|msg| msg.contains("--repo requires a value")));
+    // The envelope carries the same targeted answer as the text.
+    assert_eq!(
+        parsed["error"]["details"]["hint"],
+        "Run `effigy tasks --help` for every form"
+    );
+    assert!(parsed["error"]["details"]["usage"]
+        .as_array()
+        .is_some_and(|lines| !lines.is_empty()));
+    assert_eq!(parsed["error"]["details"]["did_you_mean"], Value::Null);
 }
 
 #[test]
