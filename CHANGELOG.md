@@ -1181,6 +1181,12 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- A deleted checkout's stale gateway route no longer blocks every other
+  project. Route-table writes only check added or changed routes against
+  domain owners, so `container up`/`down` elsewhere stops failing with `domain
+  … has a reserved successor owner`. `gateway repair --owner-checkout` now
+  judges each route by its own project, so a deleted checkout's routes are
+  reclaimable even when a live successor already claims their domains.
 - `effigy test` suites no longer inherit the invoking task tree's runtime
   capability. Inside a foreground tree such as `effigy qa`, every test that
   used a private durable store failed with `late durable effect refused: parent
