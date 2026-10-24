@@ -3,13 +3,15 @@ use std::path::Path;
 use effigy_core::resolver::ResolvedTarget;
 use effigy_release::{
     collect_release_gate_run, collect_release_status as collect_release_status_via_release,
-    plan_release_pipeline as plan_release_pipeline_via_release,
+    gate_outcome_word, plan_release_pipeline as plan_release_pipeline_via_release,
     read_release_record as read_release_record_via_release,
     release_home as release_home_via_release, run_release as run_release_via_release,
-    run_release_gates_with_progress, GateExecutionReport, GitEffects, ReleaseAction,
-    ReleaseGateRun, ReleasePipelinePlan, ReleaseRunOutcome, ReleaseRunRequest, ReleaseStage,
-    ReleaseStatus, ResolvedGate,
+    run_release_gates_with_observer, GateExecutionReport, GateObserver, GateResult, GitEffects,
+    ReleaseAction, ReleaseGateRun, ReleasePipelinePlan, ReleaseRunOutcome, ReleaseRunRequest,
+    ReleaseStage, ReleaseStatus, ResolvedGate,
 };
+
+use effigy_ui::steps::Step;
 
 use super::*;
 
@@ -113,6 +115,8 @@ pub(super) fn release_run_action(
     to: Option<ReleaseStage>,
 ) -> Result<ReleaseRunOutcome, RunnerError> {
     let home = release_home_via_release()?;
+    let step = effigy_ui::steps::step(&release_run_label(&action, to));
+    let action_label = action_name(&action);
     let request = ReleaseRunRequest {
         repo_root: resolved.resolved_root.clone(),
         home,
@@ -120,11 +124,64 @@ pub(super) fn release_run_action(
         to,
     };
     let mut effects = GitEffects::new(&resolved.resolved_root);
-    let outcome = run_release_via_release(&request, &mut effects)?;
+    let result = run_release_via_release(&request, &mut effects);
+    let outcome = match result {
+        Ok(outcome) => {
+            step.succeed(&release_run_summary(&outcome));
+            outcome
+        }
+        Err(error) => {
+            step.fail(&format!(
+                "release {action_label} stopped: {}",
+                effigy_ui::HumanError::new(error.to_string()).what_failed()
+            ));
+            return Err(error.into());
+        }
+    };
     for message in &outcome.messages {
         emit_release_progress_line(message);
     }
     Ok(outcome)
+}
+
+/// The live label while a release Run works: what this invocation is doing,
+/// not which internal stage it is in.
+fn release_run_label(action: &ReleaseAction, to: Option<ReleaseStage>) -> String {
+    let mut label = match action {
+        ReleaseAction::Run => "running the release".to_owned(),
+        ReleaseAction::Resume { run } => format!("resuming release run {run}"),
+        ReleaseAction::Approve { run } => format!("approving release run {run}"),
+        ReleaseAction::Decide { run, .. } => {
+            format!("recording the decision for release run {run}")
+        }
+    };
+    if let Some(to) = to {
+        label.push_str(&format!(" through {}", to.label()));
+    }
+    label
+}
+
+fn action_name(action: &ReleaseAction) -> &'static str {
+    match action {
+        ReleaseAction::Run => "run",
+        ReleaseAction::Resume { .. } => "resume",
+        ReleaseAction::Approve { .. } => "approve",
+        ReleaseAction::Decide { .. } => "decide",
+    }
+}
+
+/// One line when a release invocation ends: the stage it reached and whether
+/// it is waiting for something.
+fn release_run_summary(outcome: &ReleaseRunOutcome) -> String {
+    let stage = if outcome.record.stage.is_empty() {
+        "validate"
+    } else {
+        outcome.record.stage.as_str()
+    };
+    format!(
+        "release reached stage `{stage}` ({})",
+        outcome.record.status.label()
+    )
 }
 
 /// The release receipt for a Run id, or the active Run's receipt.
@@ -197,7 +254,100 @@ fn emit_release_gate_inventory(gates: &[ResolvedGate]) {
 }
 
 fn run_release_gates(root: &Path, gates: &[ResolvedGate], fail_fast: bool) -> GateExecutionReport {
-    run_release_gates_with_progress(root, gates, fail_fast, emit_release_progress_line)
+    let mut observer = ReleaseGateSteps::default();
+    run_release_gates_with_observer(root, gates, fail_fast, &mut observer)
+}
+
+/// Draw each gate as a live step: `running gate cargo test (2/5)` while it
+/// runs, then one line saying whether it passed, how long it took and, when it
+/// failed, that the log is where the detail is.
+#[derive(Default)]
+struct ReleaseGateSteps {
+    running: Option<Step>,
+}
+
+impl ReleaseGateSteps {
+    fn clear(&mut self) {
+        if let Some(step) = self.running.take() {
+            step.finish_clear();
+        }
+    }
+}
+
+impl Drop for ReleaseGateSteps {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
+impl GateObserver for ReleaseGateSteps {
+    fn gate_started(
+        &mut self,
+        position: usize,
+        total: usize,
+        gate: &ResolvedGate,
+        reusing_hosted_evidence: bool,
+    ) {
+        self.clear();
+        let label = release_gate_label(position, total, &gate.name, reusing_hosted_evidence);
+        self.running = Some(effigy_ui::steps::step(&label));
+    }
+
+    fn gate_finished(&mut self, position: usize, total: usize, result: &GateResult) {
+        let summary = release_gate_summary(position, total, result);
+        match self.running.take() {
+            Some(step) if result.passed => step.succeed(&summary),
+            Some(step) => step.fail(&summary),
+            None => {
+                let step = effigy_ui::steps::step(&summary);
+                if result.passed {
+                    step.succeed(&summary);
+                } else {
+                    step.fail(&summary);
+                }
+            }
+        }
+    }
+
+    fn note(&mut self, message: &str) {
+        self.clear();
+        emit_release_progress_line(message);
+    }
+}
+
+/// `running gate cargo test (2/5)` while the gate runs; reusing hosted
+/// evidence says so, because nothing local is running.
+pub(super) fn release_gate_label(
+    position: usize,
+    total: usize,
+    name: &str,
+    reusing_hosted_evidence: bool,
+) -> String {
+    if reusing_hosted_evidence {
+        format!("reusing hosted evidence for gate {name} ({position}/{total})")
+    } else {
+        format!("running gate {name} ({position}/{total})")
+    }
+}
+
+/// The line a finished gate leaves: the outcome word, the timing, and where
+/// the gate's own output went.
+pub(super) fn release_gate_summary(position: usize, total: usize, result: &GateResult) -> String {
+    let outcome = gate_outcome_word(result);
+    let duration = effigy_kernel::human::human_duration(std::time::Duration::from_millis(
+        result.duration_ms as u64,
+    ));
+    match result.log_path.as_deref() {
+        Some(path) if !result.passed => format!(
+            "gate `{}` {outcome} after {duration} ({position}/{total}); its output is in {}",
+            result.name,
+            path.display()
+        ),
+        _ => format!(
+            "gate `{}` {outcome} after {duration} ({position}/{total})",
+            result.name
+        ),
+    }
 }
 
 pub(super) fn emit_release_progress_line(message: &str) {

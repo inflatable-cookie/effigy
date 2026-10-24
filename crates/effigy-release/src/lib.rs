@@ -603,50 +603,125 @@ pub fn run_release_gates_with_lookup<F>(
     gates: &[ResolvedGate],
     fail_fast: bool,
     lookup: &dyn HostedEvidenceLookup,
-    mut progress: F,
+    progress: F,
 ) -> GateExecutionReport
 where
     F: FnMut(&str),
 {
-    let started = Instant::now();
-    let environment_path = gate_reports::persist_gate_run_environment(root);
-    let mut results = Vec::with_capacity(gates.len());
-    let mut stopped_early = false;
-    let hosted = resolve_run_hosted_evidence(root, gates, lookup, &mut progress);
+    let mut observer = TextGateObserver { progress };
+    run_release_gates_observed(root, gates, fail_fast, lookup, &mut observer)
+}
 
-    for (index, gate) in gates.iter().enumerate() {
-        let position = index + 1;
-        let result = if gate.reuse_hosted_evidence {
-            progress(&format!(
-                "gate {position}/{} `{}` ({}) reusing hosted evidence",
-                gates.len(),
+/// How a gate run says what it is doing, as it does it.
+///
+/// A gate can take minutes, so the command plane draws each one as a live
+/// step (`running gate cargo test (2/5)`) instead of waiting for the end. The
+/// engine reports the facts; the plane decides how they look, which is why
+/// `--json` and piped output stay silent.
+pub trait GateObserver {
+    /// A gate is about to run, or about to reuse hosted evidence.
+    fn gate_started(
+        &mut self,
+        position: usize,
+        total: usize,
+        gate: &ResolvedGate,
+        reusing_hosted_evidence: bool,
+    );
+    /// The gate finished, passed or failed.
+    fn gate_finished(&mut self, position: usize, total: usize, result: &GateResult);
+    /// Progress that is not one gate: hosted evidence lookup, for instance.
+    fn note(&mut self, message: &str) {
+        let _ = message;
+    }
+}
+
+/// The text observer: exactly the lines #290 streamed, for callers that draw
+/// plain lines rather than steps.
+struct TextGateObserver<F: FnMut(&str)> {
+    progress: F,
+}
+
+impl<F: FnMut(&str)> GateObserver for TextGateObserver<F> {
+    fn gate_started(
+        &mut self,
+        position: usize,
+        total: usize,
+        gate: &ResolvedGate,
+        reusing_hosted_evidence: bool,
+    ) {
+        if reusing_hosted_evidence {
+            (self.progress)(&format!(
+                "gate {position}/{total} `{}` ({}) reusing hosted evidence",
                 gate.name,
                 gate.stage.stage_name()
             ));
-            gate_result_from_hosted_evidence(root, gate, hosted.as_ref())
         } else {
-            progress(&format!(
-                "gate {position}/{} `{}` ({}) starting: {}",
-                gates.len(),
+            (self.progress)(&format!(
+                "gate {position}/{total} `{}` ({}) starting: {}",
                 gate.name,
                 gate.stage.stage_name(),
                 gate.command
             ));
-            run_release_gate(root, gate)
-        };
-        progress(&format!(
-            "gate {position}/{} `{}` {} ({})",
-            gates.len(),
+        }
+    }
+
+    fn gate_finished(&mut self, position: usize, total: usize, result: &GateResult) {
+        (self.progress)(&format!(
+            "gate {position}/{total} `{}` {} ({})",
             result.name,
-            if result.reused {
-                "reused"
-            } else if result.passed {
-                "passed"
-            } else {
-                "failed"
-            },
+            gate_outcome_word(result),
             format_duration_ms(result.duration_ms),
         ));
+    }
+
+    fn note(&mut self, message: &str) {
+        (self.progress)(message);
+    }
+}
+
+/// The one word a finished gate reads as.
+pub fn gate_outcome_word(result: &GateResult) -> &'static str {
+    if result.reused {
+        "reused"
+    } else if result.passed {
+        "passed"
+    } else {
+        "failed"
+    }
+}
+
+/// Run gates, reporting each start and finish to `observer`.
+pub fn run_release_gates_with_observer(
+    root: &Path,
+    gates: &[ResolvedGate],
+    fail_fast: bool,
+    observer: &mut dyn GateObserver,
+) -> GateExecutionReport {
+    run_release_gates_observed(root, gates, fail_fast, &GhCliHostedEvidenceLookup, observer)
+}
+
+fn run_release_gates_observed(
+    root: &Path,
+    gates: &[ResolvedGate],
+    fail_fast: bool,
+    lookup: &dyn HostedEvidenceLookup,
+    observer: &mut dyn GateObserver,
+) -> GateExecutionReport {
+    let started = Instant::now();
+    let environment_path = gate_reports::persist_gate_run_environment(root);
+    let mut results = Vec::with_capacity(gates.len());
+    let mut stopped_early = false;
+    let hosted = resolve_run_hosted_evidence(root, gates, lookup, observer);
+
+    for (index, gate) in gates.iter().enumerate() {
+        let position = index + 1;
+        observer.gate_started(position, gates.len(), gate, gate.reuse_hosted_evidence);
+        let result = if gate.reuse_hosted_evidence {
+            gate_result_from_hosted_evidence(root, gate, hosted.as_ref())
+        } else {
+            run_release_gate(root, gate)
+        };
+        observer.gate_finished(position, gates.len(), &result);
         let passed = result.passed;
         results.push(result);
         if fail_fast && !passed {
@@ -667,14 +742,14 @@ fn resolve_run_hosted_evidence(
     root: &Path,
     gates: &[ResolvedGate],
     lookup: &dyn HostedEvidenceLookup,
-    progress: &mut dyn FnMut(&str),
+    observer: &mut dyn GateObserver,
 ) -> Option<Result<HostedRun, HostedEvidenceError>> {
     let spec = gates
         .iter()
         .find(|gate| gate.reuse_hosted_evidence)?
         .hosted_evidence
         .as_ref()?;
-    progress("checking hosted GitHub Actions evidence");
+    observer.note("checking hosted GitHub Actions evidence");
     Some(collect_hosted_evidence(root, spec, lookup))
 }
 

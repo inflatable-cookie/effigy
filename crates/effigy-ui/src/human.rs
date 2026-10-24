@@ -128,7 +128,14 @@ impl HumanError {
     ///   next: run `effigy container logs web`
     /// ```
     pub fn render_text(&self) -> String {
-        let mut text = format!("[error] {}", self.what_failed);
+        format!("[error] {}", self.render_text_body())
+    }
+
+    /// The same text without the `[error]` title prefix: for a refusal that is
+    /// already the body of a larger message, such as a `Display` sentence a
+    /// wrapper quotes.
+    pub fn render_text_body(&self) -> String {
+        let mut text = self.what_failed.clone();
         for (index, line) in self.evidence.iter().enumerate() {
             text.push('\n');
             let _ = if index == 0 {
@@ -229,6 +236,21 @@ mod tests {
             "[error] container `web` never became healthy\n  \
              cause: health check http://localhost:8080/healthz answered HTTP 404 (attempt 12, 60s)\n  \
              next: run `effigy container logs web`"
+        );
+    }
+
+    #[test]
+    fn text_body_is_the_same_message_without_the_title_prefix() {
+        let error = HumanError::new("command `make` failed")
+            .evidence("exit code 2")
+            .next_action("run `make` again");
+        assert_eq!(
+            error.render_text_body(),
+            "command `make` failed\n  cause: exit code 2\n  next: run `make` again"
+        );
+        assert_eq!(
+            error.render_text(),
+            format!("[error] {}", error.render_text_body())
         );
     }
 

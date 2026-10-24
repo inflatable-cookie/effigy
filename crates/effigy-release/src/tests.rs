@@ -3,17 +3,18 @@ use super::{
     apply_release_mutations, build_release_prepare_plan, collect_release_execute_plan,
     collect_release_gate_run, collect_release_status, compare_release_state_fingerprints,
     execute_release_prepare, execute_release_prepare_with_lookup, format_release_tag,
-    gate_blockers, git_create_tag, git_modified_files, is_optional_next_version_blocker,
-    is_release_state_file, load_release_config, load_release_context, load_release_prepared_state,
-    normalized_expected_files, render_release_execute_plan_text, render_release_gate_run_json,
-    render_release_gate_run_text, render_release_prepare_plan_text, render_release_prepared_text,
-    render_release_status_json, render_release_status_text, restore_mutation_snapshots,
-    run_release_gates, run_release_gates_with_lookup, run_release_gates_with_progress,
-    snapshot_mutation_paths, test_support, validate_planned_release_version,
-    write_release_prepared_state, FileMutationApply, FileMutationPlan, GateExecutionReport,
-    GateResult, HostedEvidenceLookup, HostedEvidenceSpec, HostedRun,
-    ReleasePreparedFileFingerprint, ReleasePreparedSourceFingerprints, ResolvedGate,
-    ResolvedVersionSource, VersionFileKind,
+    gate_blockers, gate_outcome_word, git_create_tag, git_modified_files,
+    is_optional_next_version_blocker, is_release_state_file, load_release_config,
+    load_release_context, load_release_prepared_state, normalized_expected_files,
+    render_release_execute_plan_text, render_release_gate_run_json, render_release_gate_run_text,
+    render_release_prepare_plan_text, render_release_prepared_text, render_release_status_json,
+    render_release_status_text, restore_mutation_snapshots, run_release_gates,
+    run_release_gates_with_lookup, run_release_gates_with_observer,
+    run_release_gates_with_progress, snapshot_mutation_paths, test_support,
+    validate_planned_release_version, write_release_prepared_state, FileMutationApply,
+    FileMutationPlan, GateExecutionReport, GateObserver, GateResult, HostedEvidenceLookup,
+    HostedEvidenceSpec, HostedRun, ReleasePreparedFileFingerprint,
+    ReleasePreparedSourceFingerprints, ResolvedGate, ResolvedVersionSource, VersionFileKind,
 };
 use std::collections::BTreeMap;
 
@@ -941,6 +942,60 @@ fn failing_and_passing_gates_persist_logs_and_redacted_environment() {
         1
     );
     assert!(!passed_text.contains("stdout:"), "{passed_text}");
+}
+
+/// A command plane draws live steps from the same facts the text lines carry.
+#[derive(Default)]
+struct RecordingGateObserver {
+    events: Vec<String>,
+}
+
+impl GateObserver for RecordingGateObserver {
+    fn gate_started(
+        &mut self,
+        position: usize,
+        total: usize,
+        gate: &ResolvedGate,
+        reusing_hosted_evidence: bool,
+    ) {
+        self.events.push(format!(
+            "start {position}/{total} {} reuse={reusing_hosted_evidence}",
+            gate.name
+        ));
+    }
+
+    fn gate_finished(&mut self, position: usize, total: usize, result: &GateResult) {
+        self.events.push(format!(
+            "finish {position}/{total} {} {}",
+            result.name,
+            gate_outcome_word(result)
+        ));
+    }
+
+    fn note(&mut self, message: &str) {
+        self.events.push(format!("note {message}"));
+    }
+}
+
+#[test]
+fn gate_observer_sees_each_gate_start_and_finish_in_order() {
+    let root = temp_repo("gate-observer");
+    let gates = vec![
+        shell_gate("format", "printf check-ok"),
+        shell_gate("smoke", "printf smoke-ok"),
+    ];
+    let mut observer = RecordingGateObserver::default();
+    let report = run_release_gates_with_observer(&root, &gates, true, &mut observer);
+    assert!(report.results.iter().all(|result| result.passed));
+    assert_eq!(
+        observer.events,
+        [
+            "start 1/2 format reuse=false",
+            "finish 1/2 format passed",
+            "start 2/2 smoke reuse=false",
+            "finish 2/2 smoke passed",
+        ]
+    );
 }
 
 #[test]

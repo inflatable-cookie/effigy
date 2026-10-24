@@ -7,7 +7,7 @@
 use super::*;
 use effigy_kernel::{
     ctx::{CleanupContext, EffectContext},
-    custody::{Custody, EnvValue, Lifetime, ProcessSpec, SecretValue, Terminal},
+    custody::{Custody, EnvValue, Lifetime, ProcessSpec, SecretValue, SpawnError, Terminal},
     gate::Wait,
     id::{
         CheckoutId, CheckoutKind, ExecutionTarget, InvocationSpec, ResolvedInvocation, ResourceId,
@@ -93,6 +93,9 @@ pub struct SourcePreparation {
     pub cancel: CancelToken,
     pub next: Invocation,
     pub budget: Duration,
+    /// How acquisition says what it is doing while it does it. Silent by
+    /// default; the command plane attaches `effigy_ui::steps` here.
+    pub progress: SourceProgress,
 }
 
 /// Only custody effects need recovery calls. Published source generations are
@@ -256,9 +259,12 @@ fn prepare(
         EffectClass::Prepare,
         Placement::Host,
     );
-    let cx = op
-        .effects()
-        .map_err(|err| error(&manifest, format!("{err:?}")))?;
+    let cx = op.effects().map_err(|_| {
+        error(
+            &manifest,
+            "source preparation could not start: this operation is not allowed to write",
+        )
+    })?;
     let location = state_location(&manifest)?;
     let root = StateRoot::checkout_effects(&cx, &preparation.home, &location)
         .map_err(|err| error(&manifest, err.to_string()))?;
@@ -315,9 +321,12 @@ fn prepare(
     } else {
         None
     };
-    let cleanup = op
-        .cleanup(Duration::from_secs(15))
-        .map_err(|err| error(&manifest, format!("{err:?}")))?;
+    let cleanup = op.cleanup(Duration::from_secs(15)).map_err(|_| {
+        error(
+            &manifest,
+            "source preparation could not reserve cleanup time: the deadline is out of range",
+        )
+    })?;
     let mut run = Run::begin(
         &cx,
         &root,
@@ -344,12 +353,16 @@ fn prepare(
         &cx,
         &mut run,
         &preparation.home,
+        &preparation.progress,
     );
     // Settlement gets its own fresh budget after acquisition, independent of
     // both the workload deadline and begin's predecessor-recovery budget.
-    let cleanup = op
-        .cleanup(Duration::from_secs(15))
-        .map_err(|err| error(&manifest, format!("{err:?}")))?;
+    let cleanup = op.cleanup(Duration::from_secs(15)).map_err(|_| {
+        error(
+            &manifest,
+            "source preparation could not reserve settlement time: the deadline is out of range",
+        )
+    })?;
     let completion = match &result {
         // A required source command that failed cannot leave the run Succeeded
         // (K5 obligations); the kept pins are still what the caller uses.
@@ -493,6 +506,57 @@ fn short_pin(pin: &SourcePin) -> String {
     value.chars().take(8).collect()
 }
 
+/// The short name a person reads for a source while it is fetched: the
+/// bundle's own base name for `bundle`, the catalog handle for a catalog
+/// source. Labels stay short enough for a spinner line.
+fn source_subject(name: &str, selection: &BundleSelection) -> String {
+    if name != "bundle" {
+        return name.trim_start_matches("catalog:").to_owned();
+    }
+    match selection {
+        BundleSelection::Path { path } => path
+            .file_name()
+            .map(|base| base.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string()),
+        BundleSelection::Git { url, .. } => url
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .map(|base| base.trim_end_matches(".git").to_owned())
+            .filter(|base| !base.is_empty())
+            .unwrap_or_else(|| url.clone()),
+        BundleSelection::Oci { url } => url.clone(),
+    }
+}
+
+/// The revision a fetch names: the declared ref, the floating default, or the
+/// content digest a path and OCI source re-derives.
+fn source_revision(selection: &BundleSelection) -> String {
+    match selection {
+        BundleSelection::Path { .. } => "path".to_owned(),
+        BundleSelection::Git { reference, .. } => {
+            reference.clone().unwrap_or_else(|| "HEAD".to_owned())
+        }
+        BundleSelection::Oci { .. } => "oci".to_owned(),
+    }
+}
+
+/// Why a source acquisition process did not start, in words: the kernel keeps
+/// its own variant names for `--json` and diagnostics.
+fn spawn_refusal_text(err: &SpawnError) -> String {
+    match err {
+        SpawnError::Refused(detail) => {
+            format!("source acquisition was refused: {detail}; retry `effigy bundle sync`")
+        }
+        SpawnError::Io(error) => format!(
+            "source acquisition could not start the clone: {error}; check the toolchain and retry"
+        ),
+        SpawnError::Run(error) | SpawnError::Unrecorded(error) => format!(
+            "source acquisition could not be recorded in this checkout's run journal: {error}; run `effigy doctor`"
+        ),
+    }
+}
+
 fn remember_update_notes(notes: &[String]) {
     if let Ok(mut stored) = UPDATE_NOTES.lock() {
         stored.extend(notes.iter().cloned());
@@ -590,6 +654,7 @@ fn acquire_and_publish(
     cx: &EffectContext,
     run: &mut Run<'_>,
     home: &Path,
+    progress: &SourceProgress,
 ) -> Result<BundleSyncReport, ManifestError> {
     let ticket = retained_intent(run, "sources:generation", parent(manifest), manifest)?;
     let project = DirFd::open(parent(manifest)).map_err(|err| error(manifest, err.to_string()))?;
@@ -690,6 +755,12 @@ fn acquire_and_publish(
             }
             continue;
         };
+        let subject = source_subject(name, selection);
+        progress.emit(SourceProgressEvent::Started {
+            source: name.clone(),
+            subject: subject.clone(),
+            revision: source_revision(selection),
+        });
         let object = source_dir(&generation, &sha256_hex(name.as_bytes()), cx, manifest)?;
         let acquired = acquire_source(
             manifest,
@@ -720,14 +791,32 @@ fn acquire_and_publish(
                     if let Some(pin) = &pinned {
                         let message = kept_warning(name, pin, &failure);
                         warn(&message);
-                        warnings.push(message);
+                        warnings.push(message.clone());
+                        progress.emit(SourceProgressEvent::Finished {
+                            source: name.clone(),
+                            subject: subject.clone(),
+                            kept: Some(short_pin(pin)),
+                            failure: Some(message),
+                        });
                         reports.insert(name.clone(), pin_report(manifest, selection, pin));
                     }
                     continue;
                 }
+                progress.emit(SourceProgressEvent::Finished {
+                    source: name.clone(),
+                    subject: subject.clone(),
+                    kept: None,
+                    failure: Some(failure.to_string()),
+                });
                 return Err(failure);
             }
         };
+        progress.emit(SourceProgressEvent::Finished {
+            source: name.clone(),
+            subject: subject.clone(),
+            kept: None,
+            failure: None,
+        });
         let selected = SourcePin {
             declaration: selection.spec(),
             object: relative_object(manifest, object.path())?,
@@ -786,10 +875,12 @@ fn acquire_and_publish(
         .map_err(|err| error(manifest, err.to_string()))?;
     let known_name =
         FileName::new("sources-known.json").map_err(|err| error(manifest, err.to_string()))?;
-    let observe = cx
-        .operation()
-        .observe()
-        .map_err(|err| error(manifest, format!("{err:?}")))?;
+    let observe = cx.operation().observe().map_err(|_| {
+        error(
+            manifest,
+            "source preparation could not read its source cache: the observation window is not finite",
+        )
+    })?;
     let mut known =
         effigy_kernel::record::read_cache::<KnownVersions>(&observe, &store_dir, &known_name)
             .unwrap_or_default();
@@ -1196,7 +1287,7 @@ fn command(
         },
         cx,
     )
-    .map_err(|err| error(manifest, format!("source acquisition refused: {err:?}")))?;
+    .map_err(|err| error(manifest, spawn_refusal_text(&err)))?;
     match child.wait(cx.operation()) {
         Observed::Verified(exit, _) => {
             let bytes = child.take_output();
@@ -1217,7 +1308,10 @@ fn command(
         }
         other => Err(error(
             manifest,
-            format!("source acquisition unavailable: {other:?}"),
+            format!(
+                "source acquisition could not report its result: {}",
+                other.unproven()
+            ),
         )),
     }
 }
@@ -1289,7 +1383,7 @@ fn copy_tree(
     if let Some((_, cx)) = sink {
         cx.operation()
             .check("snapshot source")
-            .map_err(|err| error(manifest, format!("{err:?}")))?;
+            .map_err(|err| error(manifest, format!("source snapshot stopped: {err}")))?;
     }
     let mut entries = std::fs::read_dir(source)
         .map_err(|err| io_error(source, err))?
@@ -1304,7 +1398,7 @@ fn copy_tree(
         if let Some((_, cx)) = sink {
             cx.operation()
                 .check("snapshot entry")
-                .map_err(|err| error(manifest, format!("{err:?}")))?;
+                .map_err(|err| error(manifest, format!("source snapshot stopped: {err}")))?;
         }
         usage.entries += 1;
         if usage.entries > MAX_ENTRIES {
@@ -1423,6 +1517,7 @@ mod tests {
                 budget: Duration::from_secs(30),
                 next: Invocation::validated(vec!["recover".into()], |args| args == ["recover"])
                     .unwrap(),
+                progress: SourceProgress::silent(),
             },
         )
     }
@@ -1456,6 +1551,64 @@ mod tests {
         let mut entries = BTreeMap::new();
         visit(root, root, &mut entries);
         entries
+    }
+
+    #[test]
+    fn acquisition_reports_what_it_fetched_and_that_it_finished() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manifest, mut prep) = fixture(tmp.path());
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = std::sync::Arc::clone(&seen);
+        prep.progress = SourceProgress::to(move |event| {
+            sink.lock().unwrap().push(event);
+        });
+
+        prepare_bundle_sources(&manifest, &prep).unwrap();
+
+        let events = seen.lock().unwrap().clone();
+        assert_eq!(
+            events,
+            [
+                SourceProgressEvent::Started {
+                    source: "bundle".to_owned(),
+                    subject: "bundle".to_owned(),
+                    revision: "path".to_owned(),
+                },
+                SourceProgressEvent::Finished {
+                    source: "bundle".to_owned(),
+                    subject: "bundle".to_owned(),
+                    kept: None,
+                    failure: None,
+                },
+                SourceProgressEvent::Started {
+                    source: "catalog:extra".to_owned(),
+                    subject: "extra".to_owned(),
+                    revision: "path".to_owned(),
+                },
+                SourceProgressEvent::Finished {
+                    source: "catalog:extra".to_owned(),
+                    subject: "extra".to_owned(),
+                    kept: None,
+                    failure: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn nothing_to_fetch_reports_no_steps() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (manifest, mut prep) = fixture(tmp.path());
+        prepare_bundle_sources(&manifest, &prep).unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = std::sync::Arc::clone(&seen);
+        prep.progress = SourceProgress::to(move |event| {
+            sink.lock().unwrap().push(event);
+        });
+
+        // Every selected source is current: the cheap path draws no step.
+        assert!(prepare_bundle_sources(&manifest, &prep).unwrap().is_none());
+        assert!(seen.lock().unwrap().is_empty());
     }
 
     #[test]

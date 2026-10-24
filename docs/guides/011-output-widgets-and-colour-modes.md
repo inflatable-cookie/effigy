@@ -106,9 +106,48 @@ Where the output goes:
 - while the managed-run TUI owns the terminal, `steps::suspend_terminal()`
   silences the sink so the two never draw over each other.
 
-Never write a spinner by hand. A command that owns a richer event stream (the
-bootstrap and workspace reporters) keeps its own lines and leaves step drawing
-to the sink.
+Never write a spinner by hand. A command that owns a richer event stream keeps
+its own lines and leaves step drawing to the sink: an engine whose work is in
+another crate (bundle and catalog acquisition, release gates) reports
+structured events through a hook (`effigy_manifest::SourceProgress`,
+`effigy_release::GateObserver`) and the command plane turns them into steps, so
+`--json` and piped output stay silent without the engine knowing where it is
+running.
+
+### Wording shared across the planes
+
+The labels below are the agreed vocabulary for the command planes. A plane that
+adds a step uses the same shape: present tense, the verb first, then the thing
+it acts on, with the count or mode in parentheses only when it adds something.
+
+| Plane | Label | One line at the end |
+| --- | --- | --- |
+| containers | `starting web`, `waiting for web to report healthy (attempt 4)` | `✓ web is healthy` |
+| kernel and gateway | `waiting for the environment to settle`, `releasing the gateway route` | `✓ environment settled` |
+| bootstrap and setup | `pulling <url> into <path>`, `running setup <selector>`, `starting <selector>` | `✓ setup complete (<selector>)` |
+| bundle and catalog sources | `fetching bundle <name> <rev>`, `fetching catalog <name> <rev>` | `✓ fetched bundle <name>` / `✗ could not fetch bundle <name>: <why>` |
+| secrets | `unlocking vault`, `running the vault generate hook` | `✓ vault unlocked` |
+| release | `running gate <name> (2/5)`, `reusing hosted evidence for gate <name> (1/1)` | `✓ gate <name> passed after 12s (2/5)` |
+| deploy | `resolving deploy provider <name> (offline)` | `✓ resolved deploy provider <name> from cached checkout at commit <sha>` |
+| task runs | ``waiting for heavy admission (task `dev`, 2 ahead)``, ``running dev step 2/4 `build` `` | ``✓ admitted heavy task `dev` after 12s`` |
+
+A failure that wraps a child command never reports only that something failed.
+It names the child and its exit code, shows the bounded tail of the child's own
+output (redacted), and gives the next action:
+
+```text
+[error] bootstrap setup task `fails` failed: command `fails` failed
+  cause: exit code 7
+         stderr: the fixture refuses to start
+  next: run `effigy fails` on its own to see it fail
+```
+
+`RunnerError::TaskCommandFailure` renders that way for every plane, and
+`child_failure_text` in `src/runner/error.rs` wraps it without losing the
+child's evidence. A new wrapper lifts the child's `HumanError`; it never
+repeats `{error:?}` or quotes the whole streams. A hook line the engine streams
+(a heavy-admission position, a gate's own progress) becomes the step's label,
+not a second line under it.
 
 ### Errors people can read
 

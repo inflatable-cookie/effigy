@@ -1,9 +1,13 @@
 use effigy_cli::{BundleArgs, BundleSubcommand};
 use effigy_manifest::{
-    inspect_bundle_source, sync_bundle_source, BundleSourceType, TASK_MANIFEST_FILE,
+    inspect_bundle_source, sync_bundle_source, BundleSourceType, SourceProgress,
+    SourceProgressEvent, TASK_MANIFEST_FILE,
 };
+use effigy_ui::steps::Step;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use super::error::RunnerError;
 
@@ -175,8 +179,74 @@ fn source_preparation() -> Result<effigy_manifest::SourcePreparation, RunnerErro
         cancel: SOURCE_CANCEL.get().cloned().unwrap_or_default(),
         next,
         budget: std::time::Duration::from_secs(120),
+        progress: source_progress_steps(),
     })
 }
+/// Draw each source acquisition as a live step: `fetching bundle decodelabs
+/// main`, then one line saying what now holds. The engine reports the events;
+/// this plane decides how they look, so `--json` and piped output stay silent.
+fn source_progress_steps() -> SourceProgress {
+    let running: Mutex<BTreeMap<String, Step>> = Mutex::new(BTreeMap::new());
+    SourceProgress::to(move |event| {
+        let mut running = running.lock().unwrap_or_else(PoisonError::into_inner);
+        match event {
+            SourceProgressEvent::Started {
+                source,
+                subject,
+                revision,
+            } => {
+                let label = fetching_label(&source, &subject, &revision);
+                running.insert(source.clone(), effigy_ui::steps::step(&label));
+            }
+            SourceProgressEvent::Finished {
+                source,
+                subject,
+                kept,
+                failure,
+            } => {
+                let step = running.remove(&source);
+                let (ok, summary) =
+                    finished_summary(&source, &subject, kept.as_deref(), failure.as_deref());
+                match step {
+                    Some(step) if ok => step.succeed(&summary),
+                    Some(step) => step.fail(&summary),
+                    None if !ok => eprintln!("[warn] {summary}"),
+                    None => {}
+                }
+            }
+        }
+    })
+}
+
+/// A fetch's spinner label: `fetching bundle decodelabs main`. Short, present
+/// tense, and it names the source handle, the subject and the revision.
+pub(in crate::runner) fn fetching_label(source: &str, subject: &str, revision: &str) -> String {
+    let noun = if source == "bundle" {
+        "bundle"
+    } else {
+        "catalog"
+    };
+    format!("fetching {noun} {subject} {revision}")
+}
+
+/// The one line a finished fetch leaves: what was fetched, or why it was not
+/// and which pin still holds.
+pub(in crate::runner) fn finished_summary(
+    source: &str,
+    subject: &str,
+    kept: Option<&str>,
+    failure: Option<&str>,
+) -> (bool, String) {
+    match (failure, kept) {
+        (Some(failure), _) => (
+            false,
+            format!("could not fetch {source} `{subject}`: {failure}"),
+        ),
+        (None, Some(pin)) => (true, format!("kept {source} `{subject}` at {pin}")),
+        (None, None) => (true, format!("fetched {source} `{subject}`")),
+    }
+}
+
 /// Prepare the nearest manifest at or above `root` (contract 020).
 pub(in crate::runner) fn prepare_sources_at(root: &Path) -> Result<(), RunnerError> {
     let Some(manifest) = root
@@ -249,6 +319,35 @@ fn source_type_label(source_type: BundleSourceType) -> &'static str {
 mod tests {
     use super::*;
     use effigy_context::{CapturedEnv, EffigyRuntimeContext};
+
+    #[test]
+    fn source_steps_name_the_bundle_its_revision_and_the_outcome() {
+        assert_eq!(
+            fetching_label("bundle", "decodelabs", "main"),
+            "fetching bundle decodelabs main"
+        );
+        assert_eq!(
+            fetching_label("catalog:acme", "acme", "path"),
+            "fetching catalog acme path"
+        );
+        assert_eq!(
+            finished_summary("bundle", "decodelabs", None, None),
+            (true, "fetched bundle `decodelabs`".to_owned())
+        );
+        assert_eq!(
+            finished_summary(
+                "bundle",
+                "decodelabs",
+                Some("1a2b3c4d"),
+                Some("bundle update failed: the remote refused the fetch")
+            ),
+            (
+                false,
+                "could not fetch bundle `decodelabs`: bundle update failed: the remote refused the fetch"
+                    .to_owned()
+            )
+        );
+    }
 
     #[test]
     fn bundle_sync_reports_missing_bundle_config() {

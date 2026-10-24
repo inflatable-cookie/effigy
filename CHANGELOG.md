@@ -497,6 +497,28 @@ During v0.x, MINOR bumps may include breaking changes.
   `config/human-error-debug-ratchet.json`. The label and error style for
   contributors is in `docs/guides/011-output-widgets-and-colour-modes.md`.
 
+- The remaining command planes report live steps and errors that say what is
+  wrong (effigy#315). `bootstrap` draws each phase as a step (`pulling …`,
+  `running setup <selector>`, `starting <selector>`), and a failing `setup` or
+  `start` selector now names the child command, its exit code, the tail of its
+  output and the command that reproduces it. Bundle and catalog acquisition
+  report `fetching bundle <name> <rev>` through a `SourceProgress` hook, so
+  `dev`, `bootstrap`, `container up` and `bundle sync` show the source they are
+  fetching. `secrets unlock` and a task's vault read draw `unlocking vault`, the
+  `[secrets.vault].generate` hook draws `running the vault generate hook`, and a
+  vault read or decrypt failure names the vault and the next command.
+  `release gates` and `release status --check-gates` draw
+  `running gate <name> (2/5)` from a structured `GateObserver` while keeping
+  #290's text lines for plain callers, `release run` draws the invocation and
+  the stage it reached, and deploy provider resolution draws
+  `resolving deploy provider <name> (offline)`. A heavy task draws
+  ``waiting for heavy admission (task `dev`, 2 ahead)`` using the
+  admission hook's own progress, and every sequence step draws
+  ``running dev step 2/4 `build` ``. A child command's failure reads
+  `command `make` failed / cause: exit code 2 / stderr: … / next: …` with
+  bounded, redacted output instead of `(code=Some(2))` and the whole streams,
+  and the Debug ratchet baseline drops from 239 to 226.
+
 - Task journals live in the owning checkout's `.effigy/state/`. Durable
   initialization refuses an unresolved legacy migration and binds checkout
   and Git directory generations, so same-path replacements cannot adopt old

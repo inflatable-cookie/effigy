@@ -13,13 +13,11 @@ pub(super) fn write_task_command_failure(
     stdout: &str,
     stderr: &str,
 ) -> std::fmt::Result {
-    if stdout.is_empty() && stderr.is_empty() {
-        return write!(f, "task command failed `{command}` (code={:?})", code);
-    }
-    write!(
-        f,
-        "task command failed `{command}` (code={:?})\nstdout:\n{}\nstderr:\n{}",
-        code, stdout, stderr
+    // The sentence names the command and its exit code, and shows the bounded
+    // tail of its own output. `--json` keeps the full streams.
+    f.write_str(
+        &crate::runner::error::task_command_failure_human(command, *code, stdout, stderr)
+            .render_text_body(),
     )
 }
 

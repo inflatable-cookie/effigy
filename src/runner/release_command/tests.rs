@@ -377,3 +377,44 @@ fn release_ci_gate_requires_a_successful_manual_run_for_the_exact_head() {
 
     std::fs::remove_dir_all(fake_bin).expect("remove fake bin");
 }
+
+#[test]
+fn release_gate_steps_name_the_gate_and_its_outcome() {
+    use super::ops::{release_gate_label, release_gate_summary};
+    use effigy_release::GateResult;
+
+    assert_eq!(
+        release_gate_label(2, 5, "cargo test", false),
+        "running gate cargo test (2/5)"
+    );
+    assert_eq!(
+        release_gate_label(1, 1, "hosted ci", true),
+        "reusing hosted evidence for gate hosted ci (1/1)"
+    );
+
+    let failed = GateResult {
+        name: "cargo test".to_owned(),
+        description: None,
+        command: "effigy test".to_owned(),
+        passed: false,
+        exit_code: Some(101),
+        stdout: String::new(),
+        stderr: "a test failed".to_owned(),
+        launch_error: None,
+        duration_ms: 12_000,
+        log_path: Some(std::path::PathBuf::from(
+            ".effigy/release/gates/cargo-test.log",
+        )),
+        reused: false,
+        hosted_run_url: None,
+        hosted_head_sha: None,
+        hosted_repository: None,
+    };
+    let summary = release_gate_summary(2, 5, &failed);
+    assert!(
+        summary.contains("gate `cargo test` failed after 12s"),
+        "{summary}"
+    );
+    assert!(summary.contains("(2/5)"), "{summary}");
+    assert!(summary.contains("its output is in"), "{summary}");
+}

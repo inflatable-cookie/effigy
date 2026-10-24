@@ -298,21 +298,7 @@ impl RunnerError {
                 code,
                 stdout,
                 stderr,
-            } => {
-                let mut error = effigy_ui::HumanError::new(format!("command `{command}` failed"));
-                if let Some(code) = code {
-                    error = error.evidence(format!("exit code {code}"));
-                }
-                // The failing output is the evidence: its first lines name the
-                // failure and its last lines say how it ended.
-                if stderr.trim().is_empty() {
-                    error = error.evidence_output("stdout", stdout);
-                } else {
-                    error = error.evidence_output("stderr", stderr);
-                }
-                error
-                    .next_action("read the output above, fix the cause, then run the command again")
-            }
+            } => task_command_failure_human(command, *code, stdout, stderr),
             _ => match self
                 .json_error_details()
                 .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
@@ -496,6 +482,49 @@ impl RunnerError {
             _ => None,
         }
     }
+}
+
+/// A child command's failure, as the three facts a person needs: the command
+/// and its exit code, the bounded tail of its own output, and the next action.
+/// Both the `Display` sentence and the human renderer use this, so the text a
+/// wrapper quotes and the text a person reads cannot drift apart.
+pub(in crate::runner) fn task_command_failure_human(
+    command: &str,
+    code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) -> effigy_ui::HumanError {
+    let mut error = effigy_ui::HumanError::new(format!("command `{command}` failed"));
+    error = error.evidence(match code {
+        Some(code) => format!("exit code {code}"),
+        None => "a signal stopped it before it reported an exit code".to_owned(),
+    });
+    // The failing output is the evidence: its first lines name the failure and
+    // its last lines say how it ended. Evidence is bounded and redacted.
+    if stderr.trim().is_empty() {
+        error = error.evidence_output("stdout", stdout);
+    } else {
+        error = error.evidence_output("stderr", stderr);
+    }
+    error.next_action("read the output above, fix the cause, then run the command again")
+}
+
+/// A wrapper's sentence around a child failure: what the wrapper was doing,
+/// the child's own failure as evidence, and the next action. Sections stay on
+/// their own lines so a reader (and `human_error`) can tell them apart.
+pub(in crate::runner) fn child_failure_text(
+    context: &str,
+    child: &effigy_ui::HumanError,
+    next: &str,
+) -> String {
+    let mut text = format!("{context}: {}", child.what_failed());
+    for line in child.evidence_lines() {
+        text.push_str("\n  ");
+        text.push_str(line);
+    }
+    text.push_str("\nnext: ");
+    text.push_str(next);
+    text
 }
 
 /// A refusal that carries structured details says more than its message: the

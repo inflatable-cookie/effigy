@@ -81,44 +81,63 @@ pub(in crate::runner) fn read_effigy_vault_payload(
     vault_path: &Path,
     passphrase: &str,
 ) -> Result<VaultPlaintextPayload, RunnerError> {
-    let envelope = effigy_secrets::storage::read_envelope(vault_path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    envelope
-        .decrypt_with_passphrase(passphrase)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+    let envelope = effigy_secrets::storage::read_envelope(vault_path).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "could not read the vault at {}: {error}\nnext: run `effigy secrets unlock` (or `effigy secrets init` when there is no vault yet)",
+            vault_path.display()
+        ))
+    })?;
+    envelope.decrypt_with_passphrase(passphrase).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "could not decrypt the vault at {}: {error}\nnext: check the passphrase with `effigy secrets unlock`, or `effigy secrets change-passphrase` if it was rotated",
+            vault_path.display()
+        ))
+    })
 }
 
 pub(in crate::runner) fn read_effigy_vault_payload_for_local_dev(
     vault_path: &Path,
 ) -> Result<VaultPlaintextPayload, RunnerError> {
-    let envelope = effigy_secrets::storage::read_envelope(vault_path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let envelope = effigy_secrets::storage::read_envelope(vault_path).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "could not read the vault at {}: {error}\nnext: run `effigy secrets unlock` (or `effigy secrets init` when there is no vault yet)",
+            vault_path.display()
+        ))
+    })?;
     let key_path = local_dev_unlock_key_path(vault_path);
     match inspect_vault_permissions(&key_path) {
         Ok(VaultPermissionStatus::Safe) | Ok(VaultPermissionStatus::UnsupportedPlatform) => {}
         Ok(VaultPermissionStatus::Unsafe { mode, max_mode }) => {
             return Err(RunnerError::task_invocation(format!(
-                "local-dev unlock key permissions are unsafe: mode {mode:o}, expected at most {max_mode:o}"
+                "the local-dev unlock key {} is readable by other users: mode {mode:o}, expected at most {max_mode:o}\nnext: run `effigy secrets lock` then `effigy secrets unlock` to mint a private key",
+                key_path.display()
             )));
         }
         Err(error) => {
             return Err(RunnerError::task_invocation(format!(
-                "failed to inspect local-dev unlock key {}: {error}",
+                "could not inspect the local-dev unlock key {}: {error}\nnext: check the vault directory's ownership and permissions, or run `effigy secrets lock` then `effigy secrets unlock`",
                 key_path.display()
             )));
         }
     }
     let key = fs::read(&key_path).map_err(|error| {
         RunnerError::task_invocation(format!(
-            "failed to read local-dev unlock key {}: {error}",
+            "could not read the local-dev unlock key {}: {error}\nnext: run `effigy secrets unlock` with the passphrase to mint a new key",
             key_path.display()
         ))
     })?;
-    let key = LocalDevUnlockKey::from_bytes(key)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    envelope
-        .decrypt_with_local_dev_key(&key)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+    let key = LocalDevUnlockKey::from_bytes(key).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "the local-dev unlock key {} is not valid: {error}\nnext: run `effigy secrets lock` then `effigy secrets unlock` to mint a new key",
+            key_path.display()
+        ))
+    })?;
+    envelope.decrypt_with_local_dev_key(&key).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "could not decrypt the vault at {} with the local-dev key: {error}\nnext: run `effigy secrets unlock` again; if the vault's passphrase changed, run `effigy secrets lock` first",
+            vault_path.display()
+        ))
+    })
 }
 
 pub(in crate::runner) fn begin_vault_write(
@@ -224,6 +243,27 @@ mod tests {
         let resolved = resolve_effigy_vault_path(&worktree, &secrets(), "test").expect("path");
 
         assert_eq!(resolved, worktree.join(VAULT_RELATIVE));
+    }
+
+    #[test]
+    fn a_vault_that_is_not_a_vault_names_the_path_and_the_next_action() {
+        let root = TempDir::new().expect("tempdir");
+        let vault = root.path().join(VAULT_RELATIVE);
+        fs::create_dir_all(vault.parent().expect("vault parent")).expect("vault dir");
+        fs::write(&vault, "not a vault").expect("vault");
+
+        let error = super::read_effigy_vault_payload(&vault, "passphrase")
+            .expect_err("refuse a malformed vault");
+        let message = error.to_string();
+
+        assert!(
+            message.contains(&vault.display().to_string()),
+            "the error names the vault it could not read: {message}"
+        );
+        assert!(
+            message.contains("next: run `effigy secrets unlock`"),
+            "the error says what to do next: {message}"
+        );
     }
 
     #[test]

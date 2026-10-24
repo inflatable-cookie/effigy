@@ -83,15 +83,17 @@ pub fn read_envelope(path: &Path) -> Result<VaultEnvelope, VaultStorageError> {
     read_selected(&dir, &file_name(path)?).map(|(_, envelope)| envelope)
 }
 fn read_selected(dir: &DirFd, name: &FileName) -> Result<(u64, VaultEnvelope), VaultStorageError> {
-    let observe = context()
-        .observe()
-        .map_err(|e| VaultStorageError::Unavailable(format!("{e:?}")))?;
+    let observe = context().observe().map_err(|_| {
+        VaultStorageError::Unavailable(
+            "the vault can only be read by an operation with a finite observation window".into(),
+        )
+    })?;
     let raw = match record::read_record::<Document>(&observe, dir, name) {
         Observed::Verified(raw, _) => raw.0,
         Observed::Absent(AbsenceProof::NoFile { .. }) => {
             return Err(std::io::Error::from(std::io::ErrorKind::NotFound).into())
         }
-        other => return Err(VaultStorageError::Unavailable(format!("{other:?}"))),
+        other => return Err(VaultStorageError::Unavailable(other.unproven())),
     };
     let json =
         std::str::from_utf8(&raw).map_err(|e| VaultStorageError::Unavailable(e.to_string()))?;
@@ -107,7 +109,7 @@ fn read_selected(dir: &DirFd, name: &FileName) -> Result<(u64, VaultEnvelope), V
                 .map_err(|e| VaultStorageError::Unavailable(e.to_string()))?;
             Ok((set.generation.get(), VaultEnvelope::from_json(json)?))
         }
-        other => Err(VaultStorageError::Unavailable(format!("{other:?}"))),
+        other => Err(VaultStorageError::Unavailable(other.unproven())),
     }
 }
 
@@ -130,9 +132,11 @@ impl VaultWrite {
     }
     /// Explicit HOME for isolated fixtures and embedders.
     pub fn acquire_in(home: &Path, path: &Path) -> Result<Self, VaultStorageError> {
-        let cx = context()
-            .effects()
-            .map_err(|e| VaultStorageError::Unavailable(format!("{e:?}")))?;
+        let cx = context().effects().map_err(|_| {
+            VaultStorageError::Unavailable(
+                "the vault can only be written by an operation allowed to mutate".into(),
+            )
+        })?;
         let root = StateRoot::machine_effects(&cx, home)?;
         let id = ResourceId::store(Scope::Machine, "vault").map_err(StoreError::from)?;
         let guard = Gate::acquire(&cx, &root, &[id], Wait::Until(Instant::now() + BUDGET))?;

@@ -1,5 +1,5 @@
 use super::{
-    bootstrap_runtime_session_context, render_bootstrap_progress_message, run_bootstrap_with_cwd,
+    bootstrap_runtime_session_context, run_bootstrap_with_cwd, running_setup_label, starting_label,
 };
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, PublicWorkspaceCleanupOverride};
 use effigy_cli::BootstrapArgs;
@@ -191,6 +191,13 @@ run = "exit 7"
         message.contains("bootstrap setup task `fails` failed"),
         "{message}"
     );
+    // The wrapper names the child's exit code and the next action instead of
+    // only reporting that something failed.
+    assert!(message.contains("exit code 7"), "{message}");
+    assert!(
+        message.contains("run `effigy fails` on its own"),
+        "{message}"
+    );
 }
 
 #[test]
@@ -211,15 +218,10 @@ fn bootstrap_start_context_forces_workspace_cleanup_and_skips_lease_refresh() {
 }
 
 #[test]
-fn bootstrap_progress_message_preserves_plain_text_without_color() {
-    let rendered = render_bootstrap_progress_message("[ok] done", false);
-    assert_eq!(rendered, "[ok] done");
-}
-
-#[test]
-fn bootstrap_progress_message_colors_known_prefixes() {
-    let rendered = render_bootstrap_progress_message("[warn] drift", true);
-    assert!(rendered.contains("[warn]"), "{rendered}");
-    assert!(rendered.contains("drift"), "{rendered}");
-    assert!(rendered.starts_with('\u{1b}'), "{rendered}");
+fn bootstrap_steps_name_the_setup_and_start_selectors() {
+    assert_eq!(
+        running_setup_label("record-one"),
+        "running setup record-one"
+    );
+    assert_eq!(starting_label("dev"), "starting dev");
 }

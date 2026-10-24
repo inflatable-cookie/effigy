@@ -235,6 +235,9 @@ impl DeployProviderCheckStatus {
     }
 }
 
+/// Resolve a provider package, drawing the resolution as one live step:
+/// `resolving deploy provider acme (offline)`. A fetch can take seconds on a
+/// cold cache, and its failure is what a deploy refuses on.
 pub(super) fn resolve_provider_package(
     repo_root: &Path,
     provider_name: &str,
@@ -245,6 +248,52 @@ pub(super) fn resolve_provider_package(
     let Some(config) = providers.get(provider_name) else {
         return Ok(None);
     };
+    let step = effigy_ui::steps::step(&resolving_provider_label(provider_name, fetch));
+    match resolve_provider_package_inner(repo_root, provider_name, config, fetch) {
+        Ok(package) => {
+            step.succeed(&provider_resolved_summary(
+                provider_name,
+                &package.provenance,
+            ));
+            Ok(Some(package))
+        }
+        Err(error) => {
+            step.fail(&format!(
+                "could not resolve deploy provider `{provider_name}`: {}",
+                error.human_error().what_failed()
+            ));
+            Err(error)
+        }
+    }
+}
+
+/// `resolving deploy provider acme (offline)`: the label says which source
+/// policy is in force, because "offline" explains a cache miss.
+pub(super) fn resolving_provider_label(provider_name: &str, fetch: DeployProviderFetch) -> String {
+    let mode = match fetch {
+        DeployProviderFetch::Offline => "offline",
+        DeployProviderFetch::Online => "online",
+    };
+    format!("resolving deploy provider {provider_name} ({mode})")
+}
+
+/// One line naming where the provider came from and exactly which commit ran.
+pub(super) fn provider_resolved_summary(
+    provider_name: &str,
+    provenance: &DeployProviderProvenance,
+) -> String {
+    format!(
+        "resolved deploy provider `{provider_name}` from {}",
+        provenance.describe()
+    )
+}
+
+fn resolve_provider_package_inner(
+    repo_root: &Path,
+    provider_name: &str,
+    config: &ManifestDeployProviderConfig,
+    fetch: DeployProviderFetch,
+) -> Result<DeployProviderPackage, RunnerError> {
     let mut warnings = Vec::new();
     let (root, provenance) = match &config.source {
         DeployProviderSource::Path { dir } => {
@@ -261,30 +310,31 @@ pub(super) fn resolve_provider_package(
         )?,
         DeployProviderSource::Oci { url } => {
             return Err(RunnerError::task_invocation(format!(
-                "deploy provider `{provider_name}` uses OCI source `{url}`, but provider OCI materialization is not implemented yet"
+                "deploy provider `{provider_name}` uses OCI source `{url}`, which Effigy cannot materialize yet\nnext: declare a `path` or `git` source for `{provider_name}` in `[deploy.providers]`"
             )));
         }
     };
     let descriptor = read_provider_descriptor(&root)?;
     if descriptor.provider.schema != "effigy.deploy-provider.v1" {
         return Err(RunnerError::task_invocation(format!(
-            "deploy provider `{provider_name}` descriptor has unsupported schema `{}`",
-            descriptor.provider.schema
+            "deploy provider `{provider_name}` declares descriptor schema `{}`, not `effigy.deploy-provider.v1`\nnext: update the provider package at {} to the v1 descriptor",
+            descriptor.provider.schema,
+            root.display()
         )));
     }
     if descriptor.provider.name != provider_name {
         return Err(RunnerError::task_invocation(format!(
-            "deploy provider `{provider_name}` resolved descriptor for `{}`",
+            "deploy provider `{provider_name}` resolved a descriptor that names itself `{}`\nnext: make `[deploy.providers.{provider_name}]` point at that provider's package, or fix the descriptor's `provider.name`",
             descriptor.provider.name
         )));
     }
     validate_capability_paths(&root, provider_name, &descriptor.capabilities)?;
-    Ok(Some(DeployProviderPackage {
+    Ok(DeployProviderPackage {
         root,
         descriptor,
         provenance,
         warnings,
-    }))
+    })
 }
 
 pub(super) fn run_provider_preflight(
@@ -988,5 +1038,41 @@ impl Drop for ScopedProviderEnvOverride {
                 std::env::remove_var(key);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        provider_resolved_summary, resolving_provider_label, DeployProviderFetch,
+        DeployProviderProvenance,
+    };
+
+    #[test]
+    fn provider_resolution_names_the_provider_and_the_source_policy() {
+        assert_eq!(
+            resolving_provider_label("acme", DeployProviderFetch::Offline),
+            "resolving deploy provider acme (offline)"
+        );
+        assert_eq!(
+            resolving_provider_label("acme", DeployProviderFetch::Online),
+            "resolving deploy provider acme (online)"
+        );
+    }
+
+    #[test]
+    fn the_resolution_line_names_the_exact_commit() {
+        let provenance = DeployProviderProvenance {
+            kind: "git".to_owned(),
+            url: Some("https://example.test/acme.git".to_owned()),
+            requested_ref: Some("main".to_owned()),
+            requested_rev: None,
+            commit: Some("1a2b3c4d".to_owned()),
+            resolution: "cached".to_owned(),
+        };
+        assert_eq!(
+            provider_resolved_summary("acme", &provenance),
+            "resolved deploy provider `acme` from cached checkout at commit 1a2b3c4d"
+        );
     }
 }
