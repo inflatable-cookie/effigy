@@ -1102,12 +1102,24 @@ pub(super) fn ensure_local_linux_workspace_effigy_artifact(
                 "cannot inspect previous workspace artifact output: {error}"
             ))
         })?;
+    // Bytes already built for this exact version (for example by a direct
+    // `workspace:linux:artifact`, which writes no install identity) may come
+    // back unchanged from a no-op rebuild; they are the current build's output.
+    // Touched bytes from another version stay refused.
+    let previous_was_current_version =
+        read_trimmed_identity_file(&workspace_effigy_active_version_file(&artifact_path))
+            .as_deref()
+            == Some(effigy_core::build_info::active_version().as_str());
     let started = std::time::SystemTime::now();
     match run_linux_workspace_effigy_artifact_build(host_binary, effigy_repo_root, target) {
         Ok(())
             if linux_workspace_artifact_produced_since(&artifact_path, target, started)
-                && linux_workspace_artifact_digest(&artifact_path, || true)
-                    .is_ok_and(|digest| digest.is_some() && digest != previous_digest) =>
+                && linux_workspace_artifact_digest(&artifact_path, || true).is_ok_and(
+                    |digest| {
+                        digest.is_some()
+                            && (digest != previous_digest || previous_was_current_version)
+                    },
+                ) =>
         {
             bind_verified_linux_workspace_effigy_artifact(&artifact_path, &install_identity)
         }
