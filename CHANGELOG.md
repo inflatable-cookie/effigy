@@ -1107,6 +1107,18 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- A managed session resolves vault access once, before any front end renders
+  (TUI, headless or detach), and everything it starts uses that access on the
+  internal env route: the environment `up`, the run's supervisor, every
+  workload, shell and lifecycle tab, host-process supervisors and their
+  processes, and any nested `effigy` run inside them. A locked vault therefore
+  asks on the real terminal once, before the session starts, instead of inside
+  a tab; a nested run that inherits the route uses it whatever its task name
+  and never prompts. With no terminal and no other source the session refuses
+  before starting anything, naming the locked vault, `effigy secrets unlock`
+  and the new `EFFIGY_SECRET_PASSPHRASE` source. Nothing is persisted: a
+  session never seals a command credential, and prompt-free use of the
+  local-dev key without a passphrase stays limited to a resolved `dev` session.
 - `effigy secrets doctor` reports what the local-dev key can read: when the key
   exists it opens the vault with no passphrase, reports `vault: unlocked
   (local-dev key)` and lists the stored key names (`vault_state.unlock` is

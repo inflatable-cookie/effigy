@@ -365,6 +365,27 @@ a handover asks the run to stop and waits for its settle. Use the task's
 - `EFFIGY_TUI_DIAGNOSTICS=1|true`
   - enables post-run TUI diagnostics summary for emulator/runtime debugging
 
+### One vault question per session
+
+When the checkout declares a built-in vault and that vault exists, a managed
+session resolves vault access **once, before any front end renders** — TUI,
+`--headless` or `--detach` — and everything it starts uses that access:
+the environment `up`, the run's supervisor, every workload, shell and
+lifecycle tab, host-process supervisors and their processes, and any nested
+`effigy` run inside them. A locked vault asks on the real terminal once,
+before the session takes the screen, instead of inside a tab; a nested run
+never asks. Nothing is persisted: the session does not seal a command
+credential, so the workaround of running `effigy secrets unlock` before the
+TUI is no longer needed for this.
+
+The order is the one secrets already use: a passphrase this invocation holds,
+the sealed command credential `effigy secrets unlock` leaves, or one prompt.
+With no terminal and none of those the session refuses before it starts
+anything and names the fix — `effigy secrets unlock` once, or
+`EFFIGY_SECRET_PASSPHRASE` for one invocation. The local-dev key is unchanged:
+it serves a resolved `dev` session's own secrets without a passphrase and is
+never handed to another task's children.
+
 ### Restart the managed dev session
 
 To restart the repository's managed `dev` session, inspect and stop that run,

@@ -874,6 +874,7 @@ fn secret_test_env_clear() -> EnvGuard {
     let guard = EnvGuard::set_many(&[
         ("EFFIGY_TEST_SECRETS_PASSPHRASE", None),
         ("EFFIGY_INTERNAL_SECRET_PASSPHRASE", None),
+        ("EFFIGY_SECRET_PASSPHRASE", None),
         ("EFFIGY_TEST_SECRETS_VALUE", None),
         ("EFFIGY_TEST_SECRETS_NEW_PASSPHRASE", None),
     ]);
@@ -898,4 +899,261 @@ required = true
 targets = ["tasks", "containers"]
 description = "Postgres connection string"
 "#
+}
+
+// ---- A managed session's vault access (032, Q-007) --------------------------
+//
+// A managed session resolves the access it shares with everything it starts
+// once, before any front end renders: from what the invocation holds, the
+// sealed command credential `effigy secrets unlock` leaves, or one prompt on
+// the real terminal. These proofs exercise that resolution directly; the CLI
+// proof in `tests/cli_output_tests` drives a real session on a pseudo
+// terminal.
+
+use crate::runner::execute::resolve_managed_session_secret_access;
+use crate::runner::secret_session::{
+    internal_local_dev_secret_access_env, internal_secret_passphrase_env,
+    secret_passphrase_child_env_strings, session_passphrase, session_secret_passphrase_env,
+};
+use effigy_secrets::{local_unlock_credential_path, SecretValue, VaultSecretRecord};
+
+fn write_session_vault(
+    root: &std::path::Path,
+    passphrase: &str,
+    with_local_dev_key: bool,
+    records: &[(&str, &str)],
+) {
+    let mut payload = VaultPlaintextPayload::empty();
+    for (name, value) in records {
+        payload.records.insert(
+            (*name).to_owned(),
+            VaultSecretRecord::new(SecretValue::new(*value)),
+        );
+    }
+    let vault_path = root.join(".effigy/secrets/local.vault");
+    fs::create_dir_all(vault_path.parent().expect("vault parent")).expect("mkdir vault parent");
+    let envelope = if with_local_dev_key {
+        let local_dev_key = LocalDevUnlockKey::generate().expect("generate local-dev key");
+        let key_path = local_dev_unlock_key_path(&vault_path);
+        fs::write(&key_path, local_dev_key.expose()).expect("write local-dev key");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600))
+                .expect("secure local-dev key");
+        }
+        payload
+            .encrypt_with_passphrase_and_local_dev_key(passphrase, &local_dev_key)
+            .expect("encrypt vault with local-dev key")
+    } else {
+        payload
+            .encrypt_with_passphrase(passphrase)
+            .expect("encrypt vault")
+    };
+    fs::write(
+        &vault_path,
+        envelope.to_json_pretty().expect("serialize vault"),
+    )
+    .expect("write vault");
+}
+
+fn session_secrets_manifest() -> &'static str {
+    r#"
+[tasks.dev]
+run = "printf dev"
+
+[tasks.probe]
+run = "printf probe"
+secrets = "required"
+
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+
+[secrets.keys.database_url]
+required = true
+targets = ["tasks"]
+"#
+}
+
+fn clear_session_secret_env() -> EnvGuard {
+    let guard = EnvGuard::set_many(&[
+        ("EFFIGY_TEST_SECRETS_PASSPHRASE", None),
+        ("EFFIGY_INTERNAL_SECRET_PASSPHRASE", None),
+        (session_secret_passphrase_env(), None),
+        ("EFFIGY_TEST_SECRETS_VALUE", None),
+        ("EFFIGY_TEST_SECRETS_NEW_PASSPHRASE", None),
+    ]);
+    crate::runner::secret_session::forget_session_passphrase_for_tests();
+    guard
+}
+
+/// With no terminal and no source the session refuses before it starts
+/// anything, and the refusal names what is locked and what to run next.
+#[test]
+fn managed_session_refuses_a_locked_vault_without_a_terminal() {
+    let root = temp_workspace("session-secrets-refusal");
+    write_root_manifest(&root, session_secrets_manifest());
+    write_session_vault(&root, "vault-passphrase", false, &[]);
+    let _env = clear_session_secret_env();
+
+    let error = resolve_managed_session_secret_access(&root, "dev", "default")
+        .expect_err("a locked vault with no terminal must refuse");
+    let message = error.to_string();
+    assert!(message.contains("managed task `dev`"), "{message}");
+    assert!(message.contains("is locked"), "{message}");
+    assert!(
+        message.contains("secret input requires an interactive TTY"),
+        "{message}"
+    );
+    assert!(message.contains("effigy secrets unlock"), "{message}");
+    assert!(
+        message.contains(session_secret_passphrase_env()),
+        "{message}"
+    );
+    // Nothing was written and nothing was started: a refusal is not an
+    // implicit `secrets unlock`.
+    assert!(!local_unlock_credential_path(&root.join(".effigy/secrets/local.vault")).exists());
+    assert!(session_passphrase().is_none());
+}
+
+/// A caller-supplied passphrase answers without a terminal, and every child
+/// the session starts receives it on the internal route, not the public name.
+#[test]
+fn managed_session_shares_a_caller_supplied_passphrase_with_children() {
+    let root = temp_workspace("session-secrets-caller");
+    write_root_manifest(&root, session_secrets_manifest());
+    write_session_vault(
+        &root,
+        "vault-passphrase",
+        false,
+        &[("database_url", "postgres://secret-value")],
+    );
+    let _env = EnvGuard::set_many(&[
+        (
+            session_secret_passphrase_env(),
+            Some("vault-passphrase".to_owned()),
+        ),
+        ("EFFIGY_TEST_SECRETS_PASSPHRASE", None),
+        ("EFFIGY_INTERNAL_SECRET_PASSPHRASE", None),
+    ]);
+    crate::runner::secret_session::forget_session_passphrase_for_tests();
+
+    resolve_managed_session_secret_access(&root, "dev", "default")
+        .expect("the caller supplied the passphrase");
+    assert_eq!(
+        session_passphrase().map(|value| value.expose().to_owned()),
+        Some("vault-passphrase".to_owned())
+    );
+    // Resolving again is a cache read: a session asks at most once.
+    resolve_managed_session_secret_access(&root, "dev", "default")
+        .expect("a resolved session resolves from what it holds");
+
+    let child_env = secret_passphrase_child_env_strings();
+    assert!(child_env.iter().any(|(key, value)| {
+        key == internal_secret_passphrase_env() && value == "vault-passphrase"
+    }));
+    assert!(
+        child_env
+            .iter()
+            .all(|(key, _)| key != session_secret_passphrase_env()),
+        "the public source name never reaches a child"
+    );
+    assert!(!local_unlock_credential_path(&root.join(".effigy/secrets/local.vault")).exists());
+
+    crate::runner::secret_session::forget_session_passphrase_for_tests();
+}
+
+/// The sealed command credential answers without a terminal, exactly as it
+/// does for a task today, and the session then shares what it read.
+#[test]
+fn managed_session_uses_a_sealed_credential_without_a_terminal() {
+    let root = temp_workspace("session-secrets-sealed");
+    write_root_manifest(&root, session_secrets_manifest());
+    write_session_vault(&root, "vault-passphrase", false, &[]);
+    {
+        let _env = secret_test_env("vault-passphrase", None);
+        run_command(Command::Secrets(SecretsArgs {
+            subcommand: SecretsSubcommand::Unlock,
+            repo_override: Some(root.clone()),
+            output_json: false,
+        }))
+        .expect("unlock should seal a command credential");
+    }
+    let _env = clear_session_secret_env();
+    let vault_path = root.join(".effigy/secrets/local.vault");
+    assert!(local_unlock_credential_path(&vault_path).exists());
+
+    resolve_managed_session_secret_access(&root, "dev", "default")
+        .expect("the sealed credential answers");
+    assert_eq!(
+        session_passphrase().map(|value| value.expose().to_owned()),
+        Some("vault-passphrase".to_owned())
+    );
+
+    crate::runner::secret_session::forget_session_passphrase_for_tests();
+}
+
+/// The local-dev key is a `dev` session's own factor, not the session's
+/// children's: a session that is not `dev` still asks once.
+#[test]
+fn managed_session_with_only_the_local_dev_key_still_asks_once() {
+    let root = temp_workspace("session-secrets-local-dev");
+    write_root_manifest(&root, session_secrets_manifest());
+    write_session_vault(
+        &root,
+        "vault-passphrase",
+        true,
+        &[("database_url", "postgres://secret-value")],
+    );
+    let _env = clear_session_secret_env();
+
+    let error = resolve_managed_session_secret_access(&root, "serve", "default")
+        .expect_err("the local-dev key does not answer a non-dev session");
+    let message = error.to_string();
+    assert!(message.contains("managed task `serve`"), "{message}");
+    assert!(message.contains("effigy secrets unlock"), "{message}");
+    assert!(!local_unlock_credential_path(&root.join(".effigy/secrets/local.vault")).exists());
+}
+
+/// A session that declares no built-in vault has nothing locked to resolve.
+#[test]
+fn managed_session_without_a_declared_vault_asks_nothing() {
+    let root = temp_workspace("session-secrets-undeclared");
+    write_root_manifest(&root, "[tasks.dev]\nrun = \"printf dev\"\n");
+    let _env = clear_session_secret_env();
+
+    resolve_managed_session_secret_access(&root, "dev", "default")
+        .expect("nothing is declared, so nothing is asked");
+    assert!(session_passphrase().is_none());
+}
+
+/// The local-dev marker still travels to a session's children beside the
+/// passphrase: the marker is what a `dev` session's own work uses.
+#[test]
+fn managed_session_child_route_carries_the_local_dev_marker() {
+    let root = temp_workspace("session-secrets-marker");
+    write_root_manifest(&root, session_secrets_manifest());
+    write_session_vault(&root, "vault-passphrase", false, &[]);
+    let _env = EnvGuard::set_many(&[
+        (
+            session_secret_passphrase_env(),
+            Some("vault-passphrase".to_owned()),
+        ),
+        ("EFFIGY_INTERNAL_SECRET_PASSPHRASE", None),
+    ]);
+    crate::runner::secret_session::forget_session_passphrase_for_tests();
+    let local_dev = crate::runner::secret_session::activate_local_dev_secret_access(true);
+
+    resolve_managed_session_secret_access(&root, "dev", "default")
+        .expect("the caller supplied the passphrase");
+    let child_env = secret_passphrase_child_env_strings();
+    assert!(child_env
+        .iter()
+        .any(|(key, value)| { key == internal_local_dev_secret_access_env() && value == "1" }));
+
+    drop(local_dev);
+    crate::runner::secret_session::forget_session_passphrase_for_tests();
 }

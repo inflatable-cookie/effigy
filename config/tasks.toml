@@ -607,6 +607,18 @@
 "test:tui:startup-visibility" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "tui-startup-visibility", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-tui --lib --filterset 'test(multiprocess::startup_visibility::managed_tui_startup_visibility_production_pty)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 240000 },
 ] }
+# A managed session resolves vault access once, before any front end renders,
+# and everything it starts shares it (contract 032, Q-007 "Secrets before the
+# TUI"). The proof runs the real binary on a private PTY: one prompt before the
+# run renders, and a nested non-`dev` task in a tab resolving its value with no
+# prompt. The host-process supervisor route is covered by
+# `host_process_supervisor_spawns_with_the_session_secret_route`.
+"test:managed:session-secrets" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { id = "managed-session-secrets-pty", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test managed_session_secrets_cli_tests --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
+] }
+"test:managed:session-secrets:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { id = "managed-session-secrets-pty", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test managed_session_secrets_cli_tests --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
+] }
 "check:tui:startup-visibility" = { visibility = "internal", group = "Maintenance", run = [
   "sh scripts/oxide-selector.sh check -p effigy-process -p effigy-tui --all-targets",
   "sh scripts/oxide-selector.sh clippy -p effigy-process -p effigy-tui --all-targets -- -D warnings",
