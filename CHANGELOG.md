@@ -1159,6 +1159,14 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- A refused environment transition now names the authoritative observed holder
+  (effigy#302). `environment <name> is busy` reports the run id and pid the
+  environment's gate names, its freshly observed process state, the wait that
+  ended with the deadline it was given, and the record's observed state and
+  generation. An identity that no longer matches, or that cannot be read, is
+  reported as unknown rather than as a live owner, and `--json` carries the same
+  facts as `effigy.environment-busy.v1`. The refusal itself is unchanged: no
+  backend call, no release, no retry, no second wait.
 - Stopping an empty Compose project still withdraws its owned routes; declared
   host processes take the normal stop path. Live listener and foreign successor
   routes remain protected. Backend output and VM interpolation files use checked

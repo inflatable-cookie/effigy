@@ -97,7 +97,16 @@ fn inside_guest() -> bool {
 }
 
 pub(in crate::runner) fn error(error: EnvError) -> RunnerError {
-    RunnerError::task_invocation(error.to_string())
+    let detail = error.to_string();
+    match error.busy_details() {
+        // A refused transition keeps its refusal and exit code; the observed
+        // holder and row are additive details only.
+        Some(details_json) => RunnerError::EnvironmentBusy {
+            detail,
+            details_json,
+        },
+        None => RunnerError::task_invocation(detail),
+    }
 }
 
 fn runtime_error(error: RunnerError) -> effigy_runtime::EffigyRuntimeError {
@@ -734,4 +743,65 @@ fn now_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use effigy_containers::environment::{BusyDiagnostics, BusyRecord, EnvState};
+    use effigy_kernel::observe::UnknownReason;
+
+    fn busy(record: Observed<BusyRecord>, waited: Option<Duration>) -> RunnerError {
+        error(EnvError::Busy(Box::new(BusyDiagnostics {
+            env: "stack".to_owned(),
+            holder: None,
+            record: Some(record),
+            waited,
+            wait_limit: waited,
+        })))
+    }
+
+    /// A busy refusal keeps its exit code and its text, and adds the observed
+    /// holder and row as `effigy.environment-busy.v1` details.
+    #[test]
+    fn busy_refusals_keep_their_exit_and_carry_holder_details() {
+        let refused = busy(
+            Observed::Verified(
+                BusyRecord {
+                    state: EnvState::Active,
+                    generation: 7,
+                },
+                effigy_kernel::observe::Evidence::new("fixture".into(), None).expect("evidence"),
+            ),
+            Some(Duration::from_millis(150)),
+        );
+        assert!(matches!(refused, RunnerError::EnvironmentBusy { .. }));
+        // Diagnostic only: the refusal keeps the exit code it always had.
+        assert_eq!(refused.process_exit_code(), 1);
+        assert!(refused.to_string().contains("environment `stack` is busy"));
+        let value: serde_json::Value =
+            serde_json::from_str(refused.json_error_details().expect("busy details"))
+                .expect("busy details parse");
+        assert_eq!(value["schema"], "effigy.environment-busy.v1");
+        assert_eq!(value["refusal"], "timed-out");
+        assert!(value["holder"].is_null());
+        assert_eq!(value["environment_state"]["observed"], "verified");
+        assert_eq!(value["environment_state"]["generation"], 7);
+
+        // An unobservable row is reported as unknown, not invented.
+        let unknown = busy(
+            Observed::Unknown(UnknownReason::StoreUnreadable("fixture".into())),
+            None,
+        );
+        let value: serde_json::Value =
+            serde_json::from_str(unknown.json_error_details().expect("busy details"))
+                .expect("busy details parse");
+        assert_eq!(value["refusal"], "busy");
+        assert_eq!(value["environment_state"]["observed"], "unknown");
+
+        // Every other environment error keeps the plain invocation error.
+        let other = error(EnvError::Invalid("no record".to_owned()));
+        assert!(!matches!(other, RunnerError::EnvironmentBusy { .. }));
+        assert!(other.json_error_details().is_none());
+    }
 }

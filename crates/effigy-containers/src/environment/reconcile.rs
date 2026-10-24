@@ -15,11 +15,12 @@ use effigy_kernel::ctx::{
     CancelToken, CleanupContext, Deadline, EffectClass, EffectContext, Limits, OperationContext,
     Placement,
 };
-use effigy_kernel::gate::{GateError, Wait};
+use effigy_kernel::gate::{GateError, HolderDiag, Wait};
 use effigy_kernel::id::{
     CheckoutId, ExecutionTarget, InvocationSpec, ResolvedInvocation, ResourceId, Route, RunId,
     Surface, TaskId,
 };
+use effigy_kernel::ident::ProcessState;
 use effigy_kernel::objects::{Closure, Objects};
 use effigy_kernel::observe::{AbsenceProof, Observed, UnknownReason};
 use effigy_kernel::outcome::{CleanupOutcome, Invocation, RequiredObligation, WorkloadOutcome};
@@ -176,10 +177,225 @@ pub(crate) fn operation(
     )
 }
 
+/// What a refused transition could observe about the run holding
+/// `Gate(Env)`. Diagnostics only (I-G2): the kernel's own gate evidence and
+/// one pure record read, never a second probe and never authority.
+#[derive(Debug, Clone)]
+pub struct BusyDiagnostics {
+    pub env: String,
+    /// The gate's diagnostic body exactly as the refusal found it. `None`
+    /// when the refusal came from inside an admitted run, which retains no
+    /// gate observation.
+    pub holder: Option<Box<Observed<HolderDiag>>>,
+    /// The environment record as a pure read found it (R2). `None` when no
+    /// read was made.
+    pub record: Option<Observed<BusyRecord>>,
+    /// How long the original wait ran and the deadline it was given. Both
+    /// are `None` for a fail-fast refusal, which never waited.
+    pub waited: Option<Duration>,
+    pub wait_limit: Option<Duration>,
+}
+
+/// The record facts a refusal reports: no digest, backend, argv or secret.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BusyRecord {
+    pub state: EnvState,
+    pub generation: u64,
+}
+
+impl BusyDiagnostics {
+    /// A refusal that retained no observation: same shape, nothing claimed.
+    fn unobserved(env: &str) -> Self {
+        Self {
+            env: env.to_owned(),
+            holder: None,
+            record: None,
+            waited: None,
+            wait_limit: None,
+        }
+    }
+
+    /// The observed owner and state. It names what the gate and record say
+    /// and never turns an unverified identity into a live claim.
+    pub fn text(&self) -> String {
+        let mut text = format!("environment `{}` is busy: {}", self.env, self.owner_text());
+        if let Some(record) = &self.record {
+            text.push_str(&Self::record_text(record));
+        }
+        text.push('.');
+        if let Some(waited) = self.waited {
+            match self.wait_limit {
+                Some(limit) => text.push_str(&format!(
+                    " The wait ended after {:.1}s of its {:.1}s budget.",
+                    waited.as_secs_f64(),
+                    limit.as_secs_f64()
+                )),
+                None => text.push_str(&format!(
+                    " The wait ended after {:.1}s.",
+                    waited.as_secs_f64()
+                )),
+            }
+        }
+        text.push_str(
+            " Nothing was changed and no backend was contacted. Inspect the observed state with ",
+        );
+        text.push_str(&format!("`effigy container status {}`", self.env));
+        text.push_str("; retry once that transition finishes.");
+        text
+    }
+
+    fn owner_text(&self) -> String {
+        match &self.holder {
+            Some(holder) => match holder.as_ref() {
+                Observed::Verified(diag, _) => {
+                    let owner = match &diag.run {
+                        Some(run) => format!("transition run {run}"),
+                        None => "an unrecorded run".to_owned(),
+                    };
+                    format!("its gate is held by {owner} ({})", observe_text(diag))
+                }
+                Observed::Unknown(reason) => format!(
+                    "its gate names a holder whose diagnostics are unreadable ({})",
+                    unknown_label(reason)
+                ),
+                Observed::Absent(_) => "its gate reports no holder".to_owned(),
+            },
+            None => "another transition holds its gate, and its holder was not observed".to_owned(),
+        }
+    }
+
+    fn record_text(record: &Observed<BusyRecord>) -> String {
+        match record {
+            Observed::Verified(record, _) => format!(
+                "; the environment record reads {} at generation {}",
+                state_label(record.state),
+                record.generation
+            ),
+            Observed::Unknown(reason) => format!(
+                "; the environment record is unreadable ({})",
+                unknown_label(reason)
+            ),
+            Observed::Absent(_) => "; the environment has no record yet".to_owned(),
+        }
+    }
+
+    /// The stable `effigy.environment-busy.v1` details for `--json`. Additive
+    /// holder and transition facts only: no argv, secret or command text.
+    pub fn details(&self) -> Value {
+        json!({
+            "schema": "effigy.environment-busy.v1",
+            "schema_version": 1,
+            "environment": self.env,
+            "refusal": if self.waited.is_some() { "timed-out" } else { "busy" },
+            "waited_ms": self.waited.map(|waited| waited.as_millis() as u64),
+            "wait_budget_ms": self.wait_limit.map(|limit| limit.as_millis() as u64),
+            "holder": self.holder.as_ref().map(|holder| holder_details(holder.as_ref())),
+            "environment_state": self.record.as_ref().map(record_details),
+        })
+    }
+}
+
+fn observe_text(diag: &HolderDiag) -> String {
+    match &diag.state {
+        Observed::Verified(ProcessState::Active, _) => {
+            format!("pid {} on this host, reported live", diag.pid)
+        }
+        Observed::Verified(ProcessState::Stopped, _) => format!(
+            "pid {} on this host, stopped (SIGSTOP); it keeps the gate until resumed",
+            diag.pid
+        ),
+        Observed::Verified(ProcessState::Zombie, _) => format!(
+            "pid {} on this host, whose process has exited and is not yet reaped",
+            diag.pid
+        ),
+        Observed::Unknown(reason) => format!(
+            "pid {} on this host, whose process identity is unverifiable ({})",
+            diag.pid,
+            unknown_label(reason)
+        ),
+        Observed::Absent(_) => format!(
+            "pid {} on this host, whose process state could not be observed",
+            diag.pid
+        ),
+    }
+}
+
+fn holder_details(holder: &Observed<HolderDiag>) -> Value {
+    match holder {
+        Observed::Verified(diag, _) => {
+            let mut details = json!({
+                "observed": "verified",
+                "run": diag.run,
+                "pid": diag.pid,
+                "state": holder_state_label(&diag.state),
+            });
+            if let Observed::Unknown(reason) = &diag.state {
+                details["state_reason"] = json!(unknown_label(reason));
+            }
+            details
+        }
+        Observed::Absent(_) => json!({"observed": "absent"}),
+        Observed::Unknown(reason) => {
+            json!({"observed": "unknown", "reason": unknown_label(reason)})
+        }
+    }
+}
+
+fn record_details(record: &Observed<BusyRecord>) -> Value {
+    match record {
+        Observed::Verified(record, _) => json!({
+            "observed": "verified",
+            "state": state_label(record.state),
+            "generation": record.generation,
+        }),
+        Observed::Absent(_) => json!({"observed": "absent"}),
+        Observed::Unknown(reason) => {
+            json!({"observed": "unknown", "reason": unknown_label(reason)})
+        }
+    }
+}
+
+fn state_label(state: EnvState) -> &'static str {
+    match state {
+        EnvState::Active => "active",
+        EnvState::Stopped => "stopped",
+        EnvState::Pending => "pending",
+    }
+}
+
+fn holder_state_label(state: &Observed<ProcessState>) -> &'static str {
+    match state {
+        Observed::Verified(ProcessState::Active, _) => "running",
+        Observed::Verified(ProcessState::Stopped, _) => "stopped",
+        Observed::Verified(ProcessState::Zombie, _) => "exited",
+        _ => "unknown",
+    }
+}
+
+/// Closed vocabulary: the category only, never the free-form detail, which
+/// can name paths.
+fn unknown_label(reason: &UnknownReason) -> &'static str {
+    match reason {
+        UnknownReason::TimedOut { .. } => "timed-out",
+        UnknownReason::PermissionDenied => "permission-denied",
+        UnknownReason::ToolUnavailable(_) => "tool-unavailable",
+        UnknownReason::Unparsable(_) => "unparsable",
+        UnknownReason::Inconsistent(_) => "inconsistent",
+        UnknownReason::GuardUnavailable => "guard-unavailable",
+        UnknownReason::Injected => "injected",
+        UnknownReason::Untrusted(_) => "untrusted",
+        UnknownReason::HostAuthorityRequired => "host-authority-required",
+        UnknownReason::StoreNeedsRecovery => "store-needs-recovery",
+        UnknownReason::StoreUnreadable(_) => "store-unreadable",
+    }
+}
+
 #[derive(Debug)]
 pub enum EnvError {
-    /// Another transition holds `Gate(Env)`.
-    Busy(String),
+    /// Another transition holds `Gate(Env)`. The diagnostics are carried
+    /// through from the refusal and never decide anything; boxed so the
+    /// refusal stays small on every `Result` it passes through.
+    Busy(Box<BusyDiagnostics>),
     /// Live, interrupted or unknown holders protect the environment (R4).
     HeldBy {
         env: String,
@@ -197,10 +413,7 @@ pub enum EnvError {
 impl std::fmt::Display for EnvError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Busy(env) => write!(
-                f,
-                "environment `{env}` is busy: another up, down, handover, reset or reap holds it; retry once it finishes"
-            ),
+            Self::Busy(diagnostics) => f.write_str(&diagnostics.text()),
             Self::HeldBy { env, holders } => {
                 let runs = holders
                     .iter()
@@ -241,10 +454,20 @@ impl std::fmt::Display for EnvError {
 impl std::error::Error for EnvError {}
 
 impl EnvError {
-    fn from_run(env: &str, error: RunError) -> Self {
+    /// The stable structured details of a busy refusal, for error envelopes.
+    pub fn busy_details(&self) -> Option<String> {
+        match self {
+            Self::Busy(diagnostics) => Some(diagnostics.details().to_string()),
+            _ => None,
+        }
+    }
+
+    /// A refusal that retained no gate evidence still keeps its own variant,
+    /// distinct from `HeldBy` and from kernel journal contention.
+    pub(crate) fn from_run(env: &str, error: RunError) -> Self {
         match error {
             RunError::Gate(GateError::Busy { .. } | GateError::TimedOut { .. }) => {
-                Self::Busy(env.to_owned())
+                Self::Busy(Box::new(BusyDiagnostics::unobserved(env)))
             }
             RunError::Gate(GateError::HostAuthorityRequired) | RunError::HostAuthorityRequired => {
                 Self::HostAuthorityRequired
@@ -260,6 +483,47 @@ impl EnvError {
             other => Self::Kernel(other),
         }
     }
+}
+
+/// A refused admission onto `Gate(Env)`: carries the kernel's own gate
+/// evidence and one pure read of the record. Nothing is acquired, retried,
+/// waited for again or released here.
+fn admission_error(
+    ctx: &EnvContext<'_>,
+    env: &EnvRef,
+    wait: Wait,
+    started: Instant,
+    error: RunError,
+) -> EnvError {
+    let diagnostics =
+        |holder: Box<Observed<HolderDiag>>, waited: Option<Duration>| BusyDiagnostics {
+            env: env.name.clone(),
+            holder: Some(holder),
+            record: Some(observed_record(ctx, env)),
+            waited,
+            wait_limit: waited.and(match wait {
+                Wait::FailFast => None,
+                Wait::Until(deadline) => Some(deadline.saturating_duration_since(started)),
+            }),
+        };
+    match error {
+        RunError::Gate(GateError::Busy { holder, .. }) => {
+            EnvError::Busy(Box::new(diagnostics(holder, None)))
+        }
+        RunError::Gate(GateError::TimedOut { holder, waited, .. }) => {
+            EnvError::Busy(Box::new(diagnostics(holder, Some(waited))))
+        }
+        other => EnvError::from_run(&env.name, other),
+    }
+}
+
+/// One pure read of the exact environment record (R2): no row, gate or
+/// backend is created, and an unreadable record stays unknown.
+fn observed_record(ctx: &EnvContext<'_>, env: &EnvRef) -> Observed<BusyRecord> {
+    EnvRecord::read(&ctx.observe(), ctx.root, &env.resource).map(|record| BusyRecord {
+        state: record.state,
+        generation: record.generation.get(),
+    })
 }
 
 /// Environment effects settle by disposition only: an apply is retained and
@@ -329,6 +593,8 @@ impl<'r> EnvRun<'r> {
             provenance: BTreeMap::new(),
         })
         .map_err(|error| EnvError::Invalid(error.to_string()))?;
+        // The original deadline, kept for the refusal's own report.
+        let started = Instant::now();
         let run = Run::begin(
             &ctx.cx,
             ctx.root,
@@ -343,7 +609,7 @@ impl<'r> EnvRun<'r> {
             &ctx.cleanup,
             &mut EnvSettlement,
         )
-        .map_err(|error| EnvError::from_run(&env.name, error))?;
+        .map_err(|error| admission_error(ctx, env, wait, started, error))?;
         // The gate is held: only this run writes the row until it settles.
         let began = match EnvRecord::read(&ctx.observe(), ctx.root, &env.resource) {
             Observed::Verified(record, _) => record,

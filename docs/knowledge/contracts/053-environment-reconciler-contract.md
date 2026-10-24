@@ -84,6 +84,16 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   (`HeldBy`) while any holder remains. Before asking, the transition settles
   every interrupted holder as gate holder, taking that holder's owner gate
   `FailFast` (052 I-A2); live and unknown holders always refuse.
+- **Busy.** An admission that finds `Gate(Env)` held is refused `Busy` with
+  the kernel's own gate evidence carried through: the holder's run id and pid
+  with its freshly observed process state, the wait that ended and the
+  deadline it was given, and one pure read of the record's state and
+  generation. A holder whose identity cannot be verified is reported as
+  unknown, never as live; one that has exited, or whose pid now belongs to a
+  successor process, is named as such. The refusal acquires nothing, retries
+  nothing, contacts no backend and releases nobody. `HeldBy` (a live holder
+  protects the environment) and kernel journal contention stay distinct
+  refusals. `--json` carries it as `effigy.environment-busy.v1`.
 - **Effects.** An apply is journalled `environment:apply` with `Retain`
   settlement; a stop is `environment:stop`, `Irreversible`. Recording either
   disposition calls no adapter, so it needs no holder check. A launch failure
@@ -241,6 +251,8 @@ channel waits for that channel (052 §8.3).
 | Record, stopped publication, apply-run attach, exempt permit | `test:kernel:environment` |
 | Strict-fake engine; transition matrix against live, interrupted and unknown holders; EPERM, ENOSPC and SIGKILL at every crossing of up, down, reset and import, with O2, O3, O5, O6, O7 oracles; process-level strict fakes for both adapters; importer against copies of real Underlay and DecodeLabs `nerdctl inspect` captures | `test:containers:environment` |
 | Runner cutover: lifecycle, task activation, managed runs, handover, deferral, builder recovery | `test:environment:runner` |
+| Busy refusal diagnostics: the live exact-gate holder, terminal and successor observations, unreadable identity, the original wait deadline, explicit unknown/absent record semantics, held-by and journal-contention controls, with no backend call | `test:environment:busy-diagnostics` |
+| Touched crates compile and lint for the busy diagnostics | `check:environment:busy-diagnostics`, `lint:environment:busy-diagnostics` |
 
 Real-engine qualification belongs to the qualification lane. On Colima and
 on Docker Desktop, with cbs and Acowtancy:
