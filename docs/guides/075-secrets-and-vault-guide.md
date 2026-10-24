@@ -276,7 +276,10 @@ generate = { rhai = "scripts/generate-dev-secrets.rhai", run_in = "host" }
 ```
 
 This hook is only consumed from task startup. Effigy does not treat it as a
-general deploy/state/artifact generation hook.
+general deploy/state/artifact generation hook. Because the hook is a declared
+durable step of that startup, such a task is admitted with its checkout
+journal before its body runs, so it appears in `effigy runs` history
+even when no generation was needed.
 
 ## Use In Containers
 

@@ -1184,6 +1184,13 @@ During v0.x, MINOR bumps may include breaking changes.
   the elevation argv's operator environment, the macOS broker socket parent
   check, its activation-path comparison and its stderr log path now each have a
   regression test (effigy#392, effigy#403, effigy#405, effigy#406, effigy#408).
+- A task whose `secrets = "required"` startup declares
+  `[secrets.vault].generate` is admitted with that hook's durable effects
+  before its body. The static tree classifier now sees the manifest's declared
+  generation hook, so `secrets init` and the hook's task run inside the
+  admitted checkout journal instead of refusing a late durable effect
+  mid-startup. An undeclared durable child (shell code launching a named or
+  detached Effigy run) still refuses before its effects.
 - Stopping an empty Compose project still withdraws its owned routes; declared
   host processes take the normal stop path. Live listener and foreign successor
   routes remain protected. Backend output and VM interpolation files use checked
