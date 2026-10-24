@@ -116,7 +116,10 @@ fn a_partial_generation_matches_across_state_home_paths() {
         first_render.closure.digest(),
         second_render.closure.digest()
     );
-    assert_ne!(first_render.path, second_render.path);
+    // Q-010 moved render objects into the checkout journal, so the immutable
+    // generation also sits at one path per checkout whatever state home the
+    // caller used (contract 052 §7.1).
+    assert_eq!(first_render.path, second_render.path);
     for bytes in first_render.closure.files().values() {
         let text = String::from_utf8_lossy(bytes);
         assert!(
