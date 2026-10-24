@@ -693,6 +693,51 @@ fn resolve_task_secret_vault_path(
     )
 }
 
+/// Whether this task's preflight secret resolution can run the manifest's
+/// declared `[secrets.vault].generate` hook. The hook is not written in the
+/// task's `run`, so `classify_tree` cannot see it by walking steps: it is a
+/// durable descendant of `secrets = "required"` startup that the manifest
+/// declares. Resolving that join before admission keeps the hook's effects
+/// inside the tree class instead of refusing them after workload go
+/// (contract 052 §3.1). Only a direct-shell task resolves task secret env, and
+/// only a task-targeted key reaches the hook, so no other task widens.
+pub(in crate::runner::execute) fn startup_can_run_vault_generate_hook(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+) -> Result<bool, RunnerError> {
+    if effigy_context::external_task_source_isolation_active()
+        || !matches!(
+            selection.task.secrets,
+            Some(effigy_manifest::ManifestTaskSecretsMode::Required)
+        )
+        || !task_uses_direct_shell(selection.task.run.as_ref())
+    {
+        return Ok(false);
+    }
+    let manifest = load_task_manifest(&preflight.resolved.resolved_root.join(TASK_MANIFEST_FILE))?;
+    let Some(secrets) = manifest.secrets.as_ref() else {
+        return Ok(false);
+    };
+    if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
+        return Ok(false);
+    }
+    let Some(generate) = secrets
+        .vault
+        .as_ref()
+        .and_then(|vault| vault.generate.as_ref())
+    else {
+        return Ok(false);
+    };
+    if generate.run.is_none() && generate.task.is_none() && generate.rhai.is_none() {
+        return Ok(false);
+    }
+    let targets = task_secret_targets(&preflight.secret_targets)?;
+    Ok(secrets
+        .keys
+        .values()
+        .any(|key| key.targets.iter().any(|target| targets.contains(target))))
+}
+
 fn maybe_generate_required_task_secrets(
     repo_root: &Path,
     secrets: &ManifestSecretsConfig,

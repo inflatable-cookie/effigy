@@ -100,6 +100,17 @@ hook's purpose. Vault existence, unlock, declaration and target checks still
 apply. Outside the hook, Rhai secret access refuses before side effects when
 a `required` rhai-targeted key is missing.
 
+The hook is a declared durable descendant of task startup, so the tree
+classifier includes it before the first effect (contract
+[052](052-runtime-kernel-contract.md) §3.1). A direct-shell task with
+`secrets = "required"`, a task-targeted declared key and a configured
+`[secrets.vault].generate` is admitted checkout-durable, and the hook's
+`secrets init` and task run execute inside that admitted tree. The join is
+static: the vault's contents cannot choose a run class, so such a task is
+admitted durable even when its required keys are already stored. An
+undeclared durable child, such as shell code launching a named or detached
+Effigy run, still refuses before its effects.
+
 ## Config Versus Secrets
 
 Effigy must help repos move these values out of secret storage:
