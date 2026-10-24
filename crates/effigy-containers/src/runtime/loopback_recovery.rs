@@ -322,15 +322,17 @@ pub fn plan_recovery(
     listener_hold: impl Fn(Ipv4Addr, &[u16]) -> Option<String>,
 ) -> LoopbackRecoveryPlan {
     let global_hold = global_hold_reason(facts);
+    // A route is judged by its own project and a claim by its own owner. One
+    // shared map let a live successor's claim on a domain overwrite the state
+    // of a stale route from a deleted checkout, so that route was retained.
     let path_states: BTreeMap<String, PathState> = routes
         .all_routes()
         .into_iter()
         .map(|route| (route.domain.clone(), probe_path(Path::new(&route.project))))
-        .chain(
-            claims
-                .iter()
-                .map(|claim| (claim.domain.clone(), probe_path(Path::new(&claim.project)))),
-        )
+        .collect();
+    let claim_path_states: BTreeMap<String, PathState> = claims
+        .iter()
+        .map(|claim| (claim.domain.clone(), probe_path(Path::new(&claim.project))))
         .collect();
     let all_in_scope_routes = routes
         .all_routes()
@@ -410,7 +412,7 @@ pub fn plan_recovery(
         .iter()
         .filter(|claim| routes.lookup(&claim.domain).is_none())
         .filter(|claim| filter.is_none_or(|filter| filter.admits(&claim.project)))
-        .map(|claim| decide_claim(claim, &path_states, facts, &global_hold))
+        .map(|claim| decide_claim(claim, &claim_path_states, facts, &global_hold))
         .collect::<Vec<_>>();
 
     assignments.sort_by(|left, right| left.identity.cmp(&right.identity));

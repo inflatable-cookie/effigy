@@ -108,3 +108,27 @@ Do not default to a full QA or CI aggregator before each PR. The planner runs
 full `effigy qa` on `main` at Queue milestones. Keep the distinction in the
 task brief and use Effigy selectors so admission-aware work enters the shared
 coordinator.
+
+## 9. Never run a selector or `oxide` under a private HOME without `OXIDE_POOL`
+
+Oxide resolves its default build pool from `$HOME`. A review or validation
+harness that sets a temporary `HOME` (`$TMPDIR/tmp.*`, a fixture home, a
+private review root) therefore creates a *cold* pool under
+`<fake HOME>/Library/Caches/oxide/build-pool` on the internal SSD: about
+3.3–3.8 GB per run (measured by the Oxide Supervisor, 2026-10-24). Tom protects
+SSD writes ("my SSD is about to die", 2026-10-22).
+
+- `scripts/oxide-selector.sh` now resolves this itself, for every selector and
+  the `oxide exec -- <tool>` route: when `OXIDE_POOL` is unset and `$HOME`
+  is not the account's real home, it finds the real home with a passwd lookup,
+  reads the first `pool:` line of `oxide status` under that home, and exports
+  `OXIDE_POOL`. If it cannot resolve a pool it warns once, naming
+  `OXIDE_POOL`, and continues.
+- A harness that runs `oxide` directly — not through the selector — must pass
+  the pool through itself before overriding `HOME`: keep an existing
+  `OXIDE_POOL`, or take the first `pool:` line of `oxide status` run under the
+  real home.
+- Never hard-code a pool path: pools are per-machine, and a path that works on
+  one host silently misroutes another.
+- Oxide is built for concurrent sharing, so reusing the real pool does not
+  weaken Effigy's own HOME isolation. It only removes the duplicate cold pool.

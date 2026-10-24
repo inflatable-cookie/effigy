@@ -520,3 +520,36 @@ fn machine_store_write_budget() {
         assert_eq!(history, 0, "machine facts retained completed run history");
     }
 }
+
+#[test]
+fn an_unchanged_route_reserved_by_a_successor_never_refuses_another_projects_write() {
+    let (_dir, store) = fixture();
+    let _ = inputs(&store, documents());
+    let imported = store.import().unwrap();
+    // A successor reserved the domain while the old owner's route still sits in
+    // the table (a deleted checkout's stale route).
+    store
+        .edit(Some(imported.revision), |snapshot| {
+            snapshot.reserve_domain("import.test", "/successor", None, None)
+        })
+        .unwrap();
+    let current = store.read_compatible().unwrap();
+    store
+        .edit(Some(current.revision), |snapshot| {
+            let mut table = snapshot.routes()?;
+            let mut other = table.lookup("import.test").cloned().expect("stale route");
+            other.domain = "other.test".into();
+            other.project = "/other/project".into();
+            table.upsert(other);
+            snapshot.set_routes(&table)
+        })
+        .expect("an unrelated project's route write succeeds");
+    let after = store.read_compatible().unwrap();
+    let routes = after.routes().unwrap();
+    assert!(routes.lookup("other.test").is_some());
+    assert_eq!(
+        routes.lookup("import.test").unwrap().project,
+        "/redacted/project",
+        "the stale route is untouched"
+    );
+}

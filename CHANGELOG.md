@@ -1180,6 +1180,32 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- Commands run from your home directory no longer read `~/.effigy/state` (the
+  machine store since the Q-010 cutover) as a checkout. `effigy container retire
+  --scope … --yes` from `~`, as Queue runs it, failed with `import seal belongs
+  to a different runtime database`.
+- A deleted checkout's stale gateway route no longer blocks every other
+  project. Route-table writes only check added or changed routes against
+  domain owners, so `container up`/`down` elsewhere stops failing with `domain
+  … has a reserved successor owner`. `gateway repair --owner-checkout` now
+  judges each route by its own project, so a deleted checkout's routes are
+  reclaimable even when a live successor already claims their domains.
+- `effigy test` suites no longer inherit the invoking task tree's runtime
+  capability. Inside a foreground tree such as `effigy qa`, every test that
+  used a private durable store failed with `late durable effect refused: parent
+  tree is foreground` (727 failures in milestone QA). Suites still run under
+  the caller's custody and process group.
+- Selectors reuse the real Oxide pool when a harness overrides `HOME`.
+  `scripts/oxide-selector.sh` resolves the pool the way a normal run does — the
+  account's real home from a passwd lookup, then the first `pool:` line of
+  `oxide status` under that home — and exports `OXIDE_POOL` before `exec oxide`,
+  covering every selector and the `exec -- <tool>` route. A private HOME no
+  longer creates a cold pool under itself: 3.3-3.8 GB per run on the internal
+  SSD. An unresolved pool warns once, naming `OXIDE_POOL`, and the run
+  continues. The local-installer fixture names a pool explicitly, the Effigy
+  skill's footguns record the rule for harnesses that call `oxide` directly,
+  and `effigy test:oxide:selector-pool` proves the resolution against a stub
+  `oxide` that answers `status`.
 - `effigy run migrate` no longer refuses the whole Q-010 cutover because one
   recorded checkout no longer exists. A deleted checkout that holds only
   completed history (no unreleased claim, release owner or run that could still
@@ -1187,6 +1213,16 @@ During v0.x, MINOR bumps may include breaking changes.
   plan and the receipt's `dropped_history`. Deleted checkouts that still hold
   live state are all listed at once with their remedy, and a broken worktree
   among the discovery roots no longer fails every lookup.
+- A managed listener's declared readiness budget now starts at the supervisor's
+  own activation record instead of at supervision admission, and the supervisor
+  publishes that record before it waits on dependencies or spawns a child. A
+  slow supervisor start is admission, not readiness, so a detached `container
+  up` reports the supervisor's terminal readiness failure (with its phase
+  diagnostic) rather than its own deadline (effigy#299).
+- A failed gateway HTTP self-test names its class — `(deadline)`, `(protocol)`
+  or `(listener)` — and preserves the original bounded observation, so a
+  bounded probe deadline, a peer's malformed answer and a listener that never
+  answered are distinguishable without a quiet-machine retry (effigy#299).
 - A detached `container up --json` failure keeps the underlying refusal as
   `cause` with the activation stage, preparation step and environment/checkout
   `identity`, redacting secret-shaped values and bounding the text, instead of

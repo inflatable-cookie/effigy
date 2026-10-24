@@ -458,6 +458,18 @@ fn runtime_machine_gate_refusal_does_not_make_local_gates_depend_on_machine_form
     assert_eq!(snapshot(machine.path()), before);
 }
 #[test]
+fn the_state_home_is_never_read_as_a_checkout_state_root() {
+    // A legacy store under the state home stands in for the machine store that
+    // shares `<home>/.effigy/state` after the Q-010 cutover.
+    let (home, _source, _) = retired_central_store();
+    let observed = StateRoot::checkout_observe_in(&observe(), home.path(), &location(home.path()));
+    assert!(
+        matches!(observed, Observed::Absent(_)),
+        "the state home must not open as a checkout: {observed:?}"
+    );
+}
+
+#[test]
 fn runtime_checkout_retirement_requires_the_original_free_lease_inode_without_a_database() {
     let machine = home();
     let checkout = home();

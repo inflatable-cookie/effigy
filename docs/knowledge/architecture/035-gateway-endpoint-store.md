@@ -95,6 +95,11 @@ translated only for its exact recorded owner, retaining the address.
 Container and managed-listener route edits run under the Store owner gate.
 Managed publication proves process generations, ancestry, readiness and exclusive
 listener ownership before committing the route and its fenced claim revision.
+An unobservable identity observation (for example a kernel `EPERM` on a recorded
+process) is an unknown refusal, never an absence proof: it can never license
+another owner to replace the listener, and it never waives the live-foreign
+refusal. The supervisor's activation record, not a caller clock, is the barrier
+between supervision admission and the listener's declared readiness budget.
 Managed preflight reserves the persistent domain before child startup. Exact
 child-generation teardown withdraws active routing without releasing that
 stable owner; stale callbacks cannot withdraw a successor. Retirement releases
@@ -143,6 +148,11 @@ remains the sole persistent endpoint authority.
 
 The daemon runs its bounded HTTP/DNS self-test on a blocking worker, allowing
 the runtime to poll the same servers under test before identity publication.
+A failed HTTP self-test names its class from the bounded observation —
+`(deadline)` when the probe budget expired, `(protocol)` when a peer answered
+without a usable readiness status, `(listener)` when nothing usable answered —
+and preserves the original observation verbatim. The class names the owner of
+the failure; it does not claim the cause of a past unexplained refusal.
 
 ## Proof surfaces
 
@@ -163,6 +173,13 @@ the runtime to poll the same servers under test before identity publication.
   Store watcher against before/after publication and persistent-transfer faults,
   comparing recovered state with HTTP behavior. This replaces the kernel
   placeholder.
+- `test:gateway:readiness-closeout`: the managed-listener readiness and handover
+  proofs — dependent replacement and its cold control, scoped host routes, the
+  scoped clone round trip, the slow-owner forward handover, an injected
+  unobservable-identity control, the typed HTTP self-test fault controls and the
+  activation-publication barrier. A shared-process step runs the affected
+  gateway cases in one libtest process with concurrent threads and
+  `--include-ignored`, so none of them can pass by being skipped.
 
 ## Explicit downgrade and re-upgrade
 

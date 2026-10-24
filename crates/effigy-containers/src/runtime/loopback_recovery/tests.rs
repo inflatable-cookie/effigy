@@ -1474,3 +1474,29 @@ fn a_legacy_http_claim_is_imported_released_once_and_the_domain_then_claims_clea
     )
     .expect("an unrelated domain claims cleanly");
 }
+
+#[test]
+fn a_deleted_checkouts_route_is_reclaimable_when_a_live_successor_claims_its_domain() {
+    let routes = route_table_with(vec![http_route("api.stale.test", MISSING, 19900)]);
+    let registry = registry_with(&[]);
+    let claims = [claim("api.stale.test", LIVE, None)];
+    let probe = |path: &Path| {
+        if path == Path::new(MISSING) {
+            PathState::Missing
+        } else {
+            PathState::Present
+        }
+    };
+    let plan = plan_recovery(
+        &registry,
+        &routes,
+        &claims,
+        &clean_facts(),
+        Some(&filter(MISSING)),
+        probe,
+        no_listener,
+    );
+    let row = route_row(&plan, "api.stale.test");
+    assert_eq!(row.decision, Decision::Reclaim, "{}", row.reason);
+    assert_eq!(row.path_state, PathState::Missing);
+}
