@@ -90,7 +90,7 @@ Declare capture presets so operators do not need to remember flags:
 [state.uat.captures.new-content]
 role = "uat-capture"
 source_env = "uat"
-source = ".effigy/state/captures/{key}.tar"
+source = ".effigy/state-captures/captures/{key}.tar"
 ref = "oci://ghcr.io/acme/state:{key}"
 task = "state:capture-new-content"
 ```
@@ -102,7 +102,7 @@ logic exists only for that capture profile:
 [state.uat.captures.media]
 role = "full-capture"
 source_env = "legacy"
-source = ".effigy/state/captures/{key}/media"
+source = ".effigy/state-captures/captures/{key}/media"
 ref = "oci://ghcr.io/acme/media:{key}"
 task = [{ rhai = "state/capture-media.rhai" }]
 ```

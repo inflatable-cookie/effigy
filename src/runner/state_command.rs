@@ -1116,7 +1116,7 @@ environment_policy = "all"
 [uat.captures.media]
 role = "full-capture"
 source_env = "legacy"
-source = ".effigy/state/captures/{{key}}/media"
+source = ".effigy/state-captures/captures/{{key}}/media"
 task = {task_value}
 "#
         )

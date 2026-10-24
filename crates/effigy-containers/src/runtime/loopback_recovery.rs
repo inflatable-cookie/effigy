@@ -30,7 +30,7 @@ use serde_json::{json, Value};
 use crate::exec::{discover_compose_containers_all_states, RunningComposeContainerInventory};
 use crate::policy_support::effigy_home_dir;
 use crate::runtime::port_recovery::{probe_project_path, Decision, PathState};
-use crate::runtime::scope::{self, ScopeRecord};
+use crate::runtime::scope::{self, ScopeObservations, ScopeRecord, UnreadableCheckout};
 
 /// Stable machine report schema for the dead-owner section of `gateway repair`.
 pub const LOOPBACK_RECLAIM_SCHEMA: &str = "effigy.gateway.loopback-reclaim.v1";
@@ -100,7 +100,10 @@ impl OwnerCheckoutFilter {
 /// `Result`, so an unreadable store can never read as an empty one.
 pub struct LoopbackRecoveryFacts {
     /// Checkout-local runtime-scope records discovered through endpoint owners.
-    pub scopes: Result<Vec<ScopeRecord>, String>,
+    /// A foreign checkout's unreadable journal is recorded against that
+    /// checkout inside `Ok`, so it holds only its own entries (papercut
+    /// 9e5134a4).
+    pub scopes: Result<ScopeObservations, String>,
 
     /// Compose containers in every state on every profile that is running.
     pub inventory: RunningComposeContainerInventory,
@@ -130,7 +133,7 @@ impl LoopbackRecoveryFacts {
 
     /// Assemble facts around an already-observed container inventory.
     pub fn with_inventory(inventory: RunningComposeContainerInventory) -> Self {
-        let scopes = (|| -> Result<Vec<ScopeRecord>, String> {
+        let scopes = (|| -> Result<ScopeObservations, String> {
             let home = effigy_home_dir().ok_or("cannot resolve Effigy home")?;
             let snapshot = EndpointStore::for_effigy_home(&home)
                 .read_compatible()
@@ -149,25 +152,7 @@ impl LoopbackRecoveryFacts {
                         .map(|claim| claim.project),
                 )
                 .collect::<BTreeSet<_>>();
-            if roots.len() > 1000 {
-                return Err("checkout journal discovery exceeds 1000 endpoint roots".into());
-            }
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            let mut records = Vec::new();
-            for root in roots {
-                if std::time::Instant::now() >= deadline {
-                    return Err("checkout journal discovery exceeded its five-second budget".into());
-                }
-                match probe_project_path(Path::new(&root)) {
-                    PathState::Present => records.extend(
-                        scope::load_for_checkout(Path::new(&root))
-                            .map_err(|error| error.to_string())?,
-                    ),
-                    PathState::Missing => {}
-                    PathState::Unknown(error) => return Err(error),
-                }
-            }
-            Ok(records)
+            scope::observe_checkouts(roots, "endpoint", probe_project_path)
         })();
         let gateway_pid = effigy_home_dir()
             .map(|home| home.join("gateway").join("gateway.pid"))
@@ -266,6 +251,10 @@ pub struct LoopbackRecoveryPlan {
     /// Set when ownership proof is incomplete for the whole machine. Every
     /// absent-path entry is then held.
     pub global_hold: Option<String>,
+    /// Checkouts whose own records could not be read. Their own entries hold
+    /// through their path state, every other owner is decided without them,
+    /// and the plan names each one so the anomaly stays visible.
+    pub unreadable_checkouts: Vec<UnreadableCheckout>,
     /// Digest over the decisions. Apply refuses unless the locked, freshly
     /// recomputed plan has the same digest.
     pub digest: String,
@@ -431,6 +420,7 @@ pub fn plan_recovery(
         domain_claims: claim_rows,
         owner_checkout,
         global_hold,
+        unreadable_checkouts: unreadable_checkouts(facts),
         digest,
     }
 }
@@ -465,6 +455,39 @@ fn global_hold_reason(facts: &LoopbackRecoveryFacts) -> Option<String> {
         reasons.push(format!("runtime-scope records are unreadable: {error}"));
     }
     (!reasons.is_empty()).then(|| reasons.join("; "))
+}
+
+/// Records from the checkouts whose own journal could be read.
+fn readable_records(facts: &LoopbackRecoveryFacts) -> &[ScopeRecord] {
+    match &facts.scopes {
+        Ok(observed) => &observed.records,
+        Err(_) => &[],
+    }
+}
+
+/// Checkouts whose own runtime-scope records could not be read.
+///
+/// One such checkout used to be a machine-wide hold: the whole record set
+/// failed, so every absent-path entry on the machine looked unprovable, and
+/// `effigy gateway repair`/`container ports reclaim` could release nothing
+/// (papercut 9e5134a4 - two v0.14 `effigy state` checkouts left `.effigy/state/`
+/// at 0755). The read is per checkout, so a failure is now recorded against the
+/// checkout that failed and only that checkout's own entries are held, by the
+/// path probe or the hold reasons the other evidence produces. A live sharer's
+/// containers and routes stay visible through the machine-wide inventory and
+/// route table, so its influence on another owner's entry is still observed.
+fn unreadable_checkouts(facts: &LoopbackRecoveryFacts) -> Vec<UnreadableCheckout> {
+    let Ok(observed) = &facts.scopes else {
+        return Vec::new();
+    };
+    observed
+        .unreadable
+        .iter()
+        .map(|(checkout, reason)| UnreadableCheckout {
+            checkout: checkout.clone(),
+            reason: reason.clone(),
+        })
+        .collect()
 }
 
 /// Owner path recorded by an identity and its scope. Identities are
@@ -583,23 +606,21 @@ fn decide_missing_assignment(
         );
     }
 
-    if let Ok(records) = &facts.scopes {
-        if let Some(record) = records.iter().find(|record| {
-            record.checkout == assignment.scope
-                || record
-                    .loopback_identities
-                    .iter()
-                    .any(|held| held == identity)
-                || record
-                    .retain_loopback_identities
-                    .iter()
-                    .any(|held| held == identity)
-        }) {
-            return (
-                Decision::Hold,
-                format!("runtime-scope record {} still owns it", record.token),
-            );
-        }
+    if let Some(record) = readable_records(facts).iter().find(|record| {
+        record.checkout == assignment.scope
+            || record
+                .loopback_identities
+                .iter()
+                .any(|held| held == identity)
+            || record
+                .retain_loopback_identities
+                .iter()
+                .any(|held| held == identity)
+    }) {
+        return (
+            Decision::Hold,
+            format!("runtime-scope record {} still owns it", record.token),
+        );
     }
 
     let name = project_name(identity);
@@ -723,20 +744,18 @@ fn decide_missing_claim(claim: &DomainClaim, facts: &LoopbackRecoveryFacts) -> (
             ),
         );
     }
-    if let Ok(records) = &facts.scopes {
-        if let Some(record) = records.iter().find(|record| {
-            record.checkout == claim.project
-                || record.routes.iter().any(|held| held == &claim.domain)
-                || record
-                    .retain_routes
-                    .iter()
-                    .any(|held| held == &claim.domain)
-        }) {
-            return (
-                Decision::Hold,
-                format!("runtime-scope record {} still owns it", record.token),
-            );
-        }
+    if let Some(record) = readable_records(facts).iter().find(|record| {
+        record.checkout == claim.project
+            || record.routes.iter().any(|held| held == &claim.domain)
+            || record
+                .retain_routes
+                .iter()
+                .any(|held| held == &claim.domain)
+    }) {
+        return (
+            Decision::Hold,
+            format!("runtime-scope record {} still owns it", record.token),
+        );
     }
     if let Some(row) = facts
         .inventory
@@ -771,20 +790,18 @@ fn decide_missing_route(
             format!("loopback assignment for {ip} is still live"),
         );
     }
-    if let Ok(records) = &facts.scopes {
-        if let Some(record) = records.iter().find(|record| {
-            record.checkout == route.project
-                || record.routes.iter().any(|held| held == &route.domain)
-                || record
-                    .retain_routes
-                    .iter()
-                    .any(|held| held == &route.domain)
-        }) {
-            return (
-                Decision::Hold,
-                format!("runtime-scope record {} still owns it", record.token),
-            );
-        }
+    if let Some(record) = readable_records(facts).iter().find(|record| {
+        record.checkout == route.project
+            || record.routes.iter().any(|held| held == &route.domain)
+            || record
+                .retain_routes
+                .iter()
+                .any(|held| held == &route.domain)
+    }) {
+        return (
+            Decision::Hold,
+            format!("runtime-scope record {} still owns it", record.token),
+        );
     }
     if let Some(row) = facts.inventory.rows.iter().find(|row| {
         row.row.working_dir.as_deref() == Some(route.project.as_str())
@@ -1162,6 +1179,17 @@ pub fn loopback_reclaim_json(report: &LoopbackReclaimReport) -> Value {
         "gateway_dir": report.gateway_dir.display().to_string(),
         "owner_checkout": report.plan.owner_checkout,
         "global_hold": report.plan.global_hold,
+        "unreadable_checkouts": report
+            .plan
+            .unreadable_checkouts
+            .iter()
+            .map(|checkout| {
+                json!({
+                    "checkout": checkout.checkout,
+                    "reason": checkout.reason,
+                })
+            })
+            .collect::<Vec<_>>(),
         "plan_digest": report.plan.digest,
         "planned_release_assignments": report.plan.release_assignments(),
         "planned_release_routes": report.plan.release_routes(),

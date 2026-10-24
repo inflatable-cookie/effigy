@@ -15,14 +15,14 @@ use crate::exec::{
     RuntimeInventoryFailure,
 };
 use crate::runtime::port_recovery::{Decision, PathState};
-use crate::runtime::scope::ScopeRecord;
+use crate::runtime::scope::{ScopeObservations, ScopeRecord};
 
 const MISSING: &str = "/effigy-test/definitely/missing/checkout";
 const LIVE: &str = "/effigy-test/live/checkout";
 
 fn clean_facts() -> LoopbackRecoveryFacts {
     LoopbackRecoveryFacts {
-        scopes: Ok(Vec::new()),
+        scopes: Ok(ScopeObservations::default()),
         inventory: RunningComposeContainerInventory::default(),
         gateway_pid: None,
     }
@@ -201,6 +201,10 @@ fn container_with_status(
     }
 }
 
+fn readable_scopes(records: Vec<ScopeRecord>) -> Result<ScopeObservations, String> {
+    Ok(ScopeObservations::readable(records))
+}
+
 #[test]
 fn a_missing_owner_releases_its_assignment_and_its_stale_container_route() {
     let registry = registry_with(&[("project:gone:/gone", "127.1.0.4", MISSING)]);
@@ -360,7 +364,7 @@ fn a_container_publishing_on_the_address_holds_it() {
 fn a_runtime_scope_record_holds_its_owner() {
     let registry = registry_with(&[("project:gone:/gone", "127.1.0.4", MISSING)]);
     let mut facts = clean_facts();
-    facts.scopes = Ok(vec![scope_record(
+    facts.scopes = readable_scopes(vec![scope_record(
         "0123456789abcdef0123456789abcdef",
         MISSING,
         &["project:gone:/gone"],
@@ -438,6 +442,44 @@ fn incomplete_inventory_holds_every_absent_path_entry() {
     assert!(assignment_row(&plan, "127.1.0.4")
         .reason
         .contains("global hold"));
+}
+
+#[test]
+fn one_unreadable_checkout_holds_nothing_machine_wide() {
+    // Papercut 9e5134a4: a foreign checkout whose `.effigy/state/` was left at
+    // 0755 made every dead-owner entry on the machine unprovable. Its own
+    // journal is unreadable, so it is reported, but the other owners are still
+    // decided from the evidence that could be read.
+    let registry = registry_with(&[("project:gone:/gone", "127.1.0.4", MISSING)]);
+    let routes = route_table_with(vec![alias_route("gone.test", MISSING, "127.1.0.4", 8104)]);
+    let mut facts = clean_facts();
+    facts.scopes = Ok(ScopeObservations::default().with_unreadable(
+        LIVE,
+        "untrusted /live/.effigy/state: group- or other-accessible mode",
+    ));
+
+    let plan = plan_recovery(&registry, &routes, &[], &facts, None, missing, no_listener);
+
+    assert_eq!(plan.global_hold, None);
+    assert_eq!(
+        assignment_row(&plan, "127.1.0.4").decision,
+        Decision::Reclaim
+    );
+    assert_eq!(route_row(&plan, "gone.test").decision, Decision::Reclaim);
+    assert_eq!(
+        plan.unreadable_checkouts,
+        [super::UnreadableCheckout {
+            checkout: LIVE.to_owned(),
+            reason: "untrusted /live/.effigy/state: group- or other-accessible mode".to_owned(),
+        }]
+    );
+    let json = super::loopback_reclaim_json(&super::LoopbackReclaimReport {
+        mode: "preview",
+        gateway_dir: Path::new("/effigy-test/gateway").to_path_buf(),
+        plan: plan.clone(),
+        edit: Default::default(),
+    });
+    assert_eq!(json["unreadable_checkouts"][0]["checkout"], LIVE);
 }
 
 #[test]
@@ -996,7 +1038,7 @@ fn a_managed_listener_route_is_never_container_dead_owner_territory() {
 fn a_runtime_scope_record_holds_its_http_route() {
     let routes = route_table_with(vec![http_route("api.acme.test", MISSING, 19900)]);
     let mut facts = clean_facts();
-    facts.scopes = Ok(vec![scope_record(
+    facts.scopes = readable_scopes(vec![scope_record(
         "0123456789abcdef0123456789abcdef",
         MISSING,
         &[],

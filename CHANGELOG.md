@@ -1181,6 +1181,16 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- The `effigy state` surface no longer writes into `.effigy/state/`, the
+  runtime kernel's private checkout root. Capture and apply hook context files
+  now live under `.effigy/state-captures/`, so a state run can no longer leave
+  the root at 0755 and make that checkout's kernel state unreadable (papercut
+  `9e5134a4`). A checkout whose `.effigy/state/` already carries the v0.14
+  group/other-readable mode is adopted by tightening it to 0700 the next time
+  it performs an effect; observation never repairs it. One checkout's
+  unreadable runtime-scope records now hold only its own dead-owner and port
+  recovery entries instead of freezing `effigy gateway repair` for every
+  owner, and both plans name each unreadable checkout with the reason.
 - A deleted checkout's stale gateway route no longer blocks every other
   project. Route-table writes only check added or changed routes against
   domain owners, so `container up`/`down` elsewhere stops failing with `domain

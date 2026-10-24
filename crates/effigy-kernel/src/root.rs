@@ -68,9 +68,7 @@ impl StateRoot {
         let effigy = home
             .child(".effigy", Trust::Operator, true)?
             .expect("created directory");
-        let dir = effigy
-            .child("state", Trust::Private, true)?
-            .expect("created directory");
+        let dir = effigy.private_child_adopt("state")?;
         dir.require_local()?;
         Ok(Self {
             dir,

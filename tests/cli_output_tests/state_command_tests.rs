@@ -949,7 +949,7 @@ fn cli_state_capture_yes_runs_task_before_staging() {
         .expect("context path");
     assert_eq!(
         context_path,
-        ".effigy/state/capture-context/acowtancy-uat/uat-capture-2026-05-08.json"
+        ".effigy/state-captures/capture-context/acowtancy-uat/uat-capture-2026-05-08.json"
     );
     assert_eq!(
         result["capture_artifacts"][0]["operation"],
