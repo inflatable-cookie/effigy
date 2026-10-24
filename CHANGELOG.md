@@ -1191,6 +1191,20 @@ During v0.x, MINOR bumps may include breaking changes.
   unreadable runtime-scope records now hold only its own dead-owner and port
   recovery entries instead of freezing `effigy gateway repair` for every
   owner, and both plans name each unreadable checkout with the reason.
+- `effigy test` host suites run nested `effigy` invocations through the binary
+  that started the test run (`EFFIGY_EXECUTABLE`) instead of rebuilding the
+  workspace binary with `cargo run` for each one. A concurrent rebuild replaced
+  a running process's startup image, and kernel custody refused the run
+  (`startup binary replaced`, `foreground guard closed acknowledgement pipe`,
+  `child failed before barrier`) in tests whose steps reference another task.
+- A task reference inside an `effigy skill run` source resolves against that
+  source catalog. Sequence tree classification looked the reference up in the
+  consumer's catalogs and refused it with `task catalog prefix … not found`
+  for a nested source task the run would otherwise accept.
+- A first local-dev vault unlock (`effigy dev`, `secrets = "required"` tasks)
+  writes the unattended key before the run's foreground scope, so the kernel no
+  longer refuses it with `late durable effect refused: parent tree is
+  foreground`.
 - A nested `effigy` launched through a tool that closes inherited descriptors
   (Bun, Node, Python's `subprocess`) no longer fails with `parent run
   capability refused: Bad file descriptor`. It runs as an independent

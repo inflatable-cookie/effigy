@@ -113,6 +113,10 @@ pub(in crate::runner) fn run_standard_task(
     // value is an effect of this run, and a second spelling waits on the
     // gate instead of running them too.
     let result = (|| {
+        // The task's own vault secrets resolve before the run's lexical scope:
+        // a first local-dev unlock writes the machine vault, and the kernel
+        // refuses a durable effect while a foreground parent scope is live.
+        let task_secret_pairs = resolve_standard_task_secrets(preflight, selection)?;
         let _parent = run.enter()?;
         let env_schema_resolved = {
             let exec = RunExec::new(&mut run);
@@ -134,6 +138,7 @@ pub(in crate::runner) fn run_standard_task(
             selection_plan,
             &context,
             &env_schema_resolved,
+            Some(&task_secret_pairs),
             &mut run,
             &mut workload,
         )
@@ -223,12 +228,32 @@ fn retired_task_cache_error(task_name: &str) -> RunnerError {
     ))
 }
 
+fn resolve_standard_task_secrets(
+    preflight: &ExecutionPreflight,
+    selection: &TaskSelection<'_>,
+) -> Result<Vec<(String, SecretString)>, RunnerError> {
+    if !task_uses_direct_shell(selection.task.run.as_ref()) {
+        return Ok(Vec::new());
+    }
+    resolve_task_secret_env(
+        &preflight.resolved.resolved_root,
+        &preflight.secret_targets,
+        selection.task,
+        matches!(
+            selection.task.secrets,
+            Some(effigy_manifest::ManifestTaskSecretsMode::Required)
+        ),
+        preflight.selector.task_name == "dev",
+    )
+}
+
 fn run_standard_task_inner(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
     selection_plan: &ExecutionSelectionPlan,
     context: &ExecutionTaskContext<'_>,
     env_schema_resolved: &Option<ResolvedEnv>,
+    resolved_task_secrets: Option<&[(String, SecretString)]>,
     run: &mut TaskRun,
     workload: &mut Option<WorkloadOutcome>,
 ) -> Result<String, RunnerError> {
@@ -236,19 +261,9 @@ fn run_standard_task_inner(
         .as_ref()
         .map(|resolved| resolved.secret_env())
         .unwrap_or_default();
-    let task_secret_pairs = if task_uses_direct_shell(selection.task.run.as_ref()) {
-        resolve_task_secret_env(
-            &preflight.resolved.resolved_root,
-            &preflight.secret_targets,
-            selection.task,
-            matches!(
-                selection.task.secrets,
-                Some(effigy_manifest::ManifestTaskSecretsMode::Required)
-            ),
-            preflight.selector.task_name == "dev",
-        )?
-    } else {
-        Vec::new()
+    let task_secret_pairs = match resolved_task_secrets {
+        Some(pairs) => pairs.to_vec(),
+        None => resolve_standard_task_secrets(preflight, selection)?,
     };
     let mut secret_pairs = env_schema_secret_pairs;
     for (key, value) in &task_secret_pairs {
@@ -1091,7 +1106,9 @@ pub(in crate::runner) fn run_sequence_container_command(
             "sequence selection disappeared",
         ));
     };
-    run_standard_task_inner(preflight, &selected, &plan, &context, &None, run, &mut None)
+    run_standard_task_inner(
+        preflight, &selected, &plan, &context, &None, None, run, &mut None,
+    )
 }
 
 #[cfg(test)]

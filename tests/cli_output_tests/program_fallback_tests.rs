@@ -189,7 +189,7 @@ fn a_malformed_program_block_refuses_the_run() {
     let output = run_effigy(&root, &home, &bin, &["probe"]);
     assert!(!output.status.success(), "a malformed block must refuse");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("program fallback"), "{stderr}");
+    assert!(stderr.contains("`[programs.oxide]`"), "{stderr}");
     assert!(stderr.contains("fallback"), "{stderr}");
     assert!(
         !String::from_utf8_lossy(&output.stdout).contains("ran"),

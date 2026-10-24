@@ -705,16 +705,28 @@ fn init_upstream_guidance_links_resolve_upstream_and_preserve_consumer_text() {
 
     let prefix = "https://github.com/inflatable-cookie/effigy/blob/main/";
     let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut links = 0;
+    let mut links: Vec<&str> = Vec::new();
     for part in first.split("](").skip(1) {
         let url = part.split(')').next().expect("link end");
         let rel = url
             .strip_prefix(prefix)
             .unwrap_or_else(|| panic!("link must point upstream: {url}"));
         assert!(repo.join(rel).is_file(), "upstream doc missing: {rel}");
-        links += 1;
+        links.push(rel);
     }
-    assert_eq!(links, 5);
+    // v0.15 retired the code graph with guide 076, so the contract keeps four
+    // upstream links: adoption, installed skill sources, heavy admission and
+    // JSON contracts.
+    assert_eq!(
+        links,
+        [
+            "docs/guides/047-agent-and-cross-repo-adoption.md",
+            "docs/knowledge/contracts/042-external-skill-task-runner-contract.md",
+            "docs/guides/080-host-wide-validation-admission.md",
+            "docs/guides/017-json-output-contracts.md",
+        ],
+        "the agent contract names exactly the live upstream references"
+    );
 
     run_builtin_ok(root.to_path_buf(), "init", &["--apply"]);
     assert_eq!(std::fs::read_to_string(&agents).unwrap(), first);
