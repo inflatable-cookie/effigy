@@ -36,6 +36,16 @@ Effigy consumes that rendered model. It does not reconstruct the Underlay
 deploy shape from Rust-side bundle-name branches or inspect live containers
 and runtime state to invent production intent.
 
+The bundle owns the shared `[deploy.model]` shape. Environments are
+consumer-side: a consumer declares `[deploy.<env>]` and, when it needs
+different values, sparse `[deploy.<env>.model]` overrides over the bundle's
+rendered model. Overrides can change per-service domains, env values, task
+commands, health paths, runtimes and backing-service modes without a bundle
+change. They may not add services the bundle does not declare, so the bundle
+stays the authority on the service graph. Effigy withholds the bundle's
+development-only `.test` hosts and development task commands from a named
+non-development environment and reports them under `missing`.
+
 ## Bundle inputs that matter
 
 The Underlay derivation reads:
@@ -282,8 +292,8 @@ honestly.
 
 The sibling `underlay-reference` manifest currently uses `apps/acme-front`,
 `apps/acme-admin`, and `apps/acme-api`. Its front `build` task is a task array.
-As of this review, `effigy deploy model --repo <underlay-reference> --json`
-rejects that task as “missing or non-command.” The bundle declaration is
+As of this review, `effigy deploy model <ENV> --repo <underlay-reference>
+--json` rejects that task as “missing or non-command.” The bundle declaration is
 current design truth, but the old static JSON specimen is not a verified
 output of the current reference repository. See the
 [reference boundary](004-underlay-reference-deploy-model-example.md).

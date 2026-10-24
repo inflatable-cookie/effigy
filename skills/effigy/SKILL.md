@@ -286,7 +286,7 @@ and fallbacks never chain. Guide:
 **State stacks** — `effigy state plan`, `apply`, `capture`.
 Guide: `docs/guides/073-state-stack-guide.md`.
 
-**Deployment** — `effigy deploy model --json` and `deploy export` remain supported.
+**Deployment** — `effigy deploy model <ENV> --json` and `deploy export <PROVIDER> <ENV>` describe a declared environment (shared `[deploy.model]` with `[deploy.<env>.model]` overrides).
 `deploy apply` and `deploy redeploy` are not yet supported in v0.15, even with
 `--yes`; plan/status/history remain available. Full execution design is in the
 Queue deploy lane (Q-003). Guide: `docs/guides/074-deployment-guide.md`.

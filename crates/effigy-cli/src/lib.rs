@@ -223,17 +223,22 @@ impl DepsManager {
 
 /// Parsed `effigy deploy` subcommands.
 ///
-/// `Model` and `Export` keep the static deployment-file generation surface.
-/// The transaction variants (`Plan`, `Apply`, `Status`, `History`, and
-/// `Redeploy`) operate on named `[deploy.<env>]` manifest environments.
+/// `Model` and `Export` describe a named `[deploy.<env>]` environment and its
+/// deployment model. The transaction variants (`Plan`, `Apply`, `Status`,
+/// `History`, and `Redeploy`) operate on the same named environments.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeploySubcommand {
-    /// Derive the provider-neutral deployment model.
-    Model,
+    /// Derive the provider-neutral deployment model for an environment.
+    Model {
+        /// Name from `[deploy.<env>]`; omitted projects may default.
+        env: Option<String>,
+    },
     /// Export provider files without live provider mutation.
     Export {
         /// Provider package id from `[deploy.providers.<id>]`.
         provider: String,
+        /// Name from `[deploy.<env>]`; omitted projects may default.
+        env: Option<String>,
         /// Output directory for generated files.
         path: PathBuf,
         /// Preview generated paths without writing files.

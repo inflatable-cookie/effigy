@@ -587,7 +587,9 @@ pub(super) fn run_rhai_feature(
         FEATURE_DEPLOY_MODEL => run_typed_command(
             repo_root,
             effigy_cli::Command::Deploy(DeployArgs {
-                subcommand: DeploySubcommand::Model,
+                subcommand: DeploySubcommand::Model {
+                    env: string_option(&options, "env")?,
+                },
                 repo_override: Some(repo_root.to_path_buf()),
                 output_json: true,
             }),
@@ -597,6 +599,7 @@ pub(super) fn run_rhai_feature(
             effigy_cli::Command::Deploy(DeployArgs {
                 subcommand: DeploySubcommand::Export {
                     provider: required_string(&options, "provider")?,
+                    env: string_option(&options, "env")?,
                     path: PathBuf::from(required_string(&options, "path")?),
                     plan: bool_option(&options, "plan")?.unwrap_or(false),
                 },

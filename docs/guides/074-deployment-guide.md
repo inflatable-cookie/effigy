@@ -14,20 +14,32 @@ owns this boundary; its later sections describe the target design.
 ## Model and export
 
 ```sh
-# Inspect the provider-neutral model
-effigy deploy model --json
+# Inspect the provider-neutral model for one environment
+effigy deploy model production --json
 
-# Preview provider file generation
-effigy deploy export render --path infra/render --plan
+# Preview provider file generation for that environment
+effigy deploy export render production --path infra/render --plan
 
 # Generate provider files
-effigy deploy export render --path infra/render
+effigy deploy export render production --path infra/render
 ```
 
-Model emits `deploy.model.v1` with services, backing services, domains, secrets
-and warnings, derived from the effective manifest and bundle. Export uses that
-model and a configured external provider package. It generates files; it does
-not deploy them. Preview behavior belongs to the provider's export capability.
+`model` and `export` take a declared `[deploy.<env>]` environment. They resolve
+`[deploy.<env>.model]` over the shared `[deploy.model]` and refuse an
+environment the manifest does not declare, naming the declared environments.
+A project with exactly one declared environment may omit `<ENV>` for one
+release and receives a notice; a project with two or more environments must
+name one. A project with no `[deploy.<env>]` still reports its shared model with
+an unscoped notice. `--env <ENV>` is accepted as an alternative to the
+positional form.
+
+Model emits `deploy.model.v1` with services, backing services, domains, secrets,
+`provenance` and `warnings`, derived from the effective manifest and bundle. It
+also reports `environment`, `environment_state` and `missing`: the key paths
+whose shared value was development-only and therefore not promoted. Export uses
+that model and a configured external provider package. It generates files; it
+does not deploy them. Preview behavior belongs to the provider's export
+capability.
 
 ```toml
 [deploy.providers.render]
@@ -70,6 +82,74 @@ is removed when the phase ends.
 Existing `[deploy.<env>]` configuration remains readable, including Acowtancy's
 `infra/deploy.toml`. No manifest migration is required for model/export.
 Environment declarations describe intended work; they do not enable execution.
+
+The model and export read per-environment overrides from
+`[deploy.<env>.model]`, shaped like `[deploy.model]` but sparse:
+
+```toml
+[deploy.production]
+state = "production"
+provider = "render"
+provider_project = "acme-production"
+
+[deploy.production.model.app]
+project_name = "acme-production"
+
+[[deploy.production.model.services]]
+name = "front"
+domains = ["www.acme.com"]
+
+[deploy.production.model.services.build]
+task = "build:release"
+
+[deploy.production.model.services.env]
+PUBLIC_API_URL = "https://api.acme.com"
+
+[[deploy.production.model.backing_services]]
+name = "r2"
+mode = "external"
+
+[[deploy.production.model.domains]]
+host = "www.acme.com"
+service = "front"
+tls = "provider_managed"
+```
+
+Rules:
+
+- Overrides replace per key; lists replace wholesale and never concatenate.
+- `env` merges per key, and `env_unset = ["KEY"]` removes a shared development
+  value.
+- Task steps, `health` and `output` merge per field, so an environment can
+  substitute only `task` or `path`.
+- Overrides may only reference service, backing-service and secret names the
+  shared model already declares. The bundle owns the shared shape.
+- An environment model cannot invent values from the development profile.
+  A shared `.test`/`.localhost`/`.local` domain or a development-only task
+  command is withheld, listed under `missing` and warned about with
+  `environment-missing-field` naming the key.
+- `state = "production"` refuses `deploy export` when a resolved domain still
+  uses a reserved local suffix.
+
+`provenance` records whether each key came from `[deploy.<env>.model]`
+(`environment`), the shared `[deploy.model]` (`shared`) or was withheld
+(`missing`).
+
+### Closed runtime and backing-service vocabularies
+
+Service `runtime` and backing-service `mode` are closed sets. An unknown value
+is refused, naming the allowed set.
+
+- `runtime`: `static`, `node`, `bun`, `deno`, `rust`, `python`, `go`, `php`,
+  `ruby`, `java`
+- backing-service `mode`: `managed`, `external`
+
+`static` describes a static-site surface served as files; `external` describes
+a resource the operator supplies and Effigy does not provision. The values used
+before this vocabulary remain accepted for one release with a
+`deploy-vocabulary-migration` warning: a `role = "static"` service still
+declaring a non-static runtime, and a `managed` backing service whose warnings
+describe an external resource.
 
 ```toml
 [deploy.production]

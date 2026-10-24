@@ -68,11 +68,12 @@ For narrative workflow guidance instead of lookup, start with:
   repo's declared system: use `effigy container` and `effigy workspace`.
 - Need to inspect or refresh a local, git, or OCI bundle source: use
   `effigy bundle`.
-- Need a provider-neutral production model derived from the effective manifest
-  and bundle: use `effigy deploy model --json`.
-- Need deployment configuration: use `effigy deploy model --json` or
-  `effigy deploy export <PROVIDER> --path <DIR> --plan`. Apply/redeploy are not
-  yet supported in v0.15; see [guide 074](074-deployment-guide.md) and Q-003.
+- Need a provider-neutral production model for one declared environment derived
+  from the effective manifest and bundle: use `effigy deploy model <ENV> --json`.
+- Need deployment configuration: use `effigy deploy model <ENV> --json` or
+  `effigy deploy export <PROVIDER> <ENV> --path <DIR> --plan`. Apply/redeploy
+  are not yet supported in v0.15; see [guide 074](074-deployment-guide.md) and
+  Q-003.
 - Need a bounded machine-readable repo map before broad source scanning: use
   `rg`, then read `docs/README.md` for the owning knowledge.
 - Need repository-defined documentation graph semantics: use the optional
@@ -147,7 +148,7 @@ through the help route.
 | `effigy container` | Operate manifest-defined local container environments across Colima/containerd or Docker, along with data lifecycle, cleanup surfaces, shared-service reuse, scoped identity and host discovery, and per-scope retirement | `up`, `down`, `status`, `stats`, `logs`, `shell`, `data`, `reset`, `eject`, `render`, `hosts`, `scope`, `retire`, `ports status`, `ports reclaim`, `volume`, `cache`, `profile status`, `profile resize`, `profile recreate`, `profile purge`, `profile repair`, `profile reset-runtime`, `--apply`, `--expect-plan`, `--repo`, `--system`, `--attach`, `--detach`, `--service`, `--command`, `--bounded`, `--deadline-ms`, `--stdout-limit-bytes`, `--stderr-limit-bytes`, `--follow`, `--global`, `--dormant`, `--orphans`, `--project`, `--kind`, `--profile`, `--disk`, `--db-seed`, `--db-dump`, `--no-prompt`, `--push`, `--keep-data`, `--scope`, `--yes`, `--json` | `effigy.container.up.v1`, `effigy.container.down.v1`, `effigy.container.status.v1`, `effigy.container.logs.v1`, `effigy.container.hosts.v1`, `effigy.container.scope.v1`, `effigy.container.retire.v1`, `effigy.container.ports.v1`, `effigy.container.bounded-exec.v1`, `effigy.system.recover.v1` (`profile repair` and `profile reset-runtime` keep this envelope) | `063-container-system-guide.md`, `064-system-workspace-and-dev-contract.md` |
 | `effigy workspace` | Ensure the selected system is up and then open the resolved workspace shell for the repo's declared developer surface | `<WORKSPACE>`, `--system`, `--repo` | (interactive; no JSON payload) | `064-system-workspace-and-dev-contract.md` |
 | `effigy bundle` | Inspect the active repo bundle source and refresh repo-local git/OCI bundle sources | `inspect`, `sync`, `--repo`, `--json` | `effigy.bundle.inspect.v1`, `effigy.bundle.sync.v1` | `065-external-bundle-adoption.md` |
-| `effigy deploy` | Derive a provider-neutral deployment model, export provider files, inspect plans/status/history; apply and redeploy refuse as unsupported in v0.15 (Q-003) | `model`, `export <PROVIDER>`, `plan`, `apply`, `status`, `history`, `redeploy`, `--repo`, `--path`, `--write-report`, `--deployment`, `--yes`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1`, `effigy.deploy.plan.v1`, `effigy.deploy.apply.v1`, `effigy.deploy.status.v1`, `effigy.deploy.history.v1` | `074-deployment-guide.md`, [`../contracts/002-production-deployment-model.md`](../knowledge/contracts/002-production-deployment-model.md), [`../contracts/019-deployment-transaction-system-contract.md`](../knowledge/contracts/019-deployment-transaction-system-contract.md) |
+| `effigy deploy` | Derive the provider-neutral deployment model for a declared environment, export provider files, inspect plans/status/history; apply and redeploy refuse as unsupported in v0.15 (Q-003) | `model [<ENV>]`, `export <PROVIDER> [<ENV>]`, `--env`, `plan`, `apply`, `status`, `history`, `redeploy`, `--repo`, `--path`, `--write-report`, `--deployment`, `--yes`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1`, `effigy.deploy.plan.v1`, `effigy.deploy.apply.v1`, `effigy.deploy.status.v1`, `effigy.deploy.history.v1` | `074-deployment-guide.md`, [`../contracts/002-production-deployment-model.md`](../knowledge/contracts/002-production-deployment-model.md), [`../contracts/019-deployment-transaction-system-contract.md`](../knowledge/contracts/019-deployment-transaction-system-contract.md) |
 | `effigy rhai` | Inspect the registered Rhai host API surface available to scripts, including module/function names and side-effect posture | `surface`, `--json` | `effigy.rhai.surface.v1` | `061-rhai-script-steps-guide.md`, `068-rhai-host-surface-audit.md` |
 | `effigy bootstrap` | Clone or update a repo from a git URL (or use this checkout with no URL), materialise its pinned bundle, catalog and `[sources.<name>]` sources, initialise submodules when `[bootstrap] submodules = true`, run its `setup` selectors in order as ordinary tasks, then start its `start` selector unless `--no-start` | `[<git-url>]`, `--path`, `--branch`, `--no-start`, `--plan`, `--json` | `effigy.bootstrap.v1` | `057-bootstrap-repo-bringup.md` |
 | `effigy scan` | Run the built-in repo scanners `god-files` (oversized code files, per-language size defaults) and `duplicate-blocks` (repeated code spans, opt-in) | `god-files`, `duplicate-blocks`, `--threshold/--warn`, `--high`, `--critical`, `--include`, `--exclude`, `--show-warnings`, `--no-gitignore`, `--fail-on-findings`, `--markdown`, `--out`, `--json` | `effigy.scan.god-files.v1`, `effigy.scan.duplicate-blocks.v1` | `022-manifest-cookbook.md` |
@@ -330,8 +331,8 @@ effigy uninstall --yes [--json]
 ```sh
 effigy bundle inspect [--repo <PATH>] [--json]
 effigy bundle sync [--json]
-effigy deploy model [--repo <PATH>] --json
-effigy deploy export <PROVIDER> [--repo <PATH>] --path <DIR> [--plan] [--json]
+effigy deploy model [<ENV>] [--repo <PATH>] [--json]
+effigy deploy export <PROVIDER> [<ENV>] [--repo <PATH>] --path <DIR> [--plan] [--json]
 effigy deploy plan <ENV> [--repo <PATH>] [--write-report] [--json]
 # Unsupported in v0.15; retained spelling always refuses:
 effigy deploy apply <ENV> [--repo <PATH>] --yes [--json]
@@ -465,10 +466,18 @@ Use the deeper guides for full surface detail. The main sharp edges here are:
   including local path snapshots; `dev`, `bootstrap` and `container up` update
   a stale pin themselves (`update = "manual"` opts a source out), and
   inspection never fetches, checks or writes
-- `deploy model` is intentionally JSON-only and reads the active rendered
-  `[deploy.model]` section from the effective manifest
-- `deploy export <PROVIDER>` requires a matching
-  `[deploy.providers.<provider>]` package with an export capability
+- `deploy model` is intentionally JSON-only. It reads the active rendered
+  `[deploy.model]` section from the effective manifest and resolves the named
+  `[deploy.<env>.model]` overrides over it, recording key provenance and
+  refusing an undeclared environment
+- a project with one declared `[deploy.<env>]` may omit `<ENV>` for one release
+  with a notice; with two or more, `<ENV>` is required
+- `deploy export <PROVIDER> [<ENV>]` requires a matching
+  `[deploy.providers.<provider>]` package with an export capability, and the
+  environment's `[deploy.<env>.provider]` must select the same provider
+- a non-development environment never inherits shared `.test`/`.localhost`/
+  `.local` domains or development-only task commands; they are withheld, listed
+  under `missing` and warned about with `environment-missing-field`
 - the external Render provider package currently writes `render.yaml`
 - the external Railway provider package currently writes service-local
   `railway.toml` files plus `report.json`

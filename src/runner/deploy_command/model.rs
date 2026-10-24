@@ -11,11 +11,22 @@ use super::provider_package::DeployProviderProvenance;
 pub(crate) struct DeployModel {
     pub(crate) schema: String,
     pub(crate) schema_version: u64,
+    /// Declared environment the model describes; `None` when the project
+    /// declares no `[deploy.<env>]` environments.
+    pub(crate) environment: Option<String>,
+    pub(crate) environment_state: Option<String>,
     pub(crate) app: DeployApp,
     pub(crate) services: Vec<DeployService>,
     pub(crate) backing_services: Vec<DeployBackingService>,
     pub(crate) domains: Vec<DeployDomain>,
     pub(crate) secrets: Vec<DeploySecret>,
+    /// Which keys resolved from `[deploy.<env>.model]` (`environment`), the
+    /// shared `[deploy.model]` (`shared`), or were withheld as
+    /// development-only (`missing`).
+    pub(crate) provenance: BTreeMap<String, String>,
+    /// Key paths whose shared value was development-only and therefore not
+    /// promoted into this environment.
+    pub(crate) missing: Vec<String>,
     pub(crate) warnings: Vec<DeployWarning>,
 }
 
@@ -117,6 +128,9 @@ pub(crate) struct DeployExportResult {
     pub(crate) schema: String,
     pub(crate) schema_version: u64,
     pub(crate) provider: String,
+    /// Declared environment the exported model describes.
+    pub(crate) environment: Option<String>,
+    pub(crate) environment_state: Option<String>,
     pub(crate) plan: bool,
     pub(crate) path: String,
     /// The resolved provider package commit and how it was obtained.
@@ -173,6 +187,12 @@ pub(crate) fn collect_model_warnings(model: &DeployModel) -> Vec<DeployWarning> 
         .chain(
             model
                 .services
+                .iter()
+                .flat_map(|service| service.warnings.clone()),
+        )
+        .chain(
+            model
+                .backing_services
                 .iter()
                 .flat_map(|service| service.warnings.clone()),
         )

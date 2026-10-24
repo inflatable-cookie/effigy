@@ -1,12 +1,11 @@
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command as ProcessCommand;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
+use super::config::{load_deploy_config, ArtifactPolicy, ManifestDeployEnvConfig, ReleasePolicy};
 use super::derive::derive_deploy_model;
 use super::provider_context::{
     build_provider_context, provider_package_policy_blockers, DeployProviderContextRequest,
@@ -14,12 +13,11 @@ use super::provider_context::{
 use super::provider_package::{
     resolve_provider_package, run_provider_preflight, run_provider_status,
     DeployProviderCheckStatus, DeployProviderFetch, DeployProviderPackage,
-    DeployProviderProvenance, ManifestDeployProviderConfig,
+    DeployProviderProvenance,
 };
 use super::report::*;
 use super::text::{render_deploy_history_text, render_deploy_plan_text, render_deploy_status_text};
 use crate::runner::error::RunnerError;
-use crate::runner::manifest::load_task_manifest_with_inspection;
 use crate::runner::render::render_command_result;
 
 pub(super) fn run_deploy_plan(
@@ -318,7 +316,7 @@ fn deploy_execution_inputs(
             config.envs.keys().cloned().collect::<Vec<_>>().join(", ")
         ))
     })?;
-    let model = derive_deploy_model(repo_root)?;
+    let model = derive_deploy_model(repo_root, Some(env))?;
     let provider_package = resolve_provider_package(
         repo_root,
         env_config.provider.adapter(),
@@ -326,25 +324,6 @@ fn deploy_execution_inputs(
         fetch,
     )?;
     Ok((env_config, model, provider_package))
-}
-
-fn load_deploy_config(repo_root: &Path) -> Result<ManifestDeployConfig, RunnerError> {
-    let loaded =
-        load_task_manifest_with_inspection(&repo_root.join(effigy_manifest::TASK_MANIFEST_FILE))?;
-    let deploy_value = loaded
-        .effective_value
-        .get("deploy")
-        .cloned()
-        .ok_or_else(|| {
-            RunnerError::task_invocation(
-                "no `[deploy]` section found in the composed manifest".to_owned(),
-            )
-        })?;
-    deploy_value.try_into().map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "failed to parse composed `[deploy]` config: {error}"
-        ))
-    })
 }
 
 fn provider_preflight_report(
@@ -582,149 +561,4 @@ fn utc_basic_timestamp(time: SystemTime) -> String {
         .unwrap_or_default()
         .as_secs();
     seconds.to_string()
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct ManifestDeployConfig {
-    #[serde(default)]
-    providers: BTreeMap<String, ManifestDeployProviderConfig>,
-    #[serde(rename = "model", default)]
-    _model: Option<toml::Value>,
-    #[serde(flatten)]
-    envs: BTreeMap<String, ManifestDeployEnvConfig>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct ManifestDeployEnvConfig {
-    provider: ManifestDeployProviderSelection,
-    #[serde(default)]
-    state: Option<String>,
-    #[serde(default = "default_code_ref")]
-    code_ref: String,
-    #[serde(default)]
-    release_policy: ReleasePolicy,
-    #[serde(default)]
-    provider_project: Option<String>,
-    #[serde(default)]
-    artifact_policy: ArtifactPolicy,
-    #[serde(default)]
-    preflight: Option<DeployPreflightConfig>,
-    #[serde(default)]
-    hooks: Option<DeployHooksConfig>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-enum ManifestDeployProviderSelection {
-    Name(String),
-    Config(ManifestDeployProviderEnvConfig),
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-struct ManifestDeployProviderEnvConfig {
-    adapter: String,
-    #[serde(flatten)]
-    config: BTreeMap<String, toml::Value>,
-}
-
-impl ManifestDeployProviderSelection {
-    fn adapter(&self) -> &str {
-        match self {
-            Self::Name(name) => name,
-            Self::Config(config) => config.adapter.as_str(),
-        }
-    }
-
-    fn config_value(&self) -> Value {
-        match self {
-            Self::Name(name) => json!({ "adapter": name }),
-            Self::Config(config) => provider_config_to_json(config),
-        }
-    }
-}
-
-fn provider_config_to_json(config: &ManifestDeployProviderEnvConfig) -> Value {
-    let mut value = Map::new();
-    value.insert("adapter".to_owned(), json!(config.adapter));
-    for (key, item) in &config.config {
-        value.insert(key.clone(), toml_value_to_json(item));
-    }
-    Value::Object(value)
-}
-
-fn toml_value_to_json(value: &toml::Value) -> Value {
-    match value {
-        toml::Value::String(value) => json!(value),
-        toml::Value::Integer(value) => json!(value),
-        toml::Value::Float(value) => json!(value),
-        toml::Value::Boolean(value) => json!(value),
-        toml::Value::Datetime(value) => json!(value.to_string()),
-        toml::Value::Array(values) => Value::Array(values.iter().map(toml_value_to_json).collect()),
-        toml::Value::Table(values) => Value::Object(
-            values
-                .iter()
-                .map(|(key, value)| (key.clone(), toml_value_to_json(value)))
-                .collect(),
-        ),
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-struct DeployPreflightConfig {
-    #[serde(default)]
-    require_release_gates: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
-struct DeployHooksConfig {
-    #[serde(default)]
-    before_state: Option<String>,
-    #[serde(default)]
-    after_state: Option<String>,
-    #[serde(default)]
-    after_deploy: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
-#[serde(rename_all = "kebab-case")]
-enum ReleasePolicy {
-    None,
-    #[default]
-    Optional,
-    Required,
-}
-
-impl ReleasePolicy {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Optional => "optional",
-            Self::Required => "required",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
-#[serde(rename_all = "kebab-case")]
-enum ArtifactPolicy {
-    MutableOk,
-    #[default]
-    DigestPreferred,
-    DigestPinned,
-}
-
-impl ArtifactPolicy {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::MutableOk => "mutable-ok",
-            Self::DigestPreferred => "digest-preferred",
-            Self::DigestPinned => "digest-pinned",
-        }
-    }
-}
-
-fn default_code_ref() -> String {
-    "branch:main".to_owned()
 }
