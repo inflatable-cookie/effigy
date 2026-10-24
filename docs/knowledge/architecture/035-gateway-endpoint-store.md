@@ -6,7 +6,7 @@ Mechanisms: [runtime kernel contract](../contracts/052-runtime-kernel-contract.m
 
 ## Atomic state
 
-`EndpointStore` addresses the operator's `~/.effigy/state/kernel.db`. Its
+`EndpointStore` addresses the operator's `~/.effigy/state/machine.db`. Its
 machine-scoped `Store(gateway-endpoints)` resource owns the publication gate
 and one versioned payload containing routes, loopback assignments, generated
 port ranges, original import hashes and released-resource quarantine. Private
@@ -74,7 +74,7 @@ files does not import or allocate anything.
 Container Prepare reserves or retains generated host-port ranges through this
 API, including an already assigned legacy range. Before an effectful Prepare
 reads policy, it admits endpoint import/initialization if the payload is not yet
-verified. This serializes first use with shared kernel-store schema bootstrap;
+verified. This serializes first use with shared machine-store schema bootstrap;
 a SQLite file alone is not proof that its schema is ready. Existing verified
 payloads need no import run, and pure policy observation remains effect-free.
 Unknown state enters the admitted writer's verification/recovery path and never

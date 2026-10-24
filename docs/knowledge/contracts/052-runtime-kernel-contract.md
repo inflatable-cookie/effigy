@@ -3,7 +3,7 @@
 Q-010 storage model (Tom, 2026-10-22: "Approve"): foreground runs keep
 runtime state in memory; runs requiring retained state use their owning
 checkout journal; only gateway endpoints/routes, ports and admission facts use
-the machine store. §3.1, §7 and §11.1 govern classification, storage and migration.
+the machine store. §3.1, §7 and §11 govern classification, storage and migration.
 Engine adoption limits remain recorded in §10.
 
 Local shell tasks, statically resolved local sequences and local test suites,
@@ -22,15 +22,12 @@ or consult machine state unless an existing legacy owner requires that
 compatibility evidence. `runs --all` and doctor use bounded filesystem/Git and
 explicit-root discovery with visible omissions, without a central index.
 
-`run migrate` plans read-only, identifies exact blocking writers with stop/drain
-commands, and refuses before staging while ordinary foreground work continues.
-It imports live state and unresolved closures, preserves identity and opaque
-payloads, and publishes one manifest with native-bound destination seals.
-Preparation, publication and retry have kill/ENOSPC/EPERM proofs. A read-only
-151,244,800-byte operator copy and an outage-scale variant (18,700 runs, 10,800
-historical gates) are qualified through `proof:runtime-migration:actual-copy`;
-per-checkout outputs, hashes, integrity results and durations are retained in
-the task's validation artifacts. The original source is never opened for writing.
+v0.15 ships exactly one migration path: the v0.14.1 importers in §11. The
+importer for the current-main central `~/.effigy/state/kernel.db` is retired
+(§11.1, effigy#307). `run migrate --plan` is a read-only report: a committed
+manifest is provenance, and a machine still holding the retired store without
+one is refused once with its exact upgrade path. The retired source is never
+imported, opened for writing or deleted.
 
 Scope inventory lives in its checkout. After deletion, `container retire --dead`
 uses the selected backend's ownership labels and surviving shared facts. It
@@ -1954,12 +1951,12 @@ block; foreground admission and all reads never append it.
   runs/<run-id>/                    durable redacted rotating logs
   objects/<sha256>/                 immutable render/source closures
   staging/<run-id>/                 durable run-owned staging
-  migration-committed.json          local import seal, only after §11.1 cutover
+  migration-committed.json          local import seal, only on a machine that committed §11.1
 ~/.effigy/state/
   machine.db                        only §7.5 shared facts (+ -wal and -shm while open)
   gates/<scope>.scope               machine scope locks
   gates/<scope>/<rid>.gate          shared-resource locks
-  migration/                       §11.1 receipts and cutover manifest only
+  migration/                       retired §11.1 cutover manifest and receipts
 ```
 
 Roots/components are real, operator-owned 0700 directories; files are 0600,
@@ -2065,7 +2062,7 @@ nor holder records are added to the machine database.
 | 14 | Reports and exports | explicit user-owned paths, engine `atomic_replace` |
 | 15 | Platform setup outputs | resolver, launchd, completion; setup verifies ownership before changing (R3), retained until explicit removal |
 | 16 | Machine facts | `~/.effigy/state/machine.db`; §7.5 only |
-| 17 | Migration receipts | machine `state/migration/`, local `state/migration-committed.json` and destination metadata; §11.1 |
+| 17 | Migration receipts | machine `state/migration/`, local `state/migration-committed.json` and destination metadata; retired §11.1 evidence, read never written |
 
 Families 1–6 and 17 are host-only; family 4 may be mounted read-only by the
 backend. Certificate, source, vault, cache, report and platform families do not
@@ -2707,7 +2704,7 @@ A v0.14.1 user updates and everything keeps working with no manual steps
 | # | Principle |
 | --- | --- |
 | M1 | Never dual-write. Per scope: quiesce the old writer, import, cut over. Old and new code never write the same fact. |
-| M2 | One destination transaction per scope, under `Gate(Store migrate:<scope>)`, recording source paths/digests. Multi-destination publication uses §11.1's commit manifest, never partial authority. |
+| M2 | One destination transaction per scope, under `Gate(Store migrate:<scope>)`, recording source paths/digests. No scope ever gains partial authority. |
 | M3 | Import never modifies or deletes legacy files, and the new binary never writes them. Removal comes after one minor, by explicit maintenance, once the scope's import is committed. |
 | M4 | Unknown grants nothing. Unparsable, PID-only or foreign legacy state imports as `Unknown` and blocks destructive action until an explicit, label-verified `down` or `retire`. |
 | M5 | A legacy version without an importer is ignored, never guessed at. Doctor lists it. |
@@ -2737,142 +2734,27 @@ other scope gains downgrade support. The owning protocol and proofs are in
 | Vault | `<checkout>/.effigy/secrets/local.vault` | not moved; the next write uses the pointer commit | — | unreadable vault: never overwritten |
 | Host-run pending facts; retired admission store | `~/.local/state/host-run/`; `~/.cache/effigy/admission/` | untouched (contract 049) | — | — |
 
-### 11.1 Q-010 relocation from the central kernel store
+### 11.1 Q-010 relocation from the central kernel store (retired 2026-10-24)
 
-This is a second importer, in addition to the v0.14.1 family importers above.
-It accepts the current-main central `~/.effigy/state/kernel.db` schema and the
-v0.14.1 files; it must not assume a v0.14.1 user has a kernel database. On a
-fresh install no central store is created. Observe reports migration required
-and reads the appropriate legacy source without importing (M6). First Mutate
-requiring legacy state enters this protocol. Unrelated new foreground owners
-can run without a machine store, but must refuse unresolved or unreadable legacy
-evidence for their own owner until imported.
+The importer for the current-main central `~/.effigy/state/kernel.db` is
+retired (effigy#307, Tom 2026-10-24). That schema existed only on unreleased
+main between `8fc1b9663` (2026-10-18) and effigy#276, so no released version
+ever wrote it and v0.15 ships one migration path: the v0.14.1 importers above.
 
-**Unlocatable checkouts (2026-10-24).** Each retained checkout partition is
-*live* when it holds an unreleased claim's resource or holder, a release owner,
-or a run reachable from an open run, a claim's run or an unreleased attachment.
-An open run is not live authority when every recorded owner, supervisor and
-sentinel identity names an earlier boot, or it recorded none and was created
-more than a minute before this boot. A partition that isn't live is completed
-history. When its checkout has no verified location (`CheckoutUnlocated`, never
-a duplicate, changed or interrupted lookup), the importer drops it and records
-the count, resources, runs and a bounded sample in the receipt's
-`dropped_history`. Live partitions with no verified location refuse together,
-before staging, each named with its remedy. A broken discovery candidate (for
-example a linked worktree whose metadata is gone) never matches and never fails
-the lookup for other checkouts. On Tom's machine this dropped 50 fixture and
-deleted-worktree partitions (56 resources, 7 earlier-boot runs) out of 6,292
-recorded checkouts.
-
-**Busy-machine preflight (Tom, 2026-10-22).** Before creating staging files or
-changing any destination, migration reports every legacy writer that blocks
-cutover: verified pid, boot/start identity, checkout, run/resource id, owner type
-and its exact executable stop/drain command with arguments. There is no generic
-"stop agents" diagnostic. A writer with no safe protocol is listed as requiring
-natural completion; unknown identity is named as unknown and is never signalled.
-A blocking report refuses with no partially imported state. Ordinary foreground
-runs continue while migration is pending; pending import alone is not a
-machine-wide admission gate. A live-legacy-writer fixture must prove the exact
-blocking commands, no destination changes and concurrent foreground progress.
-
-**M1/M3 compatibility boundary.** Holding the new migration lock alone cannot
-fence an old binary that does not know that lock or schema. Before snapshotting,
-setup inventories and verifies legacy writers (owners, supervisors, sentinels,
-reapers, gateway daemon and in-flight clients), pauses admission of new legacy
-mutations through their owning launchers and waits for finite transitions to
-finish. Supported daemons use their existing quiesce/stop protocol; verified
-managed custodians drain or transfer only through a versioned custody handshake
-that keeps the gate and spawn barrier held. A process receipt copied into another
-database is not a custody transfer. Containers and environment sidecars with
-verified independent custody stay running; gateway listener continuity uses its
-existing setup protocol. An old custodian without a safe transfer must finish or
-be explicitly stopped through its legacy control before cutover; migration
-refuses with that command rather than stopping user work automatically.
-
-Acquire the legacy writer locks/owner gates and migration scope gate in canonical
-order; hold them through publication. Verify no old writer remains; recheck its
-boot/start identity and the legacy snapshot digest immediately before commit.
-The scope-aware legacy store takes `machine.scope` shared before every journal
-write. Migration holds that existing inode exclusively and inventories owner
-gates under it, using a bounded number of descriptors even with thousands of
-historical gate files. Only the importer's three metadata-gate identities may
-borrow the same verified exclusive description, without downgrade or unlock;
-ordinary gates cannot borrow it. The lexical borrowing grant expires with the
-source freeze. Scope-inode replacement refuses publication. Sources predating
-that scope protocol still require withdrawal of unsupported writers; the
-importer never creates or rewrites their source lock files.
-Unknown writers or unavailable quiescence refuse with a diagnostic, never a
-partial import. This is a one-time coordination boundary across the old store,
-not a recurring global task gate. If an unmanaged old binary can still be
-launched against that store, setup refuses until the operator has withdrawn that
-writer. No doc can make a pre-fence binary honour a new marker. After cutover,
-M8 forbids running it; supported new binaries check the cutover/schema before
-mutation. The importer never edits the legacy database/header or takes a
-write-capable SQLite connection, including to recover a hot journal. A source
-needing recovery must be recovered by its old owner before import (M3).
-
-**Prepare, validate, publish.**
-
-1. Under quiescence read one consistent, bounded legacy snapshot and record
-   its digest/schema/build. A consistent read includes any committed WAL content
-   for schemas that used it; do not copy only the main file of a live store.
-   Select the closure of every unresolved run and live environment, including attachments, effects, requests, renders, objects,
-   backend metadata and identity evidence needed to settle it. Preserve all
-   original run ids, checkout tokens, generations, fences and reservations.
-   Preserve caller-key-to-run mappings as checkout-local aliases so retrying an
-   imported `--run-id` finds its original run despite the new key derivation.
-2. For each verified checkout create a private staging database/object tree
-   *inside that checkout's state root*, tagged with one migration id. Import
-   the selected closure in one destination transaction. Import endpoint/route
-   claims, manual routes, quarantine and port pins byte-for-byte into a staged
-   `machine.db`, with owning checkout references and exact unknown fields.
-   Active gateway recovery belongs there; active task/environment runs belong
-   only to their checkout. Completed run history, unreferenced logs/objects and
-   obsolete free-gate diagnostics may be dropped; no unresolved evidence may be.
-3. A missing, changed-token or unwritable checkout is not redirected to its
-   primary or silently dropped. Refuse publication and report it; the legacy
-   source remains authoritative. Explicit operator retirement may later resolve
-   it, retaining unknown endpoint/port claims. PID-only legacy custody imports
-   as `Unknown` and can never gain signalling authority (M4).
-4. Verify integrity, local foreign keys, object digests and every cross-store
-   reference. Fsync each staged closure, publish its prepared root under the
-   destination scope gate, and fsync each parent. Prepared roots carry the
-   migration id and are inert: all new readers/mutators use legacy authority
-   until a matching commit manifest exists.
-5. One `atomic_replace` publishes `state/migration/cutover.json`: migration id,
-   source digest, destination identities/closure digests, format and writing
-   build. Fsync it and its directory before acknowledging cutover. This is the
-   single authority switch across filesystems; no claim of multi-file rename
-   atomicity. Destination schema/import receipts must match it before use.
-   Failure before it leaves legacy authority; failure after it resumes the new
-   authority. New binary startup gates access on that match, so incomplete
-   prepared state is never mistaken for a fresh empty checkout or machine.
-6. After verifying the committed manifest, `atomic_replace` a local
-   `migration-committed.json` seal in each destination, containing migration id,
-   committed-manifest digest, destination identity and imported-closure digest.
-   This is a local publication receipt, not a second data import. Until sealed,
-   a prepared destination consults the commit manifest and can only resume
-   migration if it is missing/unreadable. Once sealed, it verifies its own schema
-   and import metadata locally: ordinary checkout runs no longer read the
-   machine manifest or any other checkout. Seal the machine destination likewise.
-   A crash between seals resumes the remaining seals from the committed manifest;
-   an already sealed checkout remains independently usable.
-7. Resume only new writers and gateway control, verify imported live resources
-   by exact labels/start identities, and reconnect transferred custody. Do not
-   recreate containers, change names, repin ports or reassign routes because of
-   import (M7). Old files remain byte-identical backups for one minor (M3).
-   The source is never a fallback after the manifest commits; an unreadable new
-   destination is `Unknown`, not permission to revive an old writer.
-
-A crash before the commit manifest retries the same import id and revalidates
-quiescence/source digest; a changed source invalidates all prepared closures.
-A crash after publication verifies destinations and resumes; it never reimports
-or replays a completed effect. Manifest and schema prevent a supported older
-new-format writer from mutating newer state (M8). Genuine pre-fence binaries
-remain unsupported after cutover, as explicitly stated above. Existing explicit
-gateway export-on-remove is the only downgrade exception; it must export from
-the new machine store under its own freeze protocol. Completed import receipts
-are provenance, not a live checkout registry or runtime lookup service.
+- The single machine that held the store migrated once with Effigy main
+  `7b82d26`: 110,944 machine rows, one checkout destination and 50 history
+  partitions dropped. Its `state/migration/cutover.json` and per-checkout
+  `migration-committed.json` seals are that machine's evidence.
+- With a committed manifest, Effigy ignores `kernel.db` entirely. Per M3 it
+  never deletes it; removal is explicit maintenance after one minor.
+- With no committed manifest, a machine still holding the store is refused
+  once, before any effect: "this machine has unreleased-main runtime state;
+  migrate it with Effigy main 7b82d26 (`effigy run migrate
+  --legacy-launchers-stopped`) then upgrade". It is never guessed at (M5).
+- `effigy run migrate --plan` only reports that state. The importer's
+  busy-writer preflight, stop controls, prepared/staged destinations, commit
+  manifest publication, seal resumption and the 151,244,800-byte actual-copy
+  proof are gone; `docs/knowledge/retired.toml` lists their terms and paths.
 
 ## 12. Proof plan
 
@@ -2981,7 +2863,7 @@ only those identities, remove fixtures and preserve exit codes before reporting.
 | Task status read model | `tasks status <task>` and `tasks status --all`, text/JSON: first foreground run with no token/DB is live, not never-run; free/stale gates and foreground exit produce not-recorded; old durable success stays historical; held/unverifiable identity and discovered residue are unknown; interrupted durable runs keep recovery commands. No history row or token is created. Validate the v3 envelopes and durable-only latest/history per 018 |
 | Gates/layout/deletion | Fresh checkout, linked worktree, primary, non-Git root, same-path replacement, explicit retire and external deletion; gate inode continuity while held, token-init races, host-only guest masking, unknown residue/claims protected, no primary journal fallback |
 | Discovery/admission | Configured/unconfigured roots, linked worktrees, duplicate/ambiguous keys, symlink, missing/unreadable/corrupt checkout, depth/count/time limits, empty roots; R2 filesystem diff empty. Nested live/dead/forged admission capabilities and hook death/owner death do not use a central run lookup |
-| Migration scale and faults | Read-only copy of the operator's actual central store into a fresh private root; never open the original for writing. Report elapsed migration duration and each checkout's destination path, imported live/unresolved counts and integrity outcome. Also exercise a private copy of a large current store (at least the outage scale: 138 MB and 18,700 runs), plus v0.14.1 fixtures; live environments, verified active custody, manual routes, pins, unknown fields and quarantine survive. Kill/ENOSPC at each staging/fsync/manifest/custody-handoff crossing: exactly one authority, byte-identical legacy hashes, no restarts or new identities, completed history dropped safely. Old/unquiesceable writer and missing destination refuse before publication |
+| Retired central store | A machine home holding the retired `~/.effigy/state/kernel.db` is refused once with the Effigy main `7b82d26` upgrade path, before any run or destination state exists and without changing the file; with a committed manifest the file is ignored and never deleted; `run migrate --plan` never stages, stops, imports or deletes anything |
 | Deleted-worktree retirement (Tom, 2026-10-22) | Disposable backend stacks from deleted linked/Queue worktrees, with their checkout journals removed and no central index: `effigy container retire --dead` discovers exact surviving ownership from backend labels and shared endpoint/port facts, retires the dead scopes, and preserves live/unknown/foreign scopes, persistent data and the unselected backend |
 | Gateway/environment regression | Private gateway and disposable engine fixtures: unchanged pins/routes after migration, proxy readiness, container reuse, R4 holder refusal, idle-stop and interrupted recovery; no calls to the unselected backend or operator's gateway |
 
@@ -2990,8 +2872,8 @@ head for binary-level proofs (`oxide build --bin effigy`). Extend the covering
 selectors rather than raw test commands: `test:kernel:*` families touched,
 `test:run-control`, `test:run-control:cli`, `test:supervisor:faults`,
 `test:kernel:environment`, `test:containers:environment`,
-`test:environment:runner`, and the touched gateway endpoint/operator/migration
-selectors. Include task-engine/sequence/test/QA-group coverage for classification.
+`test:environment:runner`, `test:kernel:runtime-routing`, and the touched
+gateway endpoint/operator selectors. Include task-engine/sequence/test/QA-group coverage for classification.
 New acceptance harnesses need narrow bounded Effigy selectors if none exists;
 a missing harness is not a waived proof. Run `check:kernel`,
 `qa:kernel-ratchet`, the covering strict-clippy selectors, `fmt:check` and

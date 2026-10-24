@@ -295,6 +295,18 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- The importer for the current-main central `~/.effigy/state/kernel.db`
+  (contract 052 §11.1, effigy#307). That schema existed only on unreleased main
+  between 2026-10-18 and #276, so no released version ever wrote it, and v0.15
+  ships one migration path: the v0.14.1 importers, which read legacy files on
+  first use. A machine which committed the cutover ignores `kernel.db` and
+  never deletes it; one still holding it without a committed manifest is
+  refused once with its exact upgrade path (migrate with Effigy main
+  `7b82d26`, then upgrade). `effigy run migrate --plan` is now a read-only
+  report of that state: it stages, imports, stops and deletes nothing, and its
+  busy-writer preflight, stop controls and `--legacy-launchers-stopped` import
+  mode are gone. The importer's `actual-copy` acceptance proof and its selectors
+  are removed with it.
 - The distribution surface (Q-009), contract 054 §4.4 and §13. Effigy's own
   release is now one `[release]` declaration in `config/release.toml`: the
   `effigy` `semver` identity, a `preflight` pre gate and the `ci`, `format`,

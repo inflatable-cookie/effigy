@@ -103,11 +103,9 @@ pub enum StoreError {
     /// Store waits need a finite deadline (K8, I-CX2).
     Unbounded,
     MigrationPending(String),
-    LegacyMigrationRequired,
-    /// Migration found no verified location for a recorded checkout. Unlike
-    /// a duplicate or changed location, this is the only resolver outcome
-    /// that lets a history-only partition be dropped.
-    CheckoutUnlocated(String),
+    /// The retired current-main central store is present and no migration
+    /// manifest committed this machine (contract 052 §11.2).
+    UnreleasedMainRuntime,
     /// Retention, repair and scope removal run only in Mutate (K15).
     ClassRefused(EffectClass),
     InTransaction,
@@ -130,8 +128,10 @@ pub enum StoreError {
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::CheckoutUnlocated(reason) => write!(f, "{reason}"),
-            Self::LegacyMigrationRequired => write!(f, "legacy runtime exists; run `effigy run migrate --plan`, stop or drain its exact writers, then `effigy run migrate --legacy-launchers-stopped`"),
+            Self::UnreleasedMainRuntime => write!(
+                f,
+                "this machine has unreleased-main runtime state; migrate it with Effigy main 7b82d26 (`effigy run migrate --legacy-launchers-stopped`) then upgrade"
+            ),
             Self::MigrationPending(id) => write!(f, "runtime import {id} is prepared but not sealed; finish migration before using this journal"),
             Self::Corrupt(reason) => write!(
                 f,
