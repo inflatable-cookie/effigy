@@ -96,7 +96,7 @@ impl Gate {
             for scope in gates.list(64).map_err(|error| error.to_string())? {
                 cx.operation
                     .check("foreground gate inventory")
-                    .map_err(|error| format!("{error:?}"))?;
+                    .map_err(|error| format!("{error}"))?;
                 let scope = scope.to_str().ok_or("non-UTF8 gate scope")?;
                 if scope.ends_with(".scope") {
                     continue;
@@ -115,7 +115,7 @@ impl Gate {
                         continue;
                     };
                     cx.check("foreground gate inventory")
-                        .map_err(|error| format!("{error:?}"))?;
+                        .map_err(|error| format!("{error}"))?;
                     let Some(file) = open_gate(&dir, &format!("{name}.gate"), false)
                         .map_err(|error| error.to_string())?
                     else {
@@ -128,7 +128,7 @@ impl Gate {
                     let diag = match holder(&file) {
                         Observed::Verified(diag, _) => diag,
                         Observed::Unknown(reason) => {
-                            return Err(format!("held gate diagnostics unavailable: {reason:?}"))
+                            return Err(format!("held gate diagnostics unavailable: {reason}"))
                         }
                         Observed::Absent(_) => return Err("held gate has no diagnostics".into()),
                     };

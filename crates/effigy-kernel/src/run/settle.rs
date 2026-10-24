@@ -319,7 +319,7 @@ fn resolve(
         Observed::Verified(_, _) => {}
     }
     if let Err(reason) = cx.operation().check("settle adapter") {
-        return (EffectState::Residue, Some(format!("{reason:?}")));
+        return (EffectState::Residue, Some(format!("{reason}")));
     }
     if let Err(error) = crate::fault_point!(AdapterBefore) {
         return (EffectState::Residue, Some(error.to_string()));
@@ -355,7 +355,7 @@ pub(crate) fn subject(effect: &Effect) -> String {
     )
 }
 fn residue(reason: UnknownReason) -> (EffectState, Option<String>) {
-    (EffectState::Residue, Some(format!("{reason:?}")))
+    (EffectState::Residue, Some(format!("{reason}")))
 }
 
 /// Recovery serializes with both a live owner and another recovery attempt.

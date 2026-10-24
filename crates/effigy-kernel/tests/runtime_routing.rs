@@ -519,3 +519,36 @@ fn runtime_checkout_retirement_requires_the_original_free_lease_inode_without_a_
     assert!(!root.path().join("kernel.db").exists());
     assert!(!machine.path().join(".effigy/state").exists());
 }
+
+#[test]
+fn runtime_foreground_adopts_a_legacy_open_state_root_mode() {
+    // Papercut 9e5134a4 on the observer-then-adopt path: a 0755 `.effigy/state`
+    // comes back from observation as an untrusted-mode Unknown, and the
+    // foreground effect path must recognise that sentence, tighten the mode and
+    // continue rather than refuse every task in the checkout.
+    let checkout = home();
+    let state = checkout.path().join(".effigy/state");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mode = |path: &std::path::Path| {
+        std::fs::symlink_metadata(path)
+            .expect("stat")
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    let location = location(checkout.path());
+    assert!(
+        matches!(
+            StateRoot::checkout_observe(&observe(), &location),
+            Observed::Unknown(_)
+        ),
+        "observation never adopts a mode it does not trust"
+    );
+    assert_eq!(mode(&state), 0o755, "observation repairs nothing");
+
+    let root = StateRoot::foreground_effects(&effects(EffectClass::Mutate), &location)
+        .expect("the foreground path adopts a legacy open state root");
+    assert_eq!(mode(root.path()), 0o700);
+    assert_eq!(mode(&state), 0o700);
+}

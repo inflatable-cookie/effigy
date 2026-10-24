@@ -22,6 +22,46 @@ pub enum WorkloadOutcome {
     Interrupted,
     Unknown(UnknownReason),
 }
+/// How the workload ended, in the words a person reads instead of a variant.
+impl std::fmt::Display for WorkloadOutcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotStarted => f.write_str("the workload never started"),
+            Self::Succeeded => f.write_str("the workload succeeded"),
+            Self::Failed { code } => write!(f, "the workload failed with exit code {code}"),
+            Self::Cancelled { cause, signal } => {
+                if let StopCause::Signal(cause_signal) = cause {
+                    write!(
+                        f,
+                        "the workload was cancelled by {}",
+                        crate::human::signal_name(*cause_signal)
+                    )
+                } else if let Some(signal) = signal {
+                    write!(
+                        f,
+                        "the workload was cancelled by {} ({cause})",
+                        crate::human::signal_name(*signal)
+                    )
+                } else {
+                    write!(f, "the workload was cancelled by {cause}")
+                }
+            }
+            Self::TimedOut { phase } => {
+                write!(f, "the workload timed out while {}", phase_phrase(phase))
+            }
+            Self::Interrupted => f.write_str("the workload was interrupted by a signal"),
+            Self::Unknown(reason) => write!(f, "the workload outcome is unknown: {reason}"),
+        }
+    }
+}
+/// A phase a caller named, phrased as the work in progress.
+fn phase_phrase(phase: &str) -> String {
+    match phase {
+        "settle" => "waiting for the environment to settle".to_owned(),
+        "workload" => "running".to_owned(),
+        other => format!("in `{other}`"),
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum CleanupOutcome {
     NotNeeded,

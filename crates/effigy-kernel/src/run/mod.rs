@@ -693,7 +693,7 @@ impl<'a> Run<'a> {
             ticket,
             EffectState::Unknown,
             None,
-            Some(format!("{reason:?}")),
+            Some(format!("{reason}")),
         )
     }
     fn callback(

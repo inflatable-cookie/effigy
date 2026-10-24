@@ -518,6 +518,27 @@ During v0.x, MINOR bumps may include breaking changes.
   `command `make` failed / cause: exit code 2 / stderr: … / next: …` with
   bounded, redacted output instead of `(code=Some(2))` and the whole streams,
   and the Debug ratchet baseline drops from 239 to 226.
+- Live steps and the what/evidence/next rubric now cover the remaining command
+  planes (effigy#314). `effigy gateway setup` shows each stage — verifying the
+  operator, trusting mkcert's local CA, applying platform setup (DNS,
+  certificate trust, broker; approve the administrator prompt if it appears),
+  importing endpoint state, recording the receipt and starting the gateway —
+  and `gateway up`, `gateway down`, `gateway repair` and `gateway status`
+  report what they are reading, stopping, planning and applying. `effigy
+  container ports` names the registry it reads, the facts it gathers and the
+  allocations it decides, and `effigy run migrate` shows each read of the
+  runtime state. Kernel, store, gateway, container port/loopback and runner
+  refusals now name the object (the checkout path rather than a token, the
+  domain, the stale and successor owners, the recorded project path), the
+  evidence, and the exact next command: a stale domain reservation names both
+  owners and `effigy gateway repair --owner-checkout <PATH>`, an untrusted
+  state root names the path and its `chmod 700`, a hold on an unreadable
+  project path names the path and the command that shows it again, a
+  foreground child refusal says why it could not start, and kernel `Debug`
+  trees (`Unknown(StoreUnreadable(…))`, `Untrusted("…")`,
+  `CheckoutId { token: […] }`) no longer reach a person. `tests` carry the
+  before/after text for each rewrite, and with this lane's removals the
+  Debug-format ratchet stands at 184 specifiers in 67 files.
 
 - A deleted or stopped Colima profile is no longer a dead end: the next command
   that needs it creates the profile with Effigy's managed arguments (SSH agent

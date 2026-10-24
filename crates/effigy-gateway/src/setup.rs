@@ -63,7 +63,8 @@ pub fn read_receipt(home: &Path) -> io::Result<Receipt> {
             Ok(receipt)
         }
         other => Err(error(format!(
-            "gateway setup is unavailable ({other:?}); run `effigy gateway setup`"
+            "gateway setup is unavailable ({}); run `effigy gateway setup`",
+            other.unproven()
         ))),
     }
 }
@@ -146,7 +147,8 @@ pub fn platform_suffixes(
                 Observed::Absent(_) => {}
                 other => {
                     return Err(error(format!(
-                        "legacy resolver inputs are unknown: {other:?}"
+                        "legacy resolver inputs are unknown: {}",
+                        other.unproven()
                     )))
                 }
             }
@@ -161,7 +163,8 @@ pub fn platform_suffixes(
                 Observed::Absent(_) => {}
                 other => {
                     return Err(error(format!(
-                        "setup resolver receipt is unknown: {other:?}"
+                        "setup resolver receipt is unknown: {}",
+                        other.unproven()
                     )))
                 }
             }

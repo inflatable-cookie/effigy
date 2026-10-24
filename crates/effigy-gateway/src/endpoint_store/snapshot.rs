@@ -85,6 +85,15 @@ impl DomainOwner {
         }
     }
 }
+
+/// An owner a person can find again: the checkout path, and its scope when one
+/// was recorded, never a bare token.
+fn owner_label(project: &str, scope: Option<&str>) -> String {
+    match scope {
+        Some(scope) => format!("checkout {project} (scope {scope})"),
+        None => format!("checkout {project}"),
+    }
+}
 /// One persistent domain claim and the exact owner that reserved it. Withdrawn
 /// claims have no active route and are only visible through this record.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -175,15 +184,29 @@ impl EndpointSnapshot {
                 let routes = self.routes()?;
                 match routes.lookup(&domain) {
                     Some(route) if current.project == route.project && current.scope == route.scope => crate::registration::check_claim(route, project, scope)?,
-                    Some(_) => return Err(error(format!("domain {domain} has a reserved successor owner"))),
-                    None => return Err(error(format!("domain {domain} belongs to another persistent owner; retire that owner explicitly"))),
+                    Some(route) => {
+                        return Err(error(format!(
+                            "domain {domain} is still reserved for {} while {} is listed as its successor in the route table. Release the stale reservation with `effigy gateway repair --owner-checkout {}`",
+                            owner_label(&current.project, current.scope.as_deref()),
+                            owner_label(&route.project, route.scope.as_deref()),
+                            current.project
+                        )))
+                    }
+                    None => {
+                        return Err(error(format!(
+                            "domain {domain} belongs to {}; retire that owner explicitly, or release it with `effigy gateway repair --owner-checkout {}` once the checkout is gone",
+                            owner_label(&current.project, current.scope.as_deref()),
+                            current.project
+                        )))
+                    }
                 }
             } else if listener.is_some()
                 && current.listener.is_some()
                 && current.listener.as_deref() != listener
             {
                 return Err(error(format!(
-                    "domain {domain} belongs to another stable listener owner"
+                    "domain {domain} belongs to another stable listener owner ({}); stop that listener, then retry",
+                    current.listener.as_deref().unwrap_or("unnamed")
                 )));
             }
         }
@@ -632,4 +655,84 @@ fn add(
         );
     }
     Ok(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::routes::RouteSource;
+
+    fn route(domain: &str, project: &str, scope: Option<&str>) -> Route {
+        Route {
+            domain: domain.to_owned(),
+            target: Some("127.0.0.1:8105".to_owned()),
+            dns_ip: None,
+            tcp_port: None,
+            tcp_target: None,
+            source: RouteSource::Container,
+            project: project.to_owned(),
+            scope: scope.map(str::to_owned),
+            managed_listener: None,
+            tls: false,
+            registered: chrono::Utc::now(),
+        }
+    }
+
+    fn snapshot_with(claim: DomainOwner, route: Route) -> EndpointSnapshot {
+        let mut snapshot =
+            EndpointSnapshot::imported(BTreeMap::new(), BTreeMap::new()).expect("empty snapshot");
+        snapshot.domains.insert("acme.test".to_owned(), claim);
+        let mut table = snapshot.routes().expect("empty route table");
+        table.upsert(route);
+        snapshot
+            .documents
+            .insert("routes".to_owned(), serde_json::to_value(&table).unwrap());
+        snapshot
+    }
+
+    #[test]
+    fn a_stale_reservation_names_the_owner_the_successor_and_the_repair() {
+        // Before: `gateway endpoint store: domain acme.test has a reserved
+        // successor owner` — no owner, no successor, no next command.
+        let mut snapshot = snapshot_with(
+            DomainOwner {
+                project: "/stale/checkout".to_owned(),
+                scope: Some("abc".to_owned()),
+                listener: None,
+                route: None,
+            },
+            route("acme.test", "/new/checkout", None),
+        );
+        let refused = snapshot
+            .reserve_domain("acme.test", "/new/checkout", None, None)
+            .expect_err("a stale reservation refuses its successor");
+        assert_eq!(
+            refused.to_string(),
+            "gateway endpoint store: domain acme.test is still reserved for checkout /stale/checkout \
+             (scope abc) while checkout /new/checkout is listed as its successor in the route table. \
+             Release the stale reservation with `effigy gateway repair --owner-checkout /stale/checkout`"
+        );
+    }
+
+    #[test]
+    fn a_withdrawn_reservation_names_its_owner_and_the_release_command() {
+        let mut snapshot = snapshot_with(
+            DomainOwner {
+                project: "/gone/checkout".to_owned(),
+                scope: None,
+                listener: None,
+                route: None,
+            },
+            route("other.test", "/gone/checkout", None),
+        );
+        let refused = snapshot
+            .reserve_domain("acme.test", "/new/checkout", None, None)
+            .expect_err("a stale reservation refuses its successor");
+        assert_eq!(
+            refused.to_string(),
+            "gateway endpoint store: domain acme.test belongs to checkout /gone/checkout; retire that \
+             owner explicitly, or release it with `effigy gateway repair --owner-checkout /gone/checkout` \
+             once the checkout is gone"
+        );
+    }
 }

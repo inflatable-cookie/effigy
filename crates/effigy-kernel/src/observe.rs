@@ -125,7 +125,7 @@ impl std::fmt::Display for UnknownReason {
             Self::Injected => f.write_str("could not tell: a test fault was injected"),
             Self::Untrusted(reason) => write!(
                 f,
-                "could not tell: the state root is not trusted ({reason}); Effigy only reads state it owns",
+                "could not tell: the state root is not trusted ({reason}); Effigy only reads state it owns, so fix the mode or ownership it names and retry",
             ),
             Self::HostAuthorityRequired => f.write_str(
                 "could not tell: this is host state, and a guest placement cannot read it",

@@ -138,7 +138,7 @@ pub(super) fn wait_for_private_gateway_ready_with_probe(
             .check("private gateway verified listener publication")
             .map_err(|error| {
                 RunnerError::task_invocation(format!(
-                    "private gateway startup interrupted: {error:?}"
+                    "private gateway startup interrupted: {error}; the daemon was not confirmed ready"
                 ))
             })?;
         match probe() {

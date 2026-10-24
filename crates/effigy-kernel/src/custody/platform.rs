@@ -132,7 +132,7 @@ pub(crate) fn recover_with(
     let mut killed = false;
     loop {
         if let Err(e) = cx.operation().check("custody recovery") {
-            return Observed::Unknown(unknown(format!("{e:?}")));
+            return Observed::Unknown(unknown(format!("{e}")));
         }
         let signal = if Instant::now() >= grace || crate::signal::escalated() || escalate() {
             killed = true;
@@ -448,7 +448,7 @@ pub(super) fn live_pids(pgid: u32) -> io::Result<Vec<u32>> {
         match ident::process_state(pid) {
             Observed::Verified(ProcessState::Zombie, _) | Observed::Absent(_) => {}
             Observed::Verified(_, _) => live.push(pid),
-            Observed::Unknown(r) => return Err(io::Error::other(format!("{r:?}"))),
+            Observed::Unknown(r) => return Err(io::Error::other(format!("{r}"))),
         }
     }
     Ok(live)

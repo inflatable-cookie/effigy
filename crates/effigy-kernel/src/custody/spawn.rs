@@ -583,7 +583,7 @@ impl Blocked {
             let mut offset = 0;
             while offset < bytes.len() {
                 cx.check("anchor identity frame")
-                    .map_err(|e| io::Error::other(format!("{e:?}")))?;
+                    .map_err(|e| io::Error::other(format!("{e}")))?;
                 // SAFETY: nonblocking live status pipe and remaining buffer.
                 let n = unsafe {
                     libc::read(
@@ -624,7 +624,7 @@ impl Blocked {
     fn await_status(&mut self, cx: &OperationContext, exec: bool) -> io::Result<()> {
         loop {
             cx.check("spawn barrier")
-                .map_err(|e| io::Error::other(format!("{e:?}")))?;
+                .map_err(|e| io::Error::other(format!("{e}")))?;
             let mut byte = [0u8];
             // SAFETY: live nonblocking pipe and initialized writable byte.
             let count = unsafe { libc::read(self.status.as_raw_fd(), byte.as_mut_ptr().cast(), 1) };

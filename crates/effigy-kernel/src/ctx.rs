@@ -282,10 +282,28 @@ impl OperationContext {
         }
     }
 }
+/// A wait or child deadline does not fit the operation's budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BudgetOverflow;
+/// The operation's class does not permit the effect it was asked to run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClassError;
+impl std::fmt::Display for BudgetOverflow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "the requested wait does not fit inside the operation's remaining budget; shorten the wait or start a longer-budgeted operation",
+        )
+    }
+}
+impl std::error::Error for BudgetOverflow {}
+impl std::fmt::Display for ClassError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "this operation is read-only, so it cannot run the effect it was asked for; rerun it as a mutating command",
+        )
+    }
+}
+impl std::error::Error for ClassError {}
 
 /// Read-only capability. No conversion to an effect capability exists.
 /// ```compile_fail
