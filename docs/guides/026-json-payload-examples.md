@@ -1803,7 +1803,9 @@ carries `state_reason`. An unreadable gate body is
     "state",
     "tasks",
     "test",
-    "workspace"
+    "workspace",
+    "fmt",
+    "fmt-rust"
   ]
 }
 ```

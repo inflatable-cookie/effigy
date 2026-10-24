@@ -53,63 +53,6 @@ impl Record for Binding {
 }
 
 impl StateRoot {
-    /// Compatibility observation for a persisted owner before relocation.
-    /// Published checkout authority never depends on the machine source again.
-    pub(crate) fn foreground_legacy(
-        cx: &ObserveContext,
-        local: &Self,
-        machine_home: Option<&Path>,
-    ) -> Result<Option<Self>, StoreError> {
-        local.verify_binding()?;
-        match authority(cx, local) {
-            Observed::Verified(Authority::Committed { .. }, _) => return Ok(None),
-            Observed::Verified(Authority::Fresh, _) => {
-                match read_record::<Binding>(cx, local.dir(), &FileName::new(BINDING)?) {
-                    Observed::Verified(_, _) => return Ok(None),
-                    Observed::Absent(_) => {}
-                    other => {
-                        return Err(unreadable(format!(
-                            "foreground checkout authority: {other:?}"
-                        )))
-                    }
-                }
-            }
-            other => {
-                return Err(unreadable(format!(
-                    "foreground checkout publication: {other:?}"
-                )))
-            }
-        }
-        let home = machine_home.ok_or_else(|| {
-            unreadable("HOME is required to verify this persisted owner's legacy predecessor")
-        })?;
-        if crate::migration::committed(cx, home)?.is_some() {
-            return Ok(None);
-        }
-        let legacy = match Self::legacy_observe(cx, home) {
-            Observed::Verified(root, _) => root,
-            Observed::Absent(_) => return Ok(None),
-            other => {
-                return Err(unreadable(format!(
-                    "legacy foreground predecessor source: {other:?}"
-                )))
-            }
-        };
-        let database = legacy
-            .dir()
-            .entry(&FileName::new(crate::store::DB_NAME)?)?
-            .is_some();
-        if !database && machine_format(cx, &legacy)? {
-            return Ok(None);
-        }
-        if legacy.owner.identity()? == local.owner.identity()? {
-            return Err(unreadable(
-                "legacy machine source overlaps the foreground checkout",
-            ));
-        }
-        Ok(Some(legacy))
-    }
-
     /// Pure checkout routing with the current Git resolution supplied by the
     /// engine. A copied token or retargeted `.git` file cannot select an old
     /// journal whose original Git directory still happens to exist.
@@ -385,29 +328,16 @@ fn require_cutover(
     }
     match StateRoot::legacy_observe(cx, machine_home) {
         Observed::Verified(legacy, _) => {
-            let database = legacy
+            if legacy
                 .dir()
                 .entry(&FileName::new(crate::store::DB_NAME)?)?
-                .is_some();
-            let initializer = format_gate()?.name().to_string();
-            let source_hints = ResourceId::store(Scope::Machine, "source-hints")?
-                .name()
-                .to_string();
-            let pre_run_writer = !database
-                && legacy.dir().entry(&FileName::new("machine.db")?)?.is_none()
-                && !machine_format(cx, &legacy)?
-                && crate::migration::inspect_gates(cx, &legacy)?
-                    .iter()
-                    .any(|blocker| {
-                        // This new-format initializer has no old-binary meaning
-                        // and never opens a database. Concurrent bootstrap waits
-                        // on its gate after the legacy-writer check.
-                        blocker.scope != "machine"
-                            || (blocker.resource != initializer && blocker.resource != source_hints)
-                    });
-            if database || pre_run_writer {
-                return Err(StoreError::LegacyMigrationRequired);
+                .is_some()
+            {
+                return Err(StoreError::UnreleasedMainRuntime);
             }
+            // An unreadable or foreign machine layout is `Unknown`, never a
+            // fresh empty machine. A new-format layout has no database yet.
+            machine_format(cx, &legacy)?;
         }
         Observed::Absent(_) => {}
         other => return Err(unreadable(format!("legacy runtime root: {other:?}"))),

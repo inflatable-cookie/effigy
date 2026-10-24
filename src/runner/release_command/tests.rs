@@ -332,9 +332,13 @@ fn release_ci_gate_requires_a_successful_manual_run_for_the_exact_head() {
         std::env::temp_dir().join(format!("effigy-release-ci-gate-{}", std::process::id()));
     std::fs::create_dir_all(&fake_bin).expect("create fake bin");
     let fake_gh = fake_bin.join("gh");
+    // The gate reads `gh run list --json ... --jq '<one line per run>'`, so the
+    // fake answers with one run row: id, head SHA, status, conclusion, url. The
+    // head SHA is the answer under test: a run for another commit is a sibling
+    // dispatch, not this candidate's.
     std::fs::write(
         &fake_gh,
-        "#!/bin/sh\nprintf '%s\\n' \"$EFFIGY_TEST_CI_SHA\"\n",
+        "#!/bin/sh\nprintf '%s\\n' \"4242 $EFFIGY_TEST_CI_SHA completed success https://example.invalid/actions/runs/4242\"\n",
     )
     .expect("write fake gh");
     let mut permissions = std::fs::metadata(&fake_gh)
@@ -365,8 +369,11 @@ fn release_ci_gate_requires_a_successful_manual_run_for_the_exact_head() {
     let failure = run("different-commit");
     assert!(!failure.status.success());
     let stderr = String::from_utf8_lossy(&failure.stderr);
-    assert!(stderr.contains("CI is not green for candidate commit"));
-    assert!(stderr.contains("dispatch ci.yml on main for this exact commit"));
+    assert!(
+        stderr.contains("hosted CI run #4242 is for commit different-commit"),
+        "{stderr}"
+    );
+    assert!(stderr.contains(&candidate_sha), "{stderr}");
 
     std::fs::remove_dir_all(fake_bin).expect("remove fake bin");
 }

@@ -21,16 +21,6 @@ macro_rules! points {
     };
 }
 points! {
-    MigrationStageBefore,
-    MigrationStageAfter,
-    MigrationCopyBefore,
-    MigrationCopyAfter,
-    MigrationPreparedBefore,
-    MigrationPreparedAfter,
-    MigrationCommitBefore,
-    MigrationCommitAfter,
-    MigrationSealBefore,
-    MigrationSealAfter,
     ObjectStageBefore,
     ObjectStageCreated,
     ObjectWriteBefore,

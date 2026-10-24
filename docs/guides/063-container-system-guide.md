@@ -1627,7 +1627,7 @@ conflicts, but leaves live checkout routes alone.
 ### Route-table trust
 
 The operator daemon reads routes from the gateway endpoint Store in
-`~/.effigy/state/kernel.db`. The first gateway mutation automatically imports
+`~/.effigy/state/machine.db`. The first gateway mutation automatically imports
 `routes.json`, `loopback-ips.json` and `ports.json`, preserving their mappings
 and leaving the original files untouched as backups. Registration and daemon
 reload use committed Store revisions after import; editing a backup does not

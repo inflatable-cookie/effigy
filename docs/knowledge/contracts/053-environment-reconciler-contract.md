@@ -6,10 +6,11 @@ and `src/runner/environment.rs` (runner cutover), effigy#232. The
 its host authority channel are later work (§9).
 
 Q-010 storage follows contract [052](052-runtime-kernel-contract.md) §3.1,
-§7 and §11.1, approved by planner and Tom (2026-10-22: "Approve"). Environment
+§7 and §11, approved by planner and Tom (2026-10-22: "Approve"). Environment
 records, renders and holders use their checkout journal; shared endpoint and
-port facts use the machine store. The later workflows named in §9 remain
-separate from this relocation.
+port facts use the machine store. §11.1's central-store importer is retired
+(effigy#307), so v0.15 ships only the §11 v0.14.1 family importers. The later
+workflows named in §9 remain separate from this relocation.
 
 Owner: environment reconciler (Queue lane `v015-environment`)
 Kernel: [052](052-runtime-kernel-contract.md) §5.9, §10.3, §11
@@ -218,17 +219,17 @@ first Mutate waits for it, up to 10 minutes, before adopting. A later `up`
 adopts an imported stack without recreation when the v0.14.1 admission
 matches the current inputs.
 
-### Central-store relocation
+### Central-store relocation (retired 2026-10-24)
 
-For current-main users the 052 §11.1 importer moves the full live environment
-closure: desired/applied/partial generations, backend, retention, object refs,
-holders, unresolved transition/sidecar/remote runs and custody receipts. Tokens,
-labels, object digests and fences stay the same; containers are not recreated.
-Endpoint claims and pins move to the machine store in the same manifest-gated
-cutover. Active custodians need verified transfer or drain; copying receipts
-alone never transfers custody. A missing checkout or unquiesceable writer
-refuses publication, preserving legacy authority. PID-only evidence remains
-Unknown, and old input stays byte-identical (M1/M3/M8).
+The 052 §11.1 importer for the current-main central store is retired
+(effigy#307). v0.15 ships only the v0.14.1 importers above, so an environment
+closure arrives through the family import on first use: desired/applied/partial
+generations, backend, retention, object refs and holders keep their identity,
+and containers are not recreated (M7). A machine that committed the retired
+cutover ignores the old store and never deletes it; one still holding it
+without a committed manifest is refused once with the Effigy main `7b82d26`
+upgrade path. PID-only evidence remains Unknown, and old input stays
+byte-identical (M1/M3/M4/M8).
 
 ## 8. Guest
 

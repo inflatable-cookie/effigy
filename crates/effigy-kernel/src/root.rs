@@ -138,11 +138,6 @@ impl StateRoot {
         root.database = Database::Checkout;
         root
     }
-    pub(crate) fn legacy_control(&self) -> Self {
-        let mut root = self.legacy_source();
-        root.writable = true;
-        root
-    }
     pub(crate) fn unpublished(&self) -> Self {
         let mut root = self.clone();
         root.writable = false;
@@ -182,27 +177,6 @@ impl StateRoot {
             checkout.verify(&self.owner)?;
         }
         Ok(())
-    }
-    /// An inert migration staging root inside this verified destination. It
-    /// inherits database routing, but publication remains a separate authority
-    /// switch; normal engine callers never receive this root.
-    pub(crate) fn migration_stage(&self, name: &str) -> Result<Self, FsError> {
-        if !self.writable {
-            return Err(FsError::untrusted(self.path(), "read-only staging parent"));
-        }
-        let dir = self
-            .dir
-            .child(name, Trust::Private, true)?
-            .expect("created staging directory");
-        Ok(Self {
-            dir,
-            owner: self.owner.clone(),
-            writable: true,
-            database: self.database.clone(),
-            adoption: false,
-            checkout: self.checkout.clone(),
-            machine_gates: self.machine_gates.clone(),
-        })
     }
     /// Retained filesystem identity of the actual checkout or machine home.
     pub fn owning_directory(&self) -> &DirFd {

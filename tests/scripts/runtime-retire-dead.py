@@ -3,7 +3,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 import fcntl
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -109,10 +108,9 @@ finally:
     for root in managed:
         cli(root, 'hold', 'stop')
 
-# Model a stopped current-main launcher by combining these private journals
-# into its central schema. The actual backend keeps running throughout cutover.
+# Every checkout keeps its own v0.15 journal; the retirement proof never
+# models the retired current-main central store.
 state = home / '.effigy/state'
-source = state / 'kernel.db'
 def read_db(path):
     return closing(sqlite3.connect(f'file:{path}?mode=ro&immutable=1', uri=True))
 def mutable_tree(root):
@@ -122,48 +120,7 @@ before_backend = json.loads(docker('inspect', *docker('ps', '-aq').stdout.split(
 before_identity = {row['Id']: row['State']['StartedAt'] for row in before_backend}
 with read_db(state / 'machine.db') as machine:
     before_endpoints = machine.execute('SELECT state FROM resources').fetchall()
-    with closing(sqlite3.connect(source)) as target:
-        machine.backup(target)
-with closing(sqlite3.connect(source)) as target:
-    target.execute('PRAGMA foreign_keys=OFF')
-    tables = ['checkouts', 'resources', 'runs', 'events', 'attachments', 'claims',
-              'requests', 'objects', 'object_refs', 'logs']
-    for root in checkouts:
-        local = root / '.effigy/state'
-        with read_db(local / 'kernel.db') as journal:
-            for table in tables:
-                rows = journal.execute(f'SELECT * FROM {table}').fetchall()
-                if rows:
-                    placeholders = ','.join('?' for _ in rows[0])
-                    target.executemany(f'INSERT INTO {table} VALUES ({placeholders})', rows)
-        objects = local / 'objects'
-        if objects.exists():
-            shutil.copytree(objects, state / 'objects', dirs_exist_ok=True, symlinks=True)
-            mutable_tree(state / 'objects')
-        mutable_tree(local)
-        shutil.rmtree(local)
-    assert not target.execute('PRAGMA foreign_key_check').fetchall()
-    target.commit()
-    assert target.execute('PRAGMA journal_mode=DELETE').fetchone() == ('delete',)
-assert source.read_bytes()[18:20] == bytes([1, 1]), 'fixture backup is not checkpointed'
-assert not Path(str(source) + '-wal').exists()
-Path(str(source) + '-shm').unlink(missing_ok=True)
-# Only private proof files are replaced; preserve the exact retirement gates.
-for name in ['machine.db', 'machine.db-wal', 'machine.db-shm', 'machine-format.json']:
-    (state / name).unlink(missing_ok=True)
-os.chmod(source, 0o400)
-source_digest = hashlib.sha256(source.read_bytes()).hexdigest()
-cli(primary, 'run', 'migrate', '--plan', '--json')
-started = time.monotonic()
-migrated = cli(primary, 'run', 'migrate', '--legacy-launchers-stopped', '--json')
-(base / 'migration.json').write_text(migrated.stdout)
-migration_seconds = round(time.monotonic() - started, 3)
-assert hashlib.sha256(source.read_bytes()).hexdigest() == source_digest
-with read_db(state / 'machine.db') as machine:
-    assert machine.execute('SELECT state FROM resources').fetchall() == before_endpoints
-# Primary held only completed history, which the importer deliberately drops.
-assert all((root / '.effigy/state/kernel.db').exists() for root in [dead, live])
-assert not (primary / '.effigy/state/kernel.db').exists()
+assert all((root / '.effigy/state/kernel.db').exists() for root in checkouts), 'mixed runs kept their own journals'
 cli(live, 'container', 'up', '--detach')
 after_backend = json.loads(docker('inspect', *before_identity).stdout)
 assert {row['Id']: row['State']['StartedAt'] for row in after_backend} == before_identity
@@ -217,12 +174,11 @@ assert mutable not in volumes and persistent in volumes
 assert alternate_id in docker('--host', alternate, 'ps', '-aq', '--no-trunc').stdout.split()
 assert 'q010-unselected' in docker('--host', alternate, 'volume', 'ls', '-q').stdout.split()
 assert not dead.exists(), 'cleanup recreated deleted checkout'
-assert hashlib.sha256(source.read_bytes()).hexdigest() == source_digest
 cli(primary, 'container', 'retire', '--dead', '--yes', '--json')
 value = {'schema': 'effigy.proof.runtime-retire-dead.v1', 'foreground_runs': 24,
          'checkouts': 3, 'detached_runs': 2, 'stalled_local_writer': True,
-         'mixed_seconds': mixed_seconds, 'migration_seconds': migration_seconds,
-         'live_backend_migration_preserved_ids_started_at_and_port_pins': True, 'lease_refusal_before_deletion': True,
+         'mixed_seconds': mixed_seconds,
+         'live_backend_preserved_ids_started_at_and_port_pins': True, 'lease_refusal_before_deletion': True,
          'deleted_scope': token, 'preserved_live_containers': len(live_ids),
          'preserved_unknown_and_foreign': 2, 'persistent_volume_retained': True, 'unselected_engine_preserved': True,
          'report': report}
