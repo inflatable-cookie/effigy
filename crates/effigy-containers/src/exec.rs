@@ -1,5 +1,6 @@
 mod colima_runtime;
 mod compose_progress;
+mod compose_steps;
 mod healthcheck_pidfiles;
 mod healthcheck_timer;
 mod implementation;
@@ -26,6 +27,7 @@ pub use colima_runtime::{
 pub use compose_progress::{
     parse_compose_step_event, service_from_container_name, ComposeStepEvent,
 };
+pub use compose_steps::{phase, ComposeSteps, TimedStep};
 pub use healthcheck_pidfiles::{
     inspect_run_inode_pressure, parse_health_check_pidfile_prune, parse_run_inode_pressure,
     prune_stale_health_check_pidfiles, HealthCheckPidFilePrune, RunInodePressure,

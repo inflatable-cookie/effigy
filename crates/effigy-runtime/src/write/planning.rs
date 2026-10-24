@@ -8,7 +8,7 @@ use effigy_containers::{
 use serde_yaml::{Mapping, Value};
 
 use crate::container_manager::{compose_invocation_plan_from_args, runtime_invocation_plan};
-use crate::signals::{run_compose_plan_capture_with_env, run_runtime_plan_capture};
+use crate::signals::run_runtime_plan_capture;
 use crate::EffigyRuntimeError;
 
 /// An uninitialized scoped checkout has nothing it may stop or reset.
@@ -54,6 +54,18 @@ pub(super) fn run_shutdown_compose(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<(), EffigyRuntimeError> {
+    run_shutdown_compose_watched(repo_root, policy, &mut |_| {})
+}
+
+/// [`run_shutdown_compose`], reporting each line the runtime prints while it
+/// stops and removes the services, so `container down` can name the service it
+/// is working on as it happens (effigy#313). The output still lands in the
+/// checkout's retained backend record.
+pub(super) fn run_shutdown_compose_watched(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    on_line: &mut dyn FnMut(&str),
+) -> Result<(), EffigyRuntimeError> {
     let env = effigy_containers::policy::ports::teardown_interpolation_env();
     for (args, label) in shutdown_compose_commands(policy) {
         let plan = compose_invocation_plan_from_args(
@@ -63,7 +75,17 @@ pub(super) fn run_shutdown_compose(
             ContainerAction::Shutdown,
             label,
         )?;
-        run_compose_plan_capture_with_env(policy, &plan, &env)?;
+        effigy_containers::exec::run_compose_invocation_streaming_with_env(
+            &plan.repo_root,
+            policy,
+            &plan.program,
+            &plan.args,
+            &plan.label,
+            &env,
+            None,
+            on_line,
+        )
+        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
     }
     Ok(())
 }

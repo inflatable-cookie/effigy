@@ -299,6 +299,11 @@ impl RunnerError {
                 stdout,
                 stderr,
             } => task_command_failure_human(command, *code, stdout, stderr),
+            // A lock conflict's remediation is already the sentence a person
+            // reads: what holds the lock, and the commands that stop it. The
+            // structured details are for `--json`; lifting them by key lost the
+            // advice entirely (effigy#313).
+            RunnerError::TaskLockConflict(details) => lock_conflict_human(details),
             _ => match self
                 .json_error_details()
                 .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
@@ -531,6 +536,18 @@ pub(in crate::runner) fn child_failure_text(
 /// details name the phase, the cause and the recovery. Lift those into the
 /// three facts, and keep the message's own sentence as what failed when the
 /// details do not improve on it.
+/// The lock refusal as three facts: the holder and the wait, then the next
+/// commands. `remediation` is the one rendering both paths share, so the text a
+/// person reads can never drift from the text `Display` produces.
+fn lock_conflict_human(
+    details: &effigy_core::task_lock::TaskLockConflict,
+) -> effigy_ui::HumanError {
+    match details.remediation.split_once(". ") {
+        Some((what_failed, next)) => effigy_ui::HumanError::new(what_failed).next_action(next),
+        None => effigy_ui::HumanError::new(&details.remediation),
+    }
+}
+
 fn human_error_from_details(rendered: &str, details: &serde_json::Value) -> effigy_ui::HumanError {
     // A detail is a string or a number (`exit_code` is a JSON number).
     let scalar = |key: &str| {

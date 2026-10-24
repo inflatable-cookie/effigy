@@ -1813,9 +1813,9 @@ effigy container profile prune-health-pid-files --profile effigy
 `effigy doctor` prints an evidence line for every running profile
 (`colima-profile `effigy` /run: 270087/819200 inodes used (32%), 269082
 health-check pid file(s) (268182 older than 10m)`) and warns once inode use
-reaches 80% or 10,000 stale files accumulate. Container commands (`container
-up`, `container down` and a task that uses an environment) run the same bounded
-prune automatically and say nothing about it in a normal run: it is Effigy's
+reaches 80% or 10,000 stale files accumulate. `container up` and a task that
+starts an environment run the same bounded prune automatically and say nothing
+about it in a normal run: it is Effigy's
 own housekeeping in a VM tmpfs, and Colima 0.10.3 ships nerdctl 2.3.1, so a
 routine nerdctl upgrade note is advice the reader cannot act on. An activation
 prints the doctor warning only when `/run` inode use is at the doctor

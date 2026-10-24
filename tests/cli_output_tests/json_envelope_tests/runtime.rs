@@ -482,7 +482,14 @@ fn cli_json_mode_lock_conflict_wraps_runner_failure() {
         &["dev"],
         &["dev"],
         "dev",
-        &["`dev` is already running", "effigy tasks status dev"],
+        // The refusal names the holding run and only commands the CLI
+        // accepts (`effigy tasks status` does not resolve a managed profile).
+        &[
+            "`dev` is already running",
+            "`effigy run status ",
+            "`effigy run stop ",
+            "`effigy runs`",
+        ],
     );
 }
 
@@ -669,7 +676,11 @@ fn cli_lock_wait_timeout_keeps_owner_on_status_and_omits_json_from_text_stdout()
     );
     assert!(stderr.contains("`dev` is already running"), "{stderr}");
     assert!(stderr.contains("waited"), "{stderr}");
-    assert!(stderr.contains("effigy tasks status dev"), "{stderr}");
+    assert!(
+        stderr.contains("`effigy run status ") && stderr.contains("`effigy run stop "),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("effigy tasks status"), "{stderr}");
     assert_eq!(text.status.code(), Some(75), "a lock conflict exits 75");
 
     let json = Command::new(env!("CARGO_BIN_EXE_effigy"))
@@ -688,9 +699,11 @@ fn cli_lock_wait_timeout_keeps_owner_on_status_and_omits_json_from_text_stdout()
     assert_eq!(parsed["error"]["details"]["schema"], "effigy.lock-wait.v2");
     assert_eq!(parsed["error"]["details"]["wait_timeout_ms"], 150);
     assert!(parsed["error"]["details"]["holder"]["pid"].is_u64());
-    assert_eq!(
-        parsed["error"]["details"]["status_command"],
-        "effigy tasks status dev"
+    assert!(
+        parsed["error"]["details"]["status_command"]
+            .as_str()
+            .is_some_and(|command| command.starts_with("effigy run status ")),
+        "status_command must be a command the CLI accepts: {parsed}"
     );
 
     let status = Command::new(env!("CARGO_BIN_EXE_effigy"))

@@ -414,6 +414,53 @@ fn command_failure_renders_the_three_human_facts() {
     );
 }
 
+/// A lock conflict's human rendering keeps the holder and the commands. The
+/// details JSON has no `message`/`cause` key, so lifting it by key used to
+/// print only ``task `dev` failed`` (effigy#313).
+#[test]
+fn a_lock_conflict_renders_its_holder_and_the_next_commands() {
+    let error = RunnerError::TaskLockConflict(Box::new(effigy_core::task_lock::TaskLockConflict {
+        scope: "task:dev".to_owned(),
+        task: "dev".to_owned(),
+        holder_pid: Some(99_290),
+        holder_run: Some("agqw465rcnc7zpo22ry62fmtnq".to_owned()),
+        holder_started_at_epoch_ms: Some(1),
+        wait_timeout_ms: Some(150),
+        waited_ms: Some(150),
+        status_command: Some("effigy run status agqw465rcnc7zpo22ry62fmtnq".to_owned()),
+        details_json: Some(
+            r#"{"schema":"effigy.lock-wait.v2","status_command":"effigy run status agqw465rcnc7zpo22ry62fmtnq"}"#
+                .to_owned(),
+        ),
+        remediation: "`dev` is already running (pid 99290 on this host, run \
+            agqw465rcnc7zpo22ry62fmtnq, started 1h06m ago, attached to a terminal); \
+            waited 150ms of 150ms. Inspect it with `effigy run status \
+            agqw465rcnc7zpo22ry62fmtnq` (or list every run with `effigy runs`), wait \
+            longer with `effigy --lock-wait-ms 600000 dev`, or stop that run with \
+            `effigy run stop agqw465rcnc7zpo22ry62fmtnq` (or press Ctrl-C in its terminal)"
+                .to_owned(),
+    }));
+
+    let human = error.human_error();
+    let rendered = human.render_text();
+    assert!(
+        rendered.contains("`dev` is already running (pid 99290"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("waited 150ms of 150ms"), "{rendered}");
+    assert!(
+        rendered.contains("`effigy run status agqw465rcnc7zpo22ry62fmtnq`"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("`effigy run stop "), "{rendered}");
+    assert!(rendered.contains("`effigy runs`"), "{rendered}");
+    assert!(!rendered.contains("tasks status"), "{rendered}");
+    // The structured envelope is unchanged: a machine still reads the schema.
+    assert!(error
+        .json_error_details()
+        .is_some_and(|details| details.contains("effigy.lock-wait.v2")));
+}
+
 #[test]
 fn a_display_sentence_lifts_its_next_step_out_of_the_evidence() {
     let error = RunnerError::TaskInvocation(

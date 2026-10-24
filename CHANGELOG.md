@@ -543,10 +543,14 @@ During v0.x, MINOR bumps may include breaking changes.
 - Container commands say what is happening per service, and a readiness
   failure names the service that is wrong (effigy#313). `container up`
   (attached and `--detach`) and `container down` draw one step per service
-  from the runtime's own progress lines (`pulling postgres:16`,
-  `creating web`, `starting web`, `stopping web`, `removing web`), and each
-  step ends with its duration; the phases around them are named too
-  (`rendering the stack`, `preparing ports and loopback`,
+  from the runtime's own progress lines, created and moved while it works:
+  `up` reads `pulling postgres:16`, `building web`, `creating web` and
+  `starting web`, `down` reads `stopping web`, `stopped web`, `removing web`
+  and `removed web`. Each step ends with ✓/✗ and its duration, a step the
+  runtime never finished is closed from the post-teardown inventory (still
+  listed means still present), and a runtime that narrates nothing still gets
+  one live `stopping the <name> stack` step. The phases around them are named
+  too (`rendering the stack`, `preparing ports and loopback`,
   `starting shared services`, `registering routes`,
   `settling the environment`). Readiness waits poll every service's own
   health check: the label reads
@@ -560,10 +564,11 @@ During v0.x, MINOR bumps may include breaking changes.
   environment's declared health check stays the final gate, and
   `container status` now shows an unhealthy service's last check output.
 - The pid-file prune after the nerdctl 2.3.1 health-check leak is silent in a
-  normal run. It still runs on container commands, but nothing is printed
-  unless `/run` inode use reaches the doctor threshold or the prune fails; the
-  counts, the prune command and the nerdctl 2.4.1 upgrade note live in
-  `effigy doctor` and `effigy container profile prune-health-pid-files`.
+  normal run. It still runs on `container up` and on a task that starts an
+  environment (the managed-profile ensure), but nothing is printed unless
+  `/run` inode use reaches the doctor threshold or the prune fails; the counts,
+  the prune command and the nerdctl 2.4.1 upgrade note live in `effigy doctor`
+  and `effigy container profile prune-health-pid-files`.
 - The held-environment and already-running refusals name the run holding the
   work and give commands that exist. `refused to stop, restart or recreate
   environment <name> while runs hold it` now lists each holder's run id, task,
