@@ -23,8 +23,10 @@ use serde::Serialize;
 
 use crate::server::GatewayConfig;
 
-pub(crate) fn error(reason: impl std::fmt::Debug) -> io::Error {
-    io::Error::other(format!("{reason:?}"))
+/// A gateway refusal as a person reads it: the reason's own sentence, never a
+/// `Debug` quotation.
+pub(crate) fn error(reason: impl std::fmt::Display) -> io::Error {
+    io::Error::other(reason.to_string())
 }
 pub fn context(budget: Duration, class: EffectClass) -> OperationContext {
     context_until(Deadline::At(Instant::now() + budget), class)
@@ -388,7 +390,7 @@ fn completion_reason(workload: &WorkloadOutcome, tail: &str) -> Option<String> {
         } => return None,
         WorkloadOutcome::Succeeded => "gateway daemon exited with code 0".to_owned(),
         WorkloadOutcome::Failed { code } => format!("gateway daemon exited with code {code}"),
-        other => format!("gateway daemon stopped: {other:?}"),
+        other => format!("gateway daemon stopped: {other}"),
     };
     if !tail.trim().is_empty() {
         reason.push_str(": ");
@@ -396,6 +398,35 @@ fn completion_reason(workload: &WorkloadOutcome, tail: &str) -> Option<String> {
     }
     Some(reason)
 }
+/// A supervisor event in the words a person reads, never a `Debug` tree. The
+/// event reached the caller before the daemon reported itself active, so each
+/// arm says what the supervisor did instead.
+fn describe_event(event: &supervise::Event) -> String {
+    match event {
+        supervise::Event::Admitted { run, .. } => {
+            format!("the supervisor admitted run {run} without reporting it active")
+        }
+        supervise::Event::Active => "the supervisor reported itself active".to_owned(),
+        supervise::Event::Log { process, bytes } => format!(
+            "the supervisor streamed {} byte(s) from process {process} instead of reporting active",
+            bytes.len()
+        ),
+        supervise::Event::Closed {
+            workload,
+            exit_code,
+            ..
+        } => {
+            format!("the supervisor closed before going active (exit code {exit_code}; {workload})")
+        }
+        supervise::Event::Refused(reason) => {
+            format!("the supervisor refused to start it ({reason})")
+        }
+        supervise::Event::Engine(_) => {
+            "the supervisor sent an engine-only event before going active".to_owned()
+        }
+    }
+}
+
 /// Probe HTTP, HTTPS acceptance, and a DNS answer; every wait shares one budget.
 pub fn self_test(config: &GatewayConfig, budget: Duration) -> io::Result<()> {
     let op = context(budget, EffectClass::Observe);
@@ -410,7 +441,10 @@ pub fn self_test(config: &GatewayConfig, budget: Duration) -> io::Result<()> {
         {
             Ok(())
         }
-        other => Err(error(format!("DNS self-test failed: {other:?}"))),
+        other => Err(error(format!(
+            "DNS self-test failed: {}; check that the gateway is running and that its DNS port is not taken",
+            other.unproven()
+        ))),
     }
 }
 
@@ -546,7 +580,12 @@ pub fn up_with_executable_within(
     // reports its cause instead of waiting for the readiness deadline.
     match client.event(&admission) {
         Ok(supervise::Event::Active) => {}
-        Ok(event) => return Err(error(format!("gateway daemon failed to start: {event:?}"))),
+        Ok(event) => {
+            return Err(error(format!(
+                "gateway daemon failed to start: {}; run `effigy gateway status` for the recorded diagnosis",
+                describe_event(&event)
+            )))
+        }
         Err(err) if admission.check("gateway admission").is_err() => {
             let _ = client.stop(&cx, run_id()?);
             return Err(error(format!(
@@ -706,8 +745,9 @@ fn http_probe(config: &GatewayConfig, cx: &ObserveContext) -> io::Result<()> {
         // The typed class names the owner of the failure; the observation is
         // preserved verbatim so the historical cause is never discarded.
         return Err(error(format!(
-            "HTTP self-test failed ({}): {observed:?}",
-            classify_http_self_test(&observed).as_str()
+            "HTTP self-test failed ({}): {}; run `effigy gateway status` for the recorded diagnosis",
+            classify_http_self_test(&observed).as_str(),
+            observed.unproven()
         )));
     }
     if let Some(address) = config.proxy.tls_bind_addr {
@@ -724,6 +764,67 @@ fn http_probe(config: &GatewayConfig, cx: &ObserveContext) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stopped_daemon_says_what_ended_it_and_never_a_debug_tree() {
+        // Before: `gateway daemon stopped: TimedOut { phase: "settle", ... }`.
+        let reason = completion_reason(
+            &WorkloadOutcome::TimedOut {
+                phase: "settle".into(),
+            },
+            "waiting for DNS",
+        )
+        .expect("a timed-out daemon reports a reason");
+        assert_eq!(
+            reason,
+            "gateway daemon stopped: the workload timed out while waiting for the environment to \
+             settle: waiting for DNS"
+        );
+        assert!(!reason.contains("TimedOut {"), "{reason}");
+
+        let unknown = completion_reason(
+            &WorkloadOutcome::Unknown(UnknownReason::PermissionDenied),
+            "",
+        )
+        .expect("an unproven daemon reports a reason");
+        assert!(
+            unknown.contains(
+                "the workload outcome is unknown: could not tell: this user may not read"
+            ),
+            "{unknown}"
+        );
+    }
+
+    #[test]
+    fn a_daemon_that_never_went_active_says_what_the_supervisor_did() {
+        // Before: `gateway daemon failed to start: Refused("port 443 in use")`.
+        let refused = describe_event(&supervise::Event::Refused("port 443 is in use".into()));
+        assert_eq!(
+            refused,
+            "the supervisor refused to start it (port 443 is in use)"
+        );
+        let closed = describe_event(&supervise::Event::Closed {
+            cleanup_complete: true,
+            workload: WorkloadOutcome::Failed { code: 1 },
+            exit_code: 1,
+        });
+        assert_eq!(
+            closed,
+            "the supervisor closed before going active (exit code 1; the workload failed with \
+             exit code 1)"
+        );
+        for event in [
+            supervise::Event::Refused("x".into()),
+            supervise::Event::Engine(vec![1, 2, 3]),
+        ] {
+            let reason = describe_event(&event);
+            assert!(
+                !reason.contains("Refused(") && !reason.contains("Engine("),
+                "{reason}"
+            );
+        }
+    }
+
     #[test]
     fn gateway_readiness_budget_starts_after_admission() {
         // A slow admission is a separate phase: the readiness deadline is the
@@ -830,7 +931,7 @@ mod tests {
         let error = self_test_error(address, Duration::from_millis(300));
         assert!(error.contains("(deadline)"), "{error}");
         assert!(
-            error.contains("TimedOut"),
+            error.contains("the observation timed out during HTTP response"),
             "the original deadline observation is preserved: {error}"
         );
         let _ = silence.join();
@@ -850,7 +951,7 @@ mod tests {
         let error = self_test_error(address, Duration::from_secs(2));
         assert!(error.contains("(protocol)"), "{error}");
         assert!(
-            error.contains("Unparsable"),
+            error.contains("a recorded value could not be parsed (HTTP version)"),
             "the original protocol observation is preserved: {error}"
         );
         peer.join().unwrap();
@@ -866,7 +967,7 @@ mod tests {
         let error = self_test_error(address, Duration::from_secs(2));
         assert!(error.contains("(listener)"), "{error}");
         assert!(
-            error.contains("Unknown(") || error.contains("Absent("),
+            error.contains("the evidence contradicts itself") || error.contains("does not exist"),
             "the original listener observation is preserved: {error}"
         );
     }

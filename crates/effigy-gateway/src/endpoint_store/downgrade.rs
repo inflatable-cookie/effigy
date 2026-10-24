@@ -9,7 +9,7 @@ impl EndpointStore {
             Observed::Verified(snapshot, _) if snapshot.authority != Authority::Store => Err(error(
                 "gateway endpoints were exported; run `effigy gateway setup` to re-import after stopping v0.14.1",
             )),
-            Observed::Unknown(reason) => Err(error(format!("endpoint authority unknown: {reason:?}"))),
+            Observed::Unknown(reason) => Err(error(format!("endpoint authority unknown: {reason}"))),
             _ => Ok(()),
         }
     }

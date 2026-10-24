@@ -150,7 +150,7 @@ impl ForegroundRecord {
             ticket,
             EffectState::Unknown,
             None,
-            Some(format!("{reason:?}")),
+            Some(format!("{reason}")),
         )
     }
 

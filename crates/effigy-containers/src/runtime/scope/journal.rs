@@ -64,7 +64,10 @@ fn read(
             Ok(Some(entry))
         }
         Observed::Absent(_) => Ok(None),
-        other => Err(error(format!("scope {token} is unreadable: {other:?}"))),
+        other => Err(error(format!(
+            "the scope record for {token} is unreadable ({}); run `effigy doctor` to inspect the state root",
+            other.unproven()
+        ))),
     }
 }
 fn local(
@@ -76,7 +79,7 @@ fn local(
     match StateRoot::checkout_observe_in(cx, &home, &location) {
         Observed::Verified(root, _) => Ok(Some(root)),
         Observed::Absent(_) => Ok(None),
-        other => Err(error(format!("{other:?}"))),
+        other => Err(error(other.unproven())),
     }
 }
 fn legacy(
@@ -153,7 +156,7 @@ pub fn load_local_records(checkout: &Path) -> io::Result<Vec<ScopeRecord>> {
         {
             for entry in dir.observe_entries(&cx, LIMIT).map_err(error)? {
                 cx.check("scope inventory")
-                    .map_err(|e| error(format!("{e:?}")))?;
+                    .map_err(|interrupt| error(format!("{interrupt}")))?;
                 let Some(token) = entry.to_str().and_then(|name| name.strip_suffix(".json")) else {
                     continue;
                 };

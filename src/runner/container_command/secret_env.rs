@@ -6,7 +6,8 @@ use effigy_containers::EffectiveContainerPolicy;
 use effigy_core::shell::shell_quote;
 use effigy_env::secret::SecretString;
 use effigy_manifest::{
-    ManifestContainerSecretDelivery, ManifestSecretTarget, ManifestSecretsBackend,
+    ManifestContainerSecretDelivery, ManifestSecretKeyConfig, ManifestSecretTarget,
+    ManifestSecretsBackend,
 };
 
 use crate::runner::error::RunnerError;
@@ -17,7 +18,48 @@ use crate::runner::manifest::{load_task_manifest, TASK_MANIFEST_FILE};
 pub(in crate::runner) struct ResolvedContainerSecretRuntime {
     pub delivery: ManifestContainerSecretDelivery,
     pub env: Vec<(String, SecretString)>,
+    /// One line per declared container key this run could not deliver: the
+    /// key, why it was not delivered, and what to do about it. A bring-up that
+    /// delivers nothing this way never writes an empty runtime file silently.
+    pub warnings: Vec<String>,
 }
+
+impl ResolvedContainerSecretRuntime {
+    fn delivered(
+        delivery: ManifestContainerSecretDelivery,
+        env: Vec<(String, SecretString)>,
+        warnings: Vec<String>,
+    ) -> Self {
+        Self {
+            delivery,
+            env,
+            warnings,
+        }
+    }
+
+    /// Nothing to deliver. `reason` and `fix` describe one undeliverable key;
+    /// every declared container key gets one warning line.
+    fn undelivered(
+        delivery: ManifestContainerSecretDelivery,
+        keys: &[(&String, &ManifestSecretKeyConfig)],
+        reason: &str,
+        fix: &str,
+    ) -> Self {
+        Self::delivered(
+            delivery,
+            Vec::new(),
+            keys.iter()
+                .map(|(name, _)| {
+                    format!("container secret `{name}` was not delivered: {reason}; {fix}")
+                })
+                .collect(),
+        )
+    }
+}
+
+// Written once so every undelivered-key warning names the same remedy the
+// user can act on.
+const UNLOCK_FIX: &str = "run `effigy secrets unlock` at a terminal, or rerun `effigy dev` on one";
 
 pub(super) fn resolve_container_secret_runtime(
     repo_root: &Path,
@@ -27,10 +69,11 @@ pub(super) fn resolve_container_secret_runtime(
     let manifest = load_task_manifest(&repo_root.join(TASK_MANIFEST_FILE))?;
     let delivery = policy.secret_delivery;
     let Some(secrets) = manifest.secrets.as_ref() else {
-        return Ok(ResolvedContainerSecretRuntime {
+        return Ok(ResolvedContainerSecretRuntime::delivered(
             delivery,
-            env: Vec::new(),
-        });
+            Vec::new(),
+            Vec::new(),
+        ));
     };
     let container_keys = secrets
         .keys
@@ -38,10 +81,11 @@ pub(super) fn resolve_container_secret_runtime(
         .filter(|(_, key)| key.targets.contains(&ManifestSecretTarget::Containers))
         .collect::<Vec<_>>();
     if container_keys.is_empty() {
-        return Ok(ResolvedContainerSecretRuntime {
+        return Ok(ResolvedContainerSecretRuntime::delivered(
             delivery,
-            env: Vec::new(),
-        });
+            Vec::new(),
+            Vec::new(),
+        ));
     }
 
     let required_names = container_keys
@@ -51,10 +95,12 @@ pub(super) fn resolve_container_secret_runtime(
         .collect::<Vec<_>>();
     if !matches!(secrets.backend, Some(ManifestSecretsBackend::EffigyVault)) {
         if required_names.is_empty() {
-            return Ok(ResolvedContainerSecretRuntime {
+            return Ok(ResolvedContainerSecretRuntime::undelivered(
                 delivery,
-                env: Vec::new(),
-            });
+                &container_keys,
+                "`[secrets].backend` is not `\"effigy-vault\"`",
+                "select the effigy-vault backend and store the value",
+            ));
         }
         return Err(RunnerError::task_invocation(
             "required container secrets need `[secrets].backend = \"effigy-vault\"`",
@@ -68,10 +114,12 @@ pub(super) fn resolve_container_secret_runtime(
     )?;
     if !vault_path.exists() {
         if required_names.is_empty() {
-            return Ok(ResolvedContainerSecretRuntime {
+            return Ok(ResolvedContainerSecretRuntime::undelivered(
                 delivery,
-                env: Vec::new(),
-            });
+                &container_keys,
+                &format!("the vault is missing at {}", vault_path.display()),
+                "run `effigy secrets init` and store the value",
+            ));
         }
         return Err(RunnerError::task_invocation(format!(
             "required container secrets are declared but the vault is missing at {}",
@@ -79,20 +127,30 @@ pub(super) fn resolve_container_secret_runtime(
         )));
     }
 
+    let optional_only = required_names.is_empty() && !force_unlock;
+    // Every route a dev session can reach: the local-dev key, the passphrase
+    // this session already holds (prompted, inherited from its parent, or
+    // sealed in the local unlock credential), or one prompt now.
     let payload = if crate::runner::secret_session::local_dev_secret_access_active() {
         match crate::runner::secret_vault::read_effigy_vault_payload_for_local_dev(&vault_path) {
-            Ok(payload) => payload,
-            Err(_) => {
+            Ok(payload) => Some(payload),
+            Err(local_dev_error) => {
                 let Some(passphrase) =
                     crate::runner::secret_session::read_local_dev_upgrade_passphrase(
-                    required_names.is_empty() && !force_unlock,
-                    "Vault passphrase (one-time local-dev setup): ",
-                    "local-dev container secrets need one passphrase unlock to create the unattended dev key, and secret input requires an interactive TTY",
-                )? else {
-                    return Ok(ResolvedContainerSecretRuntime {
+                        optional_only,
+                        "Vault passphrase (one-time local-dev setup): ",
+                        "local-dev container secrets need one passphrase unlock to create the unattended dev key, and secret input requires an interactive TTY",
+                    )?
+                else {
+                    return Ok(ResolvedContainerSecretRuntime::undelivered(
                         delivery,
-                        env: Vec::new(),
-                    });
+                        &container_keys,
+                        &format!(
+                            "the local-dev key could not read the vault ({}), and this run has no terminal to ask for its passphrase",
+                            local_dev_error.human_error().what_failed()
+                        ),
+                        UNLOCK_FIX,
+                    ));
                 };
                 let write = crate::runner::secret_vault::begin_vault_write(&vault_path)?;
                 let payload = crate::runner::secret_vault::read_effigy_vault_payload(
@@ -104,24 +162,33 @@ pub(super) fn resolve_container_secret_runtime(
                     &payload,
                     passphrase.expose(),
                 )?;
-                payload
+                Some(payload)
             }
         }
     } else {
-        let Some(passphrase) = crate::runner::secret_session::read_vault_passphrase(
+        match crate::runner::secret_session::read_vault_passphrase(
             &vault_path,
-            required_names.is_empty() && !force_unlock,
+            optional_only,
             "Vault passphrase: ",
             "container secrets require an unlocked vault passphrase and secret input requires an interactive TTY",
-        )? else {
-            return Ok(ResolvedContainerSecretRuntime {
-                delivery,
-                env: Vec::new(),
-            });
-        };
-        crate::runner::secret_vault::read_effigy_vault_payload(&vault_path, passphrase.expose())?
+        )? {
+            Some(passphrase) => Some(crate::runner::secret_vault::read_effigy_vault_payload(
+                &vault_path,
+                passphrase.expose(),
+            )?),
+            None => None,
+        }
+    };
+    let Some(payload) = payload else {
+        return Ok(ResolvedContainerSecretRuntime::undelivered(
+            delivery,
+            &container_keys,
+            "the vault is locked and this run has no terminal to ask for its passphrase",
+            UNLOCK_FIX,
+        ));
     };
     let mut injected = Vec::new();
+    let mut warnings = Vec::new();
     let mut missing_required = Vec::new();
     for (name, key) in container_keys {
         match payload.records.get(name.as_str()) {
@@ -130,7 +197,9 @@ pub(super) fn resolve_container_secret_runtime(
                 SecretString::new(record.value.expose().to_owned()),
             )),
             None if key.required => missing_required.push(name.to_owned()),
-            None => {}
+            None => warnings.push(format!(
+                "container secret `{name}` was not delivered: it is declared but not stored in the vault; run `effigy secrets set {name}`"
+            )),
         }
     }
     if !missing_required.is_empty() {
@@ -139,10 +208,18 @@ pub(super) fn resolve_container_secret_runtime(
             missing_required.join(", ")
         )));
     }
-    Ok(ResolvedContainerSecretRuntime {
-        delivery,
-        env: injected,
-    })
+    Ok(ResolvedContainerSecretRuntime::delivered(
+        delivery, injected, warnings,
+    ))
+}
+
+/// Whether this bring-up has anything to write into the runtime files. An
+/// empty delivery is never written: a declared key that could not be delivered
+/// already produced its own warning in [`resolve_container_secret_runtime`],
+/// and writing `runtime.env` empty (or `runtime.json` as `{}`) would leave the
+/// service reading "no secrets configured" with nothing said about it.
+fn writes_runtime_secret_files(runtime: &ResolvedContainerSecretRuntime) -> bool {
+    runtime.delivery == ManifestContainerSecretDelivery::RuntimeFiles && !runtime.env.is_empty()
 }
 
 pub(super) fn materialize_container_secret_runtime(
@@ -151,7 +228,7 @@ pub(super) fn materialize_container_secret_runtime(
     runtime: &ResolvedContainerSecretRuntime,
     binding: &effigy_containers::exec::VerifiedComposeContainer,
 ) -> Result<(), RunnerError> {
-    if runtime.delivery != ManifestContainerSecretDelivery::RuntimeFiles || runtime.env.is_empty() {
+    if !writes_runtime_secret_files(runtime) {
         return Ok(());
     }
     let Some(runtime_dir) = policy.secret_runtime_dir.as_deref() else {
@@ -368,7 +445,7 @@ impl TempSecretFile {
 mod tests {
     use super::{
         container_secret_runtime_env_path, render_runtime_env_file, render_runtime_json_file,
-        resolve_container_secret_runtime,
+        resolve_container_secret_runtime, writes_runtime_secret_files,
     };
     use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
     use effigy_env::secret::SecretString;
@@ -535,6 +612,117 @@ catalog = "php-fpm"
         assert!(runtime.env.is_empty());
     }
 
+    /// An optional-only project must still receive its values: the vault a dev
+    /// session opened with the local-dev key is enough, with no passphrase in
+    /// sight.
+    #[test]
+    fn container_secret_runtime_dev_key_session_delivers_optional_values() {
+        let root = temp_repo("container-secret-dev-key");
+        write_optional_only_container_manifest(&root);
+        write_dev_key_vault(
+            &root,
+            &[
+                ("openai_api_key", "sk-dev-value"),
+                ("recaptcha_secret", "rc-dev-value"),
+                ("mailchimp_api_key", "mc-dev-value"),
+            ],
+        );
+        let _test_passphrase = ScopedEnvVar::remove("EFFIGY_TEST_SECRETS_PASSPHRASE");
+        let _internal_passphrase = ScopedEnvVar::remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE");
+        crate::runner::secret_session::forget_session_passphrase_for_tests();
+        let _local_dev = crate::runner::secret_session::activate_local_dev_secret_access(true);
+
+        let runtime = resolve_container_secret_runtime(&root, &test_runtime_files_policy(), false)
+            .expect("a dev-key session resolves the optional container values");
+
+        assert!(
+            runtime.warnings.is_empty(),
+            "unexpected warnings: {}",
+            runtime.warnings.join(" | ")
+        );
+        assert_eq!(runtime.env.len(), 3);
+        assert!(runtime
+            .env
+            .iter()
+            .any(|(key, value)| key == "OPENAI_API_KEY" && value.expose() == "sk-dev-value"));
+        assert!(runtime
+            .env
+            .iter()
+            .any(|(key, value)| key == "RECAPTCHA_SECRET" && value.expose() == "rc-dev-value"));
+        assert!(
+            writes_runtime_secret_files(&runtime),
+            "a delivered runtime must be written"
+        );
+    }
+
+    /// A declared key that cannot be delivered says which key and why, names
+    /// the fix, and never reaches the runtime files as an empty value.
+    #[test]
+    fn container_secret_runtime_warns_for_each_undelivered_optional_key() {
+        let root = temp_repo("container-secret-undeliverable");
+        write_optional_only_container_manifest(&root);
+        write_test_vault(&root, "vault-passphrase", &[]);
+        let _test_passphrase = ScopedEnvVar::remove("EFFIGY_TEST_SECRETS_PASSPHRASE");
+        let _internal_passphrase = ScopedEnvVar::remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE");
+        crate::runner::secret_session::forget_session_passphrase_for_tests();
+
+        let runtime = resolve_container_secret_runtime(&root, &test_runtime_files_policy(), false)
+            .expect("optional keys must not fail the bring-up");
+
+        assert!(runtime.env.is_empty());
+        assert!(
+            !writes_runtime_secret_files(&runtime),
+            "an undelivered runtime must not be written empty"
+        );
+        assert_eq!(
+            runtime.warnings.len(),
+            3,
+            "{}",
+            runtime.warnings.join(" | ")
+        );
+        for name in ["openai_api_key", "recaptcha_secret", "mailchimp_api_key"] {
+            let warning = runtime
+                .warnings
+                .iter()
+                .find(|warning| warning.contains(name))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "no warning names `{name}`: {}",
+                        runtime.warnings.join(" | ")
+                    )
+                });
+            assert!(warning.contains("was not delivered"), "{warning}");
+            assert!(warning.contains("locked"), "{warning}");
+            assert!(warning.contains("effigy secrets unlock"), "{warning}");
+        }
+    }
+
+    #[test]
+    fn container_secret_runtime_warns_for_a_declared_key_the_vault_does_not_store() {
+        let root = temp_repo("container-secret-unstored");
+        write_optional_only_container_manifest(&root);
+        write_test_vault(&root, "vault-passphrase", &[("unrelated", "hidden")]);
+        let _env = ScopedEnvVar::set("EFFIGY_TEST_SECRETS_PASSPHRASE", "vault-passphrase");
+
+        let runtime = resolve_container_secret_runtime(&root, &test_runtime_files_policy(), false)
+            .expect("optional keys must not fail the bring-up");
+
+        assert!(runtime.env.is_empty());
+        assert!(!writes_runtime_secret_files(&runtime));
+        assert_eq!(
+            runtime.warnings.len(),
+            3,
+            "{}",
+            runtime.warnings.join(" | ")
+        );
+        assert!(runtime
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("openai_api_key")
+                && warning.contains("not stored in the vault")
+                && warning.contains("effigy secrets set openai_api_key")));
+    }
+
     #[test]
     fn container_secret_runtime_env_path_is_opt_in() {
         let policy = test_runtime_files_policy();
@@ -623,6 +811,87 @@ catalog = "php-fpm"
                 previous,
                 _lock: lock,
             }
+        }
+
+        /// Holds the test lock and guarantees the variable is not set, so a
+        /// passphrase another test left behind can never answer this one.
+        fn remove(key: &str) -> Self {
+            let lock = crate::contract_test_support::lock_test();
+            let previous = std::env::var(key).ok();
+            unsafe {
+                std::env::remove_var(key);
+            }
+            Self {
+                key: key.to_owned(),
+                previous,
+                _lock: lock,
+            }
+        }
+    }
+
+    fn write_optional_only_container_manifest(root: &Path) {
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+
+[secrets.keys.openai_api_key]
+required = false
+targets = ["containers"]
+
+[secrets.keys.recaptcha_secret]
+required = false
+targets = ["containers"]
+
+[secrets.keys.mailchimp_api_key]
+required = false
+targets = ["containers"]
+
+[containers]
+default = "web"
+
+[containers.web]
+primary_service = "app"
+
+[containers.web.services.app]
+catalog = "php-fpm"
+"#,
+        )
+        .expect("write manifest");
+    }
+
+    /// A vault exactly as a first `effigy dev` upgrade leaves it: the payload
+    /// carries the local-dev key, and the key file is owner-only.
+    fn write_dev_key_vault(root: &Path, records: &[(&str, &str)]) {
+        let mut payload = VaultPlaintextPayload::empty();
+        for (name, value) in records {
+            payload.records.insert(
+                (*name).to_owned(),
+                VaultSecretRecord::new(SecretValue::new(*value)),
+            );
+        }
+        let key = effigy_secrets::LocalDevUnlockKey::generate().expect("generate local-dev key");
+        let envelope = payload
+            .encrypt_with_passphrase_and_local_dev_key("vault-passphrase", &key)
+            .expect("encrypt test vault");
+        let vault_path = root.join(".effigy/secrets/local.vault");
+        fs::create_dir_all(vault_path.parent().expect("vault parent")).expect("mkdir vault parent");
+        fs::write(
+            &vault_path,
+            envelope.to_json_pretty().expect("serialize test vault"),
+        )
+        .expect("write test vault");
+        let key_path = effigy_secrets::local_dev_unlock_key_path(&vault_path);
+        fs::write(&key_path, key.expose()).expect("write local-dev key");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600))
+                .expect("secure local-dev key");
         }
     }
 

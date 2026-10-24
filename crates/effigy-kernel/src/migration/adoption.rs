@@ -98,7 +98,9 @@ impl Record for Seal {
 }
 
 fn inconsistent(reason: UnknownReason) -> StoreError {
-    StoreError::Corrupt(format!("runtime import: {reason:?}"))
+    StoreError::Corrupt(format!(
+        "the runtime import state could not be read ({reason})"
+    ))
 }
 
 /// The one committed migration manifest on this machine, if it ever ran the

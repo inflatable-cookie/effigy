@@ -9,11 +9,21 @@ use effigy_kernel::run::ForegroundRun;
 pub(in crate::runner::task_engine) fn inherited_class() -> Result<Option<RuntimeParent>, RunnerError>
 {
     RuntimeParent::inherited(kernel::effects().operation())
-        .map_err(|error| class_error(&error.to_string()))
+        .map_err(|error| capability_error(&error.to_string()))
 }
-fn class_error(reason: &str) -> RunnerError {
+/// The parent run's capability refused this child, or could not be read.
+///
+/// The evidence is the capability's own sentence; the next action is the
+/// top-level command that grants the child its own capability.
+fn capability_error(reason: &str) -> RunnerError {
     RunnerError::task_invocation(format!(
-        "parent run capability refused: {reason}; nothing was started"
+        "the parent run capability refused this child ({reason}); nothing was started. Run the child as its own top-level command, for example `effigy tasks run <task>`, so it owns its capability"
+    ))
+}
+/// This foreground run could not start; the evidence is the cause.
+fn start_error(reason: &str) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "this task run could not start ({reason}); nothing was started"
     ))
 }
 
@@ -21,7 +31,7 @@ pub(super) fn require_durable_parent() -> Result<(), RunnerError> {
     if PARENTS.with(|parents| parents.borrow().last().is_some_and(|p| p.memory.is_some()))
         || inherited_class()?.is_some_and(|grant| grant.class == RunClass::Foreground)
     {
-        return Err(class_error(
+        return Err(capability_error(
             "a foreground parent cannot acquire late durable capabilities",
         ));
     }
@@ -49,8 +59,8 @@ impl TaskRun {
             return Self::begin_with(request, task_gate, LifecyclePlacement::Inline);
         }
         if request.key.is_some() || request.managed_run_token.is_some() {
-            return Err(class_error(
-                "named and managed runs require durable admission",
+            return Err(capability_error(
+                "named and managed runs need a durable parent run",
             ));
         }
         let plan = super::super::admission::plan(request.admission)?;
@@ -59,23 +69,23 @@ impl TaskRun {
         let location = CheckoutLocation {
             root: request.target.root.clone(),
             git_directory: effigy_core::worktree_scope::git_directory(&request.target.root)
-                .map_err(|error| class_error(&error.to_string()))?,
+                .map_err(|error| start_error(&error.to_string()))?,
         };
         let cx = kernel::effects();
         let checkout = checkout::read(&request.target.root)
-            .map_err(|error| class_error(&error.to_string()))?
+            .map_err(|error| start_error(&error.to_string()))?
             .map(Ok)
             .unwrap_or_else(|| StateRoot::filesystem_checkout(&kernel::observe(), &location))
-            .map_err(|error| class_error(&error.to_string()))?;
+            .map_err(|error| start_error(&error.to_string()))?;
         let root = StateRoot::foreground_effects(&cx, &location)
-            .map_err(|error| class_error(&error.to_string()))?;
+            .map_err(|error| start_error(&error.to_string()))?;
         let owner = if task_gate {
             request.target.owner(checkout)?
         } else {
             request
                 .target
                 .shared_lock_owner(checkout)?
-                .ok_or_else(|| class_error("standalone foreground owner needs its private gate"))?
+                .ok_or_else(|| start_error("standalone foreground owner needs its private gate"))?
         };
         let task = request.target.task_id(checkout)?;
         let ancestors = parent
@@ -83,7 +93,7 @@ impl TaskRun {
             .map(|parent| parent.ancestors.clone())
             .unwrap_or_default();
         if ancestors.contains(&owner) {
-            return Err(class_error("recursive foreground task reference"));
+            return Err(start_error("recursive foreground task reference"));
         }
         let mut shared_owners = parent
             .as_ref()
@@ -100,7 +110,7 @@ impl TaskRun {
                 let mut spec = invocation.spec().clone();
                 spec.gates.push(shared);
                 invocation = ResolvedInvocation::new(spec)
-                    .map_err(|error| class_error(&error.to_string()))?;
+                    .map_err(|error| start_error(&error.to_string()))?;
             }
         }
         kernel::install_router()?;
@@ -157,15 +167,15 @@ impl TaskRun {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .closure_identity()
                 .map(Some)
-                .map_err(|e| class_error(&e.to_string())),
+                .map_err(|e| start_error(&e.to_string())),
             None => self
                 .run
                 .as_ref()
-                .ok_or_else(|| class_error("run is closed"))?
+                .ok_or_else(|| start_error("run is closed"))?
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .cleanup_closure_identity()
-                .map_err(|e| class_error(&e.to_string())),
+                .map_err(|e| start_error(&e.to_string())),
         }
     }
     pub(in crate::runner) fn spawn(
@@ -180,7 +190,7 @@ impl TaskRun {
             let prior: RuntimeParent = lease
                 .capability()
                 .payload(cx.operation())
-                .map_err(|e| class_error(&e.to_string()))?;
+                .map_err(|e| start_error(&e.to_string()))?;
             if prior.closure != closure {
                 self.prior_leases
                     .push(self.lease.take().expect("existing lease"));
@@ -204,7 +214,7 @@ impl TaskRun {
                     )
                     .with_closure(closure),
                 )
-                .map_err(|error| class_error(&error.to_string()))?,
+                .map_err(|error| start_error(&error.to_string()))?,
             );
         }
         let capability = self
@@ -291,20 +301,20 @@ impl TaskRun {
         let parent = self.memory.as_ref().expect("memory step selected");
         let owner = self.owner();
         let effigy_kernel::id::Scope::Checkout(checkout) = owner.scope() else {
-            return Err(class_error("memory parent is not checkout-local"));
+            return Err(start_error("memory parent is not checkout-local"));
         };
         let location = CheckoutLocation {
             root: self.target.root.clone(),
             git_directory: effigy_core::worktree_scope::git_directory(&self.target.root)
-                .map_err(|error| class_error(&error.to_string()))?,
+                .map_err(|error| start_error(&error.to_string()))?,
         };
         let root = StateRoot::foreground_effects(&kernel::effects(), &location)
-            .map_err(|error| class_error(&error.to_string()))?;
+            .map_err(|error| start_error(&error.to_string()))?;
         let step_owner = ResourceId::store(
             effigy_kernel::id::Scope::Checkout(checkout),
             &format!("task-step:{}:{index}", owner.name()),
         )
-        .map_err(|error| class_error(&error.to_string()))?;
+        .map_err(|error| start_error(&error.to_string()))?;
         let inv = invocation(
             &self.target.task_id(checkout)?,
             step_owner,
@@ -328,7 +338,7 @@ impl TaskRun {
                     }),
                 },
             )
-            .map_err(|error| class_error(&error.to_string()))?;
+            .map_err(|error| start_error(&error.to_string()))?;
         let mut target = self.target.clone();
         target.label = label.into();
         let mut ancestors = self.ancestors.clone();

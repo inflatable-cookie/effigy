@@ -91,7 +91,7 @@ impl<'a> Run<'a> {
             },
             true,
         )
-        .map_err(|error| RunError::Invalid(format!("gateway process plan: {error:?}")))?;
+        .map_err(|error| RunError::Invalid(format!("gateway process plan: {error}")))?;
         Self::begin_under(
             cx,
             root,

@@ -518,6 +518,27 @@ During v0.x, MINOR bumps may include breaking changes.
   `command `make` failed / cause: exit code 2 / stderr: … / next: …` with
   bounded, redacted output instead of `(code=Some(2))` and the whole streams,
   and the Debug ratchet baseline drops from 239 to 226.
+- Live steps and the what/evidence/next rubric now cover the remaining command
+  planes (effigy#314). `effigy gateway setup` shows each stage — verifying the
+  operator, trusting mkcert's local CA, applying platform setup (DNS,
+  certificate trust, broker; approve the administrator prompt if it appears),
+  importing endpoint state, recording the receipt and starting the gateway —
+  and `gateway up`, `gateway down`, `gateway repair` and `gateway status`
+  report what they are reading, stopping, planning and applying. `effigy
+  container ports` names the registry it reads, the facts it gathers and the
+  allocations it decides, and `effigy run migrate` shows each read of the
+  runtime state. Kernel, store, gateway, container port/loopback and runner
+  refusals now name the object (the checkout path rather than a token, the
+  domain, the stale and successor owners, the recorded project path), the
+  evidence, and the exact next command: a stale domain reservation names both
+  owners and `effigy gateway repair --owner-checkout <PATH>`, an untrusted
+  state root names the path and its `chmod 700`, a hold on an unreadable
+  project path names the path and the command that shows it again, a
+  foreground child refusal says why it could not start, and kernel `Debug`
+  trees (`Unknown(StoreUnreadable(…))`, `Untrusted("…")`,
+  `CheckoutId { token: […] }`) no longer reach a person. `tests` carry the
+  before/after text for each rewrite, and with this lane's removals the
+  Debug-format ratchet stands at 184 specifiers in 67 files.
 
 - Container commands say what is happening per service, and a readiness
   failure names the service that is wrong (effigy#313). `container up`
@@ -1061,6 +1082,14 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- `effigy secrets doctor` reports what the local-dev key can read: when the key
+  exists it opens the vault with no passphrase, reports `vault: unlocked
+  (local-dev key)` and lists the stored key names (`vault_state.unlock` is
+  `local-dev-key` in JSON). `effigy secrets get` reads through the same key, so
+  a value a `dev` session already made readable on this machine no longer needs
+  `effigy secrets unlock` first. A passphrase this invocation holds or the
+  sealed local unlock credential still works, mutations still need a
+  passphrase, and values are still printed only by `get`.
 - `effigy install:local` now installs this checkout's **optimized release**
   binary: it builds once through `oxide build --release --bin effigy` and
   activates the exact release binary Oxide uplifts to `target/release/effigy`,
@@ -1267,6 +1296,21 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- `effigy dev` delivers a project's container secrets every time the vault can
+  be read. A dev session's local-dev access and the passphrase it just entered
+  now reach every child Effigy process the session starts — the managed
+  environment `up`, the run's supervisor, and a seeded workspace task — on the
+  existing internal env route, instead of the `container up` child resolving
+  nothing. The one-time local-dev upgrade passphrase is cached as the session's
+  passphrase, so a vault that upgrade just converted is readable by the
+  processes it started. A declared container key that is not delivered — the
+  vault is locked with no terminal, the key is declared but not stored, the
+  vault is missing, or the local-dev key cannot read it — prints one `[warn]`
+  line naming the key, the reason and the fix (`effigy secrets unlock`, or
+  rerunning `effigy dev` on a terminal), and is recorded under `warnings` in the
+  `container up` JSON envelope. Required keys still fail the bring-up. An empty
+  `runtime.env`/`runtime.json` is never written silently: a bring-up that
+  delivered nothing leaves the files alone.
 - A container or task declared by a nested catalog directory now belongs to the
   enclosing checkout. A nested catalog directory carries no Git metadata of its
   own, so it resolved a second checkout identity and its own

@@ -135,7 +135,7 @@ impl std::fmt::Display for StoreError {
             Self::MigrationPending(id) => write!(f, "runtime import {id} is prepared but not sealed; finish migration before using this journal"),
             Self::Corrupt(reason) => write!(
                 f,
-                "kernel.db is unreadable ({reason}); the explicit store repair moves it aside"
+                "the runtime journal is unusable ({reason}); nothing was changed. Run `effigy doctor` to inspect the state root, then retry"
             ),
             Self::Busy { waited, holder } => write!(
                 f,
@@ -1544,13 +1544,23 @@ fn schema_version(conn: &Connection) -> Result<i64, StoreError> {
 }
 fn read_unknown(error: &StoreError) -> UnknownReason {
     match error {
-        StoreError::Untrusted { reason, .. } => UnknownReason::Untrusted(reason.clone()),
+        StoreError::Untrusted { path, reason } if reason == crate::fs::OPEN_MODE_REASON => {
+            UnknownReason::Untrusted(format!(
+                "{} is readable by other users; run `chmod 700 {}`",
+                path.display(),
+                path.display()
+            ))
+        }
+        StoreError::Untrusted { path, reason } => UnknownReason::Untrusted(format!(
+            "{} is not trusted store state ({reason}); fix its ownership and permissions",
+            path.display()
+        )),
         StoreError::NeedsRecovery => UnknownReason::StoreNeedsRecovery,
         StoreError::Busy { .. } => UnknownReason::TimedOut {
             phase: "store read".into(),
         },
         StoreError::Io(io) if io.is_permission() => UnknownReason::PermissionDenied,
-        other => UnknownReason::StoreUnreadable(format!("{other:?}")),
+        other => UnknownReason::StoreUnreadable(other.to_string()),
     }
 }
 fn has_backend(conn: &Connection) -> rusqlite::Result<bool> {

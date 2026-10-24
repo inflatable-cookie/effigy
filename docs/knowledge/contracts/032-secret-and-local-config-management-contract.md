@@ -157,22 +157,25 @@ team-hosted secret storage remains a separate concern.
 
 ## Unlock Policy
 
-The built-in vault uses a passphrase. Direct `effigy secrets get`, mutation,
-doctor, and export operations follow that policy until an operator runs
+The built-in vault uses a passphrase. Mutation, `import`, `change-passphrase`
+and `export` operations follow that policy until an operator runs
 `effigy secrets unlock`.
 That command verifies the passphrase and seals a local command credential with
 the adjacent local-dev key. Secret-backed tasks and direct commands can then
 run unattended until `effigy secrets lock` removes both local files. A resolved
 `dev` task may decrypt the separate local-dev payload with `.effigy` state
-without the command credential. New vaults create that key at initialization.
+without the command credential. `effigy secrets doctor` and `effigy secrets
+get` also read through that key when it exists, reporting `unlocked (local-dev
+key)`; doctor prints stored key names and never a value, and `get` is the only
+command that prints one. New vaults create that key at initialization.
 A legacy vault requires one final passphrase unlock from `effigy dev` or
 `effigy secrets unlock`, which upgrades it in place. Changing the passphrase
 also rotates an active command credential.
 
 The local-dev key is a runtime capability, not an isolation boundary against a
 repo-owner process. A process allowed to run or alter the application can also
-influence how injected secrets are consumed. Direct CLI disclosure remains
-passphrase-gated until the operator creates the sealed command credential.
+influence how injected secrets are consumed. Mutation and export remain
+passphrase-gated; disclosure is limited to `secrets get` and doctor's key names.
 
 ## Runtime Injection
 
@@ -201,6 +204,14 @@ Injection rules:
 - resolved `dev` tasks use the local-dev payload without prompting; after an
   explicit `secrets unlock`, other task names and direct vault commands use the
   sealed local command credential without prompting
+- every child Effigy process a `dev` session starts resolves secrets through
+  that session's local-dev access and passphrase, carried on the internal env
+  route rather than this process's global environment (052 K12): the managed
+  environment `up`, the run's supervisor, and a seeded workspace task
+- a declared container key that is not delivered is reported once, naming the
+  key, the reason and the fix, and recorded under `warnings` in the bring-up's
+  JSON envelope; required keys still fail the bring-up, and no bring-up writes
+  an empty runtime secret file
 - container operations unlock `targets = ["containers"]` values only when the
   selected operation starts a runtime (`container up`); read, exec, logs,
   stats, reset, and teardown stay secret-free. Reset tears down runtime
