@@ -281,28 +281,6 @@ During v0.x, MINOR bumps may include breaking changes.
   passphrase; nested commands that need the vault use the local unlock
   credential or prompt.
 
-### Added
-- Human-facing feedback has one foundation (effigy#312). `effigy-ui` exports
-  `steps`, a step-progress API with short present-tense labels: a terminal
-  draws an asynchronous spinner on stderr, each step ends with one `✓`/`✗`
-  line, `--json`, piped output and CI stay silent unless verbose output asks
-  for plain lines, concurrent and nested steps never interleave, and the
-  managed-run TUI suspends drawing while it owns the terminal. It also exports
-  `HumanError`, which carries what failed, bounded and redacted evidence and
-  the next action, and renders both as text for a person and as `error.human`
-  in the `effigy.command.v1` envelope. The runner's top-level error printing
-  uses it, and doctor, container profile, the transient cache spinner and the
-  container health wait report through the step API. Kernel refusals
-  (`StoreError`, `RunError`, `GateError`, `FsError`, `Interrupt`,
-  `UnknownReason`, `Observed`) render what they found and what to do next
-  instead of a `Debug` tree: `run refused: Interrupted(TimedOut { phase:
-  "settle", elapsed: 247.8s })` now reads "the run was refused because the
-  operation timed out after 4m08s while waiting for the environment to
-  settle". `effigy qa:docs:human-error-debug` ratchets Debug formatting in
-  human-facing error construction against
-  `config/human-error-debug-ratchet.json`. The label and error style for
-  contributors is in `docs/guides/011-output-widgets-and-colour-modes.md`.
-
 ### Removed
 - The importer for the current-main central `~/.effigy/state/kernel.db`
   (contract 052 §11.1, effigy#307). That schema existed only on unreleased main
@@ -498,6 +476,27 @@ During v0.x, MINOR bumps may include breaking changes.
   `simulate --version`. The refusal names the replacement.
 
 ### Added
+- Human-facing feedback has one foundation (effigy#312). `effigy-ui` exports
+  `steps`, a step-progress API with short present-tense labels: a terminal
+  draws an asynchronous spinner on stderr, each step ends with one `✓`/`✗`
+  line, `--json`, piped output and CI stay silent unless verbose output asks
+  for plain lines, concurrent and nested steps never interleave, and the
+  managed-run TUI suspends drawing while it owns the terminal. It also exports
+  `HumanError`, which carries what failed, bounded and redacted evidence and
+  the next action, and renders both as text for a person and as `error.human`
+  in the `effigy.command.v1` envelope. The runner's top-level error printing
+  uses it, and doctor, container profile, the transient cache spinner and the
+  container health wait report through the step API. Kernel refusals
+  (`StoreError`, `RunError`, `GateError`, `FsError`, `Interrupt`,
+  `UnknownReason`, `Observed`) render what they found and what to do next
+  instead of a `Debug` tree: `run refused: Interrupted(TimedOut { phase:
+  "settle", elapsed: 247.8s })` now reads "the run was refused because the
+  operation timed out after 4m08s while waiting for the environment to
+  settle". `effigy qa:docs:human-error-debug` ratchets Debug formatting in
+  human-facing error construction against
+  `config/human-error-debug-ratchet.json`. The label and error style for
+  contributors is in `docs/guides/011-output-widgets-and-colour-modes.md`.
+
 - Task journals live in the owning checkout's `.effigy/state/`. Durable
   initialization refuses an unresolved legacy migration and binds checkout
   and Git directory generations, so same-path replacements cannot adopt old
