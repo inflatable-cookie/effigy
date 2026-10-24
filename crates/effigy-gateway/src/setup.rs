@@ -26,6 +26,15 @@ use crate::server::GatewayConfig;
 mod broker;
 const MARKER: &str = "Managed by Effigy gateway setup v1";
 const MAX_FILE: u64 = 8 << 20;
+/// Bound on one executable image staged for privileged setup. A developer
+/// build of `effigy` with debug info is well past 128 MiB, so the bound leaves
+/// room for one (#392); a larger file is not the binary setup just ran.
+const MAX_STAGED_EXECUTABLE: u64 = 512 << 20;
+
+/// True only when a staged image of this length may be read for setup.
+fn staged_executable_fits(len: u64) -> bool {
+    len <= MAX_STAGED_EXECUTABLE
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -229,12 +238,13 @@ pub fn session<T>(
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
             .open(source)?;
-        if !file.metadata()?.is_file() || file.metadata()?.len() > 512 << 20 {
+        if !file.metadata()?.is_file() || !staged_executable_fits(file.metadata()?.len()) {
             return Err(error("setup executable is not a bounded regular file"));
         }
         let mut bytes = Vec::new();
-        file.take((512 << 20) + 1).read_to_end(&mut bytes)?;
-        if bytes.len() > 512 << 20 {
+        file.take(MAX_STAGED_EXECUTABLE + 1)
+            .read_to_end(&mut bytes)?;
+        if !staged_executable_fits(bytes.len() as u64) {
             return Err(error("setup executable changed while staging"));
         }
         let dir = DirFd::open(temp.path()).map_err(error)?;
@@ -738,26 +748,50 @@ pub fn migrate_root(
         config,
         uid,
         |snapshot| {
-            let record = snapshot
-                .record()
-                .ok_or_else(|| error("setup requires a v0.14.1 identity record"))?;
-            match crate::identity::probe_live_identity(record) {
-                crate::identity::GatewayIdentityProbe::Matched => Ok(Some(
-                    crate::identity::read_live_process_identity(snapshot.pid())?.uid,
-                )),
-                crate::identity::GatewayIdentityProbe::Mismatch
-                    if crate::server::probe_gateway_process(snapshot.pid())
-                        == crate::server::GatewayProcessProbe::ConfirmedAbsent =>
-                {
-                    Ok(None)
-                }
-                _ => Err(error(
-                    "gateway identity is unknown; setup made no process change",
-                )),
-            }
+            inspect_migration_record(
+                snapshot,
+                crate::identity::probe_live_identity,
+                crate::server::probe_gateway_process,
+                |pid| crate::identity::read_live_process_identity(pid).map(|live| live.uid),
+            )
         },
         stop,
     )
+}
+/// Classify one persisted record for migration.
+///
+/// The kernel's word on the PID comes first: a process confirmed absent is an
+/// absent record whatever its identity sidecar says, because a stopped daemon
+/// leaves both files behind and a dead PID never matches its recorded
+/// generation. Everything else that cannot be proven matched stays unknown, so
+/// setup signals no process it cannot authenticate.
+fn inspect_migration_record(
+    snapshot: &crate::identity::GatewayRecordSnapshot,
+    identity: impl FnOnce(
+        &crate::identity::GatewayIdentityRecord,
+    ) -> crate::identity::GatewayIdentityProbe,
+    process: impl FnOnce(u32) -> crate::server::GatewayProcessProbe,
+    live_uid: impl FnOnce(u32) -> io::Result<u32>,
+) -> io::Result<Option<u32>> {
+    if process(snapshot.pid()).is_confirmed_absent() {
+        return Ok(None);
+    }
+    let record = snapshot
+        .record()
+        .ok_or_else(|| error("setup requires a v0.14.1 identity record"))?;
+    match identity(record) {
+        crate::identity::GatewayIdentityProbe::Matched => Ok(Some(live_uid(snapshot.pid())?)),
+        _ => Err(error(
+            "gateway identity is unknown; setup made no process change",
+        )),
+    }
+}
+/// The recorded version proves a v0.14.1 gateway left this record behind.
+fn recorded_v0141(config: &GatewayConfig) -> io::Result<bool> {
+    let version = crate::identity::read_gateway_version(&config.pid_file_path).map_err(error)?;
+    Ok(version
+        .as_deref()
+        .is_some_and(|v| v.starts_with("0.14.1") || v.starts_with("v0.14.1")))
 }
 fn migrate_root_with(
     config: &GatewayConfig,
@@ -768,19 +802,21 @@ fn migrate_root_with(
     if let Some(snapshot) = crate::identity::read_snapshot(&config.pid_file_path).map_err(error)? {
         match inspect(&snapshot)? {
             Some(0) => {
-                let version =
-                    crate::identity::read_gateway_version(&config.pid_file_path).map_err(error)?;
-                if !version
-                    .as_deref()
-                    .is_some_and(|v| v.starts_with("0.14.1") || v.starts_with("v0.14.1"))
-                {
+                if !recorded_v0141(config)? {
                     return Err(error(
                         "setup only migrates an authenticated v0.14.1 root gateway",
                     ));
                 }
                 stop(&snapshot)?;
             }
-            Some(owner) if owner == uid => {}
+            // A v0.14.1 gateway the operator started holds the same legacy
+            // files the root one does, so it is stopped the same way. A
+            // current-generation operator gateway stays untouched.
+            Some(owner) if owner == uid => {
+                if recorded_v0141(config)? {
+                    stop(&snapshot)?;
+                }
+            }
             Some(_) => return Err(error("preserving a foreign gateway process")),
             None => {
                 crate::identity::remove_if_unchanged(&snapshot).map_err(error)?;
@@ -1250,5 +1286,169 @@ mod tests {
             before
         );
         println!("preserved {before} redacted operator routes and every allocation byte");
+    }
+
+    /// An empty operator gateway home, as the migration finds it.
+    fn gateway_fixture() -> (tempfile::TempDir, GatewayConfig) {
+        let home = tempfile::tempdir().unwrap();
+        let gateway = home.path().join(".effigy/gateway");
+        std::fs::create_dir_all(&gateway).unwrap();
+        let config = GatewayConfig::standard(gateway);
+        (home, config)
+    }
+
+    /// A PID the kernel agreed is gone: a reaped child, never this process.
+    fn confirmed_absent_pid() -> u32 {
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        assert!(child.wait().unwrap().success());
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while !crate::server::probe_gateway_process(pid).is_confirmed_absent() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "reaped child {pid} is still reported live"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        pid
+    }
+
+    #[test]
+    fn migration_stops_an_operator_owned_v0141_gateway_and_leaves_a_current_one_alone() {
+        // A v0.14.1 gateway the operator started holds the same legacy files
+        // the root one does. Migration used to treat a matching operator owner
+        // as nothing to do, so setup needed those files moved aside by hand
+        // (Tom, 2026-10-22). A current-generation operator gateway stays a
+        // no-op.
+        let (_home, config) = gateway_fixture();
+        let uid = nix::unistd::Uid::effective().as_raw();
+        crate::identity::write_test_record(&config.pid_file_path, std::process::id());
+        crate::identity::publish_gateway_version(&config.pid_file_path, "0.15.0").unwrap();
+        let stops = std::cell::Cell::new(0);
+        migrate_root_with(
+            &config,
+            uid,
+            |_| Ok(Some(uid)),
+            |_| {
+                stops.set(stops.get() + 1);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(stops.get(), 0, "a current operator gateway stays a no-op");
+        assert!(config.pid_file_path.exists());
+
+        crate::identity::publish_gateway_version(&config.pid_file_path, "0.14.1").unwrap();
+        migrate_root_with(
+            &config,
+            uid,
+            |_| Ok(Some(uid)),
+            |snapshot| {
+                stops.set(stops.get() + 1);
+                crate::identity::remove_if_unchanged(snapshot).map_err(error)?;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(stops.get(), 1);
+        assert!(!config.pid_file_path.exists());
+    }
+
+    #[test]
+    fn migration_removes_a_record_whose_pid_is_confirmed_absent() {
+        // A stopped gateway leaves its record pair behind. The dead PID's
+        // identity can never match, so the record used to read as unknown and
+        // setup made no process change (Tom, 2026-10-22).
+        let (_home, config) = gateway_fixture();
+        let uid = nix::unistd::Uid::effective().as_raw();
+        crate::identity::write_test_record(&config.pid_file_path, confirmed_absent_pid());
+        crate::identity::publish_gateway_version(&config.pid_file_path, "0.14.1").unwrap();
+        let routes = br#"{"_managed_by":"effigy-gateway-route-table-v1","routes":{"cbs.legacy.test":{"domain":"cbs.legacy.test","target":"127.0.0.1:8100","source":"manual","project":"/redacted/site","registered":"2026-01-01T00:00:00Z"}}}"#;
+        std::fs::write(config.route_table_path.clone(), routes.as_slice()).unwrap();
+        std::fs::set_permissions(
+            &config.route_table_path,
+            std::fs::Permissions::from_mode(0o600),
+        )
+        .unwrap();
+        migrate_root(&config, uid, |_| {
+            panic!("migration must never signal a confirmed-absent PID")
+        })
+        .unwrap();
+        assert!(!config.pid_file_path.exists());
+        assert!(!config.pid_file_path.with_extension("identity").exists());
+        assert!(!config.pid_file_path.with_extension("version").exists());
+        assert_eq!(std::fs::read(&config.route_table_path).unwrap(), routes);
+    }
+
+    #[test]
+    fn migration_never_signals_a_pid_whose_identity_is_unmatched() {
+        let (_home, config) = gateway_fixture();
+        crate::identity::write_test_record(&config.pid_file_path, std::process::id());
+        let snapshot = crate::identity::read_snapshot(&config.pid_file_path)
+            .unwrap()
+            .unwrap();
+        let unmatched = [
+            crate::identity::GatewayIdentityProbe::Mismatch,
+            crate::identity::GatewayIdentityProbe::PermissionDenied,
+            crate::identity::GatewayIdentityProbe::Unknown,
+        ];
+        for identity in unmatched {
+            // A live PID whose recorded generation does not match is neither
+            // absent nor owned: setup refuses before any process change.
+            assert!(inspect_migration_record(
+                &snapshot,
+                |_| identity,
+                |_| crate::server::GatewayProcessProbe::Running,
+                |_| panic!("an unmatched PID must not be resolved"),
+            )
+            .is_err());
+            // The kernel's confirmed absence wins whatever the identity probe
+            // says; only then is the stale record removed.
+            assert_eq!(
+                inspect_migration_record(
+                    &snapshot,
+                    |_| identity,
+                    |_| crate::server::GatewayProcessProbe::ConfirmedAbsent,
+                    |_| panic!("an absent PID must not be resolved"),
+                )
+                .unwrap(),
+                None
+            );
+        }
+        // A matched generation is the live process whatever the `ps` probe
+        // says, and a matched live generation reports its kernel owner.
+        assert_eq!(
+            inspect_migration_record(
+                &snapshot,
+                |_| crate::identity::GatewayIdentityProbe::Matched,
+                |_| crate::server::GatewayProcessProbe::Unknown,
+                |_| Ok(0),
+            )
+            .unwrap(),
+            Some(0)
+        );
+        assert_eq!(
+            inspect_migration_record(
+                &snapshot,
+                |_| crate::identity::GatewayIdentityProbe::Matched,
+                |_| crate::server::GatewayProcessProbe::Running,
+                |_| Ok(501),
+            )
+            .unwrap(),
+            Some(501)
+        );
+    }
+
+    #[test]
+    fn staged_executable_bound_accepts_a_dev_build() {
+        // Before privilege escalation setup reads the running binary. A debug
+        // build of `effigy` is far past the old 128 MiB bound, and refusing it
+        // made `effigy gateway setup` fail on a developer machine (#392).
+        assert!(staged_executable_fits(300 << 20));
+        assert!(staged_executable_fits(MAX_STAGED_EXECUTABLE));
+        assert!(!staged_executable_fits(MAX_STAGED_EXECUTABLE + 1));
     }
 }

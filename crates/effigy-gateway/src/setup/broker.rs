@@ -6,7 +6,7 @@ use effigy_kernel::id::Digest;
 #[derive(Debug)]
 struct Image(Vec<u8>);
 impl Record for Image {
-    const MAX_BYTES: u64 = 512 << 20;
+    const MAX_BYTES: u64 = MAX_STAGED_EXECUTABLE;
     fn decode(bytes: &[u8]) -> Result<Self, String> {
         Ok(Self(bytes.to_vec()))
     }
@@ -16,12 +16,13 @@ fn image(source: &Path) -> io::Result<Vec<u8>> {
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(source)?;
-    if !file.metadata()?.is_file() || file.metadata()?.len() > Image::MAX_BYTES {
+    if !file.metadata()?.is_file() || !super::staged_executable_fits(file.metadata()?.len()) {
         return Err(error("broker helper must be a bounded regular executable"));
     }
     let mut bytes = Vec::new();
-    file.take(Image::MAX_BYTES + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > Image::MAX_BYTES {
+    file.take(MAX_STAGED_EXECUTABLE + 1)
+        .read_to_end(&mut bytes)?;
+    if !super::staged_executable_fits(bytes.len() as u64) {
         return Err(error("broker executable changed while copying"));
     }
     Ok(bytes)
@@ -251,6 +252,26 @@ pub(super) fn remove(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn broker_definition_logs_stderr_under_private_var_log() {
+        // A broker that fails to start must leave evidence: launchd writes the
+        // job's stderr to /private/var/log/<label>.log (#406).
+        let label = crate::bind_broker::label(501);
+        let plist = String::from_utf8(definition(501, 20, Path::new("/fixture/effigy"))).unwrap();
+        assert!(
+            plist.contains(&format!(
+                "<key>StandardErrorPath</key><string>/private/var/log/{label}.log</string>"
+            )),
+            "{plist}"
+        );
+    }
+    #[test]
+    fn staged_broker_image_bound_accepts_a_dev_size_helper() {
+        // The privileged helper is a copy of this binary; a dev build with
+        // debug info is far past the old 128 MiB bound (#392).
+        assert!(super::super::staged_executable_fits(300 << 20));
+        assert!(!super::super::staged_executable_fits(Image::MAX_BYTES + 1));
+    }
     #[test]
     fn loaded_foreign_job_and_unknown_observation_never_bootout() {
         crate::setup::tests::with_run(|run, cx, home| {
