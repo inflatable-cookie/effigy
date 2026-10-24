@@ -75,7 +75,7 @@ docker run --rm --init --cpus 2 --memory 2g "$@" \
         if [ "$KERNEL_PROOF_MODE" = task-engine ] || [ "$KERNEL_PROOF_MODE" = task-engine-fixtures ] \
             || [ "$KERNEL_PROOF_MODE" = fixtures ]; then
             # The root task engine against the real Effigy binary, and the
-            # fixture ledger's foreign-generation refusal. Both need the root
+            # fixture ledger refusal of a foreign generation. Both need the root
             # package build; the container is the Linux host, not a guest of
             # another runtime, so no container backend is exercised.
             export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_BUILD_JOBS=2

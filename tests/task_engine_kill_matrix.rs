@@ -216,11 +216,7 @@ fn wait_state(
 /// row. Waiting for that release is the definitive settle barrier, so a
 /// sentinel that is still stopping descendants cannot be mistaken for a lost
 /// run.
-fn wait_foreground_settled(
-    fixture: &Fixture,
-    task: &str,
-    timeout: Duration,
-) -> serde_json::Value {
+fn wait_foreground_settled(fixture: &Fixture, task: &str, timeout: Duration) -> serde_json::Value {
     let started = Instant::now();
     loop {
         let status = fixture.status(task);
@@ -248,7 +244,10 @@ fn assert_run_not_recorded(fixture: &Fixture, run_id: &str, cell: &str) {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(!output.status.success(), "{cell}: {text}");
-    assert!(text.contains("not-recorded") || text.contains("not recorded"), "{cell}: {text}");
+    assert!(
+        text.contains("not-recorded") || text.contains("not recorded"),
+        "{cell}: {text}"
+    );
 }
 
 /// Wait until a journaled task has `wanted` closed rows, then return its view.
@@ -586,7 +585,8 @@ fn sequence_signal_matrix_each_step_text_and_json_settles_the_entire_tree() {
                 let run_id = live["current"]["run_id"]
                     .as_str()
                     .unwrap_or_else(|| panic!("{cell}: live run id: {live}"))
-                    .to_owned();                // SAFETY: our direct fixture child, never a pattern or foreign PID.
+                    .to_owned();
+                // SAFETY: our direct fixture child, never a pattern or foreign PID.
                 assert_eq!(unsafe { libc::kill(owner.id() as i32, signal) }, 0);
                 let exit = wait_exit(&mut owner, Duration::from_secs(40)).expect("sequence exits");
                 let output = owner.wait_with_output().expect("drain owner output");

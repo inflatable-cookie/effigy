@@ -368,7 +368,8 @@ fn unknown_custody_keeps_fixture_files_and_never_signals_a_foreign_generation() 
         .unwrap();
     // The refusal is the point: cleanup must name the unsettled foreign
     // generation rather than panicking for any reason at all.
-    let refusal = std::panic::catch_unwind(|| drop(fixture)).expect_err("unknown custody must fail");
+    let refusal =
+        std::panic::catch_unwind(|| drop(fixture)).expect_err("unknown custody must fail");
     let refusal = refusal
         .downcast_ref::<String>()
         .map(String::as_str)
