@@ -185,6 +185,69 @@ mod tests {
         );
     }
 
+    /// The step lines a terminal shows for one detached activation: one per
+    /// image, build and container, each ending with what now holds. Piped and
+    /// `--json` output draws nothing, so the lines are captured instead.
+    #[test]
+    fn an_activation_draws_one_finished_line_per_service_move() {
+        let (_, lines) = effigy_ui::steps::capture_lines(|| {
+            let mut steps = ComposeSteps::new("demo-web-dev");
+            let events = [
+                ComposeStepEvent::Pulling {
+                    subject: "postgres:16".to_owned(),
+                },
+                ComposeStepEvent::Pulled {
+                    subject: "postgres:16".to_owned(),
+                },
+                ComposeStepEvent::Building {
+                    subject: "demo-web-dev-web-1".to_owned(),
+                },
+                ComposeStepEvent::Built {
+                    subject: "demo-web-dev-web-1".to_owned(),
+                },
+                ComposeStepEvent::Creating {
+                    subject: "demo-web-dev-web-1".to_owned(),
+                },
+                ComposeStepEvent::Created {
+                    subject: "demo-web-dev-web-1".to_owned(),
+                },
+                ComposeStepEvent::Starting {
+                    subject: "demo-web-dev-web-1".to_owned(),
+                },
+                ComposeStepEvent::Started {
+                    subject: "demo-web-dev-web-1".to_owned(),
+                },
+                // A container the runtime reports but never started is still
+                // finished, so no spinner is left behind.
+                ComposeStepEvent::Creating {
+                    subject: "demo-web-dev-pma-1".to_owned(),
+                },
+            ];
+            for event in &events {
+                steps.observe(event);
+            }
+            steps.finish_unfinished(true, "the runtime reported the stack as reconciled");
+        });
+        // Each line names the service and its own duration.
+        let rendered = lines.join("\n");
+        for expected in [
+            "✓ pulled postgres:16",
+            "✓ built web",
+            "✓ started web",
+            "✓ the runtime reported the stack as reconciled",
+        ] {
+            assert!(
+                rendered.contains(expected),
+                "{expected} missing from {rendered}"
+            );
+        }
+        assert_eq!(
+            lines.len(),
+            4,
+            "one line per image, build and container: {rendered}"
+        );
+    }
+
     #[test]
     fn image_build_and_container_steps_stay_distinct() {
         let mut steps = ComposeSteps::new("demo");

@@ -61,7 +61,7 @@ pub(super) fn await_services_ready(
 ) -> Result<ReadinessEnd, RunnerError> {
     let started = Instant::now();
     let deadline = started + Duration::from_secs(policy.health_timeout_secs.max(1));
-    let parent = TimedStep::new("settling the environment: waiting for services to report healthy");
+    let parent = TimedStep::new("waiting for services to report healthy");
     let mut steps = BTreeMap::<String, TimedStep>::new();
     let mut attempts = BTreeMap::<String, u32>::new();
     let mut tracker = SharedFailureTracker::default();
