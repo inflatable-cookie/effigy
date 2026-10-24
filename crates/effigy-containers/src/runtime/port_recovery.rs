@@ -637,7 +637,7 @@ fn report_at(
 ) -> Result<PortRecoveryReport, ContainerPolicyError> {
     let store = effigy_gateway::endpoint_store::EndpointStore::for_ports(path);
     let present = path.exists() || store.read().verified().is_some();
-    let (snapshot, registry_bytes, registry) = step_through(
+    let (_snapshot, registry_bytes, registry) = step_through(
         &format!("reading the port registry at {}", path.display()),
         |step| {
             step.set_label(&format!("reading the port registry at {}", path.display()));

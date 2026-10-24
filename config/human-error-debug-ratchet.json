@@ -15,7 +15,7 @@
     "crates/effigy-context/src/lib.rs": 1,
     "crates/effigy-gateway/src/endpoint_store/mod.rs": 1,
     "crates/effigy-gateway/src/managed_listener.rs": 1,
-    "crates/effigy-gateway/src/operator.rs": 3,
+    "crates/effigy-gateway/src/operator.rs": 2,
     "crates/effigy-kernel/src/custody.rs": 2,
     "crates/effigy-kernel/src/custody/platform.rs": 2,
     "crates/effigy-kernel/src/fault.rs": 2,

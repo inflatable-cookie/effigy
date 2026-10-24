@@ -836,7 +836,7 @@ mod tests {
         let error = self_test_error(address, Duration::from_millis(300));
         assert!(error.contains("(deadline)"), "{error}");
         assert!(
-            error.contains("TimedOut"),
+            error.contains("the observation timed out during HTTP response"),
             "the original deadline observation is preserved: {error}"
         );
         let _ = silence.join();
@@ -856,7 +856,7 @@ mod tests {
         let error = self_test_error(address, Duration::from_secs(2));
         assert!(error.contains("(protocol)"), "{error}");
         assert!(
-            error.contains("Unparsable"),
+            error.contains("a recorded value could not be parsed (HTTP version)"),
             "the original protocol observation is preserved: {error}"
         );
         peer.join().unwrap();
@@ -872,7 +872,7 @@ mod tests {
         let error = self_test_error(address, Duration::from_secs(2));
         assert!(error.contains("(listener)"), "{error}");
         assert!(
-            error.contains("Unknown(") || error.contains("Absent("),
+            error.contains("the evidence contradicts itself") || error.contains("does not exist"),
             "the original listener observation is preserved: {error}"
         );
     }

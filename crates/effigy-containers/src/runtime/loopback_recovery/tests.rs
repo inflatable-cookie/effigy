@@ -272,9 +272,11 @@ fn an_unknown_path_never_reads_as_dead() {
     let held = &assignment_row(&plan, "127.1.0.4").reason;
     assert!(held.contains("permission denied"), "{held}");
     // The hold names the owner checkout and the exact release command.
-    assert!(held.contains("owner path /gone"), "{held}");
+    assert!(held.contains(&format!("owner path {MISSING}:")), "{held}");
     assert!(
-        held.contains("`effigy gateway repair --owner-checkout /gone`"),
+        held.contains(&format!(
+            "`effigy gateway repair --owner-checkout {MISSING}`"
+        )),
         "{held}"
     );
     assert_eq!(route_row(&plan, "gone.test").decision, Decision::Hold);
