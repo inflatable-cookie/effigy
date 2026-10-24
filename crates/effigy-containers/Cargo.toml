@@ -17,6 +17,8 @@ tempfile = { version = "3", optional = true }
 effigy-catalog = { path = "../effigy-catalog" }
 effigy-core = { path = "../effigy-core" }
 effigy-gateway = { path = "../effigy-gateway" }
+# Step progress and human errors: container waits report through the one API.
+effigy-ui = { path = "../effigy-ui" }
 effigy-manifest = { path = "../effigy-manifest" }
 nix = { version = "0.31", default-features = false, features = ["process", "signal", "fs"] }
 serde = { version = "1", features = ["derive"] }

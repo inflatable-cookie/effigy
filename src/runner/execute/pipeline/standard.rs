@@ -247,9 +247,10 @@ fn resolve_standard_task_secrets(
     )
 }
 
-/// The admission plan, resolved context, secrets and the run's workload
-/// outcome are all part of one admission step; grouping them into a struct
-/// would only move the same list behind a field name.
+// Pre-existing 8-argument signature: this shape predates the feedback
+// foundation and the current toolchain's `too_many_arguments` denies it. The
+// split is its own task; the allow keeps the shared `-D warnings` lint group
+// meaningful for everything else instead of narrowing the group.
 #[allow(clippy::too_many_arguments)]
 fn run_standard_task_inner(
     preflight: &ExecutionPreflight,

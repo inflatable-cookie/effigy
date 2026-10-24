@@ -474,6 +474,9 @@ pub(in crate::runner) fn attach_tui(
         before_shutdown: &none,
         after_shutdown: &none,
     };
+    // The TUI owns the terminal while it runs: step spinners and finish lines
+    // stay silent so the two never draw over each other.
+    let terminal = effigy_ui::steps::suspend_terminal();
     let rendered = run_multiprocess_tui_with_source(
         repo_root,
         Box::new(source),
@@ -482,6 +485,7 @@ pub(in crate::runner) fn attach_tui(
         MultiProcessTuiOptions::default(),
         Some(&control),
     );
+    drop(terminal);
     ending.store(true, Ordering::Release);
     let closed = shared
         .lock()

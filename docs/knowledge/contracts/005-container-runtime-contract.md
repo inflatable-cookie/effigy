@@ -1256,6 +1256,18 @@ The runtime-prep phase owns:
 
 Surface-specific presentation may differ. The prep contract must not.
 
+**A deleted Colima profile is recreated, never a dead end (Tom, 2026-10-24).**
+"Deleting the colima should be recoverable in effigy - a user should be able to
+blindly remove the profile and it be recreated on next run when needed, it
+shouldn't something you have to do." Every path that needs an Effigy-managed
+Colima profile (`effigy` for stacks, `effigy-release` for the Linux workspace
+artifact builder, and any other profile Effigy names) creates it when absent,
+with Effigy's managed start arguments (`--ssh-agent`, DNS fallbacks, managed
+resources, platform overrides), and starts it when stopped. Owned containers
+that a deleted or recreated profile left stale are reconciled on the next run,
+without `down` or manual cleanup. Deletion loses only that profile's data
+volumes and images; the user sees which, in one line.
+
 Runtime prep must consume captured context facts and typed execution policy. It
 must not rediscover invocation cwd or handoff state after request construction.
 
