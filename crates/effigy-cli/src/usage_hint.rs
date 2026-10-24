@@ -574,7 +574,7 @@ mod tests {
     fn a_near_miss_subcommand_is_a_did_you_mean() {
         let hint = hint(&["container", "stat"]);
         assert_eq!(hint.command, "effigy container");
-        let did_you_mean = hint.did_you_mean.expect("a did you mean");
+        let did_you_mean = hint.did_you_mean.clone().expect("a did you mean");
         assert!(
             did_you_mean.contains("did you mean `stats`"),
             "{did_you_mean}"
@@ -604,7 +604,7 @@ mod tests {
     #[test]
     fn an_unknown_flag_is_a_did_you_mean_against_the_options_panel() {
         let hint = hint(&["tasks", "--al"]);
-        let did_you_mean = hint.did_you_mean.expect("a did you mean");
+        let did_you_mean = hint.did_you_mean.clone().expect("a did you mean");
         assert!(
             did_you_mean.contains("did you mean `--all`"),
             "{did_you_mean}"

@@ -383,18 +383,14 @@ fn sample_value(placeholder: &str, preceding: Option<&str>) -> &'static str {
 fn backtick_spans(literal: &str) -> Vec<(usize, String)> {
     let mut spans = Vec::new();
     let mut start = 0;
-    let mut remaining = literal;
-    loop {
-        let Some(open) = remaining[start..].find('`') else {
-            break;
-        };
+    while let Some(open) = literal[start..].find('`') {
         let span_start = start + open + 1;
-        let Some(close) = remaining[span_start..].find('`') else {
+        let Some(close) = literal[span_start..].find('`') else {
             break;
         };
         spans.push((
             span_start,
-            remaining[span_start..span_start + close].trim().to_owned(),
+            literal[span_start..span_start + close].trim().to_owned(),
         ));
         start = span_start + close + 1;
     }
