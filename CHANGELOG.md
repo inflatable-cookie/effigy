@@ -1333,6 +1333,22 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- Every embedded catalog health check runs a tool its image ships, now that
+  `container up` waits for every service's own check. `dbgate/dbgate:7.2.3` is
+  built on `node:22-bookworm-slim`, which drops `wget` and `curl`, so its probe
+  speaks HTTP with Node and leaves its own error message for the readiness
+  diagnostic; `sosedoff/pgweb:0.17.0` ships `curl`, not `wget`, so its probe
+  uses `curl`. The other checks were audited against their pinned images
+  (`elasticsearch` and `silo` ship `curl`/`mc`, `minio` ships `mc`, `mailpit`
+  and `nginx` ship BusyBox `wget`), and a catalog integration test now records
+  which binaries each image is known to ship, so a fragment whose check names
+  anything else fails. The readiness wait's final probe also keeps a minimum
+  budget instead of starting with the sliver of time left before its deadline,
+  so a failed bring-up no longer ends with a health read that "timed out after
+  0s". A detached `container up` whose `compose up` fails now also withholds
+  teardown, as an interrupted one already did, so the services it started stay
+  for inspection instead of being torn down and recreated by the next
+  reconcile.
 - `effigy dev` delivers a project's container secrets every time the vault can
   be read. A dev session's local-dev access and the passphrase it just entered
   now reach every child Effigy process the session starts — the managed

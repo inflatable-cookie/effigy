@@ -26,7 +26,8 @@ services:
     ports:
       - "8081:8081"
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8081/"]
+      # The image ships curl, not wget.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8081/"]
       interval: 5s
       timeout: 3s
       retries: 3
