@@ -2706,6 +2706,36 @@ fn toml_quote(value: &str) -> String {
     serde_json::to_string(value).expect("TOML basic string encoding")
 }
 
+/// The `workspace-app` bundle declares pinned sibling sources. Seed their
+/// working copies, as a consumer of that bundle has them, so the fixture never
+/// clones a repository: these proofs are about managed listeners, and a private
+/// fixture must not need network or credentials to reach them.
+/// `prepare_pinned_sources` inspects an existing checkout and reports drift
+/// instead of cloning it.
+fn seed_bundle_pinned_sources(fixture: &Path) {
+    for (name, origin) in [
+        ("platform", "git@github.com:example/platform.git"),
+        ("poodle", "git@github.com:inflatable-cookie/poodle.git"),
+    ] {
+        let path = fixture.join(name);
+        fs::create_dir_all(&path).expect("pinned source directory");
+        git(&path, &["init", "--initial-branch=main"]);
+        git(&path, &["config", "user.name", "Pinned Source Fixture"]);
+        git(
+            &path,
+            &["config", "user.email", "pinned-source@example.invalid"],
+        );
+        fs::write(
+            path.join("README.md"),
+            format!("{name} fixture pinned source\n"),
+        )
+        .expect("pinned source content");
+        git(&path, &["add", "README.md"]);
+        git(&path, &["commit", "-m", "fixture pinned source"]);
+        git(&path, &["remote", "add", "origin", origin]);
+    }
+}
+
 fn git(checkout: &Path, args: &[&str]) {
     let output = Command::new("git")
         .args(args)
@@ -4080,6 +4110,7 @@ fn container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over() {
     let bundle_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("crates/effigy-manifest/tests/fixtures/workspace-app-bundle");
     copy_dir_all(&bundle_src, &fixture.path().join("bundles/workspace-app"));
+    seed_bundle_pinned_sources(fixture.path());
 
     let checkout = fixture.path().join("checkout");
     fs::create_dir(&checkout).expect("switch checkout");

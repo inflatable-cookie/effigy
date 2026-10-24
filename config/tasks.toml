@@ -970,10 +970,10 @@
   { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_forward_handover_waits_for_owner_whose_stop_cascade_is_slow)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
 ] }
 "test:gateway:readiness-closeout:shared" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "readiness-closeout-shared-cases", run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy --test gateway_private --no-fail-fast -- --include-ignored --test-threads=8 managed_host_dependent_replacement_ managed_host_listeners_scoped_host_routes_follow_checkout_identity", timeout_ms = 1800000 },
+  { id = "readiness-closeout-shared-cases", run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy --test gateway_private --no-fail-fast -- --include-ignored --test-threads=8 managed_host_dependent_replacement_ managed_host_listeners_scoped_host_routes_follow_checkout_identity container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over", timeout_ms = 1800000 },
 ] }
 "test:gateway:readiness-closeout:shared:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --test gateway_private --no-fail-fast -- --include-ignored --test-threads=8 managed_host_dependent_replacement_ managed_host_listeners_scoped_host_routes_follow_checkout_identity", timeout_ms = 1800000 },
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --test gateway_private --no-fail-fast -- --include-ignored --test-threads=8 managed_host_dependent_replacement_ managed_host_listeners_scoped_host_routes_follow_checkout_identity container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over", timeout_ms = 1800000 },
 ] }
 "test:gateway:readiness-closeout:self-test" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "readiness-closeout-http-self-test", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --features endpoint-store-faults --lib -E 'test(http_self_test_) | test(unobservable_listener_identity)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
