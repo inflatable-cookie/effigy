@@ -245,6 +245,12 @@ peeked without consumption (short/nonblocking contention retries stay within
 peer UID/PID and fresh boot/start identity, with socket closure checked before
 and after. The receiver marks the inherited slot CLOEXEC; forwarding requires
 an explicit capability again. Queued bytes after owner closure grant nothing.
+A selector whose reserved descriptor is closed (`EBADF`) carries no grant: an
+intermediate process such as Bun, Node or Python's `subprocess` closed
+inherited descriptors. The invocation then runs as an independent one, with one
+notice, and never probes that slot again in the process (it may since hold an
+unrelated file). A present descriptor with a wrong, dead or mismatched grant
+still refuses.
 The typed runtime grant identifies its protocol purpose, run class, run id
 and optional native hook identity. Durable factories, journal open, supervisor
 launch and migration check the inherited grant before work. Lexical engine

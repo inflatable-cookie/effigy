@@ -1180,6 +1180,10 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- A nested `effigy` launched through a tool that closes inherited descriptors
+  (Bun, Node, Python's `subprocess`) no longer fails with `parent run
+  capability refused: Bad file descriptor`. It runs as an independent
+  invocation with one notice.
 - The documented `effigy.completion.v2` payload lists the `fmt` and `fmt-rust`
   commands. The completion contract test compares that example with live
   output, so the example now carries the builtin formatter rows it had
