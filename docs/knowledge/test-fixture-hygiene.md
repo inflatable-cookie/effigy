@@ -283,6 +283,20 @@ workspace nextest and shared libtest runs need no prebuilt helper or inherited
 `EFFIGY_TEST_PROCESS_HELPER`. Panic, forced exit and timeout retain the same
 ended-generation and removed-root assertions.
 
+The kernel's own helper fixture is prepared the same way. `kernel-custody-fixture`
+builds without the `fault-injection` gate (`fault_point!` is inert outside a test
+build, and its helper entries are identical either way), and
+`crates/effigy-kernel/tests/fixture_binary.rs` is the preparation proof: cargo
+builds a package's binary targets whenever one of that package's integration
+tests is selected, so every ordinary `cargo test`/`effigy test` run builds the
+fixture and the proof shows it is a capturable helper that serves kernel entries.
+Proofs that re-exec it take `EFFIGY_KERNEL_CUSTODY_FIXTURE` when their own
+selector builds and names it - `test:release:runtime-storage` for the release
+Run's custody and git proof - and otherwise look beside the test executable's
+profile directory and in `target/<profile>/`, which covers plain Cargo and
+Oxide's uplift of final binaries. Milestone QA's built-in `effigy test` therefore
+runs the release Run proofs instead of failing them with a missing binary.
+
 The matrix parent-death controller executes the rendered `sh -lc` command as
 an argument vector. An extra `sh -c` wrapper survives under Linux dash and hides
 controller death from the lifecycle's parent observation; the fixture no longer
