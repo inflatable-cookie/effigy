@@ -49,6 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ),
                 cancel: Default::default(),
                 budget: Duration::from_secs(30),
+                progress: effigy_manifest::SourceProgress::silent(),
                 next: effigy_kernel::outcome::Invocation::validated(
                     vec!["bundle".into(), "sync".into()],
                     |v| v == ["bundle", "sync"],

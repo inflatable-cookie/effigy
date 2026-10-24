@@ -5,8 +5,8 @@ use effigy_release::{
     collect_release_gate_run, collect_release_status as collect_release_status_via_release,
     gate_outcome_word, plan_release_pipeline as plan_release_pipeline_via_release,
     read_release_record as read_release_record_via_release,
-    release_home as release_home_via_release, run_release as run_release_via_release,
-    run_release_gates_with_observer, GateExecutionReport, GateObserver, GateResult, GitEffects,
+    release_home as release_home_via_release, run_release_gates_with_observer,
+    run_release_with_observer, GateExecutionReport, GateObserver, GateResult, GitEffects,
     ReleaseAction, ReleaseGateRun, ReleasePipelinePlan, ReleaseRunOutcome, ReleaseRunRequest,
     ReleaseStage, ReleaseStatus, ResolvedGate,
 };
@@ -124,7 +124,11 @@ pub(super) fn release_run_action(
         to,
     };
     let mut effects = GitEffects::new(&resolved.resolved_root);
-    let result = run_release_via_release(&request, &mut effects);
+    let mut observer = ReleaseRunSteps {
+        root: step.clone(),
+        gate: None,
+    };
+    let result = run_release_with_observer(&request, &mut effects, &mut observer);
     let outcome = match result {
         Ok(outcome) => {
             step.succeed(&release_run_summary(&outcome));
@@ -142,6 +146,57 @@ pub(super) fn release_run_action(
         emit_release_progress_line(message);
     }
     Ok(outcome)
+}
+
+/// Draws a release Run's stages and gates on one live step: the label names the
+/// stage or the gate now running, and each gate leaves its own line.
+pub(super) struct ReleaseRunSteps {
+    pub(super) root: Step,
+    pub(super) gate: Option<Step>,
+}
+
+impl Drop for ReleaseRunSteps {
+    fn drop(&mut self) {
+        if let Some(gate) = self.gate.take() {
+            gate.finish_clear();
+        }
+    }
+}
+
+impl GateObserver for ReleaseRunSteps {
+    fn gate_started(
+        &mut self,
+        position: usize,
+        total: usize,
+        gate: &ResolvedGate,
+        reusing_hosted_evidence: bool,
+    ) {
+        if let Some(previous) = self.gate.take() {
+            previous.finish_clear();
+        }
+        let label = release_gate_label(position, total, &gate.name, reusing_hosted_evidence);
+        self.root.set_label(&format!("release: {label}"));
+        self.gate = Some(self.root.step(&label));
+    }
+
+    fn gate_finished(&mut self, position: usize, total: usize, result: &GateResult) {
+        let summary = release_gate_summary(position, total, result);
+        match self.gate.take() {
+            Some(step) if result.passed => step.succeed(&summary),
+            Some(step) => step.fail(&summary),
+            None => {}
+        }
+        self.root.set_label("release: continuing");
+    }
+
+    fn stage(&mut self, stage: &str) {
+        self.root
+            .set_label(&format!("release: running stage {stage}"));
+    }
+
+    fn note(&mut self, message: &str) {
+        self.root.set_label(&format!("release: {message}"));
+    }
 }
 
 /// The live label while a release Run works: what this invocation is doing,

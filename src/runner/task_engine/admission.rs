@@ -493,8 +493,7 @@ fn admission_progress_line(stderr: &[u8]) -> Option<String> {
     String::from_utf8_lossy(stderr)
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .next_back()
+        .rfind(|line| !line.is_empty())
         .map(|line| line.chars().take(120).collect())
 }
 

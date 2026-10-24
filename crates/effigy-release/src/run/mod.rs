@@ -61,7 +61,8 @@ use crate::prepare_helpers::build_sync_mutations;
 use crate::version::render_updated_version_contents;
 use crate::ResolvedGate;
 use crate::{
-    render_prepared_changelog_contents, run_release_gates, ReleaseError, ResolvedSyncFile,
+    render_prepared_changelog_contents, run_release_gates_with_observer, GateObserver,
+    ReleaseError, ResolvedSyncFile, SilentGateObserver,
 };
 
 const ANNOTATED_TAG_MESSAGE: &str = "Release {tag}";
@@ -130,6 +131,17 @@ fn now() -> String {
 pub fn run_release(
     request: &ReleaseRunRequest,
     effects: &mut dyn ReleaseEffects,
+) -> Result<ReleaseRunOutcome, ReleaseError> {
+    run_release_with_observer(request, effects, &mut SilentGateObserver)
+}
+
+/// Run, resume or approve a release, reporting each gate and stage to
+/// `observer` as it happens. A gate can take minutes, so a command plane draws
+/// it live instead of waiting for the final receipt.
+pub fn run_release_with_observer(
+    request: &ReleaseRunRequest,
+    effects: &mut dyn ReleaseEffects,
+    observer: &mut dyn GateObserver,
 ) -> Result<ReleaseRunOutcome, ReleaseError> {
     let session = ReleaseSession::open(&request.home, &request.repo_root)?;
     let state = session.state()?;
@@ -208,6 +220,7 @@ pub fn run_release(
         messages: Vec::new(),
         prepared: Vec::new(),
         waiting: None,
+        observer,
     };
     let staged = runner.run_stages(start, to);
 
@@ -440,6 +453,8 @@ struct Runner<'a, 's> {
     /// A stage that stopped at a wait instead of finishing: the Run records the
     /// status and what it waits on, then holds nothing open (054 §3, §7).
     waiting: Option<Waiting>,
+    /// How each stage and gate says what it is doing, as it happens.
+    observer: &'a mut dyn GateObserver,
 }
 
 struct Waiting {
@@ -453,6 +468,7 @@ impl<'a, 's> Runner<'a, 's> {
     fn run_stages(&mut self, start: ReleaseStage, to: ReleaseStage) -> Result<(), ReleaseError> {
         let mut stage = start;
         loop {
+            self.observer.stage(stage.label());
             if self.awaits_approval(stage) {
                 self.record.status = ReleaseRunStatus::AwaitingApproval;
                 self.record.waiting_on = Some(stage.label().to_owned());
@@ -768,7 +784,12 @@ impl<'a, 's> Runner<'a, 's> {
                     }
                 }
             }
-            let report = run_release_gates(&self.plan.repo_root, std::slice::from_ref(&gate), true);
+            let report = run_release_gates_with_observer(
+                &self.plan.repo_root,
+                std::slice::from_ref(&gate),
+                true,
+                self.observer,
+            );
             for result in &report.results {
                 self.record.gates.push(RecordGate {
                     stage: stage.stage_name().to_owned(),

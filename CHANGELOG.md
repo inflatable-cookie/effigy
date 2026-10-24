@@ -509,8 +509,8 @@ During v0.x, MINOR bumps may include breaking changes.
   vault read or decrypt failure names the vault and the next command.
   `release gates` and `release status --check-gates` draw
   `running gate <name> (2/5)` from a structured `GateObserver` while keeping
-  #290's text lines for plain callers, `release run` draws the invocation and
-  the stage it reached, and deploy provider resolution draws
+  #290's text lines for plain callers, `release run` reports its stage and each
+  gate as they happen, and deploy provider resolution draws
   `resolving deploy provider <name> (offline)`. A heavy task draws
   ``waiting for heavy admission (task `dev`, 2 ahead)`` using the
   admission hook's own progress, and every sequence step draws
