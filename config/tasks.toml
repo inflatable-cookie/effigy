@@ -662,6 +662,19 @@
   "sh scripts/oxide-selector.sh test -p effigy-containers --lib runtime::dns::tests:: -- --nocapture",
 ] }
 "test:containers:loopback" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh scripts/oxide-selector.sh test -p effigy-containers runtime::loopback::tests:: -- --nocapture" }
+# Detached container exit-141 isolation (effigy#300, papercut 8064c5b9): a strict
+# fake runtime models a slow-but-within-budget inspect, an exhausted deadline, a
+# pending inventory, a cancelled client whose attached writer outlives it, and a
+# detached client whose writer keeps writing on the retained regular file. It
+# carries the SIGPIPE classification and its genuine-service-failure negative
+# control, plus the live-holder refusal that forbids recreating a service under
+# an active run. Native pipes and processes only; no shared stack or VM.
+"test:containers:exit141" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(exit141_) | test(sigpipe) | test(transitions_refuse_against_live_interrupted_and_unknown_holders)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
+"test:containers:exit141:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib --filterset 'test(exit141_) | test(sigpipe) | test(transitions_refuse_against_live_interrupted_and_unknown_holders)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 }] }
+"check:containers:exit141" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy-containers --all-targets", timeout_ms = 900000 }] }
+"check:containers:exit141:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo check -p effigy-containers --all-targets", timeout_ms = 900000 }] }
+"lint:containers:exit141" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy-containers --all-targets -- -D warnings", timeout_ms = 900000 }] }
+"lint:containers:exit141:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy-containers --all-targets -- -D warnings", timeout_ms = 900000 }] }
 # Machine-wide generated-container port registry recovery: exhaustion and
 # reclaim in a private registry, status/dry-run non-mutation, digest-confirmed
 # locked apply, retirement releasing only its own allocation in the isolated

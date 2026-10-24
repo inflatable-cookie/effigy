@@ -8,6 +8,9 @@ mod parse;
 mod participation;
 pub(crate) use colima_runtime::default_runtime_profile;
 pub(crate) use participation::docker_config_current_context;
+#[cfg(all(test, unix))]
+#[path = "exec/exit141_tests.rs"]
+mod exit141_tests;
 mod process;
 mod restart_recovery;
 mod ssh_agent_preflight;

@@ -1686,8 +1686,10 @@ answer is not restarted. When a bounded call still cannot answer, the error
 names the observed host load (`load average 40.00 over 18 CPU(s)`) and says the
 service's state is unproven instead of blaming it. `Exited (141)` is reported
 as SIGPIPE — a closed stdout/stderr pipe — not as a health verdict; read the
-service log for the writer that closed. Let the host quiesce and retry once
-rather than widening timeouts or recreating the stack.
+service log for the writer that closed. Detached `container up` writes backend
+output to one retained file, so Effigy holds no pipe a service could lose, and
+the original nerdctl reader was never identified. Let the host quiesce and retry
+once rather than widening timeouts or recreating the stack.
 
 ## Troubleshooting: host `docker` cannot see a Colima container
 

@@ -910,6 +910,45 @@ mod tests {
     }
 
     #[test]
+    fn a_genuine_service_failure_is_not_reported_as_sigpipe() {
+        // The negative control for the SIGPIPE classification: an ordinary
+        // non-zero exit is a service failure, and the SIGPIPE explanation must
+        // never be manufactured for it (effigy#300).
+        let exited = vec![row(
+            "demo-web",
+            "postgres",
+            "demo-postgres-1",
+            "Exited (1) 3 minutes ago",
+        )];
+        let error = recover_exited_owned_services_with(
+            "demo-web",
+            "effigy",
+            ComposeBackend::ColimaNerdctl,
+            &["postgres"],
+            || Ok(exited.clone()),
+            |_| {
+                Ok(RuntimeStartResult {
+                    success: true,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            },
+        )
+        .expect_err("a service that stays exited is still a bounded failure");
+
+        let detail = error.to_string();
+        assert!(detail.contains("Exited (1)"), "got: {detail}");
+        assert!(
+            !detail.contains("is SIGPIPE") && !detail.contains("pipe whose reader had closed"),
+            "a genuine service failure is never attributed to a pipe: {detail}"
+        );
+        assert!(
+            detail.contains("did not recreate"),
+            "the failure keeps its no-recreation statement: {detail}"
+        );
+    }
+
+    #[test]
     fn a_sigpipe_exit_is_reported_as_a_closed_pipe_not_a_health_verdict() {
         let exited = vec![row(
             "demo-web",
