@@ -950,3 +950,183 @@ fn cleanup_owned_routes_and_certs_removes_owned_cert_then_route() {
         .lookup("app.test")
         .is_none());
 }
+
+/// A domain held by a container route whose checkout is gone refuses a managed
+/// listener claim with the exact owner and the one supported repair, never as a
+/// live foreign owner.
+#[test]
+fn a_deleted_checkout_container_claim_refuses_as_stale_owner_territory() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("routes.json");
+    let (claimant, _) = linked_checkout(root.path(), "claimant");
+    let claimant_path = claimant.display().to_string();
+    let deleted = root.path().join("deleted-checkout");
+    let deleted_path = deleted.display().to_string();
+
+    register_route(
+        &path,
+        &RouteRegistration {
+            domain: "api.app.test".to_owned(),
+            target: Some("127.0.0.1:19900".to_owned()),
+            dns_ip: None,
+            tcp_port: None,
+            tcp_target: None,
+            tls: true,
+            project_path: deleted_path.clone(),
+            source: RouteSource::Container,
+        },
+    )
+    .unwrap();
+
+    let refusal = check_managed_listener_route_claim(
+        &path,
+        &claimant_path,
+        "api.app.test",
+        "main|web|test|api",
+    )
+    .expect_err("a stale container claim still refuses the managed listener");
+
+    assert!(
+        matches!(&refusal, GatewayError::StaleRouteClaim { project, .. } if project == &deleted_path),
+        "expected stale-owner classification, got {refusal:?}"
+    );
+    let rendered = refusal.to_string();
+    assert!(rendered.contains(&deleted_path), "{rendered}");
+    assert!(
+        rendered.contains(&format!("--owner-checkout {deleted_path}")),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("no recorded checkout generation"),
+        "{rendered}"
+    );
+    assert!(
+        !rendered.contains(&claimant_path),
+        "the refusal must not name the claimant as the owner: {rendered}"
+    );
+    // Nothing was published or reserved by the refused claim.
+    let table = RouteTable::load(&path).unwrap();
+    let existing = table.lookup("api.app.test").expect("claim stays");
+    assert_eq!(existing.project, deleted_path);
+    assert_eq!(existing.source, RouteSource::Container);
+}
+
+#[test]
+fn a_live_foreign_checkout_claim_still_refuses_as_foreign() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("routes.json");
+    let (claimant, _) = linked_checkout(root.path(), "claimant");
+    let (foreign, _) = linked_checkout(root.path(), "foreign");
+    let claimant_path = claimant.display().to_string();
+    let foreign_path = foreign.display().to_string();
+
+    register_route(
+        &path,
+        &RouteRegistration {
+            domain: "api.app.test".to_owned(),
+            target: Some("127.0.0.1:19900".to_owned()),
+            dns_ip: None,
+            tcp_port: None,
+            tcp_target: None,
+            tls: false,
+            project_path: foreign_path.clone(),
+            source: RouteSource::Container,
+        },
+    )
+    .unwrap();
+
+    let refusal = check_managed_listener_route_claim(
+        &path,
+        &claimant_path,
+        "api.app.test",
+        "main|web|test|api",
+    )
+    .expect_err("a live foreign claim must refuse");
+
+    assert!(
+        matches!(&refusal, GatewayError::ForeignRoute { .. }),
+        "a present checkout is live, not stale: {refusal:?}"
+    );
+    let rendered = refusal.to_string();
+    assert!(rendered.contains("live checkout"), "{rendered}");
+    assert!(rendered.contains(&foreign_path), "{rendered}");
+}
+
+#[test]
+fn a_withdrawn_claim_from_a_deleted_checkout_keeps_its_domain_reserved() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("routes.json");
+    let (claimant, _) = linked_checkout(root.path(), "claimant");
+    let claimant_path = claimant.display().to_string();
+    let deleted_path = root.path().join("deleted-checkout").display().to_string();
+
+    let store = EndpointStore::for_routes(&path);
+    store
+        .edit(None, |snapshot| {
+            snapshot.reserve_domain("api.app.test", &deleted_path, None, None)?;
+            let mut table = snapshot.routes()?;
+            table.upsert(Route {
+                domain: "api.app.test".to_owned(),
+                target: Some("127.0.0.1:19900".to_owned()),
+                dns_ip: None,
+                tcp_port: None,
+                tcp_target: None,
+                source: RouteSource::Container,
+                project: deleted_path.clone(),
+                scope: None,
+                managed_listener: None,
+                tls: false,
+                registered: Utc::now(),
+            });
+            snapshot.set_routes(&table)?;
+            let mut table = snapshot.routes()?;
+            let _ = table.deregister("api.app.test");
+            snapshot.set_routes(&table)
+        })
+        .expect("withdrawn claim");
+
+    let refusal = check_managed_listener_route_claim(
+        &path,
+        &claimant_path,
+        "api.app.test",
+        "main|web|test|api",
+    )
+    .expect_err("a withdrawn foreign claim must refuse");
+
+    let rendered = refusal.to_string();
+    assert!(rendered.contains(&deleted_path), "{rendered}");
+    assert!(
+        rendered.contains(&format!("--owner-checkout {deleted_path}")),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn a_withdrawn_claim_from_a_live_checkout_refuses_as_foreign() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("routes.json");
+    let (claimant, _) = linked_checkout(root.path(), "claimant");
+    let (owner, _) = linked_checkout(root.path(), "owner");
+    let claimant_path = claimant.display().to_string();
+    let owner_path = owner.display().to_string();
+
+    EndpointStore::for_routes(&path)
+        .edit(None, |snapshot| {
+            snapshot.reserve_domain("api.app.test", &owner_path, None, None)
+        })
+        .expect("withdrawn claim from a live checkout");
+
+    let refusal = check_managed_listener_route_claim(
+        &path,
+        &claimant_path,
+        "api.app.test",
+        "main|web|test|api",
+    )
+    .expect_err("a live foreign withdrawn claim must refuse");
+
+    assert!(
+        matches!(&refusal, GatewayError::ForeignRoute { project, .. } if project == &owner_path),
+        "a present owner is live, not stale: {refusal:?}"
+    );
+    assert!(refusal.to_string().contains("live checkout"), "{refusal}");
+}

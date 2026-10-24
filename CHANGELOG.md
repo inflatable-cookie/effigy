@@ -965,6 +965,14 @@ During v0.x, MINOR bumps may include breaking changes.
   follows a path-linked workspace into unrelated crates (papercut `d988bc52`).
   Every path must be an existing `.rs` file inside the target repository;
   `--check` reports without writing.
+- `effigy gateway repair --owner-checkout <PATH>` narrows the dead-owner plan to
+  one exact deleted checkout, and the plan covers HTTP container routes with no
+  pool address and withdrawn persistent domain claims as well as loopback
+  assignments (papercut `d7453892`). The filter is lexically normalized and part
+  of the plan digest, so a reviewed apply cannot release another owner. A
+  managed-listener claim on a domain whose owner checkout is gone now refuses as
+  stale-owner territory, naming that checkout and the exact repair command,
+  instead of calling it a live foreign owner.
 
 ### Changed
 - `effigy install:local` builds this checkout through `oxide build --bin effigy`
@@ -1159,6 +1167,11 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- A detached `container up --json` failure keeps the underlying refusal as
+  `cause` with the activation stage, preparation step and environment/checkout
+  `identity`, redacting secret-shaped values and bounding the text, instead of
+  reporting only generic reconciliation advice. The admission cause that a
+  stale gateway claim produced is now visible.
 - `effigy gateway setup` migrates a v0.14.1 gateway the operator started, not
   only a root one: when the recorded version is v0.14.1 the same
   exact-generation stop runs as for the root case, and a current-generation

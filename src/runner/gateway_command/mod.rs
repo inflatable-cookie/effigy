@@ -112,9 +112,17 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
         GatewaySubcommand::Up => run_gateway_up_with_config(&config, args.output_json),
         GatewaySubcommand::Down => run_gateway_down_with_config(&config, args.output_json),
         GatewaySubcommand::Status => run_gateway_status_with_config(&config, args.output_json),
-        GatewaySubcommand::Repair { yes, expect_plan } => {
-            run_gateway_repair_with_config(&config, yes, expect_plan.as_deref(), args.output_json)
-        }
+        GatewaySubcommand::Repair {
+            yes,
+            expect_plan,
+            owner_checkout,
+        } => run_gateway_repair_with_config(
+            &config,
+            yes,
+            expect_plan.as_deref(),
+            owner_checkout.as_deref(),
+            args.output_json,
+        ),
         GatewaySubcommand::SetupTls => run_gateway_setup_tls_with_config(&config, args.output_json),
     }
 }
@@ -925,9 +933,14 @@ fn run_gateway_repair_with_config(
     config: &GatewayConfig,
     yes: bool,
     expect_plan: Option<&str>,
+    owner_checkout: Option<&str>,
     output_json: bool,
 ) -> Result<String, RunnerError> {
     let store = effigy_gateway::endpoint_store::EndpointStore::for_routes(&config.route_table_path);
+    let owner_filter = owner_checkout
+        .map(effigy_containers::OwnerCheckoutFilter::new)
+        .transpose()
+        .map_err(RunnerError::task_invocation)?;
     let snapshot = if yes {
         store.import()?
     } else {
@@ -965,9 +978,9 @@ fn run_gateway_repair_with_config(
     // read-only; `--yes` releases the set its locked recomputation still
     // proves dead, and refuses when a reviewed digest no longer matches.
     let loopback = if yes {
-        effigy_containers::loopback_reclaim_apply(&store, expect_plan)
+        effigy_containers::loopback_reclaim_apply(&store, expect_plan, owner_filter.as_ref())
     } else {
-        effigy_containers::loopback_reclaim_preview(&store)
+        effigy_containers::loopback_reclaim_preview(&store, owner_filter.as_ref())
     }
     .map_err(RunnerError::task_invocation)?;
 
@@ -1056,6 +1069,7 @@ fn loopback_decision_counts(
             .iter()
             .map(|row| row.decision)
             .chain(plan.routes.iter().map(|row| row.decision))
+            .chain(plan.domain_claims.iter().map(|row| row.decision))
             .filter(|candidate| *candidate == decision)
             .count()
     };
@@ -1066,22 +1080,39 @@ fn loopback_decision_counts(
     )
 }
 
+/// The reviewed apply command for a plan, including the owner filter that is
+/// part of its digest.
+fn dead_owner_apply_command(plan: &effigy_containers::LoopbackRecoveryPlan) -> String {
+    let mut command = "effigy gateway repair".to_owned();
+    if let Some(owner) = plan.owner_checkout.as_deref() {
+        command.push_str(&format!(" --owner-checkout {owner}"));
+    }
+    command.push_str(&format!(" --yes --expect-plan {}", plan.digest));
+    command
+}
+
 fn render_dead_loopback_preview(report: &effigy_containers::LoopbackReclaimReport) -> Vec<String> {
     let (reclaim, hold, retain) = loopback_decision_counts(&report.plan);
     let mut lines = vec![format!(
-        "[gateway] dead loopback owners: {reclaim} reclaimable, {hold} held, {retain} retained"
+        "[gateway] dead owners: {reclaim} reclaimable, {hold} held, {retain} retained"
     )];
+    if let Some(owner) = report.plan.owner_checkout.as_deref() {
+        lines.push(format!(
+            "[gateway] dead-owner plan limited to checkout {owner}"
+        ));
+    }
     if let Some(hold) = &report.plan.global_hold {
         lines.push(format!("[warn] all absent-path entries are held: {hold}"));
     }
     if reclaim == 0 {
-        lines.push("[info] no dead loopback owners were identified".to_owned());
+        lines.push("[info] no dead owners were identified".to_owned());
         return lines;
     }
     lines.push(format!(
-        "[check] repair would release {} loopback assignment(s) and {} stale container route(s)",
+        "[check] repair would release {} loopback assignment(s), {} stale container route(s) and {} withdrawn domain claim(s)",
         report.plan.release_assignments().len(),
-        report.plan.release_routes().len()
+        report.plan.release_routes().len(),
+        report.plan.release_domain_claims().len()
     ));
     lines.extend(
         report
@@ -1114,22 +1145,38 @@ fn render_dead_loopback_preview(report: &effigy_containers::LoopbackReclaimRepor
                 )
             }),
     );
+    lines.extend(
+        report
+            .plan
+            .domain_claims
+            .iter()
+            .filter(|row| row.decision != effigy_containers::Decision::Retain)
+            .map(|row| {
+                format!(
+                    "- domain claim {} ({}, {})",
+                    row.domain,
+                    row.decision.label(),
+                    row.reason
+                )
+            }),
+    );
     lines.push(format!(
         "[info] dead-owner plan digest {}",
         report.plan.digest
     ));
     lines.push(format!(
-        "[next] rerun `effigy gateway repair --yes --expect-plan {}` to release them",
-        report.plan.digest
+        "[next] rerun `{}` to release them",
+        dead_owner_apply_command(&report.plan)
     ));
     lines
 }
 
 fn render_dead_loopback_apply(report: &effigy_containers::LoopbackReclaimReport) -> Vec<String> {
     let mut lines = vec![format!(
-        "[ok] released {} dead loopback assignment(s) and {} stale container route(s)",
+        "[ok] released {} dead loopback assignment(s), {} stale container route(s) and {} withdrawn domain claim(s)",
         report.edit.released_assignments.len(),
-        report.edit.released_routes.len()
+        report.edit.released_routes.len(),
+        report.edit.released_domains.len()
     )];
     lines.extend(
         report
@@ -1144,6 +1191,13 @@ fn render_dead_loopback_apply(report: &effigy_containers::LoopbackReclaimReport)
             .released_routes
             .iter()
             .map(|domain| format!("- route {domain}")),
+    );
+    lines.extend(
+        report
+            .edit
+            .released_domains
+            .iter()
+            .map(|domain| format!("- domain claim {domain}")),
     );
     if let Some(backup) = report.backup() {
         lines.push(format!(

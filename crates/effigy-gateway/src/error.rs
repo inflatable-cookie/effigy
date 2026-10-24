@@ -41,6 +41,18 @@ pub enum GatewayError {
     #[error("gateway domain `{domain}` is owned by live checkout `{project}`; configure a distinct domain for this worktree or stop the owning checkout")]
     ForeignRoute { domain: String, project: String },
 
+    /// A container route from a checkout that no longer exists still claims the
+    /// domain. Absence alone never grants the claim here; the refusal names the
+    /// exact owner and the one supported repair.
+    #[error(
+        "gateway domain `{domain}` is claimed by a container route from checkout `{project}`, which no longer exists ({generation}); this checkout is not its owner. Recover it with `effigy gateway repair --owner-checkout {project}`: review the plan, then apply the digest it prints. That repair holds the claim unless no container, runtime scope or listener still owns it"
+    )]
+    StaleRouteClaim {
+        domain: String,
+        project: String,
+        generation: String,
+    },
+
     /// A live managed listener from this same checkout still owns the domain.
     #[error("gateway domain `{domain}` is held by the live managed listener `{owner}` (supervisor PID {pid}); stop that environment with `effigy container down` before starting the container environment")]
     ManagedListenerRouteConflict {
@@ -138,10 +150,10 @@ pub enum GatewayError {
     #[error("failed to provision loopback alias {ip}: {reason}")]
     LoopbackAliasProvision { ip: Ipv4Addr, reason: String },
 
-    /// A planned dead-loopback release no longer matches the committed
-    /// endpoint snapshot.
-    #[error("loopback endpoint `{entry}` changed before its release; read and retry")]
-    DeadLoopbackChanged { entry: String },
+    /// A planned dead-claim release no longer matches the committed endpoint
+    /// snapshot.
+    #[error("gateway endpoint `{entry}` changed before its release; read and retry")]
+    DeadClaimChanged { entry: String },
 
     /// Gateway is not running.
     #[error("gateway is not running")]

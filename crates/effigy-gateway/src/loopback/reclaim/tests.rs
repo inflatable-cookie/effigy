@@ -57,15 +57,17 @@ fn planned_release_removes_both_entries_and_keeps_a_pre_edit_backup() {
     let (assignment, route) = seed(&store);
     let before_revision = store.read_compatible().unwrap().revision;
 
-    let (outcome, plan) = edit_locked::<_, GatewayError>(&store, |registry, routes| {
+    let (outcome, plan) = edit_locked::<_, GatewayError>(&store, |registry, routes, claims| {
+        assert!(claims.iter().any(|claim| claim.domain == "gone.test"));
         let assignment = registry
             .get("project:gone:/gone/project")
             .expect("planned assignment");
         let route = routes.lookup("gone.test").expect("planned route");
         Ok((
-            DeadLoopbackEdit {
+            DeadClaimEdit {
                 assignments: vec![("project:gone:/gone/project".to_owned(), assignment.clone())],
                 routes: vec![route.clone()],
+                domains: Vec::new(),
             },
             (assignment.ip, route.domain.clone()),
         ))
@@ -109,9 +111,9 @@ fn planned_release_removes_both_entries_and_keeps_a_pre_edit_backup() {
 fn release_refuses_when_the_planned_entry_changed_under_the_gate() {
     let (_dir, store) = fixture();
     seed(&store);
-    let result = edit_locked::<_, GatewayError>(&store, |_, _| {
+    let result = edit_locked::<_, GatewayError>(&store, |_, _, _| {
         Ok((
-            DeadLoopbackEdit {
+            DeadClaimEdit {
                 assignments: vec![(
                     "project:gone:/gone/project".to_owned(),
                     LoopbackAssignment {
@@ -120,14 +122,12 @@ fn release_refuses_when_the_planned_entry_changed_under_the_gate() {
                     },
                 )],
                 routes: Vec::new(),
+                domains: Vec::new(),
             },
             (),
         ))
     });
-    assert!(matches!(
-        result,
-        Err(GatewayError::DeadLoopbackChanged { .. })
-    ));
+    assert!(matches!(result, Err(GatewayError::DeadClaimChanged { .. })));
 
     let snapshot = store.read_compatible().unwrap();
     assert_eq!(
@@ -147,10 +147,120 @@ fn a_plan_that_releases_nothing_writes_nothing() {
     let before = store.read_compatible().unwrap();
 
     let (outcome, plan) =
-        edit_locked::<_, GatewayError>(&store, |_, _| Ok((DeadLoopbackEdit::default(), "kept")))
+        edit_locked::<_, GatewayError>(&store, |_, _, _| Ok((DeadClaimEdit::default(), "kept")))
             .expect("empty plan");
 
     assert!(plan == "kept");
-    assert_eq!(outcome, DeadLoopbackOutcome::default());
+    assert_eq!(outcome, DeadClaimOutcome::default());
     assert_eq!(store.read_compatible().unwrap(), before);
+}
+
+/// Seed one withdrawn claim: a container route that was deregistered, so only
+/// its persistent domain owner remains.
+fn seed_withdrawn_claim(store: &EndpointStore, domain: &str, project: &str) -> DomainClaim {
+    store
+        .edit(None, |snapshot| {
+            snapshot.reserve_domain(domain, project, None, None)?;
+            let mut table = snapshot.routes()?;
+            table.upsert(alias_route(domain, project, "127.1.0.5", 8105));
+            snapshot.set_routes(&table)?;
+            let mut table = snapshot.routes()?;
+            let _ = table.deregister(domain);
+            snapshot.set_routes(&table)
+        })
+        .expect("seed withdrawn claim");
+    let claims = store.read_compatible().unwrap().domain_claims();
+    let claim = claims
+        .into_iter()
+        .find(|claim| claim.domain == domain)
+        .expect("withdrawn claim survives route withdrawal");
+    assert_eq!(claim.project, project);
+    assert_eq!(claim.scope, None);
+    claim
+}
+
+#[test]
+fn planned_release_removes_a_withdrawn_domain_claim_and_records_it() {
+    let (_dir, store) = fixture();
+    seed_withdrawn_claim(&store, "gone.test", "/gone/project");
+
+    let (outcome, released) = edit_locked::<_, GatewayError>(&store, |_, _, claims| {
+        let planned = claims
+            .iter()
+            .find(|current| current.domain == "gone.test")
+            .expect("planned claim");
+        Ok((
+            DeadClaimEdit {
+                domains: vec![planned.clone()],
+                ..DeadClaimEdit::default()
+            },
+            (),
+        ))
+    })
+    .expect("release withdrawn claim");
+
+    assert_eq!(released, ());
+    assert_eq!(outcome.released_domains, ["gone.test"]);
+    assert!(outcome.released_routes.is_empty());
+    let snapshot = store.read_compatible().unwrap();
+    assert!(snapshot.domain_claims().is_empty());
+    assert!(snapshot.routes().unwrap().is_empty());
+    let backup = outcome.backup.expect("backup path");
+    let document: serde_json::Value =
+        serde_json::from_slice(&fs::read(backup).expect("backup bytes")).expect("backup json");
+    assert_eq!(document["domain_claims"][0]["domain"], "gone.test");
+    assert_eq!(
+        document["domain_claims"][0]["project"], "/gone/project",
+        "the backup names the exact released owner"
+    );
+}
+
+#[test]
+fn a_withdrawn_domain_claim_cannot_be_published_over_by_a_successor() {
+    let (_dir, store) = fixture();
+    seed_withdrawn_claim(&store, "gone.test", "/gone/project");
+
+    // A successor cannot even publish the domain while the claim is unreleased:
+    // the store keeps it reserved for its exact owner.
+    let refused = store
+        .edit(None, |snapshot| {
+            let mut table = snapshot.routes()?;
+            table.upsert(alias_route("gone.test", "/successor", "127.1.0.6", 8106));
+            snapshot.set_routes(&table)
+        })
+        .expect_err("a successor cannot take an unreleased claim");
+    assert!(
+        refused
+            .to_string()
+            .contains("belongs to another persistent owner"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_withdrawn_domain_claim_release_refuses_a_claim_released_elsewhere() {
+    let (_dir, store) = fixture();
+    let claim = seed_withdrawn_claim(&store, "gone.test", "/gone/project");
+    // Another explicit retirement releases the same owner first.
+    store
+        .edit(None, |snapshot| {
+            snapshot.release_domains("/gone/project", None)
+        })
+        .expect("retire the claim elsewhere");
+
+    let result = edit_locked::<_, GatewayError>(&store, |_, _, _| {
+        Ok((
+            DeadClaimEdit {
+                domains: vec![claim.clone()],
+                ..DeadClaimEdit::default()
+            },
+            (),
+        ))
+    });
+
+    assert!(
+        matches!(result, Err(GatewayError::DeadClaimChanged { .. })),
+        "a stale claim release must refuse a vanished or replaced claim"
+    );
+    assert!(store.read_compatible().unwrap().domain_claims().is_empty());
 }

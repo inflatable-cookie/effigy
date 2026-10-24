@@ -4,7 +4,7 @@ pub(crate) mod import;
 mod reservations;
 mod snapshot;
 
-pub use snapshot::{EndpointSnapshot, Quarantine};
+pub use snapshot::{DomainClaim, EndpointSnapshot, Quarantine};
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};

@@ -70,8 +70,9 @@ pub use runtime::loopback::{
 pub use runtime::loopback_recovery::{
     loopback_ownership_inventory, loopback_reclaim_apply, loopback_reclaim_json,
     loopback_reclaim_preview, reserve_loopback_collecting_dead, stale_alias_listener_hold,
-    LoopbackCollection, LoopbackReclaimReport, LoopbackRecoveryFacts, LoopbackRecoveryPlan,
-    LoopbackRecoveryRow, StaleRouteRow, LOOPBACK_RECLAIM_SCHEMA,
+    DomainClaimRow, LoopbackCollection, LoopbackReclaimReport, LoopbackRecoveryFacts,
+    LoopbackRecoveryPlan, LoopbackRecoveryRow, OwnerCheckoutFilter, StaleRouteRow,
+    LOOPBACK_RECLAIM_SCHEMA,
 };
 /// The Effigy state home for this process: `~/.effigy`, or the private
 /// fixture home while unit tests run. Callers that touch `ports.json` or other

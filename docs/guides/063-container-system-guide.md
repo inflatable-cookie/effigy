@@ -906,10 +906,13 @@ JSON failure details expose `state` (`partial` or `unavailable`),
 recovery/stop commands. `activation_stage` uses the closed vocabulary
 `preparation`, `environment_handover`, `compose_activation`,
 `stopped_service_recovery`, `readiness`, `runtime_integrations`, or
-`persistent_owner`. Manifest-declared detached mode
+`persistent_owner`, `identity` names the environment and checkout, and `cause`
+carries the sanitized underlying refusal (secret-shaped values redacted,
+bounded). Manifest-declared detached mode
 also reports preparation failures as unavailable with no recovery authority.
-These stages identify caller boundaries, not causes or readiness proof. Details
-contain no raw backend output, argv or environment.
+These stages and codes identify caller boundaries, not readiness proof; the
+cause is what refused. Details contain no raw backend output, argv or
+environment.
 Fresh full-ID inspect must match project, service, non-oneoff running state and
 checkout ownership; bindings come from current inspect published ports. An
 owned replacement updates its TCP target in the same locked route transaction,
@@ -1438,6 +1441,45 @@ and starts the operator daemon. Unknown process identity prevents migration.
 URLs, loopback IPs, generated 100-port ranges and pins remain unchanged.
 The endpoint Store owns their imported state; the legacy JSON files remain
 unchanged until an explicit downgrade export.
+
+### Recover a deleted checkout's gateway claims
+
+A checkout that published container routes and was then deleted keeps those
+routes and their reserved domains: the hostnames answer from nothing, and a new
+checkout of the same project cannot claim them. `effigy gateway repair` is the
+supported repair. Preview first, narrowed to the exact deleted checkout:
+
+```sh
+effigy gateway repair --owner-checkout /Users/me/.t3/worktrees/old-checkout
+```
+
+The preview lists every loopback assignment, container route (DNS alias or HTTP)
+and withdrawn domain claim with `reclaim`, `hold` or `retain` and a reason, and
+prints a plan digest. Reclaim means the repair proved the owner gone: the path is
+definitely missing, and no runtime-scope record, container in any state, live
+listener or foreign owner still holds the entry. `hold` means the proof is
+incomplete or something may still own it, and the reason says which; `retain`
+means a live owner keeps it. Nothing is written by a preview.
+
+Apply exactly what you reviewed:
+
+```sh
+effigy gateway repair --owner-checkout /Users/me/.t3/worktrees/old-checkout   --yes --expect-plan <DIGEST>
+```
+
+Apply refuses when the recomputed plan differs, when a successor published the
+domain between review and apply, or when the release would take a live
+owner. A successful apply releases the assignment, its container routes and its
+withdrawn claims in one endpoint Store publication, writes a pre-edit backup with
+SHA-256 evidence under `~/.effigy/gateway/`, and never touches containers,
+volumes, data, certificates or another project's routes. The recovered domains
+leave the endpoint reuse quarantine after about three minutes; retry the
+consumer until it claims them.
+
+When a managed listener (host process) wants a domain that a deleted checkout
+still claims, its startup refuses and names that checkout plus this same command
+instead of calling the claim a live foreign owner. The refusal is expected: run
+the repair, then start the environment again.
 
 For a reversible downgrade, stop dependent consumers first, then use the new
 binary to remove its setup and export its latest endpoint state:

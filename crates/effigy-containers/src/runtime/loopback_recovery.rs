@@ -1,12 +1,15 @@
-//! Collection of loopback assignments and container routes whose owner is
-//! provably gone.
+//! Collection of loopback assignments, container routes and withdrawn domain
+//! claims whose owner is provably gone.
 //!
 //! The bounded `127.1.0.x` pool is exhausted when every address is either
 //! assigned or still reserved by another project's container route. Projects
 //! whose checkout, containers, runtime scope and listeners are all gone keep
-//! both forever, so a new stack cannot get an address. This module proves each
-//! owner dead before anything is released, and releases an assignment together
-//! with the stale container routes that keep its address reserved.
+//! both forever, so a new stack cannot get an address. The same dead checkouts
+//! keep the HTTP container routes they published and any persistent domain
+//! claim whose route was withdrawn, so a new checkout cannot claim its own
+//! hostnames. This module proves each owner dead before anything is released,
+//! and releases an assignment together with the stale container routes and
+//! withdrawn claims that keep its namespace reserved.
 //!
 //! Releasing is allocation-only: it never touches containers, volumes, data,
 //! profiles, certificates or a live owner's route.
@@ -15,9 +18,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 
-use effigy_gateway::endpoint_store::EndpointStore;
+use effigy_gateway::endpoint_store::{DomainClaim, EndpointStore};
 use effigy_gateway::error::GatewayError;
-use effigy_gateway::loopback::reclaim::{edit_locked, DeadLoopbackEdit, DeadLoopbackOutcome};
+use effigy_gateway::loopback::reclaim::{edit_locked, DeadClaimEdit, DeadClaimOutcome};
 use effigy_gateway::loopback::{LoopbackAssignment, LoopbackRegistry};
 use effigy_gateway::ports::sha256_hex;
 use effigy_gateway::routes::{Route, RouteSource, RouteTable};
@@ -31,6 +34,67 @@ use crate::runtime::scope::{self, ScopeRecord};
 
 /// Stable machine report schema for the dead-owner section of `gateway repair`.
 pub const LOOPBACK_RECLAIM_SCHEMA: &str = "effigy.gateway.loopback-reclaim.v1";
+
+/// One exact owner checkout a preview or apply may target.
+///
+/// The filter is the public `--owner-checkout` value. It never grants anything:
+/// it narrows the plan to entries whose recorded owner path is exactly this
+/// value, so an operator recovering one deleted checkout cannot release another
+/// project's endpoints by accident. Normalization is lexical, because a deleted
+/// checkout cannot be canonicalized.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnerCheckoutFilter {
+    checkout: String,
+}
+
+impl OwnerCheckoutFilter {
+    /// Normalize one absolute owner checkout path.
+    ///
+    /// Normalization is lexical because a deleted checkout cannot be
+    /// canonicalized: repeated separators, `.` components and a trailing
+    /// separator collapse, while `..`, a relative path and the filesystem root
+    /// refuse.
+    pub fn new(raw: &str) -> Result<Self, String> {
+        let value = raw.trim();
+        if value.is_empty() {
+            return Err("`--owner-checkout` needs an absolute checkout path".to_owned());
+        }
+        if !value.starts_with('/') {
+            return Err(format!(
+                "`--owner-checkout` must be an absolute path, found `{value}`"
+            ));
+        }
+        let mut normalized = PathBuf::from("/");
+        for part in value.split('/') {
+            match part {
+                "" | "." => continue,
+                ".." => {
+                    return Err(format!(
+                        "`--owner-checkout` must not contain `..`: `{value}`"
+                    ))
+                }
+                component => normalized.push(component),
+            }
+        }
+        if normalized.as_os_str() == "/" {
+            return Err(
+                "`--owner-checkout` must name one checkout, not the filesystem root".to_owned(),
+            );
+        }
+        Ok(Self {
+            checkout: normalized.display().to_string(),
+        })
+    }
+
+    /// The normalized checkout path this filter targets.
+    pub fn checkout(&self) -> &str {
+        &self.checkout
+    }
+
+    fn admits(&self, project: &str) -> bool {
+        project == self.checkout
+    }
+}
 
 /// Ownership facts gathered once per plan. Each source is an explicit
 /// `Result`, so an unreadable store can never read as an empty one.
@@ -78,6 +142,12 @@ impl LoopbackRecoveryFacts {
                 .iter()
                 .filter_map(|(identity, assignment)| owner_path(identity, assignment))
                 .chain(routes.routes.values().map(|route| route.project.clone()))
+                .chain(
+                    snapshot
+                        .domain_claims()
+                        .into_iter()
+                        .map(|claim| claim.project),
+                )
                 .collect::<BTreeSet<_>>();
             if roots.len() > 1000 {
                 return Err("checkout journal discovery exceeds 1000 endpoint roots".into());
@@ -141,7 +211,13 @@ pub struct StaleRouteRow {
     pub domain: String,
     /// Absolute path to the project directory.
     pub project: String,
-    /// Loopback address the route holds.
+    /// Recorded checkout generation token, when the route carries one.
+    pub scope: Option<String>,
+    /// How the route was registered.
+    pub source: RouteSource,
+    /// Upstream the gateway proxies to; absent for a DNS-only alias route.
+    pub target: Option<String>,
+    /// Loopback address the route holds; absent for an HTTP domain route.
     pub dns_ip: Option<Ipv4Addr>,
     /// TCP alias port the gateway binds for it.
     pub tcp_port: Option<u16>,
@@ -153,13 +229,40 @@ pub struct StaleRouteRow {
     pub reason: String,
 }
 
-/// One consistent set of decisions over the loopback pool.
+/// One withdrawn persistent domain claim's decision.
+///
+/// A claim outlives its route: the domain stays reserved for its exact owner
+/// even after nothing is routed to it, so a new checkout cannot claim it until
+/// the owner's claim is released.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DomainClaimRow {
+    /// Claimed domain.
+    pub domain: String,
+    /// Absolute path to the exact owner checkout.
+    pub project: String,
+    /// Recorded checkout generation token, when the claim carries one.
+    pub scope: Option<String>,
+    /// Stable managed-listener owner token the claim reserved, if any.
+    pub listener: Option<String>,
+    /// Classification of the owner path.
+    pub path_state: PathState,
+    /// What the plan does with the entry.
+    pub decision: Decision,
+    /// Why.
+    pub reason: String,
+}
+
+/// One consistent set of decisions over the loopback pool and its domains.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoopbackRecoveryPlan {
     /// Assignment rows, sorted by identity.
     pub assignments: Vec<LoopbackRecoveryRow>,
     /// Route rows, sorted by domain.
     pub routes: Vec<StaleRouteRow>,
+    /// Withdrawn domain-claim rows, sorted by domain.
+    pub domain_claims: Vec<DomainClaimRow>,
+    /// The exact owner checkout the plan was narrowed to, if any.
+    pub owner_checkout: Option<String>,
     /// Set when ownership proof is incomplete for the whole machine. Every
     /// absent-path entry is then held.
     pub global_hold: Option<String>,
@@ -187,18 +290,34 @@ impl LoopbackRecoveryPlan {
             .collect()
     }
 
+    /// Withdrawn domain claims to release.
+    pub fn release_domain_claims(&self) -> Vec<&DomainClaimRow> {
+        self.domain_claims
+            .iter()
+            .filter(|row| row.decision == Decision::Reclaim)
+            .collect()
+    }
+
     /// Whether the plan releases nothing.
     pub fn is_empty(&self) -> bool {
-        self.release_assignments().is_empty() && self.release_routes().is_empty()
+        self.release_assignments().is_empty()
+            && self.release_routes().is_empty()
+            && self.release_domain_claims().is_empty()
     }
 }
 
-/// Decide every assignment and loopback-holding container route from one
-/// consistent set of facts.
+/// Decide every assignment, container route and withdrawn domain claim from
+/// one consistent set of facts.
+///
+/// `filter` narrows the plan to one exact owner checkout. `claims` is the
+/// store's persistent domain-claim set, so a withdrawn claim is visible even
+/// though no route names it.
 pub fn plan_recovery(
     registry: &LoopbackRegistry,
     routes: &RouteTable,
+    claims: &[DomainClaim],
     facts: &LoopbackRecoveryFacts,
+    filter: Option<&OwnerCheckoutFilter>,
     probe_path: impl Fn(&Path) -> PathState,
     listener_hold: impl Fn(Ipv4Addr, &[u16]) -> Option<String>,
 ) -> LoopbackRecoveryPlan {
@@ -207,15 +326,34 @@ pub fn plan_recovery(
         .all_routes()
         .into_iter()
         .map(|route| (route.domain.clone(), probe_path(Path::new(&route.project))))
+        .chain(
+            claims
+                .iter()
+                .map(|claim| (claim.domain.clone(), probe_path(Path::new(&claim.project)))),
+        )
         .collect();
-    let loopback_routes = routes
+    let all_in_scope_routes = routes
         .all_routes()
         .into_iter()
-        .filter(|route| route.source == RouteSource::Container)
+        .filter(|route| route_is_in_scope(route))
+        .collect::<Vec<_>>();
+    // Assignment decisions see every route on an address, so a narrowed plan
+    // still knows which addresses another owner holds.
+    let loopback_routes = all_in_scope_routes
+        .iter()
+        .copied()
         .filter(|route| route.dns_ip.is_some_and(is_pool_address))
         .collect::<Vec<_>>();
+    let in_scope_routes = all_in_scope_routes
+        .iter()
+        .copied()
+        .filter(|route| filter.is_none_or(|filter| filter.admits(&route.project)))
+        .collect::<Vec<_>>();
 
-    let mut assignments = registry
+    // Every assignment is decided, even when the plan is narrowed to one
+    // owner: an address another owner still holds must hold a route that names
+    // it, whoever asked.
+    let all_assignments = registry
         .assignments
         .iter()
         .map(|(identity, assignment)| {
@@ -234,13 +372,24 @@ pub fn plan_recovery(
 
     // Addresses a retained assignment keeps are never released, even when a
     // stale route names the same address.
-    let live_assignment_ips = assignments
+    let live_assignment_ips = all_assignments
         .iter()
         .filter(|row| row.decision != Decision::Reclaim)
         .map(|row| row.ip)
         .collect::<BTreeSet<_>>();
 
-    let mut route_rows = loopback_routes
+    let mut assignments = all_assignments
+        .into_iter()
+        .filter(|row| {
+            filter.is_none_or(|filter| {
+                row.owner_path
+                    .as_deref()
+                    .is_some_and(|path| filter.admits(path))
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut route_rows = in_scope_routes
         .iter()
         .map(|route| {
             decide_route(
@@ -254,15 +403,45 @@ pub fn plan_recovery(
         })
         .collect::<Vec<_>>();
 
+    // A routed claim is decided by its route row; only withdrawn claims reach
+    // this list, and they stay visible so an operator sees why a domain is
+    // still reserved.
+    let mut claim_rows = claims
+        .iter()
+        .filter(|claim| routes.lookup(&claim.domain).is_none())
+        .filter(|claim| filter.is_none_or(|filter| filter.admits(&claim.project)))
+        .map(|claim| decide_claim(claim, &path_states, facts, &global_hold))
+        .collect::<Vec<_>>();
+
     assignments.sort_by(|left, right| left.identity.cmp(&right.identity));
     route_rows.sort_by(|left, right| left.domain.cmp(&right.domain));
-    let digest = plan_digest(&assignments, &route_rows);
+    claim_rows.sort_by(|left, right| left.domain.cmp(&right.domain));
+    let owner_checkout = filter.map(|filter| filter.checkout().to_owned());
+    let digest = plan_digest(
+        &assignments,
+        &route_rows,
+        &claim_rows,
+        owner_checkout.as_deref(),
+    );
     LoopbackRecoveryPlan {
         assignments,
         routes: route_rows,
+        domain_claims: claim_rows,
+        owner_checkout,
         global_hold,
         digest,
     }
+}
+
+/// Container routes the dead-owner plan may ever release: pool-address alias
+/// routes and HTTP domain routes, never a managed-listener (host process)
+/// route and never a route the gateway did not publish for a container.
+fn route_is_in_scope(route: &Route) -> bool {
+    route.source == RouteSource::Container
+        && match route.dns_ip {
+            Some(ip) => is_pool_address(ip),
+            None => route.managed_listener.is_none(),
+        }
 }
 
 /// Whether an address belongs to the bounded loopback pool.
@@ -482,12 +661,100 @@ fn decide_route(
     StaleRouteRow {
         domain: route.domain.clone(),
         project: route.project.clone(),
+        scope: route.scope.clone(),
+        source: route.source,
+        target: route.target.clone(),
         dns_ip: route.dns_ip,
         tcp_port: route.tcp_port,
         path_state,
         decision,
         reason,
     }
+}
+
+/// Decide one withdrawn persistent domain claim whose route is gone.
+///
+/// A claim carries no address and no listener generation, so absence alone is
+/// never enough: a claim that reserved a managed listener owner holds, because
+/// its liveness cannot be proven without the route that carried the process
+/// identity. The exact owner checkout must still be missing, no runtime-scope
+/// record may retain the domain, and no container in any state may belong to
+/// the checkout.
+fn decide_claim(
+    claim: &DomainClaim,
+    path_states: &BTreeMap<String, PathState>,
+    facts: &LoopbackRecoveryFacts,
+    global_hold: &Option<String>,
+) -> DomainClaimRow {
+    let path_state = path_states
+        .get(&claim.domain)
+        .cloned()
+        .unwrap_or_else(|| PathState::Unknown("claim has no observed owner path".to_owned()));
+    let (decision, reason) = match path_state.clone() {
+        PathState::Present => (Decision::Retain, "owner path exists".to_owned()),
+        PathState::Unknown(error) => (
+            Decision::Hold,
+            format!("owner path state is unknown: {error}"),
+        ),
+        PathState::Missing => match global_hold {
+            Some(reason) => (Decision::Hold, format!("global hold: {reason}")),
+            None => decide_missing_claim(claim, facts),
+        },
+    };
+    DomainClaimRow {
+        domain: claim.domain.clone(),
+        project: claim.project.clone(),
+        scope: claim.scope.clone(),
+        listener: claim.listener.clone(),
+        path_state,
+        decision,
+        reason,
+    }
+}
+
+fn decide_missing_claim(claim: &DomainClaim, facts: &LoopbackRecoveryFacts) -> (Decision, String) {
+    if let Some(listener) = &claim.listener {
+        return (
+            Decision::Hold,
+            format!(
+                "claim reserved managed listener owner `{listener}` with no published route, so its liveness is unproven"
+            ),
+        );
+    }
+    if let Ok(records) = &facts.scopes {
+        if let Some(record) = records.iter().find(|record| {
+            record.checkout == claim.project
+                || record.routes.iter().any(|held| held == &claim.domain)
+                || record
+                    .retain_routes
+                    .iter()
+                    .any(|held| held == &claim.domain)
+        }) {
+            return (
+                Decision::Hold,
+                format!("runtime-scope record {} still owns it", record.token),
+            );
+        }
+    }
+    if let Some(row) = facts
+        .inventory
+        .rows
+        .iter()
+        .find(|row| row.row.working_dir.as_deref() == Some(claim.project.as_str()))
+    {
+        return (
+            Decision::Hold,
+            format!(
+                "container {} ({}) still belongs to it",
+                row.row.container_name, row.row.status
+            ),
+        );
+    }
+    (
+        Decision::Reclaim,
+        "owner path is missing and no route, scope record or container still holds the withdrawn claim"
+            .to_owned(),
+    )
 }
 
 fn decide_missing_route(
@@ -560,37 +827,58 @@ fn decide_missing_route(
             return (Decision::Hold, reason);
         }
     }
+    let detail = if route.dns_ip.is_some() {
+        "no scope record, container, listener or live assignment uses it"
+    } else {
+        "no scope record, container or managed listener uses it"
+    };
     (
         Decision::Reclaim,
-        "project path is missing; no scope record, container, listener or live assignment uses it"
-            .to_owned(),
+        format!("project path is missing; {detail}"),
     )
 }
 
-fn plan_digest(assignments: &[LoopbackRecoveryRow], routes: &[StaleRouteRow]) -> String {
-    let mut material = assignments
-        .iter()
-        .map(|row| {
-            format!(
-                "assignment\t{}\t{}\t{}\t{}",
-                row.identity,
-                row.ip,
-                row.scope,
-                row.decision.label()
-            )
-        })
-        .collect::<Vec<_>>();
+fn plan_digest(
+    assignments: &[LoopbackRecoveryRow],
+    routes: &[StaleRouteRow],
+    claims: &[DomainClaimRow],
+    owner_checkout: Option<&str>,
+) -> String {
+    let mut material = vec![format!(
+        "filter\t{}",
+        owner_checkout.unwrap_or("every-owner")
+    )];
+    material.extend(assignments.iter().map(|row| {
+        format!(
+            "assignment\t{}\t{}\t{}\t{}",
+            row.identity,
+            row.ip,
+            row.scope,
+            row.decision.label()
+        )
+    }));
     material.extend(routes.iter().map(|row| {
         format!(
-            "route\t{}\t{}\t{}\t{}\t{}",
+            "route\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             row.domain,
             row.project,
+            row.scope.as_deref().unwrap_or("-"),
+            row.target.as_deref().unwrap_or("-"),
             row.dns_ip
                 .map(|ip| ip.to_string())
                 .unwrap_or_else(|| "-".to_owned()),
             row.tcp_port
                 .map(|port| port.to_string())
                 .unwrap_or_else(|| "-".to_owned()),
+            row.decision.label()
+        )
+    }));
+    material.extend(claims.iter().map(|row| {
+        format!(
+            "claim\t{}\t{}\t{}\t{}",
+            row.domain,
+            row.project,
+            row.scope.as_deref().unwrap_or("-"),
             row.decision.label()
         )
     }));
@@ -640,7 +928,7 @@ pub struct LoopbackReclaimReport {
     /// The decisions that were made.
     pub plan: LoopbackRecoveryPlan,
     /// What the Store released, empty for a preview.
-    pub edit: DeadLoopbackOutcome,
+    pub edit: DeadClaimOutcome,
 }
 
 impl LoopbackReclaimReport {
@@ -655,9 +943,15 @@ fn gateway_directory(store: &EndpointStore) -> PathBuf {
 }
 
 /// Plan the release without writing anything.
-pub fn loopback_reclaim_preview(store: &EndpointStore) -> Result<LoopbackReclaimReport, String> {
+///
+/// `filter` narrows the plan to one exact owner checkout; the digest covers the
+/// filter, so an apply cannot release a different owner than the one reviewed.
+pub fn loopback_reclaim_preview(
+    store: &EndpointStore,
+    filter: Option<&OwnerCheckoutFilter>,
+) -> Result<LoopbackReclaimReport, String> {
     let facts = LoopbackRecoveryFacts::gather();
-    preview_from(store, &facts, probe_project_path, |ip, ports| {
+    preview_from(store, &facts, filter, probe_project_path, |ip, ports| {
         stale_alias_listener_hold(facts.gateway_pid, ip, ports)
     })
 }
@@ -665,6 +959,7 @@ pub fn loopback_reclaim_preview(store: &EndpointStore) -> Result<LoopbackReclaim
 fn preview_from(
     store: &EndpointStore,
     facts: &LoopbackRecoveryFacts,
+    filter: Option<&OwnerCheckoutFilter>,
     probe_path: impl Fn(&Path) -> PathState,
     listener_hold: impl Fn(Ipv4Addr, &[u16]) -> Option<String>,
 ) -> Result<LoopbackReclaimReport, String> {
@@ -677,12 +972,21 @@ fn preview_from(
     let routes = snapshot
         .routes()
         .map_err(|error| format!("gateway route table: {error}"))?;
-    let plan = plan_recovery(&registry, &routes, facts, probe_path, listener_hold);
+    let claims = snapshot.domain_claims();
+    let plan = plan_recovery(
+        &registry,
+        &routes,
+        &claims,
+        facts,
+        filter,
+        probe_path,
+        listener_hold,
+    );
     Ok(LoopbackReclaimReport {
         mode: "preview",
         gateway_dir: gateway_directory(store),
         plan,
-        edit: DeadLoopbackOutcome::default(),
+        edit: DeadClaimOutcome::default(),
     })
 }
 
@@ -693,11 +997,13 @@ fn preview_from(
 pub fn loopback_reclaim_apply(
     store: &EndpointStore,
     expect_digest: Option<&str>,
+    filter: Option<&OwnerCheckoutFilter>,
 ) -> Result<LoopbackReclaimReport, String> {
     let facts = LoopbackRecoveryFacts::gather();
     apply_from(
         store,
         &facts,
+        filter,
         probe_project_path,
         |ip, ports| stale_alias_listener_hold(facts.gateway_pid, ip, ports),
         expect_digest,
@@ -707,23 +1013,38 @@ pub fn loopback_reclaim_apply(
 fn apply_from(
     store: &EndpointStore,
     facts: &LoopbackRecoveryFacts,
+    filter: Option<&OwnerCheckoutFilter>,
     probe_path: impl Fn(&Path) -> PathState,
     listener_hold: impl Fn(Ipv4Addr, &[u16]) -> Option<String>,
     expect_digest: Option<&str>,
 ) -> Result<LoopbackReclaimReport, String> {
-    let (edit, plan) = edit_locked::<_, GatewayError>(store, |registry, routes| {
-        let plan = plan_recovery(registry, routes, facts, &probe_path, &listener_hold);
+    let (edit, plan) = edit_locked::<_, GatewayError>(store, |registry, routes, claims| {
+        let plan = plan_recovery(
+            registry,
+            routes,
+            claims,
+            facts,
+            filter,
+            &probe_path,
+            &listener_hold,
+        );
         if let Some(expected) = expect_digest {
             if plan.digest != expected {
+                let again = match filter {
+                    Some(filter) => {
+                        format!("effigy gateway repair --owner-checkout {}", filter.checkout())
+                    }
+                    None => "effigy gateway repair".to_owned(),
+                };
                 return Err(GatewayError::EndpointStore {
                     reason: format!(
-                        "dead-owner plan changed since it was reviewed (expected digest {expected}, found {}); run `effigy gateway repair` again and review the new plan",
+                        "dead-owner plan changed since it was reviewed (expected digest {expected}, found {}); run `{again}` again and review the new plan",
                         plan.digest
                     ),
                 });
             }
         }
-        let edit = edit_for_plan(registry, routes, &plan);
+        let edit = edit_for_plan(registry, routes, claims, &plan);
         Ok((edit, plan))
     })
     .map_err(|error| format!("gateway endpoints: {error}"))?;
@@ -740,9 +1061,10 @@ fn apply_from(
 fn edit_for_plan(
     registry: &LoopbackRegistry,
     routes: &RouteTable,
+    claims: &[DomainClaim],
     plan: &LoopbackRecoveryPlan,
-) -> DeadLoopbackEdit {
-    DeadLoopbackEdit {
+) -> DeadClaimEdit {
+    DeadClaimEdit {
         assignments: plan
             .release_assignments()
             .into_iter()
@@ -757,6 +1079,20 @@ fn edit_for_plan(
             .release_routes()
             .into_iter()
             .filter_map(|domain| routes.lookup(&domain).cloned())
+            .collect(),
+        domains: plan
+            .release_domain_claims()
+            .into_iter()
+            .filter_map(|row| {
+                claims
+                    .iter()
+                    .find(|claim| {
+                        claim.domain == row.domain
+                            && claim.project == row.project
+                            && claim.scope == row.scope
+                    })
+                    .cloned()
+            })
             .collect(),
     }
 }
@@ -788,8 +1124,28 @@ pub fn loopback_reclaim_json(report: &LoopbackReclaimReport) -> Value {
             json!({
                 "domain": row.domain,
                 "project": row.project,
+                "scope": row.scope,
+                "source": route_source_label(row.source),
+                "target": row.target,
                 "dns_ip": row.dns_ip.map(|ip| ip.to_string()),
                 "tcp_port": row.tcp_port,
+                "path_state": row.path_state.label(),
+                "path_state_detail": path_state_detail(&row.path_state),
+                "decision": row.decision.label(),
+                "reason": row.reason,
+            })
+        })
+        .collect::<Vec<_>>();
+    let domain_claims = report
+        .plan
+        .domain_claims
+        .iter()
+        .map(|row| {
+            json!({
+                "domain": row.domain,
+                "project": row.project,
+                "scope": row.scope,
+                "listener": row.listener,
                 "path_state": row.path_state.label(),
                 "path_state_detail": path_state_detail(&row.path_state),
                 "decision": row.decision.label(),
@@ -802,10 +1158,17 @@ pub fn loopback_reclaim_json(report: &LoopbackReclaimReport) -> Value {
         "schema_version": 1,
         "mode": report.mode,
         "gateway_dir": report.gateway_dir.display().to_string(),
+        "owner_checkout": report.plan.owner_checkout,
         "global_hold": report.plan.global_hold,
         "plan_digest": report.plan.digest,
         "planned_release_assignments": report.plan.release_assignments(),
         "planned_release_routes": report.plan.release_routes(),
+        "planned_release_domain_claims": report
+            .plan
+            .release_domain_claims()
+            .into_iter()
+            .map(|row| row.domain.clone())
+            .collect::<Vec<_>>(),
         "planned_release_addresses": report
             .plan
             .assignments
@@ -815,6 +1178,7 @@ pub fn loopback_reclaim_json(report: &LoopbackReclaimReport) -> Value {
             .collect::<Vec<_>>(),
         "released_assignments": report.edit.released_assignments,
         "released_routes": report.edit.released_routes,
+        "released_domain_claims": report.edit.released_domains,
         "released_addresses": report
             .edit
             .released_addresses
@@ -826,7 +1190,16 @@ pub fn loopback_reclaim_json(report: &LoopbackReclaimReport) -> Value {
         "sha256_after": report.edit.sha256_after,
         "assignments": assignments,
         "routes": routes,
+        "domain_claims": domain_claims,
     })
+}
+
+fn route_source_label(source: RouteSource) -> &'static str {
+    match source {
+        RouteSource::Container => "container",
+        RouteSource::Task => "task",
+        RouteSource::Manual => "manual",
+    }
 }
 
 fn path_state_detail(state: &PathState) -> Value {
@@ -841,8 +1214,10 @@ fn path_state_detail(state: &PathState) -> Value {
 pub struct LoopbackCollection {
     /// Identities released.
     pub released_assignments: Vec<String>,
-    /// Domains released.
+    /// Routed domains released.
     pub released_routes: Vec<String>,
+    /// Withdrawn persistent domain claims released.
+    pub released_domain_claims: Vec<String>,
     /// Addresses freed.
     pub released_addresses: Vec<Ipv4Addr>,
     /// Pre-edit copy of both endpoint documents.
@@ -901,11 +1276,17 @@ fn reserve_loopback_collecting_dead_with(
     };
 
     let facts = gather();
-    let (outcome, plan) = edit_locked::<_, GatewayError>(store, |registry, routes| {
-        let plan = plan_recovery(registry, routes, &facts, &probe_path, |ip, ports| {
-            stale_alias_listener_hold(facts.gateway_pid, ip, ports)
-        });
-        let edit = edit_for_plan(registry, routes, &plan);
+    let (outcome, plan) = edit_locked::<_, GatewayError>(store, |registry, routes, claims| {
+        let plan = plan_recovery(
+            registry,
+            routes,
+            claims,
+            &facts,
+            None,
+            &probe_path,
+            |ip, ports| stale_alias_listener_hold(facts.gateway_pid, ip, ports),
+        );
+        let edit = edit_for_plan(registry, routes, claims, &plan);
         Ok((edit, plan))
     })?;
     if plan.is_empty() {
@@ -916,13 +1297,15 @@ fn reserve_loopback_collecting_dead_with(
     }
 
     eprintln!(
-        "[info] released {} dead loopback assignment(s) and {} stale container route(s) to allocate an address for {identity}",
+        "[info] released {} dead loopback assignment(s), {} stale container route(s) and {} withdrawn domain claim(s) to allocate an address for {identity}",
         outcome.released_assignments.len(),
-        outcome.released_routes.len()
+        outcome.released_routes.len(),
+        outcome.released_domains.len()
     );
     let collection = LoopbackCollection {
         released_assignments: outcome.released_assignments,
         released_routes: outcome.released_routes,
+        released_domain_claims: outcome.released_domains,
         released_addresses: outcome.released_addresses,
         backup: outcome.backup,
         plan_digest: plan.digest,

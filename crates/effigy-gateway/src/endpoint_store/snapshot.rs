@@ -85,6 +85,19 @@ impl DomainOwner {
         }
     }
 }
+/// One persistent domain claim and the exact owner that reserved it. Withdrawn
+/// claims have no active route and are only visible through this record.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DomainClaim {
+    /// Claimed domain, lowercased by the store.
+    pub domain: String,
+    /// Exact checkout path that owns the claim.
+    pub project: String,
+    /// Recorded checkout generation token, when the claim carries one.
+    pub scope: Option<String>,
+    /// Stable managed-listener owner token, when a listener reserved it.
+    pub listener: Option<String>,
+}
 impl EndpointSnapshot {
     pub(super) fn imported(
         mut documents: BTreeMap<String, Value>,
@@ -252,6 +265,42 @@ impl EndpointSnapshot {
                 .map(|route| route.domain.clone()),
         );
         Ok(domains.into_iter().collect())
+    }
+    /// Every persistent domain claim, ordered by domain, with the exact owner
+    /// that reserved it. A claim survives withdrawal of its route, so it stays
+    /// in ownership inventory when nothing is routed to it.
+    pub fn domain_claims(&self) -> Vec<DomainClaim> {
+        self.domains
+            .iter()
+            .map(|(domain, owner)| DomainClaim {
+                domain: domain.clone(),
+                project: owner.project.clone(),
+                scope: owner.scope.clone(),
+                listener: owner.listener.clone(),
+            })
+            .collect()
+    }
+    /// Explicit repair ends one exact withdrawn claim's persistent ownership.
+    /// The reviewed owner must still hold it and its domain must still be
+    /// unrouted, so a successor claim published between review and apply is
+    /// never released.
+    pub fn release_domain_claim(&mut self, claim: &DomainClaim) -> Result<(), GatewayError> {
+        let key = claim.domain.to_ascii_lowercase();
+        match self.domains.get(&key) {
+            Some(current) if current.project == claim.project && current.scope == claim.scope => {}
+            _ => {
+                return Err(GatewayError::DeadClaimChanged {
+                    entry: claim.domain.clone(),
+                })
+            }
+        }
+        if self.routes()?.lookup(&claim.domain).is_some() {
+            return Err(GatewayError::DeadClaimChanged {
+                entry: claim.domain.clone(),
+            });
+        }
+        self.domains.remove(&key);
+        Ok(())
     }
     /// Explicit repair ends one exact route's persistent ownership. Routine
     /// down/up uses set_routes and retains the conflict set instead.
