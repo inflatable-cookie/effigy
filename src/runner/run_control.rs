@@ -42,19 +42,10 @@ const STOP_WAIT_DEFAULT: Duration = Duration::from_secs(30);
 pub(in crate::runner) fn run_runs(args: RunsArgs) -> Result<String, RunnerError> {
     let json = args.output_json;
     match args.action {
-        RunsAction::Migrate {
-            plan,
-            legacy_launchers_stopped,
-            checkouts,
-            stop,
-        } => migrate::run(
-            args.repo_override,
-            plan,
-            legacy_launchers_stopped,
-            checkouts,
-            stop,
-            json,
-        ),
+        RunsAction::Migrate { plan } => {
+            debug_assert!(plan, "`run migrate` parses only its read-only plan form");
+            migrate::run(json)
+        }
         RunsAction::List { limit, all } => list(args.repo_override, limit, all, json),
         RunsAction::Status { run } => status(&run, json),
         RunsAction::Logs {

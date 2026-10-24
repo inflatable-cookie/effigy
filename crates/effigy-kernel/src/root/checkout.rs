@@ -146,13 +146,24 @@ impl StateRoot {
             .observe()
             .map_err(|_| StoreError::Unbounded)?;
         Self::filesystem_checkout(&observe, location)?;
-        match Self::checkout_observe(&observe, location) {
-            Observed::Verified(_, _) | Observed::Absent(_) => {}
-            Observed::Unknown(reason) => {
+        let mut local = Self::checkout_observe(&observe, location);
+        if let Observed::Unknown(reason) = &local {
+            // A leftover group/other-readable root is only a mode repair: the
+            // effect path adopts it, and the root is then observed again on its
+            // real mode before any authority is trusted (papercut 9e5134a4).
+            // Every other unknown still refuses here.
+            if !super::is_open_mode_only(reason) {
                 return Err(StoreError::Corrupt(format!(
                     "foreground checkout: {reason:?}"
-                )))
+                )));
             }
+            Self::effects(cx, &location.root)?;
+            local = Self::checkout_observe(&observe, location);
+        }
+        if let Observed::Unknown(reason) = local {
+            return Err(StoreError::Corrupt(format!(
+                "foreground checkout: {reason:?}"
+            )));
         }
         Self::effects(cx, &location.root)?
             .retain_checkout(location)

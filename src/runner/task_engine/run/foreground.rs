@@ -4,7 +4,7 @@ use effigy_kernel::custody::{Custody, Exit, OwnedProcess, ProcessSpec, SpawnErro
 use effigy_kernel::inheritance::{MemoryLease, RunClass, RuntimeParent};
 use effigy_kernel::migration::CheckoutLocation;
 use effigy_kernel::root::StateRoot;
-use effigy_kernel::run::{ForegroundRun, LegacyForeground};
+use effigy_kernel::run::ForegroundRun;
 
 pub(in crate::runner::task_engine) fn inherited_class() -> Result<Option<RuntimeParent>, RunnerError>
 {
@@ -120,30 +120,13 @@ impl TaskRun {
                 placement: LifecyclePlacement::Inline,
             }),
         };
-        let aliases = if task_gate {
-            checkout::identities(&kernel::observe(), &request.target.root)
-                .map_err(|error| class_error(&error.to_string()))?
-        } else {
-            // Fresh private builtin owners cannot have an old incarnation.
-            Vec::new()
-        };
-        let home = kernel::state_home();
-        let legacy = LegacyForeground::for_checkout(
-            &kernel::observe(),
-            &root,
-            home.as_deref(),
-            &invocation,
-            &aliases,
-        )
-        .map_err(|error| begin_error(error, request.target, request.lock_wait_ms, started))?;
+        kernel::refuse_unreleased_main()?;
         let memory = match parent.and_then(|parent| parent.memory) {
             Some(parent) => parent
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .begin_child_with_legacy(&root, &invocation, opts, legacy.as_ref()),
-            None => {
-                ForegroundRun::begin_with_legacy(&cx, &root, &invocation, opts, legacy.as_ref())
-            }
+                .begin_child(&root, &invocation, opts),
+            None => ForegroundRun::begin(&cx, &root, &invocation, opts),
         }
         .map_err(|error| begin_error(error, request.target, request.lock_wait_ms, started))?;
         let mut run = Self {

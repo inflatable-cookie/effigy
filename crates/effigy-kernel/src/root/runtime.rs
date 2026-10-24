@@ -53,63 +53,6 @@ impl Record for Binding {
 }
 
 impl StateRoot {
-    /// Compatibility observation for a persisted owner before relocation.
-    /// Published checkout authority never depends on the machine source again.
-    pub(crate) fn foreground_legacy(
-        cx: &ObserveContext,
-        local: &Self,
-        machine_home: Option<&Path>,
-    ) -> Result<Option<Self>, StoreError> {
-        local.verify_binding()?;
-        match authority(cx, local) {
-            Observed::Verified(Authority::Committed { .. }, _) => return Ok(None),
-            Observed::Verified(Authority::Fresh, _) => {
-                match read_record::<Binding>(cx, local.dir(), &FileName::new(BINDING)?) {
-                    Observed::Verified(_, _) => return Ok(None),
-                    Observed::Absent(_) => {}
-                    other => {
-                        return Err(unreadable(format!(
-                            "foreground checkout authority: {other:?}"
-                        )))
-                    }
-                }
-            }
-            other => {
-                return Err(unreadable(format!(
-                    "foreground checkout publication: {other:?}"
-                )))
-            }
-        }
-        let home = machine_home.ok_or_else(|| {
-            unreadable("HOME is required to verify this persisted owner's legacy predecessor")
-        })?;
-        if crate::migration::committed(cx, home)?.is_some() {
-            return Ok(None);
-        }
-        let legacy = match Self::legacy_observe(cx, home) {
-            Observed::Verified(root, _) => root,
-            Observed::Absent(_) => return Ok(None),
-            other => {
-                return Err(unreadable(format!(
-                    "legacy foreground predecessor source: {other:?}"
-                )))
-            }
-        };
-        let database = legacy
-            .dir()
-            .entry(&FileName::new(crate::store::DB_NAME)?)?
-            .is_some();
-        if !database && machine_format(cx, &legacy)? {
-            return Ok(None);
-        }
-        if legacy.owner.identity()? == local.owner.identity()? {
-            return Err(unreadable(
-                "legacy machine source overlaps the foreground checkout",
-            ));
-        }
-        Ok(Some(legacy))
-    }
-
     /// Pure checkout routing with the current Git resolution supplied by the
     /// engine. A copied token or retargeted `.git` file cannot select an old
     /// journal whose original Git directory still happens to exist.
@@ -175,7 +118,8 @@ impl StateRoot {
         cx.require(Capability::HostAuthority)
             .map_err(|_| StoreError::HostAuthorityRequired)?;
         let observe = observation(cx)?;
-        require_cutover(&observe, machine_home, Some(&location.root))?;
+        let local = cutover_root(cx, &observe, machine_home, Some(&location.root))?;
+        require_cutover(&observe, local, machine_home, Some(&location.root))?;
         let root = Self::effects(cx, &location.root)?
             .retain_checkout(location)?
             .route_machine_gates(&observe, machine_home);
@@ -247,7 +191,7 @@ impl StateRoot {
         if cx.placement() == Placement::Guest {
             return Observed::Unknown(UnknownReason::HostAuthorityRequired);
         }
-        match require_cutover(cx, home, None) {
+        match require_cutover(cx, StateRoot::machine_observe(cx, home), home, None) {
             Ok(()) => Self::machine_observe(cx, home),
             Err(error) => Observed::Unknown(UnknownReason::StoreUnreadable(error.to_string())),
         }
@@ -262,7 +206,8 @@ impl StateRoot {
         cx.require(Capability::HostAuthority)
             .map_err(|_| StoreError::HostAuthorityRequired)?;
         let observe = observation(cx)?;
-        require_cutover(&observe, home, None)?;
+        let local = cutover_root(cx, &observe, home, None)?;
+        require_cutover(&observe, local, home, None)?;
         let root = Self::machine_effects(cx, home)?;
         if matches!(
             authority(&observe, &root),
@@ -349,15 +294,12 @@ fn observation(cx: &EffectContext) -> Result<ObserveContext, StoreError> {
 
 fn require_cutover(
     cx: &ObserveContext,
+    local: Observed<StateRoot>,
     machine_home: &Path,
     checkout: Option<&Path>,
 ) -> Result<(), StoreError> {
     // A sealed checkout remains independently usable even when the machine
     // store is unavailable. A partial import remains a refusal everywhere.
-    let local = match checkout {
-        Some(path) => StateRoot::observe(cx, path),
-        None => StateRoot::machine_observe(cx, machine_home),
-    };
     match local {
         Observed::Verified(root, _) => match authority(cx, &root) {
             Observed::Verified(Authority::Committed { .. }, _) => return Ok(()),
@@ -386,34 +328,54 @@ fn require_cutover(
     }
     match StateRoot::legacy_observe(cx, machine_home) {
         Observed::Verified(legacy, _) => {
-            let database = legacy
+            if legacy
                 .dir()
                 .entry(&FileName::new(crate::store::DB_NAME)?)?
-                .is_some();
-            let initializer = format_gate()?.name().to_string();
-            let source_hints = ResourceId::store(Scope::Machine, "source-hints")?
-                .name()
-                .to_string();
-            let pre_run_writer = !database
-                && legacy.dir().entry(&FileName::new("machine.db")?)?.is_none()
-                && !machine_format(cx, &legacy)?
-                && crate::migration::inspect_gates(cx, &legacy)?
-                    .iter()
-                    .any(|blocker| {
-                        // This new-format initializer has no old-binary meaning
-                        // and never opens a database. Concurrent bootstrap waits
-                        // on its gate after the legacy-writer check.
-                        blocker.scope != "machine"
-                            || (blocker.resource != initializer && blocker.resource != source_hints)
-                    });
-            if database || pre_run_writer {
-                return Err(StoreError::LegacyMigrationRequired);
+                .is_some()
+            {
+                return Err(StoreError::UnreleasedMainRuntime);
             }
+            // An unreadable or foreign machine layout is `Unknown`, never a
+            // fresh empty machine. A new-format layout has no database yet.
+            machine_format(cx, &legacy)?;
         }
         Observed::Absent(_) => {}
         other => return Err(unreadable(format!("legacy runtime root: {other:?}"))),
     }
     Ok(())
+}
+
+/// The local root an effect decides the cutover from.
+///
+/// A leftover group/other-readable mode on `.effigy/state/` (v0.14
+/// `effigy state`, papercut 9e5134a4) is not a fact about the journal. The same
+/// adoption an effect performs, which only tightens a directory that already
+/// exists, resolves it, so the cutover is decided on the real root instead of
+/// refusing every task in the checkout. No new destination is created before
+/// the cutover decision, and pure observation keeps such a root `Unknown`.
+fn cutover_root(
+    cx: &EffectContext,
+    observe: &ObserveContext,
+    machine_home: &Path,
+    checkout: Option<&Path>,
+) -> Result<Observed<StateRoot>, StoreError> {
+    let local = match checkout {
+        Some(path) => StateRoot::observe(observe, path),
+        None => StateRoot::machine_observe(observe, machine_home),
+    };
+    match local {
+        Observed::Unknown(reason) if crate::root::is_open_mode_only(&reason) => {
+            let adopted = match checkout {
+                Some(path) => StateRoot::effects(cx, path),
+                None => StateRoot::machine_effects(cx, machine_home),
+            }?;
+            Ok(Observed::Verified(
+                adopted,
+                Evidence::new("adopted state root mode".into(), None).expect("fixed source"),
+            ))
+        }
+        other => Ok(other),
+    }
 }
 
 pub(crate) fn verify(cx: &ObserveContext, root: &StateRoot) -> Result<(), StoreError> {

@@ -624,6 +624,56 @@ fn gate_untrusted_roots_refuse_mutate_and_read_unknown() {
 }
 
 #[test]
+fn gate_effects_adopt_a_legacy_v014_state_root_mode() {
+    // Papercut 9e5134a4: v0.14 `effigy state` created `.effigy/state/` with the
+    // process umask (0755), which Q-010 made the kernel's private root. An
+    // effect in that checkout adopts the root by tightening its mode; an
+    // observation never repairs what it does not trust.
+    let home = home();
+    let state = home.path().join(".effigy/state");
+    let legacy = state.join("capture-context/acme/uat.json");
+    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    std::fs::write(&legacy, b"{}\n").unwrap();
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mode = |path: &Path| {
+        std::fs::symlink_metadata(path)
+            .expect("stat")
+            .permissions()
+            .mode()
+            & 0o777
+    };
+
+    assert_eq!(mode(&state), 0o755);
+    assert!(matches!(
+        StateRoot::observe(&observe(), home.path()),
+        Observed::Unknown(UnknownReason::Untrusted(_))
+    ));
+    assert_eq!(mode(&state), 0o755, "observation repairs nothing");
+
+    let root = StateRoot::effects(&effects(EffectClass::Mutate), home.path()).unwrap();
+    assert_eq!(mode(root.path()), 0o700);
+    assert_eq!(mode(&state), 0o700);
+    assert!(
+        legacy.is_file(),
+        "adopting the mode keeps the legacy content"
+    );
+    assert_eq!(
+        StateRoot::observe(&observe(), home.path()).map(|root| mode(root.path())),
+        Observed::Verified(
+            0o700,
+            Evidence::new("kernel state root".into(), None).unwrap()
+        )
+    );
+
+    // A root another user could write is still refused, never repaired.
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o770)).unwrap();
+    assert!(matches!(
+        StateRoot::effects(&effects(EffectClass::Mutate), home.path()),
+        Err(effigy_kernel::fs::FsError::Untrusted { .. })
+    ));
+}
+
+#[test]
 fn gate_acquire_inside_a_store_transaction_is_refused() {
     let home = home();
     let cx = effects(EffectClass::Mutate);

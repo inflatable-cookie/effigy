@@ -111,15 +111,21 @@ fn a_partial_generation_matches_across_state_home_paths() {
     let second_render = second.render.as_ref().unwrap();
     // A detached activation recorded as partial under one state home is
     // reconciled by a plain `container up` from another: the generation
-    // digest never depends on where the state home lives.
+    // digest never depends on where the state home lives. Q-010 moved the
+    // published generation into the checkout's own journal, so both renders
+    // name the same immutable path instead of one per state home.
     assert_eq!(
         first_render.closure.digest(),
         second_render.closure.digest()
     );
-    // Q-010 moved render objects into the checkout journal, so the immutable
-    // generation also sits at one path per checkout whatever state home the
-    // caller used (contract 052 §7.1).
     assert_eq!(first_render.path, second_render.path);
+    assert!(
+        first_render
+            .path
+            .starts_with(checkout.join(".effigy/state")),
+        "the generation is published in the checkout journal: {}",
+        first_render.path.display()
+    );
     for bytes in first_render.closure.files().values() {
         let text = String::from_utf8_lossy(bytes);
         assert!(

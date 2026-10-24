@@ -253,8 +253,8 @@
     {
       "schema": "effigy.runtime-migration.v1",
       "schema_version": 1,
-      "command": "effigy run migrate --plan --json --repo <fixture_task_success>",
-      "surface": "read-only legacy runtime migration plan",
+      "command": "effigy run migrate --plan --json",
+      "surface": "read-only runtime migration report",
       "status": "active",
       "isolated_home": true
     }

@@ -36,10 +36,14 @@ name = "kernel-ratchet"
 path = "examples/kernel-ratchet.rs"
 
 # Disposable same-binary re-exec harness, never part of a product install.
+# Built without a feature gate: `fault_point!` is inert outside a test build, so
+# the helper behaviour ordinary runs need is identical with or without
+# `fault-injection`, and proofs that run under a plain test runner (built-in
+# `effigy test` included) must be able to prepare it. `tests/fixture_binary.rs`
+# is the preparation proof that makes an ordinary workspace run build it.
 [[bin]]
 name = "kernel-custody-fixture"
 path = "tests/support/custody-fixture.rs"
-required-features = ["fault-injection"]
 test = false
 bench = false
 

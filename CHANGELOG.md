@@ -60,8 +60,6 @@ During v0.x, MINOR bumps may include breaking changes.
 - Resumable release runs keep their journal, checkpoints, receipts and certified
   candidates in the checkout's gitignored `.effigy/state/`. Checkpoint files
   use journalled atomic replacement; status never recreates missing records.
-  Migration preserves paused release identities and approvals, verifies certified
-  artifacts, and relocates the record and candidate into that checkout.
 - Gateway process startup batches its admitted intents and its applied receipts
   into two commits before process go; the detach request is the third commit.
   Receipt-commit refusal keeps the workload blocked. Positive close removes
@@ -70,8 +68,6 @@ During v0.x, MINOR bumps may include breaking changes.
 - Endpoint and port fact edits publish their complete conflict set in one
   transaction. Unchanged edits and imports write nothing and create no run
   history; cold schema initialization is counted separately.
-- Runtime migration freezes the legacy writer scope with bounded descriptors,
-  rechecks old owners before publication, and refuses replaced scope inodes.
 - Managed supervisors initialize in the selected checkout journal and explicitly
   forward verified parent capabilities; Linux retained-image helpers prepare
   descriptors before exec and preserve their explicit environment.
@@ -86,15 +82,6 @@ During v0.x, MINOR bumps may include breaking changes.
   runtime state. Remote suites and retained scratch use checkout journals;
   suite workers explicitly carry their parent's verified admission hook.
   The TUI uses kernel custody for output, input, stop and verified retry.
-- Before migration, foreground owners with persisted checkout identities
-  also hold their legacy lock-file aliases and read their old predecessors.
-  Unresolved legacy evidence refuses before workload start. Compatibility
-  locks stay in memory custody and never write the old database; migrated
-  checkout runs no longer consult that source.
-- Runtime migration reports busy destination checkout owners before staging
-  and holds checkout directory fences through publication. Existing foreground
-  work continues when migration refuses; the report includes stop and drain
-  commands for its verified owner.
 - Named run keys now derive their run IDs from the owning checkout token.
   Equal keys in different checkouts are independent; peer queries refuse
   ambiguous keys. Imported legacy IDs remain local aliases after cutover.
@@ -295,6 +282,18 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- The importer for the current-main central `~/.effigy/state/kernel.db`
+  (contract 052 §11.1, effigy#307). That schema existed only on unreleased main
+  between 2026-10-18 and #276, so no released version ever wrote it, and v0.15
+  ships one migration path: the v0.14.1 importers, which read legacy files on
+  first use. A machine which committed the cutover ignores `kernel.db` and
+  never deletes it; one still holding it without a committed manifest is
+  refused once with its exact upgrade path (migrate with Effigy main
+  `7b82d26`, then upgrade). `effigy run migrate --plan` is now a read-only
+  report of that state: it stages, imports, stops and deletes nothing, and its
+  busy-writer preflight, stop controls and `--legacy-launchers-stopped` import
+  mode are gone. The importer's `actual-copy` acceptance proof and its selectors
+  are removed with it.
 - The distribution surface (Q-009), contract 054 §4.4 and §13. Effigy's own
   release is now one `[release]` declaration in `config/release.toml`: the
   `effigy` `semver` identity, a `preflight` pre gate and the `ci`, `format`,
@@ -486,12 +485,12 @@ During v0.x, MINOR bumps may include breaking changes.
   checkout journal; an unavailable journal refuses backend effects. Source
   preparation also journals per checkout. Gateway lifecycle and endpoint/port
   facts route to `machine.db`; unmigrated central state is reported explicitly.
-- `effigy run migrate --plan` inspects legacy runtime state and reports exact
-  blocking writers with verified stop commands. Withdraw old launchers, then
-  use `--legacy-launchers-stopped` to import retained state into per-checkout
-  journals and the machine store. `--checkout` and user-config
-  `[runtime].checkout_roots` locate existing checkout identities without a
-  central registration index. Interrupted imports resume the same cutover.
+- `effigy run migrate --plan` is a read-only report of runtime migration
+  state: `no-legacy-state`, `committed`, or a refused `unreleased-main-state`
+  naming the Effigy main `7b82d26` upgrade path. v0.15 imports v0.14.1 legacy
+  state on first use, so an upgrade from v0.14.1 needs no migration command.
+  User-config `[runtime].checkout_roots` locates existing checkout identities
+  without a central registration index.
 - `effigy skill run ... --repo <DIR>` accepts a bare target directory with no
   repository marker, so an isolated fixture can be the consumer target of an
   installed skill task. The JSON evidence reports canonical root paths, and a
@@ -1191,6 +1190,47 @@ During v0.x, MINOR bumps may include breaking changes.
   objects and container labels now resolve through the nearest enclosing
   directory carrying `.git` (contract 052 §7.1); a nested repository or
   submodule, and every root checkout or linked worktree, keeps its own.
+- The `effigy state` surface no longer writes into `.effigy/state/`, the
+  runtime kernel's private checkout root. Capture and apply hook context files
+  now live under `.effigy/state-captures/`, so a state run can no longer leave
+  the root at 0755 and make that checkout's kernel state unreadable (papercut
+  `9e5134a4`). A checkout whose `.effigy/state/` already carries the v0.14
+  group/other-readable mode is adopted by tightening it to 0700 on its next
+  effect — a foreground task tree and a retained (`--run-id`) run both decide
+  their cutover on the adopted root; observation never repairs it. One checkout's
+  unreadable runtime-scope records now hold only its own dead-owner and port
+  recovery entries instead of freezing `effigy gateway repair` for every
+  owner, and both plans name each unreadable checkout with the reason.
+- `effigy test` host suites run nested `effigy` invocations through the binary
+  that started the test run (`EFFIGY_EXECUTABLE`) instead of rebuilding the
+  workspace binary with `cargo run` for each one. A concurrent rebuild replaced
+  a running process's startup image, and kernel custody refused the run
+  (`startup binary replaced`, `foreground guard closed acknowledgement pipe`,
+  `child failed before barrier`) in tests whose steps reference another task.
+- A task reference inside an `effigy skill run` source resolves against that
+  source catalog. Sequence tree classification looked the reference up in the
+  consumer's catalogs and refused it with `task catalog prefix … not found`
+  for a nested source task the run would otherwise accept.
+- A first local-dev vault unlock (`effigy dev`, `secrets = "required"` tasks)
+  writes the unattended key before the run's foreground scope, so the kernel no
+  longer refuses it with `late durable effect refused: parent tree is
+  foreground`.
+- A nested `effigy` launched through a tool that closes inherited descriptors
+  (Bun, Node, Python's `subprocess`) no longer fails with `parent run
+  capability refused: Bad file descriptor`. It runs as an independent
+  invocation with one notice.
+- The documented `effigy.completion.v2` payload lists the `fmt` and `fmt-rust`
+  commands. The completion contract test compares that example with live
+  output, so the example now carries the builtin formatter rows it had
+  drifted past.
+- `effigy contracts check-json` fixture commands no longer inherit the
+  invoking task tree's runtime capability, so `qa:json` inside `effigy qa`
+  stops failing the qa-group contract fixtures (`fixture group run failed
+  unexpectedly`).
+- Commands run from your home directory no longer read `~/.effigy/state` (the
+  machine store since the Q-010 cutover) as a checkout. `effigy container retire
+  --scope … --yes` from `~`, as Queue runs it, failed with `import seal belongs
+  to a different runtime database`.
 - A deleted checkout's stale gateway route no longer blocks every other
   project. Route-table writes only check added or changed routes against
   domain owners, so `container up`/`down` elsewhere stops failing with `domain

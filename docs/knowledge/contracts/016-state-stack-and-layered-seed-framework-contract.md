@@ -380,12 +380,17 @@ quoting or naming churn.
 
 Context file:
 
-- path: `.effigy/state/capture-context/<stack>/<key>.json`
+- path: `.effigy/state-captures/capture-context/<stack>/<key>.json`
 - schema: `effigy.state-stack.capture-context.v1`
 - written before the repo task runs
 - overwritten by later captures with the same stack/key
 - exposed to the task as `EFFIGY_STATE_CAPTURE_CONTEXT`
 - recorded in the capture report as `tasks[].context_path`
+- never under `.effigy/state/`: that path is the runtime kernel's private
+  checkout root (contract
+  [052](052-runtime-kernel-contract.md#71-location-trust-and-clocks)). The
+  `apply-context/` hook files use the same root, and the guide's capture-source
+  examples put payloads under `.effigy/state-captures/captures/`.
 
 Context fields:
 
@@ -576,7 +581,7 @@ Named capture profiles:
 [state.uat.captures.new-content]
 role = "uat-capture"
 source_env = "uat"
-source = ".effigy/state/captures/{key}.tar"
+source = ".effigy/state-captures/captures/{key}.tar"
 ref = "oci://ghcr.io/example-app/state:{key}"
 task = "state:capture-new-content"
 ```

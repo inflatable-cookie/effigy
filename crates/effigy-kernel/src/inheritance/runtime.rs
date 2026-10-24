@@ -39,14 +39,37 @@ impl RuntimeParent {
     }
     /// Text selects the inherited descriptor; only a live native capability
     /// supplies the grant. Invalid or unknown grants are errors, never absence.
+    /// A closed descriptor carries no grant at all and reads as absence.
     pub fn inherited(cx: &OperationContext) -> io::Result<Option<Self>> {
         let Some(marker) = std::env::var_os(ENV) else {
             return Ok(None);
         };
+        // Once the descriptor is known lost, the slot may since hold an
+        // unrelated file this process opened; never probe it again.
+        if CAPABILITY_LOST.load(std::sync::atomic::Ordering::Acquire) {
+            return Ok(None);
+        }
         let marker = marker
             .to_str()
             .ok_or_else(|| refused("invalid runtime parent selector"))?;
-        let capability = InheritedCapability::capture(cx, marker)?;
+        let capability = match InheritedCapability::capture(cx, marker) {
+            Ok(capability) => capability,
+            // The selector survived but its descriptor didn't: an intermediate
+            // process (Bun, Node, Python's subprocess) closed inherited
+            // descriptors. No grant arrived, so there is nothing to verify or
+            // forge; refusing would block every nested Effigy behind such a
+            // tool. The invocation runs as an independent one, as if the
+            // variable were unset.
+            Err(error) if error.raw_os_error() == Some(libc::EBADF) => {
+                if !CAPABILITY_LOST.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                    eprintln!(
+                        "[warn] {ENV} is set but its descriptor was closed by an intermediate process; running as an independent invocation"
+                    );
+                }
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
         let grant: Self = capability.payload(cx)?;
         if grant.purpose != "effigy.runtime-parent.v1" {
             return Err(refused("unsupported runtime parent grant"));
@@ -71,6 +94,9 @@ impl RuntimeParent {
         Ok(())
     }
 }
+/// Set when this process found its inherited capability descriptor closed.
+static CAPABILITY_LOST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 thread_local! {
     static SCOPES: RefCell<Vec<Weak<RuntimeParent>>> = const { RefCell::new(Vec::new()) };
 }
@@ -142,6 +168,21 @@ pub fn require_durable(cx: &OperationContext) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_selector_whose_descriptor_was_closed_reads_as_no_parent() {
+        // nextest runs each test in its own process, so the variable and the
+        // reserved slot are this test's alone. If the slot happens to be open
+        // the closed-descriptor case can't be modelled here.
+        // SAFETY: F_GETFD only queries the descriptor table.
+        if unsafe { libc::fcntl(CHILD_FD, libc::F_GETFD) } >= 0 {
+            return;
+        }
+        std::env::set_var(ENV, format!("memory-v1:{CHILD_FD}:{}", "0".repeat(64)));
+        let cx = super::super::tests::context(crate::ctx::Placement::Host);
+        let parent = RuntimeParent::inherited(cx.operation());
+        std::env::remove_var(ENV);
+        assert!(matches!(parent, Ok(None)), "{parent:?}");
+    }
     #[test]
     fn scopes_cannot_lift_a_live_foreground_restriction_by_drop_order() {
         let cx = super::super::tests::context(crate::ctx::Placement::Host);

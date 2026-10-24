@@ -1803,7 +1803,9 @@ carries `state_reason`. An unreadable gate body is
     "state",
     "tasks",
     "test",
-    "workspace"
+    "workspace",
+    "fmt",
+    "fmt-rust"
   ]
 }
 ```
@@ -2507,7 +2509,7 @@ Staged local capture:
     {
       "name": "example-app:migrate:capture-uat-overlay",
       "status": "executed",
-      "context_path": ".effigy/state/capture-context/example-app-uat/uat-capture-2026-05-08.json",
+      "context_path": ".effigy/state-captures/capture-context/example-app-uat/uat-capture-2026-05-08.json",
       "output": "capture complete"
     }
   ],

@@ -93,10 +93,11 @@ pub use runtime::scope::{
     load as load_scope_record, load_for_checkout, load_local_records as load_local_scope_records,
     remove as remove_scope_record, upsert as upsert_scope_record,
     upsert_at as upsert_scope_record_at, volume_has_ownership_proof,
-    with_retirement as with_scope_retirement, ScopeComposeKind, ScopeJournalError, ScopeRecord,
-    CHECKOUT_FENCE_LABEL, CHECKOUT_GENERATION_LABEL, CHECKOUT_LABEL, COMPOSE_PROJECT_LABEL,
-    MANAGED_LABEL, MOUNT_TARGET_LABEL, PERSIST_LABEL, PROJECT_LABEL, REPO_ROOT_LABEL, SCOPE_LABEL,
-    SERVICE_LABEL, VOLUME_NAME_LABEL,
+    with_retirement as with_scope_retirement, ScopeComposeKind, ScopeJournalError,
+    ScopeObservations, ScopeRecord, UnreadableCheckout, CHECKOUT_FENCE_LABEL,
+    CHECKOUT_GENERATION_LABEL, CHECKOUT_LABEL, COMPOSE_PROJECT_LABEL, MANAGED_LABEL,
+    MOUNT_TARGET_LABEL, PERSIST_LABEL, PROJECT_LABEL, REPO_ROOT_LABEL, SCOPE_LABEL, SERVICE_LABEL,
+    VOLUME_NAME_LABEL,
 };
 pub use workspace::{
     load_workspace_ownership_plan, load_workspace_ownership_targets, rust_cache_kind,

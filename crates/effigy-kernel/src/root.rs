@@ -68,9 +68,7 @@ impl StateRoot {
         let effigy = home
             .child(".effigy", Trust::Operator, true)?
             .expect("created directory");
-        let dir = effigy
-            .child("state", Trust::Private, true)?
-            .expect("created directory");
+        let dir = effigy.private_child_adopt("state")?;
         dir.require_local()?;
         Ok(Self {
             dir,
@@ -140,11 +138,6 @@ impl StateRoot {
         root.database = Database::Checkout;
         root
     }
-    pub(crate) fn legacy_control(&self) -> Self {
-        let mut root = self.legacy_source();
-        root.writable = true;
-        root
-    }
     pub(crate) fn unpublished(&self) -> Self {
         let mut root = self.clone();
         root.writable = false;
@@ -184,27 +177,6 @@ impl StateRoot {
             checkout.verify(&self.owner)?;
         }
         Ok(())
-    }
-    /// An inert migration staging root inside this verified destination. It
-    /// inherits database routing, but publication remains a separate authority
-    /// switch; normal engine callers never receive this root.
-    pub(crate) fn migration_stage(&self, name: &str) -> Result<Self, FsError> {
-        if !self.writable {
-            return Err(FsError::untrusted(self.path(), "read-only staging parent"));
-        }
-        let dir = self
-            .dir
-            .child(name, Trust::Private, true)?
-            .expect("created staging directory");
-        Ok(Self {
-            dir,
-            owner: self.owner.clone(),
-            writable: true,
-            database: self.database.clone(),
-            adoption: false,
-            checkout: self.checkout.clone(),
-            machine_gates: self.machine_gates.clone(),
-        })
     }
     /// Retained filesystem identity of the actual checkout or machine home.
     pub fn owning_directory(&self) -> &DirFd {
@@ -246,4 +218,19 @@ pub(crate) fn unknown(error: &FsError) -> UnknownReason {
         FsError::Io(io) if io.is_permission() => UnknownReason::PermissionDenied,
         other => UnknownReason::Inconsistent(other.to_string()),
     }
+}
+
+/// Whether an observation failed only because a state root carries a
+/// group/other-readable mode an effect may tighten.
+///
+/// That mode is not a fact about the journal: v0.14 `effigy state` created
+/// `.effigy/state/` with the process umask (papercut 9e5134a4), and
+/// [`StateRoot::effects`] adopts such a root. Effect paths use this to reach
+/// that adoption instead of refusing; observation keeps the root `Unknown` and
+/// never repairs it.
+pub(crate) fn is_open_mode_only(reason: &UnknownReason) -> bool {
+    matches!(
+        reason,
+        UnknownReason::Untrusted(reason) if reason == crate::fs::OPEN_MODE_REASON
+    )
 }

@@ -2460,15 +2460,19 @@ fn release_verify_install_repo_task_proves_a_tagged_install() {
     write_effigy_release_root_marker(&root);
 
     let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/release/checks.sh");
+    // No `CARGO_NET_OFFLINE` here: the proof is a tagged-source `cargo install
+    // --git`, which cargo can only do by fetching the tag. The fake repository
+    // is a local `file://` remote, so nothing leaves this machine, but offline
+    // mode refuses even that fetch and would fail the proof for the wrong
+    // reason.
     let output = Command::new("sh")
         .arg(&script)
         .args(["verify-install", "--tag", "v0.1.0", "--repo-url", &repo_url])
         .current_dir(&root)
         .env("NO_COLOR", "1")
-        // Local `file://` git sources cannot be checked out in Cargo's offline
-        // mode, and this fixture's package has no dependencies, so the proof
-        // stays offline by construction rather than by that switch.
         .env_remove("CARGO_NET_OFFLINE")
+        // Keep cargo's git checkout and install cache inside this fixture.
+        .env("CARGO_HOME", root.join("cargo-home"))
         .output()
         .expect("run the release:verify:install script");
 

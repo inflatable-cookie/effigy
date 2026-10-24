@@ -153,12 +153,6 @@ pub(crate) fn duplicate_custody(
     Ok(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) })
 }
 impl GateGuard {
-    /// Memory custody may span local gates and pre-cutover compatibility
-    /// gates. Every description then reaches the same death guard and children.
-    pub(crate) fn extend_custody(&mut self, mut other: Self) {
-        self.gates.append(&mut other.gates);
-        self.scopes.append(&mut other.scopes);
-    }
     /// Foreground backup custody retains these same open descriptions. Once
     /// shared, closing a custodian must not explicitly unlock the other's
     /// flock. Workload forks still inherit only CLOEXEC copies.
@@ -318,18 +312,7 @@ impl Gate {
                 .iter()
                 .find(|id| &scope_name(id.scope()) == name)
                 .expect("scope of an id");
-            let borrowed = if name == "machine" {
-                crate::migration::borrow_source_scope(&file, &ids)?
-            } else {
-                None
-            };
-            let file = match borrowed {
-                Some(file) => GateFile {
-                    file,
-                    unlock_on_drop: false,
-                },
-                None => lock(cx, file, libc::LOCK_SH, deadline, started, wait, first)?,
-            };
+            let file = lock(cx, file, libc::LOCK_SH, deadline, started, wait, first)?;
             guard.scopes.push((name.clone(), file));
             // Recreated after a removal; removal cannot run while we hold SH.
             let dir = gates.child(name, Trust::Private, true)?.expect("created");
@@ -452,10 +435,9 @@ impl Gate {
 
 pub(crate) enum ExpectedHolder<'a> {
     Run(&'a RunId),
-    Writer(&'a ident::ProcessIdentity, Option<&'a str>),
 }
-/// Migration can address a pre-run writer whose legacy gate has no RunId.
-/// Names are validated by that boundary; identity matching is never optional.
+/// The holder is matched by exact run, start and boot identity, never by name
+/// or PID alone.
 pub(crate) fn signal_named_holder(
     cx: &EffectContext,
     root: &StateRoot,
@@ -528,12 +510,6 @@ pub(crate) fn signal_named_holder(
     };
     let matches_target = match target {
         ExpectedHolder::Run(run) => diag.run.as_deref() == Some(run.to_string().as_str()),
-        ExpectedHolder::Writer(identity, run) => {
-            diag.run.as_deref() == run
-                && diag.pid == identity.pid
-                && diag.start.as_deref() == Some(identity.start.text().as_str())
-                && diag.boot.as_deref() == Some(identity.boot.as_str())
-        }
     };
     if !matches_target || !matches!(diag.state, Observed::Verified(..)) {
         return Observed::Unknown(UnknownReason::Inconsistent(

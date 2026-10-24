@@ -538,7 +538,7 @@ pub fn read_release_record(
     })?;
     let root = match StateRoot::checkout_observe_in(&observe, home, &location(repo_root)?) {
         Observed::Verified(root, _) => root,
-        Observed::Absent(_) => return legacy_release_refusal(&observe, home, repo_root),
+        Observed::Absent(_) => return legacy_release_refusal(&observe, home),
         Observed::Unknown(reason) => {
             return Err(ReleaseError::TaskInvocation(format!(
                 "release state is unreadable: {reason:?}"
@@ -547,7 +547,7 @@ pub fn read_release_record(
     };
     let reader = match Store::read(&observe, &root) {
         Observed::Verified(reader, _) => reader,
-        Observed::Absent(_) => return legacy_release_refusal(&observe, home, repo_root),
+        Observed::Absent(_) => return legacy_release_refusal(&observe, home),
         Observed::Unknown(reason) => {
             return Err(ReleaseError::TaskInvocation(format!(
                 "release state store is unreadable: {reason:?}"
@@ -576,40 +576,14 @@ pub fn read_release_record(
 }
 
 /// Historical evidence is read-only. Missing local state must not hide a
-/// paused old release or silently turn it into a new release.
+/// paused old release. A machine which still holds the retired central store
+/// has no v0.15 import path, so it is refused once rather than guessed at.
 fn legacy_release_refusal(
     observe: &effigy_kernel::ctx::ObserveContext,
     home: &Path,
-    repo_root: &Path,
 ) -> Result<Option<ReleaseRecord>, ReleaseError> {
-    if effigy_kernel::migration::committed(observe, home)
-        .map_err(storage_error)?
-        .is_some()
-    {
-        return Ok(None);
-    }
-    let root = match StateRoot::legacy_observe(observe, home) {
-        Observed::Verified(root, _) => root,
-        Observed::Absent(_) => return Ok(None),
-        Observed::Unknown(reason) => {
-            return Err(storage_error(format!("legacy release source: {reason:?}")))
-        }
-    };
-    let reader = match Store::read(observe, &root) {
-        Observed::Verified(reader, _) => reader,
-        Observed::Absent(_) => return Ok(None),
-        Observed::Unknown(reason) => {
-            return Err(storage_error(format!("legacy release source: {reason:?}")))
-        }
-    };
-    let canonical = repo_root.canonicalize().map_err(storage_error)?;
-    let owner = ResourceId::store(Scope::Machine, &format!("release {}", canonical.display()))
-        .map_err(storage_error)?;
-    match checkpoint_from_reader(&reader, &owner)? {
-        None => Ok(None),
-        Some(checkpoint) => Err(storage_error(format!(
-            "legacy release checkpoint {} requires `effigy run migrate`; its record and certified artifacts remain untouched", checkpoint.release_id))),
-    }
+    effigy_kernel::migration::refuse_unreleased_main(observe, home).map_err(storage_error)?;
+    Ok(None)
 }
 
 /// Incomplete cleanup stays in the journal. Project it without a late file
