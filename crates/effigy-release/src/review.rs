@@ -245,7 +245,7 @@ pub fn render_execute_stale_review_lines(plan: &ReleaseExecutePlan) -> Vec<Strin
         lines.push(format!("  Warning: {warning}"));
     }
     lines.push(
-        "  Action required: rerun `effigy release prepare` or acknowledge this age-stale state now."
+        "  Action required: rerun `effigy release run` or acknowledge this age-stale state now."
             .to_owned(),
     );
     lines
@@ -378,7 +378,7 @@ pub fn build_execute_stale_review_items(plan: &ReleaseExecutePlan) -> Vec<Execut
                 plan.stale_threshold_seconds
             ));
             detail_lines.push(
-                "  Recommended action: rerun `effigy release prepare` unless you intentionally want to continue with stale state."
+                "  Recommended action: rerun `effigy release run` unless you intentionally want to continue with stale state."
                     .to_owned(),
             );
             ExecuteReviewItem {
@@ -401,7 +401,7 @@ pub fn build_execute_working_tree_review_items(
                 "  Category: missing expected prepared file".to_owned(),
                 format!("  Path: {path}"),
                 "  Meaning: `.release-prepared.json` expects this file to still be modified, but it is no longer present in the working tree.".to_owned(),
-                "  Recommended action: rerun `effigy release prepare` or restore the expected prepared change before executing.".to_owned(),
+                "  Recommended action: rerun `effigy release run` or restore the expected prepared change before publishing.".to_owned(),
             ],
         });
     }
@@ -556,7 +556,7 @@ pub fn render_release_reprepare_handoff_lines(plan: &ReleaseExecutePlan) -> Vec<
                 .unwrap_or_else(|| "unavailable".to_owned())
         ),
         format!("  Current blockers: {}", plan.blockers.len()),
-        "  This will remove the current `.release-prepared.json` and open `effigy release prepare` review.".to_owned(),
+        "  This will remove the current `.release-prepared.json` and open `effigy release run` review.".to_owned(),
     ]
 }
 

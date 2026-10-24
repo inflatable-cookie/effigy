@@ -1552,6 +1552,30 @@ fn render_secrets_doctor_text(
         }
     }
     lines.push(format!("vault: {}", vault_state.status_label()));
+    if let Some(path) = &vault_state.path {
+        lines.push(format!("vault path: {path}"));
+    }
+    match vault_state.status {
+        "unlocked" => {
+            lines.push(key_name_list(
+                "stored keys",
+                vault_state.stored_keys.as_deref().unwrap_or_default(),
+            ));
+            lines.push(key_name_list(
+                "missing required keys",
+                &vault_state.missing_required,
+            ));
+            lines.push(key_name_list(
+                "undeclared stored keys",
+                &vault_state.undeclared_stored,
+            ));
+        }
+        "locked" => lines.push(
+            "stored keys: unknown; unlock the vault (`effigy secrets unlock`) to list them"
+                .to_owned(),
+        ),
+        _ => {}
+    }
     if !warnings.is_empty() {
         lines.push(String::new());
         lines.push(format!("Warnings ({})", warnings.len()));
@@ -1563,6 +1587,14 @@ fn render_secrets_doctor_text(
         lines.extend(blockers.iter().map(|blocker| format!("- {blocker}")));
     }
     lines.join("\n")
+}
+
+/// One report line naming keys — never their values.
+fn key_name_list(label: &str, names: &[String]) -> String {
+    if names.is_empty() {
+        return format!("{label}: none");
+    }
+    format!("{label} ({}): {}", names.len(), names.join(", "))
 }
 
 fn render_targets(targets: &[ManifestSecretTarget]) -> String {
@@ -1627,6 +1659,97 @@ mod vault_generate_hook_tests {
         assert!(
             std::env::var_os(TASK_SECRET_GENERATION_ACTIVE_ENV).is_none(),
             "flag must be cleared after a failing hook"
+        );
+    }
+}
+
+#[cfg(test)]
+mod doctor_text_tests {
+    use super::*;
+
+    /// A vault that opened: #317 names the factor, this change names the keys.
+    fn opened(unlock: &'static str) -> VaultDoctorState {
+        VaultDoctorState {
+            status: "unlocked",
+            unlock: Some(unlock),
+            path: Some("/repo/.effigy/secrets.vault".to_owned()),
+            stored_keys: Some(vec![
+                "mailchimp_api_key".to_owned(),
+                "openai_api_key".to_owned(),
+                "recaptcha_secret".to_owned(),
+            ]),
+            missing_required: Vec::new(),
+            undeclared_stored: Vec::new(),
+        }
+    }
+
+    fn rendered(state: &VaultDoctorState) -> String {
+        render_secrets_doctor_text(Path::new("/repo"), None, &[], &[], state)
+    }
+
+    #[test]
+    fn doctor_text_lists_the_stored_key_names_and_never_a_value() {
+        // Before (effigy#318): `vault: unlocked` and `keys: 3`; the stored key
+        // names appeared only in `--json`.
+        let text = rendered(&opened("passphrase"));
+        assert!(text.contains("vault: unlocked (passphrase)"), "{text}");
+        assert!(
+            text.contains("stored keys (3): mailchimp_api_key, openai_api_key, recaptcha_secret"),
+            "{text}"
+        );
+        assert!(text.contains("missing required keys: none"), "{text}");
+        assert!(text.contains("undeclared stored keys: none"), "{text}");
+        assert!(!text.contains("secret-value"), "{text}");
+    }
+
+    #[test]
+    fn doctor_text_names_the_factor_that_opened_the_vault() {
+        for (factor, expected) in [
+            ("passphrase", "vault: unlocked (passphrase)"),
+            ("local-dev-key", "vault: unlocked (local-dev key)"),
+        ] {
+            let text = rendered(&opened(factor));
+            assert!(text.contains(expected), "{expected}: {text}");
+        }
+    }
+
+    #[test]
+    fn doctor_text_names_missing_required_and_undeclared_stored_keys() {
+        let mut state = opened("local-dev-key");
+        state.missing_required = vec!["database_url".to_owned()];
+        state.undeclared_stored = vec!["legacy_key".to_owned()];
+        let text = rendered(&state);
+        assert!(
+            text.contains("missing required keys (1): database_url"),
+            "{text}"
+        );
+        assert!(
+            text.contains("undeclared stored keys (1): legacy_key"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_locked_vault_says_the_key_names_are_unknown() {
+        let state =
+            VaultDoctorState::unreadable("locked", Some("/repo/.effigy/secrets.vault".to_owned()));
+        let text = rendered(&state);
+        assert!(text.contains("vault: locked"), "{text}");
+        assert!(
+            text.contains("stored keys: unknown; unlock the vault (`effigy secrets unlock`)"),
+            "{text}"
+        );
+        assert_eq!(state.to_json()["unlock"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn the_json_state_names_the_unlock_factor_next_to_the_stored_keys() {
+        let state = opened("local-dev-key");
+        let json = state.to_json();
+        assert_eq!(json["unlock"], "local-dev-key");
+        assert_eq!(
+            json["stored_keys"],
+            serde_json::json!(["mailchimp_api_key", "openai_api_key", "recaptcha_secret"])
         );
     }
 }

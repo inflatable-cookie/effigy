@@ -40,18 +40,16 @@ pub fn remediation_hints_for_blockers(
             );
         }
         if blocker.starts_with("release state file does not exist") {
-            hints.insert(
-                "Run `effigy release prepare` or `effigy release prepare --yes --check-gates` before attempting execute.".to_owned(),
-            );
+            hints.insert("Run `effigy release run` before attempting the publish.".to_owned());
         }
         if blocker.contains("release state is stale") {
             hints.insert(
-                "Prefer rerunning `effigy release prepare` to refresh the prepared state; use `--allow-stale` only when the stale state has been deliberately reviewed.".to_owned(),
+                "Prefer rerunning `effigy release run` to refresh the prepared state; use `--allow-stale` only when the stale state has been deliberately reviewed.".to_owned(),
             );
         }
         if blocker.contains("prepared release source drift detected") {
             hints.insert(
-                "Prepared-source drift cannot be overridden with `--allow-stale`; review the reported branch, HEAD, and content drift, then regenerate `.release-prepared.json` with `effigy release prepare` before executing the release. In interactive `release resume` or `release execute`, use `reprepare` to regenerate state or `discard` to clear the old prepared state.".to_owned(),
+                "Prepared-source drift cannot be overridden with `--allow-stale`; review the reported branch, HEAD, and content drift, then regenerate `.release-prepared.json` with `effigy release run` before publishing the release. When a run reports that drift, use `reprepare` to regenerate state or `discard` to clear the old prepared state.".to_owned(),
             );
         }
         if blocker.contains("prepared release state reports failed or skipped gates") {
@@ -61,7 +59,7 @@ pub fn remediation_hints_for_blockers(
         }
         if blocker.contains("requires a checked-out branch") {
             hints.insert(
-                "Check out the release branch locally before running `effigy release execute`."
+                "Check out the release branch locally before running `effigy release run`."
                     .to_owned(),
             );
         }
@@ -77,7 +75,7 @@ pub fn remediation_hints_for_blockers(
         }
         if blocker.contains("working tree is missing") {
             hints.insert(
-                "Restore or rerun `effigy release prepare` so every expected prepared file change is present before execute.".to_owned(),
+                "Restore or rerun `effigy release run` so every expected prepared file change is present before publishing.".to_owned(),
             );
         }
         if blocker.contains("working tree contains") {
@@ -107,11 +105,11 @@ pub fn remediation_hints_for_blockers(
     if hints.is_empty() {
         hints.insert(match stage {
             ReleaseBlockedStage::Prepare => {
-                "Review the blockers above, correct the release inputs, and rerun `effigy release prepare --plan` before applying changes."
+                "Review the blockers above, correct the release inputs, and rerun `effigy release --plan` before applying changes."
                     .to_owned()
             }
             ReleaseBlockedStage::Execute => {
-                "Review the blockers above, correct the repository state, and rerun `effigy release execute --plan` before attempting the irreversible execute step."
+                "Review the blockers above, correct the repository state, and rerun `effigy release --plan` before attempting the irreversible publish."
                     .to_owned()
             }
         });
@@ -1065,7 +1063,7 @@ pub fn render_release_state_discarded_text(
         "Release Prepared State Discarded".to_owned(),
         format!("  Repository: {}", repo_root.display()),
         format!("  State file: {} (removed)", state_file.display()),
-        "  Next step: rerun `effigy release prepare` when you are ready to regenerate release state."
+        "  Next step: rerun `effigy release run` when you are ready to regenerate release state."
             .to_owned(),
     ]
     .join("\n")

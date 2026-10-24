@@ -36,9 +36,8 @@ contain the skill, report the ambiguity and choose one source explicitly.
 This repo's `.agents/skills/effigy` copy is optional project-local content,
 not the maintained guidance source. Preserve it if it exists; plain init does
 not create or refresh it. The named `skill.codex_project` init action is an
-explicit snapshot opt-in and may replace files at maintained paths. Named
-`effigy skill run` task lookup still gives an invocation project's local skill
-source precedence, as defined by contract 042.
+explicit snapshot opt-in and may replace files at maintained paths. Named-skill lookup (`effigy skill run <SKILL>/<task>`) still gives an
+invocation project's local skill source precedence, as defined by contract 042.
 
 If no installed Effigy Agent Skill is present, say so and suggest
 `npx skills add inflatable-cookie/effigy -g`; init does not download or install
