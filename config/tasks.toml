@@ -947,6 +947,46 @@
   { id = "managed-handover-owner-settle", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(container_command::handover::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { id = "managed-lock-attribution", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_and_locking_tests::locking_tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
 ] }
+# Managed-listener readiness closeout (effigy#299). The two formerly ignored
+# proofs (b1bf877f shared-process dependent replacement, a841af96 macOS scoped
+# successor) run here unconditionally, beside the scoped clone and cold
+# dependent replacement cases, the slow-owner forward handover, and the typed
+# self-test fault controls. The shared-process step runs the affected gateway
+# cases in one libtest process with concurrent threads and --include-ignored, so
+# a case can never pass by being skipped. Private fixtures only; no consumer or
+# live gateway operation.
+"test:gateway:readiness-closeout" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { task = "test:host-process:dependent-replacement" },
+  { task = "test:managed:scoped-host-routes" },
+  { id = "readiness-closeout-scoped-clone", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(container_scoped_clone_first_listener_up_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { task = "test:gateway:readiness-closeout:shared" },
+  { task = "test:gateway:readiness-closeout:self-test" },
+  { task = "test:managed:handover-settle" },
+  { id = "readiness-closeout-forward-handover", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_forward_handover_waits_for_owner_whose_stop_cascade_is_slow)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
+] }
+"test:gateway:readiness-closeout:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { task = "test:host-process:dependent-replacement:cargo" },
+  { task = "test:managed:scoped-host-routes:cargo" },
+  { run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(container_scoped_clone_first_listener_up_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { task = "test:gateway:readiness-closeout:shared:cargo" },
+  { task = "test:gateway:readiness-closeout:self-test:cargo" },
+  { task = "test:managed:handover-settle:cargo" },
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests --filterset 'test(cli_forward_handover_waits_for_owner_whose_stop_cascade_is_slow)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
+] }
+"test:gateway:readiness-closeout:shared" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { id = "readiness-closeout-shared-cases", run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy --test gateway_private --no-fail-fast -- --include-ignored --test-threads=8 managed_host_dependent_replacement_ managed_host_listeners_scoped_host_routes_follow_checkout_identity container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over", timeout_ms = 1800000 },
+] }
+"test:gateway:readiness-closeout:shared:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { run = "RUSTFLAGS='--cfg effigy_shared_process' cargo test -p effigy --test gateway_private --no-fail-fast -- --include-ignored --test-threads=8 managed_host_dependent_replacement_ managed_host_listeners_scoped_host_routes_follow_checkout_identity container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over", timeout_ms = 1800000 },
+] }
+"test:gateway:readiness-closeout:self-test" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { id = "readiness-closeout-http-self-test", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --features endpoint-store-faults --lib -E 'test(http_self_test_) | test(unobservable_listener_identity)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "readiness-closeout-activation-barrier", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(listener_activation_barrier)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+] }
+"test:gateway:readiness-closeout:self-test:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-gateway --features endpoint-store-faults --lib -E 'test(http_self_test_) | test(unobservable_listener_identity)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(listener_activation_barrier)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+] }
 "proof:managed:host-readiness" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "managed-host-readiness-probe", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_host_readiness_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "managed-host-readiness-terminal", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_readiness_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
