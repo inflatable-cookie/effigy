@@ -125,6 +125,7 @@ fn identity_v1_golden_table_all_kinds() {
         ResourceId::endpoint(EndpointKind::Port, "080").unwrap(),
         ResourceId::store(Scope::Machine, "vault").unwrap(),
         ResourceId::gateway("default").unwrap(),
+        ResourceId::host_process(checkout(), "dev", "effigy", "app").unwrap(),
     ];
     let expected: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/identity-v1.json")).unwrap();

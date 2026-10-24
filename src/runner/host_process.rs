@@ -3387,6 +3387,45 @@ mod tests {
         );
     }
 
+    /// Client death mid-`up` (the owning pipe closes before any detach) still
+    /// stops both children through kernel custody, verified by the PIDs the
+    /// custody receipts recorded.
+    #[test]
+    fn host_process_owned_client_death_mid_up_stops_both_recorded_pids() {
+        let fixture = fixture();
+        let policy = policy(
+            &fixture.checkout,
+            vec![
+                host_process("a", "exec /bin/sleep 120", HostProcessRestart::Never),
+                host_process("b", "exec /bin/sleep 120", HostProcessRestart::Never),
+            ],
+        );
+        let clients = super::kernel_run::start_host_processes_owning(&fixture.checkout, &policy)
+            .expect("both host processes start with an owning client");
+        assert_eq!(clients.len(), 2, "both supervisors have an owning client");
+        wait_until("both custody receipts to name a PID", || {
+            super::kernel_run::host_process_status(&fixture.checkout, &policy)
+                .iter()
+                .all(|process| process.pid.is_some())
+        });
+        let pids = super::kernel_run::host_process_status(&fixture.checkout, &policy)
+            .iter()
+            .filter_map(|process| process.pid)
+            .collect::<Vec<_>>();
+        assert_eq!(pids.len(), 2, "both custody receipts name a PID");
+        // Dropping the owning clients before any detach is client death mid-up:
+        // kernel custody must settle both children.
+        drop(clients);
+        wait_until("both child groups to close after client death", || {
+            pids.iter().all(|pid| group_members(*pid).is_empty())
+        });
+        wait_until("both kernel runs to settle after client death", || {
+            super::kernel_run::host_process_status(&fixture.checkout, &policy)
+                .iter()
+                .all(|process| process.state == "closed")
+        });
+    }
+
     /// A legacy PID-file supervisor is stopped by its exact recorded identity
     /// on the next lifecycle command, and its record is removed.
     #[test]

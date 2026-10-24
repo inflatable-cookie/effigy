@@ -634,9 +634,9 @@ pub(in crate::runner) fn stop_hook_exempting(
 ) -> Result<(), effigy_runtime::EffigyRuntimeError> {
     move |repo_root, policy, effect| {
         stop_exempting(repo_root, policy, op, exempt, || {
-            report_host_process_stop(crate::runner::host_process::stop_host_processes_for_container(
-                repo_root, policy,
-            ));
+            report_host_process_stop(
+                crate::runner::host_process::stop_host_processes_for_container(repo_root, policy),
+            );
             effect().map_err(RunnerError::from)
         })
         .map_err(runtime_error)
@@ -651,9 +651,9 @@ pub(in crate::runner) fn reset_hook() -> impl Fn(
 ) -> Result<(), effigy_runtime::EffigyRuntimeError> {
     move |repo_root, policy, effect| {
         reset(repo_root, policy, || {
-            report_host_process_stop(crate::runner::host_process::stop_host_processes_for_container(
-                repo_root, policy,
-            ));
+            report_host_process_stop(
+                crate::runner::host_process::stop_host_processes_for_container(repo_root, policy),
+            );
             effect().map_err(RunnerError::from)
         })
         .map_err(runtime_error)

@@ -1346,6 +1346,11 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- `run stop` treats a run that settled between its status snapshot and the
+  request as already closed instead of refusing. The supervisor fault matrix
+  crosses this boundary at every journal commit, and a concurrent stop, owner
+  death or recovery could otherwise turn the idempotent stop into a false
+  refusal.
 - `effigy dev` delivers a project's container secrets every time the vault can
   be read. A dev session's local-dev access and the passphrase it just entered
   now reach every child Effigy process the session starts — the managed

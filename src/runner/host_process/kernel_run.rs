@@ -16,13 +16,13 @@ use std::time::{Duration, Instant};
 
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_kernel::ctx::{CleanupContext, EffectClass, EffectContext, OpenReason, Placement};
-use effigy_kernel::id::{CheckoutId, ResolvedInvocation, ResourceId, RunId};
 use effigy_kernel::gate::GateState;
+use effigy_kernel::id::{CheckoutId, ResolvedInvocation, ResourceId, RunId};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::outcome::Invocation;
 use effigy_kernel::run::{
-    history, settle_interrupted, summary, Effect, Fence, Phase, Reconciled, Request,
-    RequestAction, RunSummary, SettlementAdapter,
+    history, settle_interrupted, summary, Effect, Fence, Phase, Reconciled, Request, RequestAction,
+    RunSummary, SettlementAdapter,
 };
 use effigy_kernel::store::Store;
 use serde::{Deserialize, Serialize};
@@ -83,7 +83,11 @@ pub(in crate::runner) struct HostProcessStopReport {
 
 impl HostProcessStopReport {
     pub(in crate::runner) fn complete(&self) -> bool {
-        self.residue.is_empty() && self.processes.iter().all(|process| process.state != "failed")
+        self.residue.is_empty()
+            && self
+                .processes
+                .iter()
+                .all(|process| process.state != "failed")
     }
 
     /// The operator-facing lines; a failed stop is named, never dropped.
@@ -288,8 +292,56 @@ pub(in crate::runner) fn start_host_processes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<ManagedHostListenerResult>, RunnerError> {
+    let HostProcessStart { started, listeners } = start_host_processes_inner(repo_root, policy)?;
+    let cx = effects()?;
+    for (name, client) in started {
+        let run = client.run;
+        if let Err(error) = client.detach(&cx, run) {
+            let report = stop_host_processes_for_container(repo_root, policy);
+            return Err(RunnerError::task_invocation(format!(
+                "host process `{name}` could not detach after readiness: {error}{}",
+                if report.complete() {
+                    String::new()
+                } else {
+                    format!(
+                        "\nhost-process rollback could not confirm every stop:\n{}",
+                        report.lines().join("\n")
+                    )
+                }
+            )));
+        }
+    }
+    Ok(listeners)
+}
+
+/// Starts every supervisor and keeps its owning client, without detaching.
+/// Dropping the clients is exactly the client death the kernel treats as an
+/// owner-loss stop; tests use it to prove custody settles both children.
+#[cfg(test)]
+pub(super) fn start_host_processes_owning(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Vec<(String, effigy_kernel::supervise::SupervisorClient)>, RunnerError> {
+    let HostProcessStart { started, .. } = start_host_processes_inner(repo_root, policy)?;
+    Ok(started)
+}
+
+/// One successful bring-up: the supervisors still held by their owning
+/// clients, and the listener results the caller reports.
+struct HostProcessStart {
+    started: Vec<(String, effigy_kernel::supervise::SupervisorClient)>,
+    listeners: Vec<ManagedHostListenerResult>,
+}
+
+fn start_host_processes_inner(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<HostProcessStart, RunnerError> {
     if policy.host_processes.is_empty() {
-        return Ok(Vec::new());
+        return Ok(HostProcessStart {
+            started: Vec::new(),
+            listeners: Vec::new(),
+        });
     }
     super::validate_host_process_preflight(repo_root, policy)?;
     let checkout_root = repo_root.canonicalize().map_err(|error| {
@@ -297,7 +349,9 @@ pub(in crate::runner) fn start_host_processes_for_container(
     })?;
     let project_path = checkout_root.display().to_string();
     let listener_root = listener_gateway_root(policy)?;
-    let route_table = listener_root.as_deref().map(|root| root.join("routes.json"));
+    let route_table = listener_root
+        .as_deref()
+        .map(|root| root.join("routes.json"));
     let dir = host_process_dir_for_policy(&checkout_root, policy);
     super::create_host_process_dir(&checkout_root, &dir)?;
     // A v0.14.1 PID/spec supervisor is stopped by its recorded identity first;
@@ -346,7 +400,11 @@ pub(in crate::runner) fn start_host_processes_for_container(
             // A previous generation of this exact process (from an earlier
             // `up`) is settled before this bring-up replaces it.
             stop_resource_run(repo_root, policy, &resource, &hp.name, "replace")?;
-            let env = hp.env.iter().cloned().collect::<std::collections::BTreeMap<_, _>>();
+            let env = hp
+                .env
+                .iter()
+                .cloned()
+                .collect::<std::collections::BTreeMap<_, _>>();
             let mut dependencies = Vec::new();
             for dependency in &hp.depends_on {
                 let dependency_process = by_name.get(dependency.as_str()).ok_or_else(|| {
@@ -494,17 +552,13 @@ pub(in crate::runner) fn start_host_processes_for_container(
             residue.join("\n")
         )));
     }
-    // Every declared process is ready: release the owning pipes. The runs stay
-    // detached in the journal and are stopped by the environment's transitions.
-    for (name, client) in started {
-        let run = client.run;
-        client.detach(&cx, run).map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "host process `{name}` could not detach after readiness: {error}"
-            ))
-        })?;
-    }
-    Ok(listener_results)
+    // Every declared process is ready. The caller releases the owning pipes
+    // after a successful detach; a dropped client is the kernel's owner-loss
+    // stop.
+    Ok(HostProcessStart {
+        started,
+        listeners: listener_results,
+    })
 }
 
 /// Stops every host process of the environment through the kernel.
@@ -604,10 +658,7 @@ fn stop_resource_run(
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    let closed = matches!(
-        run_summary_of(repo_root, run_id),
-        Some((_, Phase::Closed))
-    );
+    let closed = matches!(run_summary_of(repo_root, run_id), Some((_, Phase::Closed)));
     let mut settled = false;
     if !closed {
         let next = recovery_invocation(&policy.name)?;
@@ -710,7 +761,10 @@ fn latest_run(repo_root: &Path, resource: &ResourceId) -> Option<RunSummary> {
 }
 
 /// The newest run of `resource` that has not closed.
-fn latest_open_run(repo_root: &Path, resource: &ResourceId) -> Result<Option<RunSummary>, RunnerError> {
+fn latest_open_run(
+    repo_root: &Path,
+    resource: &ResourceId,
+) -> Result<Option<RunSummary>, RunnerError> {
     let Some(observed) = observe_root(repo_root) else {
         return Ok(None);
     };
@@ -932,13 +986,8 @@ fn run_exit(run: &RunSummary) -> Option<i32> {
     }
 }
 
-fn hp_log_path(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    name: &str,
-) -> PathBuf {
-    host_process_dir_for_policy(repo_root, policy)
-        .join(format!("{}.log", super::sanitize(name)))
+fn hp_log_path(repo_root: &Path, policy: &EffectiveContainerPolicy, name: &str) -> PathBuf {
+    host_process_dir_for_policy(repo_root, policy).join(format!("{}.log", super::sanitize(name)))
 }
 
 /// Whether a payload is a host-process supervisor payload (as opposed to a
@@ -954,13 +1003,12 @@ pub(super) fn fresh_run_id() -> Result<RunId, RunnerError> {
         .unwrap_or_default();
     let random = super::random_token()?;
     let bytes = (0..10)
-        .map(|index| {
-            u8::from_str_radix(&random[index * 2..index * 2 + 2], 16).unwrap_or_default()
-        })
+        .map(|index| u8::from_str_radix(&random[index * 2..index * 2 + 2], 16).unwrap_or_default())
         .collect::<Vec<_>>();
-    let random: [u8; 10] = bytes.as_slice().try_into().map_err(|_| {
-        RunnerError::task_invocation("cannot obtain host-process run entropy")
-    })?;
+    let random: [u8; 10] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| RunnerError::task_invocation("cannot obtain host-process run entropy"))?;
     RunId::new(milliseconds, random)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
