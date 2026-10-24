@@ -22,6 +22,15 @@ impl<T> Observed<T> {
             _ => None,
         }
     }
+    /// Why this observation is not a value, for an error that has to say what
+    /// it saw without borrowing a `Display` from `T`.
+    pub fn unproven(&self) -> String {
+        match self {
+            Self::Verified(..) => "the observation found a value where another was expected".to_owned(),
+            Self::Absent(proof) => proof.to_string(),
+            Self::Unknown(reason) => reason.to_string(),
+        }
+    }
 }
 /// Evidence is diagnostic metadata, never raw subprocess output or credentials.
 /// Its source is bounded; process/network capture bounds belong to cut 6.
@@ -83,4 +92,86 @@ pub enum UnknownReason {
     HostAuthorityRequired,
     StoreNeedsRecovery,
     StoreUnreadable(String),
+}
+
+/// What the kernel could not prove, what that means, and the next step.
+impl std::fmt::Display for UnknownReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TimedOut { phase } => write!(
+                f,
+                "could not tell: the observation timed out during {phase}; retry once the host is less busy"
+            ),
+            Self::PermissionDenied => f.write_str(
+                "could not tell: this user may not read the state; check the checkout's `.effigy/state` ownership and permissions",
+            ),
+            Self::ToolUnavailable(tool) => write!(
+                f,
+                "could not tell: `{tool}` is not available on this host; install it and retry, or run `effigy doctor` to see what is missing"
+            ),
+            Self::Unparsable(detail) => write!(
+                f,
+                "could not tell: a recorded value could not be parsed ({detail}); run `effigy doctor` to inspect the state root"
+            ),
+            Self::Inconsistent(detail) => write!(
+                f,
+                "could not tell: the evidence contradicts itself ({detail}); retry, and if it persists run `effigy doctor`"
+            ),
+            Self::GuardUnavailable => f.write_str(
+                "could not tell: the guard that makes the observation safe is unavailable; retry when the host is quieter",
+            ),
+            Self::Injected => f.write_str("could not tell: a test fault was injected"),
+            Self::Untrusted(reason) => write!(
+                f,
+                "could not tell: the state root is not trusted ({reason}); Effigy only reads state it owns",
+            ),
+            Self::HostAuthorityRequired => f.write_str(
+                "could not tell: this is host state, and a guest placement cannot read it",
+            ),
+            Self::StoreNeedsRecovery => f.write_str(
+                "could not tell: the store needs recovery from its rollback journal; the next write recovers it",
+            ),
+            Self::StoreUnreadable(detail) => write!(
+                f,
+                "could not tell: the store is unreadable ({detail}); run `effigy doctor` to inspect the state root"
+            ),
+        }
+    }
+}
+
+/// What an absence proves, in words a person reads instead of a variant name.
+impl std::fmt::Display for AbsenceProof {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoGateInode => f.write_str("no gate file exists"),
+            Self::GateFreeRunClosed => f.write_str("the run closed and left no gate"),
+            Self::NoStateRoot => f.write_str("there is no state root"),
+            Self::NoStore => f.write_str("there is no store"),
+            Self::NoFile { name } => write!(f, "`{name}` does not exist"),
+            Self::NoRow { table } => write!(f, "table `{table}` has no such row"),
+            Self::BootChanged { recorded, current } => write!(
+                f,
+                "the host rebooted (recorded boot {recorded}, current {current})"
+            ),
+            Self::NoSuchProcess { pid } => write!(f, "process {pid} does not exist"),
+            Self::StartIdentityDiffers { pid } => write!(
+                f,
+                "process {pid} exists but is a different process than the one recorded"
+            ),
+            Self::GroupEmpty { pgid } => write!(f, "process group {pgid} is empty"),
+            Self::NotInInventory { .. } => f.write_str("the process is not in the runtime inventory"),
+            Self::ContainerGone { id } => write!(f, "container `{id}` no longer exists"),
+        }
+    }
+}
+
+/// An observation reads as its value, or as the reason it could not be proved.
+impl<T: std::fmt::Display> std::fmt::Display for Observed<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Verified(value, _) => value.fmt(f),
+            Self::Absent(proof) => proof.fmt(f),
+            Self::Unknown(reason) => reason.fmt(f),
+        }
+    }
 }

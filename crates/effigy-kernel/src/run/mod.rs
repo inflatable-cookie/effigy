@@ -186,7 +186,61 @@ impl std::fmt::Display for RunError {
                 }
                 Ok(())
             }
-            _ => write!(f, "run refused: {self:?}"),
+            Self::Store(error) => write!(f, "the run was refused because {error}"),
+            Self::Gate(error) => write!(f, "the run was refused because {error}"),
+            Self::Interrupted(interrupt @ Interrupt::TimedOut { .. }) => {
+                write!(f, "the run was refused because it {interrupt}")
+            }
+            Self::Interrupted(interrupt @ Interrupt::Cancelled { .. }) => {
+                write!(f, "the run was refused because it was {interrupt}")
+            }
+            Self::HostAuthorityRequired => f.write_str(
+                "the run was refused: a managed run needs host authority, and this placement is a guest",
+            ),
+            Self::Invalid(what) => write!(
+                f,
+                "the run was refused: `{what}` is not a valid run request; run `effigy tasks` to see the task names this checkout routes"
+            ),
+            Self::StaleGeneration { expected, current } => match current {
+                Some(current) => write!(
+                    f,
+                    "the run was refused: it expected generation {} of resource `{}`, but the resource is now at generation {}; retry the command so it resolves the current state",
+                    expected.generation.get(),
+                    expected.resource.label(),
+                    current.get()
+                ),
+                None => write!(
+                    f,
+                    "the run was refused: it expected generation {} of resource `{}`, which no longer exists; retry the command so it resolves the current state",
+                    expected.generation.get(),
+                    expected.resource.label()
+                ),
+            },
+            Self::PredecessorUnsettled { run, effects } => write!(
+                f,
+                "the run was refused: run {run} has {} effect(s) still unsettled; let that run finish or settle it before starting this one",
+                effects.len()
+            ),
+            Self::HeldBy(holders) => {
+                let named = holders
+                    .iter()
+                    .map(|holder| holder.run.to_string())
+                    .collect::<Vec<_>>();
+                write!(
+                    f,
+                    "the run was refused: {} still holds a resource it needs ({}); stop that run first",
+                    named.len(),
+                    named.join(", ")
+                )
+            }
+            Self::EnvNotActive => f.write_str(
+                "the run was refused: its environment is not active, so start the environment before this workload",
+            ),
+            Self::Conflict(resource) => write!(
+                f,
+                "the run was refused: resource `{}` is already claimed by another run; stop that run or choose another resource",
+                resource.label()
+            ),
         }
     }
 }

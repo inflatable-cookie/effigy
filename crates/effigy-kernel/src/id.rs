@@ -22,8 +22,31 @@ pub enum IdentityError {
 }
 impl fmt::Display for IdentityError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid kernel identity: {self:?}")
+        match self {
+            Self::Empty => f.write_str("a kernel identity was empty"),
+            Self::InvalidPath => f.write_str("a path is not a valid kernel identity"),
+            Self::TooLong => f.write_str("a kernel identity is longer than the kernel allows"),
+            Self::InvalidEndpoint => f.write_str("an endpoint is not a valid kernel identity"),
+            Self::Collision { existing, incoming } => write!(
+                f,
+                "two different objects claim the same name ({} vs {})",
+                hex_prefix(existing),
+                hex_prefix(incoming)
+            ),
+            Self::InvalidInvocation => {
+                f.write_str("an invocation is not a valid kernel identity")
+            }
+        }
     }
+}
+
+/// The first bytes of an identity digest, enough to tell two apart.
+fn hex_prefix(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 impl std::error::Error for IdentityError {}
 

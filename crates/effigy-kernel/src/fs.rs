@@ -88,15 +88,39 @@ impl FsError {
 impl fmt::Display for FsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::HostAuthorityRequired => f.write_str("host authority required"),
-            Self::Untrusted { path, reason } => {
-                write!(f, "untrusted {}: {reason}", path.display())
-            }
-            Self::UnsupportedFilesystem { path, fs } => {
-                write!(f, "{} is on a network filesystem ({fs})", path.display())
-            }
+            Self::HostAuthorityRequired => f.write_str(
+                "host state is not available to a guest placement; run this on the host",
+            ),
+            Self::Untrusted { path, reason } if reason == OPEN_MODE_REASON => write!(
+                f,
+                "{} is readable by other users; run `chmod 700 {}`",
+                path.display(),
+                path.display()
+            ),
+            Self::Untrusted { path, reason } => write!(
+                f,
+                "{} is not trusted state ({reason}); {}",
+                path.display(),
+                trust_next_action(reason)
+            ),
+            Self::UnsupportedFilesystem { path, fs } => write!(
+                f,
+                "{} is on a network filesystem ({fs}); move the state root to a local disk",
+                path.display()
+            ),
             Self::Io(error) => error.fmt(f),
         }
+    }
+}
+
+/// Why an object was refused, and what makes it acceptable again.
+fn trust_next_action(reason: &str) -> &'static str {
+    match reason {
+        "wrong owner" => "it belongs to another user, so remove it or run as its owner",
+        "symlinked component" => "Effigy never follows a symlink in its state root, so replace it with a real path",
+        "hard-linked file" => "it has more than one link, so remove the extra link",
+        "NUL in path" => "the path is invalid, so choose one without a NUL byte",
+        _ => "fix its ownership and permissions, then retry",
     }
 }
 impl std::error::Error for FsError {}
