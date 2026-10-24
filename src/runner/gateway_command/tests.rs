@@ -1995,6 +1995,7 @@ fn private_status_json_refusal_carries_observation_labels() {
 fn dead_loopback_report(
     assignment_decision: effigy_containers::Decision,
     route_decision: effigy_containers::Decision,
+    claim_decision: effigy_containers::Decision,
     applied: bool,
 ) -> effigy_containers::LoopbackReclaimReport {
     let assignment = effigy_containers::LoopbackRecoveryRow {
@@ -2009,23 +2010,38 @@ fn dead_loopback_report(
     let route = effigy_containers::StaleRouteRow {
         domain: "gone.test".to_owned(),
         project: "/gone".to_owned(),
+        scope: None,
+        source: effigy_gateway::routes::RouteSource::Container,
+        target: Some("127.0.0.1:19900".to_owned()),
         dns_ip: Some("127.1.0.9".parse().expect("address")),
         tcp_port: Some(8109),
         path_state: effigy_containers::PathState::Missing,
         decision: route_decision,
         reason: "project path is missing".to_owned(),
     };
+    let claim = effigy_containers::DomainClaimRow {
+        domain: "withdrawn.test".to_owned(),
+        project: "/gone".to_owned(),
+        scope: None,
+        listener: None,
+        path_state: effigy_containers::PathState::Missing,
+        decision: claim_decision,
+        reason: "owner path is missing".to_owned(),
+    };
     let plan = effigy_containers::LoopbackRecoveryPlan {
         assignments: vec![assignment],
         routes: vec![route],
+        domain_claims: vec![claim],
+        owner_checkout: applied.then(|| "/gone".to_owned()),
         global_hold: None,
         digest: "digest".to_owned(),
     };
     let reclaiming = assignment_decision == effigy_containers::Decision::Reclaim;
     let edit = if applied && reclaiming {
-        effigy_gateway::loopback::reclaim::DeadLoopbackOutcome {
+        effigy_gateway::loopback::reclaim::DeadClaimOutcome {
             released_assignments: vec!["project:gone:/gone".to_owned()],
             released_routes: vec!["gone.test".to_owned()],
+            released_domains: vec!["withdrawn.test".to_owned()],
             released_addresses: vec!["127.1.0.9".parse().expect("address")],
             backup: Some(std::path::PathBuf::from(
                 "/gateway/loopback-dead-reclaim-backup-1.json",
@@ -2045,22 +2061,42 @@ fn dead_loopback_report(
 }
 
 #[test]
-fn gateway_repair_preview_lists_dead_loopback_owners_with_their_reasons() {
+fn gateway_repair_preview_lists_dead_owners_with_their_reasons() {
     let report = dead_loopback_report(
+        effigy_containers::Decision::Reclaim,
         effigy_containers::Decision::Reclaim,
         effigy_containers::Decision::Reclaim,
         false,
     );
     let lines = render_dead_loopback_preview(&report).join("\n");
 
-    assert!(lines.contains("dead loopback owners: 2 reclaimable, 0 held, 0 retained"));
-    assert!(lines
-        .contains("repair would release 1 loopback assignment(s) and 1 stale container route(s)"));
+    assert!(lines.contains("dead owners: 3 reclaimable, 0 held, 0 retained"));
+    assert!(lines.contains(
+        "repair would release 1 loopback assignment(s), 1 stale container route(s) and 1 withdrawn domain claim(s)"
+    ));
     assert!(lines
         .contains("- assignment 127.1.0.9 project:gone:/gone (reclaim, owner path is missing)"));
     assert!(lines.contains("- route gone.test (reclaim, project path is missing)"));
+    assert!(lines.contains("- domain claim withdrawn.test (reclaim, owner path is missing)"));
     assert!(lines.contains("--expect-plan digest"));
     assert!(!lines.contains("backup"));
+}
+
+#[test]
+fn gateway_repair_preview_names_the_owner_filter_in_the_apply_command() {
+    let report = dead_loopback_report(
+        effigy_containers::Decision::Reclaim,
+        effigy_containers::Decision::Reclaim,
+        effigy_containers::Decision::Reclaim,
+        true,
+    );
+    let lines = render_dead_loopback_preview(&report).join("\n");
+
+    assert!(lines.contains("dead-owner plan limited to checkout /gone"));
+    assert!(
+        lines.contains("effigy gateway repair --owner-checkout /gone --yes --expect-plan digest"),
+        "{lines}"
+    );
 }
 
 #[test]
@@ -2068,13 +2104,17 @@ fn gateway_repair_apply_reports_released_entries_and_the_backup() {
     let report = dead_loopback_report(
         effigy_containers::Decision::Reclaim,
         effigy_containers::Decision::Reclaim,
+        effigy_containers::Decision::Reclaim,
         true,
     );
     let lines = render_dead_loopback_apply(&report).join("\n");
 
-    assert!(lines.contains("released 1 dead loopback assignment(s) and 1 stale container route(s)"));
+    assert!(lines.contains(
+        "released 1 dead loopback assignment(s), 1 stale container route(s) and 1 withdrawn domain claim(s)"
+    ));
     assert!(lines.contains("- assignment project:gone:/gone"));
     assert!(lines.contains("- route gone.test"));
+    assert!(lines.contains("- domain claim withdrawn.test"));
     assert!(lines.contains("backup /gateway/loopback-dead-reclaim-backup-1.json"));
 }
 
@@ -2083,12 +2123,13 @@ fn gateway_repair_preview_reports_nothing_reclaimable_when_every_owner_is_live()
     let report = dead_loopback_report(
         effigy_containers::Decision::Retain,
         effigy_containers::Decision::Retain,
+        effigy_containers::Decision::Retain,
         false,
     );
     let lines = render_dead_loopback_preview(&report).join("\n");
 
-    assert!(lines.contains("dead loopback owners: 0 reclaimable, 0 held, 2 retained"));
-    assert!(lines.contains("no dead loopback owners were identified"));
+    assert!(lines.contains("dead owners: 0 reclaimable, 0 held, 3 retained"));
+    assert!(lines.contains("no dead owners were identified"));
 }
 
 #[test]

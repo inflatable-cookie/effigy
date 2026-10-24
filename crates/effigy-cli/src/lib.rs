@@ -585,6 +585,8 @@ pub enum GatewaySubcommand {
     Repair {
         yes: bool,
         expect_plan: Option<String>,
+        /// Exact owner checkout the dead-owner plan is narrowed to.
+        owner_checkout: Option<String>,
     },
     SetupTls,
 }

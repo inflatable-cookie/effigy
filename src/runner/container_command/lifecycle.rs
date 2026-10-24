@@ -104,6 +104,67 @@ struct DetachedOperationState {
     admitted: bool,
     stage: Option<&'static str>,
     preparation_step: Option<&'static str>,
+    /// The environment and checkout the activation was asked to bring up.
+    identity: Option<String>,
+}
+
+/// The exact activation identity a detached JSON failure reports, so an
+/// operator can place the refusal without reading the human message.
+fn detached_activation_identity(policy: &EffectiveContainerPolicy) -> String {
+    format!(
+        "environment `{}` at {}",
+        policy.name,
+        policy.repo_root.display()
+    )
+}
+
+/// The underlying refusal, bounded and safe for machine output.
+///
+/// The detached JSON envelope used to replace the real cause with generic
+/// advice, which hid which admission or claim refused. This keeps the cause,
+/// drops values assigned to secret-shaped keys, and bounds the result.
+fn sanitized_failure_cause(error: &RunnerError) -> String {
+    const MAX_CHARS: usize = 1200;
+    let mut cause = error
+        .to_string()
+        .lines()
+        .map(|line| redact_secret_assignments(line.trim()))
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ");
+    if cause.chars().count() > MAX_CHARS {
+        cause = cause.chars().take(MAX_CHARS).collect::<String>();
+        cause.push('…');
+    }
+    cause
+}
+
+/// Replace the value of any `key=value` token whose key names a secret. The key
+/// stays, so the refusal still says which input was involved.
+fn redact_secret_assignments(text: &str) -> String {
+    const MARKERS: [&str; 7] = [
+        "password",
+        "passphrase",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+        "authorization",
+    ];
+    text.split_whitespace()
+        .map(|token| {
+            let Some((key, _)) = token.split_once('=') else {
+                return token.to_owned();
+            };
+            let lowered = key.to_ascii_lowercase();
+            if MARKERS.iter().any(|marker| lowered.contains(marker)) {
+                format!("{key}=[redacted]")
+            } else {
+                token.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// `retention` is persistent for an explicit `container up` and held for a
@@ -130,45 +191,81 @@ pub(super) fn run_container_up(
         &mut operation,
     );
     result.map_err(|error| {
-        if !operation.active { return error; }
-        let state = if operation.partial { "partial" } else { "unavailable" };
-        let recovery = operation.admitted.then_some("effigy container up --detach");
-        let message = match &error {
-            RunnerError::ManagedHostReadiness { diagnostic, .. } => format!("Detached activation did not complete: {diagnostic}"),
-            _ => "Detached activation did not complete. Reconciliation requires the original admitted inputs and fresh exact-owned bindings; unavailable observations grant no restart, recreation or route authority.".to_owned(),
-        };
-        if output_json {
-            let failure_kind = match &error {
-                RunnerError::TaskInvocation(message) if message.starts_with("gateway endpoint store: observation unknown:") => "endpoint_observation_unknown",
-                RunnerError::TaskInvocation(message) if message.starts_with("gateway endpoint store:") => "endpoint_store_refusal",
-                RunnerError::TaskInvocation(_) => "invocation_refusal",
-                RunnerError::ManagedHostReadiness { .. } => "managed_readiness",
-                RunnerError::GatewayRouteTable { .. } | RunnerError::GatewayRouteRegistration { .. } | RunnerError::GatewayRouteShape { .. } | RunnerError::GatewayLoopback { .. } | RunnerError::GatewayRuntimeTarget { .. } => "gateway_route_refusal",
-                _ => "other",
-            };
-            return RunnerError::CommandJsonFailure {
-                rendered: serde_json::json!({
-                    "state": state,
-                    "phase": "detached_activation",
-                    "activation_stage": operation.stage.unwrap_or("preparation"),
-                    "preparation_step": operation.preparation_step.filter(|_| operation.stage == Some("preparation")),
-                    "failure_kind": failure_kind,
-                    "readiness": "unverified",
-                    "exposure": "unverified",
-                    "recovery": recovery,
-                    "stop": "effigy container down",
-                    "retirement_removes_mutable_data": true,
-                    "message": message,
-                }).to_string(),
-            };
+        if !operation.active {
+            return error;
         }
-        let advice = if operation.admitted {
-            "reconcile with `effigy container up --detach`; the environment record keeps the partial generation, so the rerun does not recreate running services"
-        } else {
-            "the activation was never admitted; retry `effigy container up --detach`"
-        };
-        RunnerError::task_invocation(format!("{error}\ndetached activation {state}: readiness and exposure are unverified. Inspect with `effigy container status`; {advice}. `effigy container down` stops the scope; `effigy container retire --yes` removes owned mutable data."))
+        detached_activation_failure(&operation, output_json, error)
     })
+}
+
+/// Render one failed detached activation.
+///
+/// The JSON envelope keeps the underlying refusal as `cause` plus the stage and
+/// the environment/checkout identity, so an operator can act on why admission
+/// refused instead of only on the generic reconciliation advice.
+fn detached_activation_failure(
+    operation: &DetachedOperationState,
+    output_json: bool,
+    error: RunnerError,
+) -> RunnerError {
+    let state = if operation.partial {
+        "partial"
+    } else {
+        "unavailable"
+    };
+    let recovery = operation.admitted.then_some("effigy container up --detach");
+    let message = match &error {
+        RunnerError::ManagedHostReadiness { diagnostic, .. } => format!("Detached activation did not complete: {diagnostic}"),
+        _ => "Detached activation did not complete. Reconciliation requires the original admitted inputs and fresh exact-owned bindings; unavailable observations grant no restart, recreation or route authority.".to_owned(),
+    };
+    if output_json {
+        let failure_kind = match &error {
+            RunnerError::TaskInvocation(message)
+                if message.starts_with("gateway endpoint store: observation unknown:") =>
+            {
+                "endpoint_observation_unknown"
+            }
+            RunnerError::TaskInvocation(message)
+                if message.starts_with("gateway endpoint store:") =>
+            {
+                "endpoint_store_refusal"
+            }
+            RunnerError::TaskInvocation(_) => "invocation_refusal",
+            RunnerError::ManagedHostReadiness { .. } => "managed_readiness",
+            RunnerError::GatewayRouteTable { .. }
+            | RunnerError::GatewayRouteRegistration { .. }
+            | RunnerError::GatewayRouteShape { .. }
+            | RunnerError::GatewayLoopback { .. }
+            | RunnerError::GatewayRuntimeTarget { .. } => "gateway_route_refusal",
+            _ => "other",
+        };
+        return RunnerError::CommandJsonFailure {
+            rendered: serde_json::json!({
+                "state": state,
+                "phase": "detached_activation",
+                "activation_stage": operation.stage.unwrap_or("preparation"),
+                "preparation_step": operation.preparation_step.filter(|_| operation.stage == Some("preparation")),
+                "identity": operation.identity,
+                "failure_kind": failure_kind,
+                "cause": sanitized_failure_cause(&error),
+                "readiness": "unverified",
+                "exposure": "unverified",
+                "recovery": recovery,
+                "stop": "effigy container down",
+                "retirement_removes_mutable_data": true,
+                "message": message,
+            })
+            .to_string(),
+        };
+    }
+    let advice = if operation.admitted {
+        "reconcile with `effigy container up --detach`; the environment record keeps the partial generation, so the rerun does not recreate running services"
+    } else {
+        "the activation was never admitted; retry `effigy container up --detach`"
+    };
+    RunnerError::task_invocation(format!(
+        "{error}\ndetached activation {state}: readiness and exposure are unverified. Inspect with `effigy container status`; {advice}. `effigy container down` stops the scope; `effigy container retire --yes` removes owned mutable data."
+    ))
 }
 
 /// How an attached Compose activation ended without starting the stack.
@@ -194,6 +291,7 @@ fn run_container_up_inner(
     operation.stage = Some("preparation");
     let mut plan = prepare_container_up(repo_root, name, attach, detach, operation)?;
     operation.active = plan.attach_mode == EffectiveAttachMode::Detached;
+    operation.identity = Some(detached_activation_identity(&plan.policy));
 
     if container_up_stop_requested(&plan) {
         return render_container_up_interrupted(repo_root, &plan);
@@ -1397,10 +1495,12 @@ fn emit_ssh_agent_socket_warning(policy: &EffectiveContainerPolicy, repo_root: &
 #[cfg(test)]
 mod tests {
     use super::{
-        annotate_workspace_extra_mount_decisions, detached_partial_activation_error,
+        annotate_workspace_extra_mount_decisions, detached_activation_failure,
+        detached_activation_identity, detached_partial_activation_error,
         ensure_up_workspace_permissions, exec_operation_plan, gateway_registration_failure,
         lifecycle_operation_plan, refresh_workspace_mounts_for_creation,
-        run_container_down_command, start_runtime_after_scope_registration, RunnerError,
+        run_container_down_command, sanitized_failure_cause,
+        start_runtime_after_scope_registration, DetachedOperationState, RunnerError,
     };
     use crate::runner::container_command::handover::hand_over_conflicting_environments;
     use crate::runner::container_command::support::{
@@ -1511,6 +1611,71 @@ mod tests {
         assert!(
             matches!(error, RunnerError::ManagedHostReadiness { diagnostic: observed, .. } if observed == diagnostic)
         );
+    }
+
+    #[test]
+    fn detached_json_failure_keeps_the_stage_identity_and_sanitized_cause() {
+        let policy = test_policy(Vec::new());
+        let mut operation = DetachedOperationState {
+            active: true,
+            stage: Some("environment_handover"),
+            identity: Some(detached_activation_identity(&policy)),
+            ..Default::default()
+        };
+        let error = RunnerError::task_invocation(
+            "gateway domain `api.app.test` is claimed by a container route from checkout `/gone/worktree`\nDB_PASSWORD=hunter2 EFFIGY_TOKEN=abcd1234",
+        );
+
+        let failure = detached_activation_failure(&operation, true, error);
+        let RunnerError::CommandJsonFailure { rendered } = failure else {
+            panic!("detached JSON mode must render a machine failure");
+        };
+        let document: serde_json::Value = serde_json::from_str(&rendered).expect("json failure");
+        assert_eq!(document["phase"], "detached_activation");
+        assert_eq!(document["activation_stage"], "environment_handover");
+        assert_eq!(document["state"], "unavailable");
+        assert_eq!(document["recovery"], serde_json::Value::Null);
+        assert_eq!(document["failure_kind"], "invocation_refusal");
+        assert_eq!(
+            document["identity"], "environment `web` at /tmp",
+            "the envelope names the environment and checkout"
+        );
+        let cause = document["cause"].as_str().expect("cause");
+        assert!(cause.contains("api.app.test"), "{cause}");
+        assert!(cause.contains("/gone/worktree"), "{cause}");
+        assert!(cause.contains("DB_PASSWORD=[redacted]"), "{cause}");
+        assert!(cause.contains("EFFIGY_TOKEN=[redacted]"), "{cause}");
+        assert!(!cause.contains("hunter2"), "{cause}");
+        assert!(!cause.contains("abcd1234"), "{cause}");
+
+        // A partial, admitted activation keeps its reconcile advice.
+        operation.admitted = true;
+        operation.partial = true;
+        let failure = detached_activation_failure(
+            &operation,
+            true,
+            RunnerError::task_invocation("gateway endpoint store: revision changed"),
+        );
+        let RunnerError::CommandJsonFailure { rendered } = failure else {
+            panic!("detached JSON mode must render a machine failure");
+        };
+        let document: serde_json::Value = serde_json::from_str(&rendered).expect("json failure");
+        assert_eq!(document["state"], "partial");
+        assert_eq!(document["recovery"], "effigy container up --detach");
+        assert_eq!(document["failure_kind"], "endpoint_store_refusal");
+        assert_eq!(
+            document["cause"],
+            "gateway endpoint store: revision changed"
+        );
+    }
+
+    #[test]
+    fn sanitized_failure_cause_bounds_the_reported_detail() {
+        let long = format!("first line\n{}", "detail ".repeat(600));
+        let cause = sanitized_failure_cause(&RunnerError::task_invocation(long));
+        assert!(cause.starts_with("first line; detail"), "{cause}");
+        assert!(cause.chars().count() <= 1201, "{}", cause.chars().count());
+        assert!(cause.ends_with('…'), "{cause}");
     }
 
     #[test]

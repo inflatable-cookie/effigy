@@ -31,6 +31,7 @@ where
         "repair" => GatewaySubcommand::Repair {
             yes: false,
             expect_plan: None,
+            owner_checkout: None,
         },
         "recover" => return Err(CliParseError::InvalidArguments(
             "`effigy gateway recover` is retired; v0.14.1 gateways use `effigy gateway up`; for a pre-0.14 gateway ask the host administrator to verify and stop it before removing its old PID/version records".to_owned(),
@@ -141,6 +142,33 @@ where
                     *expect_plan = Some(value);
                 }
             }
+            "--owner-checkout"
+                if matches!(
+                    subcommand,
+                    GatewaySubcommand::Repair {
+                        owner_checkout: None,
+                        ..
+                    }
+                ) =>
+            {
+                let value = next_required_value(
+                    &mut args,
+                    CliParseError::MissingFlagValue {
+                        flag: "--owner-checkout".to_owned(),
+                    },
+                )?;
+                let path = std::path::Path::new(&value);
+                if !path.is_absolute() {
+                    return Err(CliParseError::InvalidFlagValue {
+                        flag: "--owner-checkout".to_owned(),
+                        value,
+                        expected: "an absolute checkout path".to_owned(),
+                    });
+                }
+                if let GatewaySubcommand::Repair { owner_checkout, .. } = &mut subcommand {
+                    *owner_checkout = Some(value);
+                }
+            }
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Gateway)),
             other => return Err(unknown_argument(other)),
         }
@@ -153,8 +181,17 @@ where
             ));
         }
     }
-    if let GatewaySubcommand::Repair { expect_plan, .. } = subcommand {
-        subcommand = GatewaySubcommand::Repair { yes, expect_plan };
+    if let GatewaySubcommand::Repair {
+        expect_plan,
+        owner_checkout,
+        ..
+    } = subcommand
+    {
+        subcommand = GatewaySubcommand::Repair {
+            yes,
+            expect_plan,
+            owner_checkout,
+        };
     }
 
     if private_state_root.is_none()

@@ -49,25 +49,58 @@ pub fn check_claim(
     if owned_by(route, project_path, scope) {
         return Ok(());
     }
-    let live = match std::fs::metadata(&route.project) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-        Err(_) => true,
-        Ok(_) => match route.scope.as_deref() {
-            Some(token) => match worktree_scope::load_scoped(Path::new(&route.project)) {
-                Ok(Some((_, current))) => current == token,
-                Ok(None) => false,
-                Err(_) => !recorded_git_directory_absent(Path::new(&route.project)),
-            },
-            None => true,
-        },
-    };
-    if live || route.source != RouteSource::Container {
+    if !claim_owner_checkout_absent(route) || route.source != RouteSource::Container {
         return Err(GatewayError::ForeignRoute {
             domain: route.domain.clone(),
             project: route.project.clone(),
         });
     }
     Ok(())
+}
+
+/// Whether an existing claim's owner checkout is provably gone: its recorded
+/// path is absent, or the checkout is present without the recorded generation
+/// and its own git directory has vanished.
+///
+/// This is evidence about the owner path, never authority to take the claim.
+/// A claim can outlive its checkout in a container, runtime-scope record or
+/// listener, so only the dead-owner repair proves that nothing still owns it.
+pub fn claim_owner_checkout_absent(route: &Route) -> bool {
+    checkout_generation_absent(&route.project, route.scope.as_deref())
+}
+
+/// [`claim_owner_checkout_absent`] for a persisted owner that carries no route,
+/// such as a withdrawn domain claim.
+pub fn checkout_generation_absent(project: &str, scope: Option<&str>) -> bool {
+    match std::fs::metadata(project) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(_) => false,
+        Ok(_) => match scope {
+            Some(token) => match worktree_scope::load_scoped(Path::new(project)) {
+                Ok(Some((_, current))) => current != token,
+                Ok(None) => true,
+                Err(_) => recorded_git_directory_absent(Path::new(project)),
+            },
+            None => false,
+        },
+    }
+}
+
+/// A short, non-secret description of the checkout generation a claim records.
+fn recorded_generation(route: &Route) -> String {
+    generation_label(route.scope.as_deref())
+}
+
+fn generation_label(scope: Option<&str>) -> String {
+    match scope {
+        Some(token) if token.chars().count() > 12 => {
+            let mut short = token.chars().take(12).collect::<String>();
+            short.push('…');
+            format!("recorded generation {short}")
+        }
+        Some(token) => format!("recorded generation {token}"),
+        None => "no recorded checkout generation".to_owned(),
+    }
 }
 
 fn recorded_git_directory_absent(project: &Path) -> bool {
@@ -363,13 +396,53 @@ pub fn check_managed_listener_route_claim(
                 .is_some_and(|current| current.owner == owner);
             let container_handover =
                 existing.managed_listener.is_none() && existing.source == RouteSource::Container;
-            if !owned_by(existing, project_path, scope.as_deref())
-                || !(same_owner || container_handover)
-            {
+            if !owned_by(existing, project_path, scope.as_deref()) {
+                // A container claim whose checkout is gone is stale-owner
+                // territory, not a live successor. It still refuses here: only
+                // the digest-fenced dead-owner repair may release it, and that
+                // repair holds it unless nothing else still owns it.
+                if container_handover && claim_owner_checkout_absent(existing) {
+                    return Err(GatewayError::StaleRouteClaim {
+                        domain: domain.to_owned(),
+                        project: existing.project.clone(),
+                        generation: recorded_generation(existing),
+                    });
+                }
                 return Err(GatewayError::ForeignRoute {
                     domain: domain.to_owned(),
                     project: existing.project.clone(),
                 });
+            }
+            if !(same_owner || container_handover) {
+                return Err(GatewayError::ForeignRoute {
+                    domain: domain.to_owned(),
+                    project: existing.project.clone(),
+                });
+            }
+        } else if let Some(claim) = snapshot
+            .domain_claims()
+            .into_iter()
+            .find(|claim| claim.domain.eq_ignore_ascii_case(domain))
+        {
+            // A withdrawn claim outlives its route. It reserves the domain for
+            // its exact owner, so a different checkout meets the same truthful
+            // stale-owner or foreign refusal instead of an opaque store error.
+            let ours = claim.project == project_path && claim.scope.as_deref() == scope.as_deref();
+            if !ours {
+                return Err(
+                    if checkout_generation_absent(&claim.project, claim.scope.as_deref()) {
+                        GatewayError::StaleRouteClaim {
+                            domain: domain.to_owned(),
+                            project: claim.project,
+                            generation: generation_label(claim.scope.as_deref()),
+                        }
+                    } else {
+                        GatewayError::ForeignRoute {
+                            domain: domain.to_owned(),
+                            project: claim.project,
+                        }
+                    },
+                );
             }
         }
         snapshot.reserve_domain(domain, project_path, scope.as_deref(), Some(owner))
