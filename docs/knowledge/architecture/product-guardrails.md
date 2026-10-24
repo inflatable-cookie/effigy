@@ -30,6 +30,32 @@ These guardrails define what must stay true while the product expands.
   adoption confidence, operator clarity, or release readiness. Avoid endless
   “one more pass” churn.
 
+## Human-Facing Feedback
+
+Tom, 2026-10-24: "We need much better human facing feedback in all command
+planes in effigy - asynchronous spinners with a short label that says what is
+happening as it happens, and error messages that actually describe what is
+wrong." This followed an `effigy dev` that sat for four minutes and then
+reported only `run refused: Interrupted(TimedOut { phase: "settle", … })`,
+when the real cause was two named services failing their health checks.
+
+- **Show what is happening as it happens.** On a terminal, any step that can
+  take more than a moment runs under an asynchronous spinner whose short label
+  names the current step and its subject, for example `starting web`,
+  `waiting for web to report healthy (attempt 4, last: HTTP 404)` or
+  `fetching bundle decodelabs`. The label changes as the work moves on, and
+  each step ends with a one-line success or failure. Spinners write to stderr
+  and never appear in `--json`, piped or non-terminal output.
+- **Errors describe what is wrong.** Every error a person can see names:
+  - the thing that failed (service, file, command, route or checkout);
+  - the evidence (exit code, the last relevant output, the health check's
+    own message, the conflicting owner);
+  - the next action, as an exact command when one exists.
+- **No internal structures in human output.** Rust `Debug` renderings, enum
+  and variant names, and nested `Unknown(StoreUnreadable(…))` chains never
+  reach a person unrendered. Keep those details for `--json` and verbose
+  diagnostics.
+
 ## Anti-Patterns
 
 - adding new command surfaces without a clear routing or adoption reason
