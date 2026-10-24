@@ -1181,6 +1181,10 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- Commands run from your home directory no longer read `~/.effigy/state` (the
+  machine store since the Q-010 cutover) as a checkout. `effigy container retire
+  --scope … --yes` from `~`, as Queue runs it, failed with `import seal belongs
+  to a different runtime database`.
 - A deleted checkout's stale gateway route no longer blocks every other
   project. Route-table writes only check added or changed routes against
   domain owners, so `container up`/`down` elsewhere stops failing with `domain

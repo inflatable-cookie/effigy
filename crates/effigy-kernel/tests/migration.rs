@@ -1971,3 +1971,15 @@ fn runtime_checkout_retirement_requires_the_original_free_lease_inode_without_a_
     assert!(!root.path().join("kernel.db").exists());
     assert!(!machine.path().join(".effigy/state").exists());
 }
+
+#[test]
+fn the_state_home_is_never_read_as_a_checkout_state_root() {
+    // A legacy store under the state home stands in for the machine store that
+    // shares `<home>/.effigy/state` after the Q-010 cutover.
+    let (home, _source, _) = source();
+    let observed = StateRoot::checkout_observe_in(&observe(), home.path(), &location(home.path()));
+    assert!(
+        matches!(observed, Observed::Absent(_)),
+        "the state home must not open as a checkout: {observed:?}"
+    );
+}

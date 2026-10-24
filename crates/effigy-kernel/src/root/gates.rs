@@ -63,6 +63,13 @@ impl StateRoot {
         home: &Path,
         location: &crate::migration::CheckoutLocation,
     ) -> Observed<Self> {
+        // Under Q-010 the state home's `.effigy/state` is the machine store, so
+        // the state home itself is never a checkout. Reading it as one opens the
+        // legacy or machine database against the machine seal and refuses every
+        // caller that merely runs from HOME (for example a retire with cwd ~).
+        if same_directory(&location.root, home) {
+            return Observed::Absent(crate::observe::AbsenceProof::NoStateRoot);
+        }
         Self::checkout_observe(cx, location).map(|root| root.route_machine_gates(cx, home))
     }
 
@@ -293,5 +300,12 @@ impl MachineGates {
             ),
             other => other,
         }
+    }
+}
+
+fn same_directory(left: &Path, right: &Path) -> bool {
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
     }
 }
