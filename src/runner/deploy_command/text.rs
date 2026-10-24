@@ -13,6 +13,9 @@ pub(super) fn render_deploy_plan_text(report: &DeployPlanReport) -> String {
     if let Some(state) = &report.state {
         lines.push(format!("state: {} ({})", state.stack, state.lineage_id));
     }
+    if let Some(provider) = &report.provider_provenance {
+        lines.push(format!("provider: {}", provider.describe()));
+    }
     if !report.blockers.is_empty() {
         lines.push(String::new());
         lines.push(format!("Blockers ({})", report.blockers.len()));
@@ -37,10 +40,14 @@ pub(super) fn render_deploy_status_text(report: &DeployStatusReport) -> String {
     } else {
         "missing"
     };
-    format!(
+    let mut text = format!(
         "[deploy] status {}\nactive: {active}\nlatest: {latest}",
         report.env
-    )
+    );
+    if let Some(provider) = &report.provider_provenance {
+        text.push_str(&format!("\nprovider: {}", provider.describe()));
+    }
+    text
 }
 
 pub(super) fn render_deploy_history_text(report: &DeployHistoryReport) -> String {

@@ -203,6 +203,16 @@ impl RhaiSecretTarget {
     }
 }
 
+/// How one script run may read secrets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RhaiSecretPolicy<'a> {
+    /// Resolve the secrets declared for these manifest targets.
+    Targets(&'a [RhaiSecretTarget]),
+    /// Refuse every secret operation, naming the secret and this reason.
+    /// The manifest and vault are never read; plan-mode previews use this.
+    Refuse(&'a str),
+}
+
 pub(crate) struct ProcessExecutionOptions {
     cwd: PathBuf,
     env: Vec<(String, String)>,
@@ -220,6 +230,10 @@ pub(crate) struct RhaiSecretStore {
     /// stays empty and every `secrets::*` helper is refused instead of
     /// resolving against the consumer vault.
     isolated: bool,
+    /// Set when the caller's policy refuses all secret access (for example a
+    /// deploy provider plan phase). Every refusal names the requested secret
+    /// and this reason, and the store never reads the manifest or vault.
+    refusal: Option<String>,
 }
 
 pub fn load_script(path: &Path, cwd: &Path) -> Result<String, RhaiHostError> {
@@ -295,8 +309,29 @@ pub fn execute_rhai_script_with_runtime_context_and_secret_targets(
     callbacks: &HostCallbacks,
     secret_targets: &[RhaiSecretTarget],
 ) -> Result<(), RhaiHostError> {
+    execute_rhai_script_with_runtime_context_and_secret_policy(
+        context,
+        runtime_context,
+        script,
+        script_args,
+        callbacks,
+        RhaiSecretPolicy::Targets(secret_targets),
+    )
+}
+
+/// Execute one script under an explicit secret policy. `Refuse` runs the script
+/// with no secret access at all: every `secrets::*` call fails, naming the
+/// secret and the caller's reason, before the manifest or vault is read.
+pub fn execute_rhai_script_with_runtime_context_and_secret_policy(
+    context: &ScriptContext,
+    runtime_context: Option<&EffigyRuntimeContext>,
+    script: &str,
+    script_args: &[String],
+    callbacks: &HostCallbacks,
+    policy: RhaiSecretPolicy<'_>,
+) -> Result<(), RhaiHostError> {
     with_rhai_runtime_context(runtime_context, || {
-        execute_rhai_script_inner(context, script, script_args, callbacks, secret_targets)
+        execute_rhai_script_inner(context, script, script_args, callbacks, policy)
     })
 }
 
@@ -313,13 +348,16 @@ fn execute_rhai_script_inner(
     script: &str,
     script_args: &[String],
     callbacks: &HostCallbacks,
-    secret_targets: &[RhaiSecretTarget],
+    policy: RhaiSecretPolicy<'_>,
 ) -> Result<(), RhaiHostError> {
-    let secret_store = resolve_rhai_secret_store(
-        &context.repo_root,
-        secret_targets,
-        rhai_secrets::rhai_script_consumes_secrets(script),
-    )?;
+    let secret_store = match policy {
+        RhaiSecretPolicy::Targets(secret_targets) => resolve_rhai_secret_store(
+            &context.repo_root,
+            secret_targets,
+            rhai_secrets::rhai_script_consumes_secrets(script),
+        )?,
+        RhaiSecretPolicy::Refuse(reason) => rhai_secrets::refused_rhai_secret_store(reason),
+    };
     let context = Arc::new(context.clone());
     let callbacks = callbacks.clone();
     let mut engine = configured_rhai_engine();

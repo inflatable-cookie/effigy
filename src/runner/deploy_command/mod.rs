@@ -18,7 +18,8 @@ mod transaction;
 use model::*;
 use provider_context::{build_provider_context, DeployProviderContextRequest};
 use provider_package::{
-    resolve_provider_package, run_provider_export, ManifestDeployProviderConfig,
+    resolve_provider_package, run_provider_export, DeployProviderFetch,
+    ManifestDeployProviderConfig,
 };
 
 pub(super) fn run_deploy(args: DeployArgs) -> Result<String, RunnerError> {
@@ -82,8 +83,15 @@ fn run_deploy_export(
     let provider_name = provider.as_str();
 
     let providers = load_deploy_providers_config(repo_root)?;
-    let package =
-        resolve_provider_package(repo_root, provider_name, &providers)?.ok_or_else(|| {
+    // A preview is an offline operation: it reuses the provider cache and never
+    // reaches the network. A real export refreshes the cache when needed.
+    let fetch = if plan {
+        DeployProviderFetch::Offline
+    } else {
+        DeployProviderFetch::Online
+    };
+    let package = resolve_provider_package(repo_root, provider_name, &providers, fetch)?
+        .ok_or_else(|| {
             RunnerError::task_invocation(format!(
                 "deploy provider `{provider_name}` is not configured under `[deploy.providers]`"
             ))
@@ -104,9 +112,18 @@ fn run_deploy_export(
         plan,
     })?;
 
-    let report = run_provider_export(repo_root, provider_name, &package, context)?;
+    let report = run_provider_export(repo_root, provider_name, &package, context, plan)?;
 
     let mut warnings = collect_model_warnings(&model);
+    for warning in package.warnings.iter() {
+        warnings.push(DeployWarning {
+            code: "provider-source-warning".to_owned(),
+            scope: "export".to_owned(),
+            target: Some(provider_name.to_owned()),
+            message: warning.clone(),
+            severity: "warn".to_owned(),
+        });
+    }
     for warning in report.warnings {
         warnings.push(DeployWarning {
             code: "provider-warning".to_owned(),
@@ -126,6 +143,7 @@ fn run_deploy_export(
             provider: provider_name.to_owned(),
             plan,
             path: path.display().to_string(),
+            provider_provenance: package.provenance.clone(),
             files: file_paths,
             warnings,
         })

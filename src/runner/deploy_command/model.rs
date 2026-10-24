@@ -5,6 +5,8 @@ use std::path::Path;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use super::provider_package::DeployProviderProvenance;
+
 #[derive(Clone, Serialize)]
 pub(crate) struct DeployModel {
     pub(crate) schema: String,
@@ -117,6 +119,8 @@ pub(crate) struct DeployExportResult {
     pub(crate) provider: String,
     pub(crate) plan: bool,
     pub(crate) path: String,
+    /// The resolved provider package commit and how it was obtained.
+    pub(crate) provider_provenance: DeployProviderProvenance,
     pub(crate) files: Vec<String>,
     pub(crate) warnings: Vec<DeployWarning>,
 }

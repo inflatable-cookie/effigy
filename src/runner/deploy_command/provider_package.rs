@@ -5,12 +5,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use effigy_core::git_exec::run_git_output;
 use effigy_core::git_source::{canonical_git_cache_identity, sanitize_cache_segment, sha256_hex};
+use effigy_rhai::RhaiSecretPolicy;
 use effigy_rhai::RhaiSecretTarget;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::runner::error::RunnerError;
-use crate::runner::script_command::execute_repo_rhai_script_with_secret_targets;
+use crate::runner::script_command::execute_repo_rhai_script_with_secret_policy;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -28,16 +29,75 @@ pub(super) enum DeployProviderSource {
         url: String,
         #[serde(default)]
         r#ref: Option<String>,
+        /// Full commit SHA. A pinned provider is reused from the cache without
+        /// any network access; a floating `ref` is only refreshed online.
+        #[serde(default)]
+        rev: Option<String>,
     },
     Oci {
         url: String,
     },
 }
 
+/// Whether resolving a provider package may use the network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DeployProviderFetch {
+    /// Use the cached checkout only: never clone or fetch. A working tree can
+    /// still be materialized from objects the cache already holds.
+    Offline,
+    /// Refresh the cached checkout from its origin when it is not already at
+    /// the requested commit.
+    Online,
+}
+
+/// Where a resolved provider package came from, and exactly which commit ran.
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct DeployProviderProvenance {
+    /// `path` or `git`.
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_rev: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    /// `path`, `cached` or `fetched`.
+    pub resolution: String,
+}
+
+impl DeployProviderProvenance {
+    pub(super) fn path() -> Self {
+        Self {
+            kind: "path".to_owned(),
+            url: None,
+            requested_ref: None,
+            requested_rev: None,
+            commit: None,
+            resolution: "path".to_owned(),
+        }
+    }
+
+    /// Short human label for the resolved commit and how it was obtained.
+    pub(super) fn describe(&self) -> String {
+        match (&self.commit, self.resolution.as_str()) {
+            (Some(commit), "cached") => format!("cached checkout at commit {commit}"),
+            (Some(commit), "fetched") => format!("fetched commit {commit}"),
+            (Some(commit), _) => format!("commit {commit}"),
+            (None, "path") => "path source".to_owned(),
+            (None, resolution) => format!("unresolved {resolution} source"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct DeployProviderPackage {
     pub root: PathBuf,
     pub descriptor: DeployProviderDescriptor,
+    pub provenance: DeployProviderProvenance,
+    /// Non-fatal source warnings, for example a floating provider ref.
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -179,16 +239,26 @@ pub(super) fn resolve_provider_package(
     repo_root: &Path,
     provider_name: &str,
     providers: &BTreeMap<String, ManifestDeployProviderConfig>,
+    fetch: DeployProviderFetch,
 ) -> Result<Option<DeployProviderPackage>, RunnerError> {
     validate_provider_name(provider_name)?;
     let Some(config) = providers.get(provider_name) else {
         return Ok(None);
     };
-    let root = match &config.source {
-        DeployProviderSource::Path { dir } => repo_root.join(dir),
-        DeployProviderSource::Git { url, r#ref } => {
-            resolve_git_provider_source(repo_root, provider_name, url, r#ref.as_deref())?
+    let mut warnings = Vec::new();
+    let (root, provenance) = match &config.source {
+        DeployProviderSource::Path { dir } => {
+            (repo_root.join(dir), DeployProviderProvenance::path())
         }
+        DeployProviderSource::Git { url, r#ref, rev } => resolve_git_provider_source(
+            repo_root,
+            provider_name,
+            url,
+            r#ref.as_deref(),
+            rev.as_deref(),
+            fetch,
+            &mut warnings,
+        )?,
         DeployProviderSource::Oci { url } => {
             return Err(RunnerError::task_invocation(format!(
                 "deploy provider `{provider_name}` uses OCI source `{url}`, but provider OCI materialization is not implemented yet"
@@ -209,7 +279,12 @@ pub(super) fn resolve_provider_package(
         )));
     }
     validate_capability_paths(&root, provider_name, &descriptor.capabilities)?;
-    Ok(Some(DeployProviderPackage { root, descriptor }))
+    Ok(Some(DeployProviderPackage {
+        root,
+        descriptor,
+        provenance,
+        warnings,
+    }))
 }
 
 pub(super) fn run_provider_preflight(
@@ -228,6 +303,7 @@ pub(super) fn run_provider_preflight(
         "preflight",
         script,
         context,
+        true,
     )
 }
 
@@ -240,7 +316,15 @@ pub(super) fn run_provider_status(
     let Some(script) = &package.descriptor.capabilities.status else {
         return Ok(None);
     };
-    run_provider_phase(repo_root, provider_name, package, "status", script, context)
+    run_provider_phase(
+        repo_root,
+        provider_name,
+        package,
+        "status",
+        script,
+        context,
+        false,
+    )
 }
 
 pub(super) fn run_provider_export(
@@ -248,21 +332,31 @@ pub(super) fn run_provider_export(
     provider_name: &str,
     package: &DeployProviderPackage,
     context: Value,
+    plan: bool,
 ) -> Result<DeployProviderPhaseReport, RunnerError> {
     let Some(script) = &package.descriptor.capabilities.export else {
         return Err(RunnerError::task_invocation(format!(
             "deploy provider `{provider_name}` package does not declare an export capability"
         )));
     };
-    run_provider_phase(repo_root, provider_name, package, "export", script, context)?.ok_or_else(
-        || {
-            RunnerError::task_invocation(format!(
-                "deploy provider `{provider_name}` export capability did not produce a report"
-            ))
-        },
-    )
+    run_provider_phase(
+        repo_root,
+        provider_name,
+        package,
+        "export",
+        script,
+        context,
+        plan,
+    )?
+    .ok_or_else(|| {
+        RunnerError::task_invocation(format!(
+            "deploy provider `{provider_name}` export capability did not produce a report"
+        ))
+    })
 }
 
+/// `plan` phases are previews: they run with no secret access at all, so a
+/// provider script that asks for a secret fails instead of reaching the vault.
 fn run_provider_phase(
     repo_root: &Path,
     provider_name: &str,
@@ -270,6 +364,7 @@ fn run_provider_phase(
     phase: &str,
     script: &str,
     context: Value,
+    plan: bool,
 ) -> Result<Option<DeployProviderPhaseReport>, RunnerError> {
     let _guard = provider_script_env_lock().lock().map_err(|error| {
         RunnerError::task_invocation(format!(
@@ -277,8 +372,14 @@ fn run_provider_phase(
         ))
     })?;
     let workspace = provider_phase_workspace(repo_root, provider_name, phase)?;
-    let context_path = workspace.join("context.json");
-    let report_path = workspace.join("report.json");
+    let refusal = plan_mode_secret_refusal(provider_name, phase);
+    let secret_policy = if plan {
+        RhaiSecretPolicy::Refuse(&refusal)
+    } else {
+        RhaiSecretPolicy::Targets(&[RhaiSecretTarget::Deploy])
+    };
+    let context_path = workspace.path.join("context.json");
+    let report_path = workspace.path.join("report.json");
     write_provider_json(&context_path, &context)?;
     let _env_guard = ScopedProviderEnvOverride::set(&[
         (
@@ -290,12 +391,12 @@ fn run_provider_phase(
             report_path.display().to_string(),
         ),
     ]);
-    execute_repo_rhai_script_with_secret_targets(
+    execute_repo_rhai_script_with_secret_policy(
         repo_root,
         &format!("deploy-provider:{provider_name}:{phase}"),
         &package.root.join(script),
         &[],
-        &[RhaiSecretTarget::Deploy],
+        secret_policy,
     )?;
     if !report_path.is_file() {
         return Err(RunnerError::task_invocation(format!(
@@ -322,26 +423,100 @@ fn provider_script_env_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+/// A provider phase's context/report directory. It lives under the checkout's
+/// v0.15 state root, not the retired `.effigy/runtime/` tree, and the guard
+/// removes it when the phase ends, whatever the outcome.
+struct ProviderPhaseWorkspace {
+    path: PathBuf,
+}
+
+impl Drop for ProviderPhaseWorkspace {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+/// Leftovers exist only when a previous process died mid-phase. The sweep is
+/// bounded like other per-checkout cleanup and only removes Effigy's own
+/// `<millis>-<phase>` directories, never anything else under the provider root.
+const PROVIDER_PHASE_RETENTION: std::time::Duration = std::time::Duration::from_secs(3600);
+const PROVIDER_PHASE_SWEEP_LIMIT: usize = 32;
+
 fn provider_phase_workspace(
     repo_root: &Path,
     provider_name: &str,
     phase: &str,
-) -> Result<PathBuf, RunnerError> {
+) -> Result<ProviderPhaseWorkspace, RunnerError> {
+    let provider_dir = repo_root
+        .join(".effigy/state/deploy/provider")
+        .join(provider_name);
+    sweep_stale_provider_phases(&provider_dir);
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or_default();
-    let path = repo_root
-        .join(".effigy/runtime/deploy/provider")
-        .join(provider_name)
-        .join(format!("{millis}-{phase}"));
+    let path = provider_dir.join(format!("{millis}-{phase}"));
     std::fs::create_dir_all(&path).map_err(|error| {
         RunnerError::task_invocation(format!(
             "failed to create deploy provider `{provider_name}` {phase} workspace {}: {error}",
             path.display()
         ))
     })?;
-    Ok(path)
+    Ok(ProviderPhaseWorkspace { path })
+}
+
+fn sweep_stale_provider_phases(provider_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(provider_dir) else {
+        return;
+    };
+    let now = SystemTime::now();
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        if removed >= PROVIDER_PHASE_SWEEP_LIMIT {
+            return;
+        }
+        if !is_provider_phase_workspace_name(&entry.file_name().to_string_lossy()) {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if !metadata.is_dir() {
+            continue;
+        }
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        let stale = now
+            .duration_since(modified)
+            .map(|age| age >= PROVIDER_PHASE_RETENTION)
+            .unwrap_or(false);
+        if stale && std::fs::remove_dir_all(entry.path()).is_ok() {
+            removed += 1;
+        }
+    }
+}
+
+fn is_provider_phase_workspace_name(name: &str) -> bool {
+    match name.split_once('-') {
+        Some((millis, phase)) => {
+            !millis.is_empty()
+                && millis.bytes().all(|byte| byte.is_ascii_digit())
+                && matches!(
+                    phase,
+                    "preflight" | "export" | "validate" | "status" | "apply"
+                )
+        }
+        None => false,
+    }
+}
+
+/// Plan-mode phases receive no secrets. The refusal names the phase and the
+/// requested secret; the vault and manifest are never read.
+fn plan_mode_secret_refusal(provider_name: &str, phase: &str) -> String {
+    format!(
+        "deploy provider `{provider_name}` {phase} phase runs in plan mode and receives no secret values"
+    )
 }
 
 fn write_provider_json(path: &Path, value: &Value) -> Result<(), RunnerError> {
@@ -512,34 +687,149 @@ fn resolve_git_provider_source(
     provider_name: &str,
     url: &str,
     reference: Option<&str>,
-) -> Result<PathBuf, RunnerError> {
-    let reference = reference
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("main");
+    rev: Option<&str>,
+    fetch: DeployProviderFetch,
+    warnings: &mut Vec<String>,
+) -> Result<(PathBuf, DeployProviderProvenance), RunnerError> {
+    let reference = reference.map(str::trim).filter(|value| !value.is_empty());
+    let pinned = rev.map(|rev| pinned_rev(provider_name, rev)).transpose()?;
+    let cache_key = match (&pinned, reference) {
+        (Some(rev), _) => rev.clone(),
+        (None, Some(reference)) => reference.to_owned(),
+        (None, None) => "main".to_owned(),
+    };
+    if pinned.is_none() {
+        let floating = reference.unwrap_or("main");
+        warnings.push(format!(
+            "deploy provider `{provider_name}` source uses floating ref `{floating}`; pin `rev` to a full commit SHA so plans and exports are reproducible"
+        ));
+    }
     let local_path = repo_root
         .join(".effigy")
         .join("cache/providers/git")
         .join(sha256_hex(canonical_git_cache_identity(url).as_bytes()))
-        .join(sanitize_cache_segment(reference));
-    ensure_git_checkout(repo_root, provider_name, url, reference, &local_path)?;
-    Ok(local_path)
+        .join(sanitize_cache_segment(&cache_key));
+    let resolution = ensure_git_checkout(GitCheckoutRequest {
+        repo_root,
+        provider_name,
+        url,
+        reference,
+        pinned: pinned.as_deref(),
+        fetch,
+        local_path: &local_path,
+    })?;
+    let commit = git_head(&local_path)?;
+    if let Some(pinned) = &pinned {
+        if commit.as_deref() != Some(pinned.as_str()) {
+            return Err(RunnerError::task_invocation(format!(
+                "deploy provider `{provider_name}` checkout at {} resolved commit {} instead of pinned rev {pinned}",
+                local_path.display(),
+                commit.as_deref().unwrap_or("<none>")
+            )));
+        }
+    }
+    Ok((
+        local_path,
+        DeployProviderProvenance {
+            kind: "git".to_owned(),
+            url: Some(url.to_owned()),
+            requested_ref: reference.map(str::to_owned),
+            requested_rev: pinned,
+            commit,
+            resolution: resolution.as_str().to_owned(),
+        },
+    ))
+}
+
+fn pinned_rev(provider_name: &str, rev: &str) -> Result<String, RunnerError> {
+    let rev = rev.trim().to_ascii_lowercase();
+    let full_sha = matches!(rev.len(), 40 | 64) && rev.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if full_sha {
+        return Ok(rev);
+    }
+    Err(RunnerError::task_invocation(format!(
+        "deploy provider `{provider_name}` source `rev` must be a full commit SHA (40 hex characters), not `{rev}`; use `ref` for a moving branch or tag"
+    )))
+}
+
+/// How a cached checkout was obtained for this resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GitCheckoutResolution {
+    Cached,
+    Fetched,
+}
+
+impl GitCheckoutResolution {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Cached => "cached",
+            Self::Fetched => "fetched",
+        }
+    }
+}
+
+struct GitCheckoutRequest<'a> {
+    repo_root: &'a Path,
+    provider_name: &'a str,
+    url: &'a str,
+    reference: Option<&'a str>,
+    pinned: Option<&'a str>,
+    fetch: DeployProviderFetch,
+    local_path: &'a Path,
 }
 
 fn ensure_git_checkout(
-    repo_root: &Path,
-    provider_name: &str,
-    url: &str,
-    reference: &str,
-    local_path: &Path,
-) -> Result<(), RunnerError> {
-    if !local_path.join(".git").is_dir() {
-        if local_path.exists() && !local_path.is_dir() {
-            return Err(RunnerError::task_invocation(format!(
-                "deploy provider `{provider_name}` cache path exists but is not a directory: {}",
-                local_path.display()
+    request: GitCheckoutRequest<'_>,
+) -> Result<GitCheckoutResolution, RunnerError> {
+    let GitCheckoutRequest {
+        repo_root,
+        provider_name,
+        url,
+        reference,
+        pinned,
+        fetch,
+        local_path,
+    } = request;
+    if local_path.exists() && !local_path.is_dir() {
+        return Err(RunnerError::task_invocation(format!(
+            "deploy provider `{provider_name}` cache path exists but is not a directory: {}",
+            local_path.display()
+        )));
+    }
+    let fresh_clone = !local_path.join(".git").is_dir();
+    if fetch == DeployProviderFetch::Offline {
+        if fresh_clone {
+            return Err(RunnerError::task_invocation(offline_provider_message(
+                provider_name,
+                local_path,
+                "there is no cached checkout for it",
             )));
         }
+        let Some(pinned) = pinned else {
+            // A floating preview uses whatever the cache holds. Materializing the
+            // working tree from local objects needs no network.
+            materialize_checkout(local_path, None)?;
+            return Ok(GitCheckoutResolution::Cached);
+        };
+        let head = git_head(local_path)?;
+        if head.as_deref() == Some(pinned) {
+            materialize_checkout(local_path, None)?;
+            return Ok(GitCheckoutResolution::Cached);
+        }
+        if git_rev_exists(local_path, pinned) {
+            materialize_checkout(local_path, Some(pinned))?;
+            return Ok(GitCheckoutResolution::Cached);
+        }
+        return Err(RunnerError::task_invocation(offline_provider_message(
+            provider_name,
+            local_path,
+            &format!(
+                "the cached checkout is at commit {}, not the pinned rev {pinned}",
+                head.as_deref().unwrap_or("<none>")
+            ),
+        )));
+    }
+    if fresh_clone {
         if let Some(parent) = local_path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| {
                 RunnerError::task_invocation(format!(
@@ -553,23 +843,108 @@ fn ensure_git_checkout(
             None,
             &["clone", "--no-checkout", url, &local_path.to_string_lossy()],
         )?;
+    } else {
+        run_git(
+            local_path,
+            Some(local_path),
+            &["remote", "set-url", "origin", url],
+        )?;
     }
+    let Some(pinned) = pinned else {
+        let reference = reference.unwrap_or("main");
+        run_git(
+            local_path,
+            Some(local_path),
+            &["fetch", "--depth", "1", "origin", reference],
+        )?;
+        run_git(
+            local_path,
+            Some(local_path),
+            &["checkout", "--detach", "FETCH_HEAD"],
+        )?;
+        return Ok(GitCheckoutResolution::Fetched);
+    };
+    if !fresh_clone && git_head(local_path)?.as_deref() == Some(pinned) {
+        materialize_checkout(local_path, None)?;
+        return Ok(GitCheckoutResolution::Cached);
+    }
+    // A fresh clone carries every object, so the pin needs no fetch. Otherwise
+    // fetch the configured ref when it can carry the pin, then the pin itself;
+    // a server that refuses an unadvertised SHA still succeeds after the ref
+    // fetch brought the commit with it.
+    if !git_rev_exists(local_path, pinned) {
+        let fetch_source = reference.unwrap_or(pinned);
+        let fetched_ref = run_git(
+            local_path,
+            Some(local_path),
+            &["fetch", "--depth", "1", "origin", fetch_source],
+        )
+        .is_ok();
+        if !fetched_ref || !git_rev_exists(local_path, pinned) {
+            run_git(
+                local_path,
+                Some(local_path),
+                &["fetch", "--depth", "1", "origin", pinned],
+            )?;
+        }
+    }
+    materialize_checkout(local_path, Some(pinned))?;
+    Ok(GitCheckoutResolution::Fetched)
+}
+
+/// Materialize the working tree for `commit` (or the cached HEAD) when a
+/// previous run left the checkout empty. `provider.toml` is the package root's
+/// required file, so for an already-correct HEAD its absence proves the working
+/// tree is not materialized. An explicit commit is always checked out because
+/// the cache may hold another commit's files.
+fn materialize_checkout(local_path: &Path, commit: Option<&str>) -> Result<(), RunnerError> {
+    if commit.is_none() && local_path.join("provider.toml").is_file() {
+        return Ok(());
+    }
+    let target = commit.unwrap_or("HEAD");
     run_git(
         local_path,
         Some(local_path),
-        &["remote", "set-url", "origin", url],
-    )?;
-    run_git(
-        local_path,
+        &["checkout", "--detach", target],
+    )
+}
+
+fn offline_provider_message(provider_name: &str, local_path: &Path, detail: &str) -> String {
+    format!(
+        "deploy provider `{provider_name}` cannot be resolved offline: {detail} at {}. Plan previews never fetch. Populate the cache with a networked `effigy deploy export {provider_name} --path <DIR>` (without `--plan`) or `effigy deploy status <ENV>` run, or configure a `path` source",
+        local_path.display()
+    )
+}
+
+fn git_head(local_path: &Path) -> Result<Option<String>, RunnerError> {
+    let output = run_git_output(
         Some(local_path),
-        &["fetch", "--depth", "1", "origin", reference],
-    )?;
-    run_git(
-        local_path,
+        &["rev-parse", "--verify", "--quiet", "HEAD"],
+        |error| {
+            RunnerError::task_invocation(format!(
+                "failed to run git for deploy provider package in {}: {error}",
+                local_path.display()
+            ))
+        },
+        |detail| RunnerError::task_invocation(format!("{detail} for deploy provider package")),
+    );
+    match output {
+        Ok(output) => {
+            let head = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            Ok((!head.is_empty()).then_some(head))
+        }
+        Err(_) => Ok(None),
+    }
+}
+
+fn git_rev_exists(local_path: &Path, reference: &str) -> bool {
+    run_git_output(
         Some(local_path),
-        &["checkout", "--detach", "FETCH_HEAD"],
-    )?;
-    Ok(())
+        &["rev-parse", "--verify", "--quiet", reference],
+        |_| (),
+        |_| (),
+    )
+    .is_ok()
 }
 
 fn run_git(manifest_root: &Path, cwd: Option<&Path>, args: &[&str]) -> Result<(), RunnerError> {

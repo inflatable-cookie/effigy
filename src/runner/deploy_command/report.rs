@@ -6,6 +6,8 @@ use serde_json::{to_value, Value};
 
 use crate::runner::error::RunnerError;
 
+use super::provider_package::DeployProviderProvenance;
+
 pub(super) const PLAN_SCHEMA: &str = "effigy.deploy.plan.v1";
 pub(super) const APPLY_SCHEMA: &str = "effigy.deploy.apply.v1";
 pub(super) const STATUS_SCHEMA: &str = "effigy.deploy.status.v1";
@@ -18,6 +20,9 @@ pub(super) struct DeployPlanReport {
     pub(super) deployment_id: String,
     pub(super) env: String,
     pub(super) provider: String,
+    /// The resolved provider package commit and how it was obtained.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) provider_provenance: Option<DeployProviderProvenance>,
     pub(super) app: DeployPlanApp,
     pub(super) code: DeployCodeRef,
     pub(super) release_policy: DeployReleasePolicyReport,
@@ -116,6 +121,8 @@ pub(super) struct DeployStatusReport {
     pub(super) latest: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) provider_status: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) provider_provenance: Option<DeployProviderProvenance>,
     pub(super) warnings: Vec<String>,
 }
 

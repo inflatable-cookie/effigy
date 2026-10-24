@@ -7,6 +7,19 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- Deploy previews are offline and secret-free. `deploy plan` and
+  `deploy export --plan` resolve the provider package from the cache alone and
+  refuse, naming the command that populates it, when the cache has no usable
+  checkout. Plan-mode provider phases run with no secret access, and a
+  plan-mode `secrets::*` request fails naming the phase and the secret, never
+  its value. `[deploy.providers.<name>].source` accepts `rev`, a full commit
+  SHA; a cached checkout already at that pin is reused with no network, a
+  floating `ref` warns in `export`, `plan` and `status`, and `apply` refuses
+  before provider resolution so a floating ref can never be applied. Export,
+  plan and status reports record `provider_provenance` with the resolved
+  provider commit and whether it was `cached`, `fetched` or a `path` source.
+  Provider phase context and report files move from `.effigy/runtime/deploy/`
+  to `.effigy/state/deploy/provider/` and are removed when the phase ends.
 - Tasks whose scripts launch durable Effigy operations declare `durable = true`;
   the runner journals their tree before starting children. Checkout custody
   leases use machine lock files without initializing machine journal state.

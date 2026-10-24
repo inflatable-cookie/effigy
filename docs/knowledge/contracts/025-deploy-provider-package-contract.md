@@ -58,7 +58,7 @@ Provider packages should be configured separately from environment selection:
 
 ```toml
 [deploy.providers.render]
-source = { type = "git", url = "git@github.com:inflatable-cookie/effigy-provider-render.git", ref = "main" }
+source = { type = "git", url = "git@github.com:inflatable-cookie/effigy-provider-render.git", ref = "main", rev = "0f3c9a4c1b7d2e8f5a6b3c9d0e1f2a3b4c5d6e7f" }
 
 [deploy.uat]
 state = "uat"
@@ -84,6 +84,50 @@ adapter fallback; provider-specific behavior belongs in provider packages.
 The implementation validates `path` and `git` provider package sources during
 deploy planning. OCI provider package materialization is reserved for a later
 slice.
+
+### Pinned sources
+
+`source.rev` pins a git provider package to a full commit SHA (40 hex
+characters). `source.ref` may name a branch or tag alongside it or on its own.
+With `rev` set:
+
+- a cached checkout already at that commit is reused with no network access;
+- `deploy plan` and `deploy export --plan` resolve only from the cache and
+  refuse when it is missing or at another commit, naming the command that
+  populates it;
+- `deploy export` (without `--plan`) and `deploy status` fetch the pin when the
+  cache does not hold it.
+
+Without `rev`, the source is floating: `export`, `plan` and `status` warn that
+the package is not reproducible, and the cache follows `ref` (default `main`).
+`deploy apply` and `deploy redeploy` refuse in v0.15 before provider
+resolution, so a floating ref can never be applied; a mutation-capable resolver
+would refuse one outright.
+
+### Offline previews
+
+A preview never reaches the network. `deploy plan` and `deploy export --plan`
+read the provider package from the existing cache and refuse, naming both
+`effigy deploy export <provider> --path <dir>` (without `--plan`) and
+`effigy deploy status <env>`, when the cache has no usable checkout. A preview
+that needs a new pin therefore runs one of those commands first, deliberately.
+
+### Provider provenance
+
+Every provider-resolving deploy report records where the package came from:
+`provider_provenance` carries `kind` (`path` or `git`), `url`, `requested_ref`,
+`requested_rev`, `commit` and `resolution` (`path`, `cached` or `fetched`).
+`effigy.deploy.export.v1`, `effigy.deploy.plan.v1` and
+`effigy.deploy.status.v1` include it; the plan's `provider_preflight.checks`
+also carries a `provider-source` check whose target is the resolved commit.
+The provider context's `provider_package` block exposes `commit` and
+`resolution` to provider scripts. `deploy model` is provider-neutral and
+resolves no provider package, so it records no provider commit.
+
+The phase workspace that carries the context and report files lives under
+`<checkout>/.effigy/state/deploy/provider/<provider>/`, not the retired
+`.effigy/runtime/` tree. It is removed when the phase ends, and a bounded sweep
+removes leftovers from a crashed process after an hour.
 
 ## Execution Contract
 
@@ -134,7 +178,9 @@ Context schema:
     "root": "/repo/.effigy/cache/providers/render",
     "name": "render",
     "display_name": "Render",
-    "version": "0.1.0"
+    "version": "0.1.0",
+    "commit": "0f3c9a4c1b7d2e8f5a6b3c9d0e1f2a3b4c5d6e7f",
+    "resolution": "cached"
   },
   "deploy": {
     "state": "uat",
@@ -205,6 +251,15 @@ as `provider_status` in `effigy.deploy.status.v1`.
 ## Safety Rules
 
 Provider packages must default to read-only planning.
+
+Plan-mode phases (`preflight`, and `export` when `--plan` is set) run with no
+secret access at all. Effigy resolves no secret targets and reads neither the
+manifest's secret declarations nor the vault, so a provider script that asks
+for a secret fails. The failure names the phase and the secret, for example
+`secret `DATABASE_URL` is unavailable: deploy provider `render` preflight phase
+runs in plan mode and receives no secret values`. It never contains a value.
+Provider scripts that need secrets must run outside plan mode, where the
+`deploy` secret target applies.
 
 For future execution, mutating phases require an explicit `--yes` gate from
 core Effigy; v0.15 grants no apply/redeploy mutation approval. Provider

@@ -42,6 +42,9 @@ struct DeployProviderContextPackage<'a> {
     name: &'a str,
     display_name: &'a str,
     version: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit: Option<&'a str>,
+    resolution: &'a str,
 }
 
 #[derive(Serialize)]
@@ -66,6 +69,8 @@ pub(super) fn build_provider_context(
             name: request.package.descriptor.provider.name.as_str(),
             display_name: request.package.descriptor.provider.display_name.as_str(),
             version: request.package.descriptor.provider.version.as_str(),
+            commit: request.package.provenance.commit.as_deref(),
+            resolution: request.package.provenance.resolution.as_str(),
         },
         deploy: DeployProviderContextDeploy {
             state: request.state,

@@ -487,9 +487,30 @@ fn run_deploy_plan_json_reports_render_provider_preflight() {
     );
 }
 
-#[test]
-fn run_deploy_plan_materializes_git_provider_package_under_shared_cache_identity() {
-    let root = temp_workspace("deploy-plan-git-provider-cache");
+fn git_stdout(args: &[&str], cwd: &Path) -> String {
+    let output = ProcessCommand::new("git")
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {:?} failed in {}",
+        args,
+        cwd.display()
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+fn file_url(path: &Path) -> String {
+    format!("file://{}", path.display())
+}
+
+fn setup_git_provider_workspace(
+    name: &str,
+    source: &str,
+) -> (std::path::PathBuf, std::path::PathBuf) {
+    let root = temp_workspace(name);
     setup_workspace_app_path_bundle(&root);
     fs::create_dir_all(root.join("app-front")).expect("mkdir front");
     fs::create_dir_all(root.join("app-admin")).expect("mkdir admin");
@@ -537,7 +558,305 @@ admin = "app-admin"
 api = "app-api"
 
 [deploy.providers.render]
-source = {{ type = "git", url = {:?}, ref = "main" }}
+source = {source}
+
+[deploy.uat]
+state = "uat"
+code_ref = "branch:main"
+release_policy = "optional"
+provider_project = "acme-uat"
+artifact_policy = "digest-preferred"
+
+[deploy.uat.provider]
+adapter = "render"
+"#
+        ),
+    );
+    (root, provider_repo)
+}
+
+fn provider_cache_path(root: &Path, provider_repo: &Path, key: &str) -> std::path::PathBuf {
+    root.join(".effigy")
+        .join("cache/providers/git")
+        .join(sha256_hex(
+            canonical_git_cache_identity(&file_url(provider_repo)).as_bytes(),
+        ))
+        .join(sanitize_cache_segment(key))
+}
+
+fn run_plan(root: &Path, env: &str) -> Result<String, crate::runner::error::RunnerError> {
+    run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Plan {
+            env: env.to_owned(),
+            write_report: false,
+        },
+        repo_override: Some(root.to_path_buf()),
+        output_json: true,
+    }))
+}
+
+fn run_status(root: &Path, env: &str) -> Result<String, crate::runner::error::RunnerError> {
+    run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Status {
+            env: env.to_owned(),
+        },
+        repo_override: Some(root.to_path_buf()),
+        output_json: true,
+    }))
+}
+
+fn provider_phase_leftovers(root: &Path) -> Vec<std::path::PathBuf> {
+    let dir = root.join(".effigy/state/deploy/provider/render");
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|entry| entry.ok())
+        .map(|e| e.path())
+        .collect()
+}
+
+#[test]
+fn run_deploy_plan_materializes_git_provider_package_under_shared_cache_identity() {
+    let (root, provider_repo) =
+        setup_git_provider_workspace("deploy-plan-git-provider-cache", "PLACEHOLDER");
+    let source = format!(
+        "{{ type = \"git\", url = {:?}, ref = \"main\" }}",
+        file_url(&provider_repo)
+    );
+    write_root_manifest(
+        &root,
+        &fs::read_to_string(root.join("effigy.toml"))
+            .expect("read manifest")
+            .replace("PLACEHOLDER", &source),
+    );
+
+    // A networked observation resolves and caches the provider package.
+    let status = run_status(&root, "uat").expect("run deploy status");
+    let parsed = parse_json_output_with_schema_version(&status, "effigy.deploy.status.v1", 1);
+    let commit = git_stdout(&["rev-parse", "HEAD"], &provider_repo);
+    assert_eq!(
+        parsed["provider_provenance"]["commit"].as_str(),
+        Some(commit.as_str())
+    );
+    assert_eq!(
+        parsed["provider_provenance"]["resolution"].as_str(),
+        Some("fetched")
+    );
+    assert!(
+        parsed["warnings"]
+            .as_array()
+            .expect("status warnings")
+            .iter()
+            .any(|warning| warning
+                .as_str()
+                .is_some_and(|value| value.contains("floating ref"))),
+        "status should warn about the floating provider ref: {parsed}"
+    );
+
+    let expected_cache_path = provider_cache_path(&root, &provider_repo, "main");
+    assert!(
+        expected_cache_path.join(".git").is_dir(),
+        "expected provider git cache checkout at {}",
+        expected_cache_path.display()
+    );
+    assert!(
+        expected_cache_path.join("provider.toml").is_file(),
+        "expected provider package contents at {}",
+        expected_cache_path.display()
+    );
+
+    // A plan preview then runs offline: no clone, no fetch, same checkout.
+    let plan = run_plan(&root, "uat").expect("run deploy plan");
+    let parsed = parse_json_output_with_schema_version(&plan, "effigy.deploy.plan.v1", 1);
+    assert_eq!(
+        parsed["provider_provenance"]["commit"].as_str(),
+        Some(commit.as_str())
+    );
+    assert_eq!(
+        parsed["provider_provenance"]["resolution"].as_str(),
+        Some("cached")
+    );
+    assert!(parsed["provider_preflight"]["checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
+        .any(|check| {
+            check["name"].as_str() == Some("provider-source")
+                && check["target"].as_str() == Some(commit.as_str())
+        }));
+    assert!(
+        provider_phase_leftovers(&root).is_empty(),
+        "provider phase workspace should be cleaned up: {:?}",
+        provider_phase_leftovers(&root)
+    );
+}
+
+#[test]
+fn run_deploy_plan_reuses_pinned_rev_without_network_access() {
+    let (root, provider_repo) =
+        setup_git_provider_workspace("deploy-plan-pinned-provider", "PLACEHOLDER");
+    let pinned = git_stdout(&["rev-parse", "HEAD"], &provider_repo);
+    let source = format!(
+        "{{ type = \"git\", url = {:?}, ref = \"main\", rev = {:?} }}",
+        file_url(&provider_repo),
+        pinned
+    );
+    write_root_manifest(
+        &root,
+        &fs::read_to_string(root.join("effigy.toml"))
+            .expect("read manifest")
+            .replace("PLACEHOLDER", &source),
+    );
+
+    run_status(&root, "uat").expect("populate the provider cache online");
+    assert!(provider_cache_path(&root, &provider_repo, &pinned)
+        .join(".git")
+        .is_dir());
+
+    // The origin disappears: a pinned cached checkout must not need it.
+    fs::remove_dir_all(&provider_repo).expect("remove provider origin");
+
+    let plan = run_plan(&root, "uat").expect("pinned plan runs without its origin");
+    let parsed = parse_json_output_with_schema_version(&plan, "effigy.deploy.plan.v1", 1);
+    assert_eq!(
+        parsed["provider_provenance"]["commit"].as_str(),
+        Some(pinned.as_str())
+    );
+    assert_eq!(
+        parsed["provider_provenance"]["resolution"].as_str(),
+        Some("cached")
+    );
+    assert_eq!(
+        parsed["provider_provenance"]["requested_rev"].as_str(),
+        Some(pinned.as_str())
+    );
+    assert!(
+        parsed["warnings"]
+            .as_array()
+            .expect("plan warnings")
+            .iter()
+            .all(|warning| !warning
+                .as_str()
+                .is_some_and(|value| value.contains("floating ref"))),
+        "a pinned rev must not warn about a floating ref: {parsed}"
+    );
+}
+
+#[test]
+fn run_deploy_plan_refuses_offline_without_provider_cache() {
+    let (root, provider_repo) =
+        setup_git_provider_workspace("deploy-plan-offline-refusal", "PLACEHOLDER");
+    let pinned = git_stdout(&["rev-parse", "HEAD"], &provider_repo);
+    let source = format!(
+        "{{ type = \"git\", url = {:?}, rev = {:?} }}",
+        file_url(&provider_repo),
+        pinned
+    );
+    write_root_manifest(
+        &root,
+        &fs::read_to_string(root.join("effigy.toml"))
+            .expect("read manifest")
+            .replace("PLACEHOLDER", &source),
+    );
+
+    let error = run_plan(&root, "uat").expect_err("offline plan without a cache refuses");
+    let message = error.to_string();
+    assert!(
+        message.contains("cannot be resolved offline"),
+        "expected an offline refusal: {message}"
+    );
+    assert!(
+        message.contains("effigy deploy export render --path"),
+        "offline refusal must name the command that populates the cache: {message}"
+    );
+    assert!(
+        !root.join(".effigy/cache/providers/git").exists(),
+        "an offline preview must not create or populate the provider cache"
+    );
+}
+
+#[test]
+fn run_deploy_plan_refuses_floating_provider_rev() {
+    let (root, provider_repo) =
+        setup_git_provider_workspace("deploy-plan-floating-rev", "PLACEHOLDER");
+    let source = format!(
+        "{{ type = \"git\", url = {:?}, rev = \"main\" }}",
+        file_url(&provider_repo)
+    );
+    write_root_manifest(
+        &root,
+        &fs::read_to_string(root.join("effigy.toml"))
+            .expect("read manifest")
+            .replace("PLACEHOLDER", &source),
+    );
+
+    let error = run_plan(&root, "uat").expect_err("a floating rev is refused");
+    let message = error.to_string();
+    assert!(
+        message.contains("must be a full commit SHA"),
+        "expected a full-SHA refusal: {message}"
+    );
+}
+
+#[test]
+fn run_deploy_plan_mode_secret_request_fails_without_a_value() {
+    let root = temp_workspace("deploy-plan-secret-request");
+    setup_workspace_app_path_bundle(&root);
+    fs::create_dir_all(root.join("app-front")).expect("mkdir front");
+    fs::create_dir_all(root.join("app-admin")).expect("mkdir admin");
+    fs::create_dir_all(root.join("app-api")).expect("mkdir api");
+    for dir in ["app-front", "app-admin"] {
+        fs::write(
+            root.join(dir).join("svelte.config.js"),
+            "export default { kit: { adapter: adapter({ fallback: \"200.html\" }) } };\n",
+        )
+        .expect("write svelte config");
+        write_manifest(
+            &root.join(dir).join("effigy.toml"),
+            "[tasks.build]\nrun = \"bun x vite build\"\n",
+        );
+    }
+    write_manifest(
+        &root.join("app-api/effigy.toml"),
+        "[tasks.build]\nrun = \"cargo build --release\"\n\n[tasks.api]\nrun = \"cargo run -p acme-api\"\n",
+    );
+    let provider = root.join("providers/render");
+    write_provider_package(&provider, "render");
+    write_provider_phase_script(
+        &provider,
+        "preflight",
+        r#"
+let token = secrets::get("DATABASE_URL");
+deploy::provider_report(#{
+    schema: "effigy.deploy-provider.report.v1",
+    phase: "preflight",
+    provider: "render",
+    status: "planned",
+    checks: [],
+    warnings: [],
+    blockers: [],
+    files: [],
+});
+"#,
+    );
+    write_root_manifest(
+        &root,
+        r#"
+[bundle]
+base = { type = "path", dir = "bundles/workspace-app" }
+host = "acme.test"
+project_name = "acme-dev"
+workspace_subdir = "acme"
+databases = ["acme"]
+
+[bundle.dirs]
+front = "app-front"
+admin = "app-admin"
+api = "app-api"
+
+[deploy.providers.render]
+source = { type = "path", dir = "providers/render" }
 
 [deploy.uat]
 state = "uat"
@@ -549,38 +868,49 @@ artifact_policy = "digest-preferred"
 [deploy.uat.provider]
 adapter = "render"
 "#,
-            provider_repo.display().to_string()
-        ),
     );
 
-    run_command(Command::Deploy(DeployArgs {
-        subcommand: DeploySubcommand::Plan {
-            env: "uat".to_owned(),
-            write_report: false,
+    let error = run_plan(&root, "uat").expect_err("plan-mode secret access is refused");
+    let message = error.to_string();
+    assert!(
+        message.contains("DATABASE_URL"),
+        "the refusal must name the secret: {message}"
+    );
+    assert!(
+        message.contains("preflight"),
+        "the refusal must name the phase: {message}"
+    );
+    assert!(
+        message.contains("plan mode") && message.contains("no secret values"),
+        "the refusal must explain plan-mode secret policy: {message}"
+    );
+    assert!(
+        !message.contains("missing from the vault"),
+        "plan-mode refusal must not fall through to a vault lookup: {message}"
+    );
+}
+
+#[test]
+fn run_deploy_export_reports_provider_commit_and_source_kind() {
+    let root = setup_deploy_transaction_fixture("deploy-export-provider-provenance");
+    write_test_deploy_export_provider(&root, "render", "acme-api", "acme-jobs");
+    let out = run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Export {
+            provider: "render".to_owned(),
+            path: root.join("infra/render"),
+            plan: true,
         },
         repo_override: Some(root.clone()),
         output_json: true,
     }))
-    .expect("run deploy plan");
-
-    let expected_cache_path = root
-        .join(".effigy")
-        .join("cache/providers/git")
-        .join(sha256_hex(
-            canonical_git_cache_identity(&provider_repo.display().to_string()).as_bytes(),
-        ))
-        .join(sanitize_cache_segment("main"));
-
-    assert!(
-        expected_cache_path.join(".git").is_dir(),
-        "expected provider git cache checkout at {}",
-        expected_cache_path.display()
+    .expect("run deploy export --plan");
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.deploy.export.v1", 1);
+    assert_eq!(parsed["provider_provenance"]["kind"].as_str(), Some("path"));
+    assert_eq!(
+        parsed["provider_provenance"]["resolution"].as_str(),
+        Some("path")
     );
-    assert!(
-        expected_cache_path.join("provider.toml").is_file(),
-        "expected provider package contents at {}",
-        expected_cache_path.display()
-    );
+    assert!(parsed["provider_provenance"]["commit"].is_null());
 }
 
 #[test]
