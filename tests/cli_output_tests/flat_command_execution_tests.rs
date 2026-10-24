@@ -29,8 +29,11 @@ fn assert_no_migration_diagnostics(output: &std::process::Output) {
 }
 
 fn assert_json_has_no_warning_metadata(payload: &Value) {
-    assert!(
-        payload.get("warnings").is_none(),
+    // v0.15's envelope always carries `warnings` (guide 017); a direct route
+    // simply contributes none.
+    assert_eq!(
+        payload["warnings"],
+        Value::Array(Vec::new()),
         "command envelope must not carry preview warning metadata: {payload}"
     );
     let text = payload.to_string();
@@ -79,11 +82,10 @@ fn unowned_former_grouped_spelling_does_not_reach_the_child_builtin() {
     let output = run_json_cli_command(&root, &["repo", "scan", "god-files"]);
     assert!(!output.status.success(), "unowned repo scan: {output:?}");
     let payload = parse_stdout_json(&output);
-    assert_ne!(
-        payload["command"]["kind"], "scan",
-        "unowned `repo scan` must not reach the scan built-in: {payload}"
-    );
-    assert_ne!(payload["command"]["name"], "scan", "{payload}");
+    // The unowned word stays a failed task selector; it never becomes the
+    // `scan` built-in.
+    assert_eq!(payload["command"]["kind"], "task");
+    assert_eq!(payload["command"]["name"], "repo");
     assert_json_has_no_warning_metadata(&payload);
     assert_no_migration_diagnostics(&output);
 }
@@ -144,7 +146,10 @@ fn leading_repo_and_json_flags_still_select_direct_builtins() {
     assert!(output.status.success(), "leading flags: {output:?}");
     let payload = parse_stdout_json(&output);
     assert_eq!(payload["ok"], true);
-    assert_eq!(payload["command"]["kind"], "scan");
+    // `scan` is a flat built-in task surface, so the envelope names it as a
+    // task rather than the retired `scan` command kind.
+    assert_eq!(payload["command"]["kind"], "task");
+    assert_eq!(payload["command"]["name"], "scan");
     assert_json_has_no_warning_metadata(&payload);
     assert_no_migration_diagnostics(&output);
 }
@@ -162,7 +167,8 @@ fn direct_text_and_json_success_have_no_migration_metadata() {
     assert!(json.status.success(), "json: {json:?}");
     let payload = parse_stdout_json(&json);
     assert_eq!(payload["ok"], true);
-    assert_eq!(payload["command"]["kind"], "scan");
+    assert_eq!(payload["command"]["kind"], "task");
+    assert_eq!(payload["command"]["name"], "scan");
     assert_json_has_no_warning_metadata(&payload);
     assert_no_migration_diagnostics(&json);
 
@@ -176,10 +182,18 @@ fn direct_usage_and_runtime_errors_have_no_migration_metadata() {
     let root = temp_workspace("flat-json-errors");
 
     let usage = run_json_cli_command(&root, &["scan", "god-files", "--bogus"]);
-    assert_eq!(usage.status.code(), Some(2), "usage: {usage:?}");
+    // `scan` runs through the flat task surface, so its argument refusal is a
+    // runner invocation error, not a CLI parse error.
+    assert_eq!(usage.status.code(), Some(1), "usage: {usage:?}");
     let payload = parse_stdout_json(&usage);
     assert_eq!(payload["ok"], false);
-    assert_eq!(payload["error"]["kind"], "CliParseError");
+    assert_eq!(payload["error"]["kind"], "RunnerError");
+    assert!(
+        payload["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("built-in `scan`")),
+        "usage error names the built-in: {payload}"
+    );
     assert_json_has_no_warning_metadata(&payload);
     assert_no_migration_diagnostics(&usage);
 

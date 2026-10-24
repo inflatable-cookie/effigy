@@ -1180,6 +1180,20 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- `effigy test` host suites run nested `effigy` invocations through the binary
+  that started the test run (`EFFIGY_EXECUTABLE`) instead of rebuilding the
+  workspace binary with `cargo run` for each one. A concurrent rebuild replaced
+  a running process's startup image, and kernel custody refused the run
+  (`startup binary replaced`, `foreground guard closed acknowledgement pipe`,
+  `child failed before barrier`) in tests whose steps reference another task.
+- A task reference inside an `effigy skill run` source resolves against that
+  source catalog. Sequence tree classification looked the reference up in the
+  consumer's catalogs and refused it with `task catalog prefix … not found`
+  for a nested source task the run would otherwise accept.
+- A first local-dev vault unlock (`effigy dev`, `secrets = "required"` tasks)
+  writes the unattended key before the run's foreground scope, so the kernel no
+  longer refuses it with `late durable effect refused: parent tree is
+  foreground`.
 - `effigy contracts check-json` fixture commands no longer inherit the
   invoking task tree's runtime capability, so `qa:json` inside `effigy qa`
   stops failing the qa-group contract fixtures (`fixture group run failed
