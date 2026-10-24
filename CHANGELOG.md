@@ -967,11 +967,25 @@ During v0.x, MINOR bumps may include breaking changes.
   `--check` reports without writing.
 
 ### Changed
-- `effigy install:local` builds this checkout through `oxide build --bin effigy`
-  and installs `target/debug/effigy`, so the local binary comes from Oxide's
-  shared slot instead of a private `target/bootstrap-local/` directory. The
-  plain-Cargo escape is `effigy install:local:cargo`, and a machine without
-  Oxide needs `oxide` on `PATH` (or that escape) to install this checkout.
+- `effigy install:local` now installs this checkout's **optimized release**
+  binary: it builds once through `oxide build --release --bin effigy` and
+  activates the exact release binary Oxide uplifts to `target/release/effigy`,
+  with no silent fallback to another profile or to plain Cargo. Activation is
+  staged and byte-verified, and the version receipt is published by rename, so
+  a failed build, copy or rename leaves the previously active binary and
+  receipt intact. `effigy install:local` also preserves an existing launcher it
+  did not generate: a customized `~/.local/bin/effigy` script or a custom
+  symlink is left byte-for-byte alone and explained instead of clobbered, while
+  a fresh install still writes the maintained wrapper and a recognised
+  generated wrapper is refreshed only for a known stable target. A new
+  `test:install:local` fixture suite (private HOME and checkout, stubbed
+  build/copy/activation programs) covers release selection, launcher
+  disposition, rollback and version receipts.
+- `effigy install:local` builds this checkout through Oxide, so the local binary
+  comes from Oxide's shared slot instead of a private `target/bootstrap-local/`
+  directory. The plain-Cargo escape is `effigy install:local:cargo`, and a
+  machine without Oxide needs `oxide` on `PATH` (or that escape) to install this
+  checkout.
 - Every Effigy route that runs Cargo is now either routed through `oxide` or
   recorded with its rule and reason in
   [cargo routes](docs/knowledge/cargo-routes.md): the fixture-hygiene and
