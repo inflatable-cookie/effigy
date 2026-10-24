@@ -39,6 +39,11 @@ use effigy_kernel::supervise::EngineSession;
 
 /// The managed engine's entry in its detached supervisor process.
 pub(in crate::runner) fn supervise(session: EngineSession) -> Result<(), RunError> {
+    // An environment-owned host process is another engine over the same
+    // detached supervisor: its payload is one host-process spec.
+    if super::host_process::owns_supervise_payload(session.payload()) {
+        return super::host_process::supervise(session);
+    }
     #[cfg(all(test, feature = "fault-injection"))]
     return faults::armed(|| engine::supervise(session));
     #[cfg(not(all(test, feature = "fault-injection")))]

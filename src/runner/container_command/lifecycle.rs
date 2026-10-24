@@ -1077,14 +1077,21 @@ pub(super) fn run_container_down_command(
         ContainerRepoScope::RepoRoot(repo_root) => {
             run_container_down_adapter(&repo_root, name, output_json)
         }
-        ContainerRepoScope::InvocationCwd(cwd) => run_container_down_under_path_with_hook(
-            &cwd,
-            name,
-            output_json,
-            deregister_runtime_gateway_routes,
-            environment::stop_hook(Operation::Down),
-        )
-        .map_err(Into::into),
+        ContainerRepoScope::InvocationCwd(cwd) => {
+            let rendered = run_container_down_under_path_with_hook(
+                &cwd,
+                name,
+                output_json,
+                deregister_runtime_gateway_routes,
+                environment::stop_hook(Operation::Down),
+            )?;
+            Ok(annotate_host_process_status(
+                &cwd,
+                name,
+                output_json,
+                rendered,
+            ))
+        }
     }
 }
 
@@ -1111,12 +1118,79 @@ pub(super) fn run_container_status_command(
 
     match resolve_repo_root_or_invocation_cwd_scope(repo_override)? {
         ContainerRepoScope::RepoRoot(repo_root) => {
-            run_container_status(&repo_root, name, output_json).map_err(Into::into)
+            let rendered = run_container_status(&repo_root, name, output_json)?;
+            Ok(annotate_host_process_status(
+                &repo_root,
+                name,
+                output_json,
+                rendered,
+            ))
         }
         ContainerRepoScope::InvocationCwd(cwd) => {
-            run_container_status_under_path(&cwd, name, output_json).map_err(Into::into)
+            let rendered = run_container_status_under_path(&cwd, name, output_json)?;
+            Ok(annotate_host_process_status(
+                &cwd,
+                name,
+                output_json,
+                rendered,
+            ))
         }
     }
+}
+
+/// Each declared host process is a kernel run: status reports its run, state
+/// and last exit beside the services (052 §10.2).
+fn annotate_host_process_status(
+    repo_root: &std::path::Path,
+    name: Option<&str>,
+    output_json: bool,
+    rendered: String,
+) -> String {
+    let Ok(policy) = load_container_policy(repo_root, name) else {
+        return rendered;
+    };
+    if policy.host_processes.is_empty() {
+        return rendered;
+    }
+    let rows = crate::runner::host_process::host_process_status(repo_root, &policy);
+    if rows.is_empty() {
+        return rendered;
+    }
+    if output_json {
+        let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&rendered) else {
+            return rendered;
+        };
+        let Some(object) = value.as_object_mut() else {
+            return rendered;
+        };
+        object.insert(
+            "host_processes".to_owned(),
+            serde_json::to_value(&rows).unwrap_or(serde_json::Value::Null),
+        );
+        return value.to_string();
+    }
+    let mut text = rendered;
+    for row in rows {
+        text.push('\n');
+        text.push_str(&format!("[host process] {} {}", row.name, row.state));
+        if let Some(run) = &row.run {
+            text.push_str(&format!(" (run {run}"));
+            if let Some(pid) = row.pid {
+                text.push_str(&format!(", pid {pid}"));
+            }
+            if let Some(exit) = row.last_exit {
+                text.push_str(&format!(", last exit {exit}"));
+            }
+            text.push(')');
+        }
+        if let Some(listener) = &row.listener {
+            text.push_str(&format!(" listener {listener}"));
+        }
+        if let Some(log) = &row.log {
+            text.push_str(&format!(" log {log}"));
+        }
+    }
+    text
 }
 
 pub(super) fn run_container_stats_command(
@@ -1215,14 +1289,20 @@ fn run_container_down_adapter(
     let policy = load_container_policy(repo_root, name)?;
     let _operation_plan =
         lifecycle_operation_plan(repo_root, &policy, ContainerLifecycleOperation::down(false));
-    run_container_down(
+    let rendered = run_container_down(
         repo_root,
         name,
         output_json,
         deregister_runtime_gateway_routes,
         environment::stop_hook(Operation::Down),
     )
-    .map_err(RunnerError::from)
+    .map_err(RunnerError::from)?;
+    Ok(annotate_host_process_status(
+        repo_root,
+        name,
+        output_json,
+        rendered,
+    ))
 }
 
 /// A managed run's settle releasing the environment it started: the

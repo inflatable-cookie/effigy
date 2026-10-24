@@ -476,6 +476,19 @@ During v0.x, MINOR bumps may include breaking changes.
   `simulate --version`. The refusal names the replacement.
 
 ### Added
+- Host processes are environment-owned kernel runs (effigy#320).
+  `[[containers.<env>.host_processes]]` no longer start a `setsid` supervisor
+  with PID and spec files and a blocking lifecycle lock. Each process is one
+  detached run owned by its own `HostProcess` kernel resource in the
+  environment's checkout journal: `up` starts it after services are ready and
+  in `depends_on` order, waits for its listener readiness and detaches, and
+  `down`, `reset` and session settle stop it through a fenced kernel stop and
+  report every stop (`HostProcessStopReport`) including a process that needed
+  SIGKILL after its grace. A process that exits is recorded with its exit and
+  the last log lines, `container status` (and `--json`) shows each host
+  process's run, state, PID and last exit, and a v0.14.1 PID-file supervisor is
+  stopped by its recorded identity on the next lifecycle command. The log
+  location under `.effigy/runtime/host-processes/` is unchanged.
 - Human-facing feedback has one foundation (effigy#312). `effigy-ui` exports
   `steps`, a step-progress API with short present-tense labels: a terminal
   draws an asynchronous spinner on stderr, each step ends with one `✓`/`✗`

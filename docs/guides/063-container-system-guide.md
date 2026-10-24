@@ -439,6 +439,32 @@ in progress; the stopped environment restarts with a plain `up`. Another checkou
 worktree generation still refuses, and stopping the old container
 environment never removes the handed-over listener route.
 
+Host processes are environment-owned kernel runs. Each
+`[[containers.<env>.host_processes]]` entry is one detached run in the
+checkout's environment journal, owned by its own kernel resource, with custody
+of its child process group. They start after the environment's services are
+ready, in `depends_on` order (a dependency must declare a `listener`), and the
+declared `restart`, `restart_delay_ms`, `shutdown_signal` and
+`shutdown_grace_secs` apply. `effigy container up` waits for each listener's
+declared readiness and then detaches; if the bring-up is interrupted, the
+kernel stops what it started.
+
+`effigy container down`, `reset` and a session's settle stop host processes
+through the kernel and report every stop, for example
+`[host process] frontend stopped (run 7k2…, pid 47120, SIGTERM then SIGKILL, exit 137)`.
+A process that ignores its shutdown signal is killed after its grace and named
+with its PID and the signals that were sent; a process that could not be
+confirmed stopped is reported as residue, never dropped. A host process that
+exits is recorded with its exit code and its last log lines under
+`.effigy/runtime/host-processes/<env>/<name>.log`. `effigy container status`
+(and `status --json` under `host_processes`) shows each host process's run,
+state, PID, last exit and listener state.
+
+An environment started by a pre-v0.15 build still has a PID-file supervisor.
+The next `container up` or `container down` stops it by the exact identities in
+its PID and listener records (never by a process-name pattern), withdraws its
+route and removes the record before starting the kernel-run generation.
+
 `container up --detach --json` returns each ready listener's actual address,
 internal URL, public URL, generation and state-file path. A linked worktree
 or marked ephemeral clone publishes its checkout-scoped name, so the same
