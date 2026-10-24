@@ -768,7 +768,12 @@ fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
     assert_eq!(failed["error"]["details"]["state"], "partial", "{failed}");
     assert_eq!(failed["error"]["details"]["readiness"], "unverified");
     for (i, output) in outputs.iter().enumerate().skip(1) {
-        let commands = fs::read_to_string(fixture.stacks[i].root.join("commands.jsonl")).unwrap();
+        // A sibling that was refused before the private transport has no
+        // receipt at all, so report its own output rather than a bare read
+        // error: the surrounding concurrency is the thing under proof.
+        let Ok(commands) = fs::read_to_string(fixture.stacks[i].root.join("commands.jsonl")) else {
+            panic!("healthy stack{i} never reached the private transport: {output:?}");
+        };
         let observations =
             fs::read_to_string(fixture.stacks[i].root.join("observations.jsonl")).unwrap();
         assert!(output.status.success(), "healthy stack{i}: {output:?}; actual commands={commands}; transport observations={observations}");
