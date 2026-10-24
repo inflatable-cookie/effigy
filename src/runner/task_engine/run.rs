@@ -1326,7 +1326,7 @@ fn conflict(
     let wait_flag = (!builtin).then(|| format!("effigy --lock-wait-ms 600000 {}", target.label));
     let stop_text = match (stop_command.as_deref(), attached_to_terminal) {
         (Some(stop), true) => {
-            format!("stop that run with `{stop}`, or press Ctrl-C in its terminal")
+            format!("stop that run with `{stop}` (or press Ctrl-C in its terminal)")
         }
         (Some(stop), false) => format!("stop it with `{stop}`"),
         (None, _) => "stop that run through its own owner".to_owned(),
