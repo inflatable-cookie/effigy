@@ -356,17 +356,7 @@ fn begin<'a>(cx: &EffectContext, root: &'a StateRoot, adapter: &mut Adapter) -> 
     .unwrap()
 }
 fn fixture() -> PathBuf {
-    std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::current_exe()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .join("kernel-custody-fixture")
-        })
+    crate::fixture::custody_fixture()
 }
 fn expected(run: &Run<'_>) -> RemoteRegistration {
     let bytes = serde_json::to_vec(&(run.id(), run.fence(), run.effects().unwrap().len())).unwrap();

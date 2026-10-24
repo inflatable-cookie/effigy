@@ -1391,7 +1391,6 @@ pub(super) fn resolve_local_workspace_effigy_freshness_anchor(
 ) -> PathBuf {
     let candidates = [
         effigy_repo_root.join(".local-install/bin/effigy"),
-        effigy_repo_root.join("target/bootstrap-local/debug/effigy"),
         effigy_repo_root.join("target/debug/effigy"),
     ];
     newest_existing_path(&candidates).unwrap_or_else(|| host_binary.to_path_buf())

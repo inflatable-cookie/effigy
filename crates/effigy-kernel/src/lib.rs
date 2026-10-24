@@ -38,6 +38,8 @@ mod fault;
 mod fault_tests;
 #[cfg(all(test, feature = "fault-injection"))]
 mod faults;
+#[cfg(test)]
+mod fixture;
 
 /// A named fault point (§12.1): `io::Result<()>`, always `Ok` outside
 /// fault-injection test builds.

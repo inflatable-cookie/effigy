@@ -14,6 +14,7 @@ Current product truth is owned by topic. User documentation remains in [guides](
 | Releases (config, `status` and `--plan` implemented; the Run is not) | [Release platform contract](contracts/054-release-platform-contract.md) |
 | Release procedure | [Release](contracts/release.md) |
 | Test fixture ownership | [Fixture hygiene](test-fixture-hygiene.md) |
+| Cargo routing and its recorded exceptions | [Cargo routes](cargo-routes.md) |
 | Domain vocabulary | [Domain](domain/README.md) |
 | Retired concepts | [Retirements](retired.toml) |
 | Open questions | [Questions](questions.md) |

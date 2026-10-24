@@ -17,7 +17,7 @@ The plan (lanes, their documents and their order), leads, papercuts, brief draft
 - `rg` and the docs index (`docs/README.md`) for code and documentation understanding.
 - `effigy tasks` for selector inventory; `effigy doctor` for routing or health ambiguity.
 - `effigy test --plan` when test selection matters; narrow Effigy selectors for task validation.
-- Install this checkout's `effigy` with `effigy install:local` (or, with no Effigy installed at all, `cargo run --bin effigy -- install:local`). `cargo run --bin effigy -- <command>` runs a one-off without installing.
+- Install this checkout's `effigy` with `effigy install:local`; it builds through `oxide build --bin effigy` (escape: `effigy install:local:cargo`). With no Effigy installed at all, `cargo run --bin effigy -- install:local` runs the same task without a prior install, and `cargo run --bin effigy -- <command>` runs a one-off.
 - The old `cargo qa`, `qa-docs`, `qa-json`, `qa-json-ci`, `qa-release` and `prepush-ci` aliases are gone: a Cargo alias either needs unsupported `!sh` syntax or makes plain Cargo compile Effigy's dependency graph first. Use the tasks they selected - `effigy qa:gates`, `effigy qa:docs`, `effigy qa:json`, `effigy qa:json:ci`, `effigy release gates`, `effigy prepush:ci`.
 
 ## Guardrails
@@ -41,7 +41,7 @@ Workers run the changed-code tests, compile the touched targets, and run docs ch
 
 The planner runs milestone full QA on `main` through Queue `project.qa.run` and reads its result with `project.qa.get`, then briefs fixes for failures. Do not configure a per-task Queue validation command. Run `effigy skill run northstar/retired-concepts` when retiring concepts.
 
-Run validation through Effigy selectors, not raw Cargo, Bun, or Vitest commands. **Run selectors with the installed `effigy`** (Tom, 2026-10-22). It's a `install:local` install of current main and reads this checkout's config. Don't build Effigy just to run a selector: tests build what they test. When your change alters config parsing, selector syntax or the task runner, build your binary once per head (`oxide build --bin effigy`) and run those checks with `./target/debug/effigy`; reuse it until you edit source again. Run independent selectors one after another in a single shell command. Selectors run Cargo through `scripts/oxide-selector.sh`, so Rust intermediates land in Oxide's shared slot pool instead of `target/`; selectors that pin a `target/` binary path, a non-Oxide Cargo profile or a scrubbed `HOME` stay on Cargo. Every routed selector has a named escape sibling: `effigy <selector>:cargo` runs the plain-Cargo command that selector replaced (for example `effigy qa:docs:changelog:cargo`). Also: `EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>` escapes a whole selector run, `effigy cargo <cargo args>` escapes one command, and `cargo run --bin effigy -- <selector>` needs no wrapper at all. Record background exit codes. Stop only processes you started, using their recorded PIDs or process groups; never use pattern kills (`pkill -f`, `killall`, or `pgrep` piped into `kill`).
+Run validation through Effigy selectors, not raw Cargo, Bun, or Vitest commands. **Run selectors with the installed `effigy`** (Tom, 2026-10-22). It's a `install:local` install of current main and reads this checkout's config. Don't build Effigy just to run a selector: tests build what they test. When your change alters config parsing, selector syntax or the task runner, build your binary once per head (`oxide build --bin effigy`) and run those checks with `./target/debug/effigy`; reuse it until you edit source again. Run independent selectors one after another in a single shell command. Selectors run Cargo through `scripts/oxide-selector.sh`, so Rust intermediates land in Oxide's shared slot pool instead of `target/`; a wrapper that runs Cargo itself goes through `oxide exec -- <tool>`, and every route still on plain Cargo is recorded with its rule and reason in `docs/knowledge/cargo-routes.md` (`effigy qa:docs:cargo-routes` fails on an unrecorded one). Every routed selector has a named escape sibling: `effigy <selector>:cargo` runs the plain-Cargo command that selector replaced (for example `effigy qa:docs:changelog:cargo`). Also: `EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>` escapes a whole selector run, `effigy cargo <cargo args>` escapes one command, and `cargo run --bin effigy -- <selector>` needs no wrapper at all. Record background exit codes. Stop only processes you started, using their recorded PIDs or process groups; never use pattern kills (`pkill -f`, `killall`, or `pgrep` piped into `kill`).
 
 <!-- northstar:rust-quality:start -->
 ## Northstar Rust Quality
@@ -57,10 +57,14 @@ is explicit audit intent; never route it through everyday authoring.
 <!-- northstar:rust-quality:end -->
 
 <!-- oxide:begin -->
+<!-- oxide:workspaces: . -->
 ## Rust commands: use `oxide`
+
+Covers Cargo workspaces `.`, relative to this file's folder.
 
 - Write `oxide` wherever you would write `cargo`: `oxide check`, `oxide test`, `oxide run -- <args>`, `oxide add <crate>`.
 - Profiles: `quick` (default), `--profile debug` for a debugger, `--release`. Oxide places build output, so it refuses `--target-dir`.
+- A tool that runs Cargo itself (Tauri CLI, npm or bun scripts): `oxide exec -- <command>`.
 - A `waiting for …` line means another build holds a slot; let it wait. `oxide status` shows the pool, slots and waits.
 - Use `oxide clean`, not `cargo clean`.
 

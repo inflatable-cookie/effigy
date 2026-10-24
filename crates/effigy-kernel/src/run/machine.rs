@@ -222,18 +222,7 @@ mod tests {
     };
 
     fn executable() -> Executable {
-        let path = std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                std::env::current_exe()
-                    .unwrap()
-                    .parent()
-                    .unwrap()
-                    .parent()
-                    .unwrap()
-                    .join("kernel-custody-fixture")
-            });
-        Executable::capture(&path).unwrap()
+        Executable::capture(&crate::fixture::custody_fixture()).unwrap()
     }
     fn process(home: &std::path::Path) -> ProcessSpec {
         ProcessSpec {

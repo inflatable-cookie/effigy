@@ -1071,15 +1071,12 @@ fn local_workspace_effigy_freshness_anchor_prefers_newest_repo_local_build() {
     ));
     let host = root.join("outside-effigy");
     let target_debug = root.join("target/debug/effigy");
-    let target_bootstrap = root.join("target/bootstrap-local/debug/effigy");
     let local_install = root.join(".local-install/bin/effigy");
-    for path in [&target_debug, &target_bootstrap, &local_install] {
+    for path in [&target_debug, &local_install] {
         std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir parent");
     }
     std::fs::write(&host, "host").expect("write host");
     std::fs::write(&target_debug, "debug").expect("write target debug");
-    std::thread::sleep(std::time::Duration::from_millis(10));
-    std::fs::write(&target_bootstrap, "bootstrap").expect("write target bootstrap");
     std::thread::sleep(std::time::Duration::from_millis(10));
     std::fs::write(&local_install, "local-install").expect("write local install");
 
