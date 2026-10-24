@@ -171,31 +171,21 @@ fn run_secrets_unlock(
 ) -> Result<String, RunnerError> {
     let vault_path = resolve_shared_vault_path(repo_root, secrets)?;
     let passphrase = read_secret_input("Vault passphrase: ", "EFFIGY_TEST_SECRETS_PASSPHRASE")?;
-    let write = crate::runner::secret_vault::begin_vault_write(&vault_path)?;
-    let payload = read_vault_payload(&vault_path, passphrase.expose())?;
-    // A legacy vault, a deleted key, or a stale key needs a fresh local payload.
-    if !matches!(
-        crate::runner::secret_vault::read_effigy_vault_payload_for_local_dev(&vault_path),
-        Ok(ref local_payload) if local_payload == &payload
-    ) {
-        crate::runner::secret_vault::write_effigy_vault_payload(
-            &write,
-            &payload,
-            passphrase.expose(),
-        )?;
+    // Decrypting a large vault and sealing the local credential takes long
+    // enough to be worth a live step, and it fails in ways a person needs
+    // named (a wrong passphrase, an unreadable vault, a key it cannot seal).
+    let step = effigy_ui::steps::step("unlocking vault");
+    match unlock_local_vault(&vault_path, passphrase.expose()) {
+        Ok(()) => step.succeed("vault unlocked for commands and tasks"),
+        Err(error) => {
+            step.fail(&format!(
+                "could not unlock the vault at {}: {}",
+                vault_path.display(),
+                error.human_error().what_failed()
+            ));
+            return Err(error);
+        }
     }
-    let key_path = local_dev_unlock_key_path(&vault_path);
-    let key = LocalDevUnlockKey::from_bytes(fs::read(&key_path).map_err(|error| {
-        RunnerError::task_invocation(format!("failed to read local unlock key: {error}"))
-    })?)
-    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let credential = seal_local_unlock_passphrase(&key, passphrase.expose())
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    crate::runner::secret_vault::write_private_file(
-        &write,
-        &local_unlock_credential_path(&vault_path),
-        &credential,
-    )?;
     render_mutation_result(
         repo_root,
         secrets,
@@ -204,6 +194,45 @@ fn run_secrets_unlock(
         &vault_path,
         output_json,
         "local vault unlocked for commands and tasks",
+    )
+}
+
+/// Decrypt the vault with `passphrase` and leave the sealed local-dev
+/// credential this machine's tasks unlock with. A vault whose local payload
+/// is missing, stale or written by an older format is rewritten, so the
+/// credential and the payload always match.
+fn unlock_local_vault(vault_path: &Path, passphrase: &str) -> Result<(), RunnerError> {
+    let write = crate::runner::secret_vault::begin_vault_write(vault_path)?;
+    let payload = read_vault_payload(vault_path, passphrase)?;
+    if !matches!(
+        crate::runner::secret_vault::read_effigy_vault_payload_for_local_dev(vault_path),
+        Ok(ref local_payload) if local_payload == &payload
+    ) {
+        crate::runner::secret_vault::write_effigy_vault_payload(&write, &payload, passphrase)?;
+    }
+    let key_path = local_dev_unlock_key_path(vault_path);
+    let key = LocalDevUnlockKey::from_bytes(fs::read(&key_path).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "could not read the local unlock key {}: {error}\nnext: run `effigy secrets lock` then `effigy secrets unlock` to mint a new one",
+            key_path.display()
+        ))
+    })?)
+    .map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "the local unlock key {} is not valid: {error}\nnext: run `effigy secrets lock` then `effigy secrets unlock` to mint a new one",
+            key_path.display()
+        ))
+    })?;
+    let credential = seal_local_unlock_passphrase(&key, passphrase).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "could not seal the local unlock credential with {}: {error}\nnext: check that the vault directory is writable, then run `effigy secrets unlock` again",
+            vault_path.display()
+        ))
+    })?;
+    crate::runner::secret_vault::write_private_file(
+        &write,
+        &local_unlock_credential_path(vault_path),
+        &credential,
     )
 }
 
@@ -264,18 +293,32 @@ pub(in crate::runner) fn run_configured_vault_generate_task(
         std::env::set_var(TASK_SECRET_GENERATION_ACTIVE_ENV, "1");
     }
     let _guard = ScopedVaultGenerateTask;
-    crate::runner::execute::api::run_inline_task_with_cwd_and_env(
+    let step = effigy_ui::steps::step("running the vault generate hook");
+    match crate::runner::execute::api::run_inline_task_with_cwd_and_env(
         generate.into_manifest_task(),
         repo_root.to_path_buf(),
         "secrets vault generate task",
         &std::collections::BTreeMap::new(),
-    )
-    .map(|_| true)
-    .map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "task secret generation failed via `[secrets.vault].generate`: {error}"
-        ))
-    })
+    ) {
+        Ok(_) => {
+            step.succeed("generated the missing vault secrets");
+            Ok(true)
+        }
+        Err(error) => {
+            let human = error.human_error();
+            step.fail(&format!(
+                "could not run the vault generate hook: {}",
+                human.what_failed()
+            ));
+            Err(RunnerError::task_invocation(
+                crate::runner::error::child_failure_text(
+                    "the `[secrets.vault].generate` hook failed",
+                    &human,
+                    "fix the generate hook, then run `effigy secrets unlock` again",
+                ),
+            ))
+        }
+    }
 }
 
 struct ScopedVaultGenerateTask;

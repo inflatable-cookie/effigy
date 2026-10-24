@@ -16,10 +16,12 @@ use serde::{Deserialize, Serialize};
 use super::BundleSourceType;
 use crate::{ManifestBundleBase, ManifestError};
 mod prepare;
+mod progress;
 pub use prepare::{
     bundle_update_notes, prepare_bundle_sources, sync_bundle_source, SourcePreparation,
     SourceSettlement,
 };
+pub use progress::{SourceProgress, SourceProgressEvent};
 
 const LOCK_FILE: &str = "sources.lock.json";
 const LOCK_MAX: u64 = 1024 * 1024;
