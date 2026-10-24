@@ -200,7 +200,7 @@ pub(in crate::runner) fn preflight_route_claims(
                     effigy_kernel::observe::Observed::Absent(_) => false,
                     effigy_kernel::observe::Observed::Unknown(reason) => {
                         return Err(RunnerError::task_invocation(format!(
-                            "listener claim observation unknown: {reason:?}"
+                            "listener claim observation unknown: {reason}"
                         )))
                     }
                 } {

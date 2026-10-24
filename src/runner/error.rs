@@ -303,16 +303,24 @@ impl RunnerError {
                 if let Some(code) = code {
                     error = error.evidence(format!("exit code {code}"));
                 }
-                if let Some(line) = last_meaningful_line(stderr) {
-                    error = error.evidence(format!("stderr: {line}"));
-                }
-                if let Some(line) = last_meaningful_line(stdout) {
-                    error = error.evidence(format!("stdout: {line}"));
+                // The failing output is the evidence: its first lines name the
+                // failure and its last lines say how it ended.
+                if stderr.trim().is_empty() {
+                    error = error.evidence_output("stdout", stdout);
+                } else {
+                    error = error.evidence_output("stderr", stderr);
                 }
                 error
                     .next_action("read the output above, fix the cause, then run the command again")
             }
-            _ => human_error_from_display(&self.to_string()),
+            _ => match self
+                .json_error_details()
+                .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+                .filter(|details| details.is_object())
+            {
+                Some(details) => human_error_from_details(&self.to_string(), &details),
+                None => human_error_from_display(&self.to_string()),
+            },
         }
     }
 
@@ -490,6 +498,60 @@ impl RunnerError {
     }
 }
 
+/// A refusal that carries structured details says more than its message: the
+/// details name the phase, the cause and the recovery. Lift those into the
+/// three facts, and keep the message's own sentence as what failed when the
+/// details do not improve on it.
+fn human_error_from_details(rendered: &str, details: &serde_json::Value) -> effigy_ui::HumanError {
+    let text = |key: &str| {
+        details
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+    let lifted = ["cause", "message"]
+        .iter()
+        .filter_map(|key| text(key))
+        .collect::<Vec<_>>();
+    let base = human_error_from_display(rendered);
+    if lifted.is_empty() {
+        return base;
+    }
+    let mut error = effigy_ui::HumanError::new(lifted[0]);
+    for line in &lifted[1..] {
+        error = error.evidence(line.to_owned());
+    }
+    for key in [
+        "failure_kind",
+        "phase",
+        "preparation_step",
+        "activation_stage",
+        "state",
+        "readiness",
+        "exposure",
+        "schema",
+        "task",
+        "exit_code",
+    ] {
+        if let Some(value) = text(key) {
+            error = error.evidence(format!("{key}: {value}"));
+        }
+    }
+    for key in ["stderr", "stdout"] {
+        if let Some(output) = text(key) {
+            error = error.evidence_output(key, output);
+        }
+    }
+    match ["next_action", "next", "stop", "recovery"]
+        .iter()
+        .find_map(|key| text(key))
+    {
+        Some(action) => error.next_action(action.to_owned()),
+        None => error,
+    }
+}
+
 /// Lift a rendered refusal into the three facts, without inventing any: the
 /// first line is what failed, a `next:` line is the next action, and the rest
 /// is evidence.
@@ -512,15 +574,6 @@ fn human_error_from_display(rendered: &str) -> effigy_ui::HumanError {
         }
     }
     error
-}
-
-/// The last line with content: the tail of a command's output is the evidence
-/// a person reads first.
-fn last_meaningful_line(text: &str) -> Option<&str> {
-    text.lines()
-        .rev()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
 }
 
 impl From<TaskError> for RunnerError {

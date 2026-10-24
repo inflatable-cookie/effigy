@@ -115,7 +115,7 @@ pub fn load_trusted(path: &Path) -> Result<Option<RouteTable>, GatewayError> {
         }
         effigy_kernel::observe::Observed::Unknown(reason) => {
             return Err(crate::endpoint_store::error(format!(
-                "endpoint observation unknown: {reason:?}"
+                "endpoint observation unknown: {reason}"
             )))
         }
         effigy_kernel::observe::Observed::Absent(_) => {}

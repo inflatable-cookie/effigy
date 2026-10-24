@@ -20,7 +20,11 @@ use std::fmt::Write as _;
 /// Longest evidence line kept, before redaction: a terminal line, not a log.
 pub const MAX_EVIDENCE_BYTES: usize = 512;
 /// Most evidence lines kept; the rest are summarised, never silently dropped.
-pub const MAX_EVIDENCE_LINES: usize = 6;
+pub const MAX_EVIDENCE_LINES: usize = 12;
+/// Lines kept from the start of a command's output: the first failure.
+pub const OUTPUT_HEAD_LINES: usize = 3;
+/// Lines kept from its end: how it finished.
+pub const OUTPUT_TAIL_LINES: usize = 2;
 /// What replaces a redacted value.
 pub const REDACTED: &str = "<redacted>";
 
@@ -53,6 +57,44 @@ impl HumanError {
         } else if self.evidence.len() == MAX_EVIDENCE_LINES {
             self.evidence
                 .push("(further evidence withheld; see verbose output)".to_owned());
+        }
+        self
+    }
+
+    /// Add the output of a failed command: its first lines name the failure,
+    /// its last lines say how it ended. A long output keeps both and says how
+    /// much it left out, so the evidence stays readable without hiding the
+    /// detail a person needs.
+    pub fn evidence_output(mut self, label: &str, output: &str) -> Self {
+        let lines: Vec<&str> = output
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect();
+        if lines.is_empty() {
+            return self;
+        }
+        let kept = OUTPUT_HEAD_LINES + OUTPUT_TAIL_LINES;
+        let mut picked: Vec<String> = if lines.len() <= kept {
+            lines.iter().map(|line| (*line).to_owned()).collect()
+        } else {
+            let mut picked: Vec<String> = lines[..OUTPUT_HEAD_LINES]
+                .iter()
+                .map(|line| (*line).to_owned())
+                .collect();
+            picked.push(format!("({} lines omitted)", lines.len() - kept));
+            picked.extend(
+                lines[lines.len() - OUTPUT_TAIL_LINES..]
+                    .iter()
+                    .map(|line| (*line).to_owned()),
+            );
+            picked
+        };
+        if let Some(first) = picked.first_mut() {
+            *first = format!("{label}: {first}");
+        }
+        for line in picked {
+            self = self.evidence(line);
         }
         self
     }
@@ -238,9 +280,9 @@ mod tests {
     }
 
     #[test]
-    fn evidence_keeps_six_lines_then_says_so() {
+    fn evidence_keeps_its_line_budget_then_says_so() {
         let mut error = HumanError::new("startup failed");
-        for index in 0..9 {
+        for index in 0..=MAX_EVIDENCE_LINES + 2 {
             error = error.evidence(format!("line {index}"));
         }
         assert_eq!(error.evidence_lines().len(), MAX_EVIDENCE_LINES + 1);
@@ -248,6 +290,38 @@ mod tests {
         assert_eq!(
             error.evidence_lines()[MAX_EVIDENCE_LINES],
             "(further evidence withheld; see verbose output)"
+        );
+    }
+
+    #[test]
+    fn command_output_keeps_its_head_and_tail() {
+        let output = "first failure\nsecond\nthird\nfourth\nfifth\nsixth\nseventh\nninth";
+        let error = HumanError::new("task `dev` failed").evidence_output("stderr", output);
+        assert_eq!(
+            error.evidence_lines(),
+            [
+                "stderr: first failure",
+                "second",
+                "third",
+                "(3 lines omitted)",
+                "seventh",
+                "ninth",
+            ]
+        );
+    }
+
+    #[test]
+    fn short_command_output_is_kept_whole_under_its_label() {
+        let error = HumanError::new("task `dev` failed").evidence_output(
+            "stderr",
+            "\n  link check failed: 1 broken link(s)\n  README.md: [Broken](./gone.md)\n",
+        );
+        assert_eq!(
+            error.evidence_lines(),
+            [
+                "stderr: link check failed: 1 broken link(s)",
+                "README.md: [Broken](./gone.md)",
+            ]
         );
     }
 

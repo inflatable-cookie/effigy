@@ -393,8 +393,7 @@ fn command_failure_renders_the_three_human_facts() {
         human.evidence_lines(),
         [
             "exit code 2",
-            "stderr: error TS2304: Cannot find name 'widget'.",
-            "stdout: compiled 12 modules",
+            "stderr: error TS2304: Cannot find name 'widget'."
         ]
     );
     assert!(human
@@ -404,8 +403,7 @@ fn command_failure_renders_the_three_human_facts() {
         human.render_text(),
         "[error] command `npm run build` failed\n  \
          cause: exit code 2\n         \
-         stderr: error TS2304: Cannot find name 'widget'.\n         \
-         stdout: compiled 12 modules\n  \
+         stderr: error TS2304: Cannot find name 'widget'.\n  \
          next: read the output above, fix the cause, then run the command again"
     );
     let json = human.to_json();
@@ -428,4 +426,33 @@ fn a_display_sentence_lifts_its_next_step_out_of_the_evidence() {
         human.next_action_text(),
         Some("run `effigy container up web`")
     );
+}
+
+#[test]
+fn structured_details_name_what_failed_and_the_recovery() {
+    let details = serde_json::json!({
+        "schema": "effigy.container.activation.v1",
+        "cause": "container render: object store is absent or unavailable",
+        "message": "Detached activation did not complete.",
+        "failure_kind": "invocation_refusal",
+        "phase": "detached_activation",
+        "readiness": "unverified",
+        "stop": "effigy container down",
+    });
+    let error = RunnerError::CommandJsonFailure {
+        rendered: details.to_string(),
+    };
+    let human = error.human_error();
+    assert_eq!(
+        human.what_failed(),
+        "container render: object store is absent or unavailable"
+    );
+    assert_eq!(
+        human.evidence_lines()[0],
+        "Detached activation did not complete."
+    );
+    assert!(human
+        .evidence_lines()
+        .contains(&"phase: detached_activation".to_owned()));
+    assert_eq!(human.next_action_text(), Some("effigy container down"));
 }
