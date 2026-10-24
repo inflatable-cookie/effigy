@@ -224,8 +224,8 @@ effigy --json service list
 effigy --json config path
 effigy --json config get containers.backend
 effigy --json config --schema --target test
-effigy --json deploy model --repo /path/to/workspace
-effigy --json deploy export <PROVIDER> --repo /path/to/workspace --path infra/deploy --plan
+effigy --json deploy model production --repo /path/to/workspace
+effigy --json deploy export <PROVIDER> production --repo /path/to/workspace --path infra/deploy --plan
 effigy --json deploy plan uat --repo /path/to/workspace
 effigy --json deploy history uat --repo /path/to/workspace
 effigy --json test --plan

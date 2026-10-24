@@ -90,7 +90,7 @@ run = "cargo run -p acme-jobs {args}"
     );
 
     let out = run_command(Command::Deploy(DeployArgs {
-        subcommand: DeploySubcommand::Model,
+        subcommand: DeploySubcommand::Model { env: None },
         repo_override: Some(root.clone()),
         output_json: true,
     }))
@@ -897,6 +897,7 @@ fn run_deploy_export_reports_provider_commit_and_source_kind() {
     let out = run_command(Command::Deploy(DeployArgs {
         subcommand: DeploySubcommand::Export {
             provider: "render".to_owned(),
+            env: Some("uat".to_owned()),
             path: root.join("infra/render"),
             plan: true,
         },
@@ -905,6 +906,7 @@ fn run_deploy_export_reports_provider_commit_and_source_kind() {
     }))
     .expect("run deploy export --plan");
     let parsed = parse_json_output_with_schema_version(&out, "effigy.deploy.export.v1", 1);
+    assert_eq!(parsed["environment"].as_str(), Some("uat"));
     assert_eq!(parsed["provider_provenance"]["kind"].as_str(), Some("path"));
     assert_eq!(
         parsed["provider_provenance"]["resolution"].as_str(),
@@ -997,6 +999,7 @@ deploy::provider_report(#{
     run_command(Command::Deploy(DeployArgs {
         subcommand: DeploySubcommand::Export {
             provider: "context".to_owned(),
+            env: None,
             path: export_root.clone(),
             plan: true,
         },
@@ -1277,13 +1280,19 @@ fn run_deploy_acowtancy_infra_config_preserves_model_and_export() {
             .contains("not_supported"));
     }
     let model = run_command(Command::Deploy(DeployArgs {
-        subcommand: DeploySubcommand::Model,
+        subcommand: DeploySubcommand::Model {
+            env: Some("uat".to_owned()),
+        },
         repo_override: Some(root.clone()),
         output_json: true,
     }))
     .expect("model with Acowtancy deploy configuration");
     let model = parse_json_output_with_schema_version(&model, "deploy.model.v1", 1);
+    assert_eq!(model["environment"].as_str(), Some("uat"));
     assert_eq!(model["services"][2]["name"], "api");
+    // The uat model must not promote the bundle's dev commands or `.test`
+    // hosts; they are reported missing instead.
+    assert!(model["services"][2].get("release").is_none());
     write_test_deploy_export_provider(&root, "render", "acme-api", "acme-jobs");
     let local_config = config.replace(
         r#"{ type = "git", url = "git@github.com:inflatable-cookie/effigy-provider-render.git", ref = "main" }"#,
@@ -1298,6 +1307,7 @@ fn run_deploy_acowtancy_infra_config_preserves_model_and_export() {
         let out = run_command(Command::Deploy(DeployArgs {
             subcommand: DeploySubcommand::Export {
                 provider: "render".to_owned(),
+                env: Some("uat".to_owned()),
                 path: root.join("infra/render"),
                 plan,
             },
@@ -1347,7 +1357,7 @@ databases = ["acme"]
     );
 
     let error = run_command(Command::Deploy(DeployArgs {
-        subcommand: DeploySubcommand::Model,
+        subcommand: DeploySubcommand::Model { env: None },
         repo_override: Some(root),
         output_json: false,
     }))
@@ -1392,7 +1402,7 @@ databases = ["acme"]
     );
 
     let out = run_command(Command::Deploy(DeployArgs {
-        subcommand: DeploySubcommand::Model,
+        subcommand: DeploySubcommand::Model { env: None },
         repo_override: Some(root),
         output_json: true,
     }))
@@ -1443,7 +1453,7 @@ databases = ["acme"]
     );
 
     let out = run_command(Command::Deploy(DeployArgs {
-        subcommand: DeploySubcommand::Model,
+        subcommand: DeploySubcommand::Model { env: None },
         repo_override: Some(root),
         output_json: true,
     }))
@@ -1530,6 +1540,7 @@ run = "cargo run -p acme-jobs {args}"
     let rendered = run_command(Command::Deploy(DeployArgs {
         subcommand: DeploySubcommand::Export {
             provider: "render".to_owned(),
+            env: None,
             path: export_dir.clone(),
             plan: false,
         },
@@ -1599,6 +1610,7 @@ databases = ["acme"]
     let rendered = run_command(Command::Deploy(DeployArgs {
         subcommand: DeploySubcommand::Export {
             provider: "render".to_owned(),
+            env: None,
             path: export_dir.clone(),
             plan: true,
         },
@@ -1673,6 +1685,7 @@ run = "cargo run -p acme-jobs {args}"
     let rendered = run_command(Command::Deploy(DeployArgs {
         subcommand: DeploySubcommand::Export {
             provider: "railway".to_owned(),
+            env: None,
             path: export_dir.clone(),
             plan: false,
         },
@@ -1752,6 +1765,7 @@ databases = ["acme"]
     let rendered = run_command(Command::Deploy(DeployArgs {
         subcommand: DeploySubcommand::Export {
             provider: "railway".to_owned(),
+            env: None,
             path: export_dir.clone(),
             plan: true,
         },
@@ -1808,7 +1822,7 @@ run = "pnpm start"
     );
 
     let out = run_command(Command::Deploy(DeployArgs {
-        subcommand: DeploySubcommand::Model,
+        subcommand: DeploySubcommand::Model { env: None },
         repo_override: Some(root.clone()),
         output_json: true,
     }))
@@ -1888,6 +1902,7 @@ run = "pnpm build"
     let rendered = run_command(Command::Deploy(DeployArgs {
         subcommand: DeploySubcommand::Export {
             provider: "render".to_owned(),
+            env: None,
             path: export_dir.clone(),
             plan: true,
         },
@@ -1948,6 +1963,7 @@ run = "pnpm start"
     let rendered = run_command(Command::Deploy(DeployArgs {
         subcommand: DeploySubcommand::Export {
             provider: "railway".to_owned(),
+            env: None,
             path: export_dir.clone(),
             plan: true,
         },
@@ -1959,4 +1975,495 @@ run = "pnpm start"
     assert!(rendered.contains("planned railway export"));
     assert!(!export_dir.join("services/web/railway.toml").exists());
     assert!(!export_dir.join("report.json").exists());
+}
+
+/// Workspace whose shared `[deploy.model]` carries development-only values and
+/// whose `uat`/`production` environments override part of them.
+///
+/// `uat` proves override precedence and development-profile suppression;
+/// `production` deliberately declares reserved local domains so the export
+/// refusal can be exercised.
+fn setup_environment_model_workspace(name: &str) -> std::path::PathBuf {
+    let root = temp_workspace(name);
+    fs::create_dir_all(root.join("app-web")).expect("mkdir web");
+    fs::create_dir_all(root.join("app-admin")).expect("mkdir admin");
+    write_manifest(
+        &root.join("app-web/effigy.toml"),
+        r#"
+[tasks.build]
+run = "bun x vite build"
+
+[tasks."build:release"]
+run = "bun x vite build --mode production"
+
+[tasks.dev]
+run = "bun x vite dev"
+
+[tasks.serve]
+run = "cargo run -p acme-web --release"
+"#,
+    );
+    write_manifest(
+        &root.join("app-admin/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_root_manifest(
+        &root,
+        r#"
+[deploy.providers.context]
+source = { type = "path", dir = "providers/context" }
+
+[deploy.model.app]
+project_name = "acme-dev"
+
+[[deploy.model.services]]
+name = "web"
+role = "web"
+runtime = "node"
+source_root = "app-web"
+port = 8080
+domains = ["web.acme.test"]
+env = { API_URL = "http://api.acme.test", DEV_ONLY = "1" }
+secret_refs = ["DATABASE_URL"]
+
+[deploy.model.services.build]
+task = "build"
+
+[deploy.model.services.start]
+task = "dev"
+
+[deploy.model.services.health]
+kind = "http"
+path = "/healthz"
+
+[[deploy.model.services]]
+name = "admin"
+role = "static"
+runtime = "node"
+source_root = "app-admin"
+domains = ["admin.acme.test"]
+
+[deploy.model.services.build]
+task = "build"
+
+[[deploy.model.backing_services]]
+name = "postgres"
+kind = "postgres"
+mode = "managed"
+consumers = ["web"]
+
+[[deploy.model.domains]]
+host = "web.acme.test"
+service = "web"
+tls = "provider_managed"
+
+[deploy.uat]
+state = "uat"
+provider = "context"
+provider_project = "acme-uat"
+
+[deploy.uat.model.app]
+project_name = "acme-uat"
+
+[[deploy.uat.model.services]]
+name = "web"
+runtime = "static"
+domains = ["web.acme.dev"]
+env = { API_URL = "https://api.acme.dev", PUBLIC_URL = "https://acme.dev" }
+env_unset = ["DEV_ONLY"]
+warnings = []
+
+[deploy.uat.model.services.build]
+task = "build:release"
+
+[[deploy.uat.model.backing_services]]
+name = "postgres"
+mode = "external"
+
+[[deploy.uat.model.domains]]
+host = "web.acme.dev"
+service = "web"
+tls = "provider_managed"
+
+[deploy.production]
+state = "production"
+provider = "context"
+provider_project = "acme-production"
+
+[[deploy.production.model.services]]
+name = "web"
+domains = ["web.acme.test"]
+
+[[deploy.production.model.domains]]
+host = "web.acme.test"
+service = "web"
+tls = "provider_managed"
+"#,
+    );
+    root
+}
+
+fn write_context_provider(root: &Path) {
+    fs::create_dir_all(root.join("providers/context/scripts")).expect("mkdir provider scripts");
+    fs::write(
+        root.join("providers/context/provider.toml"),
+        r#"
+[provider]
+schema = "effigy.deploy-provider.v1"
+name = "context"
+display_name = "Context"
+version = "0.1.0"
+
+[capabilities]
+export = "scripts/export.rhai"
+"#,
+    )
+    .expect("write context descriptor");
+    write_provider_phase_script(
+        &root.join("providers/context"),
+        "export",
+        r#"
+let context = deploy::provider_context();
+let export_dir = context["export_path"];
+json::write_file(path::join(export_dir, "context.json"), context);
+deploy::provider_report(#{
+    schema: "effigy.deploy-provider.report.v1",
+    phase: "export",
+    provider: "context",
+    status: "planned",
+    checks: [#{ name: "context", status: "planned" }],
+    warnings: [],
+    blockers: [],
+    files: ["context.json"],
+});
+"#,
+    );
+}
+
+fn run_model(root: &Path, env: Option<&str>) -> Result<String, crate::runner::error::RunnerError> {
+    run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Model {
+            env: env.map(str::to_owned),
+        },
+        repo_override: Some(root.to_path_buf()),
+        output_json: true,
+    }))
+}
+
+fn run_export(
+    root: &Path,
+    provider: &str,
+    env: Option<&str>,
+    plan: bool,
+) -> Result<String, crate::runner::error::RunnerError> {
+    run_command(Command::Deploy(DeployArgs {
+        subcommand: DeploySubcommand::Export {
+            provider: provider.to_owned(),
+            env: env.map(str::to_owned),
+            path: root.join("infra/export"),
+            plan,
+        },
+        repo_override: Some(root.to_path_buf()),
+        output_json: true,
+    }))
+}
+
+#[test]
+fn run_deploy_model_resolves_environment_overrides_with_provenance() {
+    let root = setup_environment_model_workspace("deploy-model-env-overrides");
+    let out = run_model(&root, Some("uat")).expect("run deploy model uat");
+    let model = parse_json_output_with_schema_version(&out, "deploy.model.v1", 1);
+
+    assert_eq!(model["environment"].as_str(), Some("uat"));
+    assert_eq!(model["environment_state"].as_str(), Some("uat"));
+    assert_eq!(model["app"]["project_name"].as_str(), Some("acme-uat"));
+
+    let web = model["services"]
+        .as_array()
+        .expect("services")
+        .iter()
+        .find(|service| service["name"].as_str() == Some("web"))
+        .expect("web service");
+    assert_eq!(web["runtime"].as_str(), Some("static"));
+    assert_eq!(web["domains"][0].as_str(), Some("web.acme.dev"));
+    assert_eq!(
+        web["build"]["command"].as_str(),
+        Some("bun x vite build --mode production")
+    );
+    assert!(
+        web.get("start").is_none(),
+        "the shared `dev` start command must not be promoted: {web}"
+    );
+    assert_eq!(web["env"]["API_URL"].as_str(), Some("https://api.acme.dev"));
+    assert_eq!(web["env"]["PUBLIC_URL"].as_str(), Some("https://acme.dev"));
+    assert!(
+        web["env"].get("DEV_ONLY").is_none(),
+        "env_unset must remove the shared development value: {web}"
+    );
+
+    let admin = model["services"]
+        .as_array()
+        .expect("services")
+        .iter()
+        .find(|service| service["name"].as_str() == Some("admin"))
+        .expect("admin service");
+    assert_eq!(
+        admin["domains"].as_array().expect("admin domains").len(),
+        0,
+        "shared .test domains must not be promoted"
+    );
+
+    assert_eq!(
+        model["backing_services"][0]["mode"].as_str(),
+        Some("external")
+    );
+    assert_eq!(model["domains"][0]["host"].as_str(), Some("web.acme.dev"));
+
+    let provenance = model["provenance"].as_object().expect("provenance");
+    assert_eq!(provenance["app.project_name"].as_str(), Some("environment"));
+    assert_eq!(
+        provenance["services.web.domains"].as_str(),
+        Some("environment")
+    );
+    assert_eq!(
+        provenance["services.web.runtime"].as_str(),
+        Some("environment")
+    );
+    assert_eq!(provenance["services.web.role"].as_str(), Some("shared"));
+    assert_eq!(provenance["services.web.health"].as_str(), Some("shared"));
+    assert_eq!(provenance["services.web.start"].as_str(), Some("missing"));
+    assert_eq!(
+        provenance["services.web.env.API_URL"].as_str(),
+        Some("environment")
+    );
+    assert_eq!(
+        provenance["services.web.env.DEV_ONLY"].as_str(),
+        Some("environment")
+    );
+    assert_eq!(
+        provenance["backing_services.postgres.mode"].as_str(),
+        Some("environment")
+    );
+
+    let missing = model["missing"]
+        .as_array()
+        .expect("missing fields")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        missing.contains(&"services.web.start"),
+        "missing: {missing:?}"
+    );
+    assert!(
+        missing.contains(&"services.admin.domains"),
+        "missing: {missing:?}"
+    );
+
+    let web_warnings = web["warnings"].as_array().expect("web warnings");
+    assert!(web_warnings.iter().any(|warning| {
+        warning["code"].as_str() == Some("environment-missing-field")
+            && warning["target"].as_str() == Some("services.web.start")
+    }));
+    let admin_warnings = admin["warnings"].as_array().expect("admin warnings");
+    assert!(admin_warnings.iter().any(|warning| {
+        warning["code"].as_str() == Some("environment-missing-field")
+            && warning["target"].as_str() == Some("services.admin.domains")
+    }));
+    assert!(
+        admin_warnings.iter().any(|warning| {
+            warning["code"].as_str() == Some("deploy-vocabulary-migration")
+                && warning["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("runtime = \"static\""))
+        }),
+        "the static admin service approximating node should carry a migration notice: {admin}"
+    );
+}
+
+#[test]
+fn run_deploy_refuses_an_undeclared_environment() {
+    let root = setup_environment_model_workspace("deploy-model-unknown-env");
+    let error = run_model(&root, Some("staging")).expect_err("undeclared env must refuse");
+    let message = error.to_string();
+    assert!(
+        message.contains("deploy environment `staging` is not defined"),
+        "got: {message}"
+    );
+    assert!(
+        message.contains("production, uat"),
+        "message should name declared environments: {message}"
+    );
+
+    let error = run_export(&root, "context", Some("staging"), true)
+        .expect_err("export for an undeclared env must refuse");
+    assert!(
+        error.to_string().contains("deploy environment `staging`"),
+        "got: {error}"
+    );
+
+    let error = run_model(&root, None).expect_err("multiple environments need <ENV>");
+    assert!(
+        error
+            .to_string()
+            .contains("require <ENV>; declared environments: production, uat"),
+        "got: {error}"
+    );
+}
+
+#[test]
+fn run_deploy_model_defaults_to_the_only_environment_with_a_notice() {
+    let root = temp_workspace("deploy-model-single-env-default");
+    fs::create_dir_all(root.join("app-web")).expect("mkdir web");
+    write_manifest(
+        &root.join("app-web/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_root_manifest(
+        &root,
+        r#"
+[deploy.model.app]
+project_name = "acme-dev"
+
+[[deploy.model.services]]
+name = "web"
+role = "web"
+runtime = "node"
+source_root = "app-web"
+
+[deploy.model.services.build]
+task = "build"
+
+[deploy.uat]
+state = "uat"
+provider = "render"
+"#,
+    );
+
+    let out = run_model(&root, None).expect("single environment default");
+    let model = parse_json_output_with_schema_version(&out, "deploy.model.v1", 1);
+    assert_eq!(model["environment"].as_str(), Some("uat"));
+    let warnings = model["warnings"].as_array().expect("warnings");
+    assert!(
+        warnings.iter().any(|warning| {
+            warning["code"].as_str() == Some("deploy-environment-notice")
+                && warning["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("only declared environment `uat`"))
+        }),
+        "expected a default notice: {model}"
+    );
+
+    let out = run_model(&root, Some("uat")).expect("explicit environment");
+    let model = parse_json_output_with_schema_version(&out, "deploy.model.v1", 1);
+    assert_eq!(model["environment"].as_str(), Some("uat"));
+    assert!(
+        model["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .all(|warning| warning["code"].as_str() != Some("deploy-environment-notice")),
+        "an explicit <ENV> must not emit the default notice: {model}"
+    );
+}
+
+#[test]
+fn run_deploy_export_refuses_production_reserved_local_domains() {
+    let root = setup_environment_model_workspace("deploy-export-production-reserved");
+    let error = run_export(&root, "context", Some("production"), true)
+        .expect_err("production export must refuse reserved local domains");
+    let message = error.to_string();
+    assert!(message.contains("reserved local domains"), "got: {message}");
+    assert!(message.contains("web.acme.test"), "got: {message}");
+
+    // The model itself reports the problem as an error warning rather than
+    // silently exporting a local host.
+    let out = run_model(&root, Some("production")).expect("production model");
+    let model = parse_json_output_with_schema_version(&out, "deploy.model.v1", 1);
+    assert_eq!(model["environment_state"].as_str(), Some("production"));
+    assert!(model["warnings"]
+        .as_array()
+        .expect("warnings")
+        .iter()
+        .any(
+            |warning| warning["code"].as_str() == Some("reserved-local-domain")
+                && warning["severity"].as_str() == Some("error")
+        ));
+}
+
+#[test]
+fn run_deploy_model_refuses_unknown_runtime_and_backing_mode_values() {
+    let root = temp_workspace("deploy-model-closed-vocabulary");
+    fs::create_dir_all(root.join("app-web")).expect("mkdir web");
+    write_manifest(
+        &root.join("app-web/effigy.toml"),
+        "[tasks.build]\nrun = \"bun x vite build\"\n",
+    );
+    write_root_manifest(
+        &root,
+        r#"
+[deploy.model.app]
+project_name = "acme"
+
+[[deploy.model.services]]
+name = "web"
+role = "web"
+runtime = "js"
+source_root = "app-web"
+"#,
+    );
+    let error = run_model(&root, None).expect_err("unknown runtime must refuse");
+    let message = error.to_string();
+    assert!(
+        message.contains("unsupported runtime `js`"),
+        "got: {message}"
+    );
+    assert!(
+        message.contains("allowed runtimes: static, node"),
+        "message should name the allowed set: {message}"
+    );
+
+    write_root_manifest(
+        &root,
+        r#"
+[deploy.model.app]
+project_name = "acme"
+
+[[deploy.model.backing_services]]
+name = "store"
+kind = "object-storage"
+mode = "magic"
+"#,
+    );
+    let error = run_model(&root, None).expect_err("unknown backing mode must refuse");
+    let message = error.to_string();
+    assert!(
+        message.contains("unsupported mode `magic`"),
+        "got: {message}"
+    );
+    assert!(
+        message.contains("allowed modes: managed, external"),
+        "message should name the allowed set: {message}"
+    );
+}
+
+#[test]
+fn run_deploy_export_context_names_the_environment_and_its_model() {
+    let root = setup_environment_model_workspace("deploy-export-env-context");
+    write_context_provider(&root);
+    run_export(&root, "context", Some("uat"), true).expect("export uat preview");
+
+    let context: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("infra/export/context.json")).expect("read context snapshot"),
+    )
+    .expect("parse context snapshot");
+    assert_eq!(context["env"].as_str(), Some("uat"));
+    assert_eq!(context["deploy"]["state"].as_str(), Some("uat"));
+    assert_eq!(context["provider_project"].as_str(), Some("acme-uat"));
+    assert_eq!(context["provider"]["adapter"].as_str(), Some("context"));
+    assert_eq!(context["model"]["environment"].as_str(), Some("uat"));
+    assert_eq!(
+        context["model"]["provenance"]["services.web.domains"].as_str(),
+        Some("environment")
+    );
 }

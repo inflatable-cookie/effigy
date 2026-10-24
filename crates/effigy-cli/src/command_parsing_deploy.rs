@@ -35,18 +35,28 @@ where
     let mut args = args.into_iter();
     let mut repo_override: Option<PathBuf> = None;
     let mut output_json = false;
+    let mut env: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--env" => {
+                let Some(value) = args.next() else {
+                    return Err(CliParseError::MissingFlagValue {
+                        flag: "--env".to_owned(),
+                    });
+                };
+                env = Some(value);
+            }
             "--json" => output_json = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Deploy)),
+            other if !other.starts_with('-') && env.is_none() => env = Some(other.to_owned()),
             other => return Err(unknown_argument(other)),
         }
     }
 
     Ok(Command::Deploy(DeployArgs {
-        subcommand: DeploySubcommand::Model,
+        subcommand: DeploySubcommand::Model { env },
         repo_override,
         output_json,
     }))
@@ -71,10 +81,19 @@ where
     let mut output_json = false;
     let mut path: Option<PathBuf> = None;
     let mut plan = false;
+    let mut env: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--repo" => repo_override = Some(parse_repo_path(&mut args)?),
+            "--env" => {
+                let Some(value) = args.next() else {
+                    return Err(CliParseError::MissingFlagValue {
+                        flag: "--env".to_owned(),
+                    });
+                };
+                env = Some(value);
+            }
             "--path" => {
                 let Some(value) = args.next() else {
                     return Err(CliParseError::MissingFlagValue {
@@ -86,6 +105,7 @@ where
             "--plan" => plan = true,
             "--json" => output_json = true,
             "--help" | "-h" => return Ok(Command::Help(HelpTopic::Deploy)),
+            other if !other.starts_with('-') && env.is_none() => env = Some(other.to_owned()),
             other => return Err(unknown_argument(other)),
         }
     }
@@ -99,6 +119,7 @@ where
     Ok(Command::Deploy(DeployArgs {
         subcommand: DeploySubcommand::Export {
             provider,
+            env,
             path,
             plan,
         },

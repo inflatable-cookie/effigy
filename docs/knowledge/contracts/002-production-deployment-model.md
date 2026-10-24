@@ -34,25 +34,121 @@ but core Effigy should keep this model provider-neutral and product-neutral.
 
 ## Command surface
 
-The neutral model should be inspectable directly.
-
-Primary command direction:
+The neutral model should be inspectable directly, and it describes one named
+environment rather than an implicit development profile:
 
 ```bash
-effigy deploy model --json
+effigy deploy model <ENV> --json
+effigy deploy model <ENV> --env <ENV>   # accepted naming form
 ```
 
-Provider export should build on that model:
+Provider export builds on that model:
 
 ```bash
-effigy deploy export <PROVIDER> --path <DIR>
+effigy deploy export <PROVIDER> <ENV> --path <DIR> [--plan]
 ```
 
 `<PROVIDER>` is a provider id configured under `[deploy.providers]`.
+`<ENV>` names a declared `[deploy.<env>]` environment.
 
-The first model output should use schema id:
+`model` and `export` refuse an environment the manifest does not declare, and
+the refusal names the declared environments. Without `<ENV>`, a project with
+exactly one declared environment uses it and records a notice; the default is
+available for one release. A project with two or more declared environments
+requires `<ENV>`. A project that declares no `[deploy.<env>]` environment
+reports the shared `[deploy.model]` with an unscoped notice, exactly as before
+this contract change.
+
+The model output uses schema id:
 
 - `deploy.model.v1`
+
+The environment-aware fields are additive, so the schema id stays `v1`.
+
+## Environment resolution
+
+The effective deployment model is the shared `[deploy.model]` with the selected
+environment's `[deploy.<env>.model]` overrides applied per key.
+
+```text
+effective = [deploy.model] <- [deploy.<env>.model]
+```
+
+- Overrides replace per key. Lists (`domains`, `consumers`, `secret_refs`,
+  `volumes`, `warnings`) replace wholesale and never concatenate.
+- Map values (`env`) merge per key: an environment value wins, and
+  `env_unset = ["KEY"]` removes a shared development value.
+- Task steps (`build`, `start`, `release`) and `health`/`output` merge per field,
+  so an environment can substitute only `task` or `path` and keep shared flags.
+- Services, backing services and secrets are identified by `name`. An override
+  may only reference a name the shared model declares; anything else is a
+  refusal, because the bundle owns the shared service shape.
+- `app` fields override individually.
+
+The model records where every key came from:
+
+```json
+{
+  "environment": "production",
+  "environment_state": "production",
+  "provenance": {
+    "app.project_name": "environment",
+    "services.front.domains": "environment",
+    "services.api.build": "shared",
+    "services.api.release": "missing"
+  },
+  "missing": ["services.api.release"]
+}
+```
+
+`provenance` values are `environment`, `shared` or `missing`. `missing` lists
+the key paths whose shared value was development-only and therefore withheld.
+
+## No development inference
+
+A non-development environment never inherits a value that only exists in the
+development profile:
+
+- a shared domain ending in a reserved local suffix (`.test`, `.localhost`,
+  `.local`) is withheld from the environment, reported under `missing`, and
+  warned about with `environment-missing-field` naming the key;
+- a shared task command that is development-only (a `dev`/`development`/
+  `debug`/`local` token, `localhost`, `127.0.0.1`, `0.0.0.0` or a `.test` host)
+  is withheld from `build`, `start` or `release`, reported under `missing`, and
+  warned about with `environment-missing-field` naming the key.
+
+An environment named `dev` (or declaring `state = "dev"`/`"local"`) is a
+development environment and keeps the shared values. Values the environment
+itself declares are always honoured.
+
+`state = "production"` goes further: the model records a `reserved-local-domain`
+warning at `error` severity when a resolved domain uses a reserved local suffix,
+and `deploy export` refuses rather than export a local-only host.
+
+## Closed vocabularies
+
+Service `runtime` and backing-service `mode` are closed vocabularies. Model
+derivation refuses any other value, naming the allowed set.
+
+Allowed service `runtime` values:
+
+- `static` — a static-site surface served as files, with no application runtime
+- `node`, `bun`, `deno`
+- `rust`, `python`, `go`, `php`, `ruby`, `java`
+
+Allowed backing-service `mode` values:
+
+- `managed` — the provider platform owns and provisions the resource
+- `external` — the operator supplies an endpoint Effigy does not provision
+
+The vocabulary closes the approximations Acowtancy #718 had to make: a static
+site declares `runtime = "static"` instead of `runtime = "node"`, and an
+external resource declares `mode = "external"` instead of `mode = "managed"`
+with prose warnings. Values used before this contract remain accepted for one
+release, with a `deploy-vocabulary-migration` warning pointing at the new value:
+a `role = "static"` service that still declares a non-static runtime, and a
+`managed` backing service whose warnings describe an external resource. The
+notices appear only when the model is bound to a declared environment.
 
 ## Top-level model
 
@@ -82,6 +178,8 @@ Recommended first envelope:
 {
   "schema": "deploy.model.v1",
   "schema_version": 1,
+  "environment": "production",
+  "environment_state": "production",
   "app": {
     "name": "example-site",
     "bundle": "acme",
@@ -91,6 +189,8 @@ Recommended first envelope:
   "backing_services": [],
   "domains": [],
   "secrets": [],
+  "provenance": {},
+  "missing": [],
   "warnings": []
 }
 ```
@@ -147,10 +247,9 @@ Each application service should carry at least:
 - `name`
 - `role`
 - `runtime`
-  - `php`
-  - `node`
-  - `rust`
-  - or future supported runtime family
+  - `static`, `node`, `bun`, `deno`, `rust`, `python`, `go`, `php`, `ruby`
+    or `java`
+  - any other value is refused; see [Closed vocabularies](#closed-vocabularies)
 - `source_root`
   - repo-relative package or service root
 - `build`
@@ -287,8 +386,8 @@ Each backing service should carry:
   - `object_storage`
 - `mode`
   - `managed`
-  - `self_hosted`
-  - `unknown`
+  - `external`
+  - any other value is refused; see [Closed vocabularies](#closed-vocabularies)
 - `required`
   - whether the app can run without it
 - `consumers`
@@ -423,8 +522,9 @@ That means:
 - `error` warnings should block `deploy export` unless the operator explicitly
   chooses a future override surface
 
-`deploy model --json` should always emit the model when derivation succeeds,
-even if export would later stop on `error` warnings.
+`deploy model <ENV> --json` should always emit the model when derivation
+succeeds, even if export would later stop on `error` warnings. A production
+export refuses reserved local domains before touching the provider package.
 
 ## Derivation rule
 
@@ -453,6 +553,13 @@ Adapters should not:
 - re-derive bundle intent from scratch
 - silently guess secrets
 - silently invent storage or scale policy
+- substitute development values for a named environment
+
+The provider context names the selected environment (`env`) and carries its
+resolved model in `model`, together with the environment's `deploy.state`,
+`code_ref`, `release_policy` and `artifact_policy`. A provider package
+therefore sees the same environment-scoped model that `deploy model <ENV>`
+reports, never the unqualified development profile.
 
 ## First non-goals
 

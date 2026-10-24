@@ -42,7 +42,7 @@ fn command_kind_and_name_maps_command_variants() {
     });
     let help = Command::Help(HelpTopic::Doctor);
     let deploy = Command::Deploy(DeployArgs {
-        subcommand: DeploySubcommand::Model,
+        subcommand: DeploySubcommand::Model { env: None },
         repo_override: None,
         output_json: false,
     });

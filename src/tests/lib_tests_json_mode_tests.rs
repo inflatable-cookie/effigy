@@ -114,7 +114,7 @@ fn command_requests_json_checks_task_or_global_mode() {
         output_json: true,
     });
     let cmd_deploy = Command::Deploy(DeployArgs {
-        subcommand: DeploySubcommand::Model,
+        subcommand: DeploySubcommand::Model { env: None },
         repo_override: None,
         output_json: true,
     });
@@ -169,7 +169,7 @@ fn apply_global_json_flag_sets_non_task_command_json_mode() {
         output_json: false,
     });
     let deploy_cmd = Command::Deploy(DeployArgs {
-        subcommand: DeploySubcommand::Model,
+        subcommand: DeploySubcommand::Model { env: None },
         repo_override: None,
         output_json: false,
     });

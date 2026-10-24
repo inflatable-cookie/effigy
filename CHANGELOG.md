@@ -7,6 +7,25 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- `effigy deploy model` and `effigy deploy export` are environment-aware:
+  `deploy model <ENV>` and `deploy export <PROVIDER> <ENV>` describe the named
+  `[deploy.<env>]` environment by resolving sparse `[deploy.<env>.model]`
+  overrides over the shared `[deploy.model]`. An undeclared environment is
+  refused, naming the declared environments. A project with exactly one declared
+  environment may omit `<ENV>` for one release and gets a notice; two or more
+  require it. The model now reports `environment`, `environment_state`,
+  `provenance` (whether each key came from the environment, the shared model or
+  was withheld) and `missing`; export reports `environment`. A non-development
+  environment no longer inherits shared `.test`/`.localhost`/`.local` domains or
+  development-only task commands: they are withheld, listed under `missing` and
+  warned about with `environment-missing-field` naming the key. `state =
+  "production"` refuses export while a resolved domain uses a reserved local
+  suffix. Service `runtime` and backing-service `mode` are closed vocabularies:
+  unknown values are refused naming the allowed set, `static` names a
+  static-site runtime and `external` names an operator-supplied backing service.
+  Values used before this change remain accepted for one release with a
+  `deploy-vocabulary-migration` warning. The provider context names the
+  environment and carries its resolved model.
 - Deploy previews are offline and secret-free. `deploy plan` and
   `deploy export --plan` resolve the provider package from the cache alone and
   refuse, naming the command that populates it, when the cache has no usable

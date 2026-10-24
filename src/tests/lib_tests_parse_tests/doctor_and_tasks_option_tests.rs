@@ -256,7 +256,7 @@ fn parse_deploy_model_with_repo_and_json() {
     assert_eq!(
         cmd,
         Command::Deploy(DeployArgs {
-            subcommand: DeploySubcommand::Model,
+            subcommand: DeploySubcommand::Model { env: None },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
         })
@@ -282,11 +282,109 @@ fn parse_deploy_export_provider_with_path_plan_and_json() {
         Command::Deploy(DeployArgs {
             subcommand: DeploySubcommand::Export {
                 provider: "acme-cloud".to_owned(),
+                env: None,
                 path: PathBuf::from("infra/deploy"),
                 plan: true,
             },
             repo_override: Some(PathBuf::from("/tmp/repo")),
             output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_deploy_model_with_environment_positional() {
+    let cmd = parse_command(vec![
+        "deploy".to_owned(),
+        "model".to_owned(),
+        "production".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Deploy(DeployArgs {
+            subcommand: DeploySubcommand::Model {
+                env: Some("production".to_owned()),
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_deploy_model_with_environment_flag() {
+    let cmd = parse_command(vec![
+        "deploy".to_owned(),
+        "model".to_owned(),
+        "--env".to_owned(),
+        "uat".to_owned(),
+        "--json".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Deploy(DeployArgs {
+            subcommand: DeploySubcommand::Model {
+                env: Some("uat".to_owned()),
+            },
+            repo_override: None,
+            output_json: true,
+        })
+    );
+}
+
+#[test]
+fn parse_deploy_export_with_environment_positional() {
+    let cmd = parse_command(vec![
+        "deploy".to_owned(),
+        "export".to_owned(),
+        "acme-cloud".to_owned(),
+        "production".to_owned(),
+        "--path".to_owned(),
+        "infra/deploy".to_owned(),
+        "--plan".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Deploy(DeployArgs {
+            subcommand: DeploySubcommand::Export {
+                provider: "acme-cloud".to_owned(),
+                env: Some("production".to_owned()),
+                path: PathBuf::from("infra/deploy"),
+                plan: true,
+            },
+            repo_override: None,
+            output_json: false,
+        })
+    );
+}
+
+#[test]
+fn parse_deploy_export_with_environment_flag() {
+    let cmd = parse_command(vec![
+        "deploy".to_owned(),
+        "export".to_owned(),
+        "acme-cloud".to_owned(),
+        "--env".to_owned(),
+        "uat".to_owned(),
+        "--path".to_owned(),
+        "infra/deploy".to_owned(),
+    ])
+    .expect("parse should succeed");
+    assert_eq!(
+        cmd,
+        Command::Deploy(DeployArgs {
+            subcommand: DeploySubcommand::Export {
+                provider: "acme-cloud".to_owned(),
+                env: Some("uat".to_owned()),
+                path: PathBuf::from("infra/deploy"),
+                plan: false,
+            },
+            repo_override: None,
+            output_json: false,
         })
     );
 }
@@ -405,6 +503,7 @@ fn parse_deploy_export_provider_after_global_json_and_repo() {
         Command::Deploy(DeployArgs {
             subcommand: DeploySubcommand::Export {
                 provider: "acme-cloud".to_owned(),
+                env: None,
                 path: PathBuf::from("infra/deploy"),
                 plan: true,
             },

@@ -124,6 +124,13 @@ The provider context's `provider_package` block exposes `commit` and
 `resolution` to provider scripts. `deploy model` is provider-neutral and
 resolves no provider package, so it records no provider commit.
 
+The context also names the environment: `env` is the selected
+`[deploy.<env>]` name (`unscoped` when the project declares none), `model` is
+that environment's resolved model (including `environment`, `provenance` and
+`missing`), and `deploy` carries the environment's `state`, `code_ref`,
+`release_policy` and `artifact_policy`. A provider package therefore cannot
+silently use development values.
+
 The phase workspace that carries the context and report files lives under
 `<checkout>/.effigy/state/deploy/provider/<provider>/`, not the retired
 `.effigy/runtime/` tree. It is removed when the phase ends, and a bounded sweep

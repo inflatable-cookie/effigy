@@ -67,7 +67,7 @@ run = "cargo run -p acme-jobs {args}"
 
     let parsed = parse_json(
         &run_command(Command::Deploy(DeployArgs {
-            subcommand: DeploySubcommand::Model,
+            subcommand: DeploySubcommand::Model { env: None },
             repo_override: Some(root.clone()),
             output_json: true,
         }))
@@ -140,6 +140,7 @@ source = { type = "path", dir = "providers/render" }
         &run_command(Command::Deploy(DeployArgs {
             subcommand: DeploySubcommand::Export {
                 provider: "render".to_owned(),
+                env: None,
                 path: root.join("infra/render"),
                 plan: true,
             },
@@ -204,6 +205,7 @@ source = { type = "path", dir = "providers/railway" }
         &run_command(Command::Deploy(DeployArgs {
             subcommand: DeploySubcommand::Export {
                 provider: "railway".to_owned(),
+                env: None,
                 path: root.join("infra/railway"),
                 plan: true,
             },
@@ -253,7 +255,7 @@ databases = ["acme"]
 
     let parsed = parse_json(
         &run_command(Command::Deploy(DeployArgs {
-            subcommand: DeploySubcommand::Model,
+            subcommand: DeploySubcommand::Model { env: None },
             repo_override: Some(root),
             output_json: true,
         }))
@@ -266,6 +268,10 @@ databases = ["acme"]
             "app",
             "backing_services",
             "domains",
+            "environment",
+            "environment_state",
+            "missing",
+            "provenance",
             "schema",
             "schema_version",
             "secrets",
