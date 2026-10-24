@@ -419,7 +419,7 @@ pub struct TaskId {
 pub struct RunId([u8; 16]);      // 48-bit ms time + 80-bit random; text: 26-char base32
 pub struct Generation(u64);      // per resource, strictly increasing
 
-pub enum ResourceKind { Checkout, Task, Run, Env, Data, Endpoint, Store, Gateway }
+pub enum ResourceKind { Checkout, Task, Run, Env, Data, Endpoint, Store, Gateway, HostProcess }
 pub struct ResourceId { kind: ResourceKind, scope: Scope, key: Vec<Field> }
 pub enum Scope { Machine, Checkout(CheckoutId) }
 
@@ -468,6 +468,7 @@ name      := base32_lower(SHA-256(canonical)[0..20])
 | Endpoint | machine | endpoint kind (domain, address, port), normalized value |
 | Store | checkout or machine | store name (`vault`, `bundles`, `graph`, `deps`, `migrate:<scope>`) |
 | Gateway | machine | instance (`default`, or the private home's digest) |
+| HostProcess | checkout | environment name, profile, host process name |
 
 `CheckoutId` tokens live in Git's per-checkout state. Linked worktrees and
 ephemeral clones reuse the existing runtime-scope token
@@ -477,7 +478,9 @@ and Mutate classes mint a token; Observe reports "no runtime state yet". The
 `Filesystem` kind is never persisted as a checkout token or durable run owner.
 Its domain-separated digest uses retained checkout/Git device and inode facts;
 its scope names are separate even if a persisted token has the same raw bytes.
-The existing kind tags 0–3 remain unchanged; tag 4 denotes this local-only kind.
+The existing kind tags 0–3 remain unchanged; tag 4 denotes this local-only kind,
+tags 0–7 keep their meanings, and tag 8 is the `HostProcess` resource an
+environment's host process run owns (effigy#320).
 
 #### Invariants
 
@@ -2615,7 +2618,7 @@ bounds. Ordinary dev, test and release profiles are unchanged.
 | Generated lifecycle shell, state file, EXIT trap, curl readiness, `starting` deadline bypass | `crates/effigy-containers/src/session.rs:221`, `:260`, `:317`, `:324`, `:405`, `:412-420` | attachment effect, `Probe`, deadlines |
 | Progressive spawn without rollback | `crates/effigy-process/src/lib.rs:211-238` | `spawn_all` with barrier and rollback |
 | Supervisor shutdown grace | `crates/effigy-process/src/supervisor_shutdown.rs:7-11` | `OwnedProcess::stop` |
-| Host sidecar supervisors: setsid, PID and spec files, blocking lifecycle lock, best-effort stop | `src/runner/host_process.rs:104-128`, `:430-458`, `:745`; `src/runner/container_command/closeout.rs:33-36` | environment-owned detached run; `StopReport` |
+| Host sidecar supervisors: setsid, PID and spec files, blocking lifecycle lock, best-effort stop | `src/runner/host_process.rs`; `src/runner/container_command/closeout.rs:33-36` | environment-owned detached run; `StopReport` (adopted, effigy#320) |
 | Listener transition history | Removed; existing historical files are left untouched | No replacement writer or store |
 | Remote stop of a bare PGID in the current primary | `crates/effigy-containers/src/exec/managed_stop.rs:36` | `signal_session` on the registration (I-RC2) |
 
@@ -2658,8 +2661,24 @@ and `--detach` are front ends over the same run. Row by row:
 - Progressive spawn without rollback: replaced. Each workload is an intended
   custody effect; a failed start settles everything already started.
 - Supervisor shutdown grace: replaced by `OwnedProcess::stop` in settle.
-- Host sidecar supervisors: not adopted. Sidecars stay owned by the
-  environment's `up`/`down`, which the run's environment effect releases.
+- Host sidecars: adopted (effigy#320). Each `[[containers.<env>.host_processes]]`
+  entry is one detached `Run` owned by its own `HostProcess` resource in the
+  environment's checkout scope, so it holds a `Gate(HostProcess)` and never
+  `Gate(Env)` for its lifetime. The supervisor spawns each child generation
+  through `Custody`, which journals the group receipt, the anchor and the
+  grace; readiness, route publication and the declared restart policy stay
+  engine work. `up` keeps the owning pipe until the listener's declared
+  readiness is observed and then detaches; a bring-up that stops short drops
+  the pipe, which is the kernel's owner-loss stop. `down`, `reset` and session
+  settle stop a run with a fenced `StopRequest`, wait for the live supervisor,
+  and settle as the gate holder when it is gone, returning a
+  `HostProcessStopReport` that names each PID, the signals the kernel sent
+  (including a SIGKILL after the declared grace), the exit and any residue. A
+  process that exits is recorded with its exit in the custody receipt and its
+  last log lines in the unchanged `.effigy/runtime/host-processes/<env>/`
+  log; `container status` projects the run, state and last exit. A v0.14.1
+  PID/spec supervisor is stopped by its recorded identity on the next `up` or
+  `down`, never by a process-name pattern.
 - Remote stop of a bare PGID: narrowed by the nonce check above;
   `signal_session` on a registration stays open with §5.10.
 
@@ -2753,7 +2772,7 @@ other scope gains downgrade support. The owning protocol and proofs are in
 | Environment markers, lease, persistent owner, handover, admission | `~/.effigy/runtime/host-container-leases/`, `<root>/.effigy/runtime/` | `resources` row: desired from persistent or lease, applied from complete, failed-unknown from partial without complete | a live reaper sleeper is waited for or refused | containers adopted only by `Verified` labels |
 | Generated renders | `<root>/.effigy/runtime/compose/` | not imported; re-rendered into objects on the next apply | — | — |
 | Backend override metadata | `crates/effigy-containers/src/lib.rs:219-235` | the environment's backend field | — | unparsable: `Unknown` backend; destructive actions refuse until the backend is named |
-| Host sidecars: PID, spec, listener records | `<root>/.effigy/runtime/host-processes/` | stopped through the legacy stop protocol after identity verification, then started under an environment run | legacy supervisor alive and verified: stopped first | unverifiable identity: `Unknown`, residue |
+| Host sidecars: PID, spec, listener records | `<root>/.effigy/runtime/host-processes/` | stopped through the legacy stop protocol after identity verification, then started as an environment-owned kernel run (effigy#320) | legacy supervisor alive and verified: stopped first | unverifiable identity: `Unknown`, residue |
 | Runtime-scope records | `~/.effigy/runtime-scopes/` | Read-only input for an explicitly named live checkout; first inventory edit journals its record locally; deletion discovery uses backend labels | — | — |
 | Gateway PID, identity, version; routes, loopback, ports | `~/.effigy/gateway/`, `~/.effigy/ports.json` | gateway-lane importer: claims byte for byte, manual routes kept | legacy daemon quiesced by the gateway lane's setup | — |
 | Vault | `<checkout>/.effigy/secrets/local.vault` | not moved; the next write uses the pointer commit | — | unreadable vault: never overwritten |
