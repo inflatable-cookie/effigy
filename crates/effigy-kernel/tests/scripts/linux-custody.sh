@@ -7,7 +7,7 @@
 set -eu
 proof_mode=${1:-custody}
 case "$proof_mode" in
-    custody|gate-shared|probe|helpers|runtime-storage|actual-copy|qualification|final-runtime|task-engine|fixtures|task-engine-fixtures) ;;
+    custody|gate-shared|probe|helpers|runtime-storage|qualification|final-runtime|task-engine|fixtures|task-engine-fixtures) ;;
     *) printf 'Unknown Linux proof mode: %s\n' "$proof_mode" >&2; exit 2 ;;
 esac
 proof_dir=$(mktemp -d /tmp/k208.XXXXXX)
@@ -20,12 +20,6 @@ export XDG_CONFIG_HOME="$proof_dir/config"
 export XDG_CACHE_HOME="$proof_dir/xdg-cache"
 mkdir -p "$DOCKER_CONFIG" "$COLIMA_HOME"
 source_dir=$(mktemp -d "$proof_dir/source.XXXXXX")
-if { [ "$proof_mode" = actual-copy ] || [ "$proof_mode" = qualification ]; }; then
-    copied_store=${EFFIGY_RUNTIME_MIGRATION_COPY:?explicit private operator-copy fixture required}
-    test -f "$copied_store/copy-report.json"
-    # Only private, already copied/checkpointed data enters the disposable VM.
-    cp -R "$copied_store/offline/home" "$proof_dir/runtime-copy"
-fi
 # Colima 0.10 requires COLIMA_HOME to exist; otherwise it falls back to ~/.colima.
 git ls-files -c -o --exclude-standard -z | tar --null -T - -cf "$proof_dir/source.tar"
 tar -xf "$proof_dir/source.tar" -C "$source_dir"
@@ -51,10 +45,6 @@ if [ "$proof_mode" = gate-shared ]; then
     set -- --user "$(id -u):$(id -g)" --env CARGO_HOME=/proof-cargo \
         --env RUSTUP_TOOLCHAIN=1.97.1 \
         --mount "type=bind,source=$proof_dir/cargo,target=/proof-cargo"
-fi
-if { [ "$proof_mode" = actual-copy ] || [ "$proof_mode" = qualification ]; }; then
-    set -- "$@" --mount "type=bind,source=$proof_dir/runtime-copy,target=/runtime-copy" \
-        --env EFFIGY_RUNTIME_COPY_HOME=/runtime-copy
 fi
 docker run --rm --init --cpus 2 --memory 2g "$@" \
     --env "PROOF_UID=$(id -u)" --env "PROOF_GID=$(id -g)" --env "KERNEL_PROOF_MODE=$proof_mode" \
@@ -102,26 +92,16 @@ docker run --rm --init --cpus 2 --memory 2g "$@" \
             exit
         fi
         if [ "$KERNEL_PROOF_MODE" = qualification ]; then
-            chown -R "$PROOF_UID:$PROOF_GID" /proof /usr/local/cargo/registry /runtime-copy
-            find /runtime-copy -type d -exec chmod 500 {} +
-            find /runtime-copy -type f -exec chmod u-w,go-rwx {} +
-            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups env EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test migration --test custody --test store --test gate --test probe -E "test(/^inheritance::/) | test(/^supervise::/) | test(/^store::/) | test(/^root::/) | binary(migration) | binary(custody) | binary(store) | binary(gate) | binary(probe)" --no-fail-fast --retries 0 --no-tests fail
-            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups env EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test migration_scale --run-ignored only --success-output immediate --no-fail-fast --retries 0 --no-tests fail
+            chown -R "$PROOF_UID:$PROOF_GID" /proof /usr/local/cargo/registry
+            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups env EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test runtime_routing --test custody --test store --test gate --test probe -E "test(/^inheritance::/) | test(/^supervise::/) | test(/^store::/) | test(/^root::/) | binary(runtime_routing) | binary(custody) | binary(store) | binary(gate) | binary(probe)" --no-fail-fast --retries 0 --no-tests fail
             cargo build --bin effigy
             setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups python3 tests/scripts/runtime-write-budget.py target/debug/effigy
-            exit
-        fi
-        if [ "$KERNEL_PROOF_MODE" = actual-copy ]; then
-            chown -R "$PROOF_UID:$PROOF_GID" /proof /usr/local/cargo/registry /runtime-copy
-            find /runtime-copy -type d -exec chmod 500 {} +
-            find /runtime-copy -type f -exec chmod u-w,go-rwx {} +
-            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups env EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --test migration_scale --run-ignored only --success-output immediate --no-fail-fast --retries 0 --no-tests fail
             exit
         fi
         if [ "$KERNEL_PROOF_MODE" = runtime-storage ]; then
             # Permission refusals must run as the fixture owner, not root.
             chown -R "$PROOF_UID:$PROOF_GID" /proof /usr/local/cargo/registry
-            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups env EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test migration --test custody --test store --test gate -E "test(/^inheritance::/) | test(/^supervise::/) | test(/^store::/) | test(/^root::/) | binary(migration) | binary(custody) | binary(store) | binary(gate)" --no-fail-fast --retries 0 --no-tests fail
+            setpriv --reuid="$PROOF_UID" --regid="$PROOF_GID" --clear-groups env EFFIGY_KERNEL_CUSTODY_FIXTURE=/proof/target/debug/kernel-custody-fixture cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test runtime_routing --test custody --test store --test gate -E "test(/^inheritance::/) | test(/^supervise::/) | test(/^store::/) | test(/^root::/) | binary(runtime_routing) | binary(custody) | binary(store) | binary(gate)" --no-fail-fast --retries 0 --no-tests fail
             exit
         fi
         if [ "$KERNEL_PROOF_MODE" = helpers ]; then

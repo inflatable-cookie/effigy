@@ -1668,185 +1668,27 @@ fn an_unknown_task_publish_with_a_check_reconciles_before_any_retry() {
 }
 
 #[test]
-fn legacy_release_migration_resumes_the_certified_candidate_from_its_checkout() {
-    use effigy_kernel::ctx::*;
-    use effigy_kernel::gate::Wait;
-    use effigy_kernel::id::*;
-    use effigy_kernel::migration::{self, CheckoutLocation, LegacyQuiescence};
-    use effigy_kernel::observe::Observed;
-    use effigy_kernel::outcome::{Invocation, WorkloadOutcome};
-    use effigy_kernel::root::StateRoot;
-    use effigy_kernel::run::{BeginOpts, Run};
-    use effigy_kernel::store::Store;
-    use std::time::{Duration, Instant};
-    let fixture = fixture("legacy-migration");
+fn a_machine_holding_the_retired_central_store_refuses_release_reads_once() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = fixture("unreleased-main");
     single_identity_project(&fixture);
-    let mut effects = TestEffects::new(&fixture.root);
-    effects.artifact_path = Some("dist/app-0.2.5.tgz".into());
-    let paused = run(
-        &fixture,
-        &mut effects,
-        ReleaseAction::Run,
-        Some(ReleaseStage::Certify),
-    );
-    assert!(paused.succeeded(), "{:?}", paused.record.errors);
-    assert_eq!(paused.record.stage, "certify");
-    assert_eq!(paused.record.artifacts.len(), 1);
-    let session = ReleaseSession::open(&fixture.home, &fixture.root).unwrap();
-    let Scope::Checkout(checkout) = session.owner.scope() else {
-        panic!("checkout owner")
-    };
-    let local_state = session.state().unwrap();
-    drop(session);
-    let op = OperationContext::new(
-        Deadline::At(Instant::now() + Duration::from_secs(120)),
-        CancelToken::default(),
-        Limits {
-            capture_tail: 4096,
-            log_rotate: 4096,
-            log_keep: 1,
-            line_max: 4096,
-            queue_bytes: 4096,
-            probe_concurrency: 1,
-        },
-        EffectClass::Mutate,
-        Placement::Host,
-    );
-    let cx = op.effects().unwrap();
-    let observe = op.observe().unwrap();
-    let cleanup = op.cleanup(Duration::from_secs(30)).unwrap();
-    let source = StateRoot::effects(&cx, &fixture.home).unwrap();
-    let owner = ResourceId::store(
-        Scope::Machine,
-        &format!("release {}", fixture.root.canonicalize().unwrap().display()),
-    )
-    .unwrap();
-    let legacy_dir = source.path().join("release").join(owner.name().to_string());
-    std::fs::create_dir_all(legacy_dir.parent().unwrap()).unwrap();
-    std::fs::rename(local_state.record_path.parent().unwrap(), &legacy_dir).unwrap();
-    // The fixture now has exactly the previous release layout. Its checkout
-    // journal is removed only after all fixture invocations have settled.
-    std::fs::remove_dir_all(fixture.root.join(".effigy/state")).unwrap();
-    let mut record = paused.record.clone();
-    record.root = fixture.root.canonicalize().unwrap().display().to_string();
-    for artifact in &mut record.artifacts {
-        for file in &mut artifact.files {
-            let suffix = Path::new(&file.path)
-                .strip_prefix(&local_state.candidate_dir)
-                .unwrap();
-            file.path = legacy_dir
-                .join("candidate")
-                .join(suffix)
-                .display()
-                .to_string();
-        }
-    }
-    std::fs::write(
-        legacy_dir.join("record.json"),
-        serde_json::to_vec(&record).unwrap(),
-    )
-    .unwrap();
-    let invocation = ResolvedInvocation::new(InvocationSpec {
-        task: TaskId::new(checkout, "release", Surface::Published, "release run", None).unwrap(),
-        route: Route::Builtin("release".into()),
-        argv: vec!["release".into(), "run".into()],
-        cwd: String::new(),
-        target: ExecutionTarget::Host,
-        env: BTreeMap::new(),
-        owner: owner.clone(),
-        gates: vec![],
-        attachments: vec![],
-        class: EffectClass::Mutate,
-        placement: Placement::Host,
-        provenance: BTreeMap::new(),
-    })
-    .unwrap();
-    let mut adapter = ReportsOnly;
-    let mut legacy = Run::begin(
-        &cx,
-        &source,
-        &invocation,
-        BeginOpts {
-            id: record.run_id.parse().unwrap(),
-            wait: Wait::FailFast,
-            acknowledge: vec![],
-            next: Invocation::validated(vec!["release".into(), "resume".into()], |_| true).unwrap(),
-            custody: None,
-        },
-        &cleanup,
-        &mut adapter,
-    )
-    .unwrap();
-    legacy
-        .set_engine_record(
-            &serde_json::to_value(record.checkpoint(&legacy_dir.join("record.json"))).unwrap(),
-        )
-        .unwrap();
-    legacy.finish(WorkloadOutcome::Succeeded).unwrap();
-    legacy.settle(&cleanup, &mut adapter).unwrap();
-    let mut store = Store::open(&cx, &source).unwrap();
-    store
-        .txn(&cx, |txn| {
-            txn.checkout_seen(&checkout, Some(&record.root), None)
-        })
-        .unwrap();
-    drop(store);
-    let source_bytes = std::fs::read(source.path().join("kernel.db")).unwrap();
+    // The retired current-main store never existed outside unreleased main.
+    // Its mere presence is refused; v0.15 does not import or delete it.
+    let state = fixture.home.join(".effigy/state");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let store = state.join("kernel.db");
+    std::fs::write(&store, b"retired central store").unwrap();
+    std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o600)).unwrap();
     let refused = read_release_record(&fixture.home, &fixture.root)
         .unwrap_err()
         .to_string();
-    assert!(refused.contains("run migrate"), "{refused}");
-    let git_directory = effigy_core::worktree_scope::git_directory(&fixture.root).unwrap();
-    migration::import(
-        &cx,
-        &source,
-        &fixture.home,
-        &LegacyQuiescence::launchers_withdrawn(),
-        &mut |id, _, _| {
-            assert_eq!(id, checkout);
-            Ok(CheckoutLocation {
-                root: fixture.root.clone(),
-                git_directory: git_directory.clone(),
-            })
-        },
-    )
-    .unwrap();
-    let imported = current_record(&fixture);
-    assert_eq!(imported.release_id, record.release_id);
-    assert_eq!(imported.approvals, record.approvals);
-    assert_eq!(imported.candidate_commit, record.candidate_commit);
-    let alias_session = ReleaseSession::open(&fixture.home, &fixture.root).unwrap();
-    assert_eq!(alias_session.owner, owner);
-    drop(alias_session);
-    let resumed = resume(&fixture, &mut effects);
-    assert_eq!(resumed.record.release_id, record.release_id);
-    assert_eq!(
-        resumed.record.status,
-        ReleaseRunStatus::Complete,
-        "{:?}",
-        resumed.record.errors
+    assert!(
+        refused.contains("unreleased-main runtime state"),
+        "{refused}"
     );
-    assert_eq!(
-        std::fs::read(source.path().join("kernel.db")).unwrap(),
-        source_bytes
-    );
-    let local = match StateRoot::checkout_observe_in(
-        &observe,
-        &fixture.home,
-        &CheckoutLocation {
-            root: fixture.root.clone(),
-            git_directory,
-        },
-    ) {
-        Observed::Verified(root, _) => root,
-        other => panic!("local root: {other:?}"),
-    };
-    assert!(local
-        .path()
-        .join("release")
-        .join(owner.name().to_string())
-        .join("record.json")
-        .exists());
+    assert!(refused.contains("7b82d26"), "{refused}");
+    assert_eq!(std::fs::read(&store).unwrap(), b"retired central store");
 }
 
 #[test]

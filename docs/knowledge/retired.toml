@@ -370,7 +370,7 @@ allow = ["CHANGELOG.md"]
 [[retired]]
 id = "effigy-run-journal-on-admission-store"
 retired = "2026-10-18"
-replacement = "The kernel store is ~/.effigy/state/kernel.db (contract 052, store layout). No run journal reuses the retired heavy-admission store or a host-wide coordinator, and runs carry no capacity kind."
+replacement = "The checkout journal is <checkout>/.effigy/state/kernel.db and shared machine facts are ~/.effigy/state/machine.db (contract 052 §7). No run journal reuses the retired heavy-admission store or a host-wide coordinator, and runs carry no capacity kind."
 owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
 terms = ["host-wide coordinator", "capacity_lease", "evidence_only"]
 paths = []
@@ -1173,7 +1173,7 @@ allow = [
 [[retired]]
 id = "effigy-central-runtime-journal"
 retired = "2026-10-23"
-replacement = "Contract 052 §3.1/§7: short foreground runs use memory and lock files; retained runs journal in their checkout; machine.db contains gateway endpoints/routes, ports and admission only. Built-in migration reads the old kernel.db without changing it. Scope inventory is checkout-local and dead-checkout retirement uses verified backend ownership and custody leases, without an index. Close-time retention scans and their environment-variable stopgap are removed."
+replacement = "Contract 052 §3.1/§7: short foreground runs use memory and lock files; retained runs journal in their checkout; machine.db contains gateway endpoints/routes, ports and admission only. The one-minor built-in migration read an unreleased-main central kernel.db without changing it; that importer is itself retired (effigy#307), so v0.15 ships only the v0.14.1 importers. Scope inventory is checkout-local and dead-checkout retirement uses verified backend ownership and custody leases, without an index. Close-time retention scans and their environment-variable stopgap are removed."
 owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
 terms = ["EFFIGY_RETENTION_ON_CLOSE", "machine-wide runtime journal", "~/.effigy/runtime-scopes/"]
 paths = []
@@ -1238,4 +1238,49 @@ allow = [
   "src/runner/release_command/tests.rs",
   "src/runner/script_command/tests.rs",
   "src/tests/lib_tests_parse_tests/release_option_tests.rs",
+]
+
+[[retired]]
+id = "unreleased-main-central-store-importer"
+retired = "2026-10-24"
+replacement = "v0.15 ships one migration path: the v0.14.1 importers in contract 052 §11, which read legacy files on first use. The importer for the current-main central ~/.effigy/state/kernel.db is gone (effigy#307, Tom 2026-10-24). That schema existed only on unreleased main between 8fc1b9663 and #276, and the one machine that held it migrated once with Effigy main 7b82d26. With a committed manifest Effigy ignores kernel.db entirely and never deletes it (M3); without one it refuses once with that upgrade path. effigy run migrate --plan is a read-only report of that state and stages, imports, stops and deletes nothing."
+owner = "docs/knowledge/contracts/052-runtime-kernel-contract.md"
+terms = [
+  "proof:runtime-migration:actual-copy",
+  "proof:runtime-migration:cli",
+  "test:kernel:migration:freeze",
+  "test:kernel:migration-scale:compile",
+  "test:release:runtime-storage:migration",
+  "actual-copy",
+  "migration_scale",
+  "migration-writer",
+  "migration-key",
+  "seed-aliases",
+  "unlocated_live_report",
+  "CheckoutResolver",
+  "LegacyQuiescence",
+  "destination_blocker",
+  "WriterTarget",
+  "LegacyForeground",
+  "foreground_legacy",
+]
+paths = [
+  "crates/effigy-kernel/src/migration/control.rs",
+  "crates/effigy-kernel/src/migration/copy.rs",
+  "crates/effigy-kernel/src/migration/execute.rs",
+  "crates/effigy-kernel/src/migration/fence.rs",
+  "crates/effigy-kernel/src/migration/files.rs",
+  "crates/effigy-kernel/src/migration/plan.rs",
+  "crates/effigy-kernel/src/migration/release.rs",
+  "crates/effigy-kernel/src/run/foreground/legacy.rs",
+  "crates/effigy-kernel/tests/migration.rs",
+  "crates/effigy-kernel/tests/migration_scale.rs",
+  "tests/scripts/runtime-migration-cli.py",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "docs/guides/080-host-wide-validation-admission.md",
+  "docs/guides/085-v0.15.0-consumer-migration.md",
+  "docs/knowledge/questions.md",
 ]

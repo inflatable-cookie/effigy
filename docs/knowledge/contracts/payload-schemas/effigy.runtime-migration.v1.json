@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "effigy.runtime-migration.v1 payload",
-  "description": "Legacy runtime inspection, explicit stop, cutover and resumption. Planning never imports or creates destination state. A stop receipt acknowledges a request or signal, never positive settlement.",
+  "description": "Read-only report on the retired current-main central-store import. v0.15 ships only the v0.14.1 importers, which read legacy files on first use. A committed migration manifest is provenance and the retired store is ignored; without one, a machine still holding it is refused with the exact upgrade path. The command never stages, imports, stops, changes or deletes anything.",
   "type": "object",
   "required": [
     "schema",
@@ -15,104 +15,21 @@
     "state": {
       "enum": [
         "no-legacy-state",
-        "planned",
-        "needs-quiescence",
-        "blocked",
-        "stop-requested",
-        "stop-refused",
-        "committed"
+        "committed",
+        "unreleased-main-state"
       ]
     },
     "source": {
       "type": "string"
     },
-    "staging_started": {
-      "const": false
-    },
-    "blockers": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "writer",
-          "stop_command",
-          "drain_check"
-        ],
-        "properties": {
-          "writer": {
-            "type": "object"
-          },
-          "stop_command": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "drain_check": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
-      }
-    },
-    "plan": {
-      "type": [
-        "object",
-        "null"
-      ]
+    "message": {
+      "type": "string"
     },
     "committed": {
       "type": [
         "object",
         "null"
       ]
-    },
-    "report": {
-      "type": "object"
-    },
-    "destinations": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "checkout",
-          "root",
-          "unresolved_runs"
-        ]
-      }
-    },
-    "discovery": {
-      "type": "object",
-      "required": [
-        "roots_searched",
-        "checkouts",
-        "omitted"
-      ],
-      "properties": {
-        "roots_searched": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "checkouts": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "omitted": {
-          "type": "array"
-        }
-      }
-    },
-    "target": {
-      "type": "object"
-    },
-    "signalled": {
-      "type": "object"
     },
     "schema_version": {
       "const": 1
