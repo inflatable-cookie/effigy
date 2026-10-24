@@ -247,7 +247,44 @@ pub(crate) fn is_open_mode_only(reason: &UnknownReason) -> bool {
 
 /// A leftover open mode, either as the bare reason or as the rendered
 /// sentence that names the path and the `chmod` that fixes it.
+///
+/// The rendered form is `{path} is readable by other users; run `chmod 700
+/// {path}``, so the sentence continues after the command: it has to be matched
+/// by its prefix, not by the end of the string. Misjudging it here would make
+/// every effect path refuse a root the adoption is meant to tighten (papercut
+/// 9e5134a4).
 fn names_open_mode_only(detail: &str) -> bool {
     detail == crate::fs::OPEN_MODE_REASON
-        || detail.ends_with("is readable by other users; run `chmod 700")
+        || detail.contains("is readable by other users; run `chmod 700 ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_leftover_open_mode_is_recognised_in_both_its_bare_and_rendered_forms() {
+        // Bare: observation constructs it from the raw filesystem reason.
+        let bare = UnknownReason::Untrusted(crate::fs::OPEN_MODE_REASON.to_owned());
+        assert!(is_open_mode_only(&bare), "bare reason: {bare}");
+
+        // Rendered: `StoreError`/`root::unknown` name the path and the chmod.
+        let rendered = unknown(&FsError::Untrusted {
+            path: "/repo/.effigy/state".into(),
+            reason: crate::fs::OPEN_MODE_REASON.to_owned(),
+        });
+        assert!(
+            matches!(&rendered, UnknownReason::Untrusted(detail)
+                if detail.contains("chmod 700 /repo/.effigy/state")),
+            "rendered reason names the path and the chmod: {rendered}"
+        );
+        assert!(
+            is_open_mode_only(&rendered),
+            "the rendered open-mode sentence must still reach adoption: {rendered}"
+        );
+
+        // Any other untrusted reason is not an open mode: it keeps refusing.
+        let foreign = UnknownReason::Untrusted("/repo/.effigy/state is not trusted store state (wrong owner); fix its ownership and permissions".to_owned());
+        assert!(!is_open_mode_only(&foreign), "foreign reason: {foreign}");
+    }
 }

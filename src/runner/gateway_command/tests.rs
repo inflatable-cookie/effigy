@@ -30,7 +30,22 @@ fn private_gateway_publication_obeys_its_finite_kernel_budget() {
         Err(effigy_gateway::GatewayError::NotRunning)
     })
     .unwrap_err();
-    assert!(error.to_string().contains("TimedOut"), "{error}");
+    // Before: `private gateway startup interrupted: TimedOut { phase:
+    // "private gateway verified listener publication", elapsed: 22ms }`.
+    let rendered = error.to_string();
+    assert!(
+        rendered.starts_with("private gateway startup interrupted: timed out after "),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("during private gateway verified listener publication"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("; the daemon was not confirmed ready"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("TimedOut {"), "{rendered}");
 }
 
 #[test]

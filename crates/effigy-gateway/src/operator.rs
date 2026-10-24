@@ -390,7 +390,7 @@ fn completion_reason(workload: &WorkloadOutcome, tail: &str) -> Option<String> {
         } => return None,
         WorkloadOutcome::Succeeded => "gateway daemon exited with code 0".to_owned(),
         WorkloadOutcome::Failed { code } => format!("gateway daemon exited with code {code}"),
-        other => format!("gateway daemon stopped: {other:?}"),
+        other => format!("gateway daemon stopped: {other}"),
     };
     if !tail.trim().is_empty() {
         reason.push_str(": ");
@@ -398,6 +398,35 @@ fn completion_reason(workload: &WorkloadOutcome, tail: &str) -> Option<String> {
     }
     Some(reason)
 }
+/// A supervisor event in the words a person reads, never a `Debug` tree. The
+/// event reached the caller before the daemon reported itself active, so each
+/// arm says what the supervisor did instead.
+fn describe_event(event: &supervise::Event) -> String {
+    match event {
+        supervise::Event::Admitted { run, .. } => {
+            format!("the supervisor admitted run {run} without reporting it active")
+        }
+        supervise::Event::Active => "the supervisor reported itself active".to_owned(),
+        supervise::Event::Log { process, bytes } => format!(
+            "the supervisor streamed {} byte(s) from process {process} instead of reporting active",
+            bytes.len()
+        ),
+        supervise::Event::Closed {
+            workload,
+            exit_code,
+            ..
+        } => {
+            format!("the supervisor closed before going active (exit code {exit_code}; {workload})")
+        }
+        supervise::Event::Refused(reason) => {
+            format!("the supervisor refused to start it ({reason})")
+        }
+        supervise::Event::Engine(_) => {
+            "the supervisor sent an engine-only event before going active".to_owned()
+        }
+    }
+}
+
 /// Probe HTTP, HTTPS acceptance, and a DNS answer; every wait shares one budget.
 pub fn self_test(config: &GatewayConfig, budget: Duration) -> io::Result<()> {
     let op = context(budget, EffectClass::Observe);
@@ -551,7 +580,12 @@ pub fn up_with_executable_within(
     // reports its cause instead of waiting for the readiness deadline.
     match client.event(&admission) {
         Ok(supervise::Event::Active) => {}
-        Ok(event) => return Err(error(format!("gateway daemon failed to start: {event:?}"))),
+        Ok(event) => {
+            return Err(error(format!(
+                "gateway daemon failed to start: {}; run `effigy gateway status` for the recorded diagnosis",
+                describe_event(&event)
+            )))
+        }
         Err(err) if admission.check("gateway admission").is_err() => {
             let _ = client.stop(&cx, run_id()?);
             return Err(error(format!(
@@ -730,6 +764,67 @@ fn http_probe(config: &GatewayConfig, cx: &ObserveContext) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stopped_daemon_says_what_ended_it_and_never_a_debug_tree() {
+        // Before: `gateway daemon stopped: TimedOut { phase: "settle", ... }`.
+        let reason = completion_reason(
+            &WorkloadOutcome::TimedOut {
+                phase: "settle".into(),
+            },
+            "waiting for DNS",
+        )
+        .expect("a timed-out daemon reports a reason");
+        assert_eq!(
+            reason,
+            "gateway daemon stopped: the workload timed out while waiting for the environment to \
+             settle: waiting for DNS"
+        );
+        assert!(!reason.contains("TimedOut {"), "{reason}");
+
+        let unknown = completion_reason(
+            &WorkloadOutcome::Unknown(UnknownReason::PermissionDenied),
+            "",
+        )
+        .expect("an unproven daemon reports a reason");
+        assert!(
+            unknown.contains(
+                "the workload outcome is unknown: could not tell: this user may not read"
+            ),
+            "{unknown}"
+        );
+    }
+
+    #[test]
+    fn a_daemon_that_never_went_active_says_what_the_supervisor_did() {
+        // Before: `gateway daemon failed to start: Refused("port 443 in use")`.
+        let refused = describe_event(&supervise::Event::Refused("port 443 is in use".into()));
+        assert_eq!(
+            refused,
+            "the supervisor refused to start it (port 443 is in use)"
+        );
+        let closed = describe_event(&supervise::Event::Closed {
+            cleanup_complete: true,
+            workload: WorkloadOutcome::Failed { code: 1 },
+            exit_code: 1,
+        });
+        assert_eq!(
+            closed,
+            "the supervisor closed before going active (exit code 1; the workload failed with \
+             exit code 1)"
+        );
+        for event in [
+            supervise::Event::Refused("x".into()),
+            supervise::Event::Engine(vec![1, 2, 3]),
+        ] {
+            let reason = describe_event(&event);
+            assert!(
+                !reason.contains("Refused(") && !reason.contains("Engine("),
+                "{reason}"
+            );
+        }
+    }
+
     #[test]
     fn gateway_readiness_budget_starts_after_admission() {
         // A slow admission is a separate phase: the readiness deadline is the
