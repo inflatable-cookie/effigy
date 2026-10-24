@@ -22,8 +22,14 @@ use crate::runner::error::RunnerError;
 
 use super::steps::TimedStep;
 
-/// How often the wait reads the services' own health.
-const PROBE_INTERVAL: Duration = Duration::from_millis(500);
+/// How often the wait reads the services' own health while a stack is still
+/// starting. Every probe is two runtime calls, so the wait backs off to
+/// [`PROBE_INTERVAL_SETTLED`] once the stack has had a moment to come up.
+const PROBE_INTERVAL_STARTING: Duration = Duration::from_millis(400);
+/// The probe interval after [`PROBE_STARTING_WINDOW`].
+const PROBE_INTERVAL_SETTLED: Duration = Duration::from_millis(1_500);
+/// How long the wait keeps the fast probe.
+const PROBE_STARTING_WINDOW: Duration = Duration::from_secs(4);
 /// How long one probe may take. A probe is a read, so it never consumes the
 /// wait's whole budget, and an unresponsive runtime is reported rather than
 /// waited on.
@@ -120,7 +126,12 @@ pub(super) fn await_services_ready(
         if Instant::now() >= deadline {
             break;
         }
-        std::thread::sleep(PROBE_INTERVAL.min(deadline.saturating_duration_since(Instant::now())));
+        let interval = if started.elapsed() < PROBE_STARTING_WINDOW {
+            PROBE_INTERVAL_STARTING
+        } else {
+            PROBE_INTERVAL_SETTLED
+        };
+        std::thread::sleep(interval.min(deadline.saturating_duration_since(Instant::now())));
     }
 
     if !observed {
