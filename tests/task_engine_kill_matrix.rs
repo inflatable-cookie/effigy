@@ -2,10 +2,21 @@
 //!
 //! Kill matrix: a plain task that leaves a background grandchild in its
 //! group, with its Effigy owner sent INT, TERM, HUP or KILL. Nothing the task
-//! started survives, and status reports the run's real end, never
+//! started survives, and status stops reporting the run live, never
 //! `running` or a previous outcome. Reclaim race: two waiters and a sentinel
-//! race for a SIGKILLed holder's gate; runs never overlap and every run is
-//! accounted for.
+//! race for a SIGKILLed holder's gate; runs never overlap and every durable
+//! run is accounted for.
+//!
+//! Two run classes meet here, and each case proves its own (contract 052,
+//! `effigy.tasks-status.v3`):
+//!
+//! - a statically resolved plain foreground tree is a memory run. It holds a
+//!   verified foreground gate while it lives and retains no runtime record
+//!   afterwards, so its proof is the released holder (`state: not-recorded`,
+//!   `current: null`, no history) plus settled descendants and no later step.
+//! - a declared `durable = true` tree keeps the checkout journal, so its proof
+//!   is the closed row: `cancelled` for a signalled owner and `interrupted`
+//!   for one whose sentinel had to settle it.
 
 #![cfg(unix)]
 
@@ -21,6 +32,7 @@ const TASK: &str = r#"[tasks.hold]
 run = "sleep 300 & echo $! > grandchild.pid; echo $$ > leader.pid; wait"
 
 [tasks.serial]
+durable = true
 run = "echo start >> runs.log; if [ \"${EFFIGY_FIXTURE_HOLD_SERIAL:-0}\" = 1 ]; then echo ready > holder.ready; while :; do sleep 1; done; fi; sleep 1; echo end >> runs.log"
 "#;
 
@@ -199,44 +211,79 @@ fn wait_state(
     }
 }
 
-/// Wait for the settlement of the run that was live before the signal, not
-/// merely for an open row whose owner is gone. `state: interrupted` is
-/// published for an open run as soon as its gate is free, which happens
-/// while its sentinel is still closing children and committing the parent
-/// row; `latest` names a settled run only once that row is closed. The
-/// barrier is the closed row for this exact run id, so a slow settle is
-/// waited for instead of being reported as a missing cleanup.
-fn wait_settled(
-    fixture: &Fixture,
-    task: &str,
-    run_id: &str,
-    wanted: &[&str],
-    timeout: Duration,
-) -> serde_json::Value {
+/// A plain foreground run retains no runtime record (`effigy.tasks-status.v3`):
+/// the end of the run is the released foreground gate, not a closed journal
+/// row. Waiting for that release is the definitive settle barrier, so a
+/// sentinel that is still stopping descendants cannot be mistaken for a lost
+/// run.
+fn wait_foreground_settled(fixture: &Fixture, task: &str, timeout: Duration) -> serde_json::Value {
     let started = Instant::now();
     loop {
         let status = fixture.status(task);
-        let settled = status["latest"]["run_id"].as_str() == Some(run_id);
-        if settled
-            && status["state"]
-                .as_str()
-                .is_some_and(|state| wanted.contains(&state))
-        {
+        if status["state"].as_str() == Some("not-recorded") && status["current"].is_null() {
             return status;
         }
         assert!(
             started.elapsed() < timeout,
-            "`{task}` run {run_id} never settled as {wanted:?}: {status}"
+            "`{task}` never released its foreground gate: {status}"
         );
         std::thread::sleep(Duration::from_millis(100));
     }
 }
 
-fn kill_case(signal: i32, expected_state: &str) {
+/// The exact run is gone too, not merely absent from a listing: the same
+/// barrier the CLI proof states for a foreground completion.
+fn assert_run_not_recorded(fixture: &Fixture, run_id: &str, cell: &str) {
+    let output = fixture
+        .effigy(&["run", "status", run_id, "--json"])
+        .output_owned()
+        .expect("run status");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.status.success(), "{cell}: {text}");
+    assert!(
+        text.contains("not-recorded") || text.contains("not recorded"),
+        "{cell}: {text}"
+    );
+}
+
+/// Wait until a journaled task has `wanted` closed rows, then return its view.
+/// A durable run commits its row before its successor's gate is released, so
+/// a bounded wait here is the barrier, not a guess about settle speed.
+fn wait_history_len(
+    fixture: &Fixture,
+    task: &str,
+    wanted: usize,
+    timeout: Duration,
+) -> serde_json::Value {
+    let started = Instant::now();
+    loop {
+        let status = fixture.status(task);
+        if status["history"]
+            .as_array()
+            .is_some_and(|history| history.len() >= wanted)
+        {
+            return status;
+        }
+        assert!(
+            started.elapsed() < timeout,
+            "`{task}` never recorded {wanted} runs: {status}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn kill_case(signal: i32) {
     let fixture = Fixture::new();
     let mut owner = fixture.effigy(&["hold"]).spawn_owned().expect("owner");
     let grandchild = fixture.read_pid("grandchild.pid", Duration::from_secs(15));
     let leader = fixture.read_pid("leader.pid", Duration::from_secs(15));
+    // Ready/go barrier: the live gate names our owner, so its signal router and
+    // admission already exist. A signal sent earlier could end the process by
+    // signal before it could route a stop, which is not this case's subject.
     let live = wait_state(&fixture, "hold", &["running"], Duration::from_secs(10));
     assert_eq!(
         live["current"]["pid"].as_u64(),
@@ -251,15 +298,11 @@ fn kill_case(signal: i32, expected_state: &str) {
     // SAFETY: our own direct child.
     assert_eq!(unsafe { libc::kill(owner.id() as i32, signal) }, 0);
     let exit = wait_exit(&mut owner, Duration::from_secs(30)).expect("owner exits");
-    if signal != libc::SIGKILL {
-        use std::os::unix::process::ExitStatusExt;
-        assert_eq!(
-            exit.code(),
-            Some(128 + signal),
-            "owner exits 128+n after settling (signal {:?})",
-            exit.signal()
-        );
-    }
+    assert_eq!(
+        exit.code(),
+        (signal != libc::SIGKILL).then(|| 128 + signal),
+        "only a routed signal exits 128+n; KILL ends the owner: {exit:?}"
+    );
 
     assert!(
         wait_gone(leader, Duration::from_secs(20)),
@@ -270,48 +313,41 @@ fn kill_case(signal: i32, expected_state: &str) {
         "background grandchild {grandchild} survived signal {signal}"
     );
 
-    let closed = wait_settled(
-        &fixture,
-        "hold",
-        &run_id,
-        &[expected_state],
-        Duration::from_secs(40),
+    let settled = wait_foreground_settled(&fixture, "hold", Duration::from_secs(40));
+    assert!(
+        settled["latest"].is_null(),
+        "a foreground completion keeps no history: {settled}"
     );
-    assert!(closed["current"].is_null(), "no live run remains: {closed}");
-    assert_eq!(
-        closed["latest"]["cleanup"], "complete",
-        "settle proved the group closed: {closed}"
-    );
-    if signal != libc::SIGKILL {
-        assert_eq!(closed["latest"]["signal"].as_i64(), Some(i64::from(signal)));
-    }
+    assert_run_not_recorded(&fixture, &run_id, &format!("signal={signal}"));
 }
 
 #[test]
-fn task_engine_kill_matrix_int_leaves_no_orphans_and_records_cancelled() {
-    kill_case(libc::SIGINT, "cancelled");
+fn task_engine_kill_matrix_int_leaves_no_orphans_and_releases_the_gate() {
+    kill_case(libc::SIGINT);
 }
 
 #[test]
-fn task_engine_kill_matrix_term_leaves_no_orphans_and_records_cancelled() {
-    kill_case(libc::SIGTERM, "cancelled");
+fn task_engine_kill_matrix_term_leaves_no_orphans_and_releases_the_gate() {
+    kill_case(libc::SIGTERM);
 }
 
 #[test]
-fn task_engine_kill_matrix_hup_leaves_no_orphans_and_records_cancelled() {
-    kill_case(libc::SIGHUP, "cancelled");
+fn task_engine_kill_matrix_hup_leaves_no_orphans_and_releases_the_gate() {
+    kill_case(libc::SIGHUP);
 }
 
-/// The owner cannot settle; its sentinel does, and status says the run was
-/// interrupted rather than reporting it live or successful.
+/// The owner cannot settle; its sentinel does, and the task never reports the
+/// dead run live or successful.
 #[test]
-fn task_engine_kill_matrix_kill_is_settled_by_the_sentinel_and_records_interrupted() {
-    kill_case(libc::SIGKILL, "interrupted");
+fn task_engine_kill_matrix_kill_is_settled_by_the_sentinel() {
+    kill_case(libc::SIGKILL);
 }
 
 /// A SIGKILLed holder's gate is raced by two waiting successors and its
 /// sentinel. Exactly one holder runs at a time: the runs log alternates
-/// start/end, and every run is accounted for in status history.
+/// start/end, and every durable run is accounted for in status history. The
+/// fixture declares `durable = true` because only a journaled run keeps the
+/// history this case proves; a plain foreground run retains none.
 #[test]
 fn task_engine_reclaim_race_after_holder_kill_never_overlaps_runs() {
     let fixture = Fixture::new();
@@ -370,7 +406,7 @@ fn task_engine_reclaim_race_after_holder_kill_never_overlaps_runs() {
         "runs overlapped: {lines:?}"
     );
 
-    let status = fixture.status("serial");
+    let status = wait_history_len(&fixture, "serial", 3, Duration::from_secs(40));
     let history = status["history"].as_array().expect("history");
     let states = history
         .iter()
@@ -449,7 +485,10 @@ fn task_engine_equivalent_spellings_from_two_processes_serialize() {
 
 /// A sequence whose step rebuilds the running binary (as `cargo run` of
 /// Effigy inside Effigy does) still starts its later runs: their helpers
-/// re-exec the startup image, never the replacement (I-SV4).
+/// re-exec the startup image, never the replacement (I-SV4). The tree is
+/// declared durable because the held startup image is the durable helper's
+/// pin; a memory foreground anchor refuses a replaced path by design instead
+/// of pinning one.
 #[test]
 fn task_engine_runs_after_the_running_binary_is_replaced_on_disk() {
     let fixture = Fixture::new();
@@ -460,6 +499,7 @@ fn task_engine_runs_after_the_running_binary_is_replaced_on_disk() {
     fs::write(
         fixture.repo.join("effigy.toml"),
         r#"[tasks.rebuild]
+durable = true
 run = [
   { run = "cp \"$EFFIGY_UNDER_TEST\" \"$EFFIGY_UNDER_TEST.new\" && mv \"$EFFIGY_UNDER_TEST.new\" \"$EFFIGY_UNDER_TEST\"" },
   { task = "after" },
@@ -498,10 +538,6 @@ run = "echo after >> runs.log"
 }
 
 #[test]
-#[cfg_attr(
-    target_os = "linux",
-    ignore = "known v0.15 rebuild defect: papercut 4461e320-ef29-4498-b7b6-c1e462e18456; owner lane v015-task-engine"
-)]
 fn sequence_signal_matrix_each_step_text_and_json_settles_the_entire_tree() {
     for json in [false, true] {
         for step in 0..3 {
@@ -537,7 +573,15 @@ fn sequence_signal_matrix_each_step_text_and_json_settles_the_entire_tree() {
                 eprintln!("sequence matrix {cell}");
                 let grandchild = fixture.read_sequence_pid("grandchild.pid", &mut owner, &cell);
                 let leader = fixture.read_sequence_pid("leader.pid", &mut owner, &cell);
+                // Ready/go barrier: the live gate names this owner, so the
+                // signal below interrupts an admitted run whose router exists
+                // instead of guessing that startup has finished.
                 let live = wait_state(&fixture, "hold", &["running"], Duration::from_secs(15));
+                assert_eq!(
+                    live["current"]["pid"].as_u64(),
+                    Some(u64::from(owner.id())),
+                    "{cell}: the live run names its owner: {live}"
+                );
                 let run_id = live["current"]["run_id"]
                     .as_str()
                     .unwrap_or_else(|| panic!("{cell}: live run id: {live}"))
@@ -546,8 +590,16 @@ fn sequence_signal_matrix_each_step_text_and_json_settles_the_entire_tree() {
                 assert_eq!(unsafe { libc::kill(owner.id() as i32, signal) }, 0);
                 let exit = wait_exit(&mut owner, Duration::from_secs(40)).expect("sequence exits");
                 let output = owner.wait_with_output().expect("drain owner output");
-                if signal != libc::SIGKILL {
-                    assert_eq!(exit.code(), Some(128 + signal), "{cell}: {output:?}");
+                {
+                    use std::os::unix::process::ExitStatusExt;
+                    assert_eq!(
+                        (exit.code(), exit.signal()),
+                        (
+                            (signal != libc::SIGKILL).then(|| 128 + signal),
+                            (signal == libc::SIGKILL).then_some(signal),
+                        ),
+                        "{cell}: {output:?}"
+                    );
                 }
                 if json && signal != libc::SIGKILL {
                     let envelope: serde_json::Value =
@@ -572,28 +624,27 @@ fn sequence_signal_matrix_each_step_text_and_json_settles_the_entire_tree() {
                     wait_gone(leader, Duration::from_secs(30)),
                     "leader survived"
                 );
-                let status = wait_settled(
-                    &fixture,
-                    "hold",
-                    &run_id,
-                    &["cancelled", "interrupted"],
-                    Duration::from_secs(30),
-                );
-                let latest = &status["latest"];
-                assert_eq!(latest["cleanup"], "complete", "{status}");
-                let children = latest["steps"].as_array().expect("step status");
-                assert_eq!(children.len(), step + 1, "remaining steps must not start");
-                assert!(
-                    children.iter().all(|child| child["cleanup"] == "complete"),
-                    "{children:?}"
-                );
+                let settled = wait_foreground_settled(&fixture, "hold", Duration::from_secs(40));
                 let effects = fs::read_to_string(fixture.repo.join("effects")).unwrap_or_default();
-                assert_eq!(effects.lines().count(), step);
+                assert_eq!(
+                    effects.lines().count(),
+                    step,
+                    "{cell}: later steps must not start: {settled}"
+                );
+                assert!(
+                    settled["history"].as_array().is_some_and(Vec::is_empty),
+                    "{cell}: a foreground completion keeps no history: {settled}"
+                );
+                assert_run_not_recorded(&fixture, &run_id, &cell);
             }
         }
     }
 }
 
+/// Text and JSON agree on exit, effects, env and nested gates. The fixture
+/// tree is declared durable because the nested step row this case reads
+/// (`latest.steps[1].steps[0]`) is journal-only; plain foreground steps keep
+/// no rows, and their `effects` file is the proof elsewhere in this file.
 #[test]
 fn sequence_text_json_exit_effects_env_and_nested_gate_parity() {
     for json in [false, true] {
@@ -602,6 +653,7 @@ fn sequence_text_json_exit_effects_env_and_nested_gate_parity() {
             fixture.repo.join("effigy.toml"),
             r#"
 [tasks.hold]
+durable = true
 lock = "shared"
 run = [
   { env = { SEQUENCE_VALUE = "from-step" } },
@@ -665,7 +717,7 @@ fn sequence_reference_cycles_fail_before_waiting_on_ancestor_gate() {
     let output = child.wait_with_output().unwrap();
     assert!(!output.status.success());
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("cycle"),
+        String::from_utf8_lossy(&output.stderr).contains("cyclic"),
         "{output:?}"
     );
 }

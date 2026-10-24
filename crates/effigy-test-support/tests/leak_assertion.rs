@@ -309,11 +309,46 @@ fn unknown_custody_keeps_fixture_files_and_never_signals_a_foreign_generation() 
         .spawn_owned()
         .unwrap();
     let mut receipt = custody::register(child.id(), "").unwrap();
-    receipt.identity = ident::process_identity(std::process::id())
-        .verified()
-        .unwrap()
-        .clone();
+    // A genuine identity of another live process, not a fabricated token: its
+    // pid is rewritten to the protected child so the receipt names the same
+    // group, and every other field is an observed one. Linux reports a start
+    // identity in clock ticks (10 ms on the default 100 Hz clock), so a
+    // process started inside the child's own tick yields an identical
+    // identity and the sweep would settle the foreign group instead of
+    // refusing it. Observe a genuine difference instead of assuming the clock
+    // separates two starts.
+    let observed = |pid: u32| match ident::process_identity(pid) {
+        effigy_kernel::observe::Observed::Verified(identity, _) => identity.clone(),
+        other => panic!("fixture identity: {other:?}"),
+    };
+    let real = observed(child.id());
+    let mut probes = Vec::new();
+    let foreign_identity = {
+        let started = std::time::Instant::now();
+        loop {
+            let probe = Command::new("sleep")
+                .arg("60")
+                .current_dir(foreign.path())
+                .spawn_owned()
+                .unwrap();
+            let candidate = observed(probe.id());
+            probes.push(probe);
+            if candidate.start != real.start {
+                break candidate;
+            }
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(5),
+                "no live process start differs from the protected child's"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    };
+    receipt.identity = foreign_identity;
     receipt.identity.pid = child.id();
+    assert_ne!(
+        receipt.identity.start, real.start,
+        "the injected receipt must be observably foreign"
+    );
     receipt.nonce = "deliberately-foreign-generation".into();
     let ledger = process::ledger().unwrap();
     let pending = tempfile::NamedTempFile::new_in(&ledger).unwrap();
@@ -331,7 +366,19 @@ fn unknown_custody_keeps_fixture_files_and_never_signals_a_foreign_generation() 
         .current_dir(&root)
         .spawn_owned()
         .unwrap();
-    assert!(std::panic::catch_unwind(|| drop(fixture)).is_err());
+    // The refusal is the point: cleanup must name the unsettled foreign
+    // generation rather than panicking for any reason at all.
+    let refusal =
+        std::panic::catch_unwind(|| drop(fixture)).expect_err("unknown custody must fail");
+    let refusal = refusal
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| refusal.downcast_ref::<&str>().copied())
+        .unwrap_or_default();
+    assert!(
+        refusal.contains("fixture cleanup failed") && refusal.contains("fixture process residue"),
+        "unknown custody named its refusal: {refusal}"
+    );
     assert!(
         child.try_wait().unwrap().is_none(),
         "foreign generation was signalled"

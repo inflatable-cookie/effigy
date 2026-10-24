@@ -1,12 +1,13 @@
 #!/bin/sh
-# Run only through test:kernel:custody:linux or test:kernel:gate:shared:linux
-# (host admission). Every host
+# Run only through a heavy-admitted test:kernel:*:linux, test:task-engine:*:linux,
+# test:fixtures:foreign-generation:linux or proof:runtime-*:linux route (host
+# admission). Every host
 # write, VM, image and fixture belongs to this fresh directory. No existing
 # Colima profile, Docker context or checkout is mounted or changed.
 set -eu
 proof_mode=${1:-custody}
 case "$proof_mode" in
-    custody|gate-shared|probe|helpers|runtime-storage|actual-copy|qualification|final-runtime) ;;
+    custody|gate-shared|probe|helpers|runtime-storage|actual-copy|qualification|final-runtime|task-engine|fixtures|task-engine-fixtures) ;;
     *) printf 'Unknown Linux proof mode: %s\n' "$proof_mode" >&2; exit 2 ;;
 esac
 proof_dir=$(mktemp -d /tmp/k208.XXXXXX)
@@ -33,6 +34,13 @@ tar -xf "$proof_dir/source.tar" -C "$source_dir"
 trap 'result=$?; colima stop --force > "$proof_dir/stop.log" 2>&1 || true; printf "exit=%s\\n" "$result" >> "$proof_dir/result.log"; exit "$result"' EXIT
 colima start --runtime docker --activate=false --ssh-config=false --template=false \
     --binfmt=false --cpus 2 --memory 3 --disk 10 --root-disk 10 --mount "$proof_dir:w" --mount-type virtiofs
+# Teardown fault affordance: with the private VM already running, fail before
+# the proof so the trap has to stop it and record the exit. Used only by the
+# teardown check; no route sets it.
+if [ "${EFFIGY_LINUX_PROOF_INJECT_FAILURE:-0}" = 1 ]; then
+    printf 'injected failure after VM start: %s\n' "$proof_mode" >&2
+    false
+fi
 mkdir -p "$proof_dir/cargo" "$proof_dir/target"
 export DOCKER_HOST="unix://$COLIMA_HOME/default/docker.sock"
 set --
@@ -64,6 +72,22 @@ docker run --rm --init --cpus 2 --memory 2g "$@" \
         apt-get install -y -qq curl procps git python3 strace lld pkg-config libssl-dev > /dev/null
         curl --fail --location --proto "=https" --tlsv1.2 https://get.nexte.st/latest/linux-arm | tar xz -C /usr/local/cargo/bin
         rustup component add clippy
+        if [ "$KERNEL_PROOF_MODE" = task-engine ] || [ "$KERNEL_PROOF_MODE" = task-engine-fixtures ] \
+            || [ "$KERNEL_PROOF_MODE" = fixtures ]; then
+            # The root task engine against the real Effigy binary, and the
+            # fixture ledger refusal of a foreign generation. Both need the root
+            # package build; the container is the Linux host, not a guest of
+            # another runtime, so no container backend is exercised.
+            export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_BUILD_JOBS=2
+            export RUSTFLAGS="-C link-arg=-fuse-ld=lld"
+            if [ "$KERNEL_PROOF_MODE" != fixtures ]; then
+                env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test task_engine_kill_matrix --test-threads 2 --no-fail-fast --retries 0 --no-tests fail
+            fi
+            if [ "$KERNEL_PROOF_MODE" != task-engine ]; then
+                env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-test-support --test leak_assertion -E "test(unknown_custody_keeps_fixture_files_and_never_signals_a_foreign_generation) | test(unknown_kernel_state_preserves_fixture_files)" --no-fail-fast --retries 0 --no-tests fail
+            fi
+            exit
+        fi
         if [ "$KERNEL_PROOF_MODE" = qualification ] || [ "$KERNEL_PROOF_MODE" = final-runtime ]; then
             export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_BUILD_JOBS=2
             export RUSTFLAGS="-C link-arg=-fuse-ld=lld"

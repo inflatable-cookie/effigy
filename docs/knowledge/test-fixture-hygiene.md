@@ -72,6 +72,20 @@ fixture removal to share this still-unreaped native authority. The foreign-
 generation proof still refuses its injected receipt while settling every known
 native owner, regardless of ledger iteration order.
 
+The foreign-generation proof injects the observed identity of another live
+process with the protected child's PID, so the receipt names the child's group
+with a generation that is genuinely not its own. A start identity is a clock
+tick on Linux: with a 100 Hz clock two processes started inside one tick share
+it, and the injected receipt then *is* the child's identity, so the sweep
+settles the foreign group and the fixture's `Drop` does not fail. That was the
+unexplained non-panic: it depended on which side of a tick boundary the test
+process and its child fell. The proof now starts probe processes until the
+observed start identity differs from the protected child's, asserts that
+difference, and requires the refusal to name `fixture process residue` rather
+than failing for any reason. `test:fixtures:foreign-generation:linux` and
+`test:task-engine:kill-matrix:linux` run the proof on Linux through the private
+disposable-VM route, which also covers the plain-task signal matrix there.
+
 The guard stops the entire group and reaps the direct child on drop, including
 unwind. A leader can exit between generation observations after TERM; cleanup
 uses the remaining existing 15-second budget to observe verified group closure.
