@@ -1180,6 +1180,12 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- Catalog `nginx` and `phpmyadmin` health checks no longer leave a running
+  stack unhealthy until `effigy dev` times out (`environment record: run
+  refused: Interrupted(TimedOut { phase: "settle", … })`). nginx counts any HTTP
+  response, a 404 included, as ready: BusyBox `wget` in `nginx:alpine` exits 1
+  on a 404, not GNU's 8. phpMyAdmin probes with `php`, since the image ships no
+  `wget`.
 - The `effigy state` surface no longer writes into `.effigy/state/`, the
   runtime kernel's private checkout root. Capture and apply hook context files
   now live under `.effigy/state-captures/`, so a state run can no longer leave

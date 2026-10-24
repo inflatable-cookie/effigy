@@ -26,7 +26,8 @@ services:
     ports:
       - "80:80"
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:80/"]
+      # The phpMyAdmin image ships no wget or curl; PHP is always present.
+      test: ["CMD", "php", "-r", "exit(@fsockopen('127.0.0.1', 80, $$e, $$s, 2) ? 0 : 1);"]
       interval: 5s
       timeout: 3s
       retries: 3
