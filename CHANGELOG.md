@@ -1181,6 +1181,11 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- `effigy test` suites no longer inherit the invoking task tree's runtime
+  capability. Inside a foreground tree such as `effigy qa`, every test that
+  used a private durable store failed with `late durable effect refused: parent
+  tree is foreground` (727 failures in milestone QA). Suites still run under
+  the caller's custody and process group.
 - Selectors reuse the real Oxide pool when a harness overrides `HOME`.
   `scripts/oxide-selector.sh` resolves the pool the way a normal run does — the
   account's real home from a passwd lookup, then the first `pool:` line of
