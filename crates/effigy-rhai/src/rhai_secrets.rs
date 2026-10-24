@@ -319,10 +319,57 @@ fn declared_rhai_secret_vault_path(
     Ok(PathBuf::from(path))
 }
 
-fn read_rhai_secret_passphrase(
+// The vault passphrase a same-process test injected into *this thread*.
+//
+// The process environment is shared, unsynchronised mutable state, so a
+// fixture that leaves a secret there does not own it: another fixture's
+// restore can take the value away between the write and the read, and the
+// reader then reports a locked vault (papercut 8de0a24a). Contract 052 K12
+// keeps secrets out of the global environment; an in-process test keeps its
+// passphrase in thread-local memory for the length of the scope instead. The
+// seam exists only in test builds, so it neither weakens nor extends the
+// production readers.
+#[cfg(test)]
+thread_local! {
+    static TEST_SECRET_PASSPHRASE: std::cell::RefCell<Option<SecretValue>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Clears the thread's injected passphrase when the test scope ends, on success
+/// or on unwinding.
+#[cfg(test)]
+pub(crate) struct TestRhaiSecretPassphraseGuard {
+    _scope: (),
+}
+
+#[cfg(test)]
+impl Drop for TestRhaiSecretPassphraseGuard {
+    fn drop(&mut self) {
+        TEST_SECRET_PASSPHRASE.with(|active| *active.borrow_mut() = None);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn install_test_rhai_secret_passphrase(value: &str) -> TestRhaiSecretPassphraseGuard {
+    TEST_SECRET_PASSPHRASE.with(|active| *active.borrow_mut() = Some(SecretValue::new(value)));
+    TestRhaiSecretPassphraseGuard { _scope: () }
+}
+
+#[cfg(test)]
+pub(crate) fn active_test_rhai_secret_passphrase() -> Option<SecretValue> {
+    TEST_SECRET_PASSPHRASE.with(|active| active.borrow().clone())
+}
+
+pub(crate) fn read_rhai_secret_passphrase(
     vault_path: &Path,
     optional_only: bool,
 ) -> Result<Option<SecretValue>, RhaiHostError> {
+    #[cfg(test)]
+    {
+        if let Some(passphrase) = active_test_rhai_secret_passphrase() {
+            return Ok(Some(passphrase));
+        }
+    }
     if let Ok(value) = std::env::var("EFFIGY_TEST_SECRETS_PASSPHRASE") {
         return Ok(Some(SecretValue::new(value)));
     }

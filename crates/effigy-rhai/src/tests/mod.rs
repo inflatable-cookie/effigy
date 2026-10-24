@@ -177,6 +177,28 @@ impl ScopedTestEnv {
             _lock: lock,
         }
     }
+
+    /// Holds the crate's environment lock while the named keys are absent.
+    ///
+    /// A test that proves the locked-vault or environment-independent path owns
+    /// the absence of these keys for its scope, exactly as `set_many` owns their
+    /// values, so no other guarded fixture can supply them underneath it.
+    fn unset_many(keys: &[&str]) -> Self {
+        let lock = TEST_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let previous = keys
+            .iter()
+            .map(|key| {
+                let key = (*key).to_owned();
+                let previous = std::env::var_os(&key);
+                std::env::remove_var(&key);
+                (key, previous)
+            })
+            .collect();
+        Self {
+            previous,
+            _lock: lock,
+        }
+    }
 }
 
 impl Drop for ScopedTestEnv {
