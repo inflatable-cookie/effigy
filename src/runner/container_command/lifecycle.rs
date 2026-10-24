@@ -501,6 +501,7 @@ fn prepare_container_up(
         ResolvedContainerSecretRuntime {
             delivery: policy.secret_delivery,
             env: Vec::new(),
+            warnings: Vec::new(),
         }
     };
     let compose_secret_env = match secret_runtime.delivery {
@@ -511,7 +512,11 @@ fn prepare_container_up(
             .collect::<Vec<_>>(),
         effigy_manifest::ManifestContainerSecretDelivery::RuntimeFiles => Vec::new(),
     };
-    let warnings = colima_profile_warnings(&policy, repo_root);
+    let mut warnings = colima_profile_warnings(&policy, repo_root);
+    // A declared container key this bring-up could not deliver is reported
+    // here, before the slow Compose work, and again in the bring-up's JSON
+    // envelope. Required keys already failed resolution above.
+    warnings.extend(secret_runtime.warnings.iter().cloned());
     emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
     operation.preparation_step = Some("runtime");

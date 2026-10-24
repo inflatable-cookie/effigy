@@ -476,7 +476,18 @@ fn own_managed_run(
         let container_repo_root = context
             .binding_resolution
             .exec_working_dir(context.repo())?;
-        let environment = environment_plan(context, &plan, &token, &role_schema_env)?;
+        // The environment `up` is itself a child Effigy process. It receives
+        // this session's local-dev access and passphrase on the existing
+        // internal env route (K12) — never in the rendered command, and never
+        // in the plan `--plan` displays, which builds its own
+        // `environment_plan` without this extension.
+        let environment =
+            environment_plan(context, &plan, &token, &role_schema_env)?.map(|mut environment| {
+                environment
+                    .up_env
+                    .extend(crate::runner::secret_session::secret_passphrase_child_env_strings());
+                environment
+            });
         let target = context.target(&plan.profile);
         refuse_live_legacy_holder(&target)?;
         let owned = OwnedRun {

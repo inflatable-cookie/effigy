@@ -9,7 +9,7 @@ use effigy_secrets::{
 };
 
 #[test]
-fn dev_uses_local_unlock_but_direct_get_still_requires_passphrase() {
+fn dev_and_get_use_the_local_dev_key_and_other_tasks_still_need_a_passphrase() {
     let root = support::temp_workspace("effigy-secrets-cli", "execution");
     write_fixture(&root, true);
 
@@ -25,19 +25,20 @@ fn dev_uses_local_unlock_but_direct_get_still_requires_passphrase() {
         String::from_utf8_lossy(&dev.stderr)
     );
 
+    // The dev key is the factor this machine holds, and `get` is the one
+    // command allowed to print a value through it.
     let direct_get = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(["secrets", "get", "api_token"])
         .current_dir(&root)
         .stdin(Stdio::null())
         .output()
         .expect("run direct get");
-    assert!(!direct_get.status.success());
-    let stderr = String::from_utf8_lossy(&direct_get.stderr);
     assert!(
-        stderr.contains("secret input requires an interactive TTY"),
-        "unexpected direct-get error: {stderr}"
+        direct_get.status.success(),
+        "direct get failed: {}",
+        String::from_utf8_lossy(&direct_get.stderr)
     );
-    assert!(!stderr.contains("tok_local_dev"));
+    assert!(String::from_utf8_lossy(&direct_get.stdout).contains("tok_local_dev"));
 
     let other_task = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .arg("serve")
@@ -48,6 +49,35 @@ fn dev_uses_local_unlock_but_direct_get_still_requires_passphrase() {
     assert!(!other_task.status.success());
     assert!(String::from_utf8_lossy(&other_task.stderr)
         .contains("secret input requires an interactive TTY"));
+}
+
+#[test]
+fn dev_key_alone_lets_doctor_report_what_it_can_read() {
+    let root = support::temp_workspace("effigy-secrets-cli", "execution");
+    write_fixture(&root, true);
+
+    let doctor = Command::new(env!("CARGO_BIN_EXE_effigy"))
+        .args(["secrets", "doctor", "--json"])
+        .current_dir(&root)
+        .stdin(Stdio::null())
+        .env_remove("EFFIGY_TEST_SECRETS_PASSPHRASE")
+        .env_remove("EFFIGY_INTERNAL_SECRET_PASSPHRASE")
+        .output()
+        .expect("run doctor");
+    assert!(
+        doctor.status.success(),
+        "doctor failed: {}\nstdout: {}",
+        String::from_utf8_lossy(&doctor.stderr),
+        String::from_utf8_lossy(&doctor.stdout)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&doctor.stdout).expect("doctor json");
+    assert_eq!(json["result"]["vault_state"]["status"], "unlocked");
+    assert_eq!(json["result"]["vault_state"]["unlock"], "local-dev-key");
+    assert_eq!(
+        json["result"]["vault_state"]["stored_keys"],
+        serde_json::json!(["api_token"])
+    );
+    assert!(!String::from_utf8_lossy(&doctor.stdout).contains("tok_local_dev"));
 }
 
 #[test]
@@ -273,6 +303,11 @@ run = "printf %s \"$API_TOKEN\""
         envelope.to_json_pretty().expect("serialize vault"),
     )
     .expect("write vault");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&vault_path, fs::Permissions::from_mode(0o600)).expect("secure vault");
+    }
     if let Some(key) = local_dev_key {
         let key_path = local_dev_unlock_key_path(&vault_path);
         fs::write(&key_path, key.expose()).expect("write local-dev key");

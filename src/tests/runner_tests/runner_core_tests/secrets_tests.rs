@@ -522,6 +522,10 @@ fn secrets_doctor_reports_locked_vault_without_passphrase() {
         }))
         .expect("init should succeed");
     }
+    // A vault no factor can open: no passphrase in this invocation, and no
+    // local-dev key for a dev session to read it through.
+    let vault_path = root.join(".effigy/secrets/local.vault");
+    fs::remove_file(local_dev_unlock_key_path(&vault_path)).expect("remove local-dev key");
     let _env = secret_test_env_clear();
 
     let out = run_command(Command::Secrets(SecretsArgs {
@@ -535,7 +539,52 @@ fn secrets_doctor_reports_locked_vault_without_passphrase() {
     assert!(parsed["vault"].get("identity").is_none());
     assert!(parsed["vault"].get("unlock").is_none());
     assert_eq!(parsed["vault_state"]["status"].as_str(), Some("locked"));
+    assert!(parsed["vault_state"]["unlock"].is_null());
     assert_eq!(parsed["ok"].as_bool(), Some(true));
+}
+
+#[test]
+fn secrets_doctor_reports_the_local_dev_key_and_the_keys_it_can_read() {
+    let root = temp_workspace("secrets-doctor-local-dev-key");
+    write_root_manifest(&root, declared_secrets_manifest());
+    {
+        let _env = secret_test_env("vault-passphrase", Some("postgres://secret-value"));
+        run_command(Command::Secrets(SecretsArgs {
+            subcommand: SecretsSubcommand::Init,
+            repo_override: Some(root.clone()),
+            output_json: false,
+        }))
+        .expect("init should succeed");
+        run_command(Command::Secrets(SecretsArgs {
+            subcommand: SecretsSubcommand::Set {
+                name: "database_url".to_owned(),
+            },
+            repo_override: Some(root.clone()),
+            output_json: false,
+        }))
+        .expect("set should succeed");
+    }
+    let _env = secret_test_env_clear();
+
+    let out = run_command(Command::Secrets(SecretsArgs {
+        subcommand: SecretsSubcommand::Doctor,
+        repo_override: Some(root.clone()),
+        output_json: true,
+    }))
+    .expect("doctor should read the vault through the local-dev key");
+
+    let parsed = parse_json_output_with_schema_version(&out, "effigy.secrets.v1", 1);
+    assert_eq!(parsed["vault_state"]["status"].as_str(), Some("unlocked"));
+    assert_eq!(
+        parsed["vault_state"]["unlock"].as_str(),
+        Some("local-dev-key")
+    );
+    assert_eq!(
+        parsed["vault_state"]["stored_keys"],
+        serde_json::json!(["database_url"])
+    );
+    // Names only: doctor never prints a stored value.
+    assert!(!out.contains("postgres://secret-value"));
 }
 
 #[cfg(unix)]

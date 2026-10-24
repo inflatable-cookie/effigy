@@ -1017,6 +1017,14 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- `effigy secrets doctor` reports what the local-dev key can read: when the key
+  exists it opens the vault with no passphrase, reports `vault: unlocked
+  (local-dev key)` and lists the stored key names (`vault_state.unlock` is
+  `local-dev-key` in JSON). `effigy secrets get` reads through the same key, so
+  a value a `dev` session already made readable on this machine no longer needs
+  `effigy secrets unlock` first. A passphrase this invocation holds or the
+  sealed local unlock credential still works, mutations still need a
+  passphrase, and values are still printed only by `get`.
 - `effigy install:local` now installs this checkout's **optimized release**
   binary: it builds once through `oxide build --release --bin effigy` and
   activates the exact release binary Oxide uplifts to `target/release/effigy`,
@@ -1223,6 +1231,21 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- `effigy dev` delivers a project's container secrets every time the vault can
+  be read. A dev session's local-dev access and the passphrase it just entered
+  now reach every child Effigy process the session starts — the managed
+  environment `up`, the run's supervisor, and a seeded workspace task — on the
+  existing internal env route, instead of the `container up` child resolving
+  nothing. The one-time local-dev upgrade passphrase is cached as the session's
+  passphrase, so a vault that upgrade just converted is readable by the
+  processes it started. A declared container key that is not delivered — the
+  vault is locked with no terminal, the key is declared but not stored, the
+  vault is missing, or the local-dev key cannot read it — prints one `[warn]`
+  line naming the key, the reason and the fix (`effigy secrets unlock`, or
+  rerunning `effigy dev` on a terminal), and is recorded under `warnings` in the
+  `container up` JSON envelope. Required keys still fail the bring-up. An empty
+  `runtime.env`/`runtime.json` is never written silently: a bring-up that
+  delivered nothing leaves the files alone.
 - `effigy dev` no longer refuses the Linux workspace artifact with `build
   succeeded but did not produce a current artifact` when a no-op rebuild
   reproduces bytes that were already built for this exact version (for example
