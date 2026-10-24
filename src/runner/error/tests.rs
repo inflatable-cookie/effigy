@@ -456,3 +456,28 @@ fn structured_details_name_what_failed_and_the_recovery() {
         .contains(&"phase: detached_activation".to_owned()));
     assert_eq!(human.next_action_text(), Some("effigy container down"));
 }
+
+#[test]
+fn task_run_details_name_the_task_and_the_failing_output() {
+    let details = serde_json::json!({
+        "schema": "effigy.task.run.v1",
+        "task": "fail",
+        "exit_code": 3,
+        "failed_step": "1",
+        "stderr": "error: widget is undefined\n",
+        "stdout": "building widget\n",
+    });
+    let error = RunnerError::CommandJsonFailure {
+        rendered: details.to_string(),
+    };
+    let human = error.human_error();
+    assert_eq!(human.what_failed(), "task `fail` failed");
+    assert_eq!(
+        human.evidence_lines(),
+        ["exit_code: 3", "stderr: error: widget is undefined"]
+    );
+    assert_eq!(
+        human.render_text(),
+        "[error] task `fail` failed\n  cause: exit_code: 3\n         stderr: error: widget is undefined"
+    );
+}

@@ -124,7 +124,9 @@ Build those with `effigy_ui::human::HumanError`: `render_text()` prints
 `[error] <what failed>` with `cause:` lines and a `next:` line, and `to_json()`
 is the same value for `--json` (`error.human` in the `effigy.command.v1`
 envelope). The runner's top-level printer uses it, so a `RunnerError` that
-renders through `Display` already supplies the sentence.
+renders through `Display` already supplies the sentence; a refusal that also
+carries structured details lifts their `cause`, phase and `stop`/`next` keys,
+so the text and `--json` tell the same story.
 
 Rust `Debug` output, enum and variant names, and nested
 `Unknown(StoreUnreadable(…))` chains must not reach a person. Render the value

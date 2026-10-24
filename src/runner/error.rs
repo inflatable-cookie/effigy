@@ -503,25 +503,25 @@ impl RunnerError {
 /// three facts, and keep the message's own sentence as what failed when the
 /// details do not improve on it.
 fn human_error_from_details(rendered: &str, details: &serde_json::Value) -> effigy_ui::HumanError {
-    let text = |key: &str| {
-        details
-            .get(key)
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
+    // A detail is a string or a number (`exit_code` is a JSON number).
+    let scalar = |key: &str| {
+        details.get(key).and_then(|value| match value {
+            serde_json::Value::String(text) => Some(text.trim().to_owned()),
+            serde_json::Value::Number(number) => Some(number.to_string()),
+            _ => None,
+        })
     };
-    let lifted = ["cause", "message"]
-        .iter()
-        .filter_map(|key| text(key))
-        .collect::<Vec<_>>();
+    let text = |key: &str| scalar(key).filter(|value| !value.is_empty());
     let base = human_error_from_display(rendered);
-    if lifted.is_empty() {
-        return base;
-    }
-    let mut error = effigy_ui::HumanError::new(lifted[0]);
-    for line in &lifted[1..] {
-        error = error.evidence(line.to_owned());
-    }
+    let mut error = match (text("cause"), text("message"), text("task")) {
+        (Some(cause), Some(message), _) if cause != message => {
+            effigy_ui::HumanError::new(cause).evidence(message)
+        }
+        (Some(cause), _, _) => effigy_ui::HumanError::new(cause),
+        (None, Some(message), _) => effigy_ui::HumanError::new(message),
+        (None, None, Some(task)) => effigy_ui::HumanError::new(format!("task `{task}` failed")),
+        (None, None, None) => base.clone(),
+    };
     for key in [
         "failure_kind",
         "phase",
@@ -530,26 +530,29 @@ fn human_error_from_details(rendered: &str, details: &serde_json::Value) -> effi
         "state",
         "readiness",
         "exposure",
-        "schema",
-        "task",
         "exit_code",
     ] {
         if let Some(value) = text(key) {
             error = error.evidence(format!("{key}: {value}"));
         }
     }
-    for key in ["stderr", "stdout"] {
-        if let Some(output) = text(key) {
-            error = error.evidence_output(key, output);
+    // The failing output is the evidence; stdout only when stderr is silent.
+    match text("stderr") {
+        Some(stderr) => error = error.evidence_output("stderr", &stderr),
+        None => {
+            if let Some(stdout) = text("stdout") {
+                error = error.evidence_output("stdout", &stdout);
+            }
         }
     }
-    match ["next_action", "next", "stop", "recovery"]
+    if let Some(action) = ["next_action", "next", "stop", "recovery"]
         .iter()
         .find_map(|key| text(key))
+        .or_else(|| base.next_action_text().map(str::to_owned))
     {
-        Some(action) => error.next_action(action.to_owned()),
-        None => error,
+        error = error.next_action(action);
     }
+    error
 }
 
 /// Lift a rendered refusal into the three facts, without inventing any: the
