@@ -6,6 +6,7 @@ use effigy_kernel::ctx::{Deadline, OpenReason};
 use effigy_kernel::migration::{self, MigrationError};
 use effigy_kernel::observe::Observed;
 use effigy_kernel::root::StateRoot;
+use effigy_kernel::store::StoreError;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -116,21 +117,34 @@ pub(super) fn run(
             Err(failure) => return Err(error(failure)),
         })
     };
-    // Resolve every retained checkout before import can create any state.
+    // Resolve every retained checkout before import can create any state. An
+    // unlocatable checkout that owns only completed history is dropped (Q-010);
+    // every unlocatable live partition is reported together.
     let mut destinations = BTreeMap::new();
+    let mut dropped = migration::DroppedHistory::default();
+    let mut unlocated_live = Vec::new();
     for partition in import_plan
         .as_ref()
         .into_iter()
         .flat_map(|plan| &plan.partitions)
     {
         if let Some(checkout) = partition.checkout {
-            let path = found
-                .resolve(
-                    &observe,
-                    checkout,
-                    partition.path_hint.as_deref().map(Path::new),
-                )
-                .map_err(error)?;
+            let path = match found.resolve(
+                &observe,
+                checkout,
+                partition.path_hint.as_deref().map(Path::new),
+            ) {
+                Ok(path) => path,
+                Err(StoreError::CheckoutUnlocated(_)) if !partition.live => {
+                    dropped.record(partition);
+                    continue;
+                }
+                Err(StoreError::CheckoutUnlocated(_)) => {
+                    unlocated_live.push(partition);
+                    continue;
+                }
+                Err(failure) => return Err(error(failure)),
+            };
             add_destination(
                 &mut destinations,
                 checkout,
@@ -139,6 +153,9 @@ pub(super) fn run(
                 partition.unresolved_runs,
             );
         }
+    }
+    if !unlocated_live.is_empty() {
+        return Err(error(migration::unlocated_live_report(&unlocated_live)));
     }
     if let Some(receipt) = committed.as_ref() {
         for destination in &receipt.destinations {
@@ -191,10 +208,16 @@ pub(super) fn run(
         for row in destinations.values() {
             text.push_str(&format!("  {}\n", row.root.display()));
         }
+        if dropped.checkouts > 0 {
+            text.push_str(&format!(
+                "{} recorded checkout(s) with no verified location hold only completed history and are dropped ({} resources, {} runs).\n",
+                dropped.checkouts, dropped.resources, dropped.runs
+            ));
+        }
         if !plan_only {
             text.push_str("Withdraw old Effigy launchers, let the reported writers settle, then run `effigy run migrate --legacy-launchers-stopped`. No destination state has been created.");
         }
-        let payload = serde_json::json!({"schema":SCHEMA,"state":state,"source":source.path(),"plan":import_plan,"committed":committed,"destinations":destinations.into_values().collect::<Vec<_>>(),"discovery":found});
+        let payload = serde_json::json!({"schema":SCHEMA,"state":state,"source":source.path(),"plan":import_plan,"committed":committed,"destinations":destinations.into_values().collect::<Vec<_>>(),"dropped_history":dropped,"discovery":found});
         let rendered = render(payload, &text, json);
         return if plan_only {
             Ok(rendered)
@@ -223,6 +246,13 @@ pub(super) fn run(
         Err(failure) => return Err(error(failure)),
     };
     let mut text = format!("Runtime migration committed in {} ms.\n", report.elapsed_ms);
+    let dropped = &report.receipt.dropped_history;
+    if dropped.checkouts > 0 {
+        text.push_str(&format!(
+            "  dropped completed history of {} unlocatable checkout(s): {} resources, {} runs\n",
+            dropped.checkouts, dropped.resources, dropped.runs
+        ));
+    }
     for destination in &report.receipt.destinations {
         text.push_str(&format!(
             "  {}: {} rows, {} unresolved runs\n",

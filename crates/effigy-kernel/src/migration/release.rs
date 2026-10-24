@@ -106,6 +106,7 @@ pub(super) fn assign(
             objects: BTreeSet::new(),
             release_owners: BTreeSet::new(),
             unresolved_runs: 0,
+            live: false,
         });
         part.release_owners.insert(name.clone());
         if part.release_owners.len() > 1 {

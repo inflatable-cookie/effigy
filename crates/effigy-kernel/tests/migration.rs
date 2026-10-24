@@ -676,6 +676,129 @@ fn migration_missing_checkout_refuses_before_any_destination_state_is_created() 
     assert_eq!(snapshot(checkout_root.path()), local_before);
 }
 
+#[test]
+fn migration_import_drops_an_unlocated_checkout_that_holds_only_history() {
+    let (source_home, source, _) = source();
+    let cx = effects(EffectClass::Mutate);
+    let mut store = Store::open(&cx, &source).unwrap();
+    let first = CheckoutId::new(CheckoutKind::LinkedWorktree, [7; 16]);
+    let gone = CheckoutId::new(CheckoutKind::EphemeralClone, [8; 16]);
+    store
+        .txn(&cx, |txn| {
+            txn.resource(
+                &ResourceId::environment(first, "dev").unwrap(),
+                "environment",
+            )?;
+            txn.resource(
+                &ResourceId::environment(gone, "dev").unwrap(),
+                "environment",
+            )?;
+            Ok::<_, StoreError>(())
+        })
+        .unwrap();
+    drop(store);
+    let destination_home = home();
+    let checkout_root = home();
+    let source_before = snapshot(source_home.path());
+    let report = migration::import(
+        &cx,
+        &source,
+        destination_home.path(),
+        &migration::LegacyQuiescence::launchers_withdrawn(),
+        &mut |id, _, _| {
+            if id == first {
+                Ok(location(checkout_root.path()))
+            } else {
+                Err(StoreError::CheckoutUnlocated(
+                    "fixture checkout is gone".into(),
+                ))
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(snapshot(source_home.path()), source_before);
+    let dropped = &report.receipt.dropped_history;
+    assert_eq!(dropped.checkouts, 1);
+    assert_eq!(dropped.resources, 1);
+    assert_eq!(dropped.sample.len(), 1);
+    assert!(report
+        .receipt
+        .destinations
+        .iter()
+        .all(|destination| destination.checkout != Some(gone)));
+}
+
+#[test]
+fn migration_import_refuses_every_unlocated_checkout_with_live_state_before_staging() {
+    use effigy_kernel::id::{RunId, Surface, TaskId};
+    let (source_home, source, _) = source();
+    let cx = effects(EffectClass::Mutate);
+    let first = CheckoutId::new(CheckoutKind::LinkedWorktree, [7; 16]);
+    let gone_a = CheckoutId::new(CheckoutKind::EphemeralClone, [8; 16]);
+    let gone_b = CheckoutId::new(CheckoutKind::EphemeralClone, [9; 16]);
+    let tasks: Vec<_> = [gone_a, gone_b]
+        .iter()
+        .map(|checkout| {
+            TaskId::new(*checkout, "", Surface::Published, "build", None)
+                .unwrap()
+                .resource()
+        })
+        .collect();
+    let mut store = Store::open(&cx, &source).unwrap();
+    store
+        .txn(&cx, |txn| {
+            txn.resource(
+                &ResourceId::environment(first, "dev").unwrap(),
+                "environment",
+            )?;
+            for task in &tasks {
+                txn.resource(task, "task")?;
+            }
+            Ok::<_, StoreError>(())
+        })
+        .unwrap();
+    drop(store);
+    // An open run created now, with no recorded identity, belongs to this boot.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let conn = rusqlite::Connection::open(source.path().join(DB_NAME)).unwrap();
+    for (index, task) in tasks.iter().enumerate() {
+        let id = RunId::new(1, [index as u8 + 1; 10]).unwrap().to_string();
+        conn.execute("INSERT INTO runs(run_id,owner,generation,kind,placement,phase,created_at,updated_at) VALUES (?1,?2,1,'task','host','active',?3,?3)",
+            rusqlite::params![id, task.name().to_string(), now]).unwrap();
+    }
+    drop(conn);
+    let destination_home = home();
+    let checkout_root = home();
+    let source_before = snapshot(source_home.path());
+    let local_before = snapshot(checkout_root.path());
+    let error = migration::import(
+        &cx,
+        &source,
+        destination_home.path(),
+        &migration::LegacyQuiescence::launchers_withdrawn(),
+        &mut |id, _, _| {
+            if id == first {
+                Ok(location(checkout_root.path()))
+            } else {
+                Err(StoreError::CheckoutUnlocated(
+                    "fixture checkout is gone".into(),
+                ))
+            }
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("2 recorded checkout(s) hold live runtime state"),
+        "{error}"
+    );
+    assert_eq!(snapshot(source_home.path()), source_before);
+    assert_eq!(snapshot(checkout_root.path()), local_before);
+}
+
 #[cfg(feature = "fault-injection")]
 #[test]
 fn migration_prepared_journals_refuse_read_and_write_without_creating_fresh_state() {

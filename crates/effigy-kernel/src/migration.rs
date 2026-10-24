@@ -6,9 +6,13 @@ mod copy;
 mod execute;
 mod fence;
 mod files;
-pub use adoption::{authority, Authority, ImportReceipt, ImportedDestination};
+pub use adoption::{
+    authority, Authority, DroppedCheckout, DroppedHistory, ImportReceipt, ImportedDestination,
+};
 pub use control::{request_legacy_stop, stop_legacy_writer, LegacyStop, WriterTarget};
-pub use execute::{committed, import, CheckoutLocation, CheckoutResolver, ImportReport};
+pub use execute::{
+    committed, import, unlocated_live_report, CheckoutLocation, CheckoutResolver, ImportReport,
+};
 mod plan;
 mod release;
 pub(crate) use fence::borrow_source_scope;
