@@ -157,12 +157,17 @@ pub fn resolve_effigy_repo_root(start: &Path, max_depth: usize) -> Option<PathBu
 /// itself. Walk up from the labelled directory looking for `effigy.toml`
 /// and compare the resolved owning repo against `repo_root`. Falls back to
 /// an exact match when no marker is found within the walk-up budget.
+///
+/// Both sides compare by the checkout that owns them: a nested catalog
+/// directory carries no Git metadata of its own and belongs to the enclosing
+/// checkout, which is the checkout its containers are labelled with
+/// (contract 052 §7.1).
 pub fn working_dir_belongs_to_repo(working_dir: &str, repo_root: &Path) -> bool {
     let working_dir_path = Path::new(working_dir);
-    match resolve_effigy_repo_root(working_dir_path, MAX_REPO_ROOT_WALKUP) {
-        Some(resolved) => resolved == repo_root,
-        None => working_dir_path == repo_root,
-    }
+    let labelled = resolve_effigy_repo_root(working_dir_path, MAX_REPO_ROOT_WALKUP)
+        .unwrap_or_else(|| working_dir_path.to_path_buf());
+    effigy_core::worktree_scope::checkout_root(&labelled)
+        == effigy_core::worktree_scope::checkout_root(repo_root)
 }
 
 fn resolve_repo_root_for_project_rows(

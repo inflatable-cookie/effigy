@@ -1223,6 +1223,16 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- A container or task declared by a nested catalog directory now belongs to the
+  enclosing checkout. A nested catalog directory carries no Git metadata of its
+  own, so it resolved a second checkout identity and its own
+  `.effigy/state/kernel.db`; a task run fenced its remote workload against the
+  environment record in that other store and refused with `StaleGeneration`
+  after `auto-up`, and every nested container was labelled with the catalog
+  directory instead of the checkout. Identity, environment journal, render
+  objects and container labels now resolve through the nearest enclosing
+  directory carrying `.git` (contract 052 §7.1); a nested repository or
+  submodule, and every root checkout or linked worktree, keeps its own.
 - `effigy dev` no longer refuses the Linux workspace artifact with `build
   succeeded but did not produce a current artifact` when a no-op rebuild
   reproduces bytes that were already built for this exact version (for example

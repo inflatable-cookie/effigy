@@ -561,19 +561,16 @@ pub(crate) fn resolve_compose_source(
         config,
         &mut compose_document,
     )?;
-    if let Some(token) = runtime_scope_token(repo_root, config) {
-        apply_runtime_scope_labels(
-            &mut compose_document,
-            &token,
-            project_name,
-            &repo_root
-                .canonicalize()
-                .unwrap_or_else(|_| repo_root.to_path_buf()),
-        )?;
-    }
-    let checkout = repo_root
+    // The checkout label, fence and generation name the checkout that owns
+    // this environment's journal. A nested catalog directory with no Git
+    // metadata of its own is part of the enclosing checkout (contract 052
+    // §7.1), so it never labels containers as a second checkout.
+    let checkout = effigy_core::worktree_scope::checkout_root(repo_root)
         .canonicalize()
         .unwrap_or_else(|_| repo_root.to_path_buf());
+    if let Some(token) = runtime_scope_token(repo_root, config) {
+        apply_runtime_scope_labels(&mut compose_document, &token, project_name, &checkout)?;
+    }
     for service in compose_document.services.values_mut() {
         upsert_yaml_label(
             &mut service.extra,

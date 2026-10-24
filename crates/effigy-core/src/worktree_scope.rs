@@ -66,14 +66,36 @@ const MARKER_SECTION: &str = "effigy";
 const MARKER_KEY: &str = "runtimescope";
 const MARKER_VALUE: &str = "ephemeral";
 
+/// The checkout that owns `path`'s runtime identity and durable state.
+///
+/// Git discovery is lexical and upward: the nearest ancestor (or `path`
+/// itself) carrying `.git` — a directory for a primary checkout or clone, a
+/// file for a linked worktree or submodule — owns everything below it. A
+/// nested catalog directory with no Git metadata of its own therefore belongs
+/// to the enclosing checkout (contract 052 §7.1: durable checkout state
+/// belongs to the resolved invocation root, not a nested catalog's cwd), while
+/// a nested repository or submodule keeps its own identity. A path with no Git
+/// metadata anywhere above it is its own checkout.
+pub fn checkout_root(path: &Path) -> std::path::PathBuf {
+    path.ancestors()
+        .find(|candidate| {
+            !candidate.as_os_str().is_empty() && candidate.join(".git").symlink_metadata().is_ok()
+        })
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
 /// Resolve the runtime scope behind `repo_root`, or `None` when the checkout
-/// keeps primary-checkout behavior.
+/// keeps primary-checkout behavior. A nested catalog directory resolves the
+/// enclosing checkout's scope; see [`checkout_root`].
 ///
 /// A linked worktree always wins: its `.git` is a file pointing into the
 /// primary checkout, so the clone marker (which only meaningful for a `.git`
 /// directory) cannot apply. Reading the marker is a local-only operation —
 /// see [`local_config_marks_ephemeral`].
 pub fn resolve(repo_root: &Path) -> io::Result<Option<RuntimeScope>> {
+    let repo_root = checkout_root(repo_root);
+    let repo_root = repo_root.as_path();
     if let Some(layout) = detect_linked_worktree(repo_root) {
         return Ok(Some(RuntimeScope {
             kind: ScopeKind::LinkedWorktree,
@@ -109,7 +131,7 @@ pub fn git_directory(repo_root: &Path) -> io::Result<Option<std::path::PathBuf>>
     if let Some(scope) = resolve(repo_root)? {
         return Ok(Some(scope.token_dir));
     }
-    let git = repo_root.join(".git");
+    let git = checkout_root(repo_root).join(".git");
     Ok(git.is_dir().then_some(git))
 }
 
@@ -146,16 +168,19 @@ fn read_token(dir: &Path) -> io::Result<Option<String>> {
 
 /// All checkout shapes need an identity for kernel resources. Primary Git
 /// checkouts keep their token beside Git metadata; non-Git manifests keep it
-/// in their private Effigy directory. Scope naming still uses only `resolve`.
+/// in their private Effigy directory. Both answer for the enclosing checkout,
+/// so a nested catalog directory shares its checkout's identity rather than
+/// minting a second one (see [`checkout_root`]).
 fn identity_dir(repo_root: &Path) -> io::Result<std::path::PathBuf> {
     if let Some(scope) = resolve(repo_root)? {
         return Ok(scope.token_dir);
     }
-    let git = repo_root.join(".git");
+    let root = checkout_root(repo_root);
+    let git = root.join(".git");
     Ok(if git.is_dir() {
         git
     } else {
-        repo_root.join(".effigy")
+        root.join(".effigy")
     })
 }
 
@@ -216,9 +241,10 @@ pub fn load_scoped(repo_root: &Path) -> io::Result<Option<(ScopeKind, String)>> 
 pub const CHECKOUT_TOKEN_FILE: &str = "effigy-checkout-id";
 
 /// A primary checkout's identity token, created once in its `.git`
-/// directory. `None` when `repo_root` has no `.git` directory of its own.
+/// directory. `None` when neither `repo_root` nor an ancestor is a Git
+/// checkout.
 pub fn load_or_create_checkout_token(repo_root: &Path) -> io::Result<Option<String>> {
-    let git_dir = repo_root.join(".git");
+    let git_dir = checkout_root(repo_root).join(".git");
     if !git_dir.is_dir() {
         return Ok(None);
     }
@@ -227,7 +253,9 @@ pub fn load_or_create_checkout_token(repo_root: &Path) -> io::Result<Option<Stri
 
 /// The recorded primary checkout token without creating one.
 pub fn load_checkout_token(repo_root: &Path) -> io::Result<Option<String>> {
-    let path = repo_root.join(".git").join(CHECKOUT_TOKEN_FILE);
+    let path = checkout_root(repo_root)
+        .join(".git")
+        .join(CHECKOUT_TOKEN_FILE);
     match fs::read_to_string(&path) {
         Ok(value) => valid_token(&value).map(Some).ok_or_else(|| {
             io::Error::new(
@@ -473,6 +501,89 @@ mod tests {
         let next = load_or_create(&checkout).unwrap().unwrap();
         assert_ne!(first, next);
         assert!(is_live(&checkout, &next));
+    }
+
+    #[test]
+    fn nested_catalog_directory_belongs_to_the_enclosing_checkout() {
+        let root = tempfile::tempdir().unwrap();
+        let checkout = root.path().join("repo");
+        fs::create_dir_all(checkout.join(".git")).unwrap();
+        // A nested catalog directory with its own manifest and no Git
+        // metadata of its own (contract 052 §7.1).
+        let nested = checkout.join("apps/site");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("effigy.toml"), "[catalog]\n").unwrap();
+
+        assert_eq!(checkout_root(&nested), checkout);
+        let token = load_or_create_checkout_token(&checkout).unwrap().unwrap();
+        assert_eq!(checkout_token(&nested).unwrap(), Some(token.clone()));
+        assert_eq!(checkout_token(&checkout).unwrap(), Some(token));
+        assert_eq!(git_directory(&nested).unwrap(), Some(checkout.join(".git")));
+        // It never mints a second checkout, so it writes no journal of its own.
+        assert!(!nested.join(".effigy").exists());
+    }
+
+    #[test]
+    fn nested_scoped_checkout_scope_reaches_its_catalog_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let checkout = clone_checkout(root.path(), MARKED);
+        let nested = checkout.join("apps/site");
+        fs::create_dir_all(&nested).unwrap();
+        let token = load_or_create(&checkout).unwrap().unwrap();
+        assert_eq!(load(&nested).unwrap(), Some(token));
+        assert_eq!(
+            load_or_create_scoped(&nested).unwrap(),
+            Some((
+                ScopeKind::EphemeralClone,
+                load_or_create(&checkout).unwrap().unwrap()
+            ))
+        );
+    }
+
+    #[test]
+    fn nested_repository_keeps_its_own_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let checkout = root.path().join("repo");
+        fs::create_dir_all(checkout.join(".git")).unwrap();
+        // A nested repository carries its own Git metadata, so it is a
+        // checkout in its own right rather than part of its parent.
+        let inner = checkout.join("vendor/library");
+        fs::create_dir_all(inner.join(".git")).unwrap();
+        assert_eq!(checkout_root(&inner), inner);
+        let outer = load_or_create_checkout_token(&checkout).unwrap().unwrap();
+        let own = load_or_create_checkout_token(&inner).unwrap().unwrap();
+        assert_ne!(outer, own);
+        assert_eq!(checkout_token(&inner).unwrap(), Some(own));
+        // A submodule is a file-shaped `.git`; it is still its own checkout.
+        let submodule = checkout.join("vendor/submodule");
+        fs::create_dir_all(&submodule).unwrap();
+        fs::write(submodule.join(".git"), "gitdir: ../.git/modules/sub\n").unwrap();
+        assert_eq!(checkout_root(&submodule), submodule);
+    }
+
+    #[test]
+    fn root_checkout_linked_worktree_and_plain_directory_keep_their_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let git_root = root.path().join("repo");
+        fs::create_dir_all(git_root.join(".git")).unwrap();
+        assert_eq!(checkout_root(&git_root), git_root);
+
+        let worktree = root.path().join("worktree");
+        let private = root.path().join("repo/.git/worktrees/worktree");
+        fs::create_dir_all(&worktree).unwrap();
+        fs::create_dir_all(&private).unwrap();
+        fs::write(
+            worktree.join(".git"),
+            format!("gitdir: {}\n", private.display()),
+        )
+        .unwrap();
+        fs::write(private.join("commondir"), "../..\n").unwrap();
+        assert_eq!(checkout_root(&worktree), worktree);
+
+        // No Git metadata anywhere above it: the directory is its own checkout.
+        let plain = root.path().join("plain/nested");
+        fs::create_dir_all(&plain).unwrap();
+        assert_eq!(checkout_root(&plain), plain);
     }
 
     #[test]

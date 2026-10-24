@@ -114,6 +114,23 @@ struct NestedContainerFixture {
     _env: EnvGuard,
 }
 
+/// Make `root` a primary Git checkout with its fixture content committed.
+fn git_init(root: &Path) {
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .expect("run fixture git");
+        assert!(output.status.success(), "fixture git {args:?}: {output:?}");
+    };
+    git(&["init", "--initial-branch=main"]);
+    git(&["config", "user.name", "Nested Catalog Fixture"]);
+    git(&["config", "user.email", "nested-catalog@example.invalid"]);
+    git(&["add", "--all"]);
+    git(&["commit", "-m", "fixture checkout"]);
+}
+
 fn write_compose(root: &Path, service: &str) {
     fs::write(
         root.join("docker-compose.yml"),
@@ -124,15 +141,17 @@ fn write_compose(root: &Path, service: &str) {
 
 /// Install a fake docker/colima pair that logs every invocation, including
 /// the compose `-f`/`-p` selectors, and reports the child project as running.
-fn install_logging_fake_runtime(root: &Path, cattle_dir: &Path) {
+///
+/// Both containers carry the owning checkout's label: a nested catalog
+/// directory is part of the enclosing checkout, so it declares no second
+/// checkout of its own (contract 052 §7.1).
+fn install_logging_fake_runtime(root: &Path) {
     let bin_dir = root.join("bin");
     fs::create_dir_all(&bin_dir).expect("mkdir fake runtime bin");
 
     let docker = bin_dir.join("docker");
     let docker_log = root.join("fake-docker.log");
     let root_canonical = fs::canonicalize(root).expect("canonicalize fixture root");
-    let cattle_canonical =
-        fs::canonicalize(cattle_dir).expect("canonicalize cattle dir for compose rows");
     fs::write(
         &docker,
         format!(
@@ -180,7 +199,7 @@ if [ "$1" = compose ]; then
 fi
 if [ "$1" = inspect ]; then
   case "$2" in
-    cattle-a1b2|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) id=$(printf '%064d' 0 | tr 0 a); cname=cattle-a1b2; project=cattle-grid-cattle; service=cattle; checkout='{cattle}' ;;
+    cattle-a1b2|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) id=$(printf '%064d' 0 | tr 0 a); cname=cattle-a1b2; project=cattle-grid-cattle; service=cattle; checkout='{root}' ;;
     workspace-a1b2|bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) id=$(printf '%064d' 0 | tr 0 b); cname=workspace-a1b2; project=root-workspace; service=workspace; checkout='{root}' ;;
     *) exit 1 ;;
   esac
@@ -230,7 +249,7 @@ if [ "$1" = ps ]; then
     case "$1" in
       --format)
         printf 'cattle-a1b2\tUp 2 minutes\t\t'
-        printf 'cattle-grid-cattle\t{cattle}\tcattle\t0\n'
+        printf 'cattle-grid-cattle\t{root}\tcattle\t0\n'
         printf 'workspace-a1b2\tUp 2 minutes\t\t'
         printf 'root-workspace\t{root}\tworkspace\t0\n'
         exit 0
@@ -243,7 +262,6 @@ fi
 exit 0
 "#,
             log = docker_log.display(),
-            cattle = cattle_canonical.display(),
             root = root_canonical.display(),
         ),
     )
@@ -281,7 +299,12 @@ fn nested_container_fixture(name: &str) -> NestedContainerFixture {
     fs::create_dir_all(&pen).expect("mkdir pen");
     write_manifest(&pen.join("effigy.toml"), PEN_MANIFEST);
     write_compose(&pen, "sty");
-    install_logging_fake_runtime(&root, &cattle);
+    // The root catalog is a Git checkout, as a monorepo is. The nested
+    // catalog directories below it carry no Git metadata of their own, so
+    // their environments and task runs share this checkout's identity and
+    // journal (contract 052 §7.1) instead of minting one journal each.
+    git_init(&root);
+    install_logging_fake_runtime(&root);
     let old_path = std::env::var("PATH").ok().unwrap_or_default();
     let env = EnvGuard::set_many(&[
         (

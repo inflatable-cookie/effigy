@@ -72,11 +72,15 @@ pub fn observe_root(
     }
 }
 
+/// The environment journal belongs to the checkout that owns `repo_root`, not
+/// to a nested catalog's directory (contract 052 §7.1). A nested catalog
+/// directory with no Git metadata of its own therefore shares the enclosing
+/// checkout's journal with the task runs that fence it.
 pub(crate) fn location(
     repo_root: &std::path::Path,
 ) -> Result<effigy_kernel::migration::CheckoutLocation, EnvError> {
     Ok(effigy_kernel::migration::CheckoutLocation {
-        root: repo_root.into(),
+        root: effigy_core::worktree_scope::checkout_root(repo_root),
         git_directory: effigy_core::worktree_scope::git_directory(repo_root)
             .map_err(|error| EnvError::Invalid(error.to_string()))?,
     })

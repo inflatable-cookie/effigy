@@ -287,6 +287,12 @@ esac
                 Some(root.join("host-home/.effigy").display().to_string()),
             ),
             ("HOME", Some(root.join("host-home").display().to_string())),
+            // The artifact proof builds with this checkout's binary through its
+            // private host shim. An invoking `effigy test` hands suites its own
+            // `EFFIGY_EXECUTABLE`, which would run the nested build through that
+            // binary instead, so the artifact's version would come from a
+            // different build than the caller's expectation.
+            ("EFFIGY_EXECUTABLE", None),
             ("EFFIGY_RECOVERY_PROJECT", None),
             ("EFFIGY_DISABLE_HOST_CONTAINER_LEASE", Some("1".to_owned())),
         ]);

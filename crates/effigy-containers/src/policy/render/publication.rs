@@ -27,7 +27,11 @@ pub(crate) fn state_home() -> Result<PathBuf, ContainerPolicyError> {
 }
 
 pub(super) fn object_directory(repo_root: &Path) -> Result<PathBuf, ContainerPolicyError> {
-    let root = effigy_kernel::fs::DirFd::open(repo_root).map_err(error)?;
+    // Render objects are checkout state: a nested catalog directory publishes
+    // into its checkout's journal, never a journal of its own (contract 052
+    // §7.1).
+    let checkout = effigy_core::worktree_scope::checkout_root(repo_root);
+    let root = effigy_kernel::fs::DirFd::open(&checkout).map_err(error)?;
     Ok(root.path().join(".effigy/state/objects"))
 }
 

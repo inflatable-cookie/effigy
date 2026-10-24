@@ -1144,7 +1144,9 @@ impl OwnershipContext {
     ) -> Result<Self, ContainerExecError> {
         let declared =
             super::restart_recovery::declared_service_names(policy, &policy.compose_files)?;
-        let canonical = repo_root
+        // Ownership is the checkout's, not a nested catalog directory's: the
+        // generated labels name the enclosing checkout (contract 052 §7.1).
+        let canonical = effigy_core::worktree_scope::checkout_root(repo_root)
             .canonicalize()
             .map_err(|error| ContainerExecError::Launch {
                 command: "verify selected checkout".to_owned(),
