@@ -1762,8 +1762,7 @@ pub fn container_last_log_line_for_policy(
     Ok(combined
         .lines()
         .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .next_back()
+        .rfind(|line| !line.is_empty())
         .unwrap_or_default()
         .to_owned())
 }
@@ -1922,6 +1921,10 @@ pub fn run_compose_invocation_capture_with_env(
 /// reported to `on_line` as it is written, so the caller can name what the
 /// runtime is doing while it does it (effigy#313). A stop request ends the
 /// invocation's whole process group and returns its status.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one invocation needs its policy, argv, env, stop flag and line sink"
+)]
 pub fn run_compose_invocation_streaming_with_env(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,

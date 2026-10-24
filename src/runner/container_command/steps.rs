@@ -81,7 +81,7 @@ pub(super) fn during<T>(
             Ok(value)
         }
         Err(error) => {
-            step.fail(&format!("{} failed: {}", summary.as_ref(), error));
+            step.fail(format!("{} failed: {}", summary.as_ref(), error));
             Err(error)
         }
     }

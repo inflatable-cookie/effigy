@@ -414,7 +414,7 @@ fn run_container_up_inner(
     match environment::activate(&bring_up, holders) {
         Ok(()) => settling.succeed("environment settled"),
         Err(error) => {
-            settling.fail(&error.to_string());
+            settling.fail(error.to_string());
             return Err(error);
         }
     }
@@ -483,7 +483,7 @@ fn prepare_container_up(
             prepared
         }
         Err(error) => {
-            ports_step.fail(&error.to_string());
+            ports_step.fail(error.to_string());
             return Err(error);
         }
     };
@@ -721,7 +721,7 @@ fn run_container_up_compose(
         }
         Err(error) => {
             compose_steps.finish_unfinished(false, "the runtime reported the stack as failed");
-            whole_stack.fail(&format!("the stack did not start: {error}"));
+            whole_stack.fail(format!("the stack did not start: {error}"));
             Ok(Some(AttachedComposeEnd::Failed(error.to_string())))
         }
     }

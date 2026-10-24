@@ -16,7 +16,7 @@ const DOCKER_UP_PROGRESS: &str = "\
 fn a_docker_activation_reads_as_one_step_per_service_move() {
     let events = DOCKER_UP_PROGRESS
         .lines()
-        .map(|line| parse_compose_step_event(line))
+        .map(parse_compose_step_event)
         .collect::<Vec<_>>();
 
     assert_eq!(

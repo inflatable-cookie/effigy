@@ -105,15 +105,7 @@ pub(super) fn run_detached_command_with_env(
 ) -> Result<Output, ContainerExecError> {
     // One spawn path for a detached invocation, watched or not: a caller that
     // shows progress must not cost a second host-process boundary.
-    run_detached_command_streaming_with_env(
-        repo_root,
-        program,
-        args,
-        label,
-        env,
-        None,
-        &mut |_| {},
-    )
+    run_detached_command_streaming_with_env(repo_root, program, args, label, env, None, &mut |_| {})
 }
 
 /// [`run_detached_command_with_env`], reporting each line as it arrives.
