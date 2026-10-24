@@ -1181,6 +1181,10 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- The documented `effigy.completion.v2` payload lists the `fmt` and `fmt-rust`
+  commands. The completion contract test compares that example with live
+  output, so the example now carries the builtin formatter rows it had
+  drifted past.
 - A deleted checkout's stale gateway route no longer blocks every other
   project. Route-table writes only check added or changed routes against
   domain owners, so `container up`/`down` elsewhere stops failing with `domain

@@ -177,6 +177,58 @@ kind = "tag"
 }
 
 // ---------------------------------------------------------------------------
+// the kernel helper the Run re-execs
+// ---------------------------------------------------------------------------
+
+/// The kernel helper binary the release Run re-execs for process custody.
+///
+/// Custody re-execs the startup image as its sentinel and supervisor
+/// (`__kernel-sentinel`, `__kernel-supervise`; contract 052 §5.7), so the tests
+/// supply `kernel-custody-fixture` instead of the libtest binary. The selector
+/// `test:release:runtime-storage` builds it and exports
+/// `EFFIGY_KERNEL_CUSTODY_FIXTURE`; an ordinary `effigy test` run prepares it
+/// through `effigy-kernel`'s `tests/fixture_binary.rs`, so it is either beside
+/// the test executable's profile directory or, when Oxide uplifts final
+/// binaries to the workspace (Oxide #106), in `target/<profile>/`.
+fn custody_fixture() -> effigy_kernel::supervise::Executable {
+    let executable = std::env::current_exe().expect("test executable");
+    let profile_dir = executable
+        .parent()
+        .and_then(Path::parent)
+        .expect("target profile directory");
+    let profile = profile_dir
+        .file_name()
+        .expect("target profile directory name");
+    let candidates: Vec<PathBuf> = std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE")
+        .map(PathBuf::from)
+        .into_iter()
+        .chain([
+            profile_dir.join("kernel-custody-fixture"),
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target")
+                .join(profile)
+                .join("kernel-custody-fixture"),
+        ])
+        .collect();
+    for candidate in &candidates {
+        if candidate.is_file() {
+            return effigy_kernel::supervise::Executable::capture(candidate)
+                .unwrap_or_else(|error| panic!("capture `{}`: {error}", candidate.display()));
+        }
+    }
+    panic!(
+        "`kernel-custody-fixture` is missing, and the release Run re-execs it for process \
+         custody. `effigy test` prepares it; `effigy test:release:runtime-storage` builds it \
+         and names it. Looked for: {}",
+        candidates
+            .iter()
+            .map(|candidate| candidate.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+}
+
+// ---------------------------------------------------------------------------
 // the effects a test drives
 // ---------------------------------------------------------------------------
 
@@ -218,17 +270,7 @@ struct TestEffects {
 impl TestEffects {
     fn new(root: &Path) -> Self {
         Self {
-            inner: GitEffects::with_executable(
-                root,
-                effigy_kernel::supervise::Executable::capture(Path::new(
-                    &std::env::var_os("EFFIGY_KERNEL_CUSTODY_FIXTURE").unwrap_or_else(|| {
-                        Path::new(env!("CARGO_MANIFEST_DIR"))
-                            .join("../../target/debug/kernel-custody-fixture")
-                            .into_os_string()
-                    }),
-                ))
-                .unwrap(),
-            ),
+            inner: GitEffects::with_executable(root, custody_fixture()),
             pushes: Vec::new(),
             commit_pushes: Vec::new(),
             push_attempts: 0,
