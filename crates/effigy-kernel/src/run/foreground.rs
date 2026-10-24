@@ -311,7 +311,7 @@ fn check_predecessors(
         Observed::Absent(_) => {}
         Observed::Unknown(reason) => {
             return Err(RunError::Invalid(format!(
-                "foreground predecessor evidence unavailable: {reason:?}"
+                "foreground predecessor evidence unavailable: {reason}"
             )))
         }
     }

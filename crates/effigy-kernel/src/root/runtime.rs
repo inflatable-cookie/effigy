@@ -77,7 +77,8 @@ impl StateRoot {
                                 .is_none() => {}
                         other => {
                             return Err(unreadable(format!(
-                                "checkout generation disagrees: {}",
+                                "{}: the checkout generation disagrees with its binding ({})",
+                                location.root.display(),
                                 other.unproven()
                             )))
                         }
@@ -85,7 +86,8 @@ impl StateRoot {
                 }
                 other => {
                     return Err(unreadable(format!(
-                        "checkout publication: {}",
+                        "{}: the checkout publication could not be proved ({})",
+                        location.root.display(),
                         other.unproven()
                     )))
                 }
@@ -138,7 +140,8 @@ impl StateRoot {
             Observed::Verified(Authority::Fresh, _) => {}
             other => {
                 return Err(unreadable(format!(
-                    "checkout publication: {}",
+                    "{}: the checkout publication could not be proved ({})",
+                    location.root.display(),
                     other.unproven()
                 )))
             }
@@ -149,7 +152,9 @@ impl StateRoot {
             Observed::Absent(_) => {}
             other => {
                 return Err(unreadable(format!(
-                    "checkout generation disagrees: {other:?}"
+                    "{}: the checkout generation disagrees with its binding ({})",
+                    location.root.display(),
+                    other.unproven()
                 )))
             }
         }
@@ -188,7 +193,9 @@ impl StateRoot {
             }
             other => {
                 return Err(unreadable(format!(
-                    "checkout generation disagrees: {other:?}"
+                    "{}: the checkout generation disagrees with its binding ({})",
+                    location.root.display(),
+                    other.unproven()
                 )))
             }
         }
@@ -259,7 +266,11 @@ fn machine_format(cx: &ObserveContext, root: &StateRoot) -> Result<bool, StoreEr
     match read_record::<MachineFormat>(cx, root.dir(), &FileName::new(MACHINE_FORMAT)?) {
         Observed::Verified(record, _) if record.home == root.owner.identity()? => Ok(true),
         Observed::Absent(_) => Ok(false),
-        other => Err(unreadable(format!("machine format binding: {other:?}"))),
+        other => Err(unreadable(format!(
+            "{}: the machine format binding could not be read ({})",
+            root.path().display(),
+            other.unproven()
+        ))),
     }
 }
 
@@ -277,7 +288,11 @@ pub(super) fn binding_identity(
             .map(Some)
         }
         Observed::Absent(_) => Ok(None),
-        other => Err(unreadable(format!("checkout binding: {other:?}"))),
+        other => Err(unreadable(format!(
+            "{}: the checkout binding could not be read ({})",
+            root.path().display(),
+            other.unproven()
+        ))),
     }
 }
 
@@ -329,10 +344,28 @@ fn require_cutover(
                     return Ok(());
                 }
             }
-            other => return Err(unreadable(format!("runtime publication: {other:?}"))),
+            other => {
+                return Err(unreadable(format!(
+                    "{}: the checkout journal is not published yet ({})",
+                    checkout.map_or_else(
+                        || "this checkout".to_owned(),
+                        |path| path.display().to_string()
+                    ),
+                    other.unproven()
+                )))
+            }
         },
         Observed::Absent(_) => {}
-        other => return Err(unreadable(format!("runtime root: {other:?}"))),
+        other => {
+            return Err(unreadable(format!(
+                "{}: the state root could not be verified ({})",
+                checkout.map_or_else(
+                    || "this checkout".to_owned(),
+                    |path| path.display().to_string()
+                ),
+                other.unproven()
+            )))
+        }
     }
     if crate::migration::committed(cx, machine_home)?.is_some() {
         return Ok(());
@@ -351,7 +384,13 @@ fn require_cutover(
             machine_format(cx, &legacy)?;
         }
         Observed::Absent(_) => {}
-        other => return Err(unreadable(format!("legacy runtime root: {other:?}"))),
+        other => {
+            return Err(unreadable(format!(
+                "{}: legacy runtime state is unknown ({})",
+                machine_home.join(".effigy").display(),
+                other.unproven()
+            )))
+        }
     }
     Ok(())
 }
@@ -406,7 +445,11 @@ pub(crate) fn verify(cx: &ObserveContext, root: &StateRoot) -> Result<(), StoreE
             }
             Ok(())
         }
-        other => Err(unreadable(format!("checkout binding: {other:?}"))),
+        other => Err(unreadable(format!(
+            "{}: the checkout binding could not be read ({})",
+            root.path().display(),
+            other.unproven()
+        ))),
     }
 }
 

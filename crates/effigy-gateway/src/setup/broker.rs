@@ -42,7 +42,8 @@ fn owned_image(cx: &EffectContext, dir: &DirFd) -> io::Result<Option<Vec<u8>>> {
             }
         }
         other => Err(error(format!(
-            "preserving unknown privileged helper: {other:?}"
+            "preserving unknown privileged helper: {}",
+            other.unproven()
         ))),
     }
 }
@@ -68,7 +69,8 @@ pub(super) fn owned_job(cx: &EffectContext, jobs: &DirFd, name: &str) -> io::Res
             Ok(true)
         }
         other => Err(error(format!(
-            "preserving foreign broker definition: {other:?}"
+            "preserving foreign broker definition: {}",
+            other.unproven()
         ))),
     }
 }

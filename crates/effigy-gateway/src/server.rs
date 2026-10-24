@@ -1624,9 +1624,15 @@ async fn run_gateway_with_cancel(
                 .map_err(std::io::Error::other)
                 .and_then(|result| result)
             }
-            other => Err(std::io::Error::other(format!(
-                "TCP alias startup failed: {other:?}"
+            Ok(Ok(Err(error))) => Err(std::io::Error::other(format!(
+                "TCP alias startup failed: the alias listener reported {error}"
             ))),
+            Ok(Err(error)) => Err(std::io::Error::other(format!(
+                "TCP alias startup failed: the readiness channel closed ({error})"
+            ))),
+            Err(_) => Err(std::io::Error::other(
+                "TCP alias startup failed: no readiness report within 2s; run `effigy gateway status` for the recorded diagnosis",
+            )),
         };
         if let Err(error) = ready {
             let _ = shutdown_tx.send(true);

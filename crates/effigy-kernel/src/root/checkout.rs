@@ -154,7 +154,8 @@ impl StateRoot {
             // Every other unknown still refuses here.
             if !super::is_open_mode_only(reason) {
                 return Err(StoreError::Corrupt(format!(
-                    "foreground checkout: {reason:?}"
+                    "{}: the foreground checkout is unreadable ({reason}); fix the state root, then retry",
+                    location.root.display()
                 )));
             }
             Self::effects(cx, &location.root)?;
@@ -162,7 +163,8 @@ impl StateRoot {
         }
         if let Observed::Unknown(reason) = local {
             return Err(StoreError::Corrupt(format!(
-                "foreground checkout: {reason:?}"
+                "{}: the foreground checkout is unreadable ({reason}); fix the state root, then retry",
+                location.root.display()
             )));
         }
         Self::effects(cx, &location.root)?

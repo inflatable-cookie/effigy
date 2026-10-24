@@ -187,7 +187,12 @@ that lives somewhere else. It never prints the whole help panel;
   hint: Run `effigy container --help` for every form
 
 `effigy container exec` does not exist: `exec` is its own command — `effigy exec [--repo <PATH>] [--service <NAME>] [--json] <COMMAND> [ARGS...]`
+```
 
+When there is no such supported form, the same slot lists the words the command
+accepts instead:
+
+```text
 effigy container accepts here: cache, data, down, hosts, logs, migrate, ports, profile, render, retire, scope, stats, status, up, volume
 ```
 

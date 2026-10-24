@@ -30,7 +30,22 @@ fn private_gateway_publication_obeys_its_finite_kernel_budget() {
         Err(effigy_gateway::GatewayError::NotRunning)
     })
     .unwrap_err();
-    assert!(error.to_string().contains("TimedOut"), "{error}");
+    // Before: `private gateway startup interrupted: TimedOut { phase:
+    // "private gateway verified listener publication", elapsed: 22ms }`.
+    let rendered = error.to_string();
+    assert!(
+        rendered.starts_with("private gateway startup interrupted: timed out after "),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("during private gateway verified listener publication"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("; the daemon was not confirmed ready"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("TimedOut {"), "{rendered}");
 }
 
 #[test]
@@ -2209,4 +2224,48 @@ fn setup_installs_mkcert_from_an_absolute_program_path() {
             argv[0]
         );
     }
+}
+
+#[test]
+fn gateway_down_names_each_step_it_takes() {
+    let dir = tempfile::tempdir().expect("private gateway fixture");
+    // A private root must already be canonical: macOS tempdirs are symlinked.
+    let root = std::fs::canonicalize(dir.path()).expect("canonical private root");
+    std::fs::set_permissions(&root, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+        .expect("private root mode");
+    let config = GatewayConfig::private(root);
+    let (outcome, lines) =
+        effigy_ui::steps::capture_lines(|| run_gateway_down_with_config(&config, false));
+    let text = outcome.expect("a stopped private gateway reports the stop");
+    assert!(text.contains("gateway already stopped"), "{text}");
+    assert_eq!(
+        lines,
+        vec!["✓ the gateway is already stopped".to_owned()],
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn setup_stages_end_with_what_now_holds_or_what_is_wrong() {
+    let (done, lines) = effigy_ui::steps::capture_lines(|| {
+        setup_step("trusting mkcert's local CA", |step| {
+            step.set_label("the mkcert CA is trusted for this user");
+            Ok(())
+        })
+    });
+    done.expect("a finished stage");
+    assert_eq!(lines, vec!["✓ the mkcert CA is trusted for this user"]);
+
+    let (failed, lines) = effigy_ui::steps::capture_lines(|| {
+        setup_step::<()>("applying platform setup", |_| {
+            Err(std::io::Error::other(
+                "the administrator declined the elevation prompt",
+            ))
+        })
+    });
+    assert!(failed.is_err());
+    assert_eq!(
+        lines,
+        vec!["✗ the administrator declined the elevation prompt"]
+    );
 }

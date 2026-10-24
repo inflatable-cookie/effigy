@@ -196,6 +196,13 @@ fn present_path_is_retained_and_unknown_path_is_held() {
     let (decision, reason) = decision_for(&plan, "unknown");
     assert_eq!(decision, Decision::Hold);
     assert!(reason.contains("permission denied"));
+    // The hold names the recorded project path and the command that shows it
+    // again, so a person knows which checkout to fix.
+    assert!(reason.contains("project path /unknown"), "{reason}");
+    assert!(
+        reason.contains("`effigy container ports status`"),
+        "{reason}"
+    );
     assert!(plan.reclaim_names().is_empty());
 }
 
@@ -1089,4 +1096,37 @@ fn pressure_reclaim_keeps_a_range_whose_port_is_in_use() {
     assert!(after.get("dead-b").is_none());
     assert!(after.get("live").is_some());
     assert_eq!(after.len(), 2);
+}
+
+#[test]
+fn a_status_report_names_each_step_and_ends_with_a_line() {
+    let root = tempfile::tempdir().expect("fixture root");
+    let path = root.path().join("ports.json");
+    let present = root.path().join("present");
+    std::fs::create_dir_all(&present).expect("present project");
+    let mut registry = PortRegistry::new();
+    registry
+        .allocate("live", &present.display().to_string())
+        .expect("allocation");
+    registry.save(&path).expect("persist");
+
+    let (report, lines) = effigy_ui::steps::capture_lines(|| {
+        report_at(
+            &path,
+            "status",
+            clean_facts,
+            probe_project_path,
+            no_bound_ports,
+        )
+    });
+    let report = report.expect("status report");
+    assert_eq!(report.plan.reclaim_names(), Vec::<String>::new());
+    assert_eq!(
+        lines,
+        vec![
+            format!("✓ reading the port registry at {}", path.display()),
+            "✓ reading the container inventory and each checkout's scope records".to_owned(),
+            "✓ deciding 1 port allocation(s)".to_owned(),
+        ]
+    );
 }

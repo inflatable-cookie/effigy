@@ -175,6 +175,20 @@ impl From<RunError> for SpawnError {
         Self::Run(e)
     }
 }
+impl std::fmt::Display for SpawnError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Refused(reason) => write!(f, "the process was not started ({reason})"),
+            Self::Run(error) => error.fmt(f),
+            Self::Io(error) => error.fmt(f),
+            Self::Unrecorded(error) => write!(
+                f,
+                "the process started but its record could not be kept ({error}); it is residue, and recovery reconciles it before the run settles"
+            ),
+        }
+    }
+}
+impl std::error::Error for SpawnError {}
 #[derive(Debug)]
 pub struct PartialSpawn {
     pub primary: SpawnError,
@@ -737,7 +751,7 @@ impl OwnedProcess {
     pub fn wait(&mut self, cx: &OperationContext) -> Observed<Exit> {
         loop {
             if let Err(e) = cx.check("process wait") {
-                return Observed::Unknown(unknown(format!("{e:?}")));
+                return Observed::Unknown(unknown(format!("{e}")));
             }
             let mut core = lock(&self.core);
             if core.deadline.is_some_and(|at| Instant::now() >= at) {
@@ -1011,7 +1025,7 @@ impl ProcessCore {
                 break state;
             }
             if let Err(e) = cx.operation().check("group closure") {
-                break Observed::Unknown(unknown(format!("{e:?}")));
+                break Observed::Unknown(unknown(format!("{e}")));
             }
             if (Instant::now() >= grace || crate::signal::escalated() || escalate())
                 && (!killed || self.anchor.is_some())
@@ -1058,7 +1072,7 @@ impl ProcessCore {
                     Ok(None) => {}
                 }
                 if let Err(error) = cx.operation().check("leader reap") {
-                    residue.push(unknown(format!("{error:?}")));
+                    residue.push(unknown(format!("{error}")));
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(2));
@@ -1148,7 +1162,17 @@ pub(crate) fn settle_effect(
     let observed = if let Some(core) = live {
         let report = lock(&core).stop_escalating(cx, &mut escalate);
         if !report.residue.is_empty() {
-            return (EffectState::Residue, Some(format!("{:?}", report.residue)));
+            return (
+                EffectState::Residue,
+                Some(
+                    report
+                        .residue
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                ),
+            );
         }
         report.group
     } else if let Some(anchor) = &anchor {
@@ -1158,7 +1182,7 @@ pub(crate) fn settle_effect(
     };
     match observed {
         Observed::Verified(..) | Observed::Absent(_) => (EffectState::Released, None),
-        Observed::Unknown(reason) => (EffectState::Residue, Some(format!("{reason:?}"))),
+        Observed::Unknown(reason) => (EffectState::Residue, Some(format!("{reason}"))),
     }
 }
 

@@ -85,7 +85,7 @@ pub(crate) fn read_input(path: &Path) -> Result<Option<Vec<u8>>, GatewayError> {
         Observed::Verified(bytes, _) => Ok(Some(bytes.0)),
         Observed::Absent(_) => Err(error("import input disappeared while reading; retry")),
         Observed::Unknown(reason) => Err(error(format!(
-            "import input {} unknown: {reason:?}",
+            "import input {} is unreadable: {reason}",
             path.display()
         ))),
     }

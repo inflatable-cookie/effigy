@@ -69,6 +69,94 @@ fn a_cancelled_run_names_the_signal() {
 }
 
 #[test]
+fn a_corrupt_journal_says_what_is_wrong_and_the_next_command() {
+    // Before: `kernel.db is unreadable (bad page); the explicit store repair
+    // moves it aside` — no next command, and a publication refusal was still
+    // called a database fault.
+    assert_eq!(
+        StoreError::Corrupt("bad page".into()).to_string(),
+        "the runtime journal is unusable (bad page); nothing was changed. \
+         Run `effigy doctor` to inspect the state root, then retry"
+    );
+}
+
+#[test]
+fn an_untrusted_state_root_names_the_path_and_the_chmod() {
+    // Before: `legacy runtime state is unknown: Untrusted("group- or
+    // other-accessible mode")` — no path, no chmod.
+    let reason = UnknownReason::Untrusted(
+        "/repo/.effigy/state is readable by other users; run `chmod 700 /repo/.effigy/state`"
+            .to_owned(),
+    );
+    assert_eq!(
+        reason.to_string(),
+        "could not tell: the state root is not trusted (/repo/.effigy/state is readable by other \
+         users; run `chmod 700 /repo/.effigy/state`); Effigy only reads state it owns, so fix the \
+         mode or ownership it names and retry"
+    );
+}
+
+#[test]
+fn a_workload_outcome_says_how_it_ended() {
+    use effigy_kernel::ctx::StopCause;
+    use effigy_kernel::outcome::WorkloadOutcome;
+
+    // Before: the gateway printed `gateway daemon stopped: TimedOut { phase:
+    // "settle", ... }` and `Interrupted`.
+    assert_eq!(
+        WorkloadOutcome::Succeeded.to_string(),
+        "the workload succeeded"
+    );
+    assert_eq!(
+        WorkloadOutcome::Failed { code: 3 }.to_string(),
+        "the workload failed with exit code 3"
+    );
+    assert_eq!(
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Signal(libc::SIGINT),
+            signal: Some(libc::SIGINT),
+        }
+        .to_string(),
+        "the workload was cancelled by SIGINT"
+    );
+    assert_eq!(
+        WorkloadOutcome::Cancelled {
+            cause: StopCause::Requested,
+            signal: None,
+        }
+        .to_string(),
+        "the workload was cancelled by a stop request"
+    );
+    assert_eq!(
+        WorkloadOutcome::TimedOut {
+            phase: "settle".into()
+        }
+        .to_string(),
+        "the workload timed out while waiting for the environment to settle"
+    );
+    assert_eq!(
+        WorkloadOutcome::Interrupted.to_string(),
+        "the workload was interrupted by a signal"
+    );
+    assert!(WorkloadOutcome::Unknown(UnknownReason::PermissionDenied)
+        .to_string()
+        .starts_with("the workload outcome is unknown: could not tell: "));
+
+    for outcome in [
+        WorkloadOutcome::TimedOut {
+            phase: "settle".into(),
+        },
+        WorkloadOutcome::Unknown(UnknownReason::GuardUnavailable),
+    ] {
+        let rendered = outcome.to_string();
+        assert!(
+            !rendered.contains("TimedOut {") && !rendered.contains("Unknown("),
+            "{rendered}"
+        );
+    }
+}
+
+#[test]
 fn no_human_rendering_falls_back_to_a_debug_tree() {
     let refusals = [
         Stream::Store(StoreError::NeedsRecovery),

@@ -533,8 +533,7 @@ fn run_secrets_get(
     let secrets = require_secrets(secrets)?;
     require_declared_key(secrets, name)?;
     let vault_path = resolve_shared_vault_path(repo_root, Some(secrets))?;
-    let passphrase = read_vault_command_passphrase(&vault_path)?;
-    let payload = read_vault_payload(&vault_path, passphrase.expose())?;
+    let payload = read_vault_payload_for_disclosure(&vault_path)?;
     let value = payload
         .records
         .get(name)
@@ -1077,6 +1076,31 @@ fn read_vault_payload(
     crate::runner::secret_vault::read_effigy_vault_payload(vault_path, passphrase)
 }
 
+/// The payload a read-only disclosure command opens. `secrets get` is the one
+/// command allowed to print a value, and the local-dev key is the factor a dev
+/// session already established on this machine: use it when it exists and no
+/// passphrase this invocation holds says otherwise. Mutations keep
+/// [`read_vault_command_passphrase`], because writing the vault needs a
+/// passphrase.
+fn read_vault_payload_for_disclosure(
+    vault_path: &Path,
+) -> Result<VaultPlaintextPayload, RunnerError> {
+    // A passphrase this invocation already holds is the session's current
+    // factor; otherwise the local-dev key a dev session left behind opens the
+    // vault and only what neither factor can read prompts.
+    let holds_passphrase = std::env::var_os("EFFIGY_TEST_SECRETS_PASSPHRASE").is_some()
+        || crate::runner::secret_session::session_passphrase().is_some();
+    if !holds_passphrase && local_dev_unlock_key_path(vault_path).exists() {
+        if let Ok(payload) =
+            crate::runner::secret_vault::read_effigy_vault_payload_for_local_dev(vault_path)
+        {
+            return Ok(payload);
+        }
+    }
+    let passphrase = read_vault_command_passphrase(vault_path)?;
+    read_vault_payload(vault_path, passphrase.expose())
+}
+
 fn read_vault_command_passphrase(vault_path: &Path) -> Result<SecretValue, RunnerError> {
     if std::env::var_os("EFFIGY_TEST_SECRETS_PASSPHRASE").is_none()
         && crate::runner::secret_session::session_passphrase().is_none()
@@ -1179,34 +1203,15 @@ fn secret_keys_json(secrets: &ManifestSecretsConfig) -> Vec<Value> {
         .collect()
 }
 
-/// How this invocation read the vault. A doctor report names the route so a
-/// person knows why no prompt appeared, and never the passphrase itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum VaultReadSource {
-    /// A passphrase this invocation prompted for or was started with.
-    Passphrase,
-    /// A passphrase this session already holds in memory.
-    UnlockedSession,
-    /// The local-dev unlock key beside the vault.
-    LocalDevKey,
-}
-
-impl VaultReadSource {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Passphrase => "passphrase",
-            Self::UnlockedSession => "unlocked session",
-            Self::LocalDevKey => "local-dev key",
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 struct VaultDoctorState {
     status: &'static str,
+    /// The factor that opened the vault: `local-dev-key` when the dev key the
+    /// session already has read it, `passphrase` when a passphrase (prompted,
+    /// inherited or sealed in the local unlock credential) did. `None` when the
+    /// vault could not be read.
+    unlock: Option<&'static str>,
     path: Option<String>,
-    /// How the vault was read, when it was.
-    read_via: Option<VaultReadSource>,
     stored_keys: Option<Vec<String>>,
     missing_required: Vec<String>,
     undeclared_stored: Vec<String>,
@@ -1216,8 +1221,19 @@ impl VaultDoctorState {
     fn none() -> Self {
         Self {
             status: "not-configured",
+            unlock: None,
             path: None,
-            read_via: None,
+            stored_keys: None,
+            missing_required: Vec::new(),
+            undeclared_stored: Vec::new(),
+        }
+    }
+
+    fn unreadable(status: &'static str, path: Option<String>) -> Self {
+        Self {
+            status,
+            unlock: None,
+            path,
             stored_keys: None,
             missing_required: Vec::new(),
             undeclared_stored: Vec::new(),
@@ -1227,12 +1243,22 @@ impl VaultDoctorState {
     fn to_json(&self) -> Value {
         json!({
             "status": self.status,
+            "unlock": self.unlock,
             "path": self.path,
-            "read_via": self.read_via.map(VaultReadSource::label),
             "stored_keys": self.stored_keys,
             "missing_required": self.missing_required,
             "undeclared_stored": self.undeclared_stored,
         })
+    }
+
+    /// The one-line vault summary: `unlocked (local-dev key)` names the factor
+    /// `effigy dev` uses, so a user can tell it apart from a passphrase unlock.
+    fn status_label(&self) -> String {
+        match self.unlock {
+            Some("local-dev-key") => format!("{} (local-dev key)", self.status),
+            Some(_) => format!("{} (passphrase)", self.status),
+            None => self.status.to_owned(),
+        }
     }
 }
 
@@ -1302,14 +1328,7 @@ fn inspect_vault_doctor_state(
             "secrets vault is missing at {}",
             vault_path.display()
         ));
-        return Ok(VaultDoctorState {
-            status: "missing",
-            path,
-            read_via: None,
-            stored_keys: None,
-            missing_required: Vec::new(),
-            undeclared_stored: Vec::new(),
-        });
+        return Ok(VaultDoctorState::unreadable("missing", path));
     }
 
     match inspect_vault_permissions(&vault_path) {
@@ -1324,9 +1343,12 @@ fn inspect_vault_doctor_state(
     }
 
     let local_dev_key_path = local_dev_unlock_key_path(&vault_path);
+    let mut local_dev_key_is_usable = false;
     if local_dev_key_path.exists() {
         match inspect_vault_permissions(&local_dev_key_path) {
-            Ok(VaultPermissionStatus::Safe) | Ok(VaultPermissionStatus::UnsupportedPlatform) => {}
+            Ok(VaultPermissionStatus::Safe) | Ok(VaultPermissionStatus::UnsupportedPlatform) => {
+                local_dev_key_is_usable = true;
+            }
             Ok(VaultPermissionStatus::Unsafe { mode, max_mode }) => blockers.push(format!(
                 "local-dev unlock key permissions are unsafe: mode {mode:o}, expected at most {max_mode:o}"
             )),
@@ -1342,19 +1364,33 @@ fn inspect_vault_doctor_state(
         );
     }
 
-    let Some((passphrase, source)) =
-        read_optional_vault_passphrase(&vault_path, "Vault passphrase: ")?
+    // What the local-dev key can read is the fact a dev session needs, and the
+    // key is the one factor available without a prompt. Report it first: a
+    // vault the key opens is `unlocked (local-dev key)`, with no passphrase
+    // asked for and no value printed.
+    if local_dev_key_is_usable {
+        match crate::runner::secret_vault::read_effigy_vault_payload_for_local_dev(&vault_path) {
+            Ok(payload) => {
+                return Ok(vault_doctor_state_from_payload(
+                    secrets,
+                    path,
+                    payload,
+                    "local-dev-key",
+                    blockers,
+                ));
+            }
+            Err(error) => warnings.push(format!(
+                "the local-dev key cannot read the vault ({}); run `effigy secrets unlock` with the passphrase to mint a new key",
+                error.human_error().what_failed()
+            )),
+        }
+    }
+
+    let Some(passphrase) = read_optional_vault_passphrase(&vault_path, "Vault passphrase: ")?
     else {
         warnings
             .push("secrets vault is locked; set a passphrase to validate stored values".to_owned());
-        return Ok(VaultDoctorState {
-            status: "locked",
-            path,
-            read_via: None,
-            stored_keys: None,
-            missing_required: Vec::new(),
-            undeclared_stored: Vec::new(),
-        });
+        return Ok(VaultDoctorState::unreadable("locked", path));
     };
 
     let envelope = match effigy_secrets::storage::read_envelope(&vault_path) {
@@ -1366,43 +1402,35 @@ fn inspect_vault_doctor_state(
                 "read"
             };
             blockers.push(format!("failed to {action} secrets vault: {error}"));
-            return Ok(VaultDoctorState {
-                status: "corrupt",
-                path,
-                read_via: None,
-                stored_keys: None,
-                missing_required: Vec::new(),
-                undeclared_stored: Vec::new(),
-            });
+            return Ok(VaultDoctorState::unreadable("corrupt", path));
         }
     };
     let payload = match envelope.decrypt_with_passphrase(passphrase.expose()) {
         Ok(payload) => payload,
         Err(error) => {
             blockers.push(format!("failed to unlock secrets vault: {error}"));
-            return Ok(VaultDoctorState {
-                status: "corrupt",
-                path,
-                read_via: None,
-                stored_keys: None,
-                missing_required: Vec::new(),
-                undeclared_stored: Vec::new(),
-            });
+            return Ok(VaultDoctorState::unreadable("corrupt", path));
         }
     };
-    if local_dev_key_path.exists() {
-        match crate::runner::secret_vault::read_effigy_vault_payload_for_local_dev(&vault_path) {
-            Ok(local_dev_payload) if local_dev_payload == payload => {}
-            Ok(_) => blockers.push(
-                "local-dev vault payload does not match the passphrase-protected payload"
-                    .to_owned(),
-            ),
-            Err(error) => {
-                blockers.push(format!("failed to unlock local-dev vault payload: {error}"))
-            }
-        }
-    }
 
+    Ok(vault_doctor_state_from_payload(
+        secrets,
+        path,
+        payload,
+        "passphrase",
+        blockers,
+    ))
+}
+
+/// The doctor's view of a vault that opened: the stored names it may print (no
+/// values ever), plus missing and undeclared declarations.
+fn vault_doctor_state_from_payload(
+    secrets: &ManifestSecretsConfig,
+    path: Option<String>,
+    payload: VaultPlaintextPayload,
+    unlock: &'static str,
+    blockers: &mut Vec<String>,
+) -> VaultDoctorState {
     let mut stored_keys = payload.records.keys().cloned().collect::<Vec<_>>();
     stored_keys.sort();
     let mut missing_required = secrets
@@ -1434,35 +1462,30 @@ fn inspect_vault_doctor_state(
             "stored secret `{name}` is not declared under `[secrets.keys]`"
         ));
     }
-
-    Ok(VaultDoctorState {
+    VaultDoctorState {
         status: "unlocked",
+        unlock: Some(unlock),
         path,
-        read_via: Some(source),
         stored_keys: Some(stored_keys),
         missing_required,
         undeclared_stored,
-    })
+    }
 }
 
-/// The passphrase this invocation can read, and the route it came from.
-///
-/// A doctor report names the route: a passphrase it prompted for, one this
-/// session already holds, or the local-dev key beside the vault.
 fn read_optional_vault_passphrase(
     vault_path: &Path,
     prompt: &str,
-) -> Result<Option<(SecretValue, VaultReadSource)>, RunnerError> {
+) -> Result<Option<SecretValue>, RunnerError> {
     if let Ok(value) = std::env::var("EFFIGY_TEST_SECRETS_PASSPHRASE") {
-        return Ok(Some((SecretValue::new(value), VaultReadSource::Passphrase)));
+        return Ok(Some(SecretValue::new(value)));
     }
     if let Some(value) = crate::runner::secret_session::session_passphrase() {
-        return Ok(Some((value, VaultReadSource::UnlockedSession)));
+        return Ok(Some(value));
     }
     if let Some(passphrase) = read_local_unlock_passphrase(vault_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?
     {
-        return Ok(Some((passphrase, VaultReadSource::LocalDevKey)));
+        return Ok(Some(passphrase));
     }
     if !std::io::stdin().is_terminal() {
         return Ok(None);
@@ -1470,7 +1493,7 @@ fn read_optional_vault_passphrase(
     let value = rpassword::prompt_password(prompt).map_err(|error| {
         RunnerError::task_invocation(format!("failed to read secret input: {error}"))
     })?;
-    Ok(Some((SecretValue::new(value), VaultReadSource::Passphrase)))
+    Ok(Some(SecretValue::new(value)))
 }
 
 fn render_secrets_list_text(repo_root: &Path, secrets: Option<&ManifestSecretsConfig>) -> String {
@@ -1528,17 +1551,7 @@ fn render_secrets_doctor_text(
             lines.push("keys: 0".to_owned());
         }
     }
-    match vault_state.status {
-        "not-configured" => lines.push("vault: not configured".to_owned()),
-        "unlocked" => {
-            let route = vault_state
-                .read_via
-                .map(VaultReadSource::label)
-                .unwrap_or("passphrase");
-            lines.push(format!("vault: unlocked ({route})"));
-        }
-        other => lines.push(format!("vault: {other}")),
-    }
+    lines.push(format!("vault: {}", vault_state.status_label()));
     if let Some(path) = &vault_state.path {
         lines.push(format!("vault path: {path}"));
     }
@@ -1654,11 +1667,12 @@ mod vault_generate_hook_tests {
 mod doctor_text_tests {
     use super::*;
 
-    fn read(source: VaultReadSource) -> VaultDoctorState {
+    /// A vault that opened: #317 names the factor, this change names the keys.
+    fn opened(unlock: &'static str) -> VaultDoctorState {
         VaultDoctorState {
             status: "unlocked",
+            unlock: Some(unlock),
             path: Some("/repo/.effigy/secrets.vault".to_owned()),
-            read_via: Some(source),
             stored_keys: Some(vec![
                 "mailchimp_api_key".to_owned(),
                 "openai_api_key".to_owned(),
@@ -1677,7 +1691,7 @@ mod doctor_text_tests {
     fn doctor_text_lists_the_stored_key_names_and_never_a_value() {
         // Before (effigy#318): `vault: unlocked` and `keys: 3`; the stored key
         // names appeared only in `--json`.
-        let text = rendered(&read(VaultReadSource::Passphrase));
+        let text = rendered(&opened("passphrase"));
         assert!(text.contains("vault: unlocked (passphrase)"), "{text}");
         assert!(
             text.contains("stored keys (3): mailchimp_api_key, openai_api_key, recaptcha_secret"),
@@ -1689,26 +1703,19 @@ mod doctor_text_tests {
     }
 
     #[test]
-    fn doctor_text_names_the_route_the_vault_was_read_through() {
-        for (source, expected) in [
-            (VaultReadSource::Passphrase, "vault: unlocked (passphrase)"),
-            (
-                VaultReadSource::UnlockedSession,
-                "vault: unlocked (unlocked session)",
-            ),
-            (
-                VaultReadSource::LocalDevKey,
-                "vault: unlocked (local-dev key)",
-            ),
+    fn doctor_text_names_the_factor_that_opened_the_vault() {
+        for (factor, expected) in [
+            ("passphrase", "vault: unlocked (passphrase)"),
+            ("local-dev-key", "vault: unlocked (local-dev key)"),
         ] {
-            let text = rendered(&read(source));
+            let text = rendered(&opened(factor));
             assert!(text.contains(expected), "{expected}: {text}");
         }
     }
 
     #[test]
     fn doctor_text_names_missing_required_and_undeclared_stored_keys() {
-        let mut state = read(VaultReadSource::LocalDevKey);
+        let mut state = opened("local-dev-key");
         state.missing_required = vec!["database_url".to_owned()];
         state.undeclared_stored = vec!["legacy_key".to_owned()];
         let text = rendered(&state);
@@ -1724,28 +1731,22 @@ mod doctor_text_tests {
 
     #[test]
     fn a_locked_vault_says_the_key_names_are_unknown() {
-        let state = VaultDoctorState {
-            status: "locked",
-            path: Some("/repo/.effigy/secrets.vault".to_owned()),
-            read_via: None,
-            stored_keys: None,
-            missing_required: Vec::new(),
-            undeclared_stored: Vec::new(),
-        };
+        let state =
+            VaultDoctorState::unreadable("locked", Some("/repo/.effigy/secrets.vault".to_owned()));
         let text = rendered(&state);
         assert!(text.contains("vault: locked"), "{text}");
         assert!(
             text.contains("stored keys: unknown; unlock the vault (`effigy secrets unlock`)"),
             "{text}"
         );
-        assert_eq!(state.to_json()["read_via"], serde_json::Value::Null);
+        assert_eq!(state.to_json()["unlock"], serde_json::Value::Null);
     }
 
     #[test]
-    fn the_json_state_names_the_read_route_next_to_the_stored_keys() {
-        let state = read(VaultReadSource::LocalDevKey);
+    fn the_json_state_names_the_unlock_factor_next_to_the_stored_keys() {
+        let state = opened("local-dev-key");
         let json = state.to_json();
-        assert_eq!(json["read_via"], "local-dev key");
+        assert_eq!(json["unlock"], "local-dev-key");
         assert_eq!(
             json["stored_keys"],
             serde_json::json!(["mailchimp_api_key", "openai_api_key", "recaptcha_secret"])

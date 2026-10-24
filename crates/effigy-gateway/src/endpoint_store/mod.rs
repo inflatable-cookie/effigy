@@ -184,10 +184,10 @@ impl EndpointStore {
         let op = operator::context(OPERATION_BUDGET, EffectClass::Mutate);
         let cx = op
             .effects()
-            .map_err(|failure| error(format!("{failure:?}")))?;
+            .map_err(|failure| error(format!("{failure}")))?;
         let cleanup = op
             .cleanup(CLEANUP_BUDGET)
-            .map_err(|failure| error(format!("{failure:?}")))?;
+            .map_err(|failure| error(format!("{failure}")))?;
         let root = StateRoot::runtime_machine_effects(&cx, &self.home).map_err(error)?;
         let mut facts = MachineFacts::begin(
             &cx,
@@ -340,10 +340,10 @@ impl EndpointStore {
         work: impl FnOnce(&mut Run<'_>, &OperationContext) -> Result<T, E>,
     ) -> Result<T, E> {
         let op = operator::context(OPERATION_BUDGET, EffectClass::Mutate);
-        let cx = op.effects().map_err(|e| error(format!("{e:?}")))?;
+        let cx = op.effects().map_err(|e| error(format!("{e}")))?;
         let recovery = op
             .cleanup(OPERATION_BUDGET + CLEANUP_BUDGET)
-            .map_err(|e| error(format!("{e:?}")))?;
+            .map_err(|e| error(format!("{e}")))?;
         let root = StateRoot::runtime_machine_effects(&cx, &self.home).map_err(error)?;
         let mut adapter = operator::Adapter;
         let mut run = Run::begin(

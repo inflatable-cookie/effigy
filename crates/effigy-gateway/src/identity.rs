@@ -990,7 +990,8 @@ pub fn read_live_process_identity(pid: u32) -> Result<LiveProcessIdentity, std::
         effigy_kernel::observe::Observed::Verified(identity, _) => identity.as_str().to_owned(),
         other => {
             return Err(std::io::Error::other(format!(
-                "boot identity is unavailable: {other:?}"
+                "boot identity is unavailable: {}",
+                other.unproven()
             )))
         }
     };
