@@ -1181,6 +1181,10 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- `effigy contracts check-json` fixture commands no longer inherit the
+  invoking task tree's runtime capability, so `qa:json` inside `effigy qa`
+  stops failing the qa-group contract fixtures (`fixture group run failed
+  unexpectedly`).
 - Commands run from your home directory no longer read `~/.effigy/state` (the
   machine store since the Q-010 cutover) as a checkout. `effigy container retire
   --scope … --yes` from `~`, as Queue runs it, failed with `import seal belongs
