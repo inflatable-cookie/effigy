@@ -1979,8 +1979,12 @@ mounts; guests continue through the host authority channel (R1).
 beside it under `.effigy/state-captures/`, so writing them can never create or
 loosen the private root. For one release an effect adopts a `.effigy/state/`
 that v0.14 `effigy state` left at an operator-owned, not-group-writable mode by
-tightening it to 0700 and keeping its contents; observation never repairs a
-mode it does not trust, and a mode another user could write is still refused.
+tightening it to 0700 and keeping its contents. That covers every effect path,
+including a foreground task tree and a retained run: neither refuses the
+checkout's cutover on the mode alone, and adoption creates nothing, so a fresh
+destination is still never created before the migration decision. Observation
+never repairs a mode it does not trust, and a mode another user could write is
+still refused.
 A checkout whose own records cannot be read is recorded against that checkout:
 dead-owner and port recovery hold its entries only, never every owner on the
 machine.

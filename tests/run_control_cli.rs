@@ -182,6 +182,43 @@ fn wait_child(child: &mut OwnedChild) -> std::process::ExitStatus {
     }
 }
 
+/// Papercut 9e5134a4: v0.14 `effigy state` left `.effigy/state/` at the process
+/// umask, and Q-010 made that the kernel's private root. Both effect paths —
+/// the foreground tree (`foreground_effects`) and a retained run
+/// (`checkout_effects` through the cutover check) — must reach the one-release
+/// adoption that tightens it to 0700 instead of refusing every task with an
+/// unreadable journal.
+#[test]
+fn a_legacy_open_state_root_mode_is_adopted_by_foreground_and_retained_runs() {
+    let fixture = Fixture::new();
+    let state = fixture.repo.join(".effigy/state");
+    let legacy = state.join("capture-context/acme/uat/legacy.json");
+    fs::create_dir_all(legacy.parent().expect("legacy parent")).expect("legacy context dir");
+    fs::write(&legacy, b"{}\n").expect("legacy context");
+    let mode = || {
+        fs::symlink_metadata(&state)
+            .expect("state root")
+            .permissions()
+            .mode()
+            & 0o777
+    };
+
+    // A foreground task tree.
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o755)).expect("legacy mode");
+    let output = fixture.run(&["light"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(fixture.exists("light.txt"));
+    assert_eq!(mode(), 0o700, "the foreground effect adopts the mode");
+
+    // A retained run, which decides its cutover on the same root.
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o755)).expect("legacy mode");
+    let output = fixture.run(&["--run-id", "open-mode-adopted", "slow"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(fixture.exists("runs.log"));
+    assert_eq!(mode(), 0o700, "the retained run adopts the mode");
+    assert!(legacy.is_file(), "adoption keeps the legacy content");
+}
+
 #[test]
 fn an_admitted_heavy_run_holds_the_hook_until_it_ends_and_marks_its_children() {
     let fixture = Fixture::new();

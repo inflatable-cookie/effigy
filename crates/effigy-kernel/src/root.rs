@@ -245,3 +245,18 @@ pub(crate) fn unknown(error: &FsError) -> UnknownReason {
         other => UnknownReason::Inconsistent(other.to_string()),
     }
 }
+
+/// Whether an observation failed only because a state root carries a
+/// group/other-readable mode an effect may tighten.
+///
+/// That mode is not a fact about the journal: v0.14 `effigy state` created
+/// `.effigy/state/` with the process umask (papercut 9e5134a4), and
+/// [`StateRoot::effects`] adopts such a root. Effect paths use this to reach
+/// that adoption instead of refusing; observation keeps the root `Unknown` and
+/// never repairs it.
+pub(crate) fn is_open_mode_only(reason: &UnknownReason) -> bool {
+    matches!(
+        reason,
+        UnknownReason::Untrusted(reason) if reason == crate::fs::OPEN_MODE_REASON
+    )
+}

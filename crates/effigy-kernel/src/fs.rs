@@ -16,7 +16,7 @@ use std::path::{Component, Path, PathBuf};
 pub(crate) const DIR_MODE: u32 = 0o700;
 pub(crate) const FILE_MODE: u32 = 0o600;
 /// Reason reported when a trusted object carries group or other bits.
-const OPEN_MODE_REASON: &str = "group- or other-accessible mode";
+pub(crate) const OPEN_MODE_REASON: &str = "group- or other-accessible mode";
 
 /// Fixed-shape error facts. `errno` lets callers tell ENOSPC from EPERM.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
