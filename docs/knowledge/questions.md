@@ -392,3 +392,17 @@ exception is narrow:
 - Runs without a hook keep Q-010 unchanged.
 
 effigy#325 implements it and amends 049 and 052.
+
+Follow-up ruling, same day (Queue decision d3bad004 v2, Tom on the board):
+"Yes: accept the escaped-process risk, and Queue releases automatically on the
+evidence." A provider may therefore release its own capacity once all of these
+hold:
+- every reported workload group leader's `ProcessIdentity` no longer matches a
+  live process;
+- every reported group is empty;
+- coverage is complete;
+- no terminal result exists.
+
+Tom accepted the risk that a process which escaped its group is still running.
+Effigy itself still claims no closure from that evidence, and gains no
+authority to signal or reclaim from it (052 §3.1).
