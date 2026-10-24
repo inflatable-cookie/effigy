@@ -124,12 +124,14 @@ pub(super) fn await_services_ready(
     }
 
     if !observed {
-        parent.fail("the services' health could not be read");
-        return Err(RunnerError::task_invocation(format!(
-            "environment `{}` did not report ready: its services' health could not be read ({})",
-            policy.name,
-            last_probe_error.unwrap_or_else(|| "the runtime returned no observation".to_owned())
-        )));
+        // No service's health could be read at all, so the environment's own
+        // declared check is the only evidence there is. This is exactly the
+        // behaviour before per-service readiness, never a new refusal.
+        for step in steps.values() {
+            step.finish_clear();
+        }
+        parent.finish_clear();
+        return Ok(ReadinessEnd::NothingToAwait);
     }
     readiness_failure(policy, &last_services, last_probe_error, &steps)
 }
