@@ -185,60 +185,37 @@ fn nginx_healthcheck_survives_compose_interpolation_and_treats_http_responses_as
     let test = health.get("test").expect("healthcheck test");
     let command = nginx_healthcheck_command(test);
 
+    // Any HTTP status line means nginx is serving; BusyBox wget (nginx:alpine)
+    // exits 1 on a 404 just as on a refused connection, so the exit code alone
+    // can't tell them apart.
     assert!(
-        command.contains("wget -q -O /dev/null http://127.0.0.1:80/") && command.contains("eq 8"),
+        command.contains("wget -S --spider http://127.0.0.1:80/")
+            && command.contains("grep -q 'HTTP/'"),
         "nginx healthcheck should treat any HTTP response as ready, got: {command}"
     );
-    assert!(
-        command.contains("$$code"),
-        "rendered health command must use $$ so Compose leaves $code for the shell, got: {command}"
-    );
-    assert!(
-        result.compose_yaml.contains("$$code"),
-        "serialized compose must retain $$code for nerdctl/Docker Compose interpolation, got:\n{}",
-        result.compose_yaml
-    );
-
-    let (interpolated_yaml, yaml_warnings) = compose_interpolate(&result.compose_yaml);
-    assert!(
-        !yaml_warnings.iter().any(|name| name == "code"),
-        "Compose interpolation must not substitute `code`; warnings: {yaml_warnings:?}\n{interpolated_yaml}"
-    );
-
     let (interpolated, warnings) = compose_interpolate(command);
     assert!(
         warnings.is_empty(),
         "health command should not trigger Compose substitution warnings, got {warnings:?} from {command}"
     );
-    assert!(
-        interpolated.contains("[ \"$code\" -eq 0 ]")
-            && interpolated.contains("[ \"$code\" -eq 8 ]"),
-        "after Compose interpolation the shell must still see $code, got: {interpolated}"
-    );
-    assert!(
-        !interpolated.contains("[ \"\" -eq"),
-        "Compose must not blank the wget exit-code variable, got: {interpolated}"
-    );
-
     assert_eq!(
-        nginx_health_status_for_wget_exit(&interpolated, 0),
+        nginx_health_status_for_wget(&interpolated, "  HTTP/1.1 200 OK", 0),
         0,
-        "HTTP success (wget 0) should be healthy"
+        "HTTP success should be healthy"
     );
     assert_eq!(
-        nginx_health_status_for_wget_exit(&interpolated, 8),
+        nginx_health_status_for_wget(&interpolated, "  HTTP/1.1 404 Not Found", 1),
         0,
-        "HTTP error such as 404 (wget 8) should be healthy"
+        "an HTTP 404 from BusyBox wget (exit 1) should still be healthy"
     );
-    assert_ne!(
-        nginx_health_status_for_wget_exit(&interpolated, 1),
-        0,
-        "generic wget failure should be unhealthy"
-    );
-    assert_ne!(
-        nginx_health_status_for_wget_exit(&interpolated, 4),
-        0,
-        "network failure should be unhealthy"
+    assert_eq!(
+        nginx_health_status_for_wget(
+            &interpolated,
+            "wget: can't connect to remote host (127.0.0.1): Connection refused",
+            1
+        ),
+        1,
+        "a refused connection should be unhealthy"
     );
 }
 
@@ -323,10 +300,14 @@ fn compose_ident_continue(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
-fn nginx_health_status_for_wget_exit(command: &str, wget_exit: i32) -> i32 {
+fn nginx_health_status_for_wget(command: &str, stderr_line: &str, wget_exit: i32) -> i32 {
     let dir = tempfile::tempdir().unwrap();
     let wget = dir.path().join("wget");
-    std::fs::write(&wget, format!("#!/bin/sh\nexit {wget_exit}\n")).unwrap();
+    std::fs::write(
+        &wget,
+        format!("#!/bin/sh\necho '{stderr_line}' >&2\nexit {wget_exit}\n"),
+    )
+    .unwrap();
     let mut perms = std::fs::metadata(&wget).unwrap().permissions();
     perms.set_mode(0o755);
     std::fs::set_permissions(&wget, perms).unwrap();
@@ -525,6 +506,23 @@ fn phpmyadmin_fragment_assembles() {
         .unwrap();
     let doc = validate_compose_structure(&result.compose_yaml);
     let admin = validate_service(&doc, "dbadmin");
+
+    // The image ships no wget or curl, so the probe must use PHP and survive
+    // Compose interpolation with its PHP variables intact.
+    let probe = admin["healthcheck"]["test"]
+        .as_sequence()
+        .expect("healthcheck test")
+        .iter()
+        .filter_map(serde_yaml::Value::as_str)
+        .collect::<Vec<_>>();
+    assert_eq!(probe.first().copied(), Some("CMD"));
+    assert_eq!(probe.get(1).copied(), Some("php"), "{probe:?}");
+    let (interpolated, warnings) = compose_interpolate(probe.last().unwrap());
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert!(
+        interpolated.contains("fsockopen('127.0.0.1', 80, $e, $s, 2)"),
+        "{interpolated}"
+    );
 
     let image = admin.get("image").unwrap().as_str().unwrap();
     assert_eq!(
