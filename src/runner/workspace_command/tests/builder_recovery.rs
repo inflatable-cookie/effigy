@@ -19,7 +19,7 @@ trace('start')
 atexit.register(lambda: trace('exit'))
 with (state / 'calls').open('a') as f: f.write(json.dumps(args) + '\n')
 mode = (state / 'mode').read_text()
-cmd = next((a for a in args if a in ['ps', 'inspect', 'up', 'exec', 'down', 'info']), '')
+cmd = next((a for a in args if a in ['ps', 'inspect', 'up', 'exec', 'down', 'rm', 'info']), '')
 identity = state / 'identity.json'
 if cmd == 'info': sys.exit(0)
 if cmd == 'ps':
@@ -65,6 +65,10 @@ if cmd == 'up':
         labels.update({'com.docker.compose.oneoff': 'False', 'com.docker.compose.project.working_dir': str(root)})
     if mode == 'up_bad_labels': labels.pop('com.effigy.checkout', None)
     identity.write_text(json.dumps([{'Id': 'a'*64, 'Name': '/' + os.environ['EFFIGY_RECOVERY_PROJECT'] + '-builder-1', 'State': {'Running': True, 'Status': 'running'}, 'Config': {'Labels': labels}, 'Mounts': [{'Type': 'bind', 'Source': str(root), 'Destination': '/workspace', 'RW': True}], 'NetworkSettings': {'Ports': {}}}]))
+    sys.exit(0)
+if cmd == 'rm':
+    identity.unlink(missing_ok=True)
+    print('removed')
     sys.exit(0)
 if cmd == 'exec':
     tail = args[args.index('exec')+1:]
@@ -257,9 +261,25 @@ impl Fixture {
         write_executable(
             &bin.join("colima"),
             r#"#!/bin/sh
-printf '%s\n' "$*" >> "$EFFIGY_RECOVERY_ROOT/state/colima-calls"
+state="$EFFIGY_RECOVERY_ROOT/state"
+printf '%s\n' "$*" >> "$state/colima-calls"
 case "$1" in
-status) echo 'INFO[0000] status: Running' ;;
+status)
+  if [ -f "$state/colima-running" ]; then
+    echo 'INFO[0000] status: Running'
+  else
+    echo 'time="now" level=fatal msg="colima [profile=effigy-release] is not running"'
+    exit 1
+  fi
+  ;;
+list)
+  if [ -f "$state/colima-listed" ]; then
+    printf '{"name":"effigy-release","status":"%s","cpus":2,"memory":2147483648,"disk":107374182400}\n' "$( [ -f "$state/colima-running" ] && echo Running || echo Stopped )"
+    printf '{"name":"effigy","status":"%s","cpus":12,"memory":34359738368,"disk":322122547200}\n' "$( [ -f "$state/colima-running" ] && echo Running || echo Stopped )"
+  fi
+  ;;
+start) : > "$state/colima-running"; : > "$state/colima-listed"; echo 'started' ;;
+stop) rm -f "$state/colima-running"; echo 'stopped' ;;
 ssh) exit 0 ;;
 nerdctl) while [ "$1" != -- ]; do shift; done; shift; exec "$(dirname "$0")/docker" "$@" ;;
 *) exit 1 ;;
@@ -287,6 +307,12 @@ esac
                 Some(root.join("host-home/.effigy").display().to_string()),
             ),
             ("HOME", Some(root.join("host-home").display().to_string())),
+            // The artifact proof builds with this checkout's binary through its
+            // private host shim. An invoking `effigy test` hands suites its own
+            // `EFFIGY_EXECUTABLE`, which would run the nested build through that
+            // binary instead, so the artifact's version would come from a
+            // different build than the caller's expectation.
+            ("EFFIGY_EXECUTABLE", None),
             ("EFFIGY_RECOVERY_PROJECT", None),
             ("EFFIGY_DISABLE_HOST_CONTAINER_LEASE", Some("1".to_owned())),
         ]);
@@ -294,6 +320,9 @@ esac
             effigy_containers::load_container_policy(&root, Some("linux-release")).unwrap();
         std::env::set_var("EFFIGY_RECOVERY_PROJECT", &policy.project_name);
         std::fs::write(root.join("state/mode"), "success").unwrap();
+        // The profile exists and runs until a test deletes both facts.
+        std::fs::write(root.join("state/colima-listed"), "").unwrap();
+        std::fs::write(root.join("state/colima-running"), "").unwrap();
         initialize_backend(&root, backend);
         if retained {
             let mut labels = json!({"com.effigy.checkout": root, "com.docker.compose.project": policy.project_name, "com.docker.compose.service": "builder", "com.docker.compose.oneoff": "False"});
@@ -526,15 +555,26 @@ esac
             );
         }
         let trace = std::fs::read_to_string(self.root.join("state/calls")).unwrap_or_default();
-        assert!(
-            !trace.contains("\"down\"")
-                && !trace.contains("\"stop\"")
-                && !trace.contains("\"rm\"")
-                && !trace.contains("\"--volumes\"")
-                && !trace.contains("\"restart\""),
-            "{trace}"
-        );
+        let builder_container = format!("{}-builder-1", self.policy.project_name);
         for args in self.calls() {
+            // Removing the builder's own stale container is the one reconcile
+            // this operation owns (effigy#316): its canonical identity could not
+            // be read after a profile transition. Every other destructive verb
+            // stays refused.
+            if args.iter().any(|arg| arg == "rm") {
+                assert_eq!(
+                    args,
+                    &["rm".to_owned(), "-f".to_owned(), builder_container.clone()],
+                    "only the exact stale owned builder may be removed: {args:?}"
+                );
+                continue;
+            }
+            assert!(
+                !args
+                    .iter()
+                    .any(|arg| matches!(arg.as_str(), "down" | "stop" | "restart" | "--volumes")),
+                "{trace}"
+            );
             assert!(
                 !args.iter().any(|arg| arg.contains("effigy-linux-release")
                     || arg == "2f8c5ff844de522282140bc51b634eb1da22df359e701197f0b0016416f41217"
@@ -552,14 +592,40 @@ esac
         }
         let colima =
             std::fs::read_to_string(self.root.join("state/colima-calls")).unwrap_or_default();
+        // Creating or starting the builder's own managed profile is the one
+        // runtime transition this operation owns (effigy#316). Stopping,
+        // deleting or restarting a profile, and any other start, stay refused.
         assert!(
-            !colima
-                .lines()
-                .any(|line| ["start", "stop", "delete", "restart"]
+            !colima.lines().any(|line| {
+                ["stop", "delete", "restart"]
                     .iter()
-                    .any(|action| line.starts_with(action))),
+                    .any(|action| line.starts_with(action))
+                    || (line.starts_with("start")
+                        && !line.starts_with(
+                            "start --profile effigy-release --runtime containerd --ssh-agent",
+                        ))
+            }),
             "{colima}"
         );
+    }
+}
+
+/// Drop every v0.14.1 partial receipt below `dir`, as a release upgrade does.
+fn remove_legacy_markers(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            remove_legacy_markers(&path);
+        } else if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".partial.json"))
+        {
+            std::fs::remove_file(&path).unwrap();
+        }
     }
 }
 
@@ -625,6 +691,69 @@ fn unchanged_partial_completed_and_absent_builders_use_supported_task() {
         assert!(fixture.root.join("state/build-effect").exists());
         fixture.assert_preserved();
     }
+}
+
+#[test]
+fn deleted_managed_colima_profile_is_recreated_before_the_next_artifact_build() {
+    let _lock = crate::contract_test_support::lock_test();
+    let fixture = Fixture::new(false, false, "colima");
+    // The user deleted the profile: `colima list` no longer names it, its VM is
+    // not running, and the builder container went with it.
+    for name in ["colima-running", "colima-listed", "identity.json"] {
+        let _ = std::fs::remove_file(fixture.root.join("state").join(name));
+    }
+    fixture
+        .task()
+        .expect("a deleted managed profile is recreated and the build succeeds");
+    assert!(fixture.root.join("state/build-effect").exists());
+    let colima =
+        std::fs::read_to_string(fixture.root.join("state/colima-calls")).unwrap_or_default();
+    let starts = colima
+        .lines()
+        .filter(|line| line.starts_with("start "))
+        .collect::<Vec<_>>();
+    assert_eq!(starts.len(), 1, "one managed start: {colima}");
+    for expected in [
+        "--profile effigy-release",
+        "--ssh-agent",
+        "--dns 1.1.1.1",
+        "--dns 8.8.8.8",
+    ] {
+        assert!(
+            starts[0].contains(expected),
+            "{expected} missing from the managed start: {colima}"
+        );
+    }
+    fixture.assert_preserved();
+}
+
+#[test]
+fn stale_owned_builder_is_recreated_instead_of_requiring_a_manual_down() {
+    let _lock = crate::contract_test_support::lock_test();
+    let mut fixture = Fixture::new(true, false, "colima");
+    // The retained admission is the builder this run replaces; the v0.14.1
+    // partial receipt belongs to that same container and goes with it.
+    remove_legacy_markers(&fixture.root.join("host-home"));
+    fixture
+        .preserved
+        .retain(|(path, _)| !path.to_string_lossy().ends_with(".partial.json"));
+    // An out-of-band profile restart left the retained builder without a
+    // readable canonical identity while its labels still name this exact owner.
+    fixture.mutate(|row| row["Id"] = json!(""));
+    fixture
+        .task()
+        .expect("the stale owned builder is stopped and recreated, then the build succeeds");
+    assert!(fixture.root.join("state/build-effect").exists());
+    let builder = format!("{}-builder-1", fixture.policy.project_name);
+    assert!(
+        fixture
+            .calls()
+            .iter()
+            .any(|args| args == &["rm".to_owned(), "-f".to_owned(), builder.clone()]),
+        "the stale owned builder is removed for recreation: {:#?}",
+        fixture.calls()
+    );
+    fixture.assert_preserved();
 }
 
 #[test]

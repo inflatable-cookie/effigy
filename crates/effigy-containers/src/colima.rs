@@ -245,7 +245,10 @@ pub fn prepare_managed_colima_profile_name_with_disk(
     // Forward the host SSH agent into the VM at
     // `/run/host-services/ssh-auth.sock` so the workspace agent-socket bind
     // mount has a real source path. Equivalent to `colima start --ssh-agent`.
+    // Colima 0.10 persists this setting as `forwardAgent`; the older `sshAgent`
+    // key is kept for the versions that still read it.
     root.insert(Value::String("sshAgent".to_owned()), Value::Bool(true));
+    root.insert(Value::String("forwardAgent".to_owned()), Value::Bool(true));
     upsert_colima_platform_overrides(
         root,
         std::env::consts::OS,
@@ -365,6 +368,77 @@ fn colima_vm_type_override() -> Option<String> {
         .ok()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+/// A managed profile setting Effigy requires and an existing profile lacks.
+///
+/// A profile Effigy did not create (a plain `colima start`, or one recreated
+/// without Effigy's arguments) can be running and still miss Effigy's managed
+/// configuration. Deleting or recreating the profile is never the repair: the
+/// next run that needs it restarts it with the managed arguments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagedColimaProfileDrift {
+    /// SSH agent forwarding is disabled, so the workspace agent-socket bind
+    /// mount lands on a source path the VM does not provide.
+    SshAgentForwardingDisabled,
+}
+
+impl ManagedColimaProfileDrift {
+    /// One line naming the profile, the setting it lacks and the restart
+    /// Effigy runs to put the managed arguments back.
+    pub fn restart_notice(self, profile: &str) -> String {
+        match self {
+            Self::SshAgentForwardingDisabled => format!(
+                "restarting Colima profile `{profile}` to enable SSH agent forwarding: it was started without Effigy's managed arguments, so workspace `git push` over SSH would fail"
+            ),
+        }
+    }
+}
+
+/// One line for a profile Effigy has to create: first use, or the user deleted
+/// it. Creating it is the whole repair; nothing is asked of the user.
+pub fn colima_profile_creation_notice(profile: &str) -> String {
+    format!("creating Colima profile `{profile}` (first use, or it was deleted)")
+}
+
+/// One line naming what the deleted profile took with it, after Effigy has
+/// created the replacement with its managed settings.
+pub fn colima_profile_recreated_notice(profile: &str) -> String {
+    format!(
+        "Colima profile `{profile}` created with Effigy's managed settings; anything the deleted profile held - containers, images and volumes - is gone, and Effigy rebuilds the containers this run needs"
+    )
+}
+
+/// One line for a profile that exists but is stopped.
+pub fn colima_profile_start_notice(profile: &str) -> String {
+    format!("starting Colima profile `{profile}` with Effigy's managed settings")
+}
+
+/// The managed settings a Colima profile config (`colima.yaml`) lacks.
+///
+/// Colima persists SSH agent forwarding as `forwardAgent` (0.10 and later) or
+/// the older `sshAgent`; either key being explicitly false is drift. A key that
+/// is absent is not drift, because it cannot be told apart from a profile
+/// Colima has not rewritten yet, and a restart that no observation asked for
+/// would stop every stack on the profile. An unreadable config is never drift.
+pub fn managed_colima_profile_drift_in_config(
+    config: Option<&str>,
+) -> Option<ManagedColimaProfileDrift> {
+    let parsed = serde_yaml::from_str::<Value>(config?).ok()?;
+    let root = parsed.as_mapping()?;
+    let forwarding = ["forwardAgent", "sshAgent"].iter().find_map(|key| {
+        root.get(Value::String((*key).to_owned()))
+            .and_then(Value::as_bool)
+    })?;
+    (!forwarding).then_some(ManagedColimaProfileDrift::SshAgentForwardingDisabled)
+}
+
+/// The managed drift the profile's own config file shows, if any. Read-only:
+/// the config is written by the managed start below, never by this check.
+pub fn managed_colima_profile_drift(profile: &str) -> Option<ManagedColimaProfileDrift> {
+    let path = colima_profile_config_path(profile).ok()?;
+    let config = fs::read_to_string(path).ok()?;
+    managed_colima_profile_drift_in_config(Some(&config))
 }
 
 fn colima_profile_config_path(profile: &str) -> Result<PathBuf, String> {

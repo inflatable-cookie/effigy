@@ -1856,6 +1856,44 @@ When Colima exists but `docker` is not on `PATH`, Effigy falls back to:
 
 with the profile started under `containerd`.
 
+### A deleted or stopped profile is recreated
+
+Deleting a profile is recoverable, and it needs no manual step. The next Effigy
+command that needs the profile creates it (with Effigy's managed arguments) or
+starts it, and reconciles the containers the deletion left behind:
+
+```bash
+# Both of these are enough; there is nothing to start by hand afterwards.
+colima delete --profile effigy-release
+effigy dev                       # or any command that needs the profile
+```
+
+Every path that needs an Effigy-managed profile uses one helper:
+`effigy` for stacks, `effigy-release` for the Linux workspace artifact builder,
+and any other profile a container declaration names. The helper:
+
+- creates the profile when `colima list` does not have it, and says so in one
+  line (`creating Colima profile ... (first use, or it was deleted)`);
+- starts it with the managed arguments when it is stopped;
+- restarts it when a required managed setting drifted, for example a profile
+  started outside Effigy with `forwardAgent: false`, and says which setting it
+  repaired;
+- names what the deletion lost after it recreates the profile: that profile's
+  containers, images and volumes are gone, and Effigy rebuilds the containers
+  the run needs.
+
+Creation and restart never delete the profile itself. `effigy container profile
+purge --yes` remains the explicit way to remove one and keep it removed until
+something needs it again.
+
+An owned container whose canonical identity can no longer be read (what a
+profile creation or restart leaves behind) is stopped and recreated on the next
+activation, under the same exact-owner checks as every other transition: the
+project, service, checkout and scope labels must all name this owner. A foreign
+or unknown owner still refuses, and no check is relaxed for a container this
+checkout cannot prove it owns. A run that reconciles such containers says how
+many it removed.
+
 Effigy manages the default `effigy` Colima profile for workspace-heavy local
 development. New or recreated profiles use the configured
 `containers.profile_disk_gib` user-global target, falling back to 300GiB, plus

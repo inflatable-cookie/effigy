@@ -1934,8 +1934,12 @@ them; the table governs new kernel-backed surfaces.
 ### 7.1 Location, trust and clocks
 
 Durable checkout state belongs to the resolved invocation root, not a nested
-catalog's cwd. Each linked worktree and each clone owns its own
-`<checkout>/.effigy/state/`, including a primary checkout. They never share the
+catalog's cwd: identity, environment journal, render objects and container
+labels resolve through the nearest enclosing directory carrying `.git`, so a
+nested catalog directory with no Git metadata of its own declares no second
+checkout, while a nested repository or submodule keeps its own. Each linked
+worktree and each clone owns its own `<checkout>/.effigy/state/`, including a
+primary checkout. They never share the
 primary's journal: independent deletion, gate contention and recovery must be
 independent. Existing Git runtime-scope tokens, Compose names and volume names
 are preserved. Resource identity is distinct from storage routing: a globally

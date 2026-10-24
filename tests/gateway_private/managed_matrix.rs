@@ -1260,9 +1260,14 @@ if op=='down':
  sys.exit(0)
 if op=='payload' or (op=='exec' and '.pgid' in args[-1]):
  payload=args[-1].replace('/usr/local/bin/effigy',str(root/'effigy-wrapper'))
+ # A container command receives the explicitly forwarded `-e` variables, never
+ # the client's environment: the host's inherited run capability descriptor
+ # cannot cross the container boundary, so neither may its selector.
+ payload_env={k:v for k,v in os.environ.items() if k!='EFFIGY_PARENT_CAPABILITY'}
  with open(root/('remote-'+str(os.getpid())+'.out'),'wb') as log:
   nonce=os.urandom(16).hex()
-  child=subprocess.Popen(['sh','-c',payload],start_new_session=True,stdout=log,stderr=log,env=dict(os.environ,EFFIGY_CUSTODY_NONCE=nonce))
+  payload_env['EFFIGY_CUSTODY_NONCE']=nonce
+  child=subprocess.Popen(['sh','-c',payload],start_new_session=True,stdout=log,stderr=log,env=payload_env)
   try: fixture_process('register',child.pid,nonce=nonce)
   except BaseException:
    # This exact unreaped child created the dedicated group; rollback before reaping.

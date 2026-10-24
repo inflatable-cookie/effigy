@@ -519,6 +519,17 @@ During v0.x, MINOR bumps may include breaking changes.
   bounded, redacted output instead of `(code=Some(2))` and the whole streams,
   and the Debug ratchet baseline drops from 239 to 226.
 
+- A deleted or stopped Colima profile is no longer a dead end: the next command
+  that needs it creates the profile with Effigy's managed arguments (SSH agent
+  forwarding, DNS fallbacks, managed resources, platform overrides) or starts
+  it, and says which happened in one line. `effigy-release`, the Linux workspace
+  artifact builder's profile, is recreated the same way. A running profile whose
+  managed config drifted (for example `forwardAgent: false`) is restarted with
+  the managed arguments instead of failing later with a broken SSH-agent mount.
+  Owned containers a profile creation or restart left with an unreadable
+  identity are stopped and recreated on the next activation under the existing
+  exact-owner rules; foreign and unknown owners still refuse. Nothing needs a
+  manual `colima start` or `effigy container down`.
 - Task journals live in the owning checkout's `.effigy/state/`. Durable
   initialization refuses an unresolved legacy migration and binds checkout
   and Git directory generations, so same-path replacements cannot adopt old
@@ -1246,6 +1257,16 @@ During v0.x, MINOR bumps may include breaking changes.
   `container up` JSON envelope. Required keys still fail the bring-up. An empty
   `runtime.env`/`runtime.json` is never written silently: a bring-up that
   delivered nothing leaves the files alone.
+- A container or task declared by a nested catalog directory now belongs to the
+  enclosing checkout. A nested catalog directory carries no Git metadata of its
+  own, so it resolved a second checkout identity and its own
+  `.effigy/state/kernel.db`; a task run fenced its remote workload against the
+  environment record in that other store and refused with `StaleGeneration`
+  after `auto-up`, and every nested container was labelled with the catalog
+  directory instead of the checkout. Identity, environment journal, render
+  objects and container labels now resolve through the nearest enclosing
+  directory carrying `.git` (contract 052 §7.1); a nested repository or
+  submodule, and every root checkout or linked worktree, keeps its own.
 - `effigy dev` no longer refuses the Linux workspace artifact with `build
   succeeded but did not produce a current artifact` when a no-op rebuild
   reproduces bytes that were already built for this exact version (for example

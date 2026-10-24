@@ -364,6 +364,145 @@ fn shutdown_immediate_produces_two_commands() {
     assert_eq!(cmds[1].1, "docker compose down");
 }
 
+#[test]
+fn managed_drift_reads_a_disabled_forward_agent() {
+    let _lock = env_lock();
+    assert_eq!(
+        managed_colima_profile_drift_in_config(Some("forwardAgent: false\n")),
+        Some(ManagedColimaProfileDrift::SshAgentForwardingDisabled)
+    );
+    assert_eq!(
+        managed_colima_profile_drift_in_config(Some("sshAgent: false\n")),
+        Some(ManagedColimaProfileDrift::SshAgentForwardingDisabled)
+    );
+}
+
+#[test]
+fn managed_drift_leaves_a_configured_or_unknown_profile_alone() {
+    let _lock = env_lock();
+    assert_eq!(
+        managed_colima_profile_drift_in_config(Some("forwardAgent: true\nmemory: 32\n")),
+        None
+    );
+    // A key Colima has not written yet proves nothing, and a restart no
+    // observation asked for would stop every stack on the profile.
+    assert_eq!(
+        managed_colima_profile_drift_in_config(Some("memory: 32\n")),
+        None
+    );
+    assert_eq!(managed_colima_profile_drift_in_config(None), None);
+    assert_eq!(
+        managed_colima_profile_drift_in_config(Some(": not yaml :")),
+        None
+    );
+}
+
+#[test]
+fn managed_drift_reads_the_profiles_own_config_file() {
+    let _lock = env_lock();
+    let root = std::env::temp_dir().join(format!(
+        "effigy-colima-drift-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    let profile_dir = root.join(".colima/effigy-release");
+    std::fs::create_dir_all(&profile_dir).expect("mkdir profile");
+    std::fs::write(profile_dir.join("colima.yaml"), "forwardAgent: false\n").expect("write config");
+    let previous_home = std::env::var_os("HOME");
+    unsafe {
+        std::env::set_var("HOME", &root);
+    }
+
+    let drift = managed_colima_profile_drift("effigy-release");
+
+    unsafe {
+        if let Some(home) = previous_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
+    assert_eq!(
+        drift,
+        Some(ManagedColimaProfileDrift::SshAgentForwardingDisabled)
+    );
+}
+
+#[test]
+fn managed_profile_notices_name_the_profile_and_what_a_deletion_lost() {
+    let created = colima_profile_creation_notice("effigy-release");
+    assert!(
+        created.contains("creating Colima profile `effigy-release`"),
+        "{created}"
+    );
+    assert!(
+        created.contains("first use, or it was deleted"),
+        "{created}"
+    );
+
+    let recreated = colima_profile_recreated_notice("effigy-release");
+    assert!(recreated.contains("`effigy-release`"), "{recreated}");
+    for lost in ["containers", "images", "volumes"] {
+        assert!(recreated.contains(lost), "{recreated}");
+    }
+    assert!(recreated.contains("rebuilds"), "{recreated}");
+
+    let started = colima_profile_start_notice("effigy");
+    assert!(
+        started.contains("starting Colima profile `effigy`"),
+        "{started}"
+    );
+
+    let drift = ManagedColimaProfileDrift::SshAgentForwardingDisabled.restart_notice("effigy");
+    assert!(
+        drift.contains("restarting Colima profile `effigy`"),
+        "{drift}"
+    );
+    assert!(drift.contains("SSH agent forwarding"), "{drift}");
+}
+
+#[test]
+fn managed_profile_prepare_writes_both_agent_forwarding_keys() {
+    let _lock = env_lock();
+    let root = std::env::temp_dir().join(format!(
+        "effigy-colima-forward-agent-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("mkdir home");
+    let previous_home = std::env::var_os("HOME");
+    unsafe {
+        std::env::set_var("HOME", &root);
+    }
+
+    prepare_managed_colima_profile(&test_policy("effigy")).expect("prepare profile");
+
+    unsafe {
+        if let Some(home) = previous_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
+    let parsed = serde_yaml::from_str::<serde_yaml::Value>(
+        &std::fs::read_to_string(root.join(".colima/effigy/colima.yaml")).expect("read config"),
+    )
+    .expect("parse yaml");
+    let root = parsed.as_mapping().expect("yaml mapping");
+    for key in ["sshAgent", "forwardAgent"] {
+        assert_eq!(
+            root.get(serde_yaml::Value::String(key.to_owned()))
+                .and_then(serde_yaml::Value::as_bool),
+            Some(true),
+            "{key} must be true so the managed config matches the managed start"
+        );
+    }
+}
+
 fn test_policy(profile: &str) -> EffectiveContainerPolicy {
     use effigy_manifest::{
         ManifestContainerDriver, ManifestContainerOnTaskExit, ManifestContainerStartup,

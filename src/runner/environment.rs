@@ -279,13 +279,39 @@ pub(in crate::runner) fn running(
     if rows.is_empty() {
         return Ok(Observed::Verified(false, evidence()));
     }
-    effigy_containers::exec::running_stack_admits_reactivation(repo_root, policy, &rows, deadline)
-        .map_err(|reason| {
+    let admission =
+        effigy_containers::exec::running_stack_admits_reactivation(repo_root, policy, &rows, deadline)
+            .map_err(|reason| {
+                RunnerError::task_invocation(format!(
+                    "container `{}` cannot be re-activated: {reason}. Nothing was started, recreated or published. If these containers belong to this checkout, run `effigy container down`, then `effigy container up --detach`; otherwise stop the other checkout's stack first",
+                    policy.name
+                ))
+            })?;
+    if !admission.stale_owned.is_empty() {
+        // An owned container whose canonical identity cannot be read is what a
+        // deleted or restarted Colima profile leaves behind. Stop and remove it
+        // here; the bring-up that follows recreates it. Foreign and unknown
+        // owners already refused above.
+        let removed = effigy_containers::exec::remove_stale_owned_containers(
+            repo_root,
+            policy,
+            &admission.stale_owned,
+        )
+        .map_err(|error| {
             RunnerError::task_invocation(format!(
-                "container `{}` cannot be re-activated: {reason}. Nothing was started, recreated or published. If these containers belong to this checkout, run `effigy container down`, then `effigy container up --detach`; otherwise stop the other checkout's stack first",
-                policy.name
+                "container `{}` has owned containers a Colima profile transition left stale ({}) and they could not be removed for recreation: {error}",
+                policy.name,
+                admission.stale_owned.join(", ")
             ))
         })?;
+        eprintln!(
+            "[info] container `{}`: stopped and removed {} owned container(s) left stale by a Colima profile transition ({}); this bring-up recreates them",
+            policy.name,
+            removed.len(),
+            removed.join(", ")
+        );
+        return Ok(Observed::Verified(false, evidence()));
+    }
     let live = rows
         .into_iter()
         .filter(|row| effigy_containers::exec::compose_status_is_running(&row.status))

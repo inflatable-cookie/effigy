@@ -3576,6 +3576,14 @@ impl HostEffectSentinels {
         }
         write_sentinel(&path.join("mkcert"));
         write_private_mkcert(&private_mkcert);
+        // A private fixture never reads the operator's real listeners. Gateway
+        // registration lsof-probes the port a route targets, and the
+        // operator's own user gateway holds loopback aliases for ordinary
+        // bundle ports (minio 9000, dbgate 3000, ...), so a real probe would
+        // borrow the machine's state and refuse the fixture. The quiet stub
+        // answers "no host listeners" and records nothing in the host-effect
+        // log those proofs require to stay empty.
+        write_private_listener_probe(&path.join("lsof"));
         let env_path =
             std::env::join_paths(std::iter::once(path.clone()).chain(std::env::split_paths(
                 &std::env::var_os("PATH").expect("PATH must be available to tests"),
@@ -3669,6 +3677,16 @@ printf '%s|%s\n' "$CAROOT" "$domain" >> "$MKCERT_CALLS"
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))
             .expect("make fixture mkcert executable");
+    }
+}
+
+fn write_private_listener_probe(path: &Path) {
+    fs::write(path, "#!/bin/sh\nexit 1\n").expect("write private listener probe");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+            .expect("make private listener probe executable");
     }
 }
 
@@ -4470,6 +4488,10 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
     let bundle_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("crates/effigy-manifest/tests/fixtures/workspace-app-bundle");
     copy_dir_all(&bundle_src, &fixture.path().join("bundles/workspace-app"));
+    // The bundle declares pinned sibling sources. Seed their working copies,
+    // as a consumer of that bundle has them, so this private fixture never
+    // needs the network or credentials to reach them.
+    seed_bundle_pinned_sources(fixture.path());
 
     let checkout = fixture.path().join("checkout");
     fs::create_dir(&checkout).expect("managed clone checkout");
