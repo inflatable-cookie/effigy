@@ -71,6 +71,19 @@ routes and never need a row.
 | `tests/scripts/container-render-consumers.py` | pending one-use | 7 | One-use workspace: it copies the tree into a fresh fixture, sets its own `CARGO_TARGET_DIR`, and writes fixture `effigy.toml` routes that build a baseline example. Waits on Oxide one-use workspace support. |
 | `tests/scripts/sequence-consumer-baseline.py` | pending one-use | 7 | One-use workspace: it extracts a commit into a private fixture checkout and builds `--profile discovery-proof` there with its own `CARGO_TARGET_DIR`. Waits on Oxide one-use workspace support. |
 
+## Host note: permanent-drive outputs and multi-step runs
+
+With Oxide's permanent-drive placement (`target` is a link to the build
+volume), a multi-step Effigy task whose first step rebuilds `effigy` fails to
+admit the next step: the supervisor pins its replaced startup image with
+`fclonefileat`, which cannot cross from the build volume into the checkout's
+state root (`Cross-device link`, and the pin has no copy fallback). This is
+host state, not routing — the same task's `:cargo` sibling fails identically,
+and the same task passes when the driving binary runs from the internal disk.
+It affects `proof:containers:isolated-dirs`,
+`proof:containers:isolated-mount-points`, `test:containers:generations:cli`,
+`test:containers:generations:consumers` and `test:doctor:git-timeout-proof`.
+
 ## Dogfood findings for the Oxide owner
 
 - **Custom profiles on modelled commands.** `cargo test --profile
