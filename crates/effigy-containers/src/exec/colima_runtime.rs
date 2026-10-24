@@ -1672,18 +1672,19 @@ esac
         assert!(report.started);
         assert!(report.profile_created_or_restarted);
         let calls = fixture.calls();
+        let rendered = calls.join(" | ");
         let stop = calls
             .iter()
             .position(|call| call.starts_with("stop --profile effigy"))
-            .unwrap_or_else(|| panic!("the drifted profile is stopped first: {calls:#?}"));
+            .unwrap_or_else(|| panic!("the drifted profile is stopped first: {rendered}"));
         let start = calls
             .iter()
             .position(|call| call.starts_with("start --profile effigy"))
             .unwrap_or_else(|| {
-                panic!("the drifted profile is started with managed args: {calls:#?}")
+                panic!("the drifted profile is started with managed args: {rendered}")
             });
-        assert!(stop < start, "stop precedes start: {calls:#?}");
-        assert!(calls[start].contains("--ssh-agent"), "{calls:#?}");
+        assert!(stop < start, "stop precedes start: {rendered}");
+        assert!(calls[start].contains("--ssh-agent"), "{rendered}");
         let config = std::fs::read_to_string(fixture.home.join(".colima/effigy/colima.yaml"))
             .expect("managed config");
         assert!(config.contains("forwardAgent: true"), "{config}");
