@@ -205,12 +205,19 @@ impl EndpointSnapshot {
     }
     /// Withdrawn routes retain their domain. Explicit retirement releases it.
     pub fn set_routes(&mut self, table: &RouteTable) -> Result<(), GatewayError> {
-        for route in self.routes()?.all_routes() {
+        let current = self.routes()?;
+        for route in current.all_routes() {
             self.domains
                 .entry(route.domain.to_ascii_lowercase())
                 .or_insert_with(|| DomainOwner::from_route(route));
         }
         for route in table.all_routes() {
+            // An existing route carried over unchanged is not a new claim. Only
+            // added or changed routes are checked against domain owners, so
+            // one stale route can't refuse every other project's write.
+            if current.lookup(&route.domain) == Some(route) {
+                continue;
+            }
             self.reserve_domain(
                 &route.domain,
                 &route.project,
