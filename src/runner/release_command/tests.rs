@@ -377,3 +377,91 @@ fn release_ci_gate_requires_a_successful_manual_run_for_the_exact_head() {
 
     std::fs::remove_dir_all(fake_bin).expect("remove fake bin");
 }
+
+#[test]
+fn release_gate_steps_name_the_gate_and_its_outcome() {
+    use super::ops::{release_gate_label, release_gate_summary};
+    use effigy_release::GateResult;
+
+    assert_eq!(
+        release_gate_label(2, 5, "cargo test", false),
+        "running gate cargo test (2/5)"
+    );
+    assert_eq!(
+        release_gate_label(1, 1, "hosted ci", true),
+        "reusing hosted evidence for gate hosted ci (1/1)"
+    );
+
+    let failed = GateResult {
+        name: "cargo test".to_owned(),
+        description: None,
+        command: "effigy test".to_owned(),
+        passed: false,
+        exit_code: Some(101),
+        stdout: String::new(),
+        stderr: "a test failed".to_owned(),
+        launch_error: None,
+        duration_ms: 12_000,
+        log_path: Some(std::path::PathBuf::from(
+            ".effigy/release/gates/cargo-test.log",
+        )),
+        reused: false,
+        hosted_run_url: None,
+        hosted_head_sha: None,
+        hosted_repository: None,
+    };
+    let summary = release_gate_summary(2, 5, &failed);
+    assert!(
+        summary.contains("gate `cargo test` failed after 12s"),
+        "{summary}"
+    );
+    assert!(summary.contains("(2/5)"), "{summary}");
+    assert!(summary.contains("its output is in"), "{summary}");
+}
+
+#[test]
+fn a_release_run_step_names_the_stage_the_gate_and_the_next_stage() {
+    use super::ops::ReleaseRunSteps;
+    use effigy_release::{GateObserver, GateResult, ResolvedGate};
+
+    // A test process draws nothing, so this only carries the label.
+    let root = effigy_ui::steps::step("running the release");
+    let mut observer = ReleaseRunSteps {
+        root: root.clone(),
+        gate: None,
+    };
+
+    observer.stage("certify");
+    assert_eq!(root.label(), "release: running stage certify");
+
+    let gate = ResolvedGate {
+        name: "cargo test".to_owned(),
+        command: "effigy test".to_owned(),
+        task: Some("test".to_owned()),
+        description: None,
+        stage: effigy_release::GateStage::Certify,
+        reuse_hosted_evidence: false,
+        hosted_evidence: None,
+    };
+    observer.gate_started(2, 5, &gate, false);
+    assert_eq!(root.label(), "release: running gate cargo test (2/5)");
+
+    let result = GateResult {
+        name: "cargo test".to_owned(),
+        description: None,
+        command: "effigy test".to_owned(),
+        passed: true,
+        exit_code: Some(0),
+        stdout: String::new(),
+        stderr: String::new(),
+        launch_error: None,
+        duration_ms: 12_000,
+        log_path: None,
+        reused: false,
+        hosted_run_url: None,
+        hosted_head_sha: None,
+        hosted_repository: None,
+    };
+    observer.gate_finished(2, 5, &result);
+    assert_eq!(root.label(), "release: continuing");
+}

@@ -316,10 +316,23 @@ pub(super) fn admit(
         label: HOOK_LABEL.to_owned(),
     };
     let refused = |decision: &str, reason: String| refusal(target, &run_id, decision, reason);
+    // A heavy run can queue for minutes behind the machine's other heavy work.
+    // The step says so, and the hook's own progress line becomes its label.
+    let step = effigy_ui::steps::step(&admission_wait_label(&target.label, None));
     let _waiting = CustodyWait::enter();
-    let mut hook = run
-        .spawn(spec, true)
-        .map_err(|error| refused("failed", format!("the hook could not start: {error:?}")))?;
+    let mut hook = match run.spawn(spec, true) {
+        Ok(hook) => hook,
+        Err(error) => {
+            step.fail(&format!(
+                "could not ask for heavy admission of `{}`: {error}",
+                target.label
+            ));
+            return Err(refused(
+                "failed",
+                format!("the admission hook could not start: {error}"),
+            ));
+        }
+    };
     let started = Instant::now();
     let mut stdout = Vec::new();
     loop {
@@ -335,14 +348,26 @@ pub(super) fn admit(
         let exited = hook.poll();
         let (out, err) = hook.take_stream_output();
         if !err.is_empty() {
-            // The hook's progress ("waiting for capacity") is the operator's.
-            let _ = std::io::stderr().write_all(&err);
+            match admission_progress_line(&err) {
+                // The hook's own progress ("waiting for capacity, 2 ahead") is
+                // the operator's: it becomes the step's label.
+                Some(progress) if effigy_ui::steps::mode() != effigy_ui::StepMode::Silent => {
+                    step.set_label(&admission_wait_label(&target.label, Some(&progress)));
+                }
+                _ => {
+                    let _ = std::io::stderr().write_all(&err);
+                }
+            }
         }
         stdout.extend_from_slice(&out);
         if let Some(line) = decision_line(&stdout, matches!(exited, Observed::Verified(..))) {
             return match parse_decision(&line) {
                 Decision::Admit => {
                     if matches!(exited, Observed::Verified(..)) {
+                        step.fail(&format!(
+                            "heavy admission for `{}` was withdrawn: the hook exited",
+                            target.label
+                        ));
                         return Err(refused(
                             "failed",
                             "the hook exited instead of retaining admission".into(),
@@ -350,30 +375,49 @@ pub(super) fn admit(
                     }
                     verify_hook(&hook.identity().identity)?;
                     push_marker(run_id.clone(), hook.identity().identity);
+                    step.succeed(&format!(
+                        "admitted heavy task `{}` after {}",
+                        target.label,
+                        effigy_kernel::human::human_duration(started.elapsed())
+                    ));
                     Ok(Admission {
                         hook,
                         marker: run_id,
                         waited: started.elapsed(),
                     })
                 }
-                Decision::Deny(reason) => Err(refused(
-                    "deny",
-                    if reason.is_empty() {
+                Decision::Deny(reason) => {
+                    let reason = if reason.is_empty() {
                         "the hook denied admission".to_owned()
                     } else {
                         format!("the hook denied admission: {reason}")
-                    },
-                )),
-                Decision::Invalid => Err(refused(
-                    "failed",
-                    format!(
-                        "the hook answered `{}`; it must print `admit` or `deny <reason>`",
-                        line.chars().take(120).collect::<String>()
-                    ),
-                )),
+                    };
+                    step.fail(&format!(
+                        "heavy task `{}` was not admitted: {reason}",
+                        target.label
+                    ));
+                    Err(refused("deny", reason))
+                }
+                Decision::Invalid => {
+                    let line: String = line.chars().take(120).collect();
+                    step.fail(&format!(
+                        "heavy task `{}` was not admitted: the hook answered `{line}`",
+                        target.label
+                    ));
+                    Err(refused(
+                        "failed",
+                        format!(
+                            "the hook answered `{line}`; it must print `admit` or `deny <reason>`"
+                        ),
+                    ))
+                }
             };
         }
         if let Observed::Verified(exit, _) = exited {
+            step.fail(&format!(
+                "heavy admission for `{}` failed: the hook exited with code {}",
+                target.label, exit.code
+            ));
             return Err(refused(
                 "failed",
                 format!(
@@ -383,12 +427,21 @@ pub(super) fn admit(
             ));
         }
         if stdout.len() > DECISION_MAX {
+            step.fail(&format!(
+                "heavy admission for `{}` failed: the hook wrote more than a decision line",
+                target.label
+            ));
             return Err(refused(
                 "failed",
                 "the hook wrote more than a decision line".to_owned(),
             ));
         }
         if started.elapsed() >= timeout {
+            step.fail(&format!(
+                "heavy admission for `{}` timed out after {}",
+                target.label,
+                effigy_kernel::human::human_duration(timeout)
+            ));
             return Err(refused(
                 "timeout",
                 format!(
@@ -426,10 +479,31 @@ fn parse_decision(line: &str) -> Decision {
     }
 }
 
+/// The waiting label: what is happening, which task is waiting, and the
+/// hook's own progress when it reports one (`2 ahead`).
+pub(in crate::runner) fn admission_wait_label(task: &str, progress: Option<&str>) -> String {
+    match progress {
+        Some(progress) => format!("waiting for heavy admission (task `{task}`, {progress})"),
+        None => format!("waiting for heavy admission (task `{task}`)"),
+    }
+}
+
+/// The last non-empty line the hook wrote to stderr, as progress.
+fn admission_progress_line(stderr: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())
+        .map(|line| line.chars().take(120).collect())
+}
+
 fn refusal(target: &TaskTarget, run_id: &str, decision: &str, reason: String) -> RunnerError {
+    let next_action = format!(
+        "check the admission hook `{HOOK_ENV}`, or unset it to run without host-wide admission"
+    );
     let detail = format!(
         "heavy task `{}` was not admitted (run {run_id}): {reason}. The task did not run; \
-         admission fails closed",
+         admission fails closed\nnext: {next_action}",
         target.label
     );
     let details_json = serde_json::json!({
@@ -440,6 +514,7 @@ fn refusal(target: &TaskTarget, run_id: &str, decision: &str, reason: String) ->
         "class": "heavy",
         "decision": decision,
         "reason": reason,
+        "next_action": next_action,
     })
     .to_string();
     RunnerError::AdmissionRefused {
@@ -553,6 +628,44 @@ mod tests {
         .unwrap();
         assert_eq!(current_hook().unwrap(), Some(identity));
         pop_marker("parent-fixture");
+    }
+
+    #[test]
+    fn the_waiting_step_names_the_task_and_the_hooks_progress() {
+        assert_eq!(
+            admission_wait_label("dev", None),
+            "waiting for heavy admission (task `dev`)"
+        );
+        assert_eq!(
+            admission_wait_label("dev", Some("2 ahead")),
+            "waiting for heavy admission (task `dev`, 2 ahead)"
+        );
+        assert_eq!(
+            admission_progress_line(b"queued\nwaiting for capacity: 2 ahead\n").as_deref(),
+            Some("waiting for capacity: 2 ahead")
+        );
+        assert_eq!(admission_progress_line(b"\n  \n"), None);
+    }
+
+    #[test]
+    fn a_refusal_names_the_next_action() {
+        let target = TaskTarget {
+            label: "dev".to_owned(),
+            root: std::path::PathBuf::from("/tmp/checkout"),
+            catalog: String::new(),
+            task: "dev".to_owned(),
+            surface: effigy_core::task_selection::TaskSurface::Published,
+            profile: None,
+            shared_lock: None,
+        };
+        let error = refusal(&target, "run-1", "deny", "busy".to_owned());
+        let human = error.human_error();
+        assert!(
+            human
+                .next_action_text()
+                .is_some_and(|action| action.contains("EFFIGY_ADMISSION_HOOK")),
+            "{human:?}"
+        );
     }
 
     #[test]
