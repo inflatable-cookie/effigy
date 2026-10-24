@@ -190,8 +190,11 @@ STUB
 }
 
 run_install() { # [env assignment ...]
+  # The fixture HOME is private, so name a pool explicitly: the selector would
+  # otherwise ask the stub `oxide` for `status` and the fixture log would carry
+  # an extra call that no install step made.
   (cd "$repo" && env -u GITHUB_ACTIONS -u EFFIGY_OXIDE_ESCAPE \
-    HOME="$home" FIXTURE_LOG="$log" GIT_CEILING_DIRECTORIES="$fx" \
+    HOME="$home" OXIDE_POOL="$fx/pool" FIXTURE_LOG="$log" GIT_CEILING_DIRECTORIES="$fx" \
     REAL_CP="$real_cp" REAL_MV="$real_mv" REAL_CHMOD="$real_chmod" \
     PATH="$stubs:/usr/bin:/bin:/usr/sbin:/sbin" \
     "$@" "$binary" install:local) >"$out" 2>&1
