@@ -77,6 +77,13 @@ pub enum RunnerError {
         path: PathBuf,
         detail: String,
     },
+    /// A transition refused because another run holds the environment's
+    /// gate. Diagnostic only: the same refusal and exit as before, now with
+    /// the observed holder in `effigy.environment-busy.v1` details.
+    EnvironmentBusy {
+        detail: String,
+        details_json: String,
+    },
     GatewayRouteRegistration {
         phase: &'static str,
         domain: String,

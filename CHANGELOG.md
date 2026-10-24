@@ -1173,6 +1173,14 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- A refused environment transition now names the authoritative observed holder
+  (effigy#302). `environment <name> is busy` reports the run id and pid the
+  environment's gate names, its freshly observed process state, the wait that
+  ended with the deadline it was given, and the record's observed state and
+  generation. An identity that no longer matches, or that cannot be read, is
+  reported as unknown rather than as a live owner, and `--json` carries the same
+  facts as `effigy.environment-busy.v1`. The refusal itself is unchanged: no
+  backend call, no release, no retry, no second wait.
 - `effigy gateway setup` migrates a v0.14.1 gateway the operator started, not
   only a root one: when the recorded version is v0.14.1 the same
   exact-generation stop runs as for the root case, and a current-generation

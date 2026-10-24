@@ -371,6 +371,44 @@ command: the error then
 points at `effigy tasks status --all`, which lists every live holder. Stop the
 holder, or let it finish, to release it.
 
+### Symptom: the error says an environment is busy
+
+One environment changes through one transition at a time. An `up`, `down`,
+`reset`, `handover` or `reap` that finds another transition holding the
+environment's gate is refused, and the error names the observed owner:
+
+- the holder's run id and pid on this host, with its freshly observed process
+  state: `reported live`, `stopped (SIGSTOP)`, or `has exited`;
+- `its process identity is unverifiable` when the pid no longer matches the
+  gate's recorded identity (a successor process owns that pid), or the gate's
+  owner record is torn or unreadable;
+- the environment record's observed state and generation, or that there is no
+  record yet, or that the record is unreadable;
+- for a refused wait, how long it waited and the deadline it was given.
+
+```sh
+effigy container status <name>
+```
+
+names the same record and holders. The refusal itself changes nothing: it
+contacts no backend, releases nobody and never retries. Wait for that
+transition to finish, then run the command again. There is no force-unlock: the
+gate belongs to a live run, and a crashed or killed transition has already
+released it.
+
+With `--json` the refusal carries `error.details`
+`effigy.environment-busy.v1` (see the JSON payload examples).
+
+### Symptom: `refused to stop, restart or recreate environment`
+
+The environment still has runs attached (task holders, `exec` sessions or an
+attached dev session). That is a different refusal from a busy gate: it names
+the runs, and each ends through its own stop.
+
+```sh
+effigy tasks status --all
+```
+
 ### Symptom: `<task>` status reads `interrupted`
 
 Its owner exited without recording a result (for example after `kill -9`).

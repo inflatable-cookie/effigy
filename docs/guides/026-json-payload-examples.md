@@ -1723,6 +1723,46 @@ is the holder's liveness, so there is nothing to unlock.
 }
 ```
 
+### 17b) Environment busy (`effigy.environment-busy.v1`)
+
+Returned as `error.details` when a container environment transition is refused
+because another transition holds that environment's gate. The exit code is
+unchanged by this payload. `holder` and `environment_state` are the
+observation the refusal carried; each says whether it was `verified`,
+`unknown` (with a closed-vocabulary `reason`) or `absent`, and both are `null`
+when that refusal retained no observation. No argv, secret or command text is
+included.
+
+```json
+{
+  "schema": "effigy.environment-busy.v1",
+  "schema_version": 1,
+  "environment": "stack",
+  "refusal": "timed-out",
+  "waited_ms": 600512,
+  "wait_budget_ms": 600000,
+  "holder": {
+    "observed": "verified",
+    "run": "agqvgrlm6bercdndodnbeu4tb4",
+    "pid": 1234,
+    "state": "running"
+  },
+  "environment_state": {
+    "observed": "verified",
+    "state": "pending",
+    "generation": 12
+  }
+}
+```
+
+`refusal` is `busy` for a fail-fast refusal (then `waited_ms` and
+`wait_budget_ms` are `null`) and `timed-out` when a wait ended. `holder.state`
+is `running`, `stopped`, `exited` or `unknown`; an unverifiable identity also
+carries `state_reason`. An unreadable gate body is
+`{"observed":"unknown","reason":"unparsable"}`, an empty gate is
+`{"observed":"absent"}`, and an environment with no record row yet reports
+`environment_state` as `{"observed":"absent"}`.
+
 ## Completion
 
 ### 18) Completion (`effigy.completion.v2`)
