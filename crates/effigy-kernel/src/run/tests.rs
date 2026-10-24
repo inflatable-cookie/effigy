@@ -1451,10 +1451,7 @@ fn run_control_socket_long_checkout_path_has_bounded_probe_and_exact_cleanup() {
 
 #[test]
 fn gateway_control_socket_lives_in_trusted_runtime_and_settles_exact_inode() {
-    let home = tempfile::Builder::new()
-        .prefix("g219-")
-        .tempdir_in("/tmp")
-        .unwrap();
+    let home = effigy_test_support::short_tempdir("g219-").unwrap();
     let cx = context();
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let mut fake = Fake::new(home.path());

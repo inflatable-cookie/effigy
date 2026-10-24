@@ -1,7 +1,7 @@
 #!/bin/sh
 # Explicit proof: all VM/container/binary/state changes stay in this fresh tree.
 set -eu
-proof_dir=$(mktemp -d /tmp/g237-downgrade.XXXXXX)
+proof_dir=$(mktemp -d "${TMPDIR:-/tmp}/g237-downgrade.XXXXXX")
 printf 'Gateway downgrade proof artifacts: %s\n' "$proof_dir"
 target/debug/examples/gateway-downgrade-proof "$proof_dir/home"
 cp tests/scripts/gateway-downgrade.py "$proof_dir/proof.py"

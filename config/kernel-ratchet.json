@@ -333,7 +333,7 @@
       "signal_hook.registration": 1,
       "std.fs.OpenOptions.write": 6,
       "std.process.Command.new": 4,
-      "std.process.Command.spawn": 3,
+      "std.process.Command.spawn": 2,
       "std.process.Command.status": 1,
       "std::fs::remove_file": 4,
       "std::fs::rename": 1,

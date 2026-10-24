@@ -2,7 +2,7 @@
 # The caller's Effigy selector owns admission. Every VM, socket, checkout and
 # backend resource belongs to this fresh fixture; no user backend is contacted.
 set -eu
-proof_dir=$(mktemp -d /tmp/q276.XXXXXX)
+proof_dir=$(mktemp -d "${TMPDIR:-/tmp}/q276.XXXXXX")
 printf 'Private retirement proof: %s\n' "$proof_dir"
 export COLIMA_HOME="$proof_dir/colima" COLIMA_CACHE_HOME="$proof_dir/cache" LIMA_HOME="$proof_dir/lima"
 export DOCKER_CONFIG="$proof_dir/docker" XDG_CONFIG_HOME="$proof_dir/config" XDG_CACHE_HOME="$proof_dir/xdg-cache"

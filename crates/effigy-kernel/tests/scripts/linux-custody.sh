@@ -10,7 +10,7 @@ case "$proof_mode" in
     custody|gate-shared|probe|helpers|runtime-storage|qualification|final-runtime|task-engine|fixtures|task-engine-fixtures) ;;
     *) printf 'Unknown Linux proof mode: %s\n' "$proof_mode" >&2; exit 2 ;;
 esac
-proof_dir=$(mktemp -d /tmp/k208.XXXXXX)
+proof_dir=$(mktemp -d "${TMPDIR:-/tmp}/k208.XXXXXX")
 printf 'Linux qualification artifacts: %s\n' "$proof_dir"
 export COLIMA_HOME="$proof_dir/c"
 export COLIMA_CACHE_HOME="$proof_dir/cache"

@@ -71,10 +71,8 @@ impl SettlementAdapter for Strict {
     }
 }
 fn home() -> tempfile::TempDir {
-    tempfile::Builder::new()
-        .prefix("kernel-fault-")
-        .tempdir_in(std::fs::canonicalize("/tmp").unwrap())
-        .unwrap()
+    // Short: the run's control socket path is bounded (`sun_path`).
+    effigy_test_support::short_tempdir("kernel-fault-").unwrap()
 }
 fn executable_path() -> PathBuf {
     crate::fixture::custody_fixture()

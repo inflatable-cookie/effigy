@@ -1333,6 +1333,18 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- Test, selector and proof-script temp follows a configured `[scratch]` volume
+  (effigy#244) instead of landing on the internal disk. Every host-side
+  harness `mktemp` takes an explicit `${TMPDIR:-/tmp}/<name>.XXXXXX` template,
+  because macOS `mktemp -d` without one ignores `TMPDIR` and writes to
+  `/var/folders/.../T`; harnesses that need a short path for a Unix control
+  socket now take the run's temp directory when it fits and fall back to
+  `/tmp` only when it does not. `effigy qa:docs:mktemp`
+  (`scripts/check-mktemp.py`) fails a bare or `/tmp`-templated `mktemp` in
+  `config/`, `scripts/`, `tests/scripts/` and crate harness script
+  directories, with an annotated exemption for guest-side scripts, and
+  `docs/guides/069-workspace-host-integration.md` records what does and does
+  not follow the scratch directory.
 - Every embedded catalog health check runs a tool its image ships, now that
   `container up` waits for every service's own check. `dbgate/dbgate:7.2.3` is
   built on `node:22-bookworm-slim`, which drops `wget` and `curl`, so its probe

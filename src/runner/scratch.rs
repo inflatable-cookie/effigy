@@ -1671,9 +1671,14 @@ mod tests {
 
     #[test]
     fn the_real_probe_refuses_a_directory_on_the_internal_disk() {
-        // The refusal direction needs no external drive: a test directory on
-        // this machine is not a separately mounted volume.
-        let root = tempfile::tempdir().expect("root");
+        // The refusal direction needs no external drive: a directory on the
+        // boot disk is not a separately mounted volume. It asks for that disk
+        // explicitly, because the run's own temp directory is on the
+        // configured `[scratch]` volume when Effigy has one.
+        let root = tempfile::Builder::new()
+            .prefix("effigy-internal-")
+            .tempdir_in("/tmp")
+            .expect("internal-disk root");
         let canonical = std::fs::canonicalize(root.path()).expect("canonical");
         let config = Config {
             root: canonical.clone(),

@@ -16,6 +16,42 @@ pub(crate) fn drain_process_fixtures() {
     }
 }
 
+/// A Unix socket path must fit `sun_path` (104 bytes on macOS and Linux). A
+/// managed run's control socket is `<home>/.effigy/gateway/runtime/` plus a
+/// 26-character run id and `.sock`, so a fixture HOME longer than this leaves
+/// no room for one.
+pub const SHORT_PATH_MAX: usize = 48;
+
+/// The configured fixture root: `EFFIGY_TEST_FIXTURE_ROOT` when the suite
+/// wrapper supplies it, the system temporary directory otherwise.
+fn configured_root() -> PathBuf {
+    std::env::var_os("EFFIGY_TEST_FIXTURE_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// The parent a short fixture belongs under: the configured root when the
+/// resulting path leaves room for a Unix control socket, else `/tmp`. With
+/// `[scratch]` configured the temp root is on that volume and is shorter than
+/// macOS's default `/private/var/folders/.../T/`, so scratch wins there.
+fn short_parent(configured: PathBuf, prefix: &str) -> PathBuf {
+    // `tempfile` appends its own random suffix: at most eight more characters.
+    if configured.as_os_str().len() + prefix.len() + 8 <= SHORT_PATH_MAX {
+        configured
+    } else {
+        PathBuf::from("/tmp")
+    }
+}
+
+/// A fresh temporary directory whose path stays short enough for a Unix
+/// control socket, for harnesses that need a bare `TempDir` rather than a
+/// [`Fixture`].
+pub fn short_tempdir(prefix: &str) -> io::Result<tempfile::TempDir> {
+    tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir_in(short_parent(std::env::temp_dir(), prefix))
+}
+
 /// An owned directory. Cleanup restores owner permissions without following links.
 #[derive(Debug)]
 pub struct Fixture {
@@ -25,10 +61,16 @@ pub struct Fixture {
 
 impl Fixture {
     pub fn new(prefix: &str) -> io::Result<Self> {
-        let parent = std::env::var_os("EFFIGY_TEST_FIXTURE_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir);
-        Self::in_parent(prefix, &parent)
+        Self::in_parent(prefix, &configured_root())
+    }
+
+    /// A fixture HOME short enough for a managed run's Unix control socket. It
+    /// uses the configured temp root when that fits (a `[scratch]` run's
+    /// `TMPDIR` does) and the platform's `/tmp` otherwise, since macOS's
+    /// default `/private/var/folders/.../T/` is too long once the socket's own
+    /// directory and run id are appended.
+    pub fn short_home(prefix: &str) -> io::Result<Self> {
+        Self::in_parent(prefix, &short_parent(configured_root(), prefix))
     }
 
     pub fn in_parent(prefix: &str, parent: &Path) -> io::Result<Self> {
@@ -124,6 +166,12 @@ impl Fixture {
         Self::own_for_process(Self::in_parent(prefix, parent)?)
     }
 
+    /// [`Self::process_lifetime`] for a home whose run sockets must fit a Unix
+    /// socket path; the parent follows [`Self::short_home`].
+    pub fn process_lifetime_short(prefix: &str) -> io::Result<PathBuf> {
+        Self::own_for_process(Self::short_home(prefix)?)
+    }
+
     fn own_for_process(fixture: Self) -> io::Result<PathBuf> {
         extern "C" fn cleanup() {
             drain_process_fixtures();
@@ -196,6 +244,25 @@ fn unseal(path: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::os::unix::fs::symlink;
+
+    #[test]
+    fn short_parent_prefers_configured_root_until_the_socket_stops_fitting() {
+        let scratch = PathBuf::from("/Volumes/Builds/scratch/abcdefgh");
+        assert_eq!(short_parent(scratch.clone(), "e235g."), scratch);
+        let platform_default =
+            PathBuf::from("/private/var/folders/ng/5rcw8k5s24j50my4x2rqf8sm0000gn/T");
+        assert_eq!(short_parent(platform_default, "e235g."), PathBuf::from("/tmp"));
+    }
+
+    #[test]
+    fn short_tempdir_stays_within_the_socket_budget() {
+        let directory = short_tempdir("effigy-short-").unwrap();
+        assert!(
+            directory.path().as_os_str().len() <= SHORT_PATH_MAX,
+            "{} is too long for a control socket",
+            directory.path().display()
+        );
+    }
 
     #[test]
     fn cleanup_accepts_an_already_removed_fixture() {
