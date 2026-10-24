@@ -104,12 +104,65 @@ impl From<FsError> for GateError {
 impl std::fmt::Display for GateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Busy { id, .. } => write!(f, "gate busy: {}", id.label()),
-            Self::TimedOut { id, waited, .. } => {
-                write!(f, "gate wait timed out after {waited:?}: {}", id.label())
-            }
-            other => write!(f, "gate refused: {other:?}"),
+            Self::Busy { id, holder } => write!(
+                f,
+                "gate `{}` is held{}; wait for that process to finish, or stop it",
+                id.label(),
+                holder_note(holder)
+            ),
+            Self::TimedOut {
+                id,
+                waited,
+                holder,
+            } => write!(
+                f,
+                "gate `{}` was still held after {}{}; retry once that process finishes",
+                id.label(),
+                crate::human::human_duration(*waited),
+                holder_note(holder)
+            ),
+            Self::HostAuthorityRequired => f.write_str(
+                "a gate lives on the host; a guest placement cannot take it",
+            ),
+            Self::UnsupportedFilesystem { path, fs } => write!(
+                f,
+                "{} is on a network filesystem ({fs}); flock needs a local disk, so move the state root",
+                path.display()
+            ),
+            Self::Untrusted { path, reason } if reason == crate::fs::OPEN_MODE_REASON => write!(
+                f,
+                "{} is readable by other users; run `chmod 700 {}`",
+                path.display(),
+                path.display()
+            ),
+            Self::Untrusted { path, reason } => write!(
+                f,
+                "{} is not trusted gate state ({reason}); fix its ownership and permissions, then retry",
+                path.display()
+            ),
+            Self::Io(error) => error.fmt(f),
+            Self::ClassRefused { id, class } => write!(
+                f,
+                "a {} operation may not take gate `{}`; this resource needs a prepare-or-mutate operation",
+                crate::human::effect_class_label(*class),
+                id.label()
+            ),
+            Self::InTransaction => f.write_str(
+                "a store transaction is already open on this thread, so taking a gate here would deadlock",
+            ),
+            Self::Interrupted(interrupt) => interrupt.fmt(f),
         }
+    }
+}
+
+/// Which process holds a gate, when the probe could name it.
+fn holder_note(holder: &Observed<HolderDiag>) -> String {
+    match holder.verified() {
+        Some(diag) => match &diag.run {
+            Some(run) => format!(" by pid {} of run {run}", diag.pid),
+            None => format!(" by pid {}", diag.pid),
+        },
+        None => String::new(),
     }
 }
 impl std::error::Error for GateError {}

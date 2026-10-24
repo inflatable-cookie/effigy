@@ -10,8 +10,6 @@ use effigy_containers::colima::{
     prepare_managed_colima_profile_name, prepare_managed_colima_profile_name_with_disk,
 };
 use effigy_containers::exec::{recover_colima_runtime, reset_colima_runtime, ColimaRecoveryReport};
-use effigy_ui::theme::is_ci_environment;
-use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -203,33 +201,32 @@ fn render_profile_runtime_recovery(
 }
 
 struct ProfileRecoveryProgressReporter {
-    spinner: Option<Box<dyn SpinnerHandle>>,
+    step: Option<effigy_ui::steps::Step>,
 }
 
 impl ProfileRecoveryProgressReporter {
     fn new(output_json: bool, repair: bool) -> Self {
-        if output_json || !io::stderr().is_terminal() || is_ci_environment() {
-            return Self { spinner: None };
+        if output_json {
+            return Self { step: None };
         }
-
         let label = if repair {
-            "Container profile: recovering Colima runtime"
+            "recovering the Colima runtime"
         } else {
-            "Container profile: hard-resetting Colima runtime"
+            "resetting the Colima runtime"
         };
-        let mut renderer = PlainRenderer::stderr(OutputMode::from_env());
-        let spinner = renderer.spinner(label).ok();
-        Self { spinner }
+        Self {
+            step: Some(effigy_ui::steps::step(label)),
+        }
     }
 
     fn finish(&mut self, success: bool) {
-        let Some(spinner) = self.spinner.take() else {
+        let Some(step) = self.step.take() else {
             return;
         };
         if success {
-            spinner.finish_clear();
+            step.succeed("");
         } else {
-            spinner.finish_error("Container profile recovery failed");
+            step.fail("the Colima runtime did not recover; run `effigy container profile status` to see what is left");
         }
     }
 }

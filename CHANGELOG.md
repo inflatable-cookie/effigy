@@ -476,6 +476,27 @@ During v0.x, MINOR bumps may include breaking changes.
   `simulate --version`. The refusal names the replacement.
 
 ### Added
+- Human-facing feedback has one foundation (effigy#312). `effigy-ui` exports
+  `steps`, a step-progress API with short present-tense labels: a terminal
+  draws an asynchronous spinner on stderr, each step ends with one `✓`/`✗`
+  line, `--json`, piped output and CI stay silent unless verbose output asks
+  for plain lines, concurrent and nested steps never interleave, and the
+  managed-run TUI suspends drawing while it owns the terminal. It also exports
+  `HumanError`, which carries what failed, bounded and redacted evidence and
+  the next action, and renders both as text for a person and as `error.human`
+  in the `effigy.command.v1` envelope. The runner's top-level error printing
+  uses it, and doctor, container profile, the transient cache spinner and the
+  container health wait report through the step API. Kernel refusals
+  (`StoreError`, `RunError`, `GateError`, `FsError`, `Interrupt`,
+  `UnknownReason`, `Observed`) render what they found and what to do next
+  instead of a `Debug` tree: `run refused: Interrupted(TimedOut { phase:
+  "settle", elapsed: 247.8s })` now reads "the run was refused because the
+  operation timed out after 4m08s while waiting for the environment to
+  settle". `effigy qa:docs:human-error-debug` ratchets Debug formatting in
+  human-facing error construction against
+  `config/human-error-debug-ratchet.json`. The label and error style for
+  contributors is in `docs/guides/011-output-widgets-and-colour-modes.md`.
+
 - A deleted or stopped Colima profile is no longer a dead end: the next command
   that needs it creates the profile with Effigy's managed arguments (SSH agent
   forwarding, DNS fallbacks, managed resources, platform overrides) or starts
@@ -1191,6 +1212,11 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- `effigy dev` no longer refuses the Linux workspace artifact with `build
+  succeeded but did not produce a current artifact` when a no-op rebuild
+  reproduces bytes that were already built for this exact version (for example
+  after a direct `effigy workspace:linux:artifact`). Touched bytes from another
+  version are still refused.
 - Catalog `nginx` and `phpmyadmin` health checks no longer leave a running
   stack unhealthy until `effigy dev` times out (`environment record: run
   refused: Interrupted(TimedOut { phase: "settle", … })`). nginx counts any HTTP

@@ -288,7 +288,7 @@ impl SameCheckoutRoutes {
                     | effigy_kernel::observe::Observed::Absent(_) => {}
                     effigy_kernel::observe::Observed::Unknown(reason) => {
                         return Err(RunnerError::task_invocation(format!(
-                            "listener observation unknown before handover: {reason:?}"
+                            "listener observation unknown before handover: {reason}"
                         )))
                     }
                 }

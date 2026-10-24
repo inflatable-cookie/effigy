@@ -370,6 +370,37 @@ fn linux_artifact_successful_build_without_fresh_output_is_refused() {
 }
 
 #[test]
+fn linux_artifact_no_op_rebuild_of_current_version_bytes_is_bound() {
+    // A direct `workspace:linux:artifact` leaves current-version bytes with a
+    // stale install identity; the no-op rebuild reproduces identical bytes.
+    let root = linux_artifact_fixture("noop-current");
+    let host = fake_effigy_host(
+        &root,
+        r#"touch .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu
+printf '%s\n' "$EFFIGY_FIXTURE_ACTIVE_VERSION" > .effigy/linux-release/artifacts/effigy-x86_64-unknown-linux-gnu.active-version
+exit 0"#,
+    );
+    let artifact = root.join(LinuxWorkspaceTarget::X86_64Gnu.artifact_relative_path());
+    write_linux_artifact(&artifact, "current-bytes", Some(STALE_IDENTITY));
+    std::fs::write(
+        workspace_effigy_active_version_file(&artifact),
+        format!("{}\n", effigy_core::build_info::active_version()),
+    )
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    let bound =
+        ensure_local_linux_workspace_effigy_artifact(&host, &root, LinuxWorkspaceTarget::X86_64Gnu)
+            .expect("identical current-version bytes from a successful rebuild are bound");
+    assert_eq!(bound, artifact);
+    assert_ne!(
+        read_trimmed_identity_file(&workspace_effigy_install_identity_file(&artifact)).as_deref(),
+        Some(STALE_IDENTITY),
+        "the install identity is rebound to this host"
+    );
+}
+
+#[test]
 fn linux_artifact_touched_old_bytes_are_refused_in_ordinary_and_bounded_preparation() {
     for bounded in [false, true] {
         let root = linux_artifact_fixture("touched-old-output");

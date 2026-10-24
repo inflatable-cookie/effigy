@@ -1675,6 +1675,27 @@
 # The drift guard for Cargo routing: no selector or route script may run plain
 # `cargo` unless docs/knowledge/cargo-routes.md records it.
 "qa:docs:cargo-routes" = { visibility = "internal", group = "Maintenance", run = "python3 scripts/check-cargo-routes.py" }
+# The ratchet on Debug formatting in human-facing error construction: a rise
+# fails, and so does a fall that leaves the baseline stale.
+"qa:docs:human-error-debug" = { visibility = "internal", group = "Maintenance", run = "python3 scripts/check-human-error-debug.py" }
+
+# Human-facing feedback (effigy#312): the step-progress API, the human error
+# renderer and the kernel's readable refusals. Each covers the crate and test
+# binary that owns the behaviour, so a change here has a narrow proof.
+"test:ui" = { durable = true, visibility = "internal", group = "Maintenance", description = "Prove the step-progress API and the human error renderer.", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-ui --lib --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
+"test:ui:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-ui --lib --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
+"test:kernel:human-errors" = { durable = true, visibility = "internal", group = "Maintenance", description = "Snapshot the human renderings of kernel refusals.", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test human_errors --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
+"test:kernel:human-errors:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --test human_errors --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
+"test:runner:feedback" = { durable = true, visibility = "internal", group = "Maintenance", description = "Prove the runner's human error mapping, the JSON error.human form and the container health step.", run = [
+  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::error::tests::) | test(cli::output::envelope::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(health::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+] }
+"test:runner:feedback:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(runner::error::tests::) | test(cli::output::envelope::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(health::tests::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+] }
+"lint:feedback" = { visibility = "internal", group = "Maintenance", description = "Lint the crates that carry human-facing feedback.", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-ui -p effigy-kernel -p effigy-containers -p effigy-doctor --all-targets -- -D warnings", timeout_ms = 900000 }] }
+"lint:feedback:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy -p effigy-ui -p effigy-kernel -p effigy-containers -p effigy-doctor --all-targets -- -D warnings", timeout_ms = 900000 }] }
 "qa:docs" = { visibility = "public", group = "Validation", description = "Check documentation links, examples, agent defaults, knowledge and the changelog.", run = [
   { task = "qa:docs:links" },
   { task = "qa:docs:examples" },
@@ -1682,6 +1703,7 @@
   { task = "qa:docs:knowledge" },
   { task = "qa:docs:changelog" },
   { task = "qa:docs:cargo-routes" },
+  { task = "qa:docs:human-error-debug" },
 ] }
 
 # JSON contract QA

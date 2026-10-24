@@ -154,7 +154,7 @@ impl EndpointStore {
             }
             Observed::Verified(snapshot, _) => Ok(snapshot),
             Observed::Absent(_) => self.sources.read(),
-            Observed::Unknown(reason) => Err(error(format!("observation unknown: {reason:?}"))),
+            Observed::Unknown(reason) => Err(error(format!("observation unknown: {reason}"))),
         }
     }
 
