@@ -55,6 +55,14 @@ when the real cause was two named services failing their health checks.
   and variant names, and nested `Unknown(StoreUnreadable(…))` chains never
   reach a person unrendered. Keep those details for `--json` and verbose
   diagnostics.
+- **Every suggested command works.** A command a message tells someone to run
+  parses under this checkout's grammar and reaches the command it names in that
+  checkout: a repository task may own a built-in word (contract `043`), so a
+  message never spells `effigy <built-in> …` where the repository routes that
+  word to its own task. A mistyped or unknown argument gets a short, targeted
+  answer — the nearest command's own `Usage` lines, the words it accepts there,
+  and a "did you mean" when there is a close match — never the whole help
+  panel; `effigy <command> --help` is the pointer for the rest.
 
 ## Anti-Patterns
 

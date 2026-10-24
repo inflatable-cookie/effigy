@@ -173,6 +173,40 @@ through `Display` instead — the kernel's `StoreError`, `RunError`, `GateError`
 `Interrupt` and `UnknownReason` all do — and keep `Debug` for `--json` and
 verbose diagnostics.
 
+### Argument errors
+
+An argument error names what is wrong, then the nearest command's own usage: one
+or two `Usage` lines of that command, the words it accepts where the typed word
+failed, and a "did you mean" when the typed word is a near miss or a command
+that lives somewhere else. It never prints the whole help panel;
+`effigy <command> --help` is the pointer for the rest.
+
+```text
+[error] Invalid command arguments
+  unknown argument: app
+  hint: Run `effigy container --help` for every form
+
+`effigy container exec` does not exist: `exec` is its own command — `effigy exec [--repo <PATH>] [--service <NAME>] [--json] <COMMAND> [ARGS...]`
+
+effigy container accepts here: cache, data, down, hosts, logs, migrate, ports, profile, render, retire, scope, stats, status, up, volume
+```
+
+`effigy_cli::usage_hint` derives that answer from the typed argv and the
+command's own help panel, so a usage line that changes changes the answer. The
+`--json` details carry the same facts as `hint`, `usage`, `supported` and
+`did_you_mean`.
+
+Two rules keep the answer honest:
+
+- a message only suggests a command this checkout actually reaches. A
+  repository task may own a built-in word (contract `043`), so a lock conflict
+  in a repository that declares a `tasks` task says the built-in inventory is
+  unavailable there instead of suggesting `effigy tasks status …`;
+- `tests/suggested_commands.rs` collects every backtick-quoted `effigy …` form in
+  `src/` and `crates/`, substitutes its placeholders and parses it with this
+  checkout's grammar. A suggestion that stops parsing fails
+  `effigy test:feedback:suggestions`.
+
 `effigy qa:docs:human-error-debug` is the ratchet that keeps it that way. It
 counts Debug format specifiers inside string macros in files that define or
 construct human-facing errors, and fails when the count rises above

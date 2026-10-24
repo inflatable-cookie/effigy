@@ -3,6 +3,7 @@ use crate::{
     emit_json_envelope_success, parse_error_json_details, parse_json_or_string, render_cli_header,
     render_parse_error, run_help_command, run_help_group_command, CliExecutionContext,
 };
+use effigy_cli::usage_hint::usage_hint_for;
 use effigy_cli::{
     apply_global_cli_flags, command_requests_json, parse_command,
     runtime_flag_present_before_passthrough, strip_global_cli_flags, Command, GlobalCliOptions,
@@ -16,6 +17,10 @@ use std::path::{Path, PathBuf};
 
 pub fn run_cli(raw_args: Vec<String>) {
     let requested_root_json = runtime_flag_present_before_passthrough(&raw_args, "--json");
+    // One argv snapshot feeds the targeted usage of every argument error below:
+    // the answer is the nearest command's own usage, never the whole help. It
+    // holds the command argv, so a global flag can never be read as the command.
+    let mut hint_argv = raw_args.clone();
     let (args, global_options) = match strip_global_cli_flags(raw_args) {
         Ok(parsed) => parsed,
         Err(err) => {
@@ -27,17 +32,23 @@ pub fn run_cli(raw_args: Vec<String>) {
                     "parse",
                     "CliParseError",
                     &err.to_string(),
-                    Some(parse_error_json_details()),
+                    Some(parse_error_json_details(&usage_hint_for(&hint_argv))),
                 );
             }
             let mut renderer = PlainRenderer::stderr(output_mode);
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             let resolved_root = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
                 .map_or(cwd, |r| r.resolved_root);
-            let _ = render_parse_error(&mut renderer, &resolved_root, &err.to_string());
+            let _ = render_parse_error(
+                &mut renderer,
+                &resolved_root,
+                &err.to_string(),
+                &usage_hint_for(&hint_argv),
+            );
             std::process::exit(2);
         }
     };
+    hint_argv = args.clone();
     let global_json_mode = global_options.json_mode;
     // `--json` never writes the retired-config notice to stderr; the envelope
     // carries it. Set before any manifest load so parse-time routing cannot
@@ -59,13 +70,18 @@ pub fn run_cli(raw_args: Vec<String>) {
                     "parse",
                     "CliParseError",
                     &err.to_string(),
-                    Some(parse_error_json_details()),
+                    Some(parse_error_json_details(&usage_hint_for(&hint_argv))),
                 );
             }
             let mut renderer = PlainRenderer::stderr(output_mode);
             let resolved_root = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
                 .map_or(cwd, |r| r.resolved_root);
-            let _ = render_parse_error(&mut renderer, &resolved_root, &err.to_string());
+            let _ = render_parse_error(
+                &mut renderer,
+                &resolved_root,
+                &err.to_string(),
+                &usage_hint_for(&hint_argv),
+            );
             std::process::exit(2);
         }
     };
@@ -87,13 +103,18 @@ pub fn run_cli(raw_args: Vec<String>) {
                     "parse",
                     "CliParseError",
                     &err.to_string(),
-                    Some(parse_error_json_details()),
+                    Some(parse_error_json_details(&usage_hint_for(&hint_argv))),
                 );
             }
             let mut renderer = PlainRenderer::stderr(output_mode);
             let resolved_root = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
                 .map_or(cwd, |r| r.resolved_root);
-            let _ = render_parse_error(&mut renderer, &resolved_root, &err.to_string());
+            let _ = render_parse_error(
+                &mut renderer,
+                &resolved_root,
+                &err.to_string(),
+                &usage_hint_for(&hint_argv),
+            );
             std::process::exit(2);
         }
     };

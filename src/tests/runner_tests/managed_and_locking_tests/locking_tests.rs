@@ -104,6 +104,46 @@ lock = "dev-stack"
 }
 
 #[test]
+fn a_repository_task_named_tasks_is_never_the_inventory_a_conflict_suggests() {
+    let _guard = lock_test();
+    let root = temp_workspace("lock-conflict-deferred-tasks");
+    write_root_manifest(
+        &root,
+        r#"[tasks.tasks]
+run = "printf repository-tasks-task"
+lock = "dev-stack"
+
+[tasks.build]
+run = "printf build-ok"
+lock = "dev-stack"
+"#,
+    );
+
+    let root_for_thread = root.clone();
+    let owner = OwnedThread::spawn(move || run_task_with_repo(&root_for_thread, "tasks", &[]));
+    wait_for_live_task_owner(&root, "tasks");
+
+    // `effigy tasks` runs the repository's own task here, so the conflict must
+    // not suggest the built-in inventory (effigy#318).
+    let err = run_task_with_repo(&root, "build", &[]).expect_err("shared lock should conflict");
+    let RunnerError::TaskLockConflict(details) = &err else {
+        panic!("expected a lock conflict, got {err:?}");
+    };
+    let rendered = err.to_string();
+    assert!(
+        !rendered.contains("effigy tasks status"),
+        "the built-in inventory is routed away here: {rendered}"
+    );
+    assert!(
+        rendered.contains("this repository's own task owns `effigy tasks`"),
+        "{rendered}"
+    );
+    assert_eq!(details.status_command, None);
+
+    owner.join().expect("first run should complete");
+}
+
+#[test]
 fn colon_namespaced_validation_selectors_do_not_share_locks() {
     let _guard = lock_test();
     let root = temp_workspace("lock-colon-selector-isolation");

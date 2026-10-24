@@ -156,7 +156,7 @@ fn container_surface_selection_variants_render_stably() {
     );
     assert_eq!(
         RunnerError::container_surface_not_running("web").to_string(),
-        "container `web` is not running — start it with `effigy container up web`"
+        "container `web` is not running — start it with `effigy container web up`"
     );
 }
 
@@ -417,14 +417,14 @@ fn command_failure_renders_the_three_human_facts() {
 #[test]
 fn a_display_sentence_lifts_its_next_step_out_of_the_evidence() {
     let error = RunnerError::TaskInvocation(
-        "container `web` is not running\nnext: run `effigy container up web`".to_owned(),
+        "container `web` is not running\nnext: run `effigy container web up`".to_owned(),
     );
     let human = error.human_error();
     assert_eq!(human.what_failed(), "container `web` is not running");
     assert!(human.evidence_lines().is_empty());
     assert_eq!(
         human.next_action_text(),
-        Some("run `effigy container up web`")
+        Some("run `effigy container web up`")
     );
 }
 

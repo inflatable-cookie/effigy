@@ -1369,7 +1369,7 @@ pub fn collect_release_execute_plan(
                     ));
                     if !allow_stale {
                         blockers.push(
-                            "release state is stale; rerun `effigy release prepare` or pass `--allow-stale` to acknowledge and continue"
+                            "release state is stale; rerun `effigy release run` or pass `--allow-stale` to acknowledge and continue"
                                 .to_owned(),
                         );
                     }

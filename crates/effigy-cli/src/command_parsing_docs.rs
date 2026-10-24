@@ -21,7 +21,7 @@ where
             "`effigy docs qualified` is retired; run `effigy qa:docs` and `effigy skill run northstar/retired-concepts` directly".to_owned(),
         )),
         "context" => Err(CliParseError::InvalidArguments(
-            "`effigy docs context` was removed in v0.15 with no replacement: the code graph that served its evidence is gone. Read `docs/README.md` for the documentation index, and `rg` the docs tree for exact text; `effigy docs check` is unchanged. See the v0.15.0 Removed entry in CHANGELOG.md".to_owned(),
+            "`effigy docs context` was removed in v0.15 with no replacement: the code graph that served its evidence is gone. Read `docs/README.md` for the documentation index, and `rg` the docs tree for exact text. See the v0.15.0 Removed entry in CHANGELOG.md".to_owned(),
         )),
         "add-log-index" => parse_docs_add_log_index(args),
         other => Err(unknown_argument(other)),

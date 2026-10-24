@@ -239,7 +239,7 @@ impl BusyDiagnostics {
         text.push_str(
             " Nothing was changed and no backend was contacted. Inspect the observed state with ",
         );
-        text.push_str(&format!("`effigy container status {}`", self.env));
+        text.push_str(&format!("`effigy container {} status`", self.env));
         text.push_str("; retry once that transition finishes.");
         text
     }
@@ -615,7 +615,7 @@ impl<'r> EnvRun<'r> {
             Observed::Verified(record, _) => record,
             other => {
                 let reason = match other {
-                    Observed::Unknown(reason) => format!("{reason:?}"),
+                    Observed::Unknown(reason) => format!("{reason}"),
                     _ => "row missing after admission".to_owned(),
                 };
                 let _ = run.settle(&ctx.cleanup, &mut EnvSettlement);

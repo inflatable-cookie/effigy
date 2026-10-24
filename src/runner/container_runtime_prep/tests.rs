@@ -1337,7 +1337,7 @@ fn exec_preparation_stopped_runtime_gate_returns_explicit_start_guidance() {
     .expect_err("plain exec must leave a stopped primary service down");
 
     assert!(checked_running_state);
-    assert!(error.to_string().contains("effigy container up web"));
+    assert!(error.to_string().contains("effigy container web up"));
 }
 
 #[test]

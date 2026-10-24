@@ -47,7 +47,7 @@ pub(super) fn fmt_runner_error(
         ),
         RunnerError::ContainerSurfaceNotRunning { container } => write!(
             f,
-            "container `{container}` is not running — start it with `effigy container up {container}`"
+            "container `{container}` is not running — start it with `effigy container {container} up`"
         ),
         RunnerError::ContainerSurfacePolicy {
             phase,
@@ -102,7 +102,7 @@ pub(super) fn fmt_runner_error(
         } => {
             write!(
                 f,
-                "container `{container}` is not exec-ready: probe with `-w {}` failed even after restarting service `{service}`. Try `colima nerdctl --profile {profile} -- restart <container>` manually, or `effigy container down {container} && effigy container up {container}`.",
+                "container `{container}` is not exec-ready: probe with `-w {}` failed even after restarting service `{service}`. Try `colima nerdctl --profile {profile} -- restart <container>` manually, or `effigy container {container} down`, then `effigy container {container} up`.",
                 working_dir.display(),
             )?;
             if let Some(load) = host_load {

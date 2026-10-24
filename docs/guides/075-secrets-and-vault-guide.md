@@ -221,6 +221,24 @@ health, missing required values, and declaration consistency. Non-interactive
 runs do not prompt and report the vault as locked when no passphrase is
 available.
 
+The text report names the stored key names, the required keys the vault is
+missing, the stored keys `[secrets.keys]` does not declare, and how the vault was
+read (`passphrase`, `unlocked session`, or `local-dev key`). It never prints a
+value. `--json` carries the same facts as `vault_state`:
+
+```sh
+effigy secrets doctor
+# [secrets] doctor
+# repo: /path/to/repo
+# backend: effigy-vault
+# keys: 3
+# vault: unlocked (local-dev key)
+# vault path: /path/to/repo/.effigy/secrets.vault
+# stored keys (3): mailchimp_api_key, openai_api_key, recaptcha_secret
+# missing required keys: none
+# undeclared stored keys: none
+```
+
 ### Export (compatibility bridge)
 
 ```sh
