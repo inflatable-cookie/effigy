@@ -40,6 +40,9 @@ const COMPOSE_PS_TIMEOUT: Duration = Duration::from_secs(30);
 /// a pure observation, so a retry cannot duplicate an effect, and a second
 /// timeout still refuses: this is not a longer timeout.
 const INVENTORY_RETRY_BACKOFF: Duration = Duration::from_millis(500);
+/// Bound for stopping and removing one stale owned container a deleted or
+/// restarted profile left behind.
+const STALE_OWNED_CONTAINER_REMOVE_TIMEOUT: Duration = Duration::from_secs(30);
 const DOCKER_GLOBAL_RUNTIME_LABEL: &str = "docker";
 
 #[derive(Debug)]
@@ -1004,6 +1007,16 @@ pub fn compose_stack_is_running(
     }))
 }
 
+/// The outcome of admitting a project's containers for reactivation.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReactivationAdmission {
+    /// Containers whose canonical identity can no longer be read while their
+    /// Compose and Effigy labels still prove this exact owner and scope. A
+    /// deleted or restarted Colima profile leaves these behind; the caller
+    /// stops and recreates them instead of asking for a manual `down`.
+    pub stale_owned: Vec<String>,
+}
+
 /// Whether every container of `policy`'s project may be brought under a fresh
 /// activation by this checkout: each must be proven owned by this checkout and
 /// scope, or be a pre-ownership-label container (no checkout, working-directory
@@ -1011,13 +1024,18 @@ pub fn compose_stack_is_running(
 /// bind-mounting this checkout. A stopped declared sibling counts too, because
 /// a project-wide `compose up` would start or recreate it. Anything else may
 /// belong to another checkout and refuses.
+///
+/// An owned container whose canonical identity cannot be read is not a foreign
+/// owner: it is reported as `stale_owned` so the caller can reconcile it by
+/// stopping and recreating it (effigy#316).
 pub fn running_stack_admits_reactivation(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     rows: &[RunningComposeContainer],
     deadline: Instant,
-) -> Result<(), ContainerExecError> {
+) -> Result<ReactivationAdmission, ContainerExecError> {
     let ownership = OwnershipContext::resolve(repo_root, policy)?;
+    let mut admission = ReactivationAdmission::default();
     // A pre-label container is adopted only with positive ownership evidence:
     // its inspected identity plus a bind mount of this checkout at the policy
     // working directory. Resolve that directory once for the whole stack.
@@ -1053,6 +1071,10 @@ pub fn running_stack_admits_reactivation(
         {
             continue;
         }
+        if ownership.inspected_is_stale_owned(policy, row, &output.stdout) {
+            admission.stale_owned.push(row.container_name.clone());
+            continue;
+        }
         return Err(ContainerExecError::Failure {
             command: "inspect stack ownership".to_owned(),
             code: None,
@@ -1063,7 +1085,55 @@ pub fn running_stack_admits_reactivation(
             ),
         });
     }
-    Ok(())
+    Ok(admission)
+}
+
+/// Stop and remove the owned containers a profile creation or restart left with
+/// an unreadable identity, so the next activation recreates them. The names
+/// must already have passed [`running_stack_admits_reactivation`]: only exact
+/// owners reach this effect, never foreign or unknown ones.
+pub fn remove_stale_owned_containers(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    container_names: &[String],
+) -> Result<Vec<String>, ContainerExecError> {
+    let mut removed = Vec::new();
+    for container_name in container_names {
+        run_runtime_command_capture_for_policy_with_timeout(
+            repo_root,
+            policy,
+            &[
+                OsString::from("rm"),
+                OsString::from("-f"),
+                OsString::from(container_name),
+            ],
+            &format!("remove stale owned container `{container_name}`"),
+            STALE_OWNED_CONTAINER_REMOVE_TIMEOUT,
+        )?;
+        removed.push(container_name.clone());
+    }
+    Ok(removed)
+}
+
+/// The whole stale-owner reconcile after a profile transition: inventory this
+/// project's containers (including stopped ones), admit every row by the exact
+/// owner rules, then remove the ones only an unreadable identity still keeps.
+/// Foreign and unknown owners still refuse through the admission above.
+pub fn reconcile_stale_owned_containers(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    deadline: Instant,
+) -> Result<Vec<String>, ContainerExecError> {
+    let rows = list_compose_containers_for_policy_including_stopped_with_deadline(
+        repo_root,
+        policy,
+        Some(deadline),
+    )?;
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let admission = running_stack_admits_reactivation(repo_root, policy, &rows, deadline)?;
+    remove_stale_owned_containers(repo_root, policy, &admission.stale_owned)
 }
 
 pub fn verify_owned_running_compose_identities(
@@ -1219,6 +1289,73 @@ impl OwnershipContext {
         let (_, oneoff_label_ok) = compose_binding_labels(labels_value);
         self.inspected_identity_matches(policy, row, &identity, oneoff_label_ok, true)
             && inspected_mounts_checkout(&identity, &self.canonical, working_dir)
+    }
+
+    /// Label-based ownership for an inspected container whose canonical identity
+    /// cannot be read at all. This is the state a deleted or restarted Colima
+    /// profile leaves an owned container in: the labels Compose and Effigy
+    /// applied still name this exact owner and scope, but the inspect record no
+    /// longer carries a full container id, so no binding can be proven. It is
+    /// not authority to adopt, exec or publish; it only authorizes stopping and
+    /// recreating the container by the exact-owner rules. A readable identity
+    /// never takes this path, a one-off or another project or service never
+    /// takes it, and a missing or other-checkout label never takes it.
+    fn inspected_is_stale_owned(
+        &self,
+        policy: &EffectiveContainerPolicy,
+        row: &RunningComposeContainer,
+        inspect_stdout: &[u8],
+    ) -> bool {
+        if super::healthcheck_timer::parse_inspected_container_identity(&String::from_utf8_lossy(
+            inspect_stdout,
+        ))
+        .is_ok()
+        {
+            return false;
+        }
+        let Ok(raw) = serde_json::from_slice::<serde_json::Value>(inspect_stdout) else {
+            return false;
+        };
+        let Some(record) = raw.as_array().and_then(|records| records.first()) else {
+            return false;
+        };
+        if let Some(name) = record.get("Name").and_then(|value| value.as_str()) {
+            if name.trim_start_matches('/') != row.container_name {
+                return false;
+            }
+        }
+        let labels = record.get("Config").and_then(|config| config.get("Labels"));
+        let (_, oneoff_label_ok) = compose_binding_labels(labels);
+        let inspected_scope = labels
+            .and_then(|labels| labels.get(crate::runtime::scope::SCOPE_LABEL))
+            .map(|value| value.as_str().unwrap_or_default());
+        let label = |name: &str| {
+            labels
+                .and_then(|labels| labels.get(name))
+                .and_then(|value| value.as_str())
+        };
+        // The Effigy checkout label names the exact checkout the container was
+        // created for, and a Compose working directory must agree with it when
+        // the runtime recorded one. A pre-label container has no checkout label
+        // and takes the legacy bind proof instead.
+        let working_dir_agrees =
+            label("com.docker.compose.project.working_dir").is_none_or(|working_dir| {
+                Path::new(working_dir).canonicalize().ok().as_deref()
+                    == Some(self.canonical.as_path())
+            });
+        oneoff_label_ok
+            && !row.oneoff
+            && label("com.docker.compose.project") == Some(policy.project_name.as_str())
+            && label("com.docker.compose.service") == row.service.as_deref()
+            && row
+                .service
+                .as_deref()
+                .is_some_and(|service| self.declared.contains(service))
+            && working_dir_agrees
+            && self.owns(
+                label(crate::runtime::scope::CHECKOUT_LABEL),
+                inspected_scope,
+            )
     }
 
     /// Label-based ownership for an inspected container in any lifecycle

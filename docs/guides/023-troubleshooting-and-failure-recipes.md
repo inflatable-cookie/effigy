@@ -525,6 +525,37 @@ Use `container profile reset-runtime` when:
 - multiple services are stuck in a bad state
 - `repair` did not resolve the issue
 
+### Symptom: `colima [profile=effigy-release] is not running`, or a Colima profile was deleted
+
+A deleted or stopped profile is repaired on the next command that needs it, so
+there is no manual start step:
+
+```sh
+colima delete --profile effigy-release
+effigy dev          # recreates the profile with Effigy's managed settings
+```
+
+The run prints one line for what it did (`creating Colima profile … (first use,
+or it was deleted)`, `starting Colima profile …`, or `restarting Colima profile
+… to enable SSH agent forwarding`) and one line naming what the deletion lost:
+that profile's containers, images and volumes. The containers the run needs are
+rebuilt afterwards; `effigy-release` (the Linux workspace artifact builder's
+profile) is recreated the same way as `effigy`.
+
+Do not start the profile by hand with a bare `colima start <profile>`. That
+misses the managed arguments (`--ssh-agent`, the DNS fallbacks, managed
+resources and platform overrides); the missing SSH-agent socket then surfaces
+later as `mkdir /run/host-services/ssh-auth.sock: file exists` or a failing
+workspace `git push`. A profile that is running with drift is restarted with the
+managed arguments and says which setting it repaired.
+
+An owned container that survives the transition with an unreadable identity
+(`inspect owned binding … canonical full container identity is missing`) is
+stopped and recreated on the next activation, so `effigy container down` is not
+part of this recovery. A refusal that names a container Effigy cannot prove it
+owns is a different case: another checkout may own it, and `effigy container
+status` shows the running stacks.
+
 ### Symptom: doctor reports `container.workspace-ownership`
 
 The running primary service has declared rust/cargo/target mounts, managed
