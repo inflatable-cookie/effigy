@@ -247,6 +247,10 @@ fn resolve_standard_task_secrets(
     )
 }
 
+/// The admission plan, resolved context, secrets and the run's workload
+/// outcome are all part of one admission step; grouping them into a struct
+/// would only move the same list behind a field name.
+#[allow(clippy::too_many_arguments)]
 fn run_standard_task_inner(
     preflight: &ExecutionPreflight,
     selection: &TaskSelection<'_>,
