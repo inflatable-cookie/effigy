@@ -111,55 +111,22 @@ Heavy selectors need no scheduler: with no hook set they run directly, on CI
 runners too.
 
 
-## Migrate the legacy runtime store
+## Inspect runtime migration state
 
-Inspect an existing `$HOME/.effigy/state/kernel.db` without creating destination
-state:
-
-```sh
-effigy run migrate --plan
-```
-
-The report names each blocking writer by gate, run (when admitted), and verified
-process start/boot identity. Use its exact `effigy run migrate --stop ...`
-command, or let that operation finish, then repeat the plan. A writer receipt
-also covers an admission or retention writer that has no run id yet. Stale,
-free, replaced and unverifiable holders are refused; a stop request is never a
-claim that settlement has finished. A stopped verified writer receives TERM
-and is resumed so it can handle that stop.
-
-Withdraw old Effigy launchers before asserting quiescence. The importer repeats
-writer checks under the source fences and refuses before staging if any writer
-remains:
+The importer for the unreleased-main central `$HOME/.effigy/state/kernel.db` is
+retired (contract 052 §11.1). v0.15 imports v0.14.1 legacy files on first use,
+so upgrading from v0.14.1 needs no migration command. `run migrate` is now a
+read-only report and never stages, imports, stops or deletes anything:
 
 ```sh
-effigy run migrate --legacy-launchers-stopped
+effigy run migrate --plan --json
 ```
 
-Lookup uses the current checkout, Git's linked-worktree metadata and configured
-search roots. For a checkout outside those locations, pass repeatable
-`--checkout /absolute/root` arguments or configure:
+It reports one of three states through `effigy.runtime-migration.v1`:
+`no-legacy-state`, `committed` (a cutover manifest exists; the retired store is
+ignored and never deleted) or, refused before any effect, `unreleased-main-state`
+with the exact upgrade path: migrate that machine with Effigy main `7b82d26`
+(`effigy run migrate --legacy-launchers-stopped`) and then upgrade. Host-wide
+admission capacity is unaffected: a pending refusal is not a machine-wide gate,
+and ordinary foreground work continues.
 
-```toml
-# ~/.effigy/config.toml
-[runtime]
-checkout_roots = ["/work/projects", "/work/task-checkouts"]
-```
-
-Discovery is bounded and never follows directory symlinks. Omitted roots and
-limits appear in the report. A missing or ambiguous checkout identity refuses
-migration; a path hint never allocates a new identity or redirects a deleted
-checkout. Older task and environment tokens belonging to one verified physical
-checkout share one destination journal, with their original resource IDs kept.
-Checkout and Git-directory generation facts are retained in its seal; copying
-an old token into a replacement directory cannot restore that authority. A
-legacy identity derived only from a path is not verified checkout ownership.
-No registration is written at run start.
-
-Migration preserves retained state and unresolved runs in each owning checkout,
-and reports per-destination row counts and elapsed time. Completed history may
-be dropped. The legacy store remains evidence, never a fallback after commit.
-Retry the migration command after interruption: before commit it discards only
-its own tagged staging; after commit it finishes the same local seals. `--plan`
-and `--json` expose the `effigy.runtime-migration.v1` observation without changing
-state.

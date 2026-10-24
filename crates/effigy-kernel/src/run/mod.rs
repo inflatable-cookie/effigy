@@ -10,7 +10,7 @@ mod facts;
 mod foreground;
 pub use facts::{FactOptions, MachineFacts};
 mod history;
-pub use foreground::{ForegroundRun, LegacyForeground};
+pub use foreground::ForegroundRun;
 mod checkout_custody;
 mod journal;
 mod lifecycle;

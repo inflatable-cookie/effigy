@@ -1,11 +1,15 @@
 //! Local import publication receipts. Checking them never imports or repairs.
-use super::*;
-use crate::fs::DirectoryIdentity;
+use crate::ctx::ObserveContext;
+use crate::fs::{DirectoryIdentity, FileName, Trust};
 use crate::id::CheckoutId;
+use crate::observe::{Observed, UnknownReason};
 use crate::record::{read_record, Record};
+use crate::root::StateRoot;
+use crate::store::StoreError;
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 pub(super) const FORMAT: &str = "effigy.runtime-import.v1";
 pub(super) const PREPARED: &str = "migration-prepared.json";
@@ -57,24 +61,6 @@ pub struct DroppedCheckout {
     pub path_hint: Option<String>,
 }
 
-pub(crate) const DROPPED_SAMPLE: usize = 20;
-
-impl DroppedHistory {
-    pub fn record(&mut self, part: &super::plan::Partition) {
-        self.checkouts += 1;
-        self.resources += part.resources.len() as u64;
-        self.runs += part.runs.len() as u64;
-        if self.sample.len() < DROPPED_SAMPLE {
-            self.sample.push(DroppedCheckout {
-                checkout: part
-                    .checkout
-                    .map(|id| crate::store::token(&id))
-                    .unwrap_or_default(),
-                path_hint: part.path_hint.clone(),
-            });
-        }
-    }
-}
 impl Record for ImportReceipt {
     const MAX_BYTES: u64 = 16 << 20;
     fn decode(bytes: &[u8]) -> Result<Self, String> {
@@ -108,6 +94,31 @@ impl Record for Seal {
         }
         validate_destination(&seal.destination)?;
         Ok(seal)
+    }
+}
+
+fn inconsistent(reason: UnknownReason) -> StoreError {
+    StoreError::Corrupt(format!("runtime import: {reason:?}"))
+}
+
+/// The one committed migration manifest on this machine, if it ever ran the
+/// retired central-store importer. Later readers treat it as provenance.
+pub fn committed(
+    cx: &ObserveContext,
+    machine_home: &Path,
+) -> Result<Option<ImportReceipt>, StoreError> {
+    let root = match StateRoot::machine_observe(cx, machine_home) {
+        Observed::Verified(root, _) => root,
+        Observed::Absent(_) => return Ok(None),
+        Observed::Unknown(reason) => return Err(inconsistent(reason)),
+    };
+    let Some(dir) = root.dir().child("migration", Trust::Private, false)? else {
+        return Ok(None);
+    };
+    match read_record::<ImportReceipt>(cx, &dir, &FileName::new(MANIFEST)?) {
+        Observed::Verified(receipt, _) => Ok(Some(receipt)),
+        Observed::Absent(_) => Ok(None),
+        Observed::Unknown(reason) => Err(inconsistent(reason)),
     }
 }
 
