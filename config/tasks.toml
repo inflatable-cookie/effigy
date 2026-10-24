@@ -120,6 +120,19 @@
 "check:deploy" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-cli --all-targets", timeout_ms = 600000 }] }
 "lint:deploy" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-cli --all-targets -- -D warnings", timeout_ms = 600000 }] }
 
+# Narrow typing proof for the provider half of `deploy status` (task 304): the
+# status read projects its provider report, provenance and warnings through one
+# named boundary type, so cover the status read with a resolvable provider
+# package and from a legacy report, the two online observations that assert
+# provenance and warning semantics, provider report validation, and the model
+# JSON contract the read stays compatible with.
+"test:deploy:status-typing" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(deploy_tests::run_deploy_status_reads_legacy_report_after_refused_redeploy) | test(deploy_tests::run_deploy_plan_materializes_git_provider_package_under_shared_cache_identity) | test(deploy_tests::run_deploy_plan_reuses_pinned_rev_without_network_access) | test(deploy_tests::run_deploy_plan_rejects_invalid_provider_report_status) | test(deploy_tests::run_deploy_plan_rejects_invalid_provider_check_status) | test(deploy_model_json_contract_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+] }
+"test:deploy:status-typing:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(deploy_tests::run_deploy_status_reads_legacy_report_after_refused_redeploy) | test(deploy_tests::run_deploy_plan_materializes_git_provider_package_under_shared_cache_identity) | test(deploy_tests::run_deploy_plan_reuses_pinned_rev_without_network_access) | test(deploy_tests::run_deploy_plan_rejects_invalid_provider_report_status) | test(deploy_tests::run_deploy_plan_rejects_invalid_provider_check_status) | test(deploy_model_json_contract_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
+] }
+
 # Graph storage and CLI refresh contract; nextest bounds each case and leaks.
 "test:bundles:legacy-signal" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test cli_output_tests -E 'test(cli_container_data_seed_reaper_detector_catches_enabled_control_and_cleans_owned_child)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:docs:parity" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test documentation_coverage_tests --filterset 'test(project_local_and_distributed_effigy_skills_have_semantic_parity) | test(public_help_families_and_current_contract_paths_are_documented)' --no-fail-fast --retries 0 --no-tests fail --status-level fail --final-status-level fail", timeout_ms = 600000 }] }
