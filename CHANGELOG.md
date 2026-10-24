@@ -1181,6 +1181,13 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- `effigy run migrate` no longer refuses the whole Q-010 cutover because one
+  recorded checkout no longer exists. A deleted checkout that holds only
+  completed history (no unreleased claim, release owner or run that could still
+  be live; runs from an earlier boot don't count) is dropped and counted in the
+  plan and the receipt's `dropped_history`. Deleted checkouts that still hold
+  live state are all listed at once with their remedy, and a broken worktree
+  among the discovery roots no longer fails every lookup.
 - A detached `container up --json` failure keeps the underlying refusal as
   `cause` with the activation stage, preparation step and environment/checkout
   `identity`, redacting secret-shaped values and bounding the text, instead of

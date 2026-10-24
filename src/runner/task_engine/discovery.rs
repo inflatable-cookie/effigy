@@ -89,9 +89,12 @@ impl Discovery {
             let Ok(dir) = effigy_kernel::fs::DirFd::open(&path) else {
                 continue;
             };
-            let identities = super::checkout::identities(cx, dir.path()).map_err(|error| {
-                StoreError::Corrupt(format!("checkout identity {}: {error}", path.display()))
-            })?;
+            // A broken candidate (for example a linked worktree whose
+            // metadata is gone) can't hold a verifiable identity, so it never
+            // matches; it must not fail the lookup for every other checkout.
+            let Ok(identities) = super::checkout::identities(cx, dir.path()) else {
+                continue;
+            };
             if identities.contains(&expected) {
                 let git = effigy_core::worktree_scope::git_directory(dir.path())
                     .map_err(|error| StoreError::Corrupt(error.to_string()))?
@@ -102,6 +105,11 @@ impl Discovery {
             }
         }
 
+        if matches.is_empty() {
+            return Err(StoreError::CheckoutUnlocated(format!(
+                "checkout {expected:?} has no verified location; supply `--checkout <root>` or configure [runtime].checkout_roots; deleted checkouts are never redirected"
+            )));
+        }
         if matches.len() != 1 {
             return Err(StoreError::Corrupt(format!(
                 "checkout {expected:?} has {} verified locations: {:?}; supply `--checkout <root>` or configure [runtime].checkout_roots; deleted checkouts are never redirected",
