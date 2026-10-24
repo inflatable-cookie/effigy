@@ -1242,7 +1242,14 @@ then `/usr/bin/sudo -H -- effigy gateway setup`. The rule has four parts.
   Both entry points share the custody fault points and recovery machinery.
 - SIGINT, SIGTERM, SIGHUP and SIGKILL to the client, crossed with plain,
   sequence, managed and container runs: settle reports `Complete` and no
-  fixture-tagged process survives (O1a).
+  fixture-tagged process survives (O1a). The signal matrix runs on Linux
+  through the private disposable-VM route (`test:task-engine:kill-matrix:linux`,
+  `crates/effigy-kernel/tests/scripts/linux-custody.sh` mode
+  `task-engine-fixtures`), never the operator's Colima profile, contexts or
+  another VM. A statically resolved plain foreground tree keeps no runtime
+  record, so its proof is the released foreground gate plus settled
+  descendants and no later step, not a journal row; a declared `durable = true`
+  tree keeps the closed row this contract reads.
 - A failure spawning child 2 of 3 leaves no survivor and reports both errors.
 - A descendant that ignores TERM and keeps the stdout pipe open is killed,
   and capture ends at its drain deadline.

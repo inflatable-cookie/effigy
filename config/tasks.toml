@@ -425,6 +425,17 @@
 "test:task-engine:kill-matrix" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "env -u EFFIGY_PARENT_CAPABILITY sh scripts/oxide-selector.sh nextest run --cargo-profile discovery-proof --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test task_engine_kill_matrix --test-threads 2 --no-fail-fast --retries 0 --no-tests fail {args}", timeout_ms = 900000 }] }
 
 "test:task-engine:kill-matrix:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --cargo-profile discovery-proof --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --test task_engine_kill_matrix --test-threads 2 --no-fail-fast --retries 0 --no-tests fail {args}", timeout_ms = 900000 }] }
+# Linux sequence signals and the fixture ledger's foreign-generation refusal.
+# One private, disposable Colima VM per invocation (2 CPU/3 GiB, private
+# HOME, cache, Docker context and source copy); each proof's selector runs
+# both proofs in that single VM so a reviewer pays one boot and one build.
+"test:task-engine:kill-matrix:linux" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ id = "linux-task-engine", run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh task-engine-fixtures", timeout_ms = 2400000 }] }
+"test:fixtures:foreign-generation:linux" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ id = "linux-foreign-generation", run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh task-engine-fixtures", timeout_ms = 2400000 }] }
+"test:task-engine:fixtures:linux" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", run = [{ id = "linux-task-engine-fixtures", run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh task-engine-fixtures", timeout_ms = 2400000 }] }
+"check:fixtures:linux" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh check -p effigy -p effigy-kernel -p effigy-test-support --all-targets", timeout_ms = 900000 }] }
+"check:fixtures:linux:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo check -p effigy -p effigy-kernel -p effigy-test-support --all-targets --profile test", timeout_ms = 900000 }] }
+"lint:fixtures:linux" = { visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh clippy -p effigy -p effigy-kernel -p effigy-test-support --all-targets -- -D warnings", timeout_ms = 900000 }] }
+"lint:fixtures:linux:cargo" = { visibility = "internal", group = "Maintenance", run = [{ run = "cargo clippy -p effigy -p effigy-kernel -p effigy-test-support --all-targets -- -D warnings", timeout_ms = 900000 }] }
 # Covering unit tests for every crate the task-engine cutover touched; extra
 # arguments narrow the run (for example `-E 'test(status_query)'`). Nested
 # `effigy` children in these tests need the current binary, so it builds first.
