@@ -134,7 +134,7 @@ fn a_teardown_step_the_runtime_did_not_narrate_still_says_what_happened() {
         "{lines:?}"
     );
     assert!(
-        lines[0].contains("`effigy container logs web`"),
+        lines[0].contains("`effigy container logs --service web`"),
         "{lines:?}"
     );
 }

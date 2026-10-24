@@ -172,7 +172,7 @@ impl ComposeSteps {
             let duration = effigy_ui::human::human_duration(step.elapsed());
             match remaining {
                 Some(remaining) if remaining.iter().any(|held| held == subject) => step.fail(format!(
-                    "{service} is still present after the teardown ({duration}); inspect it with `effigy container status` and `effigy container logs {service}`"
+                    "{service} is still present after the teardown ({duration}); inspect it with `effigy container status` and `effigy container logs --service {service}`"
                 )),
                 Some(_) => step.succeed(format!("stopped and removed {service} ({duration})")),
                 None => step.succeed(format!(

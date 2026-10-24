@@ -131,7 +131,7 @@ fn the_readiness_failure_names_every_service_its_check_and_the_next_commands() {
         "{diagnostic}"
     );
     assert!(
-        diagnostic.contains("`effigy container logs web`"),
+        diagnostic.contains("`effigy container logs --service web`"),
         "{diagnostic}"
     );
     assert!(
@@ -167,7 +167,7 @@ fn an_exited_service_reports_its_last_log_line() {
         "{diagnostic}"
     );
     assert!(
-        diagnostic.contains("`effigy container logs db`"),
+        diagnostic.contains("`effigy container logs --service db`"),
         "{diagnostic}"
     );
     assert!(

@@ -557,7 +557,7 @@ During v0.x, MINOR bumps may include breaking changes.
   `waiting for web to report healthy (attempt 4, last: GET / 404)`, and a
   timeout reports each unready service with its status, failing streak and
   bounded last check output, plus each exited service's exit code and last log
-  line, then the next commands (`effigy container logs <service>`,
+  line, then the next commands (`effigy container logs --service <service>`,
   `effigy container status`). A stack whose unready services all fail the same
   way (for example every check reporting `command not found`) is diagnosed
   after a few observations instead of waiting out the deadline. The

@@ -124,7 +124,9 @@ lock = "dev-stack"
     wait_for_live_task_owner(&root, "tasks");
 
     // `effigy tasks` runs the repository's own task here, so the conflict must
-    // not suggest the built-in inventory (effigy#318).
+    // not suggest the built-in inventory (effigy#318). The holder's run id is
+    // the handle a repository task cannot shadow, so that is what it suggests
+    // (effigy#313).
     let err = run_task_with_repo(&root, "build", &[]).expect_err("shared lock should conflict");
     let RunnerError::TaskLockConflict(details) = &err else {
         panic!("expected a lock conflict, got {err:?}");
@@ -134,11 +136,21 @@ lock = "dev-stack"
         !rendered.contains("effigy tasks status"),
         "the built-in inventory is routed away here: {rendered}"
     );
+    let run = details
+        .holder_run
+        .as_deref()
+        .expect("the refusal names the holding run");
     assert!(
-        rendered.contains("this repository's own task owns `effigy tasks`"),
+        rendered.contains(&format!("`effigy run status {run}`")),
         "{rendered}"
     );
-    assert_eq!(details.status_command, None);
+    assert!(
+        details
+            .status_command
+            .as_deref()
+            .is_some_and(|command| command == format!("effigy run status {run}")),
+        "{details:?}"
+    );
 
     owner.join().expect("first run should complete");
 }

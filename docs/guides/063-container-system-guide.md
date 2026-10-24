@@ -854,7 +854,7 @@ check and names it while it waits:
 `waiting for web to report healthy (attempt 4, last: GET / 404)`. A timeout
 lists each service that is not ready with its health status, failing streak and
 bounded last check output, plus each exited service's exit code and last log
-line, and then the next commands (`effigy container logs <service>`,
+line, and then the next commands (`effigy container logs --service <service>`,
 `effigy container status`). A stack whose unready services all fail the same
 way — every check reporting `command not found`, for example — is diagnosed
 after a few observations rather than waited out. `container status` shows an

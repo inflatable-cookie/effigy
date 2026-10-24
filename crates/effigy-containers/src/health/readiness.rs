@@ -368,7 +368,7 @@ pub fn readiness_diagnostic(
     logs_services.dedup();
     if let Some(first) = logs_services.first() {
         lines.push(format!(
-            "Read a service's output with `effigy container logs {first}`, and every service's state with `effigy container status`"
+            "Read a service's output with `effigy container logs --service {first}`, and every service's state with `effigy container status`"
         ));
     } else {
         lines.push("Inspect the stack with `effigy container status`".to_owned());
