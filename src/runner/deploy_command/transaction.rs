@@ -92,8 +92,7 @@ pub(super) fn run_deploy_status(
     let latest_path = deploy_latest_path(repo_root, env);
     let active = read_optional_json(&active_path)?;
     let latest = read_optional_json(&latest_path)?;
-    let (provider_status, provider_provenance, warnings) =
-        deploy_status_provider_report(repo_root, env)?;
+    let provider = deploy_status_provider_report(repo_root, env)?;
     let report = DeployStatusReport {
         schema: STATUS_SCHEMA.to_owned(),
         schema_version: 1,
@@ -106,9 +105,9 @@ pub(super) fn run_deploy_status(
             .map(|_| path_display(&latest_path, repo_root)),
         active,
         latest,
-        provider_status,
-        provider_provenance,
-        warnings,
+        provider_status: provider.provider_status,
+        provider_provenance: provider.provider_provenance,
+        warnings: provider.warnings,
     };
     let text = render_deploy_status_text(&report);
     render_command_result(output_json, true, json_value(&report)?, text)
@@ -478,10 +477,24 @@ fn deploy_provider_context(
     .expect("deploy provider context should serialize")
 }
 
+/// Provider half of a `deploy status` read.
+///
+/// Status is an observation, not a gate: when the provider package cannot be
+/// resolved or its `status` phase fails, the read still succeeds and the reason
+/// travels as a warning. The projection therefore carries the provider's own
+/// report and the provenance of the package that produced it only when a
+/// package was resolved, and the warnings collected while resolving or querying
+/// it in every case.
+struct DeployStatusProviderObservation {
+    provider_status: Option<Value>,
+    provider_provenance: Option<DeployProviderProvenance>,
+    warnings: Vec<String>,
+}
+
 fn deploy_status_provider_report(
     repo_root: &Path,
     env: &str,
-) -> Result<(Option<Value>, Option<DeployProviderProvenance>, Vec<String>), RunnerError> {
+) -> Result<DeployStatusProviderObservation, RunnerError> {
     // Status observes a live provider, so it may refresh the cached checkout.
     match deploy_execution_inputs(repo_root, env, DeployProviderFetch::Online) {
         Ok((env_config, model, Some(provider_package))) => {
@@ -491,25 +504,25 @@ fn deploy_status_provider_report(
                 &provider_package,
                 deploy_provider_context("status", env, &env_config, &model, &provider_package),
             )?;
-            Ok((
-                report.map(|report| json_value(&report)).transpose()?,
-                Some(provider_package.provenance.clone()),
-                provider_package.warnings.clone(),
-            ))
+            Ok(DeployStatusProviderObservation {
+                provider_status: report.map(|report| json_value(&report)).transpose()?,
+                provider_provenance: Some(provider_package.provenance.clone()),
+                warnings: provider_package.warnings.clone(),
+            })
         }
-        Ok((env_config, _model, None)) => Ok((
-            None,
-            None,
-            vec![format!(
+        Ok((env_config, _model, None)) => Ok(DeployStatusProviderObservation {
+            provider_status: None,
+            provider_provenance: None,
+            warnings: vec![format!(
                 "deploy provider `{}` has no configured provider package; provider status skipped",
                 env_config.provider.adapter()
             )],
-        )),
-        Err(error) => Ok((
-            None,
-            None,
-            vec![format!("provider status skipped: {error}")],
-        )),
+        }),
+        Err(error) => Ok(DeployStatusProviderObservation {
+            provider_status: None,
+            provider_provenance: None,
+            warnings: vec![format!("provider status skipped: {error}")],
+        }),
     }
 }
 
