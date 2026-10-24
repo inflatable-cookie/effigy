@@ -17,7 +17,7 @@ pub(in crate::runner::task_engine) fn inherited_class() -> Result<Option<Runtime
 /// top-level command that grants the child its own capability.
 fn capability_error(reason: &str) -> RunnerError {
     RunnerError::task_invocation(format!(
-        "the parent run capability refused this child ({reason}); nothing was started. Run the child as its own top-level command, for example `effigy tasks run <task>`, so it owns its capability"
+        "the parent run capability refused this child ({reason}); nothing was started. Run the child as its own top-level command, for example `effigy <task>`, so it owns its capability"
     ))
 }
 /// This foreground run could not start; the evidence is the cause.
