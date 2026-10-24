@@ -142,7 +142,16 @@ pub(in crate::runner) fn read_local_dev_upgrade_passphrase(
     missing_tty_error: &str,
 ) -> Result<Option<SecretValue>, RunnerError> {
     if let Ok(value) = std::env::var(TEST_SECRET_PASSPHRASE_ENV) {
-        return Ok(Some(SecretValue::new(value)));
+        let secret = SecretValue::new(value);
+        cache_secret_passphrase(&secret);
+        return Ok(Some(secret));
+    }
+    // The one-time upgrade prompt is still this session's passphrase: caching
+    // it is what lets the child Effigy processes this session starts (the
+    // environment `up`, a managed supervisor, a seeded workspace task) unlock
+    // the vault they just rewrote instead of asking again or resolving nothing.
+    if let Some(secret) = session_passphrase() {
+        return Ok(Some(secret));
     }
     if !std::io::stdin().is_terminal() {
         if optional_only {
@@ -153,7 +162,9 @@ pub(in crate::runner) fn read_local_dev_upgrade_passphrase(
     let value = rpassword::prompt_password(prompt).map_err(|error| {
         RunnerError::task_invocation(format!("failed to read secret input: {error}"))
     })?;
-    Ok(Some(SecretValue::new(value)))
+    let secret = SecretValue::new(value);
+    cache_secret_passphrase(&secret);
+    Ok(Some(secret))
 }
 
 pub(in crate::runner) fn apply_secret_passphrase_to_child(command: &mut Command) {
@@ -181,7 +192,34 @@ pub(in crate::runner) fn secret_passphrase_child_env() -> Vec<(OsString, OsStrin
             OsString::from(value),
         ));
     }
+    if local_dev_secret_access_active() {
+        env.push((
+            OsString::from(LOCAL_DEV_SECRET_ACCESS_ENV),
+            OsString::from("1"),
+        ));
+    }
     env
+}
+
+/// The name of the internal marker a dev session's children receive, so a
+/// child Effigy process resolves container secrets through the local-dev key.
+pub(in crate::runner) const fn internal_local_dev_secret_access_env() -> &'static str {
+    LOCAL_DEV_SECRET_ACCESS_ENV
+}
+
+/// [`secret_passphrase_child_env`] as the plain strings a spawn environment
+/// plan carries. Same internal route: the passphrase never enters this
+/// process's global environment (contract 052 K12).
+pub(in crate::runner) fn secret_passphrase_child_env_strings() -> Vec<(String, String)> {
+    secret_passphrase_child_env()
+        .into_iter()
+        .map(|(key, value)| {
+            (
+                key.to_string_lossy().into_owned(),
+                value.to_string_lossy().into_owned(),
+            )
+        })
+        .collect()
 }
 
 pub(in crate::runner) fn inject_secret_passphrase_into_internal_command(command: String) -> String {
@@ -229,4 +267,105 @@ pub(in crate::runner) fn wrap_command_with_secret_passphrase_env_value(
         prefix.push_str(&format!(" {LOCAL_DEV_SECRET_ACCESS_ENV}=1"));
     }
     format!("{prefix} {command}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        activate_local_dev_secret_access, forget_session_passphrase_for_tests,
+        internal_local_dev_secret_access_env, internal_secret_passphrase_env,
+        read_local_dev_upgrade_passphrase, secret_passphrase_child_env,
+        secret_passphrase_child_env_strings, session_passphrase,
+    };
+
+    struct ScopedEnv {
+        key: &'static str,
+        previous: Option<String>,
+        _lock: crate::contract_test_support::ReentrantTestLockGuard,
+    }
+
+    impl ScopedEnv {
+        /// Holds the shared test lock and sets or clears `key`, so a value
+        /// another test left in the environment can never answer this one.
+        fn set(key: &'static str, value: Option<&str>) -> Self {
+            let lock = crate::contract_test_support::lock_test();
+            let previous = std::env::var(key).ok();
+            match value {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+            Self {
+                key,
+                previous,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for ScopedEnv {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(previous) => unsafe { std::env::set_var(self.key, previous) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
+
+    /// The one-time local-dev upgrade passphrase is still this session's
+    /// passphrase, and a child Effigy process receives both it and the
+    /// local-dev marker on the existing internal env route.
+    #[test]
+    fn the_upgrade_passphrase_becomes_the_session_passphrase_for_children() {
+        let _test_passphrase =
+            ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", Some("vault-passphrase"));
+        let _internal_passphrase = ScopedEnv::set("EFFIGY_INTERNAL_SECRET_PASSPHRASE", None);
+        forget_session_passphrase_for_tests();
+        let _local_dev = activate_local_dev_secret_access(true);
+
+        let passphrase = read_local_dev_upgrade_passphrase(
+            false,
+            "Vault passphrase (one-time local-dev setup): ",
+            "secret input requires an interactive TTY",
+        )
+        .expect("read the upgrade passphrase")
+        .expect("a passphrase was read");
+
+        assert_eq!(passphrase.expose(), "vault-passphrase");
+        assert_eq!(
+            session_passphrase().map(|value| value.expose().to_owned()),
+            Some("vault-passphrase".to_owned())
+        );
+        let child_env = secret_passphrase_child_env_strings();
+        assert!(child_env.iter().any(|(key, value)| {
+            key == internal_secret_passphrase_env() && value == "vault-passphrase"
+        }));
+        assert!(child_env
+            .iter()
+            .any(|(key, value)| { key == internal_local_dev_secret_access_env() && value == "1" }));
+
+        forget_session_passphrase_for_tests();
+    }
+
+    /// A session without a passphrase still tells its children they have
+    /// local-dev access, which is what makes the local-dev key usable there.
+    #[test]
+    fn local_dev_access_reaches_children_without_a_passphrase() {
+        let _test_passphrase = ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", None);
+        let _internal_passphrase = ScopedEnv::set("EFFIGY_INTERNAL_SECRET_PASSPHRASE", None);
+        forget_session_passphrase_for_tests();
+        let local_dev = activate_local_dev_secret_access(true);
+
+        let child_env = secret_passphrase_child_env();
+        assert!(child_env
+            .iter()
+            .any(|(key, value)| { key == internal_local_dev_secret_access_env() && value == "1" }));
+        assert!(
+            child_env
+                .iter()
+                .all(|(key, _)| key != internal_secret_passphrase_env()),
+            "an absent passphrase is not invented"
+        );
+
+        drop(local_dev);
+    }
 }

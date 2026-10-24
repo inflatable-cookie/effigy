@@ -74,6 +74,15 @@ pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, Run
         env.retain(|(existing, _)| existing != &key);
         env.push((key, OsString::from(passphrase.expose())));
     }
+    // A dev session's supervisor keeps the local-dev access its client holds,
+    // so the environment `up` it starts resolves container secrets through the
+    // local-dev key instead of delivering nothing.
+    if crate::runner::secret_session::local_dev_secret_access_active() {
+        let key =
+            OsString::from(crate::runner::secret_session::internal_local_dev_secret_access_env());
+        env.retain(|(existing, _)| existing != &key);
+        env.push((key, OsString::from("1")));
+    }
     let executable = task_engine::startup_executable()?;
     let cx = task_engine::effect_context(OpenReason::DevServer);
     let root = task_engine::checkout_effects_root(&request.addressed.target.root)?;

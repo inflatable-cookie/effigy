@@ -133,8 +133,12 @@ use the primary checkout's vault. Anyone who can read both files can use the
 vault; keep the vault directory out of version control and restrict filesystem
 access.
 
-Without an explicit `secrets unlock`, direct vault commands still require the
-passphrase. The local-dev key alone only unlocks resolved `dev` tasks.
+Without an explicit `secrets unlock`, mutations (`set`, `unset`, `import`,
+`change-passphrase`) and `export` still require the passphrase. The local-dev
+key alone unlocks resolved `dev` tasks, and it also lets `effigy secrets
+doctor` and `effigy secrets get` read the vault on this machine: doctor reports
+`vault: unlocked (local-dev key)` with the stored key names, and `get` prints
+one declared value. Nothing else prints a value.
 
 Existing vaults prompt once on their next `effigy dev` run, then add the
 local-dev payload and key in place. Delete the adjacent
@@ -173,8 +177,10 @@ effigy secrets get render_api_key
 effigy secrets get render_api_key --json
 ```
 
-Prints one declared stored secret after unlocking the vault. This intentionally
-reveals the value; use it only for explicit operator handoff or debugging.
+Prints one declared stored secret after unlocking the vault with the
+passphrase this invocation holds, the sealed `secrets unlock` credential, or
+the local-dev key a `dev` session created. This intentionally reveals the
+value; use it only for explicit operator handoff or debugging.
 
 ### Remove a value
 
@@ -216,10 +222,12 @@ printed.
 effigy secrets doctor
 ```
 
-Prompts for the vault passphrase when run interactively, then checks vault
-health, missing required values, and declaration consistency. Non-interactive
-runs do not prompt and report the vault as locked when no passphrase is
-available.
+Reads the vault with the local-dev key when it exists and reports
+`unlocked (local-dev key)` with the stored key names; otherwise it prompts for
+the vault passphrase when run interactively, then checks vault health, missing
+required values, and declaration consistency. Non-interactive runs never
+prompt: with no local-dev key and no passphrase available the vault is reported
+as `locked`. Doctor never prints a value.
 
 ### Export (compatibility bridge)
 
@@ -290,9 +298,24 @@ only tears down runtime artifacts; the next `container up` is what injects
 secrets again. Unrelated required container secrets cannot block those
 operations. No repo-root `.env` file is written.
 
-Stored optional values are injected when the vault is unlocked. Missing
-optional values are skipped; only keys declared with `required = true` gate
+Stored optional values are injected when the vault is unlocked. A `dev`
+session resolves them through the local-dev key, or through the passphrase that
+session just entered, in every step it starts, including the `container up`
+child a managed run brings up. Only keys declared with `required = true` gate
 container startup.
+
+A declared container key that could not be delivered — the vault is locked with
+no terminal to ask for its passphrase, the key is declared but not stored, the
+vault is missing, or the local-dev key cannot read it — is reported once:
+
+```text
+[warn] container secret `openai_api_key` was not delivered: the vault is locked and this run has no terminal to ask for its passphrase; run `effigy secrets unlock` at a terminal, or rerun `effigy dev` on one
+```
+
+The same lines appear under `warnings` in `effigy container up --json`. An
+empty `runtime.env`/`runtime.json` is never written silently: a bring-up that
+delivered nothing leaves the files alone instead of replacing them with an
+empty file the service reads as "no secrets configured".
 
 By default, Effigy passes those values through the compose process environment.
 
