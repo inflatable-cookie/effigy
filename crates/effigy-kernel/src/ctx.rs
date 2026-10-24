@@ -79,6 +79,86 @@ pub enum Interrupt {
     Cancelled { cause: StopCause },
 }
 
+/// A cancellation a person can act on: which signal or request ended the work.
+impl std::fmt::Display for StopCause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Signal(signal) => write!(f, "{}", crate::human::signal_name(*signal)),
+            Self::Requested => f.write_str("a stop request"),
+            Self::OwnerLost => f.write_str("the owning process exiting"),
+        }
+    }
+}
+
+/// What ended the work, in words: the deadline that elapsed, or the stop.
+impl std::fmt::Display for Interrupt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TimedOut { phase, elapsed } => write!(
+                f,
+                "timed out after {} {}",
+                crate::human::human_duration(*elapsed),
+                phase_phrase(phase)
+            ),
+            Self::Cancelled { cause } => write!(f, "cancelled by {cause}"),
+        }
+    }
+}
+
+/// The phase a caller named is the operation in progress, so it reads as part
+/// of the sentence rather than as a bare internal label.
+fn phase_phrase(phase: &str) -> String {
+    match phase {
+        "settle" => "while waiting for the environment to settle".to_owned(),
+        "scope inventory" => "while reading the checkout's scope inventory".to_owned(),
+        "" => "while waiting for the operation's deadline".to_owned(),
+        other => format!("during {other}"),
+    }
+}
+
+#[cfg(test)]
+mod display_tests {
+    use super::*;
+
+    #[test]
+    fn timed_out_names_the_wait_and_the_phase() {
+        let interrupt = Interrupt::TimedOut {
+            phase: "settle".into(),
+            elapsed: Duration::from_millis(247_800),
+        };
+        assert_eq!(
+            interrupt.to_string(),
+            "timed out after 4m08s while waiting for the environment to settle"
+        );
+        let other = Interrupt::TimedOut {
+            phase: "store transaction".into(),
+            elapsed: Duration::from_secs(3),
+        };
+        assert_eq!(
+            other.to_string(),
+            "timed out after 3s during store transaction"
+        );
+    }
+
+    #[test]
+    fn cancelled_names_its_cause() {
+        assert_eq!(
+            Interrupt::Cancelled {
+                cause: StopCause::Signal(libc::SIGINT)
+            }
+            .to_string(),
+            "cancelled by SIGINT"
+        );
+        assert_eq!(
+            Interrupt::Cancelled {
+                cause: StopCause::OwnerLost
+            }
+            .to_string(),
+            "cancelled by the owning process exiting"
+        );
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct OperationContext {
     deadline: Deadline,

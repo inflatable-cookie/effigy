@@ -1,7 +1,7 @@
 use crate::{
-    command_kind_and_name, emit_json_envelope_error, emit_json_envelope_success,
-    parse_error_json_details, parse_json_or_string, render_cli_header, render_parse_error,
-    run_help_command, run_help_group_command, CliExecutionContext,
+    command_kind_and_name, emit_json_envelope_error, emit_json_envelope_error_with_human,
+    emit_json_envelope_success, parse_error_json_details, parse_json_or_string, render_cli_header,
+    render_parse_error, run_help_command, run_help_group_command, CliExecutionContext,
 };
 use effigy_cli::{
     apply_global_cli_flags, command_requests_json, parse_command,
@@ -114,6 +114,13 @@ pub fn run_cli(raw_args: Vec<String>) {
     } else {
         effigy_manifest::RetiredNoticeDelivery::OncePerCheckout
     });
+    // One step sink for every plane: a terminal draws spinners on stderr,
+    // `--json` and pipes stay silent unless the command asked for verbose
+    // output, which prints one plain line per step instead.
+    effigy_ui::steps::configure_from_terminal(
+        emit_json_envelope,
+        matches!(&cmd, Command::Doctor(args) if args.verbose),
+    );
     let (command_kind, command_name) = command_kind_and_name(&cmd);
     let runtime_context = match EffigyRuntimeContext::capture_lossy(
         Some(cwd.clone()),
@@ -219,15 +226,12 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
             let _ = render_cli_header(&mut renderer, context.command_root);
         }
     }
-    let spinner = if should_show_transient_spinner(context, &command) {
-        renderer.spinner(transient_spinner_label(&command)).ok()
-    } else {
-        None
-    };
+    let transient = should_show_transient_spinner(context, &command)
+        .then(|| effigy_ui::steps::step(transient_spinner_label(&command)));
     match crate::runner::run_command_with_context(command, context.runtime_context) {
         Ok(output) => {
-            if let Some(spinner) = spinner.as_ref() {
-                spinner.finish_clear();
+            if let Some(transient) = transient.as_ref() {
+                transient.finish_clear();
             }
             if context.emit_json_envelope {
                 emit_json_envelope_success(context.command_kind, context.command_name, &output);
@@ -242,8 +246,8 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
             }
         }
         Err(err) => {
-            if let Some(spinner) = spinner.as_ref() {
-                spinner.finish_clear();
+            if let Some(transient) = transient.as_ref() {
+                transient.finish_clear();
             }
             if let crate::runner::RunnerError::RunSettled { code } = err {
                 // An attached or followed run already wrote its output; exit
@@ -251,14 +255,16 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
                 std::process::exit(code);
             }
             let exit_code = err.process_exit_code();
+            let human = err.human_error();
             if context.emit_json_envelope {
-                emit_json_envelope_error(
+                emit_json_envelope_error_with_human(
                     exit_code,
                     context.command_kind,
                     context.command_name,
                     "RunnerError",
                     &err.to_string(),
                     err.json_error_details().map(parse_json_or_string),
+                    human.to_json(),
                 );
             }
             if let Some(rendered) = err.rendered_output() {
@@ -268,7 +274,7 @@ pub fn run_and_render_command(context: &CliExecutionContext<'_>, command: Comman
                 }
             }
             let mut err_renderer = PlainRenderer::stderr(context.output_mode);
-            let _ = err_renderer.error_block(&MessageBlock::new("Task failed", err.to_string()));
+            let _ = err_renderer.text(&human.render_text());
             std::process::exit(exit_code);
         }
     }
@@ -317,9 +323,8 @@ fn should_show_transient_spinner(context: &CliExecutionContext<'_>, command: &Co
     if context.emit_json_envelope || context.suppress_header {
         return false;
     }
-    if !std::io::stdout().is_terminal() || std::env::var_os("CI").is_some() {
-        return false;
-    }
+    // The terminal decision lives in the step sink; this only says which
+    // commands have a slow phase worth a label.
     matches!(
         command,
         Command::Container(effigy_cli::ContainerArgs {

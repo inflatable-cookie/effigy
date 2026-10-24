@@ -181,7 +181,7 @@ fn observed<T>(value: Observed<T>) -> io::Result<Option<T>> {
     match value {
         Observed::Verified(value, _) => Ok(Some(value)),
         Observed::Absent(_) => Ok(None),
-        Observed::Unknown(reason) => Err(error(format!("gateway observation unknown: {reason:?}"))),
+        Observed::Unknown(reason) => Err(error(format!("gateway observation unknown: {reason}"))),
     }
 }
 fn legacy_status(config: &GatewayConfig) -> io::Result<Status> {

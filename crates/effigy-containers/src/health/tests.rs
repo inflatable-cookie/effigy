@@ -72,3 +72,16 @@ fn split_host_port_requires_port_when_default_zero() {
 fn probe_health_status_none_returns_none() {
     assert_eq!(probe_health_status(None), None);
 }
+
+#[test]
+fn a_failed_health_wait_returns_its_error_and_draws_no_step_output() {
+    // Timeout 0 keeps the wait from probing: the contract under test is the
+    // error a caller reports, and that a non-terminal run draws no step text.
+    let error = wait_for_ready("web", Some("tcp://127.0.0.1:9"), 0, None)
+        .expect_err("an unreachable health check must fail the wait");
+    assert!(
+        error.contains("container `web` health check `tcp://127.0.0.1:9` did not become ready"),
+        "{error}"
+    );
+    assert_eq!(effigy_ui::steps::mode(), effigy_ui::StepMode::Silent);
+}

@@ -144,10 +144,79 @@ impl std::fmt::Display for StoreError {
                 waited.as_secs_f64(),
                 holder_note(holder)
             ),
-            other => write!(f, "store refused: {other:?}"),
+            Self::HostAuthorityRequired => f.write_str(
+                "the kernel store lives on the host; a guest placement cannot open it, so nothing was touched",
+            ),
+            Self::Untrusted { path, reason } if reason == crate::fs::OPEN_MODE_REASON => write!(
+                f,
+                "{} is readable by other users; run `chmod 700 {}`",
+                path.display(),
+                path.display()
+            ),
+            Self::Untrusted { path, reason } => write!(
+                f,
+                "{} is not trusted store state ({reason}); fix its ownership and permissions, then retry",
+                path.display()
+            ),
+            Self::UnsupportedFilesystem { path, fs } => write!(
+                f,
+                "{} is on a network filesystem ({fs}); move the state root to a local disk",
+                path.display()
+            ),
+            Self::Io(error) => error.fmt(f),
+            Self::Sqlite { code, message } => write!(
+                f,
+                "kernel.db refused the query ({message}, SQLite code {code}); retry, and if it persists run `effigy doctor`"
+            ),
+            Self::NeedsRecovery => f.write_str(
+                "kernel.db left a rollback journal, so it needs recovery; the next write recovers it",
+            ),
+            Self::UnknownSchema { found } => write!(
+                f,
+                "kernel.db has schema version {found}, which this Effigy does not know; use the Effigy version that wrote it, or migrate the store"
+            ),
+            Self::Identity(error) => write!(f, "kernel.db failed its identity check: {error}"),
+            Self::Unbounded => f.write_str(
+                "a store wait needs a finite deadline; Effigy refused an unbounded wait",
+            ),
+            Self::ClassRefused(class) => write!(
+                f,
+                "a {} operation may not run this store effect; retention, repair and scope removal need a Mutate operation",
+                crate::human::effect_class_label(*class)
+            ),
+            Self::InTransaction => f.write_str(
+                "a store transaction is already open on this thread, so this operation refused rather than nest",
+            ),
+            Self::Interrupted(interrupt @ Interrupt::TimedOut { .. }) => {
+                write!(f, "the operation {interrupt}")
+            }
+            Self::Interrupted(interrupt @ Interrupt::Cancelled { .. }) => {
+                write!(f, "the operation was {interrupt}")
+            }
+            Self::Gate(error) => error.fmt(f),
+            Self::WrongGuard => f.write_str(
+                "this store change needs the write guard for its resource; retry through the code path that holds it",
+            ),
+            Self::MachineContentsRefused(what) => write!(
+                f,
+                "{what} belongs to a checkout journal, not the shared machine store"
+            ),
+            Self::TooLarge { limit } => write!(
+                f,
+                "the store refused a value above its {limit}-byte limit; reduce what the operation records"
+            ),
+            Self::NotCorrupt => f.write_str("kernel.db is intact, so there is nothing to repair"),
+            Self::StaleGeneration { current } => write!(
+                f,
+                "the store is already at generation {current}; a pointer commit must select a strictly newer generation"
+            ),
+            Self::UnknownResource => f.write_str(
+                "the store has no record of that resource; the run that named it may have been removed, so retry the command",
+            ),
         }
     }
 }
+
 impl std::error::Error for StoreError {}
 impl From<FsError> for StoreError {
     fn from(error: FsError) -> Self {

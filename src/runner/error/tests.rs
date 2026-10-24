@@ -378,3 +378,106 @@ fn command_json_failure_survives_builtin_port_round_trip() {
     );
     assert_eq!(round_tripped.json_error_details(), Some(rendered));
 }
+
+#[test]
+fn command_failure_renders_the_three_human_facts() {
+    let error = RunnerError::TaskCommandFailure {
+        command: "npm run build".to_owned(),
+        code: Some(2),
+        stdout: "compiled 12 modules\n".to_owned(),
+        stderr: "\n  error TS2304: Cannot find name 'widget'.\n".to_owned(),
+    };
+    let human = error.human_error();
+    assert_eq!(human.what_failed(), "command `npm run build` failed");
+    assert_eq!(
+        human.evidence_lines(),
+        [
+            "exit code 2",
+            "stderr: error TS2304: Cannot find name 'widget'."
+        ]
+    );
+    assert!(human
+        .next_action_text()
+        .is_some_and(|action| action.contains("run the command again")));
+    assert_eq!(
+        human.render_text(),
+        "[error] command `npm run build` failed\n  \
+         cause: exit code 2\n         \
+         stderr: error TS2304: Cannot find name 'widget'.\n  \
+         next: read the output above, fix the cause, then run the command again"
+    );
+    let json = human.to_json();
+    assert_eq!(json["what_failed"], "command `npm run build` failed");
+    assert_eq!(
+        json["evidence"][1],
+        "stderr: error TS2304: Cannot find name 'widget'."
+    );
+}
+
+#[test]
+fn a_display_sentence_lifts_its_next_step_out_of_the_evidence() {
+    let error = RunnerError::TaskInvocation(
+        "container `web` is not running\nnext: run `effigy container up web`".to_owned(),
+    );
+    let human = error.human_error();
+    assert_eq!(human.what_failed(), "container `web` is not running");
+    assert!(human.evidence_lines().is_empty());
+    assert_eq!(
+        human.next_action_text(),
+        Some("run `effigy container up web`")
+    );
+}
+
+#[test]
+fn structured_details_name_what_failed_and_the_recovery() {
+    let details = serde_json::json!({
+        "schema": "effigy.container.activation.v1",
+        "cause": "container render: object store is absent or unavailable",
+        "message": "Detached activation did not complete.",
+        "failure_kind": "invocation_refusal",
+        "phase": "detached_activation",
+        "readiness": "unverified",
+        "stop": "effigy container down",
+    });
+    let error = RunnerError::CommandJsonFailure {
+        rendered: details.to_string(),
+    };
+    let human = error.human_error();
+    assert_eq!(
+        human.what_failed(),
+        "container render: object store is absent or unavailable"
+    );
+    assert_eq!(
+        human.evidence_lines()[0],
+        "Detached activation did not complete."
+    );
+    assert!(human
+        .evidence_lines()
+        .contains(&"phase: detached_activation".to_owned()));
+    assert_eq!(human.next_action_text(), Some("effigy container down"));
+}
+
+#[test]
+fn task_run_details_name_the_task_and_the_failing_output() {
+    let details = serde_json::json!({
+        "schema": "effigy.task.run.v1",
+        "task": "fail",
+        "exit_code": 3,
+        "failed_step": "1",
+        "stderr": "error: widget is undefined\n",
+        "stdout": "building widget\n",
+    });
+    let error = RunnerError::CommandJsonFailure {
+        rendered: details.to_string(),
+    };
+    let human = error.human_error();
+    assert_eq!(human.what_failed(), "task `fail` failed");
+    assert_eq!(
+        human.evidence_lines(),
+        ["exit_code: 3", "stderr: error: widget is undefined"]
+    );
+    assert_eq!(
+        human.render_text(),
+        "[error] task `fail` failed\n  cause: exit_code: 3\n         stderr: error: widget is undefined"
+    );
+}

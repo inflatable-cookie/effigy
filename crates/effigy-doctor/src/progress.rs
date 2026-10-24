@@ -1,37 +1,30 @@
-use std::io::IsTerminal;
+//! Doctor's scan progress, drawn through the one step API so JSON and piped
+//! output stay silent without a second terminal check here.
 
-use effigy_ui::theme::is_ci_environment;
-use effigy_ui::{OutputMode, PlainRenderer, Renderer, SpinnerHandle};
+use effigy_ui::steps::{self, Step};
 
 pub(super) struct DoctorProgressReporter {
-    renderer: PlainRenderer<anstream::AutoStream<std::io::Stderr>>,
-    spinner: Option<Box<dyn SpinnerHandle>>,
+    step: Option<Step>,
 }
 
 impl DoctorProgressReporter {
     pub(super) fn new(output_json: bool) -> Option<Self> {
-        if output_json || !std::io::stderr().is_terminal() || is_ci_environment() {
+        if output_json {
             return None;
         }
-        Some(Self {
-            renderer: PlainRenderer::stderr(OutputMode::from_env()),
-            spinner: None,
-        })
+        Some(Self { step: None })
     }
 
     pub(super) fn start_scan(&mut self, label: &str) {
-        if self.spinner.is_none() {
-            self.spinner = self.renderer.spinner(label).ok();
-            return;
-        }
-        if let Some(spinner) = self.spinner.as_ref() {
-            spinner.set_message(label);
+        match self.step.as_ref() {
+            Some(step) => step.set_label(label),
+            None => self.step = Some(steps::step(label)),
         }
     }
 
     pub(super) fn finish(&mut self) {
-        if let Some(spinner) = self.spinner.take() {
-            spinner.finish_clear();
+        if let Some(step) = self.step.take() {
+            step.finish_clear();
         }
     }
 }

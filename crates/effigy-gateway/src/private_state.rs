@@ -105,7 +105,7 @@ fn validate_root_entries(path: &Path) -> Result<(), GatewayError> {
                     effigy_kernel::observe::Observed::Unknown(reason) => {
                         return Err(unsafe_child(
                             &child,
-                            &format!("kernel state root unknown: {reason:?}"),
+                            &format!("kernel state root unknown: {reason}"),
                         ))
                     }
                 }
