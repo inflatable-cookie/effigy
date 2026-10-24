@@ -32,7 +32,15 @@ CARGO_WORD = re.compile(r'(?<![A-Za-z0-9_/$-])cargo(?=[\s"\',]|$)')
 TASK_KEY = re.compile(r'^\s*(?:"([^"]+)"|([A-Za-z0-9_][A-Za-z0-9:_.-]*))\s*=')
 SECTION = re.compile(r'^\s*\[([^\]]+)\]\s*$')
 INCLUDE_ITEM = re.compile(r'"([^"]+\.toml)"')
-SCRIPT_TOKEN = re.compile(r'(?<![\w./-])((?:scripts|tests/scripts)/[A-Za-z0-9_./-]+\.(?:sh|py|rhai))')
+# Any repository-relative script path with a `scripts` component, including a
+# crate-owned one such as `crates/effigy-kernel/tests/scripts/linux-custody.sh`:
+# a catalog route that calls a script is a route whatever directory owns it.
+SCRIPT_TOKEN = re.compile(
+    r'(?<![\w./-])((?:[A-Za-z0-9_.+-]+/)+[A-Za-z0-9_./+-]+\.(?:sh|py|rhai))'
+)
+# A path in this catalog is only a candidate when it names a script directory;
+# the membership check keeps a stray asset path out of the route scan.
+SCRIPT_DIRECTORY = re.compile(r'(^|/)scripts/')
 # The guard itself names `cargo` in its rules and runs no Cargo.
 SKIP_SCRIPTS = ("scripts/check-cargo-routes.py",)
 
@@ -121,8 +129,11 @@ def referenced_scripts():
         source = pending.pop(0)
         for raw in open(os.path.join(ROOT, source), encoding="utf-8"):
             for match in SCRIPT_TOKEN.finditer(strip_comment(raw)):
-                candidate = match.group(1)
+                # `./scripts/x.sh` and `scripts/x.sh` name one route.
+                candidate = os.path.normpath(match.group(1))
                 if candidate in SKIP_SCRIPTS or candidate in scripts:
+                    continue
+                if not SCRIPT_DIRECTORY.search(candidate):
                     continue
                 if not os.path.isfile(os.path.join(ROOT, candidate)):
                     continue

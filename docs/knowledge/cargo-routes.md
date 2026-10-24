@@ -45,6 +45,10 @@ routes and never need a row.
 - `install:local` builds this checkout through `oxide build --bin effigy` and
   installs `target/debug/effigy`. Its escape is `install:local:cargo`
   (`EFFIGY_OXIDE_ESCAPE=cargo effigy install:local`).
+- The scan covers every repository-relative script path a catalog route names,
+  including a crate-owned one
+  (`crates/effigy-kernel/tests/scripts/linux-custody.sh`); `./scripts/x.sh` and
+  `scripts/x.sh` are one route.
 - Rule-2 repair: a test that found a sibling binary by walking up from
   `current_exe()` now resolves `$CARGO_TARGET_DIR/<profile>/` first and keeps
   the sibling path as the fallback, because Cargo's build directory lives in
@@ -68,6 +72,7 @@ routes and never need a row.
 | `tests/scripts/assurance-boundary-tests.sh` | genuine exception | 8 | Cargo is the subject: `cargo nextest list --message-format json` is the membership oracle the proof asserts against. |
 | `tests/scripts/doctor-fixture-scheduling.py` | genuine exception | 8 | Cargo is the subject: it supervises `cargo nextest` runs to prove scheduling controls, and gives each fixture crate a private `CARGO_TARGET_DIR`. |
 | `tests/scripts/gateway-linux-adapter.sh` | genuine exception | 8 | Container/VM guest build: the proof deliberately builds and executes inside a Linux container, with a container-local target directory. |
+| `crates/effigy-kernel/tests/scripts/linux-custody.sh` | genuine exception | 8 | Container/VM guest build: eight `test:kernel:*:linux` and `proof:runtime-*:linux` routes run this script, which builds and runs `cargo test`/`build`/`clippy`/`nextest` inside a disposable Colima VM with a VM-local `CARGO_TARGET_DIR`. |
 | `tests/scripts/container-render-consumers.py` | pending one-use | 7 | One-use workspace: it copies the tree into a fresh fixture, sets its own `CARGO_TARGET_DIR`, and writes fixture `effigy.toml` routes that build a baseline example. Waits on Oxide one-use workspace support. |
 | `tests/scripts/sequence-consumer-baseline.py` | pending one-use | 7 | One-use workspace: it extracts a commit into a private fixture checkout and builds `--profile discovery-proof` there with its own `CARGO_TARGET_DIR`. Waits on Oxide one-use workspace support. |
 
