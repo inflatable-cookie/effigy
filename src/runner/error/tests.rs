@@ -378,3 +378,51 @@ fn command_json_failure_survives_builtin_port_round_trip() {
     );
     assert_eq!(round_tripped.json_error_details(), Some(rendered));
 }
+
+#[test]
+fn command_failure_renders_the_three_human_facts() {
+    let error = RunnerError::TaskCommandFailure {
+        command: "npm run build".to_owned(),
+        code: Some(2),
+        stdout: "compiled 12 modules\n".to_owned(),
+        stderr: "\n  error TS2304: Cannot find name 'widget'.\n".to_owned(),
+    };
+    let human = error.human_error();
+    assert_eq!(human.what_failed(), "command `npm run build` failed");
+    assert_eq!(
+        human.evidence_lines(),
+        [
+            "exit code 2",
+            "stderr: error TS2304: Cannot find name 'widget'.",
+            "stdout: compiled 12 modules",
+        ]
+    );
+    assert!(human
+        .next_action_text()
+        .is_some_and(|action| action.contains("run the command again")));
+    assert_eq!(
+        human.render_text(),
+        "[error] command `npm run build` failed\n  \
+         cause: exit code 2\n         \
+         stderr: error TS2304: Cannot find name 'widget'.\n         \
+         stdout: compiled 12 modules\n  \
+         next: read the output above, fix the cause, then run the command again"
+    );
+    let json = human.to_json();
+    assert_eq!(json["what_failed"], "command `npm run build` failed");
+    assert_eq!(json["evidence"][1], "stderr: error TS2304: Cannot find name 'widget'.");
+}
+
+#[test]
+fn a_display_sentence_lifts_its_next_step_out_of_the_evidence() {
+    let error = RunnerError::TaskInvocation(
+        "container `web` is not running\nnext: run `effigy container up web`".to_owned(),
+    );
+    let human = error.human_error();
+    assert_eq!(human.what_failed(), "container `web` is not running");
+    assert!(human.evidence_lines().is_empty());
+    assert_eq!(
+        human.next_action_text(),
+        Some("run `effigy container up web`")
+    );
+}

@@ -909,6 +909,7 @@ dependencies = [
  "effigy-kernel",
  "effigy-manifest",
  "effigy-test-support",
+ "effigy-ui",
  "nix 0.31.3",
  "serde",
  "serde_json",

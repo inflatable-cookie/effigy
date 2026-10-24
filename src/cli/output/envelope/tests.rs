@@ -1,4 +1,7 @@
-use super::{build_json_envelope_error, build_json_envelope_success, parse_json_or_string};
+use super::{
+    build_json_envelope_error, build_json_envelope_error_with_human, build_json_envelope_success,
+    parse_json_or_string,
+};
 use serde_json::json;
 
 #[test]
@@ -46,4 +49,42 @@ fn build_json_envelope_error_sets_contract_shape() {
 fn parse_json_or_string_parses_and_falls_back_to_text() {
     assert_eq!(parse_json_or_string("{\"ok\":true}")["ok"], true);
     assert_eq!(parse_json_or_string("not json")["text"], "not json");
+}
+
+#[test]
+fn build_json_envelope_error_with_human_keeps_the_machine_fields() {
+    let human = effigy_ui::HumanError::new("container `web` never became healthy")
+        .evidence("health check answered HTTP 404 (attempt 12, 60s)")
+        .next_action("run `effigy container logs web`")
+        .to_json();
+    let payload = build_json_envelope_error_with_human(
+        "container",
+        "up",
+        "RunnerError",
+        "container `web` never became healthy",
+        Some(json!({"schema": "effigy.container.up.v1"})),
+        human,
+    );
+    assert_eq!(payload["ok"], false);
+    assert_eq!(payload["error"]["kind"], "RunnerError");
+    assert_eq!(
+        payload["error"]["message"],
+        "container `web` never became healthy"
+    );
+    assert_eq!(
+        payload["error"]["details"]["schema"],
+        "effigy.container.up.v1"
+    );
+    assert_eq!(
+        payload["error"]["human"]["what_failed"],
+        "container `web` never became healthy"
+    );
+    assert_eq!(
+        payload["error"]["human"]["evidence"][0],
+        "health check answered HTTP 404 (attempt 12, 60s)"
+    );
+    assert_eq!(
+        payload["error"]["human"]["next_action"],
+        "run `effigy container logs web`"
+    );
 }

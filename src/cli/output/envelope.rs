@@ -39,6 +39,39 @@ pub fn emit_json_envelope_error(
     std::process::exit(exit_code);
 }
 
+/// The same refusal, carried in both forms: `message` and `details` stay the
+/// machine contract, and `error.human` adds the three facts a person reads
+/// (what failed, the evidence, the next action).
+pub fn emit_json_envelope_error_with_human(
+    exit_code: i32,
+    kind: &str,
+    name: &str,
+    error_kind: &str,
+    message: &str,
+    details: Option<serde_json::Value>,
+    human: serde_json::Value,
+) -> ! {
+    let payload =
+        build_json_envelope_error_with_human(kind, name, error_kind, message, details, human);
+    print_json_payload(&payload);
+    std::process::exit(exit_code);
+}
+
+pub fn build_json_envelope_error_with_human(
+    kind: &str,
+    name: &str,
+    error_kind: &str,
+    message: &str,
+    details: Option<serde_json::Value>,
+    human: serde_json::Value,
+) -> serde_json::Value {
+    let mut payload = build_json_envelope_error(kind, name, error_kind, message, details);
+    if let Some(error) = payload.get_mut("error").and_then(|error| error.as_object_mut()) {
+        error.insert("human".to_owned(), human);
+    }
+    payload
+}
+
 pub fn build_json_envelope_success(
     kind: &str,
     name: &str,

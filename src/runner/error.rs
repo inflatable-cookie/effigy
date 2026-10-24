@@ -283,6 +283,41 @@ impl RunnerError {
         rendered_output::runner_error_json_details(self)
     }
 
+    /// The three facts a person needs from this refusal: what failed, the
+    /// evidence, and the next action. The top-level printer renders this as
+    /// text, and `--json` carries the same value as `error.human`.
+    ///
+    /// Every refusal already renders its own sentence through `Display`, so
+    /// this lifts that sentence: its first line says what failed, an explicit
+    /// `next:` line becomes the next action, and the rest is evidence. A
+    /// command failure additionally names its exit code and output tail.
+    pub fn human_error(&self) -> effigy_ui::HumanError {
+        match self {
+            RunnerError::TaskCommandFailure {
+                command,
+                code,
+                stdout,
+                stderr,
+            } => {
+                let mut error =
+                    effigy_ui::HumanError::new(format!("command `{command}` failed"));
+                if let Some(code) = code {
+                    error = error.evidence(format!("exit code {code}"));
+                }
+                if let Some(line) = last_meaningful_line(stderr) {
+                    error = error.evidence(format!("stderr: {line}"));
+                }
+                if let Some(line) = last_meaningful_line(stdout) {
+                    error = error.evidence(format!("stdout: {line}"));
+                }
+                error.next_action(
+                    "read the output above, fix the cause, then run the command again",
+                )
+            }
+            _ => human_error_from_display(&self.to_string()),
+        }
+    }
+
     pub(in crate::runner) fn task_invocation(message: impl Into<String>) -> Self {
         Self::TaskInvocation(message.into())
     }
@@ -455,6 +490,36 @@ impl RunnerError {
             _ => None,
         }
     }
+}
+
+/// Lift a rendered refusal into the three facts, without inventing any: the
+/// first line is what failed, a `next:` line is the next action, and the rest
+/// is evidence.
+fn human_error_from_display(rendered: &str) -> effigy_ui::HumanError {
+    let mut lines = rendered.lines();
+    let what_failed = lines
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .unwrap_or("the command failed");
+    let mut error = effigy_ui::HumanError::new(what_failed);
+    for line in lines {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        match line.strip_prefix("next:") {
+            Some(action) => error = error.next_action(action.trim()),
+            None => error = error.evidence(line),
+        }
+    }
+    error
+}
+
+/// The last line with content: the tail of a command's output is the evidence
+/// a person reads first.
+fn last_meaningful_line(text: &str) -> Option<&str> {
+    text.lines().rev().map(str::trim).find(|line| !line.is_empty())
 }
 
 impl From<TaskError> for RunnerError {
