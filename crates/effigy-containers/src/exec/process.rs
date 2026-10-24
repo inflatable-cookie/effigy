@@ -103,54 +103,17 @@ pub(super) fn run_detached_command_with_env(
     label: &str,
     env: &[(String, OsString)],
 ) -> Result<Output, ContainerExecError> {
-    let args = compose_invocation_args(program.as_ref(), args, env)?;
-    // A detached service must never inherit an Effigy-owned log pipe. Its
-    // output goes to a regular file in the checkout's retained runtime record:
-    // a file has no reader lifetime and remains writable after this CLI exits.
-    let record = DetachedOutputRecord::for_invocation(repo_root, &args).map_err(|error| {
-        ContainerExecError::Launch {
-            command: label.to_owned(),
-            error,
-        }
-    })?;
-    let (stdout, stderr) = record.open().map_err(|error| ContainerExecError::Launch {
-        command: label.to_owned(),
-        error: std::io::Error::new(
-            error.kind(),
-            format!("{} ({})", error, record.path.display()),
-        ),
-    })?;
-    let mut command = Command::new(resolve_host_cli_program(program));
-    command
-        .current_dir(repo_root)
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(stdout)
-        .stderr(stderr);
-    for (key, value) in env {
-        command.env(key, value);
-    }
-    crate::policy::render::apply_environment(&mut command, &args);
-    let status = command
-        .status()
-        .map_err(|error| ContainerExecError::Launch {
-            command: label.to_owned(),
-            error,
-        })?;
-    let retained = record.retain_tail();
-    if !status.success() {
-        return Err(ContainerExecError::Failure {
-            command: label.to_owned(),
-            code: status.code(),
-            stdout: String::new(),
-            stderr: detached_failure(&record, status.code(), retained.err()),
-        });
-    }
-    Ok(Output {
-        status,
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-    })
+    // One spawn path for a detached invocation, watched or not: a caller that
+    // shows progress must not cost a second host-process boundary.
+    run_detached_command_streaming_with_env(
+        repo_root,
+        program,
+        args,
+        label,
+        env,
+        None,
+        &mut |_| {},
+    )
 }
 
 /// [`run_detached_command_with_env`], reporting each line as it arrives.
@@ -202,7 +165,7 @@ pub(super) fn run_detached_command_streaming_with_env(
     let mut offset = 0_u64;
     let status = loop {
         if stop_requested.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
-            let _ = terminate_child_group(&mut child);
+            terminate_child_process_tree(&mut child);
             break child.wait().map_err(|error| ContainerExecError::Launch {
                 command: label.to_owned(),
                 error,
@@ -238,25 +201,6 @@ pub(super) fn run_detached_command_streaming_with_env(
         stdout: Vec::new(),
         stderr: Vec::new(),
     })
-}
-
-/// End a streaming child's whole process group, so a Compose invocation that
-/// already spawned helpers does not outlive the interrupt.
-fn terminate_child_group(child: &mut std::process::Child) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        let _ = kill(Pid::from_raw(-(child.id() as i32)), Signal::SIGTERM);
-        let deadline = Instant::now() + Duration::from_millis(800);
-        while Instant::now() < deadline {
-            if child.try_wait().ok().flatten().is_some() {
-                return Ok(());
-            }
-            thread::sleep(Duration::from_millis(40));
-        }
-        let _ = kill(Pid::from_raw(-(child.id() as i32)), Signal::SIGKILL);
-    }
-    let _ = child.kill();
-    Ok(())
 }
 
 /// The bounded failure text: the retained file's name and its own tail. No
