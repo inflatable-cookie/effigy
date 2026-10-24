@@ -1181,6 +1181,17 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- Selectors reuse the real Oxide pool when a harness overrides `HOME`.
+  `scripts/oxide-selector.sh` resolves the pool the way a normal run does — the
+  account's real home from a passwd lookup, then the first `pool:` line of
+  `oxide status` under that home — and exports `OXIDE_POOL` before `exec oxide`,
+  covering every selector and the `exec -- <tool>` route. A private HOME no
+  longer creates a cold pool under itself: 3.3-3.8 GB per run on the internal
+  SSD. An unresolved pool warns once, naming `OXIDE_POOL`, and the run
+  continues. The local-installer fixture names a pool explicitly, the Effigy
+  skill's footguns record the rule for harnesses that call `oxide` directly,
+  and `effigy test:oxide:selector-pool` proves the resolution against a stub
+  `oxide` that answers `status`.
 - `effigy run migrate` no longer refuses the whole Q-010 cutover because one
   recorded checkout no longer exists. A deleted checkout that holds only
   completed history (no unreleased claim, release owner or run that could still

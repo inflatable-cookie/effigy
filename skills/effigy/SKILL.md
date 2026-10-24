@@ -63,6 +63,9 @@ run with `effigy --run-id <key> <task>` and inspect, follow or stop it with
   target repo.
 - **Never map `health` to `qa`.** Keep `health` seconds-scale, `validate`
   mid-cost, and `qa` the full board.
+- **Never let a private `HOME` create a cold Oxide pool.** Set `OXIDE_POOL`
+  (or use a selector, which resolves it) before running `oxide` under a
+  temporary home; a cold pool writes 3.3-3.8 GB to the internal SSD.
 - **Never define `tasks.test`.** It was removed in v0.11. Use named
   `[test.suites]` entries for Rust, TypeScript, and other repo test routes.
 
