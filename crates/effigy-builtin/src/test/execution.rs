@@ -9,6 +9,10 @@ use effigy_core::shell::{shell_quote, with_local_node_bin_path};
 use effigy_managed::run_spec::wrap_command_with_env;
 use effigy_manifest::ManifestTestSuiteTeardownPolicy;
 use effigy_process::ProcessSpec;
+
+/// The kernel's inherited-capability variable (`effigy_kernel::inheritance::ENV`).
+/// Test suites start outside the invoking tree's grant.
+const PARENT_CAPABILITY_ENV: &str = "EFFIGY_PARENT_CAPABILITY";
 use effigy_tui::multiprocess::{
     run_multiprocess_tui, run_multiprocess_tui_with_source, MultiProcessTuiControl,
     MultiProcessTuiOptions, SessionProcesses, SessionTab,
@@ -55,11 +59,14 @@ pub(super) fn run_builtin_test_targets_tui(
             let execution_command = render_routed_suite_command(ports, suite)?;
             Ok(ProcessSpec {
                 name: suite.name.clone(),
-                run: lifecycle_execution_command_from_parts(
-                    &execution_command,
-                    suite.setup_command.as_deref(),
-                    suite.teardown_command.as_deref(),
-                    suite.teardown_policy,
+                run: format!(
+                    "unset {PARENT_CAPABILITY_ENV}; {}",
+                    lifecycle_execution_command_from_parts(
+                        &execution_command,
+                        suite.setup_command.as_deref(),
+                        suite.teardown_command.as_deref(),
+                        suite.teardown_policy,
+                    )
                 ),
                 cwd: suite.root.clone(),
                 start_after_ms: 0,
@@ -240,8 +247,14 @@ pub(super) fn run_builtin_test_targets_parallel(
                             0
                         };
                         if let Some(mut custody) = custody {
+                            // The suite stays in this run's process group, so
+                            // custody still settles it, but its own invocations
+                            // start outside the run's grant (see
+                            // `PARENT_CAPABILITY_ENV`).
+                            let suite_command =
+                                format!("unset {PARENT_CAPABILITY_ENV}; {execution_command}");
                             let outcome =
-                                custody.run(&execution_command, &root, &host_env, capture_output);
+                                custody.run(&suite_command, &root, &host_env, capture_output);
                             let result = outcome.map(|outcome| {
                                 #[cfg(unix)]
                                 let status = {
@@ -279,6 +292,11 @@ pub(super) fn run_builtin_test_targets_parallel(
                         }
                         let mut process = ProcessCommand::new("sh");
                         process.arg("-c").arg(&execution_command).current_dir(&root);
+                        // A suite models independent invocations in private
+                        // roots; it must not run as a descendant of this
+                        // task tree's runtime grant (as `oxide-selector.sh`
+                        // does for test runs).
+                        process.env_remove(PARENT_CAPABILITY_ENV);
                         with_local_node_bin_path(&mut process, &root);
                         if host {
                             for (key, value) in &host_env {
@@ -734,7 +752,10 @@ mod tests {
         let recorded = std::fs::read_to_string(&marker).expect("custody marker");
         let fields = recorded.split('|').collect::<Vec<_>>();
         assert_eq!(fields[0], "proof", "the suite reached its own custody");
-        assert_eq!(fields[1], "printf suite");
+        assert_eq!(
+            fields[1], "unset EFFIGY_PARENT_CAPABILITY; printf suite",
+            "the suite starts outside the run's grant"
+        );
         assert_eq!(
             fields[3],
             scratch.path().display().to_string(),
