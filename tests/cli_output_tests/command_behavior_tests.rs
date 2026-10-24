@@ -2785,6 +2785,19 @@ fn write_executable(path: &std::path::Path, contents: &str) {
     fs::set_permissions(path, perms).expect("chmod executable");
 }
 
+/// The fixture's private `HOME`, kept apart from the checkout root.
+///
+/// Contract 052 requires private fixtures to use a fresh `HOME` and independent
+/// checkout roots. A fixture whose `HOME` is its own checkout root would place
+/// the checkout journal at `$HOME/.effigy/state/kernel.db`, which is exactly
+/// where the machine store's unimported legacy predecessor is probed, so every
+/// shared-machine read would refuse with `legacy runtime exists`.
+fn private_home(root: &std::path::Path) -> std::path::PathBuf {
+    let home = root.join("home");
+    fs::create_dir_all(&home).expect("private fixture home");
+    home
+}
+
 fn write_container_fixture(root: &std::path::Path, health_check: Option<&str>, mount: &str) {
     write_container_fixture_with_task(root, health_check, mount, false);
 }
@@ -3542,8 +3555,8 @@ fn cli_container_status_json_reports_default_container_contract() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -3598,8 +3611,8 @@ fn cli_container_status_succeeds_with_unrelated_required_container_secrets() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -3685,8 +3698,8 @@ fn cli_container_reset_succeeds_with_unrelated_required_container_secrets() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -3732,8 +3745,8 @@ fn cli_container_data_list_json_reports_managed_volumes() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -3787,8 +3800,8 @@ fn cli_container_cache_list_json_reports_purge_safe_isolated_volumes() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -3835,8 +3848,8 @@ fn cli_generated_container_status_json_reports_media_mounts() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -3858,8 +3871,8 @@ fn cli_generated_container_status_json_reports_media_mounts() {
     let rendered = Command::new(env!("CARGO_BIN_EXE_effigy"))
         .args(["container", "render", "web", "--json", "--repo"])
         .arg(&root)
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .output()
         .unwrap();
     assert!(rendered.status.success(), "{rendered:?}");
@@ -3906,8 +3919,8 @@ fn cli_container_data_export_json_reports_transfer_contract() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -3968,8 +3981,8 @@ fn cli_container_data_import_json_reports_transfer_contract() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -4024,8 +4037,8 @@ fn cli_container_data_pull_production_json_reports_hook_contract() {
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -4152,8 +4165,8 @@ fn container_data_seed_command(fixture_root: &std::path::Path, disable_reaper: b
         .arg(&root)
         .arg("--json")
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -4357,8 +4370,8 @@ fn cli_container_up_detached_starts_colima_and_reports_ready() {
         .arg("--detach")
         .arg("--json")
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -4378,8 +4391,20 @@ fn cli_container_up_detached_starts_colima_and_reports_ready() {
     assert_eq!(parsed["result"]["colima_started"], true);
     assert_eq!(parsed["result"]["health"], "ready");
     let colima_invocations = fs::read_to_string(&colima_args).expect("read colima args");
-    assert!(colima_invocations.contains("nerdctl --profile dev -- compose -f"));
-    assert!(colima_invocations.contains(" up -d"));
+    // v0.15 renders an isolated Compose env file, so the `--env-file` input
+    // sits between `compose` and the first `-f` generation input.
+    let compose_up = colima_invocations
+        .lines()
+        .find(|line| line.contains("nerdctl --profile dev -- compose "))
+        .unwrap_or_else(|| panic!("no Colima Compose invocation: {colima_invocations}"));
+    assert!(
+        compose_up.contains(" -f "),
+        "the generated Compose inputs reach the Colima fallback: {compose_up}"
+    );
+    assert!(
+        compose_up.contains(" up -d"),
+        "the fallback starts the environment detached: {compose_up}"
+    );
 }
 
 /// Every named child of the managed run's journal started and exited 0, and
@@ -5499,8 +5524,8 @@ fn cli_container_attached_session_stops_environment_on_sigint() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -5554,8 +5579,8 @@ fn cli_container_attached_stream_session_reports_operator_overview() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_CONTAINER_STREAM", "1")
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", root.join("docker-args.log"))
@@ -5619,8 +5644,8 @@ fn cli_container_attached_session_handles_sigint_during_startup() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_CONTAINER_STREAM", "1")
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -5684,8 +5709,8 @@ fn cli_workspace_binding_handoff_stops_environment_after_return() {
         .arg(&root)
         .arg("workspace")
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
         .env("EFFIGY_TEST_COLIMA_STATE_FILE", &colima_state)
@@ -5750,8 +5775,8 @@ fn cli_container_attached_session_terminates_log_process_group() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_CONTAINER_STREAM", "1")
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
@@ -5829,8 +5854,8 @@ fn cli_container_falls_back_to_colima_nerdctl_when_docker_is_missing() {
         .arg("--detach")
         .arg("--json")
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", bin_dir.display().to_string())
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -5875,8 +5900,8 @@ fn cli_container_shell_command_runs_via_sh_lc() {
         .arg("--command")
         .arg("printf shell-ok")
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)
@@ -5926,8 +5951,8 @@ fn cli_container_rejects_mounts_that_escape_repo_root() {
         .arg("--repo")
         .arg(&root)
         .env("NO_COLOR", "1")
-        .env("HOME", &root)
-        .env("EFFIGY_TEST_CONTAINERS_HOME", root.join(".effigy"))
+        .env("HOME", private_home(&root))
+        .env("EFFIGY_TEST_CONTAINERS_HOME", private_home(&root).join(".effigy"))
         .env("PATH", path)
         .env("EFFIGY_TEST_DOCKER_ARGS_FILE", &docker_args)
         .env("EFFIGY_TEST_COLIMA_ARGS_FILE", &colima_args)

@@ -622,7 +622,8 @@ fn private_unrecorded_owned_running_stack_reactivates_with_current_inputs() {
     assert!(first.status.success(), "{first:?}");
     assert!(fixture.state(0)["active"].as_bool().unwrap());
     // Lose every environment record, as a stack an earlier release started.
-    let store = fixture.root.path().join("home/.effigy/state/kernel.db");
+    // Q-010 keeps that journal in the checkout; only the checkout has one.
+    let store = fixture.stacks[0].root.join(".effigy/state/kernel.db");
     fs::remove_file(&store).expect("remove the fixture's private store");
     let manifest = fixture.stacks[0].root.join("effigy.toml");
     let mut changed = fs::read(&manifest).unwrap();
@@ -655,7 +656,7 @@ fn private_foreign_stopped_sibling_refuses_project_wide_reactivation() {
     let first = fixture.run(0, &["container", "up", "--detach", "--json"]);
     assert!(first.status.success(), "{first:?}");
     assert!(fixture.state(0)["active"].as_bool().unwrap());
-    fs::remove_file(fixture.root.path().join("home/.effigy/state/kernel.db"))
+    fs::remove_file(fixture.stacks[0].root.join(".effigy/state/kernel.db"))
         .expect("remove the fixture's private store");
     fixture.set(0, "mode", json!("foreign-stopped-sibling"));
     let manifest = fixture.stacks[0].root.join("effigy.toml");
@@ -1118,7 +1119,9 @@ if args==['ps'] and mode in ['probe-manifest-drift','probe-compose-drift'] and n
  import hashlib
  if mode=='probe-manifest-drift': path=cwd/'effigy.toml'
  else:
-  candidates=[p for p in (root/'home/.effigy/state/objects').rglob('web.generated.compose.yml') if str(cwd) in p.read_text()]
+  # Q-010 keeps the immutable admitted generation in the checkout journal.
+  generation_roots=[cwd/'.effigy/state/objects',root/'home/.effigy/state/objects']
+  candidates=[p for base in generation_roots if base.is_dir() for p in base.rglob('web.generated.compose.yml') if str(cwd) in p.read_text()]
   assert candidates, 'admitted immutable Compose is required for the corruption control'
   path=max(candidates,key=lambda p:p.stat().st_mtime_ns)
   path.chmod(0o600)
@@ -1140,9 +1143,14 @@ def save():
   else: f.write(payload)
  os.replace(pending,sfile)
 def record(s):
- for p in (root/'home/.effigy/runtime-scopes').glob('*.json'):
+ # Q-010 moved the scope inventory to the checkout's own journal; the machine
+ # inventory stays a read-only legacy input for a live checkout.
+ checkout=pathlib.Path(s['checkout'])
+ candidates=list((checkout/'.effigy/state/runtime-scopes').glob('*.json'))
+ if not candidates: candidates=list((root/'home/.effigy/runtime-scopes').glob('*.json'))
+ for p in candidates:
   r=json.load(open(p))
-  if r['checkout']==s['checkout']: return r
+  if r and checkout.resolve()==pathlib.Path(r['checkout']).resolve(): return r
  return None
 def selected(s):
  filters=[a.removeprefix('label=') for a in args if a.startswith('label=')]
