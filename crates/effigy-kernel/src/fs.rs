@@ -117,7 +117,9 @@ impl fmt::Display for FsError {
 fn trust_next_action(reason: &str) -> &'static str {
     match reason {
         "wrong owner" => "it belongs to another user, so remove it or run as its owner",
-        "symlinked component" => "Effigy never follows a symlink in its state root, so replace it with a real path",
+        "symlinked component" => {
+            "Effigy never follows a symlink in its state root, so replace it with a real path"
+        }
         "hard-linked file" => "it has more than one link, so remove the extra link",
         "NUL in path" => "the path is invalid, so choose one without a NUL byte",
         _ => "fix its ownership and permissions, then retry",

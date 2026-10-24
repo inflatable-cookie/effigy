@@ -299,8 +299,7 @@ impl RunnerError {
                 stdout,
                 stderr,
             } => {
-                let mut error =
-                    effigy_ui::HumanError::new(format!("command `{command}` failed"));
+                let mut error = effigy_ui::HumanError::new(format!("command `{command}` failed"));
                 if let Some(code) = code {
                     error = error.evidence(format!("exit code {code}"));
                 }
@@ -310,9 +309,8 @@ impl RunnerError {
                 if let Some(line) = last_meaningful_line(stdout) {
                     error = error.evidence(format!("stdout: {line}"));
                 }
-                error.next_action(
-                    "read the output above, fix the cause, then run the command again",
-                )
+                error
+                    .next_action("read the output above, fix the cause, then run the command again")
             }
             _ => human_error_from_display(&self.to_string()),
         }
@@ -519,7 +517,10 @@ fn human_error_from_display(rendered: &str) -> effigy_ui::HumanError {
 /// The last line with content: the tail of a command's output is the evidence
 /// a person reads first.
 fn last_meaningful_line(text: &str) -> Option<&str> {
-    text.lines().rev().map(str::trim).find(|line| !line.is_empty())
+    text.lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
 }
 
 impl From<TaskError> for RunnerError {

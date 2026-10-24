@@ -410,7 +410,10 @@ fn command_failure_renders_the_three_human_facts() {
     );
     let json = human.to_json();
     assert_eq!(json["what_failed"], "command `npm run build` failed");
-    assert_eq!(json["evidence"][1], "stderr: error TS2304: Cannot find name 'widget'.");
+    assert_eq!(
+        json["evidence"][1],
+        "stderr: error TS2304: Cannot find name 'widget'."
+    );
 }
 
 #[test]

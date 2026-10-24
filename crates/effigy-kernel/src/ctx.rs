@@ -134,7 +134,10 @@ mod display_tests {
             phase: "store transaction".into(),
             elapsed: Duration::from_secs(3),
         };
-        assert_eq!(other.to_string(), "timed out after 3s during store transaction");
+        assert_eq!(
+            other.to_string(),
+            "timed out after 3s during store transaction"
+        );
     }
 
     #[test]

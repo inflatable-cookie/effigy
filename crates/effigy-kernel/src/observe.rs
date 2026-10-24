@@ -26,7 +26,9 @@ impl<T> Observed<T> {
     /// it saw without borrowing a `Display` from `T`.
     pub fn unproven(&self) -> String {
         match self {
-            Self::Verified(..) => "the observation found a value where another was expected".to_owned(),
+            Self::Verified(..) => {
+                "the observation found a value where another was expected".to_owned()
+            }
             Self::Absent(proof) => proof.to_string(),
             Self::Unknown(reason) => reason.to_string(),
         }
@@ -159,7 +161,9 @@ impl std::fmt::Display for AbsenceProof {
                 "process {pid} exists but is a different process than the one recorded"
             ),
             Self::GroupEmpty { pgid } => write!(f, "process group {pgid} is empty"),
-            Self::NotInInventory { .. } => f.write_str("the process is not in the runtime inventory"),
+            Self::NotInInventory { .. } => {
+                f.write_str("the process is not in the runtime inventory")
+            }
             Self::ContainerGone { id } => write!(f, "container `{id}` no longer exists"),
         }
     }

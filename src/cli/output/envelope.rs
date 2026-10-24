@@ -66,7 +66,10 @@ pub fn build_json_envelope_error_with_human(
     human: serde_json::Value,
 ) -> serde_json::Value {
     let mut payload = build_json_envelope_error(kind, name, error_kind, message, details);
-    if let Some(error) = payload.get_mut("error").and_then(|error| error.as_object_mut()) {
+    if let Some(error) = payload
+        .get_mut("error")
+        .and_then(|error| error.as_object_mut())
+    {
         error.insert("human".to_owned(), human);
     }
     payload

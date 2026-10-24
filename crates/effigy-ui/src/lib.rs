@@ -15,11 +15,11 @@ pub mod steps;
 pub mod table;
 pub mod theme;
 
+pub use human::HumanError;
 pub use output::{
     color_enabled_for_text_output, encode_json, encode_pretty_json_optional, plain_renderer,
     render_utf8, standard_renderer, text_color_enabled, text_renderer,
 };
-pub use human::HumanError;
 pub use plain_renderer::PlainRenderer;
 pub use renderer::{Renderer, SpinnerHandle, UiError, UiResult};
 pub use steps::{Step, StepMode};

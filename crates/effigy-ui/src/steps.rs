@@ -278,9 +278,8 @@ impl Sink {
     }
 
     fn multi(&self) -> &MultiProgress {
-        self.multi.get_or_init(|| {
-            MultiProgress::with_draw_target(ProgressDrawTarget::stderr())
-        })
+        self.multi
+            .get_or_init(|| MultiProgress::with_draw_target(ProgressDrawTarget::stderr()))
     }
 
     fn style_label(&self, label: &str) -> String {
@@ -438,7 +437,10 @@ mod tests {
     fn mode_resolution_keeps_json_and_pipes_silent() {
         // --json is silent wherever it runs.
         assert_eq!(StepMode::resolve(true, true, true, false), StepMode::Silent);
-        assert_eq!(StepMode::resolve(true, false, true, false), StepMode::Silent);
+        assert_eq!(
+            StepMode::resolve(true, false, true, false),
+            StepMode::Silent
+        );
         // A terminal draws spinners; CI and pipes draw nothing without verbose.
         assert_eq!(
             StepMode::resolve(false, false, true, false),

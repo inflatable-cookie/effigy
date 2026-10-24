@@ -44,9 +44,7 @@ pub fn wait_for_ready(
     let timeout = Duration::from_secs(timeout_secs);
     // A health wait is exactly the work the operator needs to watch: the
     // label names the container and how many attempts it has taken so far.
-    let step = effigy_ui::steps::step(&format!(
-        "waiting for {container_name} to report healthy"
-    ));
+    let step = effigy_ui::steps::step(&format!("waiting for {container_name} to report healthy"));
     let mut attempts = 0_u32;
     while started.elapsed() <= timeout {
         if stop_requested.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {

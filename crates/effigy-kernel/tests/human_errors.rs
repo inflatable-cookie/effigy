@@ -29,10 +29,9 @@ fn a_settle_timeout_says_what_it_waited_for() {
 fn an_unreadable_store_names_the_store_and_the_next_step() {
     // Before: `checkout scope inventory: Unknown(StoreUnreadable("kernel.db is
     // unreadable (checkout publication: Unknown(StoreUnreadable(...)))"))`
-    let observed: Observed<&str> =
-        Observed::Unknown(UnknownReason::StoreUnreadable(
-            "kernel.db is unreadable (the file is not a database)".to_owned(),
-        ));
+    let observed: Observed<&str> = Observed::Unknown(UnknownReason::StoreUnreadable(
+        "kernel.db is unreadable (the file is not a database)".to_owned(),
+    ));
     assert_eq!(
         format!("checkout scope inventory: {observed}"),
         "checkout scope inventory: could not tell: the store is unreadable \
@@ -83,7 +82,12 @@ fn no_human_rendering_falls_back_to_a_debug_tree() {
     ];
     for refusal in refusals {
         let rendered = refusal.to_string();
-        for debug_only in ["Unknown(", "StoreUnreadable(", "TimedOut {", "NeedsRecovery"] {
+        for debug_only in [
+            "Unknown(",
+            "StoreUnreadable(",
+            "TimedOut {",
+            "NeedsRecovery",
+        ] {
             assert!(
                 !rendered.contains(debug_only),
                 "`{rendered}` still carries Debug formatting `{debug_only}`"

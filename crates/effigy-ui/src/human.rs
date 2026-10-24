@@ -178,9 +178,10 @@ mod tests {
     #[test]
     fn text_form_names_the_failure_the_evidence_and_the_next_action() {
         let error = HumanError::new("container `web` never became healthy")
-            .evidence("health check http://localhost:8080/healthz answered HTTP 404 (attempt 12, 60s)")
-            .next_action("run `effigy container logs web`",
-            );
+            .evidence(
+                "health check http://localhost:8080/healthz answered HTTP 404 (attempt 12, 60s)",
+            )
+            .next_action("run `effigy container logs web`");
         assert_eq!(
             error.render_text(),
             "[error] container `web` never became healthy\n  \
@@ -221,7 +222,9 @@ mod tests {
     #[test]
     fn missing_parts_are_absent_not_null_noise() {
         let json = HumanError::new("starting web failed").to_json();
-        assert!(json["evidence"].as_array().is_some_and(|rows| rows.is_empty()));
+        assert!(json["evidence"]
+            .as_array()
+            .is_some_and(|rows| rows.is_empty()));
         assert!(json["next_action"].is_null());
     }
 

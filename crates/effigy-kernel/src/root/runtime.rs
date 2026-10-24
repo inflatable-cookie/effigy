@@ -77,12 +77,18 @@ impl StateRoot {
                                 .is_none() => {}
                         other => {
                             return Err(unreadable(format!(
-                                "checkout generation disagrees: {}", other.unproven()
+                                "checkout generation disagrees: {}",
+                                other.unproven()
                             )))
                         }
                     }
                 }
-                other => return Err(unreadable(format!("checkout publication: {}", other.unproven()))),
+                other => {
+                    return Err(unreadable(format!(
+                        "checkout publication: {}",
+                        other.unproven()
+                    )))
+                }
             }
             Ok::<_, StoreError>(())
         })();
@@ -130,7 +136,12 @@ impl StateRoot {
                 return Ok(root);
             }
             Observed::Verified(Authority::Fresh, _) => {}
-            other => return Err(unreadable(format!("checkout publication: {}", other.unproven()))),
+            other => {
+                return Err(unreadable(format!(
+                    "checkout publication: {}",
+                    other.unproven()
+                )))
+            }
         }
         let name = FileName::new(BINDING)?;
         match read_record::<Binding>(&observe, root.dir(), &name) {

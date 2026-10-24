@@ -33,9 +33,7 @@ impl fmt::Display for IdentityError {
                 hex_prefix(existing),
                 hex_prefix(incoming)
             ),
-            Self::InvalidInvocation => {
-                f.write_str("an invocation is not a valid kernel identity")
-            }
+            Self::InvalidInvocation => f.write_str("an invocation is not a valid kernel identity"),
         }
     }
 }
