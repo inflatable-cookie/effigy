@@ -346,7 +346,7 @@ grew by about 18,700 runs in four days and about 20 MB in 15 minutes. The ruling
   that checkout's own `.effigy/state/` (gitignored). A failure or lock affects
   one project, and removing the checkout removes its state.
 - **A small machine-level store holds only genuinely shared facts:** gateway
-  endpoints and routes, the port registry, and host admission. It's low-traffic.
+  endpoints and routes, and host admission. It's low-traffic.
 - This changes the state format, so it lands in v0.15, with built-in migration
   from the current machine store. Contract 052 is amended to match, and the
   kernel's crash-recovery guarantees still hold for every run that outlives its

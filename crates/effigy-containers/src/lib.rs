@@ -46,8 +46,7 @@ pub use policy::inline_workspace::{
 pub use policy::load::{
     effective_attach_mode, load_all_container_policies, load_container_exec_target,
     load_container_exec_working_dir, load_container_policy, load_container_policy_for_creation,
-    load_container_policy_with_workspace, prepare_container_policy,
-    register_container_runtime_scope, ContainerExecTarget,
+    load_container_policy_with_workspace, prepare_container_policy, ContainerExecTarget,
 };
 pub use policy::model::{
     ContainerPolicyError, EffectiveAttachMode, EffectiveComposeSource, EffectiveContainerPolicy,
@@ -58,21 +57,13 @@ pub use report::{
     annotate_workspace_extra_mount_decisions, cache_list_global_report, cache_list_report,
     cache_prune_report, data_list_report, data_pull_production_report, data_transfer_report,
     down_noop_report, down_report, hosts_report, logs_report, reset_report, retire_report,
-    retire_report_unverified, stats_global_report, status_global_report, status_report,
-    up_detached_report, volume_list_report, volume_prune_report,
-    workspace_extra_mount_decision_lines, AllocatedPortsSummary, ContainerCacheGlobalEntry,
-    ContainerCachePruneEntry, ContainerCacheVolumeEntry, ContainerCommandReport,
-    ContainerDataHookResult, ContainerDataTransferAction, ContainerDataVolumeEntry,
-    ContainerServiceHealth, ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry,
-    ContainerStatusService, ContainerVolumeGlobalEntry, ContainerVolumePruneEntry,
-};
-pub use runtime::loopback::{
-    prune_loopback_assignments, prune_loopback_assignments_with_rows, warn_skipped_reclamation,
-    LoopbackPruneOutcome,
-};
-pub use runtime::loopback_recovery::{
-    loopback_ownership_inventory, reserve_loopback_collecting_dead, stale_alias_listener_hold,
-    unreadable_checkouts, LoopbackCollection, LoopbackRecoveryFacts, LoopbackRecoveryRow,
+    stats_global_report, status_global_report, status_report, up_detached_report,
+    volume_list_report, volume_prune_report, workspace_extra_mount_decision_lines,
+    ContainerCacheGlobalEntry, ContainerCachePruneEntry, ContainerCacheVolumeEntry,
+    ContainerCommandReport, ContainerDataHookResult, ContainerDataTransferAction,
+    ContainerDataVolumeEntry, ContainerServiceHealth, ContainerStatsAllEntry,
+    ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
+    ContainerVolumeGlobalEntry, ContainerVolumePruneEntry,
 };
 /// The Effigy state home for this process: `~/.effigy`, or the private
 /// fixture home while unit tests run. Callers that touch `ports.json` or other
@@ -81,21 +72,12 @@ pub fn effigy_home() -> Option<std::path::PathBuf> {
     policy_support::effigy_home_dir()
 }
 
-pub use runtime::port_recovery::{
-    port_capacity_note, port_reclaim_apply, port_reclaim_dry_run, port_reclaim_under_pressure,
-    port_report_json, port_status, Decision, PathState, PortPressureReclaim, PortRecoveryReport,
-    PortRecoveryRow, AUTO_RECLAIM_FREE_RANGES, PORTS_SCHEMA,
-};
 pub use runtime::retire::{
-    plan_retirement, remaining_after, ObservedKind, ObservedResource, RetirementPlan,
+    unique_resources, FailedResource, GatewayRelease, KeptResource, OwnedResource, ResourceKind,
+    RetireOutcome,
 };
 pub use runtime::scope::{
-    load as load_scope_record, load_for_checkout, load_local_records as load_local_scope_records,
-    remove as remove_scope_record, upsert as upsert_scope_record,
-    upsert_at as upsert_scope_record_at, volume_has_ownership_proof,
-    with_retirement as with_scope_retirement, ScopeComposeKind, ScopeJournalError,
-    ScopeObservations, ScopeRecord, UnreadableCheckout, CHECKOUT_FENCE_LABEL,
-    CHECKOUT_GENERATION_LABEL, CHECKOUT_LABEL, COMPOSE_PROJECT_LABEL, MANAGED_LABEL,
+    named_volume_belongs_to, CHECKOUT_LABEL, COMPOSE_PROJECT_LABEL, MANAGED_LABEL,
     MOUNT_TARGET_LABEL, PERSIST_LABEL, PROJECT_LABEL, REPO_ROOT_LABEL, SCOPE_LABEL, SERVICE_LABEL,
     VOLUME_NAME_LABEL,
 };
@@ -194,7 +176,3 @@ pub fn driver_label(driver: ManifestContainerDriver) -> &'static str {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-#[path = "../../../tests/support/gateway_legacy.rs"]
-mod gateway_legacy_fixture;

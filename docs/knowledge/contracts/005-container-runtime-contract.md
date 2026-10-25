@@ -447,21 +447,14 @@ and calls no Compose. A stop of a never-activated render still renders and
 interpolates with the teardown-only value, never assigning a port; `up` and
 `prepare` still fail closed on the unassigned-port refusal.
 
-A missing or stopped primary does not require operator intervention: verify
-every existing project container's checkout and scope ownership, including
-stopped siblings, then recover through the same apply. Unavailable inventory or
-foreign ownership still refuses and names the owning checkout's `effigy
-container down` command. A running stack with no record at all (a stack started
-by an earlier release, or after a profile restart) is proven the same way: every
-project container - running or stopped, because a project-wide Compose up can
-start or recreate a stopped declared sibling - must belong to this checkout and
-scope. A container with no checkout, working-directory or scope label is adopted
-only on positive evidence: it must carry this project's exact full identity
-(listed name, project, declared service, running, not one-off) and bind-mount
-this checkout at the policy working directory. A stopped container is proven by
-its checkout and scope labels; an unlabelled stopped container is not proven.
-Absent labels are not proof by themselves. Anything not proven refuses with no
-Compose up, restart or publication, and names `container down` for the owner.
+A missing or stopped primary does not require operator intervention: one
+labelled `ps` reports every existing project container, including stopped
+siblings, and the same apply recovers the stack. A container whose Compose
+project or Effigy checkout and scope labels name another owner is not this
+checkout's. A container from an earlier release that carries no Effigy checkout
+label is reported, never adopted: `effigy container down` and `up` relabel it.
+A profile Effigy created or restarted leaves nothing to repair: the apply
+recreates each service whose rendered configuration differs.
 
 Operator ruling (Tom, 2026-10-15, v0.15.0 pre-release audit): "Restore for
 complete stacks". Detached `up` must not refuse a complete stack whose inputs
@@ -940,12 +933,11 @@ refuses the activation, and it names the environment, project and failure.
 
 Data safety is absolute in the borrowing direction. `container reset` and
 `reset --wipe-data` classify only owned volumes, so borrowed volumes are never
-removed; `retire`, `retire --dead` and `ports reclaim` never delete or claim
-the owner's volumes, and the borrowing environment's runtime-scope record lists
-borrowed volumes as retained, never owned. Retiring the owner's checkout still
-removes its own resources as today. Environments without `data_from` keep
-their own fresh volumes, and manifests without `data_from` generate
-byte-identical Compose.
+removed; `retire` and `retire --dead` never delete or claim
+the owner's volumes, because a borrowed volume carries the owner's Compose
+project label, not the borrower's. Retiring the owner's checkout still removes
+its own resources. Environments without `data_from` keep their own fresh
+volumes, and manifests without `data_from` generate byte-identical Compose.
 
 A linked worktree that does not share runtime identity gets one effective host
 map for its declared HTTP routes and TCP aliases. The apex becomes
@@ -974,105 +966,67 @@ not a suffix of every HTTP route, `container hosts` warns and its JSON
 undeclared base is inferred; a manifest that needs a different apex declares
 `base_domain` explicitly. A declared value is never inferred or rewritten.
 
-Owned mutable resources for that generation carry `com.effigy.scope`,
-`com.effigy.project`, or the exact Compose project label. `effigy container
-retire` deletes only resources those proofs still attribute to the recorded
-token, and only on the runtime profile that produced the labelled
-observation. Listing uses `ps -a`, so Created and exited containers retire
-with running ones. Disposable scoped build-cache volumes, including legacy
-`efv-*` caches that still carry an ownership label, are removed; persistent
-application data is not. Same-named resources in another profile stay.
-Shared services, persistent and external volumes, and foreign-owned
-resources stay. Shared-identity routes and loopbacks stay even when the
-same worktree also has isolated stacks. Compose networks are part of the
-owned inventory. A journalled record under `<checkout>/.effigy/state/runtime-scopes/` aggregates
-the checkout’s environments and runtime profiles. Edits are atomic, and corrupt
-records refuse work. External deletion removes that inventory. Dead-checkout
-retirement uses backend labels and the native custody lease instead, with retry
-progress retained in the invoking live checkout (052 §7.1).
-Backend discovery failures,
-including malformed inspect or listing JSON, keep the record and do not
-report success. A recorded profile whose runtime is stopped is probed first,
-never skipped silently and never started: retire still clears host-side
-resources (routes, ports, loopbacks, certificates) and live profiles, then
-exits non-zero, lists the profile under `unverified_profiles`, and keeps the
-record. A stopped VM is not proof that its persisted containers or volumes are
-gone; start the profile and rerun retire. Success requires that no owned container, mutable volume,
-network, isolated route, port, loopback, or TLS certificate remains. A
-second retire with nothing left is success, including a shared-only scope
-whose durable record is then removed.
+Ownership is the runtime's own labels: `com.docker.compose.project=<project>`
+plus Effigy's checkout label (`com.effigy.checkout`, or `com.effigy.repo-root`
+for a volume the `data_from` path created) and, when a scope is selected, the
+`com.effigy.scope` token. Effigy keeps no record beside them: `effigy container
+retire` asks the backend what carries those labels and deletes all of it, on
+every profile the runtime reports and on the configured endpoint. There is no
+runtime-scope journal, no checkout generation and no custody-lease fence.
+
+Listing uses `ps -a`, and each kind is read with one labelled `ps` or `ls`, so
+Created and exited containers retire with running ones. Compose networks carry
+no Effigy label of their own, so they are found by their
+`com.docker.compose.project` label and attributed to the one checkout the
+project's labelled resources name; a project two checkouts share is never
+attributed and its networks stay.
+
+`nerdctl compose` copies neither Compose's per-volume `labels:` nor Effigy's
+labels onto a named volume: it leaves `com.docker.compose.project` and the name
+Compose gave the volume, `<project>-<volume>` (`<project>_<volume>` on Docker
+Compose). That name, found through the checkout's own project names, is the
+volume's ownership proof, so `retire --yes` removes those volumes instead of
+reporting them as unlabelled. A volume of a project whose containers are
+already gone is still found, because the checkout's manifest names its
+projects. `retire --keep-data` keeps every labelled
+volume, names which ones are named data (`com.effigy.persist=true`) and lists
+them; without it retirement removes them with the rest of the stack. Anything
+that could not be deleted is named with the runtime's own error and retirement
+exits non-zero; it never reports a clean result while an owned resource
+survives.
+Retirement also releases the checkout's gateway routes and their certificates,
+port ranges and loopback addresses by checkout path alone. A second retire with
+nothing left is success and reports `idempotent: true`.
+
+A container, volume or network of one of this checkout's Compose projects that
+carries no Effigy checkout label is reported under `kept` and left alone, never
+adopted: run `effigy container down` and `up` to relabel a stack from an earlier
+release.
 
 Retirement does not accept a container environment name. `container <NAME>
-retire` fails before checkout or token record lookup, runtime inventory,
-confirmation, or mutation, including when `--scope` or `--yes` is supplied.
-`container retire` selects the recorded generation for the current checkout;
-`container retire --scope <TOKEN>` selects only that exact local record while
-the checkout exists. After deletion, use `container retire --dead` from a live
-checkout; the selected backend supplies surviving ownership evidence. A record aggregates all environments and runtime profiles
-for its generation, so named partial retirement is not supported.
+retire` fails before checkout resolution, inventory, confirmation, or mutation,
+including when `--scope` or `--yes` is supplied. `container retire` retires the
+current checkout; `container retire --scope <TOKEN>` restricts it to one scope
+token of that checkout. For a checkout whose path is gone, `container retire
+--dead` groups the labelled resources by checkout path and retires the groups
+whose path no longer exists, from any live checkout. Dead means the path is
+missing: an unreadable or relative path label is reported under `unknown` and
+never guessed about. Retirement never recreates a checkout path.
 
 Resolving, discovering, planning, or reporting container policy does not
-register runtime ownership. Runtime activation records the scope before
-starting the backend or creating containers, networks, shared services,
-routes, or ports. The registration uses the checkout generation token and
-preserves the isolated or shared-identity policy; a failed start leaves its
-record available for retry. Checkout-based retirement consults existing
-records only. A configured container with no activation record is not proof
-that its profile was activated, so retirement reports no owned scope without
-starting or probing that profile. Existing records, including records naming
-stopped or unavailable profiles, remain authoritative and fail closed when
-their resources cannot be observed.
+register runtime ownership, and no activation writes ownership state either.
+Ownership exists only on the runtime objects themselves, so a re-cloned
+checkout at the same path retires its stack with no generation or record to
+reconcile, and a deleted worktree's stack is still findable by label.
 
-Tom’s 2026-10-01 recovery ruling, "do what you need to for 061", allowed one
-exact-scope exception: start the stopped profile to observe its resources,
-retire only resources proven owned by the approved scope, and retry only the
-recorded milestone teardown while preserving its QA result. Restore the
-initial profile state only if no other active owner appeared. This does not
-permit automatic profile starts, treating stopped resources as absent, broader
-host cleanup, or scheduler activation.
-
-Loopback allocation and reclamation must follow the same ownership boundary.
-An isolated project's loopback key is `project:<project-name>:<absolute-checkout>`
-in both generated Compose preparation and gateway registration. A legacy bare
-project key may move to that qualified key only when its recorded scope equals
-the checkout and its address is not already assigned elsewhere. Retirement
-clears qualified keys and legacy bare keys only when the recorded scope proves
-the same checkout owns them. Shared loopback identities remain retained.
-
-Tom’s 2026-09-30 ruling: Colima-only use must not require starting Docker
-Desktop to permit safe loopback reclamation. Runtime discovery must distinguish
-a proven inactive optional backend from a failed authoritative inventory.
-An executable on PATH or a missing socket alone does not prove ownership.
-The repair must preserve uncertain owners; it does not authorize live registry
-cleanup or pool expansion. Uncertain evidence includes symbolic or dangling
-Colima instance entries and explicit Docker environment overrides that cannot
-be decoded. Neither may be treated as an absent runtime; failed discovery
-must keep their owners protected.
-
-Stale reclamation requires a complete inventory across every participating
-runtime: Docker's default backend when Docker participates, and every running
-Colima profile. A successful empty inventory proves that no running owners
-were found and may release stale isolated assignments. A failed profile
-listing, runtime `ps`, or row parse makes the inventory incomplete;
-reclamation then preserves all uncertain assignments and reports the backend,
-profile, error, and skipped-prune reason. The allocator may use unassigned
-capacity, but a full pool remains a capacity error that includes the discovery
-failure. Increasing the pool cannot substitute for identity and discovery
-correctness.
-
-Both allocation paths — generated Compose preparation and gateway
-registration — reserve every other project's container-route `dns_ip` through
-the one shared routine (`reserved_loopback_ips_for_other_projects`), and a
-stored assignment that collides with another project's route is reallocated
-instead of kept (Tom's 2026-10-15 papercut ruling, effigy#181). Pruning drops
-assignments for stacks that are not running while their routes stay
-registered, so without this reservation generation could publish a stack on
-an IP a stale route's gateway TCP listener still binds while registration
-reallocated elsewhere, hanging the host alias against a dead or wrong
-upstream while mapped localhost ports stayed ready. A stale route for a
-missing checkout is deleted by `effigy container retire --dead` when its scope
-record still exists, and reclaimed automatically on the next route write or on
-loopback exhaustion when it does not.
+Loopback allocation follows the same ownership boundary. An isolated project's
+alias key is `project:<project-name>:<absolute-checkout>` in both generated
+Compose preparation and gateway registration; a shared service uses
+`shared:<project-name>:<absolute-checkout>`. The alias is allocated at `up`,
+released by `down` and retirement, and reclaimed by an allocation whose recorded
+checkout path is definitely missing. Domain ownership is separate: a route is
+the whole claim on a domain, and a dead route's domain is taken over on the next
+route write.
 Status/doctor alias reporting is static route-table analysis (conflicting
 bind tuples, missing/invalid fallbacks); live OS-level listener bind failures
 remain daemon-log-only.
@@ -1500,46 +1454,6 @@ runtime-prep modules are side-effect adapters for that plan: they may start
 the runtime, perform readiness checks, reconcile aliases/routes, and hold the
 environment, but they must not invent a separate activation model.
 
-## Port registry recovery
-
-`effigy container ports` is the only supported way to release generated-port
-allocations outside `container retire`. `status` and `reclaim` without
-`--apply` are read-only. `reclaim --apply --expect-plan <DIGEST>` removes only
-entries whose project path is definitely missing and that no scope record that
-retains project volumes or routes, gateway route, container in any state,
-published port or bound host port still references. A path is definitely
-missing when its leaf is absent and its nearest existing ancestor is a readable
-directory; a missing parent under a readable root proves absence, while a real
-I/O or permission error, a non-directory ancestor and an absent volume root
-(such as an unmounted `/Volumes/...`) stay unknown and hold. Its locked
-recomputation must reproduce the reviewed digest. Reclaim never removes
-runtime resources, data, volumes, routes, certificates, profiles, scheduler
-settings or loopback assignments. Writes use the registry's `ports.lock`, the
-same lock generated-compose allocation takes, and preserve unknown registry
-fields.
-
-A runtime-scope record no longer holds an entry on its own. It holds while it
-retains volumes or routes of its own for the project; an observable profile's
-complete all-states inventory, the route table and the bound-port probe decide
-the rest.
-
-A stopped Colima profile is scoped to the entries it can own rather than
-failing the whole proof (effigy#294). It publishes no host port while stopped,
-so clearing a host-port question never requires starting it. It holds an entry
-when a runtime-scope record names that entry on the stopped profile. An entry
-with no recorded profile is attributed to the configured Effigy profile — the
-profile Prepare would allocate it on — because the registry stores no profile
-and environment records are not enumerable from this seam. That inference
-fails closed where it matters: a stopped configured profile holds every entry
-attributed to it. An inventory failure for a running runtime, an unreadable
-scope store and an unreadable route table still hold every absent-path entry.
-
-Allocation reclaims under pressure. When a Prepare that needs a new range
-finds fewer than ten free ranges, it applies the same rules as
-`reclaim --apply` — same evidence, digest recomputed under the lock, backup
-first — then allocates, and reports one line with the reclaimed count. No read
-path reclaims.
-
 ## Dead-owner collection (loopback pool and domains)
 
 A route is the whole claim on a domain: `domain -> (checkout path, target)`.
@@ -1555,41 +1469,15 @@ so the domain is free immediately and a following `up` from another checkout
 takes it at once. The daemon sweeps the same dead-owner rule on a timer so
 `gateway status` lists domains something still serves.
 
-Loopback assignment collection is allocation-only and runs at allocation time.
-When a Prepare or gateway registration that needs a new address finds the
-bounded pool full, it plans, releases and retries exactly once. Its plan covers
-bounded loopback assignments only: routes and domains are owned by their
-checkout path and never released by it. It releases under the endpoint Store's
-owner gate and keeps a pre-edit copy of the changed endpoint documents with
-SHA-256 evidence. It reports one line with the released count.
-
-A released address is immediately allocatable: the gateway publishes with no
-reuse quarantine and answers DNS with a one-second TTL. Growing the pool beyond
-`127.1.0.50` is not part of this contract; the `lo0` aliases come from
+An alias is allocated at `up`, released by `down` and by retirement, and
+reclaimed by an allocation whose recorded checkout path is definitely missing
+(absent with its nearest existing ancestor a readable directory; an I/O or
+permission error, a non-directory ancestor, or an absent volume root such as an
+unmounted `/Volumes/...` is unknown and holds it). There is no inventory probe,
+no release plan and no reuse quarantine: a released address is immediately
+allocatable, and the gateway answers DNS with a one-second TTL. Growing the pool
+beyond `127.1.0.50` is not part of this contract; the `lo0` aliases come from
 `gateway setup`.
-
-An assignment is dead only when its owner checkout path is definitely missing
-(absent with its nearest existing ancestor a readable directory, the
-classification `container ports reclaim` uses; an I/O or permission error, a
-non-directory ancestor, or an absent volume root such as an unmounted
-`/Volumes/...` is unknown and holds it), no runtime-scope record names the
-identity, checkout path or route, no container in any state carries its project
-label or working directory or publishes on its address, no live project route
-uses the address, and no non-gateway process listens on a route's alias tuple.
-The gateway binds its TCP aliases from the route table and stops a listener when
-its route disappears, so its own alias is not a hold; a same-user process that
-is not the recorded gateway daemon, or a listener probe that cannot answer, is.
-Every path proves ownership from the same inventory — every container state on
-every profile, with a profile whose VM is stopped recorded as stopped rather
-than broken — so no path can release what another holds. A shared-service
-identity is dead only when no consumer project that uses it is live and no
-container carries the shared service's own project name. Incomplete inventory or
-an unreadable scope store holds the plan and names the reason. A stopped Colima
-profile does not hold a loopback entry: it binds no host address and cannot
-start a stack whose checkout is gone, so only a failure that is not a stopped
-profile makes the inventory incomplete. Present paths, running containers and
-unknown path states are never released, so a live project's address never
-changes.
 
 ### Detached activation failures
 
@@ -1637,24 +1525,25 @@ budgets and JSON schema as host-routed commands.
 
 ### Generated host-port preparation
 
-Host-port resolution reads existing `ports.json` assignments without allocating,
-locking or migrating them. Missing bindings report `unassigned (assigned on
-first prepare)` and render a Compose placeholder that refuses execution until
-prepared. Shared-service JSON reports `target_port: null` with that label in
-`allocation` until assigned. Explicit fixed host ports remain usable without
-an allocation. Teardown is the one exception, and it publishes nothing:
-`container down`, reset and the failed-activation cleanup give that variable a
-teardown-only value so they can stop a generation whose ports were never
-assigned, while `up` and `prepare` keep refusing on the same render.
+Host ports are assigned by Compose or the OS. A generated service publishes
+`<publish-address>::<container-port>`, so Compose picks the host port when the
+service starts and Effigy reads it back from the running container when it
+registers the route. Nothing is reserved, recorded or released, and no port is
+"owned" across runs.
 
-Prepare calls the existing gateway-domain `ports::prepare_ports` allocator,
-then resolves again before admission and publication. The allocator loads,
-assigns and atomically saves all requested bindings under its existing short
-registry lock; it performs no runtime inventory under that lock. Existing
-assignments, including legacy container-port keys, retain their port numbers.
-This remains the legacy single writer until the gateway endpoint-store
-migration (#224) imports `ports.json` and owns persistent reservations. Kernel
-run-scoped Claims do not implement this temporary persistent allocation seam.
+A manifest may pin a fixed host port in `[containers.<NAME>.host].ports`. The
+pin is rendered as written; `up` refuses one another process already holds,
+naming the holder. A runtime-scoped checkout takes an OS-assigned port for that
+binding instead of competing for the primary's pin.
+
+`[containers.<NAME>.host].stable_ports = true` opts into a stable port: one
+derived from the checkout path and the published container port, probed at
+`up`, and never stored. A shared backing service uses the same derivation
+because the environment variables an app render injects need its port before
+the app starts.
+
+Prepare's only port effect is the loopback alias: it allocates one for an
+environment whose routes need it, and that alias lives until `down`.
 
 ### Bind-source preparation
 
@@ -1664,27 +1553,17 @@ Composer cache mount without creating their directories. Activation calls
 including detached admission and task preparation. Media sources are revalidated
 against the checkout at Prepare; other host mounts remain user-owned.
 
-### Loopback inventory and registry exclusion
+### Loopback allocation at Prepare
 
-Policy resolution reads existing loopback assignments without taking the
-registry lock, allocating, migrating or probing runtime inventory. A missing
-assignment stays absent until Prepare. Project-only legacy keys are read only
-when owned by the same checkout and uncontested; Prepare imports them to the
-checkout-qualified key while keeping the address. Assignments reserved by
-another project's gateway routes are not used.
+Policy resolution reads existing loopback assignments without allocating,
+migrating or probing runtime inventory. A missing assignment stays absent until
+Prepare.
 
-The host Prepare seam prepares loopbacks before ports, including shared
-services and environments with only explicit ports or no published ports.
-Existing activation, task preparation and data-workflow entry points all use
-this seam. No manifest change is required for existing consumers.
-
-Runtime inventory for loopback reclamation runs before the global registry
-lock is acquired (K14). Allocation reloads the registry under that lock and
-only reclaims entries identical to its pre-inventory snapshot. Assignments
-added or changed during inventory are preserved. Missing or incomplete
-inventory permits no reclamation. Existing uncontested assignments require
-no runtime probe. The registry remains the legacy allocation owner until
-the gateway endpoint-store migration.
+The host Prepare seam allocates the environment's alias before rendering,
+including shared services and environments with no published ports. Existing
+activation, task preparation and data-workflow entry points all use this seam.
+No manifest change is required for existing consumers. The alias lives until
+this checkout's `down` or retirement releases it.
 
 ## Container manager contract
 

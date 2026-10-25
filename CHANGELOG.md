@@ -20,8 +20,36 @@ During v0.x, MINOR bumps may include breaking changes.
   process name; no run id is recorded.
 - `effigy gateway repair` (with `--owner-checkout`, `--yes` and `--expect-plan`)
   is retired: automatic reclaim replaces it, and a dead loopback assignment is
-  collected once at allocation time. `effigy container ports reclaim` is
-  unchanged.
+  collected once at allocation time.
+- **Host ports come from the OS or Compose.** A generated service publishes
+  `127.0.0.1::<container-port>` and `up` reads the assigned port back into its
+  route; nothing is reserved across runs. A `[containers.<NAME>.host].ports`
+  pin is still used as written and a collision now fails naming the process
+  that holds it. `[containers.<NAME>.host].stable_ports = true` derives one
+  stable, probed port per published container port from the checkout path
+  instead, and never records it. Shared backing services derive their port the
+  same way.
+- **One endpoint table and one transaction.** The gateway keeps its routes and
+  loopback aliases in one committed snapshot written by one plain transaction.
+  The second commit path, the endpoint quarantine, the v0.14.1 handback and the
+  legacy `routes.json`/`loopback-ips.json`/`ports.json` import are gone; the
+  Store is the only source and the route file is no longer a privilege boundary
+  the daemon re-verifies.
+- **A loopback alias lives from `up` to `down`.** `down` releases it, and the
+  next allocation reclaims one whose checkout path is gone, so a deleted
+  worktree's address is reused without a repair command.
+- **`container up` starts the gateway** when it is not running, and `up`
+  reconciles a gateway whose cleanup an interruption left incomplete. One line
+  names it.
+- **A managed listener gets a port the same way.** Effigy binds
+  `127.0.0.1:0`, reads the port, and hands the address to the listener. A
+  restart may get a new port and the route follows it.
+- Removed: the 100-port project ranges and their permanent ownership, the port
+  registry and `effigy container ports status|reclaim` (with `--apply
+  --expect-plan`), port and loopback dead-owner repair (`port_recovery`,
+  `loopback_recovery`, the reclaim modules), the dead loopback pruner, and the
+  listener port reservation. Tests for ranges, reclaim plans and repair went
+  with them.
 - `effigy deploy model` and `effigy deploy export` are environment-aware:
   `deploy model <ENV>` and `deploy export <PROVIDER> <ENV>` describe the named
   `[deploy.<env>]` environment by resolving sparse `[deploy.<env>.model]`
@@ -320,6 +348,27 @@ During v0.x, MINOR bumps may include breaking changes.
 - `EFFIGY_INTERNAL_ENVIRONMENT_EXEMPT` (effigy#341). Nothing set it, so it was
   a forgeable dead input; a run settling in this process exempts its own hold
   by id.
+- The runtime scope journal, its `effigy.runtime-scope.v1` records, the
+  `com.effigy.checkout-generation` and `com.effigy.checkout-fence` labels, and
+  the dead-retire inode-generation comparison. `container retire` keeps no
+  record of what it owns, so there is nothing to keep "unverified", nothing to
+  delete after a successful retirement and no generation refusal after a
+  re-clone. The retire plan's Retain/Mismatch classification, which let a
+  named volume survive a "clean" retirement, is gone with it:
+  `effigy.container.retire.v1` schema version 2 reports `removed`, `kept`
+  (with a reason), `remaining` (with the runtime's error) and the released
+  gateway state; `effigy.container.retire-dead.v1` version 2 groups its
+  `scopes` by checkout path and reports unreadable paths under `unknown`.
+  `ports reclaim` and loopback collection no longer read scope records, so
+  `unreadable_checkouts` is gone from both reports.
+- The legacy bind-mount ownership proof for pre-label stacks
+  (`exec::OwnershipContext::admits_legacy_unlabelled`) and the stale-owned
+  container reconcile after a profile transition
+  (`running_stack_admits_reactivation`, `remove_stale_owned_containers`,
+  `reconcile_stale_owned_containers`, `ColimaEnsureReport::
+  reconciled_containers`). A stack from an earlier release is reported by
+  `retire` and relabelled by `down` and `up`; nothing is adopted on a mount
+  inspection that needed `working_dir`.
 - The managed listener ownership proof, about 1,100 lines of production code.
   `effigy_gateway::managed_listener` is gone, with the process-identity
   triples, the descendant walk, socket exclusivity, the availability-file
@@ -1278,6 +1327,27 @@ During v0.x, MINOR bumps may include breaking changes.
   refused this child (cancelled by SIGTERM)`. A capability that really refuses
   a child still names its reason and the top-level command that grants one
   (effigy#341).
+- Container ownership is the runtime's own labels. A checkout owns a
+  container, volume or network exactly when it carries the Compose project
+  plus Effigy's checkout and scope labels, so `container retire` asks the
+  backend what carries them, deletes all of it, then releases the checkout's
+  routes, ports and loopback addresses by checkout path. Retirement reports
+  exactly what it removed, what it kept on purpose (`--keep-data`, and
+  resources of one of its projects that carry no Effigy checkout label) and what
+  it could not delete, naming the runtime's error and exiting non-zero; it never
+  reports a clean result while an owned resource survives. `container retire
+  --keep-data` is new and is now the only way retirement keeps a volume: by
+  default it removes the stack's volumes with everything else. `retire --dead` groups the
+  labelled resources by checkout path and retires the groups whose path is
+  missing, so a deleted worktree's stack is retired without recording anything
+  and a re-cloned checkout at the same path needs no reconciliation.
+  `container up` decides whether a stack runs from one labelled `ps` instead of
+  inspecting each container, and a profile Effigy creates or restarts is
+  repaired by the apply that follows, with no stale-container sweep
+  (contracts 005, 052). `nerdctl compose` gives a named volume only its Compose
+  project label and the `<project>-<volume>` name it created, so a volume of one
+  of this checkout's projects is owned by that name as well as by Effigy's
+  labels; `retire --yes` removes it rather than reporting it as unlabelled.
 - A managed host listener is ready when its reserved loopback port answers its
   readiness request, and it stays published while the supervisor's run is alive
   and that port keeps answering. The supervisor probes the port every five

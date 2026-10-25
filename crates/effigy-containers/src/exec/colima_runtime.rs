@@ -41,7 +41,6 @@ const COLIMA_STOP_TIMEOUT: Duration = Duration::from_secs(45);
 const COLIMA_STOP_SETTLE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Bound for the stale owned-container reconcile that follows a profile
 /// creation or restart: one project inventory plus an inspect per row.
-const OWNED_CONTAINER_RECONCILE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Bound for starting stopped runtime units inside a running VM, and for the
 /// readiness re-check that follows, before falling back to a VM restart.
 const COLIMA_UNIT_START_TIMEOUT: Duration = Duration::from_secs(30);
@@ -95,9 +94,6 @@ pub struct ColimaEnsureReport {
     /// container admitted against the previous profile is gone or stale, so a
     /// retained container admission recorded earlier is void.
     pub profile_created_or_restarted: bool,
-    /// Owned containers stopped and removed because the transition left their
-    /// canonical identity unreadable. The next activation recreates them.
-    pub reconciled_containers: Vec<String>,
 }
 
 pub fn ensure_colima_running(
@@ -108,26 +104,16 @@ pub fn ensure_colima_running(
 }
 
 /// The one entry point for a managed Colima profile: create it when it does not
-/// exist, start it when stopped, restart it when its managed settings drifted,
-/// and reconcile the owned containers the transition left stale.
+/// exist, start it when stopped, restart it when its managed settings drifted.
 pub fn ensure_colima_running_report(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
 ) -> Result<ColimaEnsureReport, ContainerExecError> {
     let action = ensure_colima_profile_running(policy, repo_root)?;
-    let mut report = ColimaEnsureReport {
+    let report = ColimaEnsureReport {
         started: action != ColimaProfileAction::Reused,
         profile_created_or_restarted: action.recreates_profile(),
-        reconciled_containers: Vec::new(),
     };
-    // A profile Effigy just created or restarted can hold owned containers
-    // whose canonical identity the transition left unreadable. Reconcile them
-    // under the exact-owner rules now, so no run is left asking for a manual
-    // `down` (contract 005, "A deleted Colima profile is recreated").
-    if action.recreates_profile() {
-        report.reconciled_containers =
-            reconcile_owned_containers_after_profile_transition(policy, repo_root);
-    }
     maintain_health_check_pid_files(policy, repo_root);
     Ok(report)
 }
@@ -147,42 +133,10 @@ enum ColimaProfileAction {
 
 impl ColimaProfileAction {
     /// Whether this call replaced the profile the previous generation ran on.
-    /// A created profile keeps nothing, and a restarted one can still carry
-    /// containers whose identity the restart left unreadable, so either way any
-    /// earlier container admission is void and the owned containers must be
-    /// reconciled.
+    /// A created profile keeps nothing, so a retained container admission can
+    /// no longer describe it.
     fn recreates_profile(self) -> bool {
         matches!(self, Self::Created | Self::Restarted)
-    }
-}
-
-/// The stale-container reconcile a profile transition owns. It never fails the
-/// bring-up: the activation that follows reports its own precise refusal when
-/// a container it needs is still unverifiable, and a foreign or unknown owner
-/// is refused there by the same rules.
-fn reconcile_owned_containers_after_profile_transition(
-    policy: &EffectiveContainerPolicy,
-    repo_root: &Path,
-) -> Vec<String> {
-    let deadline = Instant::now() + OWNED_CONTAINER_RECONCILE_TIMEOUT;
-    match crate::exec::reconcile_stale_owned_containers(repo_root, policy, deadline) {
-        Ok(reconciled) if !reconciled.is_empty() => {
-            eprintln!(
-                "[info] Colima profile `{}`: stopped and removed {} owned container(s) left stale by the profile transition ({}); the next activation recreates them",
-                policy.profile,
-                reconciled.len(),
-                reconciled.join(", "),
-            );
-            reconciled
-        }
-        Ok(_) => Vec::new(),
-        Err(error) => {
-            eprintln!(
-                "[warn] Colima profile `{}`: stale owned container reconcile skipped: {error}",
-                policy.profile
-            );
-            Vec::new()
-        }
     }
 }
 

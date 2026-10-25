@@ -216,9 +216,10 @@ pub(in crate::runner) fn import_legacy(
     .map_err(error)
 }
 
-/// Whether every declared service of the environment's project runs, from
-/// an exact-identity inventory. Containers this checkout cannot prove it
-/// owns refuse, so another checkout's stack is never recreated.
+/// Whether every declared service of the environment's project runs, from one
+/// labelled `ps`. A project this checkout does not own is another checkout's:
+/// its containers carry that checkout's labels, so its rows never answer for
+/// this project.
 pub(in crate::runner) fn running(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -241,39 +242,6 @@ pub(in crate::runner) fn running(
     if rows.is_empty() {
         return Ok(Observed::Verified(false, evidence()));
     }
-    let admission =
-        effigy_containers::exec::running_stack_admits_reactivation(repo_root, policy, &rows, deadline)
-            .map_err(|reason| {
-                RunnerError::task_invocation(format!(
-                    "container `{}` cannot be re-activated: {reason}. Nothing was started, recreated or published. If these containers belong to this checkout, run `effigy container down`, then `effigy container up --detach`; otherwise stop the other checkout's stack first",
-                    policy.name
-                ))
-            })?;
-    if !admission.stale_owned.is_empty() {
-        // An owned container whose canonical identity cannot be read is what a
-        // deleted or restarted Colima profile leaves behind. Stop and remove it
-        // here; the bring-up that follows recreates it. Foreign and unknown
-        // owners already refused above.
-        let removed = effigy_containers::exec::remove_stale_owned_containers(
-            repo_root,
-            policy,
-            &admission.stale_owned,
-        )
-        .map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "container `{}` has owned containers a Colima profile transition left stale ({}) and they could not be removed for recreation: {error}",
-                policy.name,
-                admission.stale_owned.join(", ")
-            ))
-        })?;
-        eprintln!(
-            "[info] container `{}`: stopped and removed {} owned container(s) left stale by a Colima profile transition ({}); this bring-up recreates them",
-            policy.name,
-            removed.len(),
-            removed.join(", ")
-        );
-        return Ok(Observed::Verified(false, evidence()));
-    }
     let live = rows
         .into_iter()
         .filter(|row| effigy_containers::exec::compose_status_is_running(&row.status))
@@ -281,8 +249,8 @@ pub(in crate::runner) fn running(
     if live.is_empty() {
         return Ok(Observed::Verified(false, evidence()));
     }
-    // Every row's ownership, including the pre-label bind proof, was
-    // verified by the reactivation check above.
+    // One labelled `ps` answers both questions: the rows are this project's
+    // containers, and a row that runs is part of the stack.
     Ok(
         match effigy_containers::exec::compose_stack_is_running(policy, &live) {
             Ok(running) => Observed::Verified(running, evidence()),

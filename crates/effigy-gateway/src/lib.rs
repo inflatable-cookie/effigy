@@ -51,7 +51,6 @@ pub mod stats;
 pub mod tcp_alias;
 pub mod tls;
 pub mod transition_lock;
-pub mod trust;
 
 pub use error::GatewayError;
 pub use routes::{Route, RouteTable};

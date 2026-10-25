@@ -159,12 +159,9 @@ fn liveness(liveness: &Observed<Liveness>) -> &'static str {
 /// stop must run.
 ///
 /// An environment whose record never published `active` (or was stopped)
-/// and whose backend project owns no container,
-/// network or volume has nothing to tear down, and its never-assigned ports
-/// must never reach Compose: a never-prepared render carries the deliberate
-/// [`crate::policy::ports::UNASSIGNED_PORT_EXPRESSION`] refusal (effigy#286).
-/// Anything unproven is a stop: an unreadable record, a holding run, a backend
-/// that cannot answer the emptiness probe.
+/// and whose backend project owns no container, network or volume has nothing
+/// to tear down. Anything unproven is a stop: an unreadable record, a holding
+/// run, a backend that cannot answer the emptiness probe.
 pub fn nothing_to_stop(repo_root: &Path, policy: &EffectiveContainerPolicy) -> Option<String> {
     let view = EnvironmentView::read(repo_root, policy);
     let never_prepared = match &view.record {

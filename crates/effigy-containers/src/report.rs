@@ -152,16 +152,6 @@ pub struct ContainerStatusService {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct AllocatedPortsSummary {
-    pub base: u16,
-    pub http: u16,
-    pub mysql: u16,
-    pub postgres: u16,
-    pub redis: u16,
-    pub memcached: u16,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ContainerStatusAllEntry {
     pub repo_root: String,
     pub container: String,
@@ -171,7 +161,6 @@ pub struct ContainerStatusAllEntry {
     pub dns_domain: Option<String>,
     pub dns_tls: bool,
     pub declared_ports: Vec<String>,
-    pub allocated_ports: Option<AllocatedPortsSummary>,
     pub services: Vec<ContainerStatusService>,
 }
 
@@ -585,14 +574,6 @@ pub fn status_global_report(entries: &[ContainerStatusAllEntry]) -> ContainerCom
                 "dns_domain": entry.dns_domain,
                 "dns_tls": entry.dns_tls,
                 "declared_ports": entry.declared_ports,
-                "allocated_ports": entry.allocated_ports.as_ref().map(|ports| json!({
-                    "base": ports.base,
-                    "http": ports.http,
-                    "mysql": ports.mysql,
-                    "postgres": ports.postgres,
-                    "redis": ports.redis,
-                    "memcached": ports.memcached,
-                })),
                 "services": entry.services.iter().map(|service| {
                     json!({
                         "name": service.name,
@@ -636,12 +617,6 @@ pub fn status_global_report(entries: &[ContainerStatusAllEntry]) -> ContainerCom
             lines.push(format!(
                 "declared_ports: {}",
                 entry.declared_ports.join(", ")
-            ));
-        }
-        if let Some(ports) = entry.allocated_ports.as_ref() {
-            lines.push(format!(
-                "allocated_ports: base={}, http={}, mysql={}, postgres={}, redis={}, memcached={}",
-                ports.base, ports.http, ports.mysql, ports.postgres, ports.redis, ports.memcached
             ));
         }
         lines.push(format!("services: {}", entry.services.len()));
@@ -1417,19 +1392,14 @@ fn shared_services_json(policy: &EffectiveContainerPolicy) -> Vec<JsonValue> {
         .shared_services
         .iter()
         .map(|service| {
-            let mut value = json!({
+            json!({
                 "service_name": service.service_name,
                 "catalog": service.catalog,
                 "project_name": service.project_name,
                 "target_host": service.host,
                 "target_port": service.host_port,
                 "container_port": service.container_port,
-            });
-            if service.host_port == 0 {
-                value["target_port"] = JsonValue::Null;
-                value["allocation"] = json!(crate::policy::ports::UNASSIGNED_PORT_LABEL);
-            }
-            value
+            })
         })
         .collect()
 }
@@ -1445,11 +1415,7 @@ fn append_shared_service_lines(lines: &mut Vec<String>, policy: &EffectiveContai
             service.service_name,
             service.catalog,
             service.host,
-            if service.host_port == 0 {
-                crate::policy::ports::UNASSIGNED_PORT_LABEL.to_owned()
-            } else {
-                service.host_port.to_string()
-            },
+            service.host_port,
             service.project_name
         ));
     }
@@ -1558,88 +1524,89 @@ pub fn hosts_report(
 }
 
 pub fn retire_report(
-    record: Option<&crate::ScopeRecord>,
-    plan: Option<&crate::RetirementPlan>,
-    removed: &[crate::ObservedResource],
-    remaining: &[crate::ObservedResource],
-    record_removed: bool,
+    checkout: Option<&str>,
+    outcome: &crate::RetireOutcome,
 ) -> ContainerCommandReport {
-    retire_report_unverified(record, plan, removed, remaining, record_removed, &[])
-}
-
-/// Like [`retire_report`], with runtime profiles that could not be queried
-/// (stopped). Their containers and volumes are unverified, never "gone".
-pub fn retire_report_unverified(
-    record: Option<&crate::ScopeRecord>,
-    plan: Option<&crate::RetirementPlan>,
-    removed: &[crate::ObservedResource],
-    remaining: &[crate::ObservedResource],
-    record_removed: bool,
-    unverified_profiles: &[String],
-) -> ContainerCommandReport {
-    let ok = remaining.is_empty() && unverified_profiles.is_empty();
+    let ok = outcome.ok();
     let json = json!({
         "schema": "effigy.container.retire.v1",
-        "schema_version": 1,
+        "schema_version": 2,
         "ok": ok,
-        "idempotent": removed.is_empty() && remaining.is_empty() && unverified_profiles.is_empty(),
-        "scope": record.map(|record| json!({
-            "token": record.token,
-            "checkout": record.checkout,
-            "compose_kind": match record.compose_kind {
-                crate::ScopeComposeKind::Generated => "generated",
-                crate::ScopeComposeKind::RepoOwned => "repo_owned",
-                crate::ScopeComposeKind::SharedIdentity => "shared_identity",
-            },
-        })),
-        "skip_reason": plan.and_then(|plan| plan.skip_reason),
-        "removed": removed.iter().map(observed_json).collect::<Vec<_>>(),
-        "retained": plan.map(|plan| plan.retain.iter().map(observed_json).collect::<Vec<_>>()),
-        "mismatch": plan.map(|plan| plan.mismatch.iter().map(observed_json).collect::<Vec<_>>()),
-        "remaining": remaining.iter().map(observed_json).collect::<Vec<_>>(),
-        "record_removed": record_removed,
-        "unverified_profiles": unverified_profiles,
+        "idempotent": outcome.idempotent(),
+        "checkout": checkout,
+        "removed": outcome.removed.iter().map(resource_json).collect::<Vec<_>>(),
+        "kept": outcome
+            .kept
+            .iter()
+            .map(|kept| {
+                let mut value = resource_json(&kept.resource);
+                value["reason"] = json!(kept.reason);
+                value
+            })
+            .collect::<Vec<_>>(),
+        "remaining": outcome
+            .remaining()
+            .iter()
+            .map(|failed| {
+                let mut value = resource_json(&failed.resource);
+                value["error"] = json!(failed.error);
+                value
+            })
+            .collect::<Vec<_>>(),
+        "gateway": {
+            "routes": outcome.gateway.routes,
+            "loopbacks": outcome.gateway.loopbacks,
+        },
     });
     let mut lines = Vec::new();
-    if !unverified_profiles.is_empty() {
+    if let Some(checkout) = checkout {
+        lines.push(format!("checkout: {checkout}"));
+    }
+    if ok && outcome.removed.is_empty() {
+        lines.push("[ok] no owned runtime resource is left".to_owned());
+    }
+    for removed in &outcome.removed {
         lines.push(format!(
-            "[error] runtime profile(s) {} stopped; owned containers and volumes there are unverified, not gone",
-            unverified_profiles.join(", ")
+            "removed {} {} ({})",
+            removed.kind.label(),
+            removed.name,
+            removed.profile
         ));
-        lines.push(
-            "start the runtime for each profile and rerun `effigy container retire --yes`; the scope record was kept"
-                .to_owned(),
-        );
-        for resource in remaining {
-            lines.push(format!(
-                "remaining {}: {}",
-                kind_label(resource.kind),
-                resource.name
-            ));
-        }
-    } else if let Some(reason) = plan.and_then(|plan| plan.skip_reason) {
+    }
+    for kept in &outcome.kept {
         lines.push(format!(
-            "[ok] runtime scope is `{reason}`; shared resources were left in place"
+            "kept {} {}: {}",
+            kept.resource.kind.label(),
+            kept.resource.name,
+            kept.reason
         ));
-    } else if ok && removed.is_empty() {
-        lines.push("[ok] runtime scope has no owned resources left".to_owned());
-    } else if ok {
+    }
+    if !outcome.gateway.routes.is_empty() {
+        lines.push(format!(
+            "released {} route(s): {}",
+            outcome.gateway.routes.len(),
+            outcome.gateway.routes.join(", ")
+        ));
+    }
+    if outcome.gateway.loopbacks > 0 {
+        lines.push(format!(
+            "released {} loopback address(es)",
+            outcome.gateway.loopbacks
+        ));
+    }
+    for failed in outcome.remaining() {
+        lines.push(format!(
+            "[error] {} {} is still there: {}",
+            failed.resource.kind.label(),
+            failed.resource.name,
+            failed.error
+        ));
+    }
+    if ok && !outcome.removed.is_empty() {
         lines.push(format!(
             "[ok] retired {} owned runtime resource(s)",
-            removed.len()
+            outcome.removed.len()
         ));
-    } else {
-        lines.push(format!(
-            "[error] runtime scope still owns {} resource(s)",
-            remaining.len()
-        ));
-        for resource in remaining {
-            lines.push(format!(
-                "remaining {}: {}",
-                kind_label(resource.kind),
-                resource.name
-            ));
-        }
     }
     ContainerCommandReport {
         json,
@@ -1647,28 +1614,13 @@ pub fn retire_report_unverified(
     }
 }
 
-fn observed_json(resource: &crate::ObservedResource) -> JsonValue {
+fn resource_json(resource: &crate::OwnedResource) -> JsonValue {
     json!({
-        "kind": kind_label(resource.kind),
+        "kind": resource.kind.label(),
         "name": resource.name,
-        "scope_label": resource.scope_label,
-        "project_label": resource.project_label,
-        "persist": resource.persist,
-        "external": resource.external,
         "profile": resource.profile,
+        "persist": resource.persist,
     })
-}
-
-fn kind_label(kind: crate::ObservedKind) -> &'static str {
-    match kind {
-        crate::ObservedKind::Container => "container",
-        crate::ObservedKind::Volume => "volume",
-        crate::ObservedKind::Network => "network",
-        crate::ObservedKind::Route => "route",
-        crate::ObservedKind::Port => "port",
-        crate::ObservedKind::Loopback => "loopback",
-        crate::ObservedKind::TlsCert => "tls_cert",
-    }
 }
 
 struct CacheSizeTotals {
@@ -1730,49 +1682,67 @@ fn format_bytes(bytes: u64) -> String {
 }
 
 #[cfg(test)]
-mod retire_unverified_tests {
-    use super::retire_report_unverified;
-    use crate::{ObservedKind, ObservedResource};
+mod retire_tests {
+    use super::retire_report;
+    use crate::{FailedResource, KeptResource, OwnedResource, ResourceKind, RetireOutcome};
 
-    fn live_container() -> ObservedResource {
-        ObservedResource {
-            kind: ObservedKind::Container,
-            name: "web-1".to_owned(),
-            scope_label: Some("tok".to_owned()),
-            project_label: None,
+    fn resource(kind: ResourceKind, name: &str) -> OwnedResource {
+        OwnedResource {
+            kind,
+            name: name.to_owned(),
+            profile: "effigy".to_owned(),
             persist: false,
-            external: false,
-            profile: Some("live-profile".to_owned()),
         }
     }
 
     #[test]
-    fn stopped_profile_report_is_not_ok_nor_idempotent() {
-        let stopped = vec!["stopped-profile".to_owned()];
-        let report = retire_report_unverified(None, None, &[], &[], false, &stopped);
-        assert_eq!(report.json["ok"], false);
-        assert_eq!(report.json["idempotent"], false);
-        assert_eq!(report.json["record_removed"], false);
-        assert_eq!(report.json["unverified_profiles"][0], "stopped-profile");
-        assert!(report.success_text.contains("unverified"));
-    }
-
-    #[test]
-    fn mixed_stopped_and_live_report_keeps_live_remaining_and_unverified() {
-        let stopped = vec!["stopped-profile".to_owned()];
-        let remaining = vec![live_container()];
-        let report = retire_report_unverified(None, None, &[], &remaining, false, &stopped);
-        assert_eq!(report.json["ok"], false);
-        assert_eq!(report.json["idempotent"], false);
-        assert_eq!(report.json["remaining"][0]["profile"], "live-profile");
-        assert_eq!(report.json["unverified_profiles"][0], "stopped-profile");
-    }
-
-    #[test]
-    fn clean_report_stays_idempotent() {
-        let report = retire_report_unverified(None, None, &[], &[], true, &[]);
+    fn a_clean_report_is_ok_and_idempotent() {
+        let report = retire_report(Some("/w/one"), &RetireOutcome::default());
         assert_eq!(report.json["ok"], true);
         assert_eq!(report.json["idempotent"], true);
+        assert_eq!(report.json["checkout"], "/w/one");
+        assert!(report.success_text.contains("no owned runtime resource"));
+    }
+
+    #[test]
+    fn removed_kept_and_remaining_are_named() {
+        let mut outcome = RetireOutcome::default();
+        outcome
+            .removed
+            .push(resource(ResourceKind::Container, "web-1"));
+        outcome.kept.push(KeptResource {
+            resource: resource(ResourceKind::Volume, "db-data"),
+            reason: "named data volume",
+        });
+        outcome.failed.push(FailedResource {
+            resource: resource(ResourceKind::Volume, "stuck"),
+            error: "volume is in use".to_owned(),
+        });
+        let report = retire_report(Some("/w/one"), &outcome);
+        assert_eq!(report.json["ok"], false, "a leftover is never clean");
+        assert_eq!(report.json["removed"][0]["name"], "web-1");
+        assert_eq!(report.json["kept"][0]["name"], "db-data");
+        assert_eq!(report.json["kept"][0]["reason"], "named data volume");
+        assert_eq!(report.json["remaining"][0]["name"], "stuck");
+        assert_eq!(report.json["remaining"][0]["error"], "volume is in use");
+        assert!(report.success_text.contains("removed container web-1"));
+        assert!(report.success_text.contains("kept volume db-data"));
+        assert!(report.success_text.contains("volume stuck is still there"));
+    }
+
+    #[test]
+    fn gateway_release_is_reported() {
+        let mut outcome = RetireOutcome::default();
+        outcome.gateway.routes = vec!["app.test".to_owned()];
+        outcome.gateway.loopbacks = 2;
+        let report = retire_report(Some("/w/one"), &outcome);
+        assert_eq!(report.json["ok"], true);
+        assert_eq!(report.json["gateway"]["routes"][0], "app.test");
+        assert_eq!(report.json["gateway"]["loopbacks"], 2);
+        assert!(report.success_text.contains("released 1 route(s)"));
+        assert!(report
+            .success_text
+            .contains("released 2 loopback address(es)"));
     }
 }
 

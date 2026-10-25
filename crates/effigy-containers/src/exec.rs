@@ -8,7 +8,6 @@ mod managed_stop;
 mod mounts;
 mod parse;
 mod participation;
-pub(crate) use colima_runtime::default_runtime_profile;
 pub(crate) use participation::docker_config_current_context;
 #[cfg(all(test, unix))]
 #[path = "exec/exit141_tests.rs"]
@@ -48,15 +47,13 @@ pub use implementation::{
     list_running_compose_containers_for_policy_with_timeout,
     list_running_compose_containers_for_profile,
     list_running_compose_containers_for_project_with_deadline,
-    list_running_compose_containers_profiled, owned_service_listing_args,
-    reconcile_stale_owned_containers, remove_stale_owned_containers, run_backend_invocation,
+    list_running_compose_containers_profiled, owned_service_listing_args, run_backend_invocation,
     run_compose_capture, run_compose_invocation_capture, run_compose_invocation_capture_with_env,
-    run_compose_invocation_streaming_with_env, run_docker_capture,
-    running_stack_admits_reactivation, shutdown_container, verify_owned_running_compose_identities,
-    verify_owned_running_compose_rows, verify_workspace_artifact_builder,
-    verify_workspace_artifact_builder_declaration, ContainerExecError, OwnershipContext,
-    ReactivationAdmission, RunningComposeContainerInventory, RuntimeInventoryFailure,
-    VerifiedComposeContainer,
+    run_compose_invocation_streaming_with_env, run_docker_capture, shutdown_container,
+    verify_owned_running_compose_identities, verify_owned_running_compose_rows,
+    verify_workspace_artifact_builder, verify_workspace_artifact_builder_declaration,
+    ContainerExecError, OwnershipContext, RunningComposeContainerInventory,
+    RuntimeInventoryFailure, VerifiedComposeContainer,
 };
 pub use managed_stop::{end_owned_container_process_group, verify_owned_stack_for_shutdown};
 pub use mounts::ensure_isolated_mount_host_points;

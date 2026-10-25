@@ -211,11 +211,7 @@ pub struct SharedServiceBinding {
 
 impl SharedServiceBinding {
     pub fn standard_env_vars(&self) -> Vec<(String, String)> {
-        let port = if self.host_port == 0 {
-            super::ports::UNASSIGNED_PORT_EXPRESSION.to_owned()
-        } else {
-            self.host_port.to_string()
-        };
+        let port = self.host_port.to_string();
         let mut vars = Vec::new();
         vars.extend(
             self.host_env_vars

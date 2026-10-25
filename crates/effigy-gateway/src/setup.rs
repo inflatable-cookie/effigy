@@ -1176,7 +1176,7 @@ mod tests {
         });
     }
     #[test]
-    fn root_gateway_migration_preserves_every_legacy_mapping_and_unknown_stops_nothing() {
+    fn root_gateway_migration_stops_the_legacy_daemon_and_leaves_its_files_alone() {
         let home = tempfile::tempdir().unwrap();
         let gateway = home.path().join(".effigy/gateway");
         std::fs::create_dir_all(&gateway).unwrap();
@@ -1216,12 +1216,11 @@ mod tests {
         for (path, bytes) in &fixtures {
             assert_eq!(std::fs::read(path).unwrap(), *bytes);
         }
-        assert_eq!(
-            crate::routes::RouteTable::load(&config.route_table_path)
-                .unwrap()
-                .len(),
-            2
-        );
+        // The endpoint Store is the only route authority; the legacy files are
+        // left exactly as the old daemon wrote them.
+        assert!(crate::routes::RouteTable::load(&config.route_table_path)
+            .unwrap()
+            .is_empty());
         assert!(!config.pid_file_path.exists());
     }
     #[test]

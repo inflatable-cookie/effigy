@@ -145,7 +145,7 @@ through the help route.
 | `effigy docs` | Run reusable docs QA checks such as path presence, link validation, heading/content/forbidden-text checks, JSON example validation, markdown index consistency checks, next-action policy validation, workflow-path validation, and log-index entry insertion | `check <KIND>`, `add-log-index`, `--repo`, `--file`, `--section`, `--min-blocks`, `--require`, `--require-heading`, `--require-block`, `--forbid`, `--policy-index`, `--policy`, `--dir`, `--index`, `--json` | `effigy.docs.link-check.v1`, `effigy.docs.json-examples.v1`, `effigy.docs.heading-check.v1`, `effigy.docs.path-check.v1`, `effigy.docs.contains-check.v1`, `effigy.docs.forbidden-check.v1`, `effigy.docs.index-check.v1`, `effigy.docs.next-action-check.v1`, `effigy.docs.workflow-path-check.v1`, `effigy.docs.add-log-index.v1` | `029-docs-qa-checklist-and-validation.md` |
 | `effigy contracts` | Validate the project's JSON artifacts and selection payload against its own `[contracts]` schema index and selection contract | `check-json`, `--repo`, `--index`, `--contract`, `--fast`, `--full`, `--changed-only`, `--print-selected`, `--validate-selection`, `--artifact`, `--json` | `effigy.contracts.check-json.v1` | `017-json-output-contracts.md` |
 | `effigy release` | Resolve the release pipeline, run gates, run/resume/approve the checkpointed release Run, record an unknown publish decision, and print the receipt | `--plan`, `status`, `gates`, `run [--to <STAGE>]`, `resume <RUN>`, `approve <RUN>`, `decide <RUN> --published|--not-published`, `receipt [<RUN>]`, `--repo`, `--version`, `--json` | `effigy.release.plan.v1`, `effigy.release.status.v1`, `effigy.release.gates.v1`, `effigy.release.run.v1`, `effigy.release.receipt.v1`, plus the `effigy.release.input.v1` / `effigy.release.output.v1` release-task documents | `051-release-orchestration.md`, [`../knowledge/contracts/054-release-platform-contract.md`](../knowledge/contracts/054-release-platform-contract.md) |
-| `effigy container` | Operate manifest-defined local container environments across Colima/containerd or Docker, along with data lifecycle, cleanup surfaces, shared-service reuse, scoped identity and host discovery, and per-scope retirement | `up`, `down`, `status`, `stats`, `logs`, `shell`, `data`, `reset`, `eject`, `render`, `hosts`, `scope`, `retire`, `ports status`, `ports reclaim`, `volume`, `cache`, `profile status`, `profile resize`, `profile recreate`, `profile purge`, `profile repair`, `profile reset-runtime`, `--apply`, `--expect-plan`, `--repo`, `--system`, `--attach`, `--detach`, `--service`, `--command`, `--bounded`, `--deadline-ms`, `--stdout-limit-bytes`, `--stderr-limit-bytes`, `--follow`, `--global`, `--dormant`, `--orphans`, `--project`, `--kind`, `--profile`, `--disk`, `--db-seed`, `--db-dump`, `--no-prompt`, `--push`, `--keep-data`, `--scope`, `--yes`, `--json` | `effigy.container.up.v1`, `effigy.container.down.v1`, `effigy.container.status.v1`, `effigy.container.logs.v1`, `effigy.container.hosts.v1`, `effigy.container.scope.v1`, `effigy.container.retire.v1`, `effigy.container.ports.v1`, `effigy.container.bounded-exec.v1`, `effigy.system.recover.v1` (`profile repair` and `profile reset-runtime` keep this envelope) | `063-container-system-guide.md`, `064-system-workspace-and-dev-contract.md` |
+| `effigy container` | Operate manifest-defined local container environments across Colima/containerd or Docker, along with data lifecycle, cleanup surfaces, shared-service reuse, scoped identity and host discovery, and per-scope retirement | `up`, `down`, `status`, `stats`, `logs`, `shell`, `data`, `reset`, `eject`, `render`, `hosts`, `scope`, `retire`, `volume`, `cache`, `profile status`, `profile resize`, `profile recreate`, `profile purge`, `profile repair`, `profile reset-runtime`, `--apply`, `--expect-plan`, `--repo`, `--system`, `--attach`, `--detach`, `--service`, `--command`, `--bounded`, `--deadline-ms`, `--stdout-limit-bytes`, `--stderr-limit-bytes`, `--follow`, `--global`, `--dormant`, `--orphans`, `--project`, `--kind`, `--profile`, `--disk`, `--db-seed`, `--db-dump`, `--no-prompt`, `--push`, `--keep-data`, `--scope`, `--yes`, `--json` | `effigy.container.up.v1`, `effigy.container.down.v1`, `effigy.container.status.v1`, `effigy.container.logs.v1`, `effigy.container.hosts.v1`, `effigy.container.scope.v1`, `effigy.container.retire.v1`, `effigy.container.bounded-exec.v1`, `effigy.system.recover.v1` (`profile repair` and `profile reset-runtime` keep this envelope) | `063-container-system-guide.md`, `064-system-workspace-and-dev-contract.md` |
 | `effigy workspace` | Ensure the selected system is up and then open the resolved workspace shell for the repo's declared developer surface | `<WORKSPACE>`, `--system`, `--repo` | (interactive; no JSON payload) | `064-system-workspace-and-dev-contract.md` |
 | `effigy bundle` | Inspect the active repo bundle source and refresh repo-local git/OCI bundle sources | `inspect`, `sync`, `--repo`, `--json` | `effigy.bundle.inspect.v1`, `effigy.bundle.sync.v1` | `065-external-bundle-adoption.md` |
 | `effigy deploy` | Derive the provider-neutral deployment model for a declared environment, export provider files, inspect plans/status/history; apply and redeploy refuse as unsupported in v0.15 (Q-003) | `model [<ENV>]`, `export <PROVIDER> [<ENV>]`, `--env`, `plan`, `apply`, `status`, `history`, `redeploy`, `--repo`, `--path`, `--write-report`, `--deployment`, `--yes`, `--json` | `deploy.model.v1`, `effigy.deploy.export.v1`, `effigy.deploy.plan.v1`, `effigy.deploy.apply.v1`, `effigy.deploy.status.v1`, `effigy.deploy.history.v1` | `074-deployment-guide.md`, [`../contracts/002-production-deployment-model.md`](../knowledge/contracts/002-production-deployment-model.md), [`../contracts/019-deployment-transaction-system-contract.md`](../knowledge/contracts/019-deployment-transaction-system-contract.md) |
@@ -288,8 +288,8 @@ effigy container migrate [<NAME>] [--repo <PATH>] [--json]
 effigy container hosts [--repo <PATH>] [--json]
 effigy container <NAME> hosts [--repo <PATH>] [--json]
 effigy container scope [--repo <PATH>] [--json]
-effigy container retire [--repo <PATH>] [--scope <TOKEN>] [--yes] [--json]
-effigy container retire --dead [--yes] [--json]
+effigy container retire [--repo <PATH>] [--scope <TOKEN>] [--keep-data] [--yes] [--json]
+effigy container retire --dead [--keep-data] [--yes] [--json]
 effigy workspace [<NAME>] [--system <NAME>] [--repo <PATH>]
 ```
 
@@ -300,14 +300,16 @@ as Rust `target`, `node_modules`, `pnpm-store`, and Cargo caches. `--global`
 uses machine-level runtime inventory, including stopped project caches where the
 runtime metadata allows it. Text and JSON include reclaimable and in-use size
 totals; unknown sizes are counted instead of guessed.
-`effigy container retire` removes one scoped worker stack, including Created
-and stopped containers and disposable caches. Call it from worktree teardown,
-or retry with `--scope` after the checkout is gone. `--dead` retires every
-recorded scope whose checkout path no longer exists. It rejects
-`effigy container <NAME> retire` before record lookup or runtime inventory,
-including when `--scope` or `--yes` is also supplied. Omit the name to select
-the checkout's recorded generation, or pass `--scope <TOKEN>` to select one
-record.
+`effigy container retire` removes every container, volume and network the
+backend labels for this checkout, including Created and stopped containers, then
+releases its routes, ports and loopback addresses by checkout path.
+`--keep-data` keeps the volumes instead of removing them and lists what it kept.
+Anything it could not delete is named with the runtime's error and the command
+exits non-zero. Call it from worktree teardown. `--dead` retires every
+labelled stack whose checkout path no longer exists. It rejects `effigy
+container <NAME> retire` before checkout resolution or runtime inventory,
+including when `--scope` or `--yes` is also supplied. Pass `--scope <TOKEN>` to
+restrict retirement to one scope token of this checkout.
 `effigy container volume list` inventories Effigy-managed named volumes. `--dormant`
 shows repo-scoped superseded volumes; `--global` shows machine-level volumes
 across available runtimes and `--orphans` narrows that global view to ownerless

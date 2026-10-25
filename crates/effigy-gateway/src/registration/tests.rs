@@ -1,6 +1,5 @@
 use super::*;
 use crate::error::GatewayError;
-use crate::ports::PortRegistry;
 use crate::routes::RouteTable;
 
 fn container_registration(project: &str, target: &str) -> RouteRegistration {
@@ -127,36 +126,6 @@ fn deregister_nonexistent_is_idempotent() {
 }
 
 #[test]
-fn build_registration_with_default_port() {
-    let reg = build_registration("myapp.test", "myapp", "/projects/myapp", 8080, false, None);
-    assert_eq!(reg.domain, "myapp.test");
-    assert_eq!(reg.target.as_deref(), Some("127.0.0.1:8080"));
-    assert!(!reg.tls);
-}
-
-#[test]
-fn build_registration_with_port_registry() {
-    let mut registry = PortRegistry::new();
-    registry.allocate("myapp", "/projects/myapp").unwrap();
-
-    let reg = build_registration(
-        "myapp.test",
-        "myapp",
-        "/projects/myapp",
-        8080,
-        false,
-        Some(&registry),
-    );
-    assert_eq!(reg.target.as_deref(), Some("127.0.0.1:8100"));
-}
-
-#[test]
-fn build_registration_with_tls() {
-    let reg = build_registration("myapp.dev", "myapp", "/projects/myapp", 8080, true, None);
-    assert!(reg.tls);
-}
-
-#[test]
 fn simultaneous_distinct_domains_do_not_lose_updates() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("routes.json");
@@ -164,15 +133,16 @@ fn simultaneous_distinct_domains_do_not_lose_updates() {
         .map(|index| {
             let path = path.clone();
             std::thread::spawn(move || {
-                let mut registration = build_registration(
-                    &format!("app-{index}.test"),
-                    "app",
-                    "/projects/app",
-                    8100,
-                    false,
-                    None,
-                );
-                registration.source = RouteSource::Container;
+                let registration = RouteRegistration {
+                    domain: format!("app-{index}.test"),
+                    target: Some("127.0.0.1:8100".to_owned()),
+                    dns_ip: None,
+                    tcp_port: None,
+                    tcp_target: None,
+                    tls: false,
+                    project_path: "/projects/app".to_owned(),
+                    source: RouteSource::Container,
+                };
                 register_route(&path, &registration).unwrap();
             })
         })
@@ -326,7 +296,7 @@ fn down_withdraws_every_generation_of_one_listeners_routes() {
     for domain in ["app.example.test", "api.example.test"] {
         let store = EndpointStore::for_routes(&path);
         store
-            .edit(None, |snapshot| {
+            .transaction(|snapshot| {
                 let mut table = snapshot.routes()?;
                 table.upsert(Route {
                     domain: domain.to_owned(),
@@ -379,7 +349,7 @@ fn deregister_route_removes_a_listener_route_of_the_same_checkout() {
     let path = dir.path().join("routes.json");
     let project = dir.path().display().to_string();
     EndpointStore::for_routes(&path)
-        .edit(None, |snapshot| {
+        .transaction(|snapshot| {
             let mut table = snapshot.routes()?;
             table.upsert(Route {
                 domain: "app.example.test".to_owned(),
@@ -472,7 +442,16 @@ fn cleanup_owned_routes_and_certs_removes_owned_cert_then_route() {
     let checkout_path = checkout.display().to_string();
     register_route(
         &path,
-        &build_registration("app.test", "app", &checkout_path, 8100, true, None),
+        &RouteRegistration {
+            domain: "app.test".to_owned(),
+            target: Some("127.0.0.1:8100".to_owned()),
+            dns_ip: None,
+            tcp_port: None,
+            tcp_target: None,
+            tls: true,
+            project_path: checkout_path.clone(),
+            source: RouteSource::Container,
+        },
     )
     .unwrap();
     let seen = std::sync::Mutex::new(Vec::new());

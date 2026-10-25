@@ -1079,19 +1079,13 @@ unintentional LAN exposure.
 
 ## 6. Multi-Project Coordination
 
-The port registry at `~/.effigy/ports.json` allocates project ranges and
-stable service offsets. Explicit host-port declarations take precedence.
-Per-project allocations and loopback publishing allow several environments to
-run together without hand-assigned ports. The registry starts its
-default allocation pool at 8100 with 100 ports per project. Standard offsets
-include HTTP `+0`, MariaDB `+6`, Postgres `+32`, Redis `+79`, and Memcached
-`+11`. Assignments are keyed by service and container port, so an unchanged
-binding can keep its host port within the project's range. Exhaustion is an
-explicit error; a new service does not silently take another project's port.
-`effigy container ports status` reports free range capacity and per-entry
-decisions. `effigy container ports reclaim --apply --expect-plan <DIGEST>`
-releases only allocation entries proven stale under the registry lock; see the
-port registry recovery section of contract 005.
+Host ports come from the OS or Compose: a generated service publishes
+`127.0.0.1::<container-port>`, and `up` reads the assigned port back from the
+running container into its route. Several environments therefore run together
+without hand-assigned ports and without a machine-wide registry. A manifest pin
+in `[containers.<NAME>.host].ports` is used as written and a collision names the
+process holding it; `[containers.<NAME>.host].stable_ports = true` derives a
+probed, unrecorded port from the checkout path instead.
 
 `container status --global`,
 `container stats --global`, `container cache list --global`, and
@@ -1122,7 +1116,7 @@ repo-owned Compose volumes stay unless labelled mutable.
 | `effigy-runtime-plan` | typed activation stages and policy |
 | `effigy-runtime` | runtime read/write/data/shell adapters |
 | `effigy-data` | database target and seed/dump domain plans |
-| `effigy-gateway` | DNS, proxy, TLS, route trust/registration, port registry, TCP aliases |
+| `effigy-gateway` | DNS, proxy, TLS, route registration, loopback aliases, TCP aliases |
 | `effigy-managed` / `effigy-tui` | managed task process and tabbed operator session |
 | runner | CLI dispatch, prompts, side effects, output, cleanup, and gateway reconciliation |
 

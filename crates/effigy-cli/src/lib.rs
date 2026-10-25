@@ -637,12 +637,11 @@ pub enum ContainerSubcommand {
     Retire {
         name: Option<String>,
         scope: Option<String>,
-        /// Retire every recorded scope whose checkout no longer exists.
+        /// Retire every labelled stack whose checkout no longer exists.
         dead: bool,
+        /// Keep named data volumes and list them.
+        keep_data: bool,
         yes: bool,
-    },
-    Ports {
-        subcommand: ContainerPortsSubcommand,
     },
 }
 
@@ -684,15 +683,6 @@ impl BoundedExecLimits {
         }
         Ok(())
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ContainerPortsSubcommand {
-    Status,
-    Reclaim {
-        apply: bool,
-        expect_plan: Option<String>,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

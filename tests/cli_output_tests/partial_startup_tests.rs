@@ -225,7 +225,7 @@ version = "16"
     }
     fn routes(&self) -> Value {
         effigy_gateway::endpoint_store::EndpointStore::new(self.root.path().join("home"))
-            .read_compatible()
+            .snapshot()
             .expect("private endpoint snapshot")
             .document("routes")
             .expect("private routes")
@@ -234,7 +234,7 @@ version = "16"
     fn save_routes(&self, document: Value) {
         let table = serde_json::from_value(document).expect("private route table");
         effigy_gateway::endpoint_store::EndpointStore::new(self.root.path().join("home"))
-            .edit(None, |snapshot| snapshot.set_routes(&table))
+            .transaction(|snapshot| snapshot.set_routes(&table))
             .expect("publish private route claims");
     }
     fn probe(&mut self, i: usize) {
@@ -469,67 +469,6 @@ fn private_unrecorded_owned_running_stack_reactivates_with_current_inputs() {
 }
 
 #[test]
-fn private_foreign_stopped_sibling_refuses_project_wide_reactivation() {
-    // An unrecorded running stack of this checkout must not be re-activated
-    // while the project also has a stopped declared sibling owned by another
-    // checkout: a project-wide Compose up would start or recreate it. The
-    // reactivation gate must inventory stopped containers, not only running
-    // ones, and refuse the unproven sibling.
-    let mut fixture = Fixture::new();
-    let first = fixture.run(0, &["container", "up", "--detach", "--json"]);
-    assert!(first.status.success(), "{first:?}");
-    assert!(fixture.state(0)["active"].as_bool().unwrap());
-    fs::remove_file(fixture.stacks[0].root.join(".effigy/state/kernel.db"))
-        .expect("remove the fixture's private store");
-    fixture.set(0, "mode", json!("foreign-stopped-sibling"));
-    let manifest = fixture.stacks[0].root.join("effigy.toml");
-    let mut changed = fs::read(&manifest).unwrap();
-    changed.extend_from_slice(b"\n# changed while a foreign stopped sibling exists\n");
-    fs::write(&manifest, changed).unwrap();
-
-    let refused = fixture.run(0, &["container", "up", "--detach"]);
-    assert!(!refused.status.success(), "{refused:?}");
-    let stderr = String::from_utf8_lossy(&refused.stderr);
-    assert!(stderr.contains("not proven to belong"), "{stderr}");
-    assert!(stderr.contains("container down"), "{stderr}");
-    fixture.assert_no_restart_or_teardown(0);
-    fixture.probe(0);
-}
-
-#[test]
-fn private_unscoped_inspect_requires_exact_absence() {
-    let mut fixture = Fixture::new();
-    let output = Command::new("git")
-        .args(["config", "--unset", "effigy.runtimeScope"])
-        .current_dir(&fixture.stacks[0].root)
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let admitted = fixture.run(0, &["container", "up", "--detach", "--json"]);
-    assert!(
-        admitted.status.success(),
-        "absence-to-absence: {admitted:?}"
-    );
-    let routes = fixture.routes();
-    for mode in ["scope-unexpected", "scope-null", "scope-empty"] {
-        fixture.set(0, "mode", json!(mode));
-        let refused = fixture.run(0, &["container", "up", "--detach", "--json"]);
-        assert!(!refused.status.success(), "{mode}: {refused:?}");
-        assert_eq!(fixture.routes(), routes);
-        fixture.assert_no_restart_or_teardown(0);
-        for i in 0..3 {
-            fixture.probe(i);
-        }
-    }
-    fixture.set(0, "mode", json!("ready"));
-    assert!(fixture
-        .run(0, &["container", "up", "--detach"])
-        .status
-        .success());
-    fixture.assert_no_restart_or_teardown(0);
-}
-
-#[test]
 fn private_three_scopes_concurrent_resume_replacement_and_cli_refusals() {
     let mut fixture = Fixture::new();
     // Services and persistent exec connections belong to the test, not to any
@@ -757,13 +696,8 @@ fn private_three_scopes_concurrent_resume_replacement_and_cli_refusals() {
         fixture.probe(0);
     }
     fixture.set(0, "mode", json!("ready"));
-    // Noninteractive retire refuses unknown volume ownership and succeeds only
-    // for this selected generated scope; actual mutable fixture data is removed.
-    fixture.set(0, "mode", json!("volume-unknown"));
-    let refused = fixture.run(0, &["container", "retire", "--yes", "--json"]);
-    assert!(!refused.status.success(), "{refused:?}");
-    assert!(fixture.stacks[0].root.join("data").exists());
-    fixture.set(0, "mode", json!("ready"));
+    // Retirement deletes exactly what the labels own: this stack's containers
+    // and its labelled mutable volume, and nothing of its siblings.
     let retired = fixture.run(0, &["container", "retire", "--yes", "--json"]);
     assert!(retired.status.success(), "{retired:?}");
     assert!(!fixture.stacks[0].root.join("data").exists());
@@ -793,11 +727,11 @@ fn private_three_scopes_concurrent_resume_replacement_and_cli_refusals() {
         );
     }
     println!(
-        "CLI interrupted={} resume={} replacement={} retire-refusal={} retire-success={}",
+        "CLI interrupted={} resume={} replacement={} retire={} retire-success={}",
         String::from_utf8_lossy(&outputs[0].stdout),
         String::from_utf8_lossy(&resumed.stdout),
         String::from_utf8_lossy(&replaced.stdout),
-        String::from_utf8_lossy(&refused.stdout),
+        String::from_utf8_lossy(&retired.stdout),
         String::from_utf8_lossy(&retired.stdout)
     );
 }
@@ -949,14 +883,11 @@ def save():
   else: f.write(payload)
  os.replace(pending,sfile)
 def record(s):
- # Q-010 moved the scope inventory to the checkout's own journal; the machine
- # inventory stays a read-only legacy input for a live checkout.
+ # Ownership lives on the backend labels. The checkout's own scope token file
+ # is the only local identity, and the fake transport labels containers with it.
  checkout=pathlib.Path(s['checkout'])
- candidates=list((checkout/'.effigy/state/runtime-scopes').glob('*.json'))
- if not candidates: candidates=list((root/'home/.effigy/runtime-scopes').glob('*.json'))
- for p in candidates:
-  r=json.load(open(p))
-  if r and checkout.resolve()==pathlib.Path(r['checkout']).resolve(): return r
+ for candidate in [checkout/'.git/effigy-runtime-scope']:
+  if candidate.exists(): return {'token': candidate.read_text().strip()}
  return None
 def selected(s):
  filters=[a.removeprefix('label=') for a in args if a.startswith('label=')]
@@ -1004,7 +935,11 @@ if args and args[0]=='ps':
  for p in root.glob('stack*/state.json'):
   s=json.load(open(p))
   if not s['active'] or not selected(s): continue
-  if '{{.Names}}' in args: print(s['project']+'-db-1')
+  if any('{{.Label "com.effigy.checkout"}}' in a for a in args):
+   # The ownership listing `container retire` reads.
+   r=record(s)
+   print(s['project']+'-db-1\t'+s['project']+'\t'+str(s['checkout'])+'\t\t'+(r['token'] if r else ''))
+  elif '{{.Names}}' in args: print(s['project']+'-db-1')
   elif '--format' in args: print(s['project']+'-db-1\tUp 1 minute\t127.0.0.1:'+str(s['port'])+'->'+str(s['container_port'])+'/tcp\t'+s['project']+'\t'+s['checkout']+'\t'+('undeclared' if s['mode']=='orphan' else 'db')+'\tfalse')
  if mode=='foreign-stopped-sibling' and '--format' in args:
   # A stopped declared sibling of this same project, owned by another
@@ -1035,7 +970,7 @@ if args and args[0]=='network': sys.exit(0)
 if args and args[0]=='volume':
  r=record(state); name=state.get('project','private')+'-fixture-mutable-data'
  if args[1]=='ls' and state['volume'] and selected(state): print(name)
- elif args[1]=='inspect': print(json.dumps([{'Name':name,'Labels':{} if mode=='volume-unknown' else {'com.effigy.scope':r['token'],'com.effigy.project':state['project'],'com.effigy.persist':'false'}}]))
+ elif args[1]=='inspect': print(json.dumps([{'Name':name,'Labels':{'com.effigy.checkout':str(state['checkout']),'com.effigy.scope':r['token'] if r else '','com.effigy.project':state['project'],'com.effigy.persist':'false'}}]))
  elif args[1]=='rm': state['volume']=False;save();(cwd/'data').unlink()
  sys.exit(0)
 if args and args[0]=='rm':

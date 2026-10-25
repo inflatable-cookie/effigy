@@ -32,13 +32,12 @@ manifest is provenance, and a machine still holding the retired store without
 one is refused once with its exact upgrade path. The retired source is never
 imported, opened for writing or deleted.
 
-Scope inventory lives in its checkout. After deletion, `container retire --dead`
-uses the selected backend's ownership labels and surviving shared facts. It
-requires the checkout directory's inode and exact custody lease, protects live
-or unknown owners, and keeps retry progress in the invoking live checkout.
-The private backend proof combines 24 foreground commands across three
-checkouts with two detached runs, an environment transition and a stalled local
-writer, then verifies lease refusal, deletion, retry and persistent-data safety.
+Runtime ownership is only the backend's own labels; there is no scope inventory
+to keep. After deletion, `container retire --dead` groups the labelled
+containers, volumes and networks by checkout path and retires the groups whose
+path is missing. The private backend proof deletes a linked worktree, retires
+its labelled stack, and verifies that live, unknown and foreign owners, the
+unselected engine and persistent data survive.
 
 Machine fact edits publish a complete conflict set in one transaction; unchanged
 edits/read/import write zero. Cold schema initialization is a separate commit.
@@ -2127,23 +2126,14 @@ number. Machine endpoint/port claims survive deletion and protect their values
 until explicit verified retirement; unknown owners are not garbage-collected.
 No machine copy of the deleted checkout's journal exists.
 
-Dead-worktree retirement cannot rely on the deleted journal or a central
-checkout index. `container retire --dead` inventories the selected backend's
-Effigy ownership labels and surviving gateway/port claims. It validates the
-recorded checkout token/path generation and exact container/network/volume
-identity before retirement; inaccessible/ambiguous ownership remains Unknown.
-Only positively dead scopes enter the ordinary fenced retirement path. Backend
-inventory supplies lost-checkout provenance; names or PID/PGID values do not.
-A checkout custody lease is a shared lock file in `$HOME/.effigy/gates/`,
-separate from machine journal initialization and its `.effigy/state/` layout,
-not a journal or checkout index. Environment owners and holders retain it through
-positive process cleanup. Generated backend labels carry its inode and the
-checkout directory generation; the recorded device number is diagnostics, since
-`st_dev` changes at every mount and a reboot would otherwise look like a replaced
-lease. Dead retirement requires the exact existing lease inode exclusively;
-missing or replaced lease state refuses cleanup. A missing checkout
-on an unavailable volume remains Unknown. Retry progress lives in the invoking
-checkout, and cannot override live or ambiguous backend ownership.
+Dead-worktree retirement cannot rely on a deleted journal or a central checkout
+index, and needs neither. `container retire --dead` reads the backend's Effigy
+ownership labels and releases the checkout's gateway, port and loopback state by
+checkout path. Dead means the path is missing; a relative or unreadable path
+label is reported and never guessed about. Every resource of a dead group is
+deleted by the exact name the backend listed, and a deletion that fails is named
+and fails the command. A missing checkout on an unavailable volume is reported
+under `unknown`, never as dead.
 
 ### 7.2 Tables and transaction boundaries
 
@@ -2262,7 +2252,7 @@ maintenance are measured separately, never hidden in the steady-state counts.
 | --- | --- |
 | Short foreground begin/spawn/settle; ordinary durable checkout begin/spawn/settle | **0** |
 | Status, runs, doctor, unchanged gateway ensure or existing port pin lookup | **0** |
-| Pure endpoint/route/port registry edit, all conflicts as one set | **1**: payload, claim revisions, quarantine and final disposition commit together |
+| Pure endpoint/route edit, all conflicts as one set | **1**: payload and claim revisions commit together |
 | Gateway lifecycle or endpoint change with an external bind/reload effect | **3**: intent/reservation; applied receipt plus publication; positive close/settle |
 | Admission grant/enqueue, transfer/admit or release, if stored by the provider | **1 per state transition**, no polling/heartbeat writes; Effigy itself creates no admission row for a foreground run |
 | Fault recovery | one transaction per unresolved effect disposition, plus one close; no scan or rewrite of completed runs |
@@ -2854,7 +2844,6 @@ names `after = ["environment"]` / `depends_on`
 | `reset` deletes every environment's renders | `crates/effigy-runtime/src/write/planning.rs:31-44` | objects per environment generation |
 | Backend metadata read-modify-write | `crates/effigy-containers/src/lib.rs:219-235` | `resources` field; backend in `ResourceId` (I-ID4) |
 | Allocators holding a global lock across runtime inventory | `crates/effigy-containers/src/policy_support/generated_compose.rs:1134`, `:1362`, `:1417` | claim transaction; no inventory under a gate (K14) |
-| Runtime-scope records | `crates/effigy-containers/src/runtime/scope.rs:221-264` | `checkouts` table, token preserved |
 | Colima repair by `pkill -f` patterns | `crates/effigy-containers/src/exec/colima_runtime.rs:924-944` | retained identities only (I-P4, R3) |
 | Failed-run recovery downs inside `up` | `src/runner/container_command/lifecycle.rs:766` | predecessor settle (K5); permit (R4) |
 
@@ -2915,12 +2904,10 @@ A v0.14.1 user updates and everything keeps working with no manual steps
 | M7 | Running stacks survive. Containers keep running, labels prove ownership, nothing is recreated because of an import. |
 | M8 | Downgrade after a scope's cut-over is unsupported. The store records the writing build, and a binary that predates the schema refuses Mutate. |
 
-Gateway-only operator exception (Tom, 2026-10-19, effigy#237; reaffirmed in the
-2026-10-20 continuation): M3/M8 permit explicit export-on-remove to v0.14.1.
-The new writer freezes before journaled export and refuses ordinary mutation
-until setup quiesces the old writer and re-imports. No kernel primitive or
-other scope gains downgrade support. The owning protocol and proofs are in
-[architecture 035](../architecture/035-gateway-endpoint-store.md#explicit-downgrade-and-re-upgrade).
+The gateway's former export-on-remove exception to M3/M8 is retired with the
+v0.14.1 handback: the endpoint Store is the only source of routes and loopback
+aliases, and no scope exports or re-imports them
+([architecture 035](../architecture/035-gateway-endpoint-store.md#no-downgrade-handback)).
 
 
 | Legacy family | Location | Import | Quiesce condition | `Unknown` handling |
@@ -2932,8 +2919,8 @@ other scope gains downgrade support. The owning protocol and proofs are in
 | Generated renders | `<root>/.effigy/runtime/compose/` | not imported; re-rendered into objects on the next apply | — | — |
 | Backend override metadata | `crates/effigy-containers/src/lib.rs:219-235` | the environment's backend field | — | unparsable: `Unknown` backend; destructive actions refuse until the backend is named |
 | Host sidecars: PID, spec, listener records | `<root>/.effigy/runtime/host-processes/` | stopped through the legacy stop protocol after identity verification, then started as an environment-owned kernel run (effigy#320) | legacy supervisor alive and verified: stopped first | unverifiable identity: `Unknown`, residue |
-| Runtime-scope records | `~/.effigy/runtime-scopes/` | Read-only input for an explicitly named live checkout; first inventory edit journals its record locally; deletion discovery uses backend labels | — | — |
-| Gateway PID, identity, version; routes, loopback, ports | `~/.effigy/gateway/`, `~/.effigy/ports.json` | gateway-lane importer: claims byte for byte, manual routes kept | legacy daemon quiesced by the gateway lane's setup | — |
+| Runtime-scope records | `~/.effigy/runtime-scopes/` | retired: ownership is the backend's labels; a legacy directory is neither read nor written | — | — |
+| Gateway PID, identity, version; routes, loopback | `~/.effigy/gateway/` | no import: the endpoint Store is the only source | — | — |
 | Vault | `<checkout>/.effigy/secrets/local.vault` | not moved; the next write uses the pointer commit | — | unreadable vault: never overwritten |
 | Host-run pending facts; retired admission store | `~/.local/state/host-run/`; `~/.cache/effigy/admission/` | untouched (contract 049) | — | — |
 
@@ -3068,7 +3055,7 @@ only those identities, remove fixtures and preserve exit codes before reporting.
 | Gates/layout/deletion | Fresh checkout, linked worktree, primary, non-Git root, same-path replacement, explicit retire and external deletion; gate inode continuity while held, token-init races, host-only guest masking, unknown residue/claims protected, no primary journal fallback |
 | Discovery/admission | Configured/unconfigured roots, linked worktrees, duplicate/ambiguous keys, symlink, missing/unreadable/corrupt checkout, depth/count/time limits, empty roots; R2 filesystem diff empty. Nested live/dead/forged admission capabilities and hook death/owner death do not use a central run lookup |
 | Retired central store | A machine home holding the retired `~/.effigy/state/kernel.db` is refused once with the Effigy main `7b82d26` upgrade path, before any run or destination state exists and without changing the file; with a committed manifest the file is ignored and never deleted; `run migrate --plan` never stages, stops, imports or deletes anything |
-| Deleted-worktree retirement (Tom, 2026-10-22) | Disposable backend stacks from deleted linked/Queue worktrees, with their checkout journals removed and no central index: `effigy container retire --dead` discovers exact surviving ownership from backend labels and shared endpoint/port facts, retires the dead scopes, and preserves live/unknown/foreign scopes, persistent data and the unselected backend |
+| Deleted-worktree retirement (Tom, 2026-10-22) | Disposable backend stacks from deleted linked/Queue worktrees, with their checkout journals removed and no central index: `effigy container retire --dead` groups the labelled resources by checkout path, retires the groups whose path is gone, and preserves live/unknown/foreign groups, persistent data and the unselected backend |
 | Gateway/environment regression | Private gateway and disposable engine fixtures: unchanged pins/routes after migration, proxy readiness, container reuse, R4 holder refusal, idle-stop and interrupted recovery; no calls to the unselected backend or operator's gateway |
 
 Use installed Effigy selectors, and build the changed binary once per source
