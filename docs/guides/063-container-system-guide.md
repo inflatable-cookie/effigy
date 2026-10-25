@@ -416,7 +416,7 @@ running. Starting the container environment again takes the domain back once
 the recorded listener generation is no longer live. Starting either
 environment while a conflicting environment of the same checkout and scope is
 live is one preflighted handover: Effigy first checks everything that could
-refuse (foreign route claims, loopback allocation, manifest, policy and
+refuse (foreign route claims, loopback pool capacity, manifest, policy and
 ownership validation), ends every live headless managed owner bound to
 the losing environment through the same path as `effigy <task> stop`
 (one line names each managed task ended; any other environment's owner is
@@ -1084,10 +1084,9 @@ runtime is participating, without launching Docker, Colima, or a container:
   VM can outlive its client CLI. Only a host with neither is Colima-inactive.
 
 A proven-inactive runtime cannot poison an otherwise complete inventory, so a
-Colima-only host reclaims stale isolated loopback assignments without starting
-Docker Desktop. Genuine failures still make the inventory incomplete, preserve
-every uncertain assignment, and report the backend, profile, and error once
-per launch.
+Colima-only host lists its running environments without starting Docker
+Desktop. Genuine failures still make the inventory incomplete and report the
+backend, profile, and error once per launch.
 
 ## Task Activation
 
@@ -1444,9 +1443,10 @@ Safety rules:
 - `tls = true` works after `effigy gateway setup`
 - when TLS is enabled, plain HTTP requests are redirected to HTTPS
 
-TCP catalog services such as postgres, mariadb, redis, and memcached also get
-deterministic loopback aliases. That means host and container code can use the
-same stable names without hand-written `/etc/hosts` edits.
+TCP catalog services such as postgres, mariadb, redis, and memcached also
+answer on their checkout's loopback alias address. That means host and
+container code can use the same stable names without hand-written
+`/etc/hosts` edits.
 
 By default, generated TCP aliases, the `container hosts` cookie apex and
 gateway service-alias registration all use the same apex.
@@ -1548,6 +1548,8 @@ way. The takeover is logged in one line. Only a checkout that still exists and
 still serves the domain refuses the write, and that message names it and the
 command that stops it (`effigy container down` there).
 
+Any route write also drops routes whose recorded checkout path is gone, for
+every domain, so a deleted worktree never keeps a domain or a loopback address.
 The same checkout path always replaces its own route, so a new run, a new
 generation or a container-to-listener handover needs no repair command.
 `down`, `retire` and settle remove the checkout's routes by path, listener
@@ -1982,12 +1984,15 @@ published container port from the checkout path and never records it.
 
 ## Loopback aliases
 
-Each isolated project and shared service holds one address in the bounded
-`127.1.0.1`-`127.1.0.50` loopback pool. The alias is allocated at `up`,
-released at `down` and by retirement, and reclaimed on the next allocation when
-the checkout path it recorded is gone, so a deleted worktree's address is
-reused without a repair command. A path that still exists keeps its alias even
-while the environment is stopped.
+Each checkout holds one address in the bounded `127.1.0.1`-`127.1.0.50`
+loopback pool, and its aliased routes answer with it. The route table is the
+only record: an address is in use exactly when some route references it, as its
+`dns_ip` or as its target. `up` gives a checkout the address its routes already
+answer with, or the lowest address no route references, and `down` and
+retirement free it by removing the routes. A deleted worktree's routes are
+dropped by the next route write, so its address is reused without a repair
+command, and a live checkout keeps its address even while its environment is
+stopped.
 
 ## Current Limits
 

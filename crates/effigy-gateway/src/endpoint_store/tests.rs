@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use super::*;
-use crate::routes::{Route, RouteSource};
+use crate::routes::{Route, RouteSource, RouteTable};
 
 fn fixture() -> (tempfile::TempDir, EndpointStore) {
     let dir = tempfile::tempdir().unwrap();
@@ -65,7 +65,7 @@ fn an_edit_that_changes_nothing_writes_nothing() {
 }
 
 #[test]
-fn a_record_from_the_port_range_build_keeps_decoding_and_loses_ports_on_write() {
+fn a_record_from_the_port_range_build_keeps_decoding_and_loses_legacy_documents_on_write() {
     let legacy = json!({
         "schema": 1,
         "authority": "store",
@@ -83,87 +83,93 @@ fn a_record_from_the_port_range_build_keeps_decoding_and_loses_ports_on_write() 
     assert!(snapshot.document("ports").is_err());
     assert!(snapshot.claims().unwrap().is_empty());
 
-    snapshot
-        .set_loopback(&crate::loopback::LoopbackRegistry::new())
-        .unwrap();
+    snapshot.set_routes(&RouteTable::new()).unwrap();
     let rewritten = serde_json::to_value(&snapshot).unwrap();
     assert!(rewritten.get("authority").is_none());
     assert!(rewritten.get("imported_sha256").is_none());
     assert!(rewritten["documents"].get("ports").is_none());
-}
-
-#[test]
-fn a_loopback_alias_lives_from_up_to_down_and_is_reused() {
-    let (dir, store) = fixture();
-    let checkout = dir.path().join("checkout");
-    std::fs::create_dir_all(&checkout).unwrap();
-    let scope = checkout.display().to_string();
-
-    let first = store
-        .allocate_loopback("project:app", &scope)
-        .expect("allocate at up");
-    assert_eq!(first, crate::loopback::DEFAULT_LOOPBACK_START);
-    assert_eq!(
-        store.allocate_loopback("project:app", &scope).unwrap(),
-        first
-    );
-
-    assert!(store.release_loopback("project:app").unwrap());
     assert!(
-        store.snapshot().unwrap().loopback().unwrap().is_empty(),
-        "down leaves no alias behind"
-    );
-    assert_eq!(
-        store.allocate_loopback("project:app", &scope).unwrap(),
-        first
+        rewritten["documents"].get("loopback").is_none(),
+        "the routes document is the only record"
     );
 }
 
 #[test]
-fn a_deleted_worktrees_alias_is_reclaimed_by_the_next_allocation() {
+fn every_route_write_drops_routes_whose_checkout_path_is_gone() {
     let (dir, store) = fixture();
     let live = dir.path().join("live");
-    std::fs::create_dir_all(&live).unwrap();
     let gone = dir.path().join("gone");
-    std::fs::create_dir_all(&gone).unwrap();
-
-    let first = store
-        .allocate_loopback("project:live", &live.display().to_string())
+    let newer = dir.path().join("newer");
+    for path in [&live, &gone, &newer] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    store
+        .routes(|table| {
+            table.upsert(route("live.test", &live));
+            table.upsert(route("gone.test", &gone));
+            Ok::<_, crate::GatewayError>(())
+        })
         .unwrap();
-    let second = store
-        .allocate_loopback("project:gone", &gone.display().to_string())
-        .unwrap();
-    assert_ne!(first, second);
     std::fs::remove_dir_all(&gone).unwrap();
 
-    let reused = store
-        .allocate_loopback("project:new", &live.display().to_string())
+    // A write for one checkout drops the deleted checkout's route as well,
+    // and keeps every live checkout's route.
+    store
+        .routes(|table| {
+            table.upsert(route("newer.test", &newer));
+            Ok::<_, crate::GatewayError>(())
+        })
         .unwrap();
 
-    assert_eq!(reused, second);
-    assert_eq!(store.snapshot().unwrap().loopback().unwrap().len(), 2);
+    let table = store.snapshot().unwrap().routes().unwrap();
+    assert!(table.lookup("live.test").is_some());
+    assert!(table.lookup("newer.test").is_some());
+    assert!(
+        table.lookup("gone.test").is_none(),
+        "a deleted checkout's route never survives a write"
+    );
 }
 
 #[test]
-fn releasing_one_checkout_path_leaves_other_owners_alone() {
+fn a_loopback_alias_is_the_lowest_address_no_route_references() {
     let (dir, store) = fixture();
-    let one = dir.path().join("one");
-    let two = dir.path().join("two");
-    std::fs::create_dir_all(&one).unwrap();
-    std::fs::create_dir_all(&two).unwrap();
+    let other = dir.path().join("other");
+    let mine = dir.path().join("mine");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::create_dir_all(&mine).unwrap();
+    let mut theirs = route("alias.other.test", &other);
+    theirs.dns_ip = Some(std::net::Ipv4Addr::new(127, 1, 0, 2));
+    theirs.target = None;
+    theirs.tcp_port = Some(5432);
+    theirs.tcp_target = Some("127.0.0.1:3306".to_owned());
     store
-        .allocate_loopback("project:one", &one.display().to_string())
-        .unwrap();
-    store
-        .allocate_loopback("project:two", &two.display().to_string())
+        .routes(|table| {
+            table.upsert(theirs);
+            Ok::<_, crate::GatewayError>(())
+        })
         .unwrap();
 
-    let released = store
-        .release_loopback_for_path(&one.display().to_string())
-        .expect("release by path");
-    assert_eq!(released, 1);
+    let table = store.snapshot().unwrap().routes().unwrap();
+    let first = crate::loopback::claim_address(&table, &mine.display().to_string()).unwrap();
+    assert_eq!(first, std::net::Ipv4Addr::new(127, 1, 0, 1));
 
-    let registry = store.snapshot().unwrap().loopback().unwrap();
-    assert_eq!(registry.len(), 1);
-    assert!(registry.get("project:two").is_some());
+    // The address is held only by the route: removing the other checkout's
+    // route frees 127.1.0.2 at once, and registering an alias route records
+    // this checkout's address in the table itself.
+    let mut alias = route("alias.mine.test", &mine);
+    alias.dns_ip = Some(first);
+    alias.target = None;
+    alias.tcp_port = Some(5432);
+    alias.tcp_target = Some("127.0.0.1:3306".to_owned());
+    store
+        .routes(|table| {
+            table.upsert(alias);
+            Ok::<_, crate::GatewayError>(())
+        })
+        .unwrap();
+    let table = store.snapshot().unwrap().routes().unwrap();
+    assert_eq!(
+        crate::loopback::checkout_address(&table, &mine.display().to_string()),
+        Some(first)
+    );
 }

@@ -45,9 +45,11 @@ fn linked_checkout(root: &Path, name: &str) -> (std::path::PathBuf, std::path::P
 fn publication_records_the_owner_generation_and_reserved_address() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("routes.json");
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
     register_managed_listener_route(
         &path,
-        "/fixture",
+        &checkout.display().to_string(),
         "published.test",
         "127.0.0.1:43123",
         false,
@@ -67,6 +69,9 @@ fn publication_records_the_owner_generation_and_reserved_address() {
 fn register_and_deregister_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("routes.json");
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let project = checkout.display().to_string();
 
     let reg = RouteRegistration {
         domain: "myapp.test".to_string(),
@@ -75,7 +80,7 @@ fn register_and_deregister_roundtrip() {
         tcp_port: None,
         tcp_target: None,
         tls: false,
-        project_path: "/projects/myapp".to_string(),
+        project_path: project.clone(),
         source: RouteSource::Container,
     };
 
@@ -88,7 +93,7 @@ fn register_and_deregister_roundtrip() {
         Some("127.0.0.1:8080")
     );
 
-    deregister_route(&path, "myapp.test", "/projects/myapp").unwrap();
+    deregister_route(&path, "myapp.test", &project).unwrap();
 
     let table = RouteTable::load(&path).unwrap();
     assert!(table.is_empty());
@@ -98,12 +103,15 @@ fn register_and_deregister_roundtrip() {
 fn register_upserts_existing() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("routes.json");
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let project = checkout.display().to_string();
 
-    let mut reg1 = container_registration("/projects/myapp", "127.0.0.1:8080");
+    let mut reg1 = container_registration(&project, "127.0.0.1:8080");
     reg1.domain = "myapp.test".to_owned();
     register_route(&path, &reg1).unwrap();
 
-    let mut reg2 = container_registration("/projects/myapp", "127.0.0.1:9090");
+    let mut reg2 = container_registration(&project, "127.0.0.1:9090");
     reg2.domain = "myapp.test".to_owned();
     reg2.tls = true;
     register_route(&path, &reg2).unwrap();
@@ -129,9 +137,13 @@ fn deregister_nonexistent_is_idempotent() {
 fn simultaneous_distinct_domains_do_not_lose_updates() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("routes.json");
+    let checkout = root.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let project = checkout.display().to_string();
     let handles = (0..12)
         .map(|index| {
             let path = path.clone();
+            let project = project.clone();
             std::thread::spawn(move || {
                 let registration = RouteRegistration {
                     domain: format!("app-{index}.test"),
@@ -140,7 +152,7 @@ fn simultaneous_distinct_domains_do_not_lose_updates() {
                     tcp_port: None,
                     tcp_target: None,
                     tls: false,
-                    project_path: "/projects/app".to_owned(),
+                    project_path: project.clone(),
                     source: RouteSource::Container,
                 };
                 register_route(&path, &registration).unwrap();

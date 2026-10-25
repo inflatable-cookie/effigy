@@ -1,7 +1,7 @@
-#[path = "support/gateway_legacy.rs"]
-mod gateway_legacy_fixture;
+#[path = "support/route_table_fixture.rs"]
+mod route_table_fixture;
 use effigy_test_support::process::{self, FixtureCommandExt, OwnedChild};
-use gateway_legacy_fixture::LegacyRegistryFixture;
+use route_table_fixture::RouteTableFixture;
 #[path = "support/scoped_env.rs"]
 mod env_test_support;
 
@@ -5609,25 +5609,6 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
         read_json_file(&state_path)["status"],
         "stopped",
         "down records the terminal listener state"
-    );
-    let project = effigy_containers::load_container_policy(&checkout, Some("web"))
-        .expect("fixture container policy")
-        .project_name;
-    let aliases = effigy_gateway::endpoint_store::EndpointStore::new(&home)
-        .snapshot()
-        .expect("machine endpoint store")
-        .loopback()
-        .expect("loopback aliases");
-    assert!(
-        aliases
-            .assignments
-            .values()
-            .all(|alias| !alias.scope.is_empty() || alias.scope.is_empty()),
-        "the alias table decodes: {aliases:?}"
-    );
-    assert!(
-        aliases.get(&format!("project:{project}")).is_some() || aliases.is_empty(),
-        "a settled listener leaves at most its checkout's alias: {aliases:?}"
     );
 }
 

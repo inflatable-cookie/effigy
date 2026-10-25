@@ -8,9 +8,9 @@ Mechanisms: [runtime kernel contract](../contracts/052-runtime-kernel-contract.m
 
 `EndpointStore` addresses the operator's `~/.effigy/state/machine.db`. Its
 machine-scoped `Store(gateway-endpoints)` resource owns the publication gate
-and one versioned payload containing routes and loopback aliases. Host ports
-are not part of it: the OS or Compose assigns them. Private fixtures use the
-same API with a disposable home.
+and one versioned payload containing the route table. Host ports are not part
+of it: the OS or Compose assigns them. Private fixtures use the same API with a
+disposable home.
 
 `transaction` is the one write path. It reads the payload under the machine
 owner gate, applies one edit, and publishes the complete payload and its claim
@@ -27,19 +27,26 @@ longer exists, or its target address does not accept a TCP connection within
 200 ms. The takeover is logged in one line. Otherwise the write is refused with
 one message naming the other checkout and the command that stops it. Removing the
 route frees the domain immediately, so `down` followed by `up` needs no window.
-Address claims cover project loopback identities; domain claims cover routes.
-Multiple DNS aliases can share one address owned by the same scope. Host ports
-are not claimed at all: the OS or Compose assigns them. Conflicting scopes and
-incompatible targets on one TCP alias tuple refuse publication.
+The route table is also the whole record of loopback ownership. An address is
+in use exactly when some route references it, as its `dns_ip` or as its target,
+so an address claim is the route's own claim and one checkout's routes share
+one address. Host ports are not claimed at all: the OS or Compose assigns them.
+Conflicting scopes and incompatible targets on one TCP alias tuple refuse
+publication.
 
-## Lifetime and release
+## Ownership and release
 
-`allocate_loopback` takes a stable identity and its owning checkout path;
-`release_loopback` releases one identity and `release_loopback_for_path` every
-identity a checkout path owns. The alias is allocated at `up` and released by
-`down` and retirement, so a Prepare run ending releases nothing. Allocation
-first reclaims assignments whose checkout path is gone. There is no inventory
-probe and no release plan.
+An aliased route names its checkout's address, and the address is chosen where
+the route is written: the checkout's recorded address when its routes already
+have one, otherwise the lowest `127.1.0.1`-`127.1.0.50` address no route
+references. `down` and retirement free the address by removing the routes, so
+there is no separate assignment to record, reclaim or release, and no Prepare
+step that allocates one.
+
+Every route write also drops routes whose recorded checkout path is gone, for
+the whole table rather than only the domains that write touched. A deleted
+worktree therefore keeps neither a domain nor an address, and its next write is
+a log line rather than a repair.
 
 Removal and its claims commit together, and a released address is immediately
 allocatable: the gateway publishes with no reuse quarantine, and its DNS
@@ -51,25 +58,26 @@ resolves to its new owner at once.
 The payload preserves raw JSON documents. Typed edits replace known fields
 while retaining unknown fields. Releasing an entry removes that entry and its
 claims; it never reconstructs ownership from a runtime scan. A record written
-by the port-range build keeps decoding, and its `ports` document is dropped on
-the next write.
+by the port-range build keeps decoding, and its `ports` and separate `loopback`
+assignment documents are dropped on the next write.
 
 `read` is Observe-only and creates no files or gates. An unreadable or corrupt
 store is Unknown; nothing falls back to a legacy file.
 
 ## Callers and reload
 
-Container Prepare allocates its loopback alias through this API; `down` and
-retirement release it. Pure policy observation remains effect-free.
+Container route registration writes its alias routes through this API; `down`
+and retirement release the address by removing them. Pure policy observation
+remains effect-free.
 Private gateway startup uses the existing 15-second gateway operation budget
 while waiting for verified listener publication. Unverified refusals still fail
 immediately; the status budget is unchanged.
-Policy reads observe routes and loopback assignments from one snapshot without
-admitting writer runs. Generated Compose allocates only during Prepare.
+Policy reads observe routes from one snapshot without admitting writer runs.
+Generated Compose records nothing: the alias address is part of the route.
 Certificate preparation creates only its directories and certificates; endpoint
 writers and daemon startup own the Store gate, avoiding recursive acquisition
 during TLS publication.
-Prepare and route registration use the same loopback allocator.
+Alias allocation and route registration are one transaction.
 
 Container and managed-listener route edits run under the Store owner gate.
 Managed publication proves process generations, ancestry, readiness and exclusive
@@ -129,7 +137,10 @@ the failure; it does not claim the cause of a past unexplained refusal.
 - `test:gateway:endpoints`: import preservation and idempotence, persistent
   owners, immediate reuse after release, concurrent conflict races, stale
   revisions, collision refusal, untrusted inputs, Unknown reads and
-  publication/retention faults; the port and route model tests also run.
+  publication/retention faults; the route model tests also run.
+- `test:gateway:loopback-lifecycle`: alias addresses derived from the route
+  table, a new checkout taking an address no live route references, and routes
+  of deleted checkouts dropped by any write.
 - `proof:gateway:endpoints:import`: reads operator registry copies, redacts
   project paths and domains inside a fresh disposable home, then verifies
   every imported document and unchanged backup byte.

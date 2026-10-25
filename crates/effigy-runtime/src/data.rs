@@ -607,12 +607,6 @@ where
     let colima_started =
         effigy_containers::exec::ensure_runtime_backend_running(&policy, repo_root)
             .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    if effigy_containers::policy::ports::prepare_container_policy_ports(&policy)
-        .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?
-    {
-        policy = load_container_policy(repo_root, name)
-            .map_err(|error| EffigyRuntimeError::task_invocation(error.to_string()))?;
-    }
     let shared_service_notes = ensure_shared_services_running(&policy)?;
     let (creation_policy, workspace_mount_decisions) =
         load_container_policy_for_creation(repo_root, Some(policy.name.as_str()))
