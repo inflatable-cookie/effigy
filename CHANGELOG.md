@@ -1427,6 +1427,15 @@ During v0.x, MINOR bumps may include breaking changes.
   release root, and a lockfile whose owning workspace is anchored elsewhere is
   refused instead of writing an undeclared lockfile.
 
+- A checkout's local gate identity is a digest of its canonical location and its
+  resolved Git directory instead of its device and inode, so a reboot, remount or
+  volume renumbering no longer renames the gates and locks a checkout holds. The
+  `Filesystem`-kind digest is versioned `v2` for the new content; it is derived
+  and never persisted, so no state needs migrating (effigy#337).
+- `state/checkout.json` and an import seal's recorded destination are provenance
+  rather than a gate. Their device, inode and Git-directory path are recorded for
+  diagnostics and rewritten when they no longer describe the checkout.
+
 ### Fixed
 - A host process whose child leader exits now applies its declared `restart`
   policy instead of failing supervision. After a leader exit, Effigy reaps the
@@ -1437,6 +1446,26 @@ During v0.x, MINOR bumps may include breaking changes.
   dependents refreshed, after a crash, a signal or a non-zero exit; a genuinely
   live member other than the leader still keeps the generation unavailable.
   `restart = "never"` settles closed with its exit recorded (effigy#336).
+- A checkout journal opens by its location, so a checkout created before a
+  reboot, remount or volume renumbering keeps working afterwards: tasks, durable
+  runs, `run status`, managed sessions and host processes. macOS assigns `st_dev`
+  at mount, and `state/checkout.json` recorded it, so after the 2026-10-25 reboot
+  every pre-reboot checkout refused every run with "checkout directory generation
+  changed". The binding is now provenance: a record from an earlier boot, a
+  legacy record, or one whose Git directory moved is rewritten to the current
+  generations by the next effect, under the local binding gate, and the journal
+  keeps its runs, gates and history. An import seal's recorded destination
+  generations and its absolute Git directory path are provenance too, so a plain
+  `mv` of a checkout keeps working. A checkout's local gate and lock names derive
+  from its location instead of its device and inode, so a reboot no longer
+  renames them. No durable decision depends on the mount-time device number: a
+  custody lease and a supervisor socket receipt are identified by their inode,
+  and `container retire --dead` no longer calls a live checkout ambiguous when
+  its labels were written in an earlier boot. The refusals that remain protect
+  live invariants only — a custodian whose retained checkout, state directory or
+  Git locator was replaced during its own lifetime, a Git resolution that
+  disagrees with the checkout's own `.git`, and a journal database this binary
+  never bound (effigy#337).
 - A managed listener route left by a previous run of the same checkout is
   reclaimed by the next run, and `down`, `reset` and settle withdraw listener
   routes even when the supervisor that published them is gone. Since
