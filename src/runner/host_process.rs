@@ -2,15 +2,16 @@
 //!
 //! Each `[[containers.<name>.host_processes]]` entry resolves to an
 //! `EffectiveHostProcess`. Effigy runs one detached supervisor per entry.
-//! Listener processes additionally write a versioned endpoint report; the
-//! supervisor proves the reported socket belongs to that exact child
-//! generation, waits for HTTP readiness, and publishes an owned route. State,
-//! logs, reports, specs, and process identities live under the checkout's
-//! runtime directory, with listener state separated by container profile.
-//! Shutdown withdraws the exact route generation before stopping the recorded
-//! child process group.
+//! Listener processes own a reserved loopback address: the supervisor finds
+//! the listening socket in that exact child generation and verifies it, then
+//! waits for HTTP readiness and publishes an owned route. A versioned endpoint
+//! report written by an adapter is optional; when one arrives it is verified
+//! the same way and must agree with the reserved address. State, logs, reports,
+//! specs, and process identities live under the checkout's runtime directory,
+//! with listener state separated by container profile. Shutdown withdraws the
+//! exact route generation before stopping the recorded child process group.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs;
 use std::io::Read;
@@ -664,12 +665,7 @@ fn wait_for_listener_state(
                 "failed" => {
                     return Err(RunnerError::ManagedHostReadiness {
                         process: process_name.to_owned(),
-                        diagnostic: state
-                            .diagnostic
-                            .as_ref()
-                            .copied()
-                            .unwrap_or_default()
-                            .summary(),
+                        diagnostic: state.diagnostic.clone().unwrap_or_default().summary(),
                     });
                 }
                 _ => {}
@@ -1544,6 +1540,23 @@ fn write_terminal_listener_state(
     spec: &HostProcessRuntimeSpec,
     supervisor: &HostProcessRecord,
 ) -> Result<(), RunnerError> {
+    // A generation that failed before readiness keeps the diagnostic naming the
+    // phase it stopped in (contract 005). A settling supervisor must not replace
+    // that evidence with a blank `stopped` record, or a listener whose child
+    // bound the wrong address would lose the address that explains it. Only
+    // this supervisor's own last generation counts: a later activation writes
+    // its own `starting` record before it can fail.
+    if fs::read(&spec.listener_state_file)
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<HostListenerState>(&raw).ok())
+        .is_some_and(|state| {
+            state.status == "failed"
+                && state.diagnostic.is_some()
+                && state.supervisor_pid == supervisor.pid
+        })
+    {
+        return Ok(());
+    }
     write_listener_state(
         &spec.listener_state_file,
         listener_state(
@@ -1717,7 +1730,18 @@ fn supervise_managed_host_listener(
         )
     };
     let owned = match owned {
-        Ok(owned) => owned,
+        Ok(owned) => {
+            if diagnostic.report == ReportObservation::Absent {
+                append_log_line(
+                    &log_path,
+                    &format!(
+                        "[effigy host-process] listener `{}` is served at {} by its own child generation without an adapter report",
+                        spec.process_name, owned.address
+                    ),
+                );
+            }
+            owned
+        }
         Err(error) => {
             let terminal_status = error.status();
             write_listener_state(
@@ -2182,7 +2206,7 @@ fn with_diagnostic(
     mut state: HostListenerState,
     diagnostic: &HostListenerDiagnostic,
 ) -> HostListenerState {
-    state.diagnostic = Some(*diagnostic);
+    state.diagnostic = Some(diagnostic.clone());
     state
 }
 
@@ -2201,11 +2225,13 @@ struct OwnedHostListenerWait<'a> {
 /// failed generation keeps evidence after its report file and child are gone.
 /// Tokens describe what was last seen; they never authorize ownership,
 /// signaling, publication or release, and they are not read back as identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HostListenerDiagnostic {
     report: ReportObservation,
     claimed_address: Option<SocketAddr>,
+    expected_address: Option<SocketAddr>,
+    observed_addresses: Option<Vec<SocketAddr>>,
     ownership: OwnershipObservation,
     candidates_inspected: Option<u32>,
     observed_listener_pid: Option<u32>,
@@ -2219,6 +2245,8 @@ impl Default for HostListenerDiagnostic {
         Self {
             report: ReportObservation::NotObserved,
             claimed_address: None,
+            expected_address: None,
+            observed_addresses: None,
             ownership: OwnershipObservation::NotReached,
             candidates_inspected: None,
             observed_listener_pid: None,
@@ -2236,10 +2264,29 @@ impl HostListenerDiagnostic {
             (Some(outcome), None) => outcome.as_str().to_owned(),
             (None, _) => "not_attempted".to_owned(),
         };
-        format!(
-            "report={}, ownership={}, http_probe={probe}, route={}",
+        let mut summary = format!(
+            "report={}, ownership={}",
             self.report.as_str(),
-            self.ownership.as_str(),
+            self.ownership.as_str()
+        );
+        // The reserved address is what Effigy verifies itself when no adapter
+        // report arrives, and what any report must agree with. A listener that
+        // bound something else is named here instead of only timing out.
+        if let Some(expected) = self.expected_address {
+            summary.push_str(&format!(", expected={expected}"));
+        }
+        if let Some(observed) = self.observed_addresses.as_deref() {
+            if !observed.is_empty() {
+                let observed = observed
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                summary.push_str(&format!(", observed={observed}"));
+            }
+        }
+        format!(
+            "{summary}, http_probe={probe}, route={}",
             self.route.as_str()
         )
     }
@@ -2401,9 +2448,14 @@ fn wait_for_owned_listener(
     } = wait;
     let timeout = Duration::from_secs(config.readiness_timeout_secs);
     let deadline = Instant::now() + timeout;
-    let preferred = config.bind.parse::<SocketAddr>().map_err(|error| {
+    let expected = config.bind.parse::<SocketAddr>().map_err(|error| {
         RunnerError::task_invocation(format!("managed listener bind address is invalid: {error}"))
     })?;
+    diagnostic.expected_address = Some(expected);
+    // Every listening address the child generation bound that is not the
+    // reserved one. Retained across observations, so a failure names what the
+    // generation actually served instead of only timing out.
+    let mut observed: BTreeSet<SocketAddr> = BTreeSet::new();
     let mut exclusivity: Option<std::io::Error>;
     loop {
         // Per observation: an earlier iteration's sharer is not this one's.
@@ -2430,65 +2482,16 @@ fn wait_for_owned_listener(
             )
             .into());
         }
-        let metadata = match fs::symlink_metadata(report_path) {
-            Ok(metadata) => metadata,
-            Err(error) => {
-                diagnostic.report = if error.kind() == std::io::ErrorKind::NotFound {
-                    ReportObservation::Absent
-                } else {
-                    ReportObservation::Unreadable
-                };
-                if Instant::now() >= deadline {
-                    return Err(listener_readiness_timeout(timeout).into());
-                }
-                thread::sleep(Duration::from_millis(50));
-                continue;
-            }
+        let address = match observe_listener_report(report_path, generation, expected, diagnostic) {
+            Ok(Some(reported)) => reported,
+            // No adapter report: the reserved address itself is the claim to
+            // verify (effigy#334). Effigy finds the listening socket in the
+            // child generation and proves ownership exactly as it does for a
+            // reported address. A report that does arrive is still used, and
+            // it must agree with the reserved address.
+            Ok(None) => expected,
+            Err(error) => return Err(error.into()),
         };
-        if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 4096 {
-            diagnostic.report = ReportObservation::Unsafe;
-            return Err(RunnerError::task_invocation(
-                "managed listener report is not a small regular file",
-            )
-            .into());
-        }
-        let report: HostListenerReport = match read_private_json(report_path) {
-            Ok(report) => report,
-            Err(error) => {
-                diagnostic.report = ReportObservation::Unreadable;
-                return Err(error.into());
-            }
-        };
-        if report.schema != HOST_LISTENER_REPORT_SCHEMA || report.generation != generation {
-            diagnostic.report = ReportObservation::SchemaOrGenerationMismatch;
-            return Err(RunnerError::task_invocation(
-                "managed listener report has an unsupported schema or stale generation",
-            )
-            .into());
-        }
-        let address = match report.address.parse::<SocketAddr>() {
-            Ok(address) => address,
-            Err(_) => {
-                diagnostic.report = ReportObservation::InvalidAddress;
-                return Err(RunnerError::task_invocation(
-                    "managed listener report address is not a socket address",
-                )
-                .into());
-            }
-        };
-        diagnostic.claimed_address = Some(address);
-        if !address.ip().is_loopback()
-            || address.port() == 0
-            || address.ip() != preferred.ip()
-            || (preferred.port() != 0 && address.port() != preferred.port())
-        {
-            diagnostic.report = ReportObservation::BindMismatch;
-            return Err(RunnerError::task_invocation(
-                "managed listener report does not match its declared loopback bind preference",
-            )
-            .into());
-        }
-        diagnostic.report = ReportObservation::Accepted;
         let mut candidates = vec![root_pid];
         let descendants = effigy_process::process_descendant_ids(root_pid).map_err(|error| {
             diagnostic.ownership = OwnershipObservation::AncestryUnavailable;
@@ -2505,7 +2508,8 @@ fn wait_for_owned_listener(
         diagnostic.http_probe = None;
         diagnostic.http_status = None;
         let mut found = None;
-        for pid in candidates {
+        for pid in &candidates {
+            let pid = *pid;
             let identity = match read_live_process_identity(pid) {
                 Ok(identity) => identity,
                 Err(error)
@@ -2524,6 +2528,14 @@ fn wait_for_owned_listener(
             };
             let endpoints = match process_listening_endpoints(pid) {
                 Ok(endpoints) => endpoints,
+                // A descendant can exit between the ancestry read and this
+                // inspection; a vanished process owns no socket now.
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::NotFound
+                        || error.raw_os_error() == Some(libc::ESRCH) =>
+                {
+                    continue;
+                }
                 Err(error) => {
                     diagnostic.ownership = OwnershipObservation::SocketInspectionFailed;
                     return Err(RunnerError::task_invocation(format!(
@@ -2532,6 +2544,11 @@ fn wait_for_owned_listener(
                     .into());
                 }
             };
+            for endpoint in &endpoints {
+                if endpoint.transport == GatewayTransport::Tcp && endpoint.addr != address {
+                    observed.insert(endpoint.addr);
+                }
+            }
             if endpoints.contains(&GatewayEndpoint {
                 transport: GatewayTransport::Tcp,
                 addr: address,
@@ -2627,24 +2644,132 @@ fn wait_for_owned_listener(
             }
         }
         if Instant::now() >= deadline {
-            return Err(match exclusivity {
-                Some(error) => RunnerError::task_invocation(format!(
+            diagnostic.observed_addresses =
+                (!observed.is_empty()).then(|| observed.iter().copied().collect());
+            if let Some(error) = exclusivity {
+                return Err(RunnerError::task_invocation(format!(
                     "cannot prove exclusive managed listener ownership within {}s: {error}",
                     timeout.as_secs()
-                )),
-                None => listener_readiness_timeout(timeout),
+                ))
+                .into());
             }
-            .into());
+            // The reserved address is held, just not by this generation.
+            // Never accept it; name who holds it instead.
+            if let Some(pid) = foreign_listener_owner(address, &candidates, diagnostic) {
+                return Err(RunnerError::task_invocation(format!(
+                    "managed listener address {address} is held by process {pid}, which is outside the child generation"
+                ))
+                .into());
+            }
+            return Err(listener_readiness_timeout(timeout, address, &observed).into());
         }
         thread::sleep(Duration::from_millis(50));
     }
 }
 
-fn listener_readiness_timeout(timeout: Duration) -> RunnerError {
-    RunnerError::task_invocation(format!(
-        "timed out after {}s waiting for an owned ready managed host listener",
+/// Observe the adapter report for one child generation. `Ok(None)` means no
+/// report is readable this observation: the reserved address is verified by
+/// observation instead (effigy#334). A report that exists is a claim Effigy
+/// still validates against the reserved address before anything else.
+fn observe_listener_report(
+    report_path: &Path,
+    generation: &str,
+    expected: SocketAddr,
+    diagnostic: &mut HostListenerDiagnostic,
+) -> Result<Option<SocketAddr>, RunnerError> {
+    let metadata = match fs::symlink_metadata(report_path) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            diagnostic.report = if error.kind() == std::io::ErrorKind::NotFound {
+                ReportObservation::Absent
+            } else {
+                ReportObservation::Unreadable
+            };
+            return Ok(None);
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 4096 {
+        diagnostic.report = ReportObservation::Unsafe;
+        return Err(RunnerError::task_invocation(
+            "managed listener report is not a small regular file",
+        ));
+    }
+    let report: HostListenerReport = match read_private_json(report_path) {
+        Ok(report) => report,
+        Err(error) => {
+            diagnostic.report = ReportObservation::Unreadable;
+            return Err(error);
+        }
+    };
+    if report.schema != HOST_LISTENER_REPORT_SCHEMA || report.generation != generation {
+        diagnostic.report = ReportObservation::SchemaOrGenerationMismatch;
+        return Err(RunnerError::task_invocation(
+            "managed listener report has an unsupported schema or stale generation",
+        ));
+    }
+    let address = match report.address.parse::<SocketAddr>() {
+        Ok(address) => address,
+        Err(_) => {
+            diagnostic.report = ReportObservation::InvalidAddress;
+            return Err(RunnerError::task_invocation(
+                "managed listener report address is not a socket address",
+            ));
+        }
+    };
+    diagnostic.claimed_address = Some(address);
+    if !address.ip().is_loopback()
+        || address.port() == 0
+        || address.ip() != expected.ip()
+        || (expected.port() != 0 && address.port() != expected.port())
+    {
+        diagnostic.report = ReportObservation::BindMismatch;
+        return Err(RunnerError::task_invocation(
+            "managed listener report does not match its declared loopback bind preference",
+        ));
+    }
+    diagnostic.report = ReportObservation::Accepted;
+    Ok(Some(address))
+}
+
+/// A process that listens on the reserved address but is not in the child
+/// generation. `listening_process_ids` scans this user's processes, so it runs
+/// only once a generation has already failed to take its own reservation.
+fn foreign_listener_owner(
+    address: SocketAddr,
+    candidates: &[u32],
+    diagnostic: &mut HostListenerDiagnostic,
+) -> Option<u32> {
+    let owners = effigy_gateway::socket_ownership::listening_process_ids(&GatewayEndpoint {
+        transport: GatewayTransport::Tcp,
+        addr: address,
+    })
+    .ok()?;
+    let foreign = owners.into_iter().find(|pid| !candidates.contains(pid))?;
+    diagnostic.ownership = OwnershipObservation::ListenerOutsideGeneration;
+    diagnostic.observed_listener_pid = Some(foreign);
+    Some(foreign)
+}
+
+fn listener_readiness_timeout(
+    timeout: Duration,
+    expected: SocketAddr,
+    observed: &BTreeSet<SocketAddr>,
+) -> RunnerError {
+    let mut message = format!(
+        "timed out after {}s waiting for an owned ready managed host listener at {expected}",
         timeout.as_secs()
-    ))
+    );
+    if !observed.is_empty() {
+        let observed = observed
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        message.push_str(&format!(
+            "; the child generation listens on {observed} instead"
+        ));
+    }
+    RunnerError::task_invocation(message)
 }
 
 /// A recorded process identity that could not be confirmed. `Unavailable`
@@ -3580,6 +3705,34 @@ mod tests {
             }
             _ => None,
         }
+    }
+
+    /// A failed generation names the reserved address and every other address
+    /// its child generation actually served, so a listener bound elsewhere is
+    /// diagnosed instead of only timing out (effigy#334).
+    #[test]
+    fn host_process_listener_summary_names_expected_and_observed_addresses() {
+        let mut diagnostic = HostListenerDiagnostic {
+            report: ReportObservation::Absent,
+            ownership: OwnershipObservation::NoOwnerObserved,
+            ..HostListenerDiagnostic::default()
+        };
+        assert_eq!(
+            diagnostic.summary(),
+            "report=absent, ownership=no_owner_observed, http_probe=not_attempted, route=not_reached"
+        );
+        diagnostic.expected_address = Some(
+            "127.0.0.1:9400"
+                .parse::<SocketAddr>()
+                .expect("reserved address"),
+        );
+        diagnostic.observed_addresses = Some(vec!["0.0.0.0:9500"
+            .parse::<SocketAddr>()
+            .expect("observed address")]);
+        assert_eq!(
+            diagnostic.summary(),
+            "report=absent, ownership=no_owner_observed, expected=127.0.0.1:9400, observed=0.0.0.0:9500, http_probe=not_attempted, route=not_reached"
+        );
     }
 
     /// The reserved listener port reaches the child as `HOST`/`PORT` even when

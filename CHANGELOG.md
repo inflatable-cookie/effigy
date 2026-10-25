@@ -522,6 +522,21 @@ During v0.x, MINOR bumps may include breaking changes.
   settles, so a bundle needs no Python glue for ports, URLs or CA trust. A
   bundle can therefore run its api, jobs, front and admin as declared host
   processes.
+- A managed listener needs no adapter report (effigy#334). When a child writes
+  no `effigy.managed.host-listener-report.v1`, Effigy verifies the address it
+  reserved itself: the exact loopback address must be listening, the socket
+  must belong to the current child generation's process group or descendants,
+  and no other same-user process may share it, after which the declared HTTP
+  readiness request and route publication are unchanged. Any ordinary server
+  that listens on `$HOST`/`$PORT` is a managed listener, so a bundle runs
+  `effigy profile:api` directly instead of wrapping it in a
+  `managed-rust-listener.py`. A report that is written is still used as a claim
+  and must agree with the reserved address. A child that binds another address
+  (`0.0.0.0:<other>`) fails startup with a diagnostic naming the reserved
+  (`expected_address`) and observed (`observed_addresses`) addresses, and a
+  reserved address held by a process outside the generation is never accepted:
+  startup names that process instead. A failed generation keeps that
+  diagnostic when its restart policy settles it.
 - Host processes are environment-owned kernel runs (effigy#320).
   `[[containers.<env>.host_processes]]` no longer start a `setsid` supervisor
   with PID and spec files and a blocking lifecycle lock. Each process is one

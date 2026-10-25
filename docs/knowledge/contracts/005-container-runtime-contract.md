@@ -273,9 +273,10 @@ mount. This ruling changes no scheduler credential or admission boundary.
 
 `[[containers.<name>.host_processes]]` may opt a process into Effigy's
 language-neutral listener contract. The manifest selects the process, bind
-preference, HTTP readiness request and browser route. Language adapters pass
-the bind preference to their server, bind it strictly, and report the actual
-socket.
+preference, HTTP readiness request and browser route. Effigy reserves the
+address and verifies that the current child generation serves it; an ordinary
+server that listens on the reserved `HOST`/`PORT` needs no adapter. A wrapper
+may still write a versioned report, which Effigy uses as a claim to verify.
 
 ```toml
 [[containers.web.host_processes]]
@@ -298,7 +299,7 @@ domain = "frontend.example.test"
 tls = true
 ```
 
-The adapter receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`,
+The adapter contract receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`,
 `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`, `EFFIGY_MANAGED_HOST_LISTENER_GENERATION`,
 `HOST` and `PORT`, and the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and
 `EFFIGY_HOST_PROCESS_INTERNAL_URL`. `HOST`/`PORT` are the reserved, verified
@@ -330,8 +331,9 @@ Each process also receives the active gateway's CA in `EFFIGY_GATEWAY_CA_FILE`.
 `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` are filled in only when the operator
 has not exported them and the process does not declare them, so an operator
 trust store is never replaced. The gateway contract records which runtimes read
-which variable and why. After binding, the adapter writes a bounded JSON report to the
-provided report file. The generation value must be echoed exactly:
+which variable and why. A report is optional. A wrapper that writes one writes
+a bounded JSON report to the provided report file, echoing the generation value
+exactly:
 
 ```json
 {
@@ -341,12 +343,19 @@ provided report file. The generation value must be echoed exactly:
 }
 ```
 
-Effigy treats the report as a claim to verify. It checks the loopback socket
-against the recorded supervisor, child generation, listener PID/start
-identity, process ancestry and exclusive kernel socket ownership. Only an
-owned listener that passes the declared HTTP readiness request receives a
-gateway route. A successful HTTP response, open-port probe, free-port check,
-or report by itself cannot publish a route.
+Effigy treats a report as a claim to verify. With no report it verifies the
+reserved address by observation: the listening socket must be at exactly the
+reserved loopback address, held by a process in the current child generation's
+process group or descendant set, and not shareable with another same-user
+process. A report that also exists must agree with the reserved address and
+with the observed owner. It checks the loopback socket against the recorded
+supervisor, child generation, listener PID/start identity, process ancestry
+and exclusive kernel socket ownership. Only an owned listener that passes the
+declared HTTP readiness request receives a gateway route. A successful HTTP
+response, open-port probe, free-port check, or report by itself cannot publish a
+route. A child that binds a different address fails startup, and a reserved
+address held by a process outside the generation is refused, naming the
+process that holds it.
 
 Routes publish to the caller's private gateway when
 `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` selects one, and otherwise to the shared
@@ -610,11 +619,15 @@ does not retry within one attempt; the startup deadline governs repeated
 attempts.
 
 A failed generation keeps a `diagnostic` object in its state file after report
-and child cleanup. It records the last startup observation for that exact
+and child cleanup, and a settling supervisor does not replace that evidence with
+a blank terminal record. It records the last startup observation for that exact
 generation: `report` (`not_observed`, `absent`, `unreadable`, `unsafe`,
 `schema_or_generation_mismatch`, `invalid_address`, `bind_mismatch`,
 `accepted`), `claimed_address` (the adapter's loopback claim, when parsed),
-`ownership` (`not_reached`, `no_owner_observed`, `exclusive_owner_observed`,
+`expected_address` (the reserved loopback address Effigy verifies),
+`observed_addresses` (every other TCP address the child generation was seen
+serving, when it bound somewhere else), `ownership` (`not_reached`,
+`no_owner_observed`, `exclusive_owner_observed`,
 `supervisor_unavailable`, `supervisor_changed`, `child_unavailable`,
 `child_changed`, `identity_unavailable`, `identity_changed`,
 `ancestry_changed`, `ancestry_unavailable`, `listener_outside_generation`,
@@ -625,7 +638,7 @@ the recorded identity), `candidates_inspected`, `observed_listener_pid`,
 `malformed_status`, `status_mismatch`, or absent when not attempted),
 `http_status` (only for a parsed status line), and `route` (`not_reached`,
 `prepare_failed`, `ownership_changed`, `publication_failed`). The object has
-exactly these eight fields. It keeps no response body, headers, environment, or
+exactly these ten fields. It keeps no response body, headers, environment, or
 credentials, and it is not replaced by a later observation until the next
 generation starts.
 
