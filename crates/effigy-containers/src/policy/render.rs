@@ -262,7 +262,7 @@ impl Draft {
             serde_json::to_vec(&serde_json::json!({
                 "repo_root":policy.repo_root,"name":policy.name,"profile":policy.profile,
                 "project_name":policy.project_name,"primary_service":policy.primary_service,
-                "backend":super::admission::backend_name(backend),
+                "backend":backend_name(backend),
             }))
             .map_err(error)?,
         );
@@ -280,6 +280,13 @@ impl Draft {
             request: Request::Named(None),
         });
         Ok(())
+    }
+}
+
+fn backend_name(backend: crate::compose::ComposeBackend) -> &'static str {
+    match backend {
+        crate::compose::ComposeBackend::Docker => "docker",
+        crate::compose::ComposeBackend::ColimaNerdctl => "colima-nerdctl",
     }
 }
 

@@ -13,26 +13,14 @@ use effigy_containers::exec::{
 };
 use effigy_containers::{load_container_policy, ContainerAction};
 
-use super::admission::AdmissionContext;
 use crate::runner::environment;
 use crate::runner::error::RunnerError;
 use crate::runner::task_engine::TaskRun;
 
-/// The builder's admitted generation as its environment record names it:
-/// identity changes between inventory and exec refuse the build.
-fn retained_admission(
-    policy: &effigy_containers::EffectiveContainerPolicy,
-) -> Option<(u64, Option<String>, Option<String>)> {
-    environment::record(policy).and_then(|record| {
-        let stopped = record.state == effigy_containers::environment::EnvState::Stopped;
-        (!stopped && (record.last_applied.is_some() || record.partial().is_some())).then(|| {
-            (
-                record.generation.get(),
-                record.last_applied.clone(),
-                record.partial().map(str::to_owned),
-            )
-        })
-    })
+/// Whether the builder's environment is recorded as retained: its record
+/// published `active`, so an existing container is the one it describes.
+fn builder_retained(policy: &effigy_containers::EffectiveContainerPolicy) -> bool {
+    environment::record(policy).is_some_and(|record| record.active())
 }
 
 pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(), RunnerError> {
@@ -73,7 +61,6 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     // labels. Establish them before taking the execution-only source snapshot;
     // this does not publish or replace the retained environment generation.
     policy = effigy_containers::policy::render::prepare_inputs(&policy)?;
-    let mut context = AdmissionContext::workspace_builder(&policy)?;
     // The builder's profile is a managed Colima profile like any other
     // environment: create it when the user deleted it, start it when stopped
     // and restart it when its managed settings drifted. A runtime inventory
@@ -115,11 +102,10 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     // fresh budget afterwards, as it does after a bring-up below.
     environment::import_legacy(repo_root, &policy)?;
     deadline = Instant::now() + Duration::from_secs(15);
-    let mut retained = retained_admission(&policy);
+    let mut retained = builder_retained(&policy).then_some(());
     // A profile Effigy just created or restarted, or a stale owned builder it
-    // removed, discards the container the retained admission was recorded
-    // against. Recreating the builder is the repair that transition owns; the
-    // retained record is void, not a reason to demand a manual `down`.
+    // removed, discards the container the record described. Recreating the
+    // builder is the repair that transition owns.
     if runtime.profile_created_or_restarted || !reconciled.is_empty() {
         retained = None;
     }
@@ -130,11 +116,10 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     )?;
     if rows.is_empty() {
         if retained.is_some() {
-            return Err(RunnerError::task_invocation("workspace artifact builder admission has no matching container; retained state was not removed or adopted"));
+            return Err(RunnerError::task_invocation("workspace artifact builder record has no matching container; retained state was not removed or adopted"));
         }
         // No recovery is needed on first activation. Use the maintained
         // lifecycle path and its existing readiness/deadline/ownership checks.
-        context.verify(repo_root, &policy)?;
         check_interruption()?;
         super::lifecycle::run_container_up(
             repo_root,
@@ -146,8 +131,7 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
             &[],
         )?;
         policy = load_container_policy(repo_root, Some("linux-release"))?;
-        retained = retained_admission(&policy);
-        context = AdmissionContext::workspace_builder(&policy)?;
+        retained = builder_retained(&policy).then_some(());
         deadline = Instant::now() + Duration::from_secs(15);
         rows = list_compose_containers_for_policy_including_stopped_with_deadline(
             repo_root,
@@ -183,10 +167,9 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     if let Some(held) = held.as_mut() {
         held.attach_active()?;
     }
-    context.verify(repo_root, &policy)?;
-    if retained_admission(&policy) != retained {
+    if builder_retained(&policy).then_some(()) != retained {
         return Err(RunnerError::task_invocation(
-            "workspace artifact builder admission changed before build; no exec attempted",
+            "workspace artifact builder environment changed before build; no exec attempted",
         ));
     }
     check_interruption()?;

@@ -71,16 +71,8 @@ pub struct EngineRecord {
     pub retention: Retention,
     /// The Compose project the environment's workloads run under.
     pub project: String,
-    /// The desired digest the reconciler started applying and has not yet
-    /// promoted: a partial activation (replaces `.partial.json`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub applying: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub imported: Option<LegacyImport>,
-    /// The generation of the last stop transition, so a bring-up can tell
-    /// a stop during its integrations from one before it began.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stopped_at: Option<u64>,
 }
 
 impl EngineRecord {
@@ -89,9 +81,7 @@ impl EngineRecord {
             schema: RECORD_SCHEMA.to_owned(),
             retention,
             project: project.to_owned(),
-            applying: None,
             imported: None,
-            stopped_at: None,
         }
     }
 }
@@ -115,8 +105,6 @@ pub struct EnvRecord {
     pub generation: Generation,
     pub state: EnvState,
     pub desired: Option<String>,
-    pub last_applied: Option<String>,
-    pub superseded: Vec<String>,
     pub backend: Option<Observed<BackendSelection>>,
     pub engine: Option<Observed<EngineRecord>>,
     pub holders: Observed<Vec<Holder>>,
@@ -146,11 +134,6 @@ impl EnvRecord {
                 .max_by_key(|reference| reference.seq)
                 .map(|reference| reference.digest.clone())
         };
-        let mut superseded = refs
-            .iter()
-            .filter(|reference| reference.role == "superseded")
-            .collect::<Vec<_>>();
-        superseded.sort_by_key(|reference| std::cmp::Reverse(reference.seq));
         let state = match resource.state.as_deref() {
             Some("active") => EnvState::Active,
             Some("stopped") => EnvState::Stopped,
@@ -174,11 +157,6 @@ impl EnvRecord {
                 generation: resource.generation,
                 state,
                 desired: digest("desired"),
-                last_applied: digest("last_applied"),
-                superseded: superseded
-                    .into_iter()
-                    .map(|reference| reference.digest.clone())
-                    .collect(),
                 backend: resource
                     .backend
                     .as_ref()
@@ -201,11 +179,6 @@ impl EnvRecord {
     /// Attachable at its current generation.
     pub fn active(&self) -> bool {
         self.state == EnvState::Active
-    }
-
-    /// A started apply that never promoted (replaces `.partial.json`).
-    pub fn partial(&self) -> Option<&str> {
-        self.engine().and_then(|record| record.applying.as_deref())
     }
 
     /// Holders that protect the environment (R4): every attached run,

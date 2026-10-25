@@ -252,19 +252,18 @@ version = "16"
             .expect("owned service status")
             .is_none());
     }
-    fn assert_no_recreation(&self, i: usize) {
+    /// The one apply path never stops, restarts or removes a service: Compose
+    /// itself decides what changed.
+    fn assert_no_restart_or_teardown(&self, i: usize) {
         let log = fs::read_to_string(self.stacks[i].root.join("commands.jsonl"))
             .expect("actual commands");
         let args: Vec<Vec<String>> = log
             .lines()
             .map(|line| serde_json::from_str(line).expect("argv receipt"))
             .collect();
-        assert_eq!(
-            args.iter()
-                .filter(|args| args.iter().any(|arg| arg == "up"))
-                .count(),
-            1,
-            "{log}"
+        assert!(
+            args.iter().any(|args| args.iter().any(|arg| arg == "up")),
+            "the apply reached the runtime: {log}"
         );
         assert!(
             !args.iter().any(|args| args
@@ -280,147 +279,6 @@ fn environment_record(fixture: &Fixture, i: usize) -> Value {
     let status = fixture.run(i, &["container", "status", "--json"]);
     let parsed: Value = serde_json::from_slice(&status.stdout).unwrap_or(Value::Null);
     parsed["result"]["environment"]["record"].clone()
-}
-
-#[test]
-fn private_generated_preparation_must_not_adopt_probe_time_drift() {
-    let mut failures = Vec::new();
-    for (direct, mode) in [
-        (false, "probe-manifest-drift"),
-        (false, "probe-compose-drift"),
-        (true, "probe-manifest-drift"),
-    ] {
-        let mut fixture = Fixture::new();
-        if direct {
-            assert!(Command::new("git")
-                .args(["config", "--unset", "effigy.runtimeScope"])
-                .current_dir(&fixture.stacks[0].root)
-                .status()
-                .unwrap()
-                .success());
-            let manifest = fs::read_to_string(fixture.stacks[0].root.join("effigy.toml")).unwrap();
-            let direct_manifest = manifest
-                .split("[containers.web.services.db]")
-                .next()
-                .unwrap()
-                .replace(
-                    "primary_service = \"db\"",
-                    "compose_file = \"compose.yml\"\nprimary_service = \"db\"",
-                );
-            fs::write(fixture.stacks[0].root.join("effigy.toml"), direct_manifest).unwrap();
-            fs::write(
-                fixture.stacks[0].root.join("compose.yml"),
-                format!(
-                    "services:\n  db:\n    image: fixture.invalid/db\n    ports: [\"{}:5432\"]\n",
-                    fixture.stacks[0].port
-                ),
-            )
-            .unwrap();
-        }
-        assert!(fixture
-            .run(1, &["container", "up", "--detach", "--json"])
-            .status
-            .success());
-        assert!(fixture
-            .run(0, &["container", "status", "--json"])
-            .status
-            .success());
-        let mut table = fixture.routes();
-        let mut foreign = table["routes"]
-            .as_object()
-            .unwrap()
-            .values()
-            .next()
-            .unwrap()
-            .clone();
-        let owner = fixture.root.path().join("foreign-admission-owner");
-        fs::create_dir(&owner).unwrap();
-        foreign["domain"] = json!("foreign-admission.fixture.test");
-        foreign["project"] = json!(owner);
-        foreign["source"] = json!("manual");
-        foreign.as_object_mut().unwrap().remove("scope");
-        for field in ["target", "dns_ip", "tcp_port", "tcp_target"] {
-            foreign[field] = Value::Null;
-        }
-        table["routes"]["foreign-admission.fixture.test"] = foreign;
-        fixture.save_routes(table);
-        let before_table = fixture.routes();
-        // The sibling's admitted generation lives in its environment record.
-        let sibling_admission = environment_record(&fixture, 1);
-        fixture.set(0, "mode", json!(mode));
-        let before = fs::read(fixture.stacks[0].root.join("effigy.toml")).unwrap();
-        let output = fixture.run(0, &["container", "up", "--detach", "--json"]);
-        let witness = fixture.stacks[0].root.join("probe-drift.json");
-        assert!(
-            witness.exists(),
-            "real owned runtime probe must reach mutation: {mode}: {output:?}"
-        );
-        let witness: Value = serde_json::from_slice(&fs::read(witness).unwrap()).unwrap();
-        assert_eq!(witness["command"], "ps");
-        assert_ne!(witness["before_sha256"], witness["after_sha256"]);
-        for i in 0..3 {
-            fixture.probe(i);
-            assert_eq!(
-                fs::read_to_string(fixture.stacks[i].root.join("data")).unwrap(),
-                format!("private-data-{i}")
-            );
-            assert_eq!(
-                fs::read_to_string(fixture.stacks[i].root.join("lease-sentinel")).unwrap(),
-                format!("private-lease-{i}")
-            );
-        }
-        let commands = fs::read_to_string(fixture.stacks[0].root.join("commands.jsonl")).unwrap();
-        let calls: Vec<Vec<String>> = commands
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect();
-        let activated = calls.iter().any(|args| {
-            args.iter()
-                .any(|arg| matches!(arg.as_str(), "up" | "restart" | "down" | "rm"))
-        });
-        let after_table = fixture.routes();
-        for (domain, route) in before_table["routes"].as_object().unwrap() {
-            assert_eq!(
-                &after_table["routes"][domain], route,
-                "sibling route must remain unchanged"
-            );
-        }
-        assert_eq!(environment_record(&fixture, 1), sibling_admission);
-        let published = after_table != before_table;
-        println!("{mode}: actual probe witness={witness}; success={}; activation_effect={activated}; publication_effect={published}; backend receipt={commands}", output.status.success());
-        if output.status.success() || activated || published {
-            failures.push(format!("{mode}: changed inputs were admitted after the runtime probe (success={}, activation={activated}, publication={published})", output.status.success()));
-        }
-        // Restore only this fixture's own source; a refusal must allow an
-        // unchanged cold retry, while an unsafe accepted launch remains marked.
-        fs::write(fixture.stacks[0].root.join("effigy.toml"), before).unwrap();
-        let changed_path = PathBuf::from(witness["path"].as_str().unwrap());
-        assert!(changed_path.starts_with(fixture.root.path()));
-        fs::set_permissions(&changed_path, fs::Permissions::from_mode(0o600)).unwrap();
-        fs::write(
-            &changed_path,
-            fs::read(fixture.stacks[0].root.join("probe-original-input")).unwrap(),
-        )
-        .unwrap();
-        if mode == "probe-compose-drift" {
-            fs::set_permissions(&changed_path, fs::Permissions::from_mode(0o400)).unwrap();
-        }
-        fixture.set(0, "mode", json!("ready"));
-        let retry = fixture.run(0, &["container", "up", "--detach", "--json"]);
-        assert!(
-            retry.status.success(),
-            "restored original inputs must support unchanged cold activation: {retry:?}"
-        );
-        fixture.assert_no_recreation(0);
-        assert_eq!(
-            fixture.routes()["routes"]["foreign-admission.fixture.test"],
-            before_table["routes"]["foreign-admission.fixture.test"]
-        );
-        for i in 0..3 {
-            fixture.probe(i);
-        }
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]
@@ -536,7 +394,7 @@ fn private_state_publication_preserves_concurrent_inventory() {
     );
     assert_eq!(fixture.routes()["routes"]["stack2.fixture.test"], before);
     for i in 0..3 {
-        fixture.assert_no_recreation(i);
+        fixture.assert_no_restart_or_teardown(i);
         assert_eq!(
             fs::read_to_string(fixture.stacks[i].root.join("data")).unwrap(),
             format!("private-data-{i}")
@@ -545,41 +403,6 @@ fn private_state_publication_preserves_concurrent_inventory() {
             fs::read_to_string(fixture.stacks[i].root.join("lease-sentinel")).unwrap(),
             format!("private-lease-{i}")
         );
-    }
-}
-
-#[test]
-fn private_manifest_detached_preparation_failure_retains_unavailable_state() {
-    let mut fixture = Fixture::new();
-    let manifest = fixture.stacks[0].root.join("effigy.toml");
-    let original = fs::read_to_string(&manifest).unwrap();
-    fs::write(
-        &manifest,
-        original.replace(
-            "primary_service = \"db\"",
-            "startup = \"detached\"\nprimary_service = \"db\"",
-        ),
-    )
-    .unwrap();
-    fixture.set(0, "mode", json!("probe-manifest-drift"));
-    let output = fixture.run(0, &["container", "up", "--json"]);
-    assert!(!output.status.success(), "{output:?}");
-    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(result["error"]["details"]["state"], "unavailable");
-    assert_eq!(
-        result["error"]["details"]["activation_stage"],
-        "preparation"
-    );
-    assert!(result["error"]["details"]["recovery"].is_null());
-    let commands = fs::read_to_string(fixture.stacks[0].root.join("commands.jsonl")).unwrap();
-    assert!(!commands
-        .lines()
-        .map(|line| serde_json::from_str::<Vec<String>>(line).unwrap())
-        .any(|args| args
-            .iter()
-            .any(|arg| matches!(arg.as_str(), "up" | "restart" | "down" | "rm"))));
-    for i in 0..3 {
-        fixture.probe(i);
     }
 }
 
@@ -669,7 +492,7 @@ fn private_foreign_stopped_sibling_refuses_project_wide_reactivation() {
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(stderr.contains("not proven to belong"), "{stderr}");
     assert!(stderr.contains("container down"), "{stderr}");
-    fixture.assert_no_recreation(0);
+    fixture.assert_no_restart_or_teardown(0);
     fixture.probe(0);
 }
 
@@ -693,7 +516,7 @@ fn private_unscoped_inspect_requires_exact_absence() {
         let refused = fixture.run(0, &["container", "up", "--detach", "--json"]);
         assert!(!refused.status.success(), "{mode}: {refused:?}");
         assert_eq!(fixture.routes(), routes);
-        fixture.assert_no_recreation(0);
+        fixture.assert_no_restart_or_teardown(0);
         for i in 0..3 {
             fixture.probe(i);
         }
@@ -703,11 +526,11 @@ fn private_unscoped_inspect_requires_exact_absence() {
         .run(0, &["container", "up", "--detach"])
         .status
         .success());
-    fixture.assert_no_recreation(0);
+    fixture.assert_no_restart_or_teardown(0);
 }
 
 #[test]
-fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
+fn private_three_scopes_concurrent_resume_replacement_and_cli_refusals() {
     let mut fixture = Fixture::new();
     // Services and persistent exec connections belong to the test, not to any
     // CLI/inventory process group. All three stacks overlap in time.
@@ -765,7 +588,10 @@ fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
     );
     let failed: Value =
         serde_json::from_slice(&outputs[0].stdout).expect("one JSON failure envelope");
-    assert_eq!(failed["error"]["details"]["state"], "partial", "{failed}");
+    assert_eq!(
+        failed["error"]["details"]["state"], "unavailable",
+        "{failed}"
+    );
     assert_eq!(failed["error"]["details"]["readiness"], "unverified");
     for (i, output) in outputs.iter().enumerate().skip(1) {
         // A sibling that was refused before the private transport has no
@@ -864,9 +690,9 @@ fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
     // Warm detached activation also reconciles without a second compose up.
     let warm = fixture.run(0, &["container", "up", "--detach"]);
     assert!(warm.status.success(), "{warm:?}");
-    fixture.assert_no_recreation(0);
+    fixture.assert_no_restart_or_teardown(0);
     for (i, before_id) in before_ids.iter().enumerate().skip(1) {
-        fixture.assert_no_recreation(i);
+        fixture.assert_no_restart_or_teardown(i);
         assert_eq!(fixture.state(i)["id"], *before_id);
         fixture.probe(i);
     }
@@ -912,7 +738,7 @@ fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
         !replacement_routes.contains(&format!("127.0.0.1:{}", fixture.stacks[0].port)),
         "old own target retained"
     );
-    fixture.assert_no_recreation(0);
+    fixture.assert_no_restart_or_teardown(0);
     fixture.probe(0);
     let after_replacement = fixture.routes();
     for (domain, route) in siblings["routes"].as_object().unwrap() {
@@ -931,31 +757,6 @@ fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
         fixture.probe(0);
     }
     fixture.set(0, "mode", json!("ready"));
-    // Establish another partial marker, then change admitted source bytes.
-    fixture.set(0, "mode", json!("unknown"));
-    assert!(!fixture
-        .run(0, &["container", "up", "--detach"])
-        .status
-        .success());
-    fixture.set(0, "mode", json!("ready"));
-    // Warm validation rejected before a marker was written: first obtain an
-    // admitted marker via a failed exec probe instead.
-    fixture.set(0, "mode", json!("exec-fail"));
-    let partial = fixture.run(0, &["container", "up", "--detach"]);
-    assert!(!partial.status.success());
-    assert!(
-        String::from_utf8_lossy(&partial.stderr).contains("partial"),
-        "{partial:?}"
-    );
-    let manifest = fixture.stacks[0].root.join("effigy.toml");
-    let admitted = fs::read_to_string(&manifest).unwrap();
-    fs::write(&manifest, format!("{admitted}\n# drift\n")).unwrap();
-    fixture.set(0, "mode", json!("ready"));
-    let drift = fixture.run(0, &["container", "up", "--detach", "--json"]);
-    assert!(!drift.status.success());
-    assert_eq!(fixture.routes().to_string(), replacement_routes);
-    fixture.assert_no_recreation(0);
-    fs::write(manifest, admitted).unwrap();
     // Noninteractive retire refuses unknown volume ownership and succeeds only
     // for this selected generated scope; actual mutable fixture data is removed.
     fixture.set(0, "mode", json!("volume-unknown"));
@@ -992,7 +793,7 @@ fn private_three_scopes_partial_resume_replacement_and_cli_refusals() {
         );
     }
     println!(
-        "CLI partial={} resume={} replacement={} retire-refusal={} retire-success={}",
+        "CLI interrupted={} resume={} replacement={} retire-refusal={} retire-success={}",
         String::from_utf8_lossy(&outputs[0].stdout),
         String::from_utf8_lossy(&resumed.stdout),
         String::from_utf8_lossy(&replaced.stdout),
@@ -1012,7 +813,7 @@ fn private_startup_failure_and_interruption_withhold_ready_and_cleanup() {
         let result: Value = serde_json::from_slice(&output.stdout).expect("structured failure");
         assert_eq!(result["error"]["details"]["readiness"], "unverified");
         fixture.probe(i);
-        fixture.assert_no_recreation(i);
+        fixture.assert_no_restart_or_teardown(i);
         println!(
             "startup mode {i}: {}",
             String::from_utf8_lossy(&output.stdout)

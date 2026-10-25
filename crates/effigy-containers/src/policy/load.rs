@@ -179,31 +179,6 @@ pub fn prepare_container_policy(
     super::render::prepare_resolved(&policy)
 }
 
-pub fn load_admitted_container_policy(
-    repo_root: &Path,
-    requested_name: Option<&str>,
-) -> Result<(EffectiveContainerPolicy, super::admission::PolicyAdmission), ContainerPolicyError> {
-    super::ports::prepare_endpoint_store()?;
-    let policy = super::render::prepare_inputs(&load_container_policy(repo_root, requested_name)?)?;
-    let admission = super::admission::PolicyAdmission::capture(&policy)?;
-    Ok((policy, admission))
-}
-
-pub fn refresh_admitted_container_policy(
-    repo_root: &Path,
-    name: &str,
-    admission: &mut super::admission::PolicyAdmission,
-) -> Result<(EffectiveContainerPolicy, Vec<WorkspaceExtraMountDecision>), ContainerPolicyError> {
-    admission.verify()?;
-    let (observed, decisions) =
-        load_container_policy_with_workspace_decisions(repo_root, Some(name), None, true)?;
-    let policy = super::render::prepare_inputs(&observed)?;
-    admission.context_for_policy(&policy)?;
-    super::render::prepare(&policy)?;
-    super::mounts::prepare_container_mount_sources(&policy)?;
-    Ok((policy, decisions))
-}
-
 fn load_container_policy_with_workspace_decisions(
     repo_root: &Path,
     requested_name: Option<&str>,

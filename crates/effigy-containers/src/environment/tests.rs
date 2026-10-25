@@ -208,10 +208,6 @@ impl Fake {
         self.state.borrow().calls.clone()
     }
 
-    pub(super) fn running(&self) -> Observed<bool> {
-        verified(self.state.borrow().running)
-    }
-
     fn call(&self, action: &str, project: &str) -> Result<(), BackendError> {
         assert_eq!(project, PROJECT, "fake refuses an unmodelled project");
         let mut state = self.state.borrow_mut();
@@ -261,6 +257,8 @@ impl EnvironmentBackend for Fake {
     }
 }
 
+/// The production shape of one bring-up: the apply run, the command's own
+/// integrations, then the activation run.
 pub(super) fn bring_up(
     ctx: &EnvContext<'_>,
     env: &EnvRef,
@@ -269,7 +267,7 @@ pub(super) fn bring_up(
     retention: Retention,
     holders: &[(RunId, AttachMode)],
 ) -> Result<Applied, EnvError> {
-    up(
+    let applied = reconcile(
         ctx,
         env,
         Up {
@@ -277,14 +275,11 @@ pub(super) fn bring_up(
             project: PROJECT,
             backend: &selection(),
             retention,
-            running: fake.running(),
-            adopt: false,
-            drifted: false,
         },
-        holders,
         || fake.apply(),
-        |_| Ok(()),
-    )
+    )?;
+    activate(ctx, env, holders)?;
+    Ok(applied)
 }
 
 pub(super) fn take_down(
@@ -367,7 +362,7 @@ fn record_read_is_pure_and_absent_without_a_store() {
 }
 
 #[test]
-fn up_publishes_applies_promotes_and_reuses_the_running_generation() {
+fn up_applies_once_and_keeps_an_explicit_retention() {
     let home = home();
     let root = root(home.path());
     let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
@@ -381,111 +376,69 @@ fn up_publishes_applies_promotes_and_reuses_the_running_generation() {
     let applied = record(&ctx, &stack);
     assert!(applied.active());
     assert_eq!(applied.desired.as_deref(), Some(render.digest()));
-    assert_eq!(applied.last_applied.as_deref(), Some(render.digest()));
-    assert_eq!(applied.partial(), None);
     assert_eq!(applied.engine().unwrap().retention, Retention::Persistent);
     // Prepare records the backend (#230); a bring-up never writes it.
     assert!(applied.recorded_backend().is_none());
-    // Same render, running: no backend call, still active.
+    // One apply path: a second bring-up converges the backend again, and
+    // Compose decides what (if anything) to recreate.
     assert_eq!(
         bring_up(&ctx, &stack, &fake, &render, Retention::Held, &[]).unwrap(),
-        Applied::Reused
+        Applied::Reconciled
     );
-    assert_eq!(fake.calls(), ["apply"]);
+    assert_eq!(fake.calls(), ["apply", "apply"]);
     // A task's ensure never demotes an explicit up's persistence.
     assert_eq!(
         record(&ctx, &stack).engine().unwrap().retention,
         Retention::Persistent
     );
-    // A changed render reconciles once and supersedes the old generation.
-    let next = closure("two");
+    assert_store_sound(&ctx);
+}
+
+#[test]
+fn a_failed_integration_leaves_nothing_to_clean_up_and_the_next_up_applies() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    let render = closure("one");
     assert_eq!(
-        bring_up(&ctx, &stack, &fake, &next, Retention::Held, &[]).unwrap(),
+        reconcile(
+            &ctx,
+            &stack,
+            Up {
+                render: Some(&render),
+                project: PROJECT,
+                backend: &selection(),
+                retention: Retention::Persistent,
+            },
+            || fake.apply(),
+        )
+        .unwrap(),
         Applied::Reconciled
     );
-    let applied = record(&ctx, &stack);
-    assert_eq!(applied.last_applied.as_deref(), Some(next.digest()));
-    assert_eq!(applied.superseded, [render.digest().to_owned()]);
-    assert_eq!(fake.calls(), ["apply", "apply"]);
-    assert_store_sound(&ctx);
-}
-
-#[test]
-fn mount_drift_reconciles_a_running_generation_it_would_otherwise_reuse() {
-    let home = home();
-    let root = root(home.path());
-    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
-    let stack = env("stack");
-    let fake = Fake::new();
-    let render = closure("one");
-    bring_up(&ctx, &stack, &fake, &render, Retention::Persistent, &[]).unwrap();
-    let drifted = up(
-        &ctx,
-        &stack,
-        Up {
-            render: Some(&render),
-            project: PROJECT,
-            backend: &selection(),
-            retention: Retention::Persistent,
-            running: fake.running(),
-            adopt: false,
-            drifted: true,
-        },
-        &[],
-        || fake.apply(),
-        |_| Ok(()),
-    )
-    .unwrap();
-    assert_eq!(drifted, Applied::Reconciled);
-    assert_eq!(fake.calls(), ["apply", "apply"]);
-    assert!(record(&ctx, &stack).active());
-    assert_store_sound(&ctx);
-}
-
-#[test]
-fn failed_readiness_leaves_a_partial_generation_reused_without_recreation() {
-    let home = home();
-    let root = root(home.path());
-    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
-    let stack = env("stack");
-    let fake = Fake::new();
-    let render = closure("one");
-    let refused = up(
-        &ctx,
-        &stack,
-        Up {
-            render: Some(&render),
-            project: PROJECT,
-            backend: &selection(),
-            retention: Retention::Persistent,
-            running: fake.running(),
-            adopt: false,
-            drifted: false,
-        },
-        &[],
-        || fake.apply(),
-        |_| Err(EnvError::Invalid("route registration failed".into())),
-    );
-    assert!(refused.is_err());
-    let partial = record(&ctx, &stack);
-    assert_eq!(partial.partial(), Some(render.digest()));
-    assert!(!partial.active());
-    // The partial generation reconciles without a second backend apply.
+    // The command's integrations run between the apply and the activation and
+    // can fail; nothing is recorded for them to repair.
+    let failed: Result<(), EnvError> = Err(EnvError::Invalid("route registration failed".into()));
+    assert!(failed.is_err());
+    assert!(!record(&ctx, &stack).active());
+    // The next bring-up reconciles from what is running and activates.
     assert_eq!(
         bring_up(&ctx, &stack, &fake, &render, Retention::Persistent, &[]).unwrap(),
-        Applied::Reused
+        Applied::Reconciled
     );
-    assert_eq!(fake.calls(), ["apply"]);
     assert!(record(&ctx, &stack).active());
+    assert_eq!(fake.calls(), ["apply", "apply"]);
     assert_store_sound(&ctx);
 }
 
 #[test]
 fn backend_outcomes_are_journalled_without_manufacturing_success() {
-    for (outcome, retried_applies) in [
-        // The engine may have acted: retry reuses what is running (O5).
-        (BackendError::Uncertain("timed out".into()), 1),
-        // Verified non-occurrence: the retry applies once.
+    for (outcome, applied_calls) in [
+        // The engine may have acted: the call is recorded, and the retry
+        // converges the backend again.
+        (BackendError::Uncertain("timed out".into()), 2),
+        // Verified non-occurrence: only the retry's call reached the backend.
         (BackendError::NotStarted("colima: not found".into()), 1),
     ] {
         let home = home();
@@ -499,42 +452,13 @@ fn backend_outcomes_are_journalled_without_manufacturing_success() {
             bring_up(&ctx, &stack, &fake, &render, Retention::Held, &[]),
             Err(EnvError::Backend(_))
         ));
-        let partial = record(&ctx, &stack);
-        assert!(!partial.active());
-        assert_eq!(partial.partial(), Some(render.digest()));
+        let failed = record(&ctx, &stack);
+        assert!(!failed.active());
         bring_up(&ctx, &stack, &fake, &render, Retention::Held, &[]).unwrap();
-        assert_eq!(fake.calls().len(), retried_applies);
+        assert_eq!(fake.calls().len(), applied_calls);
         assert!(record(&ctx, &stack).active());
         assert_store_sound(&ctx);
     }
-}
-
-#[test]
-fn an_unknown_inventory_never_authorises_recreation() {
-    let home = home();
-    let root = root(home.path());
-    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
-    let stack = env("stack");
-    let fake = Fake::new();
-    let refused = up(
-        &ctx,
-        &stack,
-        Up {
-            render: Some(&closure("one")),
-            project: PROJECT,
-            backend: &selection(),
-            retention: Retention::Held,
-            running: Observed::Unknown(UnknownReason::Injected),
-            adopt: false,
-            drifted: false,
-        },
-        &[],
-        || fake.apply(),
-        |_| Ok(()),
-    );
-    assert!(matches!(refused, Err(EnvError::Invalid(_))));
-    assert!(fake.calls().is_empty());
-    assert_store_sound(&ctx);
 }
 
 /// The matrix: every transition against a live, an interrupted and an
@@ -552,7 +476,7 @@ fn transitions_refuse_against_live_interrupted_and_unknown_holders() {
             let fake = Fake::new();
             bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
             let mut task = holder(&ctx, "dev", 1);
-            hold(&mut task, &ctx, &stack, Wait::FailFast).unwrap();
+            hold(&mut task, &ctx, &stack, Wait::FailFast, true).unwrap();
             let task = match liveness {
                 "live" => Some(task),
                 "interrupted" => {
@@ -593,7 +517,7 @@ fn transitions_refuse_against_live_interrupted_and_unknown_holders() {
                         let expected = if liveness == "interrupted" {
                             Applied::Reconciled
                         } else {
-                            Applied::KeptForHolders
+                            Applied::HeldByRuns
                         };
                         assert_eq!(applied, expected, "recreate against a {liveness} holder");
                     }),
@@ -713,7 +637,7 @@ fn idle_stop_is_holder_based() {
         .unwrap()
     };
     let mut first = holder(&ctx, "test", 1);
-    let held = hold(&mut first, &ctx, &stack, Wait::FailFast).unwrap();
+    let held = hold(&mut first, &ctx, &stack, Wait::FailFast, true).unwrap();
     assert!(matches!(
         held.mode,
         AttachMode::Exclusive {
@@ -721,7 +645,7 @@ fn idle_stop_is_holder_based() {
         }
     ));
     let mut second = holder(&ctx, "lint", 2);
-    hold(&mut second, &ctx, &stack, Wait::FailFast).unwrap();
+    hold(&mut second, &ctx, &stack, Wait::FailFast, true).unwrap();
     first.finish(WorkloadOutcome::Succeeded).unwrap();
     first.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
     assert_eq!(reap(&fake), Idle::Kept("holders remain"));
@@ -743,7 +667,7 @@ fn idle_stop_is_holder_based() {
     )
     .unwrap();
     let mut borrower = holder(&ctx, "build", 3);
-    let held = hold(&mut borrower, &ctx, &other, Wait::FailFast).unwrap();
+    let held = hold(&mut borrower, &ctx, &other, Wait::FailFast, true).unwrap();
     assert!(matches!(held.mode, AttachMode::Borrow));
     borrower.finish(WorkloadOutcome::Succeeded).unwrap();
     borrower.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
@@ -763,14 +687,14 @@ fn a_stopped_or_unrecorded_environment_cannot_be_held() {
     let stack = env("stack");
     let mut task = holder(&ctx, "dev", 1);
     assert!(matches!(
-        hold(&mut task, &ctx, &stack, Wait::FailFast),
+        hold(&mut task, &ctx, &stack, Wait::FailFast, false),
         Err(HoldError::NotActive)
     ));
     let fake = Fake::new();
     bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
     take_down(&ctx, &stack, Operation::Down, &fake, None).unwrap();
     assert!(matches!(
-        hold(&mut task, &ctx, &stack, Wait::FailFast),
+        hold(&mut task, &ctx, &stack, Wait::FailFast, true),
         Err(HoldError::NotActive)
     ));
     task.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
@@ -790,10 +714,9 @@ fn reset_drops_only_its_own_render_references() {
     reset(&ctx, &stack, &selection(), PROJECT, || fake.stop()).unwrap();
     let reset_record = record(&ctx, &stack);
     assert_eq!(reset_record.desired, None);
-    assert_eq!(reset_record.last_applied, None);
     assert_eq!(reset_record.state, EnvState::Stopped);
     let kept = record(&ctx, &sibling);
-    assert_eq!(kept.last_applied.as_deref(), Some(closure("two").digest()));
+    assert_eq!(kept.desired.as_deref(), Some(closure("two").digest()));
     assert!(kept.active());
     assert_store_sound(&ctx);
 }
@@ -817,7 +740,7 @@ fn a_stalled_transition_excludes_a_concurrent_attach() {
         let root = self::root(&path);
         let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
         let mut task = holder(&ctx, "late", 9);
-        let busy = hold(&mut task, &ctx, &env("stack"), Wait::FailFast);
+        let busy = hold(&mut task, &ctx, &env("stack"), Wait::FailFast, true);
         assert!(matches!(busy, Err(HoldError::Run(_))), "{busy:?}");
         release_tx.send(()).unwrap();
         let waited = hold(
@@ -825,6 +748,7 @@ fn a_stalled_transition_excludes_a_concurrent_attach() {
             &ctx,
             &env("stack"),
             Wait::Until(std::time::Instant::now() + std::time::Duration::from_secs(20)),
+            true,
         );
         assert!(matches!(waited, Err(HoldError::NotActive)), "{waited:?}");
         task.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
@@ -857,7 +781,7 @@ fn a_transition_settles_an_interrupted_holder_before_acting() {
     let fake = Fake::new();
     bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
     let mut task = holder(&ctx, "dev", 1);
-    hold(&mut task, &ctx, &stack, Wait::FailFast).unwrap();
+    hold(&mut task, &ctx, &stack, Wait::FailFast, true).unwrap();
     drop(task);
     let observed = record(&ctx, &stack);
     assert!(matches!(&observed.holders, Observed::Verified(holders, _)
@@ -868,7 +792,7 @@ fn a_transition_settles_an_interrupted_holder_before_acting() {
     successor.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
     // A dead session with no successor is settled by the next transition.
     let mut session = Session::begin(&ctx, &stack, "exec").unwrap();
-    hold(session.run_mut(), &ctx, &stack, Wait::FailFast).unwrap();
+    hold(session.run_mut(), &ctx, &stack, Wait::FailFast, true).unwrap();
     assert!(matches!(
         take_down(&ctx, &stack, Operation::Down, &fake, None),
         Err(EnvError::HeldBy { .. })
@@ -895,8 +819,8 @@ fn a_session_holds_for_a_command_without_a_task_run() {
     let mut first = Session::begin(&ctx, &stack, "exec").unwrap();
     let mut second = Session::begin(&ctx, &stack, "shell").unwrap();
     assert_ne!(first.id(), second.id(), "sessions never share a gate");
-    hold(first.run_mut(), &ctx, &stack, Wait::FailFast).unwrap();
-    hold(second.run_mut(), &ctx, &stack, Wait::FailFast).unwrap();
+    hold(first.run_mut(), &ctx, &stack, Wait::FailFast, true).unwrap();
+    hold(second.run_mut(), &ctx, &stack, Wait::FailFast, true).unwrap();
     assert!(matches!(
         take_down(&ctx, &stack, Operation::Down, &fake, None),
         Err(EnvError::HeldBy { .. })
@@ -912,6 +836,80 @@ fn a_session_holds_for_a_command_without_a_task_run() {
     drop(second);
     assert_eq!(reap(), Idle::Stopped);
     assert_eq!(fake.calls(), ["apply", "stop"]);
+    assert_store_sound(&ctx);
+}
+
+/// An `up` interrupted before activation leaves nothing to clean up: the
+/// next `up` after a manifest edit applies the edit, with no refusal.
+#[test]
+fn an_interrupted_up_after_a_manifest_edit_applies_on_the_next_up() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    assert_eq!(
+        reconcile(
+            &ctx,
+            &stack,
+            Up {
+                render: Some(&closure("one")),
+                project: PROJECT,
+                backend: &selection(),
+                retention: Retention::Persistent,
+            },
+            || fake.apply(),
+        )
+        .unwrap(),
+        Applied::Reconciled
+    );
+    // Interrupted here: no activation ran.
+    assert!(!record(&ctx, &stack).active());
+    // The declaration changed; the next up applies it.
+    let edited = closure("two");
+    assert_eq!(
+        bring_up(&ctx, &stack, &fake, &edited, Retention::Persistent, &[]).unwrap(),
+        Applied::Reconciled
+    );
+    let applied = record(&ctx, &stack);
+    assert!(applied.active());
+    assert_eq!(applied.desired.as_deref(), Some(edited.digest()));
+    assert_eq!(fake.calls(), ["apply", "apply"]);
+    assert_store_sound(&ctx);
+}
+
+/// `hold` asks the runtime whether the project's containers are running, so a
+/// stack deleted behind Effigy's back is never "held" as if it were up.
+#[test]
+fn a_hold_reports_not_active_when_the_runtime_reports_nothing_running() {
+    let home = home();
+    let root = root(home.path());
+    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
+    let stack = env("stack");
+    let fake = Fake::new();
+    bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
+    assert!(record(&ctx, &stack).active());
+    let mut task = holder(&ctx, "dev", 1);
+    assert!(matches!(
+        hold(&mut task, &ctx, &stack, Wait::FailFast, false),
+        Err(HoldError::NotActive)
+    ));
+    // The bring-up that follows starts and attaches it.
+    assert_eq!(
+        bring_up(
+            &ctx,
+            &stack,
+            &fake,
+            &closure("one"),
+            Retention::Held,
+            &[(task.id(), AttachMode::Borrow)],
+        )
+        .unwrap(),
+        Applied::Reconciled
+    );
+    assert!(record(&ctx, &stack).protected());
+    task.finish(WorkloadOutcome::Succeeded).unwrap();
+    task.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
     assert_store_sound(&ctx);
 }
 
@@ -944,49 +942,6 @@ fn backend_selection_records_its_reason_and_unknown_engines_refuse() {
         BackendSelection::from_metadata(&torn),
         Observed::Unknown(_)
     ));
-}
-
-#[test]
-fn a_reconciled_generation_is_not_attachable_until_activation() {
-    let home = home();
-    let root = root(home.path());
-    let ctx = EnvContext::new(&root, CancelToken::default()).unwrap();
-    let stack = env("stack");
-    let fake = Fake::new();
-    bring_up(&ctx, &stack, &fake, &closure("one"), Retention::Held, &[]).unwrap();
-    let mut task = holder(&ctx, "dev", 1);
-    // Between the apply run and activation, the command's integrations run
-    // outside the gate: the new generation is partial, not attachable.
-    up(
-        &ctx,
-        &stack,
-        Up {
-            render: Some(&closure("two")),
-            project: PROJECT,
-            backend: &selection(),
-            retention: Retention::Held,
-            running: fake.running(),
-            adopt: false,
-            drifted: false,
-        },
-        &[],
-        || fake.apply(),
-        |applied| {
-            assert_eq!(applied, Applied::Reconciled);
-            assert!(matches!(
-                hold(&mut task, &ctx, &stack, Wait::FailFast),
-                Err(HoldError::NotActive)
-            ));
-            // A concurrent down during integrations makes activation refuse.
-            take_down(&ctx, &stack, Operation::Down, &fake, None).unwrap();
-            Ok(())
-        },
-    )
-    .expect_err("activation after a concurrent stop");
-    assert_eq!(record(&ctx, &stack).state, EnvState::Stopped);
-    assert_eq!(fake.calls(), ["apply", "apply", "stop"]);
-    task.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
-    assert_store_sound(&ctx);
 }
 
 #[test]

@@ -259,10 +259,9 @@ Direct Compose labels come from the supported ownership override, never from a
 hardcoded checkout in the builder YAML. The maintained
 `workspace:linux:artifact` task uses the builder-only
 `container::workspace_artifact_build(args)` operation. An already running owned
-builder can build current bound source even if its detached admission is partial
-and its input digests changed after an upgrade. This is execution-only recovery:
-the original admission and completion state stay untouched, and no current
-Compose activation is claimed. Ordinary application drift refusal is unchanged.
+builder can build current bound source even after the source changed. This is
+execution-only recovery: it claims no Compose activation, starts nothing and
+stops nothing.
 
 The operation serializes callers with the existing lock machinery, lists the
 selected project including stopped containers, requires exactly one builder,
@@ -288,8 +287,7 @@ The maintained Linux builder uses the stable private Compose project base
 This is a one-time namespace migration from `effigy-linux-release`, not a new
 namespace per source version, upgrade or retry. The first build activates a
 new labelled builder through the existing manager; subsequent builds reuse its
-strictly verified immutable ID, including after partial activation or changed
-source inputs. Artifact paths and the task interface are unchanged.
+strictly verified immutable ID, including after a changed source input. Artifact paths and the task interface are unchanged.
 
 Legacy `effigy-linux-release` containers and their admission records, cache
 volumes and other retained data are left untouched, whether absent, labelled,
@@ -379,8 +377,8 @@ Effigy ownership:
   non-identifier name, a non-UTF-8 value or a carriage return refuses before
   spawning
 - the file is outside the immutable closure, so the generation digest never
-  depends on the state-home path; a detached activation recorded as partial by
-  this failure is reconciled by a plain `effigy container up`
+  depends on the state-home path; an activation that this failure interrupted
+  is reconciled by a plain `effigy container up`
 - Compose's default `.env` lookup is the first Compose file's directory, which
   inside a generation is the sealed object directory and never holds one, so
   naming this file drops no interpolation the invocation had
@@ -391,7 +389,7 @@ Effigy ownership:
 Target compatibility cases:
 
 - `a_vm_hosted_invocation_names_a_file_the_vm_can_read`
-- `a_partial_generation_matches_across_state_home_paths`
+- `a_render_generation_matches_across_state_home_paths`
 - one real-Colima fixture whose Compose stack mounts a generated closure file
   through the render root
 
@@ -462,23 +460,7 @@ requires a missing nonblocking adapter and returns an explicit unsupported
 error.
 
 The private CLI matrix runs three overlapping scoped stacks through production
-adapters, maintains persistent exec sentinel connections, tests partial/warm
+adapters, maintains persistent exec sentinel connections, tests warm
 reconciliation and full-ID/port replacement, and exercises noninteractive
-retirement ownership refusals. Native engine semantics and actual consumer
-admission remain separate from these private command-transport controls.
-
-## Preparation admission interface
-
-`PolicyAdmission` seals declaration fingerprints and selected identity before
-policy generation can observe inventory. The admitted loader and creation
-refresh pass that same snapshot through `PolicyBuildContext`. Generated
-assembly, workspace rewriting and DNS rendering verify the original sources
-and existing artifacts before writes, then record expected rendered-byte
-fingerprints after checking the written output. Workspace decisions come from
-the same guarded renderer invocation; activation retains the resulting paths,
-decisions and admission context. No post-probe declaration is adopted as a new
-baseline, and marked inputs must match before materialization. The snapshot
-also gates runtime/shared-service preparation and feeds the existing locked
-publication checks. These are cooperative checked intervals, not an atomic
-multi-file snapshot or exclusion of source writers; change/restoration between
-reads and changes after the final check remain outside the guarantee.
+retirement ownership refusals. Native engine semantics remain separate from
+these private command-transport controls.
