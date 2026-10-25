@@ -56,6 +56,20 @@ pub(in crate::runner) struct RegisteredGatewayRoute {
     pub(in crate::runner) external_target: bool,
 }
 
+/// `up` starts the gateway when it is not running, so a gateway stopped by a
+/// reboot comes back without a manual `effigy gateway up` first.
+pub(in crate::runner) fn ensure_gateway_running_for_container(
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    if !crate::runner::container_runtime_prep::container_policy_uses_gateway_surface(policy) {
+        return Ok(());
+    }
+    let executable = effigy_containers::session::resolve_effigy_invocation_prefix()
+        .map_err(RunnerError::Cwd)?;
+    let command = effigy_containers::session::managed_gateway_command(&executable);
+    crate::runner::gateway_command::gateway_up_for_managed_task(&command)
+}
+
 pub(in crate::runner) fn register_gateway_routes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -482,6 +496,13 @@ pub(in crate::runner) fn resolve_gateway_tcp_alias_routes_for_container(
 pub(in crate::runner) fn deregister_gateway_routes_for_container(
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<String>, RunnerError> {
+    // `down` releases this checkout's alias IP too, so `up` can take it again
+    // at once and a deleted worktree's address is reusable.
+    let route_table_path = gateway_route_table_path()?;
+    let project_path = policy.repo_root.display().to_string();
+    EndpointStore::for_routes(&route_table_path)
+        .release_loopback_for_path(&project_path)
+        .map_err(|error| gateway_loopback_error("release", error.to_string()))?;
     // Withdrawal needs declared domain identities and the current ownership
     // predicate, never a reconstructed target or a newly assigned host port.
     let mut domains = policy
@@ -499,7 +520,6 @@ pub(in crate::runner) fn deregister_gateway_routes_for_container(
     if domains.is_empty() {
         return Ok(Vec::new());
     }
-    let route_table_path = gateway_route_table_path()?;
     EndpointStore::for_routes(&route_table_path).routes(|table| {
         let project_path = policy.repo_root.display().to_string();
         let removed = domains

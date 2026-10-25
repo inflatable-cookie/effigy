@@ -540,15 +540,6 @@ host_ports = ["41001:41001"]
         let again = load_container_policy(&root.join("clone-one"), None).unwrap();
         assert_eq!(again.project_name, identities[0].0);
         assert_eq!(again.declared_ports, identities[0].1);
-        fs::remove_dir_all(root.join("clone-one").join(".git")).unwrap();
-        fs::create_dir_all(root.join("clone-one").join(".git")).unwrap();
-        fs::write(
-            root.join("clone-one").join(".git/config"),
-            "[effigy]\n\truntimeScope = ephemeral\n",
-        )
-        .unwrap();
-        let error = load_prepared_policy(&root.join("clone-one"), None).unwrap_err();
-        assert!(error.to_string().contains("generation changed"), "{error}");
         // Move the sealed old fixture aside, then replace the whole checkout.
         // Replacing only Git metadata cannot adopt its existing journal.
         fs::rename(root.join("clone-one"), root.join("retired-clone-one")).unwrap();

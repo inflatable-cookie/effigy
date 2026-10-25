@@ -686,6 +686,22 @@ fn complete_container_up_runtime_integrations(
         let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
         return Err(finish_container_up_failure(error, cleanup_result));
     }
+    if let Err(error) = super::support::ensure_pinned_host_ports_available(repo_root, policy) {
+        if plan.attach_mode == EffectiveAttachMode::Detached {
+            return Err(detached_activation_error(policy, error));
+        }
+        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
+        return Err(finish_container_up_failure(error, cleanup_result));
+    }
+    // A gateway stopped by a reboot comes back here: `up` starts or reconciles
+    // it and prints one line naming it.
+    if let Err(error) = super::gateway_registration::ensure_gateway_running_for_container(policy) {
+        if plan.attach_mode == EffectiveAttachMode::Detached {
+            return Err(detached_activation_error(policy, error));
+        }
+        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
+        return Err(finish_container_up_failure(error, cleanup_result));
+    }
     let gateway_routes =
         match super::gateway_registration::register_gateway_routes_for_verified_container(
             repo_root,

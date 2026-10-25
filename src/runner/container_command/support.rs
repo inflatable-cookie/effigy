@@ -325,6 +325,36 @@ patch_alias() {
     script
 }
 
+/// Refuse a manifest-pinned host port another process already holds, naming
+/// the holder. A port this environment's own containers publish is not a
+/// conflict: Compose reuses its own binding.
+pub(super) fn ensure_pinned_host_ports_available(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<(), RunnerError> {
+    if policy.declared_ports.is_empty() {
+        return Ok(());
+    }
+    let owned = effigy_containers::exec::list_running_compose_containers_for_policy(repo_root, policy)
+        .map(|rows| {
+            rows.iter()
+                .flat_map(|row| row.ports.iter())
+                .filter_map(|published| published.split_once("->").map(|(host, _)| host))
+                .filter_map(|host| host.rsplit(':').next())
+                .filter_map(|port| port.trim().parse::<u16>().ok())
+                .collect::<std::collections::BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+    match effigy_containers::policy::ports::pinned_host_port_conflict(
+        &policy.name,
+        &policy.declared_ports,
+        &owned,
+    ) {
+        Some(message) => Err(RunnerError::task_invocation(message)),
+        None => Ok(()),
+    }
+}
+
 /// Shared services come up through the same one apply as the environment's
 /// own stack: `compose up -d --remove-orphans`, with failures propagated.
 pub(super) fn ensure_shared_services_running(
