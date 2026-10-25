@@ -847,16 +847,20 @@
   { id = "managed-scoped-host-routes-runtime", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(scoped_host_routes)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "managed-scoped-host-routes-policy", run = "sh scripts/oxide-selector.sh test -p effigy-containers --lib listener_routes -- --nocapture", timeout_ms = 600000 },
 ] }
-# An ordinary server needs no adapter report (effigy#334): Effigy verifies the
-# reserved address is served by the child generation itself. A plain
+# An ordinary server needs no adapter (effigy#334): readiness is the reserved
+# port answering its own probe. A plain
 # `python3 -m http.server "$PORT" --bind "$HOST"` reaches ready, publishes its
 # route, keeps the reserved port across a restart and settles on `down`; a child
 # bound elsewhere fails naming the reserved port, and so does a reservation
-# another process already answers. A compile that forks short-lived children, a
-# watch-mode respawn, a double fork and a momentary probe miss are all ordinary.
-# Disposable loopback fixtures, a private gateway and a fake Docker backend only.
+# another process already answers. A shipped bundle adapter that refuses to
+# start without `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE` and
+# `EFFIGY_MANAGED_HOST_LISTENER_GENERATION` gets both, writes its report and is
+# ready on the port alone (effigy#349). A compile that forks short-lived
+# children, a watch-mode respawn, a double fork and a momentary probe miss are
+# all ordinary. Disposable loopback fixtures, a private gateway and a fake
+# Docker backend only.
 "test:managed:adapterless-listeners" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "managed-adapterless-listener", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_adapterless_) | test(managed_host_listener_pre_bound_port_) | test(managed_host_listener_is_ready_) | test(managed_host_listener_watch_mode_) | test(managed_host_listener_double_forked_) | test(managed_host_listener_probe_miss_) | test(managed_host_listener_republishes_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
+  { id = "managed-adapterless-listener", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_adapterless_) | test(managed_host_listener_pre_bound_port_) | test(managed_host_listener_adapter_env_) | test(managed_host_listener_is_ready_) | test(managed_host_listener_watch_mode_) | test(managed_host_listener_double_forked_) | test(managed_host_listener_probe_miss_) | test(managed_host_listener_republishes_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
 ] }
 "proof:managed:host-listeners" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "managed-host-listener-cli-proof", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },

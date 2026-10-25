@@ -3,10 +3,12 @@
 //! Effigy waits for the reserved loopback address to answer the declared
 //! readiness request, then publishes the route. These proofs run plain servers
 //! that know nothing about Effigy beyond `HOST`/`PORT`: a plain
-//! `python3 -m http.server` (as Underlay's `effigy profile:api` will), one that
-//! binds a different address, and a reserved port another process already
-//! holds. Disposable loopback fixtures, a private gateway and a fake Docker
-//! backend only; every child is stopped by the fixture that started it.
+//! `python3 -m http.server` (as Underlay's `effigy profile:api` will), a shipped
+//! bundle adapter that needs the report path and generation Effigy supplies and
+//! whose report Effigy never reads, one that binds a different address, and a
+//! reserved port another process already holds. Disposable loopback fixtures, a
+//! private gateway and a fake Docker backend only; every child is stopped by the
+//! fixture that started it.
 use super::*;
 
 const LISTENER_NAME: &str = "web";
@@ -777,4 +779,83 @@ fn managed_host_listener_republishes_its_route_when_the_port_answers_again() {
 
     let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
     assert_success(down);
+}
+
+/// A shipped listener adapter needs the two variables it has always read: the
+/// report path and this generation's token (effigy#349). A fixture that, like
+/// the Underlay bundle's adapters, refuses to start without them binds
+/// `$HOST:$PORT`, writes the report file, reaches ready and publishes its
+/// route. Effigy never reads the report: the address it writes is deliberately
+/// wrong, and readiness is still the reserved port answering its probe.
+#[test]
+fn managed_host_listener_adapter_env_is_supplied_and_the_report_is_never_read() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let setup = AdapterlessSetup::start(fixture, &effects, &foreign_ca, &mut gateway_cleanup);
+    let profile = "adapterless-adapter-env";
+    let domain = "adapterless-adapter-env.host.test";
+    let manifest = format!(
+        "[[containers.web.host_processes]]\nname = {}\nrun = 'exec python3 adapter.py'\nrestart = \"never\"\n\n{}",
+        toml_quote(LISTENER_NAME),
+        listener_declaration(domain, "127.0.0.1:0", 30)
+    );
+    let checkout = adapterless_environment(setup.fixture.path(), profile, &manifest);
+    fs::write(
+        checkout.join("adapter.py"),
+        format!(
+            "{}\nimport sys\nreport = os.environ.get(\"EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE\")\ngeneration = os.environ.get(\"EFFIGY_MANAGED_HOST_LISTENER_GENERATION\")\nif not report or not generation:\n    sys.stderr.write(\"Error: Effigy did not provide the managed listener report file and generation\\n\")\n    sys.exit(1)\n# The adapter contract the shipped bundles use: a versioned report naming the\n# generation it was handed. Its address is deliberately not the one served, so\n# a reader would disagree with the reserved port.\nwith open(report, \"w\") as handle:\n    handle.write('{{\"schema\": \"effigy.managed.host-listener-report.v1\", \"generation\": \"%s\", \"address\": \"0.0.0.0:1\"}}' % generation)\nhttp.server.HTTPServer((host, int(port)), Handler).serve_forever()\n",
+            plain_server("adapter")
+        ),
+    )
+    .expect("fixture adapter script");
+    let cleanup = setup.cleanup(&effects, &checkout, profile);
+    let state_path = listener_state_path(&checkout, profile, LISTENER_NAME);
+    let routes_path = setup.private_gateway.join("routes.json");
+
+    let report = parse_json_success(run_container_cli(
+        &checkout,
+        &cleanup,
+        &["up", "--detach", "--json"],
+    ));
+    assert_eq!(
+        report["managed_host_listeners"][0]["status"], "ready",
+        "{report}"
+    );
+    let state = read_json_file(&state_path);
+    assert_eq!(state["status"], "ready", "{state}");
+    let generation = state["generation"]
+        .as_str()
+        .expect("a ready listener names its generation");
+    let address = state["address"]
+        .as_str()
+        .expect("a ready listener publishes its reserved address");
+    assert!(
+        RouteTable::load(&routes_path)
+            .expect("published routes")
+            .lookup(domain)
+            .is_some_and(|route| route.target.as_deref() == Some(address)),
+        "the adapter's route reaches its reserved address"
+    );
+    let body = curl_https(setup.https_address, &setup.ca_path, domain, "/");
+    assert!(body.contains("adapter"), "{body}");
+
+    // The report the adapter wrote names this generation and its own address;
+    // Effigy supplied the path beside the log and removed nothing early.
+    let report_path = listener_state_path(&checkout, profile, LISTENER_NAME)
+        .with_file_name(format!("{LISTENER_NAME}.{generation}.listener-report.json"));
+    wait_for_path_exists(&report_path, Duration::from_secs(10), "the adapter report");
+    let written = fs::read_to_string(&report_path).expect("adapter report");
+    assert!(written.contains(generation), "{written}");
+    assert!(written.contains("0.0.0.0:1"), "{written}");
+
+    let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
+    assert_success(down);
+    // The report belongs to the generation: stopping it removes the file.
+    assert!(
+        !report_path.exists(),
+        "a stopped generation leaves no adapter report behind: {report_path:?}"
+    );
 }
