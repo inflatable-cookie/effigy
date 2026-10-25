@@ -348,7 +348,7 @@ run_install STUB_OXIDE_OMIT_ARTIFACT=1
 rc=$?
 [ "$rc" -ne 0 ] && ok "missing release artifact fails the install" || fail "missing release artifact exited 0"
 check_contains "missing release artifact is reported" "$out" "missing built effigy release binary"
-check_contains "missing release artifact names the Cargo escape" "$out" "install:local:cargo"
+check_contains "missing release artifact names the Cargo escape" "$out" "EFFIGY_OXIDE_ESCAPE=cargo effigy install:local"
 check_absent "missing release artifact never falls back to Cargo" "$log" "cargo "
 check_snapshot_unchanged "missing release artifact leaves the active install untouched"
 

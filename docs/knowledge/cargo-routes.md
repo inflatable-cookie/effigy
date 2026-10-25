@@ -5,9 +5,7 @@ Status: active. Owner: this file. Guarded by `effigy qa:docs:cargo-routes`.
 Every Effigy route that runs Cargo is exactly one of:
 
 - **transitioned** — it runs through `oxide`, through
-  `scripts/oxide-selector.sh` where it is a selector, and keeps a named
-  `:cargo` escape sibling (`effigy <selector>:cargo`) with the plain-Cargo
-  command;
+  `scripts/oxide-selector.sh` where it is a selector;
 - **pending one-use** — labelled *one-use workspace*, left on Cargo until
   Oxide ships one-use workspace support, because it builds a private
   one-shot workspace with its own `CARGO_TARGET_DIR`;
@@ -18,7 +16,6 @@ Every Effigy route that runs Cargo is exactly one of:
 `qa:docs`) fails on a plain-`cargo` command word in a catalog route or a route
 script that this file does not record, and fails on a row whose route no
 longer runs plain Cargo. Comments, `cargo-*` binaries, `$CARGO`,
-`:cargo`/`-cargo` siblings, the internal `cargo` escape task,
 `EFFIGY_OXIDE_ESCAPE=cargo` and a `scripts/oxide-selector.sh exec -- <tool>`
 route (the nested `cargo` word belongs to the tool Oxide leases) are not
 routes and never need a row.
@@ -30,7 +27,8 @@ routes and never need a row.
   escapes: `EFFIGY_OXIDE_ESCAPE=cargo effigy <selector>` runs the whole
   selector as plain Cargo, and `GITHUB_ACTIONS=true` does the same on hosted
   runners that have no Oxide. A local run without `oxide` fails loudly and
-  names the escape; it never falls back silently.
+  names the escape; it never falls back silently. No selector has a
+  plain-Cargo sibling task: the whole-selector escape is the only one.
 - The built-in test command routes a detected Rust suite the same way:
   `effigy test` runs `oxide nextest run …` (or `oxide test …` for the
   `cargo test` fallback) when `oxide pool describe --json` answers
@@ -60,13 +58,14 @@ routes and never need a row.
 - `install:local` builds this checkout's optimized release binary through
   `oxide build --release --bin effigy` and installs the exact release binary
   Oxide uplifts to `target/release/effigy`; a missing release output fails
-  instead of falling back to another profile or to Cargo. Its escape is
-  `install:local:cargo` (`EFFIGY_OXIDE_ESCAPE=cargo effigy install:local`),
-  which produces the same `target/release/effigy`.
+  instead of falling back to another profile or to Cargo.
+  `EFFIGY_OXIDE_ESCAPE=cargo effigy install:local` runs the same build as plain
+  Cargo and produces the same `target/release/effigy`.
 - `test:install:local` runs the installer's private fixture suite. The fixture
   builds the driver through the same selector and then stubs `oxide` inside the
   fixture, so the suite exercises release-artifact selection without a real
-  release build. Its escape is `test:install:local:cargo`.
+  release build. `EFFIGY_OXIDE_ESCAPE=cargo effigy test:install:local` runs it
+  as plain Cargo.
 - The scan covers every repository-relative script path a catalog route names,
   including a crate-owned one
   (`crates/effigy-kernel/tests/scripts/linux-custody.sh`); `./scripts/x.sh` and
@@ -108,8 +107,7 @@ with `fclonefileat`, which cannot cross from the build volume into the
 checkout's state root (`Cross-device link`). The pin now falls back to a
 verified, read-only copy across filesystems (contract 052 §10.1), so the next
 step admits from a state root on another volume. This is host state, not
-routing, and the same task's `:cargo` sibling behaves identically. The routes
-that used to hit it are `proof:containers:isolated-dirs`,
+routing. The routes that used to hit it are `proof:containers:isolated-dirs`,
 `proof:containers:isolated-mount-points`, `test:containers:generations:cli`,
 `test:containers:generations:consumers` and `test:doctor:git-timeout-proof`;
 they are the ones to re-check on a host that links `target` to another volume.

@@ -27,9 +27,8 @@ pool instead of `target/`, so the bulk of the writes stay off the internal SSD
 - `oxide-selector.sh` — runs one selector's Cargo command through `oxide`. One
   place owns the escape (`EFFIGY_OXIDE_ESCAPE=cargo`) and the hosted-runner rule
   (`GITHUB_ACTIONS=true` uses Cargo, so `.github/workflows` are unchanged).
-- Every routed selector also carries a named `:cargo` sibling in
-  `config/tasks.toml` (`effigy <selector>:cargo`) with the plain-Cargo command
-  it replaced; aggregates point their siblings at sibling leaves.
+- There is no per-selector plain-Cargo sibling task: `EFFIGY_OXIDE_ESCAPE=cargo
+  effigy <selector>` is the one escape.
 - There are no Cargo aliases. A Cargo alias cannot run a wrapper (`!sh` is
   rejected, and `run --bin ...` compiles Effigy's dependency graph with plain
   Cargo first), so the former `qa*`/`prepush-ci` aliases are replaced by the
