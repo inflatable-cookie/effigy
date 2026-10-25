@@ -540,11 +540,6 @@ fn bytes_to_gib_ceil(bytes: u64) -> u64 {
     bytes.saturating_add(BYTES_PER_GIB - 1) / BYTES_PER_GIB
 }
 
-/// Build the compose args for bringing services up in detached mode.
-pub fn compose_up_args(policy: &EffectiveContainerPolicy) -> Vec<OsString> {
-    compose_args(policy, ["up", "-d"])
-}
-
 /// Build the compose args for checking service status.
 pub fn compose_ps_args(policy: &EffectiveContainerPolicy) -> Vec<OsString> {
     compose_args(policy, ["ps"])

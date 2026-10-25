@@ -66,15 +66,7 @@ pub(in crate::runner) fn register_gateway_routes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
-    register_gateway_routes_for_container_with_context(repo_root, policy, None)
-}
-
-pub(in crate::runner) fn register_gateway_routes_for_container_with_context(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    admitted: Option<&super::admission::AdmissionContext>,
-) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
-    register_gateway_routes_for_verified_container(repo_root, policy, admitted, None)
+    register_gateway_routes_for_verified_container(repo_root, policy, None)
 }
 
 /// One gateway domain this environment will claim when it activates, with the
@@ -222,18 +214,9 @@ pub(in crate::runner) fn managed_listener_owner_environment(owner: &str) -> Opti
 pub(in crate::runner) fn register_gateway_routes_for_verified_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    admitted: Option<&super::admission::AdmissionContext>,
     binding: Option<&effigy_containers::exec::VerifiedComposeContainer>,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
-    if let Some(context) = admitted {
-        context.verify(repo_root, policy)?;
-    }
     let rows = wait_for_gateway_service_ports_ready(repo_root, policy)?;
-    #[cfg(test)]
-    publication_test_control(PublicationStage::AfterProbe);
-    if let Some(context) = admitted {
-        context.verify(repo_root, policy)?;
-    }
     if let Some(binding) = binding {
         binding.reverify(
             repo_root,
@@ -255,12 +238,7 @@ pub(in crate::runner) fn register_gateway_routes_for_verified_container(
     validate_gateway_routes_against_rows(repo_root, policy, &routes, &rows)?;
     validate_gateway_routes_against_host_listeners(policy, &routes)?;
     let route_table_path = gateway_route_table_path()?;
-    reconcile_gateway_routes_guarded(
-        &route_table_path,
-        repo_root,
-        &routes,
-        admitted.map(|context| (context, policy)),
-    )?;
+    reconcile_gateway_routes_guarded(&route_table_path, repo_root, &routes)?;
     Ok(routes)
 }
 
@@ -537,35 +515,21 @@ fn reconcile_gateway_routes(
     repo_root: &Path,
     desired: &[RegisteredGatewayRoute],
 ) -> Result<(), RunnerError> {
-    reconcile_gateway_routes_guarded(path, repo_root, desired, None)
+    reconcile_gateway_routes_guarded(path, repo_root, desired)
 }
 
 fn reconcile_gateway_routes_guarded(
     path: &Path,
     repo_root: &Path,
     desired: &[RegisteredGatewayRoute],
-    admitted: Option<(
-        &super::admission::AdmissionContext,
-        &EffectiveContainerPolicy,
-    )>,
 ) -> Result<(), RunnerError> {
     EndpointStore::for_routes(path).routes(|table| {
-        if let Some((context, policy)) = admitted {
-            context.verify(repo_root, policy)?;
-        }
         let project_path = repo_root.display().to_string();
         let scope = gateway_project_scope(&project_path)?;
         validate_gateway_tcp_alias_bindings_in_table(table, repo_root, desired)?;
-        #[cfg(test)]
-        publication_test_control(PublicationStage::BeforePreparation);
-        if let Some((context, policy)) = admitted {
-            context.verify(repo_root, policy)?;
-        }
         for route in desired.iter().filter(|route| route.tls) {
             ensure_gateway_tls_cert(&route.domain)?;
         }
-        #[cfg(test)]
-        publication_test_control(PublicationStage::DuringPreparation);
         let desired_domains = desired
             .iter()
             .map(|route| route.domain.as_str())
@@ -603,12 +567,8 @@ fn reconcile_gateway_routes_guarded(
                 registered: chrono::Utc::now(),
             });
         }
-        if !stale.is_empty() || !desired.is_empty() {
-            #[cfg(test)]
-            publication_test_control(PublicationStage::BeforeSave);
-            if let Some((context, policy)) = admitted {
-                context.verify(repo_root, policy)?;
-            }
+        if stale.is_empty() && desired.is_empty() {
+            return Ok(());
         }
         for route in &stale {
             if route.tls {
@@ -1735,30 +1695,6 @@ fn parse_port_binding(
 
 pub(super) fn gateway_route_table_path() -> Result<PathBuf, RunnerError> {
     Ok(gateway_dir()?.join("routes.json"))
-}
-
-// Internal test-only timing control; never exposed to CLI or environment.
-#[cfg(test)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PublicationStage {
-    AfterProbe,
-    BeforePreparation,
-    DuringPreparation,
-    BeforeSave,
-}
-#[cfg(test)]
-type PublicationControl = Box<dyn FnMut(PublicationStage)>;
-#[cfg(test)]
-thread_local! {
-    static PUBLICATION_CONTROL: std::cell::RefCell<Option<PublicationControl>> = const { std::cell::RefCell::new(None) };
-}
-#[cfg(test)]
-fn publication_test_control(stage: PublicationStage) {
-    PUBLICATION_CONTROL.with(|control| {
-        if let Some(control) = control.borrow_mut().as_mut() {
-            control(stage);
-        }
-    });
 }
 
 #[cfg(test)]

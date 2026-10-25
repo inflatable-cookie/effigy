@@ -108,30 +108,6 @@ pub fn run_container_status(
         runtime_running.then_some(services.as_slice()),
         compose_ps.as_deref(),
     );
-    let (mount_state, mount_details) = if !runtime_running
-        || !services
-            .iter()
-            .any(|service| compose_status_is_running(&service.status))
-    {
-        ("stopped", Vec::new())
-    } else {
-        match effigy_containers::exec::probe_mount_drift(
-            repo_root,
-            &policy,
-            std::time::Instant::now() + std::time::Duration::from_secs(15),
-        ) {
-            Ok(details) => (if details.is_empty() { "clean" } else { "drift" }, details),
-            Err(error) => ("unavailable", vec![error.to_string()]),
-        }
-    };
-    report.json["mount_drift"] =
-        serde_json::json!({"state": mount_state, "details": mount_details});
-    report
-        .success_text
-        .push_str(&format!("\nmount_drift: {mount_state}"));
-    for detail in &mount_details {
-        report.success_text.push_str(&format!("\n[warn] {detail}"));
-    }
     // Compose created nothing for this project, so there is no service row to
     // explain the empty listing. Say so and name the retained up attempt.
     if runtime_running && services.is_empty() {

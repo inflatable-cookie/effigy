@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use effigy_containers::compose::compose_args;
+use effigy_containers::compose::compose_up_args;
 use effigy_containers::EffectiveContainerPolicy;
 
 use crate::runner::container_command::support::reconcile_primary_service_tcp_alias_hosts;
@@ -16,6 +16,8 @@ pub(super) fn prepare_runtime_mounts_stage(
     prepare_host_bind_mount_dirs(repo_root, policy)
 }
 
+/// The one apply, for a task's own stack preparation: the same invocation
+/// `container up` runs, and a failure is an error naming the compose output.
 pub(super) fn run_runtime_compose_up_stage(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -25,22 +27,19 @@ pub(super) fn run_runtime_compose_up_stage(
         &[std::ffi::OsString],
         &str,
     ) -> Result<(), RunnerError>,
-) {
-    // Best effort, as before: readiness below verifies the outcome. The
-    // environment record keeps the backend this ran on.
-    if let Err(error) = run_compose(
+) -> Result<(), RunnerError> {
+    run_compose(
         repo_root,
         policy,
-        // Reuse prep has no recreation authority, including when its mount
-        // observation was unavailable. Guarded lifecycle up owns reconcile.
-        &compose_args(policy, ["up", "-d", "--no-recreate"]),
-        "docker compose up (idempotent)",
-    ) {
-        eprintln!(
-            "[warn] idempotent compose up for `{}` failed: {error}",
+        &compose_up_args(policy),
+        "docker compose up",
+    )
+    .map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "container `{}` compose up failed: {error}",
             policy.name
-        );
-    }
+        ))
+    })
 }
 
 pub(super) fn ensure_runtime_exec_readiness_stage(

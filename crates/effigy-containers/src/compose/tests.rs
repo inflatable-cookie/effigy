@@ -238,28 +238,21 @@ fn test_policy(compose_source: EffectiveComposeSource) -> EffectiveContainerPoli
 }
 
 #[test]
-fn compose_up_args_force_recreate_generated_compose() {
-    let args = compose_up_args(&test_policy(EffectiveComposeSource::Generated));
-    let rendered = args
-        .iter()
-        .map(|value| value.to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-
-    assert!(rendered.windows(2).any(|window| window == ["up", "-d"]));
-    assert!(rendered.contains(&"--build".to_owned()));
-    assert!(rendered.contains(&"--force-recreate".to_owned()));
-}
-
-#[test]
-fn compose_up_args_leave_direct_compose_without_force_recreate() {
-    let args = compose_up_args(&test_policy(EffectiveComposeSource::Direct));
-    let rendered = args
-        .iter()
-        .map(|value| value.to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-
-    assert!(rendered.contains(&"--build".to_owned()));
-    assert!(!rendered.contains(&"--force-recreate".to_owned()));
+fn compose_up_args_are_one_apply_for_both_sources() {
+    for source in [
+        EffectiveComposeSource::Generated,
+        EffectiveComposeSource::Direct,
+    ] {
+        let args = compose_up_args(&test_policy(source));
+        let rendered = args
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(rendered.windows(2).any(|window| window == ["up", "-d"]));
+        assert!(rendered.contains(&"--remove-orphans".to_owned()));
+        assert!(!rendered.contains(&"--force-recreate".to_owned()));
+        assert!(!rendered.contains(&"--no-recreate".to_owned()));
+    }
 }
 
 #[test]

@@ -1126,8 +1126,8 @@ impl Unremoved {
 /// Removes one scratch tree: only a real directory Effigy named, never a
 /// symlink or a file, and the result is verified before it is reported.
 ///
-/// The tree is made removable first. Effigy's own fixtures publish immutable
-/// state objects under a run's temp directory (mode-0500 directories, mode-0400
+/// The tree is made removable first. Effigy's own fixtures can hold immutable
+/// state objects published by an older build (mode-0500 directories, mode-0400
 /// files), and a plain `remove_dir_all` fails on them with EACCES, which left
 /// the run's effect unsettled and blocked the next run of that task. The repair
 /// descends without following a symlink and without leaving the tree: an entry
@@ -2366,10 +2366,10 @@ mod tests {
         effigy_kernel::id::RunId::new(0, random).expect("run id")
     }
 
-    /// Effigy's own immutable state objects, published under a run's temp
-    /// directory as the kernel publishes them: mode-0500 directories holding
-    /// mode-0400 files, which a plain `remove_dir_all` cannot clear.
-    fn publish_immutable_objects(dir: &Path) {
+    /// Immutable state objects as an older build published them under a run's
+    /// temp directory: mode-0500 directories holding mode-0400 files, which a
+    /// plain `remove_dir_all` cannot clear.
+    fn publish_old_read_only_objects(dir: &Path) {
         let objects = dir.join("state/objects/aa");
         std::fs::create_dir_all(&objects).expect("objects");
         let object = objects.join("blob");
@@ -2386,7 +2386,7 @@ mod tests {
     }
 
     #[test]
-    fn a_released_tree_of_read_only_objects_is_removed_and_leaves_no_residue() {
+    fn a_released_tree_of_old_read_only_objects_is_removed_and_leaves_no_residue() {
         let root = tempfile::tempdir().expect("root");
         let old = now_ms() - RETENTION.as_millis() as i64 - 1;
         let id = run_id(27);
@@ -2398,7 +2398,7 @@ mod tests {
                 ..marker(&id, old, Some(now_ms()))
             },
         );
-        publish_immutable_objects(&dir);
+        publish_old_read_only_objects(&dir);
 
         let releasing = release(&effect(&dir, &id), &cleanup());
         assert!(
@@ -2417,7 +2417,7 @@ mod tests {
                 ..marker(&again, old, Some(now_ms()))
             },
         );
-        publish_immutable_objects(&dir);
+        publish_old_read_only_objects(&dir);
         let released = matches!(
             reconcile(&effect(&dir, &again), &cleanup()),
             Observed::Verified(Reconciled::Released, _)
@@ -2541,7 +2541,7 @@ mod tests {
                 ..marker(&retained, old, Some(old))
             },
         );
-        publish_immutable_objects(&retained_dir);
+        publish_old_read_only_objects(&retained_dir);
         // A run killed before deciding: the journal's close time dates it.
         let crashed = run_id(31);
         let crashed_dir = hold(root.path(), &crashed, None);

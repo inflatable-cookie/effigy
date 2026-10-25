@@ -2,7 +2,7 @@
 //! what its release triggers. This is the attachment surface the run
 //! supervisor uses.
 //!
-//! - `hold` attaches a live run to an active environment under `Gate(Env)`.
+//! - `hold` attaches a live run to a running environment under `Gate(Env)`.
 //!   The holder's own settle releases it (K5); no environment gate is needed
 //!   for that, so a holder and a waiting transition never wait on each other.
 //! - A run that finds the environment inactive asks the apply run to attach
@@ -43,13 +43,15 @@ pub fn mode_for(record: &EnvRecord) -> AttachMode {
     }
 }
 
-/// Attaches `holder` to `env`. The environment must be active; a run that
-/// needs it started asks the environment's apply run to attach it instead.
+/// Attaches `holder` to `env`. `running` is the runtime's own answer to
+/// whether the project's containers are up; a run that needs a stack started
+/// asks the environment's apply run to attach it instead.
 pub fn hold(
     holder: &mut Run<'_>,
     ctx: &EnvContext<'_>,
     env: &EnvRef,
     wait: Wait,
+    running: bool,
 ) -> Result<Hold, HoldError> {
     for _ in 0..2 {
         let record = match EnvRecord::read(&ctx.observe(), ctx.root, &env.resource) {
@@ -61,7 +63,7 @@ pub fn hold(
                 ))))
             }
         };
-        if !record.active() {
+        if !running {
             return Err(HoldError::NotActive);
         }
         let mode = mode_for(&record);
