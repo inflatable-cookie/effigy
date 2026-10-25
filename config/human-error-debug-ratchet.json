@@ -53,7 +53,7 @@
     "src/runner/format_command.rs": 2,
     "src/runner/gateway_command/daemon.rs": 3,
     "src/runner/gateway_command/mod.rs": 2,
-    "src/runner/host_process.rs": 5,
+    "src/runner/host_process.rs": 2,
     "src/runner/managed_run/control.rs": 1,
     "src/runner/managed_run/engine.rs": 3,
     "src/runner/managed_run/settlement.rs": 1,

@@ -299,10 +299,38 @@ tls = true
 ```
 
 The adapter receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`,
-`EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`, and
-`EFFIGY_MANAGED_HOST_LISTENER_GENERATION`. Port `0` requests an OS-assigned
-loopback port. A fixed preference must be bound exactly; collisions fail
-startup. After binding, the adapter writes a bounded JSON report to the
+`EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`, `EFFIGY_MANAGED_HOST_LISTENER_GENERATION`,
+`HOST` and `PORT`, and the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and
+`EFFIGY_HOST_PROCESS_INTERNAL_URL`. `HOST`/`PORT` are the reserved, verified
+address: they replace an ambient value inherited from the caller's environment,
+because a process reading them must bind the port the published route targets.
+Only a value the manifest declares outranks them. Port
+`0` asks Effigy for a concrete port: `container up` reserves one loopback port
+in the environment's generated range through the gateway endpoint store before
+any child launches, passes it as the bind, keeps the assignment across
+supervisor restarts within the run, and releases it when the environment
+settles. A fixed preference is the manifest's own, is never reserved, must be
+bound exactly, and collisions fail startup.
+
+## Host process environment
+
+A host-process `env` value is literal text plus `${...}` references resolved
+from declared environment facts; `$${` writes a literal `${`. Names are
+validated when the container policy loads and an unknown name fails with the
+offending `env` key and the valid names. Values resolve when the process
+starts, after Prepare assigned published ports and after every declared service
+reported ready. The references are `${service.<name>.host}`,
+`${service.<name>.port}`, `${route.<domain>.public_url}`,
+`${host_process.<name>.public_url}`, `${host_process.<name>.internal_url}`,
+`${domains}`, `${apex}` and `${gateway.https_port}`. A value that is not
+knowable yet (an unassigned published port, gateway TLS that is not configured)
+fails at start rather than guessing.
+
+Each process also receives the active gateway's CA in `EFFIGY_GATEWAY_CA_FILE`.
+`NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` are filled in only when the operator
+has not exported them and the process does not declare them, so an operator
+trust store is never replaced. The gateway contract records which runtimes read
+which variable and why. After binding, the adapter writes a bounded JSON report to the
 provided report file. The generation value must be echoed exactly:
 
 ```json
@@ -2415,3 +2443,28 @@ and remote container cancellation. Source 156's launchd handoff remains privatel
 qualified source only; administrator installation, live migration and cross-boot
 proof are Tom-only and unexecuted. Older source, QA and artifact receipts remain
 immutable history.
+
+## nerdctl health-check rendering — 2026-10-24
+
+`nerdctl compose` does not support the Compose `CMD` exec form of a health
+check. It logs that it converts the form and joins the argv with single spaces,
+unquoted, into one `--health-cmd` for `/bin/sh -c`, so an argument holding a
+space or a shell metacharacter changes the command: the dbgate and phpMyAdmin
+probes exited `sh: 1: Syntax error: "(" unexpected` on every interval, and
+every stack containing one stayed unhealthy (effigy#324).
+
+Effigy therefore renders every `services.<name>.healthcheck.test` exec form for
+the nerdctl backend as `["CMD-SHELL", <each argument quoted for /bin/sh>]`. The
+rule lives in the render (`policy::render::healthcheck`), so it covers catalog
+fragments, extracted fragments and project fragments in the one immutable
+generation. `CMD-SHELL`, `NONE` and bare-string checks are left as written, and
+a Docker render keeps the exec form Docker honours.
+
+A stack whose checks use the exec form gets a new nerdctl render digest. That
+is expected: the next `container up` publishes the new generation and Compose
+recreates the containers whose configuration changed (generated stacks already
+pass `--force-recreate`), so the corrected check replaces the broken one.
+
+A catalog check that needs an argument with a space or a metacharacter — a
+`node -e` or `php -r` probe — writes shell form with its own quoting, so it is
+exact on any backend instead of depending on the render's conversion.

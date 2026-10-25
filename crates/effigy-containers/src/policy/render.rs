@@ -13,6 +13,8 @@ pub use publication::{prepare, reset, verify};
 mod vm;
 pub use vm::compose_invocation_args;
 
+mod healthcheck;
+
 pub const ROOT_VARIABLE: &str = "EFFIGY_RENDER_ROOT";
 const ROOT_EXPRESSION: &str = "${EFFIGY_RENDER_ROOT:?Effigy render root is required}";
 
@@ -198,6 +200,13 @@ impl Draft {
         for path in &compose {
             self.read(path)?;
         }
+        // The backend this generation will run on decides one render rule:
+        // nerdctl compose cannot run the `CMD` exec form of a health check.
+        let backend = crate::compose::resolve_declared_backend(
+            &policy.repo_root,
+            &policy.name,
+            policy.driver,
+        );
         let names = self
             .files
             .keys()
@@ -238,6 +247,9 @@ impl Draft {
                 );
                 relocate_build_files(&mut value, &replacements);
                 relocate(&mut value, &replacements);
+                if backend == crate::compose::ComposeBackend::ColimaNerdctl {
+                    healthcheck::normalize_exec_form(&mut value);
+                }
                 serde_yaml::to_string(&value).map_err(error)?.into_bytes()
             } else {
                 bytes
@@ -245,11 +257,15 @@ impl Draft {
             files.insert(names[&path].clone(), bytes);
         }
         files.insert("inputs/manifest.toml".into(), manifest.as_bytes().to_vec());
-        files.insert("inputs/environment.json".into(), serde_json::to_vec(&serde_json::json!({
-            "repo_root":policy.repo_root,"name":policy.name,"profile":policy.profile,
-            "project_name":policy.project_name,"primary_service":policy.primary_service,
-            "backend":super::admission::backend_name(crate::compose::resolve_declared_backend(&policy.repo_root,&policy.name,policy.driver)),
-        })).map_err(error)?);
+        files.insert(
+            "inputs/environment.json".into(),
+            serde_json::to_vec(&serde_json::json!({
+                "repo_root":policy.repo_root,"name":policy.name,"profile":policy.profile,
+                "project_name":policy.project_name,"primary_service":policy.primary_service,
+                "backend":super::admission::backend_name(backend),
+            }))
+            .map_err(error)?,
+        );
         let closure = Closure::new(files).map_err(error)?;
         let path = publication::object_directory(&policy.repo_root)?.join(closure.digest());
         for file in &mut policy.compose_files {

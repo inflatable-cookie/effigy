@@ -121,6 +121,10 @@ fn validate_container_host_processes(
             &[
                 "name",
                 "run",
+                "cwd",
+                "env",
+                "depends_on",
+                "listener",
                 "restart",
                 "restart_delay_ms",
                 "shutdown_signal",
@@ -129,6 +133,18 @@ fn validate_container_host_processes(
         );
         validate_string_field(context, &entry_path, table.get("name"), "name");
         validate_string_field(context, &entry_path, table.get("run"), "run");
+        validate_string_field(context, &entry_path, table.get("cwd"), "cwd");
+        if let Some(env) = table.get("env") {
+            validate_host_process_env(context, &format!("{entry_path}.env"), env);
+        }
+        validate_string_array(
+            context,
+            &format!("{entry_path}.depends_on"),
+            table.get("depends_on"),
+        );
+        if let Some(listener) = table.get("listener") {
+            validate_host_process_listener(context, &format!("{entry_path}.listener"), listener);
+        }
         validate_string_field(context, &entry_path, table.get("restart"), "restart");
         validate_string_field(
             context,
@@ -154,6 +170,90 @@ fn validate_container_host_processes(
                 );
             }
         }
+    }
+}
+
+/// A host process's `env` is literal text plus the resolved-reference syntax
+/// `${service.<name>.host}`, `${service.<name>.port}`,
+/// `${route.<domain>.public_url}`, `${host_process.<name>.public_url}`,
+/// `${host_process.<name>.internal_url}`, `${domains}`, `${apex}` and
+/// `${gateway.https_port}` (effigy#321). Names are validated when the container
+/// policy loads; this schema check only requires string values.
+fn validate_host_process_env(context: &mut SchemaContext<'_, '_>, path: &str, value: &Value) {
+    let Some(env) = require_table(context, path, value, "expected table of strings") else {
+        return;
+    };
+    for (key, entry) in env {
+        if !entry.is_str() {
+            context.unsupported_value(
+                &format!("{path}.{key}"),
+                SchemaContext::value_type(entry),
+                "expected string",
+            );
+        }
+    }
+}
+
+/// The managed listener contract: a loopback bind, a readiness probe and a
+/// gateway route.
+fn validate_host_process_listener(context: &mut SchemaContext<'_, '_>, path: &str, value: &Value) {
+    let Some(listener) = require_table(context, path, value, "expected table") else {
+        return;
+    };
+    validate_allowed_keys(context, path, listener, &["bind", "readiness", "route"]);
+    validate_string_field(context, path, listener.get("bind"), "bind");
+    if let Some(readiness) = listener.get("readiness") {
+        let readiness_path = format!("{path}.readiness");
+        if let Some(table) = require_table(context, &readiness_path, readiness, "expected table") {
+            validate_allowed_keys(
+                context,
+                &readiness_path,
+                table,
+                &["path", "status", "timeout_secs"],
+            );
+            validate_string_field(context, &readiness_path, table.get("path"), "path");
+            validate_integer_field(context, &readiness_path, table.get("status"), "status");
+            validate_integer_field(
+                context,
+                &readiness_path,
+                table.get("timeout_secs"),
+                "timeout_secs",
+            );
+        }
+    }
+    if let Some(route) = listener.get("route") {
+        let route_path = format!("{path}.route");
+        if let Some(table) = require_table(context, &route_path, route, "expected table") {
+            validate_allowed_keys(context, &route_path, table, &["domain", "tls"]);
+            validate_string_field(context, &route_path, table.get("domain"), "domain");
+            if let Some(tls) = table.get("tls") {
+                if tls.as_bool().is_none() {
+                    context.unsupported_value(
+                        &format!("{route_path}.tls"),
+                        SchemaContext::value_type(tls),
+                        "expected boolean",
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn validate_integer_field(
+    context: &mut SchemaContext<'_, '_>,
+    base_path: &str,
+    value: Option<&Value>,
+    field: &str,
+) {
+    let Some(value) = value else {
+        return;
+    };
+    if value.as_integer().is_none() {
+        context.unsupported_value(
+            &format!("{base_path}.{field}"),
+            SchemaContext::value_type(value),
+            "expected integer",
+        );
     }
 }
 

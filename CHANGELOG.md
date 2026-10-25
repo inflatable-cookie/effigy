@@ -476,6 +476,42 @@ During v0.x, MINOR bumps may include breaking changes.
   `simulate --version`. The refusal names the replacement.
 
 ### Added
+- Host processes get resolved environment facts instead of a wrapper script
+  (effigy#321). A `[[containers.<env>.host_processes]]` `env` value may embed
+  `${...}` references to facts Effigy already resolved: a service's published
+  host and port (`${service.<name>.host}`, `${service.<name>.port}`), a
+  route's public origin (`${route.<domain>.public_url}`), another managed
+  listener's URLs (`${host_process.<name>.public_url}`,
+  `${host_process.<name>.internal_url}`), the declared domain set and its
+  shared apex (`${domains}`, `${apex}`), and the gateway's HTTPS port
+  (`${gateway.https_port}`). Names are validated when the container policy
+  loads, so a typo fails naming the `env` key and the valid names; values
+  resolve at start, after Prepare assigned published ports and after every
+  declared service reported ready. A listener process now receives its own
+  `EFFIGY_HOST_PROCESS_PUBLIC_URL`/`EFFIGY_HOST_PROCESS_INTERNAL_URL`, the
+  reserved address as `HOST`/`PORT` (replacing an ambient value; only a value
+  the manifest declares wins), and the active gateway's CA in
+  `EFFIGY_GATEWAY_CA_FILE`, with
+  `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` filled in only when the operator
+  has not set them. A `bind = "127.0.0.1:0"` listener gets a concrete port
+  reserved through the gateway endpoint store before launch: the port survives
+  supervisor restarts within the run and is released when the environment
+  settles, so a bundle needs no Python glue for ports, URLs or CA trust. A
+  bundle can therefore run its api, jobs, front and admin as declared host
+  processes.
+- Host processes are environment-owned kernel runs (effigy#320).
+  `[[containers.<env>.host_processes]]` no longer start a `setsid` supervisor
+  with PID and spec files and a blocking lifecycle lock. Each process is one
+  detached run owned by its own `HostProcess` kernel resource in the
+  environment's checkout journal: `up` starts it after services are ready and
+  in `depends_on` order, waits for its listener readiness and detaches, and
+  `down`, `reset` and session settle stop it through a fenced kernel stop and
+  report every stop (`HostProcessStopReport`) including a process that needed
+  SIGKILL after its grace. A process that exits is recorded with its exit and
+  the last log lines, `container status` (and `--json`) shows each host
+  process's run, state, PID and last exit, and a v0.14.1 PID-file supervisor is
+  stopped by its recorded identity on the next lifecycle command. The log
+  location under `.effigy/runtime/host-processes/` is unchanged.
 - Human-facing feedback has one foundation (effigy#312). `effigy-ui` exports
   `steps`, a step-progress API with short present-tense labels: a terminal
   draws an asynchronous spinner on stderr, each step ends with one `✓`/`✗`
@@ -1345,6 +1381,55 @@ During v0.x, MINOR bumps may include breaking changes.
   directories, with an annotated exemption for guest-side scripts, and
   `docs/guides/069-workspace-host-integration.md` records what does and does
   not follow the scratch directory.
+- A refused heavy run prints the admission hook's own reason and the next
+  command. Human output lifted `cause`/`message` keys that the
+  `effigy.admission.v1` details do not carry, so a deny, a hook crash and a
+  timeout all printed only ``task `<name>` failed``; the refusal's own sentence
+  now names the reason, the run id and the hook variable. The `--json` details
+  are unchanged.
+- A corrupt runtime journal's refusal names its explicit repair: move
+  `kernel.db` and its `-journal`, `-wal` and `-shm` files aside, then retry.
+  Naming only `effigy doctor` left no recovery, because doctor inspects and
+  never repairs.
+- `run stop` treats a run that settled between its status snapshot and the
+  request as already closed instead of refusing. The supervisor fault matrix
+  crosses this boundary at every journal commit, and a concurrent stop, owner
+  death or recovery could otherwise turn the idempotent stop into a false
+  refusal.
+- A task run from a nested catalog directory opens the enclosing checkout's
+  journal again (contract 052 §7.1). The state root was resolved to the nested
+  directory while the Git directory resolved to the enclosing checkout, so the
+  kernel's retained-checkout binding refused every such run as untrusted store
+  state (`resolved Git directory disagrees with checkout`) — including
+  `effigy skill run` from a project inside a repository, and every path that
+  prepares bundle sources or records release authority from a nested catalog.
+  The state root and the Git directory now resolve through the same nearest
+  enclosing `.git`.
+- A `--run-id` pre-check waits out a racing writer's journal instead of
+  refusing the key. Two invocations of one key that start together can find a
+  hot rollback journal while the first is inside its journal transaction; that
+  journal clears when the writer commits, so the check now waits for it to
+  settle (bounded) rather than reporting an unverifiable key. A journal that
+  never settles still reports its own reason.
+- The demo retirement refusal fits one human error line. The `effigy config
+  --target demos` message grew past the 512-byte line, so the renderer
+  truncated it before the `CHANGELOG.md` reference that names where the
+  removal is recorded. The shared conversion recipe is shorter (the full
+  before/after example stays in guide 085), and a test now pins every surface
+  of it to the human line.
+- A health check written as a Compose `CMD` exec form runs as written on
+  `nerdctl compose`. nerdctl does not support the exec form: it joins the argv
+  with spaces, unquoted, into one `/bin/sh -c` command, so an argument holding
+  a space or a shell metacharacter changed meaning or failed to parse — the
+  dbgate and phpMyAdmin probes exited `sh: Syntax error: "(" unexpected` on
+  every interval and no stack containing them ever became healthy. A nerdctl
+  render now writes the shell form itself, quoting every argument, for catalog,
+  extracted and project fragments alike; `CMD-SHELL`, `NONE` and string checks
+  are left as written, and a Docker render keeps the exec form Docker honours.
+  The dbgate and phpMyAdmin catalog checks are written as shell form with their
+  own quoting, so they are right on any backend. A nerdctl render digest
+  changes for a stack whose checks use the exec form; the next `container up`
+  recreates those containers with the corrected check.
 - Every embedded catalog health check runs a tool its image ships, now that
   `container up` waits for every service's own check. `dbgate/dbgate:7.2.3` is
   built on `node:22-bookworm-slim`, which drops `wget` and `curl`, so its probe

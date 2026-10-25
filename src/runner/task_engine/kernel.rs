@@ -12,6 +12,7 @@ use effigy_kernel::ctx::{
     CancelToken, CleanupContext, Deadline, EffectClass, EffectContext, Limits, ObserveContext,
     OpenReason, OperationContext, Placement,
 };
+use effigy_kernel::migration::CheckoutLocation;
 use effigy_kernel::observe::{Observed, UnknownReason};
 use effigy_kernel::outcome::Invocation;
 use effigy_kernel::root::StateRoot;
@@ -221,6 +222,25 @@ pub(super) fn known_roots_view(cx: &ObserveContext) -> Result<RootsView, RunnerE
     Ok(RootsView { roots, omitted })
 }
 
+/// The kernel location of the checkout an invocation root belongs to.
+///
+/// Durable checkout state belongs to the resolved invocation root, not a
+/// nested catalog's cwd (contract 052 §7.1): Git discovery is lexical and
+/// upward, so a nested directory with no `.git` of its own declares no second
+/// checkout and its state belongs to the nearest enclosing one. Resolving both
+/// halves of the location here keeps the state root and the Git directory the
+/// kernel binds in agreement, which is exactly what
+/// `RetainedCheckout::capture` proves.
+pub(in crate::runner) fn checkout_location(root: &Path) -> Result<CheckoutLocation, RunnerError> {
+    let checkout = effigy_core::worktree_scope::checkout_root(root);
+    let git_directory = effigy_core::worktree_scope::git_directory(&checkout)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    Ok(CheckoutLocation {
+        root: checkout,
+        git_directory,
+    })
+}
+
 /// Checkout journals are opened independently; the actual user HOME is only
 /// the migration source and shared machine-store location.
 pub(in crate::runner) fn effects_root(checkout: &Path) -> Result<&'static StateRoot, RunnerError> {
@@ -228,11 +248,7 @@ pub(in crate::runner) fn effects_root(checkout: &Path) -> Result<&'static StateR
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let home =
         state_home().ok_or_else(|| RunnerError::task_invocation("HOME is unset or relative"))?;
-    let location = effigy_kernel::migration::CheckoutLocation {
-        root: checkout.path().into(),
-        git_directory: effigy_core::worktree_scope::git_directory(checkout.path())
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
-    };
+    let location = checkout_location(checkout.path())?;
     // Revalidate before reusing a retained handle: same-path replacement is
     // never permission to write through the previous checkout's descriptor.
     let current = StateRoot::checkout_effects(&effects(), &home, &location)
@@ -241,7 +257,9 @@ pub(in crate::runner) fn effects_root(checkout: &Path) -> Result<&'static StateR
         .get_or_init(Default::default)
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(root) = roots.get(checkout.path()) {
+    // Keyed by the checkout the root belongs to, so every nested catalog in one
+    // checkout reuses that checkout's single retained handle.
+    if let Some(root) = roots.get(&location.root) {
         let identity = |dir: &effigy_kernel::fs::DirFd| {
             dir.identity()
                 .map_err(|error| RunnerError::task_invocation(error.to_string()))
@@ -256,20 +274,16 @@ pub(in crate::runner) fn effects_root(checkout: &Path) -> Result<&'static StateR
         return Ok(root);
     }
     let root = Box::leak(Box::new(current));
-    roots.insert(checkout.path().into(), root);
+    roots.insert(location.root.clone(), root);
     Ok(root)
 }
 
 /// A read-only checkout view never creates state, falls back to another
 /// checkout or opens the legacy machine journal.
 pub(super) fn observe_root(cx: &ObserveContext, checkout: &Path) -> Observed<StateRoot> {
-    let git_directory = match effigy_core::worktree_scope::git_directory(checkout) {
-        Ok(git) => git,
+    let location = match checkout_location(checkout) {
+        Ok(location) => location,
         Err(error) => return Observed::Unknown(UnknownReason::Untrusted(error.to_string())),
-    };
-    let location = effigy_kernel::migration::CheckoutLocation {
-        root: checkout.into(),
-        git_directory,
     };
     match state_home() {
         Some(home) => StateRoot::checkout_observe_in(cx, &home, &location),

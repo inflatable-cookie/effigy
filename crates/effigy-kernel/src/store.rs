@@ -135,7 +135,9 @@ impl std::fmt::Display for StoreError {
             Self::MigrationPending(id) => write!(f, "runtime import {id} is prepared but not sealed; finish migration before using this journal"),
             Self::Corrupt(reason) => write!(
                 f,
-                "the runtime journal is unusable ({reason}); nothing was changed. Run `effigy doctor` to inspect the state root, then retry"
+                "the runtime journal is unusable ({reason}); nothing was changed. The explicit repair \
+                 moves `kernel.db` and its `-journal`, `-wal` and `-shm` files aside: do that, then \
+                 retry; `effigy doctor` reports the state root"
             ),
             Self::Busy { waited, holder } => write!(
                 f,

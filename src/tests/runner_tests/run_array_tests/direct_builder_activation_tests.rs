@@ -92,7 +92,13 @@ case "$subcmd" in
     count=$((count + 1))
     printf "%s\n" "$count" > "$state/inspects"
     id_char="a"
-    if { [ "$mode" = "changing" ] && [ "$count" -gt 1 ]; } || [ -f "$state/replaced" ]; then
+    if [ "$mode" = "changing" ]; then
+      # The container is replaced between any two verifications: every
+      # inspection reports a different full ID, so a binding taken from one
+      # inspection never matches the next verification, however many
+      # inspections the activation makes before it.
+      id_char=$(printf "\\$(printf '%03o' $((97 + (count - 1) % 26)))")
+    elif [ -f "$state/replaced" ]; then
       id_char="b"
     fi
     id=$(printf "%064d" 0 | tr 0 "$id_char")
@@ -547,10 +553,14 @@ fn direct_builder_full_id_replacement_refuses_before_probe_or_restart() {
         .result
         .expect_err("a changed full ID must not be adopted");
     assert!(is_owned_binding_refusal(&error), "{error}");
-    assert!(!outcome
-        .docker_args
-        .lines()
-        .any(|line| line.starts_with("exec ")));
+    assert!(
+        !outcome
+            .docker_args
+            .lines()
+            .any(|line| line.starts_with("exec ")),
+        "no exec may run for a replaced full ID: {}",
+        outcome.docker_args
+    );
     assert!(!outcome.docker_args.contains("restart"));
 }
 

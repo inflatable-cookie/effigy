@@ -1,0 +1,1493 @@
+//! Host processes as environment-owned kernel runs (contract 052 §10.2).
+//!
+//! One detached supervisor per host process owns a run whose owner is the
+//! process's own `HostProcess` resource and whose custody is its process
+//! group. `up` starts the supervisor, waits for its declared readiness and
+//! detaches; `down`, `reset` and idle settle stop the run through the kernel
+//! (a fenced stop request, then settlement as the gate holder) and report a
+//! `HostProcessStopReport`. `status` projects the run journal. The old
+//! PID/spec-file supervisors are stopped by their recorded identities on the
+//! first lifecycle command that meets them.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
+use std::fs;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use effigy_containers::{
+    EffectiveContainerPolicy, EffectiveManagedHostListener, HostProcessEnvFacts,
+};
+use effigy_gateway::endpoint_store::{EndpointStore, ListenerPortRequest};
+use effigy_kernel::ctx::{CleanupContext, EffectClass, EffectContext, OpenReason, Placement};
+use effigy_kernel::gate::GateState;
+use effigy_kernel::id::{CheckoutId, ResolvedInvocation, ResourceId, RunId};
+use effigy_kernel::observe::Observed;
+use effigy_kernel::outcome::Invocation;
+use effigy_kernel::run::{
+    history, settle_interrupted, summary, Effect, Fence, Phase, Reconciled, Request, RequestAction,
+    RunSummary, SettlementAdapter,
+};
+use effigy_kernel::store::Store;
+use serde::{Deserialize, Serialize};
+
+use super::{
+    host_process_dir_for_policy, host_process_state_path, listener_gateway_root,
+    managed_host_process_owner, order_host_processes, read_private_json,
+    stop_legacy_host_processes, HostListenerState, HostProcessRuntimeSpec,
+    ManagedHostListenerResult, HOST_LISTENER_STATE_SCHEMA,
+};
+use crate::runner::error::RunnerError;
+
+/// How long a stop request waits for the live supervisor to act before the
+/// requester settles the run as its gate holder.
+const STOP_PICKUP: Duration = Duration::from_secs(30);
+
+/// One stopped host process, as the environment's stop reported it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(in crate::runner) struct HostProcessStop {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    /// `stopped`, `settled`, `legacy`, `already-stopped` or `failed`.
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signal: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// The kernel `StopReport` a supervisor produced for one generation.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub(in crate::runner) struct CustodyStop {
+    pub pid: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit: Option<i32>,
+    pub group_closed: bool,
+    /// Signals delivered to the group, in order.
+    pub signals: Vec<i32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub residue: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub capture_truncated: bool,
+}
+
+/// The report of one environment stop.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub(in crate::runner) struct HostProcessStopReport {
+    pub environment: String,
+    pub processes: Vec<HostProcessStop>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub residue: Vec<String>,
+}
+
+impl HostProcessStopReport {
+    pub(in crate::runner) fn complete(&self) -> bool {
+        self.residue.is_empty()
+            && self
+                .processes
+                .iter()
+                .all(|process| process.state != "failed")
+    }
+
+    /// The operator-facing lines; a failed stop is named, never dropped.
+    pub(in crate::runner) fn lines(&self) -> Vec<String> {
+        if self.processes.is_empty() && self.residue.is_empty() {
+            return Vec::new();
+        }
+        let mut lines = Vec::new();
+        for process in &self.processes {
+            let mut detail = format!("[host process] {} {}", process.name, process.state);
+            if let Some(run) = &process.run {
+                detail.push_str(&format!(" (run {run}"));
+                if let Some(pid) = process.pid {
+                    detail.push_str(&format!(", pid {pid}"));
+                }
+                if let Some(signal) = &process.signal {
+                    detail.push_str(&format!(", {signal}"));
+                }
+                if let Some(exit) = process.exit {
+                    detail.push_str(&format!(", exit {exit}"));
+                }
+                detail.push(')');
+            } else {
+                if let Some(pid) = process.pid {
+                    detail.push_str(&format!(" (pid {pid}"));
+                    if let Some(signal) = &process.signal {
+                        detail.push_str(&format!(", {signal}"));
+                    }
+                    detail.push(')');
+                }
+            }
+            if let Some(extra) = &process.detail {
+                detail.push_str(&format!(": {extra}"));
+            }
+            lines.push(detail);
+        }
+        for residue in &self.residue {
+            lines.push(format!("[host process] {residue}"));
+        }
+        lines
+    }
+}
+
+/// What `container status` shows for one declared host process.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(in crate::runner) struct HostProcessStatus {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    /// `running`, `interrupted`, `closed`, `legacy` or `absent`.
+    pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_exit: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listener: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log: Option<String>,
+}
+
+/// A host process's own resource: the environment's checkout scope, its own
+/// gate, so `Gate(Env)` is never held for a sidecar's lifetime.
+pub(in crate::runner) fn host_process_resource(
+    policy: &EffectiveContainerPolicy,
+    name: &str,
+) -> Result<ResourceId, RunnerError> {
+    let checkout = effigy_containers::environment::EnvRef::for_policy(policy)
+        .map_err(super::super::environment::error)?
+        .checkout;
+    ResourceId::host_process(checkout, &policy.name, &policy.profile, name)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+}
+
+/// The kernel context a lifecycle command uses for host-process transitions.
+fn effects() -> Result<EffectContext, RunnerError> {
+    Ok(crate::runner::task_engine::effect_context(
+        OpenReason::DevServer,
+    ))
+}
+
+fn observe() -> effigy_kernel::ctx::ObserveContext {
+    crate::runner::task_engine::observe_context(Duration::from_secs(10))
+}
+
+fn cleanup(_cx: &EffectContext) -> Result<CleanupContext, RunnerError> {
+    Ok(crate::runner::task_engine::cleanup_context(
+        Duration::from_secs(120),
+    ))
+}
+
+/// The checkout journal this environment's host process runs live in.
+fn journal_root(repo_root: &Path) -> Result<&'static effigy_kernel::root::StateRoot, RunnerError> {
+    crate::runner::task_engine::checkout_effects_root(repo_root)
+}
+
+fn location(repo_root: &Path) -> Result<effigy_kernel::migration::CheckoutLocation, RunnerError> {
+    Ok(effigy_kernel::migration::CheckoutLocation {
+        root: effigy_core::worktree_scope::checkout_root(repo_root),
+        git_directory: effigy_core::worktree_scope::git_directory(repo_root)
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
+    })
+}
+
+fn observe_root(repo_root: &Path) -> Option<Observed<effigy_kernel::root::StateRoot>> {
+    let home = crate::runner::task_engine::state_home_path()?;
+    let location = location(repo_root).ok()?;
+    Some(effigy_kernel::root::StateRoot::checkout_observe_in(
+        &observe(),
+        &home,
+        &location,
+    ))
+}
+
+/// The kernel's settlement surface for a host-process run: its only effects
+/// are custody effects, which settle from their recorded receipts.
+pub(super) struct HostProcessSettlement;
+
+impl SettlementAdapter for HostProcessSettlement {
+    fn observe(&mut self, _: &Effect, _: &CleanupContext) -> Observed<Fence> {
+        Observed::Unknown(effigy_kernel::observe::UnknownReason::Inconsistent(
+            "a host process run has no adapter effects".into(),
+        ))
+    }
+    fn release(&mut self, _: &Effect, _: &CleanupContext) -> Observed<()> {
+        Observed::Unknown(effigy_kernel::observe::UnknownReason::Inconsistent(
+            "a host process run has no adapter effects".into(),
+        ))
+    }
+    fn reconcile(&mut self, _: &Effect, _: &CleanupContext) -> Observed<Reconciled> {
+        Observed::Unknown(effigy_kernel::observe::UnknownReason::Inconsistent(
+            "a host process run has no adapter effects".into(),
+        ))
+    }
+}
+
+/// The recovery invocation a settled host-process run names.
+pub(super) fn recovery_invocation(environment: &str) -> Result<Invocation, RunnerError> {
+    let mut argv = vec![OsString::from("effigy"), OsString::from("container")];
+    if !environment.is_empty() {
+        argv.push(OsString::from(environment));
+    }
+    argv.push(OsString::from("down"));
+    Invocation::validated(argv, |argv| {
+        argv.len() >= 3
+            && argv[0] == "effigy"
+            && argv[1] == "container"
+            && argv.last().is_some_and(|verb| verb == "down")
+    })
+    .map_err(|_| RunnerError::task_invocation("invalid host-process recovery command"))
+}
+
+/// The run invocation for one host process. The run owns the process's own
+/// gate; the environment resource is never its owner.
+pub(super) fn invocation(
+    checkout: CheckoutId,
+    resource: &ResourceId,
+    spec: &HostProcessRuntimeSpec,
+) -> Result<ResolvedInvocation, RunnerError> {
+    let task = effigy_kernel::id::TaskId::new(
+        checkout,
+        "",
+        effigy_kernel::id::Surface::Published,
+        "host-process",
+        Some(&spec.profile),
+    )
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let argv = vec![
+        OsString::from("effigy"),
+        OsString::from("container"),
+        OsString::from("host-process"),
+        OsString::from(spec.environment.clone()),
+        OsString::from(spec.process_name.clone()),
+    ];
+    ResolvedInvocation::new(effigy_kernel::id::InvocationSpec {
+        task,
+        route: effigy_kernel::id::Route::Task,
+        argv,
+        cwd: String::new(),
+        target: effigy_kernel::id::ExecutionTarget::Host,
+        env: std::collections::BTreeMap::new(),
+        owner: resource.clone(),
+        gates: Vec::new(),
+        attachments: Vec::new(),
+        class: EffectClass::Mutate,
+        placement: Placement::Host,
+        provenance: std::collections::BTreeMap::new(),
+    })
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))
+}
+
+/// Starts (or replaces) the environment's host processes in dependency order.
+///
+/// Each supervisor is a detached kernel run; `up` keeps its owning pipe until
+/// its declared readiness is observed and then detaches. A bring-up that
+/// stops short never leaves a running sidecar: the failing path drops the
+/// owning pipes, which is the kernel's owner-loss stop, and settles what it
+/// started.
+pub(in crate::runner) fn start_host_processes_for_container(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Vec<ManagedHostListenerResult>, RunnerError> {
+    let HostProcessStart { started, listeners } = start_host_processes_inner(repo_root, policy)?;
+    let cx = effects()?;
+    for (name, client) in started {
+        let run = client.run;
+        if let Err(error) = client.detach(&cx, run) {
+            // A process that exits before the bring-up detaches has already
+            // settled its run; there is no owner left to detach, and that is
+            // not a bring-up failure.
+            if run_is_closed(repo_root, run) {
+                continue;
+            }
+            let report = stop_host_processes_for_container(repo_root, policy);
+            return Err(RunnerError::task_invocation(format!(
+                "host process `{name}` could not detach after readiness: {error}{}",
+                if report.complete() {
+                    String::new()
+                } else {
+                    format!(
+                        "\nhost-process rollback could not confirm every stop:\n{}",
+                        report.lines().join("\n")
+                    )
+                }
+            )));
+        }
+    }
+    Ok(listeners)
+}
+
+/// Starts every supervisor and keeps its owning client, without detaching.
+/// Dropping the clients is exactly the client death the kernel treats as an
+/// owner-loss stop; tests use it to prove custody settles both children.
+#[cfg(test)]
+pub(super) fn start_host_processes_owning(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<Vec<(String, effigy_kernel::supervise::SupervisorClient)>, RunnerError> {
+    let HostProcessStart { started, .. } = start_host_processes_inner(repo_root, policy)?;
+    Ok(started)
+}
+
+/// One successful bring-up: the supervisors still held by their owning
+/// clients, and the listener results the caller reports.
+struct HostProcessStart {
+    started: Vec<(String, effigy_kernel::supervise::SupervisorClient)>,
+    listeners: Vec<ManagedHostListenerResult>,
+}
+
+fn start_host_processes_inner(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Result<HostProcessStart, RunnerError> {
+    if policy.host_processes.is_empty() {
+        return Ok(HostProcessStart {
+            started: Vec::new(),
+            listeners: Vec::new(),
+        });
+    }
+    super::validate_host_process_preflight(repo_root, policy)?;
+    let checkout_root = repo_root.canonicalize().map_err(|error| {
+        RunnerError::task_invocation(format!("failed to resolve checkout: {error}"))
+    })?;
+    let project_path = checkout_root.display().to_string();
+    let listener_root = listener_gateway_root(policy)?;
+    let route_table = listener_root
+        .as_deref()
+        .map(|root| root.join("routes.json"));
+    let dir = host_process_dir_for_policy(&checkout_root, policy);
+    super::create_host_process_dir(&checkout_root, &dir)?;
+    // A v0.14.1 PID/spec supervisor is stopped by its recorded identity first;
+    // no new generation shares a checkout with an unmanaged one.
+    stop_legacy_host_processes(repo_root, policy)?;
+    if let Some(route_table) = route_table.as_deref() {
+        for process in policy
+            .host_processes
+            .iter()
+            .filter(|process| process.listener.is_some())
+        {
+            let owner = managed_host_process_owner(&project_path, policy, process)?;
+            effigy_gateway::registration::check_managed_listener_route_claim(
+                route_table,
+                &project_path,
+                &process
+                    .listener
+                    .as_ref()
+                    .expect("filtered listener")
+                    .route_domain,
+                &owner,
+            )
+            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+        }
+    }
+    let cx = effects()?;
+    let state_root = journal_root(&checkout_root)?;
+    let state_home = crate::runner::task_engine::state_home_path().ok_or_else(|| {
+        RunnerError::task_invocation("HOME is unset; host process runs need a checkout journal")
+    })?;
+    let executable = super::super::task_engine::startup_executable()?;
+    let checkout = effigy_containers::environment::EnvRef::for_policy(policy)
+        .map_err(super::super::environment::error)?
+        .checkout;
+    // Resolved environment facts every host-process `env` may reference, and
+    // one concrete loopback port per dynamic listener, reserved through the
+    // gateway endpoint store before any child launches (effigy#321).
+    let mut facts = HostProcessEnvFacts::for_policy(policy)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    facts.set_gateway_https_port(super::super::gateway_command::gateway_https_port());
+    let listener_binds = reserve_listener_binds(policy, &mut facts)?;
+    let ordered = order_host_processes(&policy.host_processes)?;
+    let by_name = policy
+        .host_processes
+        .iter()
+        .map(|process| (process.name.as_str(), process))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut started: Vec<(String, effigy_kernel::supervise::SupervisorClient)> = Vec::new();
+    let mut listener_results = Vec::new();
+    let start_result = (|| -> Result<(), RunnerError> {
+        for hp in ordered {
+            let resource = host_process_resource(policy, &hp.name)?;
+            // A previous generation of this exact process (from an earlier
+            // `up`) is settled before this bring-up replaces it.
+            stop_resource_run(repo_root, policy, &resource, &hp.name, "replace")?;
+            let env = resolved_host_process_environment(hp, &facts)?;
+            let listener = resolved_host_process_listener(hp, &listener_binds);
+            let mut dependencies = Vec::new();
+            for dependency in &hp.depends_on {
+                let dependency_process = by_name.get(dependency.as_str()).ok_or_else(|| {
+                    RunnerError::task_invocation(format!(
+                        "host process `{}` depends on missing process `{dependency}`",
+                        hp.name
+                    ))
+                })?;
+                let state_path = host_process_state_path(&dir, &dependency_process.name);
+                let state = super::wait_for_listener_state(
+                    &state_path,
+                    dependency,
+                    &managed_host_process_owner(&project_path, policy, dependency_process)?,
+                    dependency_process
+                        .listener
+                        .as_ref()
+                        .map(|listener| Duration::from_secs(listener.readiness_timeout_secs))
+                        .unwrap_or(Duration::from_secs(60)),
+                    route_table.as_deref().ok_or_else(|| {
+                        RunnerError::task_invocation(
+                            "managed host listener dependency has no gateway route table",
+                        )
+                    })?,
+                )?;
+                if state.internal_url.is_none() || state.public_url.is_none() {
+                    return Err(RunnerError::task_invocation(format!(
+                        "managed host listener `{dependency}` is ready without current endpoint URLs"
+                    )));
+                }
+                dependencies.push(super::HostProcessDependency {
+                    name: dependency.clone(),
+                    owner: managed_host_process_owner(&project_path, policy, dependency_process)?,
+                    state_file: state_path,
+                    route_table_file: route_table.clone().ok_or_else(|| {
+                        RunnerError::task_invocation(
+                            "managed host listener dependency has no gateway route table",
+                        )
+                    })?,
+                });
+            }
+            let log_file = dir.join(format!("{}.log", super::sanitize(&hp.name)));
+            let spec = HostProcessRuntimeSpec {
+                schema: super::HOST_PROCESS_SPEC_SCHEMA.to_owned(),
+                project_path: project_path.clone(),
+                runtime_generation: super::random_token()?,
+                cwd: super::resolve_host_process_cwd(&checkout_root, hp)?,
+                env,
+                listener,
+                owner: managed_host_process_owner(&project_path, policy, hp)?,
+                dependencies,
+                listener_state_file: host_process_state_path(&dir, &hp.name),
+                gateway_root: listener_root.clone(),
+                environment: policy.name.clone(),
+                profile: policy.profile.clone(),
+                process_name: hp.name.clone(),
+                container_name: policy.name.clone(),
+                run: hp.run.clone(),
+                log_file: log_file.clone(),
+                restart: hp.restart.as_str().to_owned(),
+                restart_delay_ms: hp.restart_delay_ms,
+                shutdown_signal: hp.shutdown_signal.as_str().to_owned(),
+                shutdown_grace_secs: hp.shutdown_grace_secs,
+                checkout: Some(checkout),
+                state_home: state_home.clone(),
+            };
+            let payload = serde_json::to_vec(&spec)
+                .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+            let mut environment: Vec<(OsString, OsString)> = std::env::vars_os()
+                .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
+                .collect();
+            if let Some(passphrase) = crate::runner::secret_session::session_passphrase() {
+                environment.push((
+                    OsString::from(crate::runner::secret_session::internal_secret_passphrase_env()),
+                    OsString::from(passphrase.expose()),
+                ));
+            }
+            let client = effigy_kernel::supervise::start_engine_at(
+                &cx,
+                state_root,
+                effigy_kernel::supervise::EngineLaunch {
+                    payload,
+                    cwd: spec.cwd.clone(),
+                    env: environment,
+                },
+                &executable,
+                effigy_kernel::supervise::ClientMode::Owning,
+            )
+            .map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "host process `{}` did not start its kernel run: {error}",
+                    hp.name
+                ))
+            })?;
+            started.push((hp.name.clone(), client));
+            if let Some(listener) = &hp.listener {
+                let owner = managed_host_process_owner(&project_path, policy, hp)?;
+                let state_path = host_process_state_path(&dir, &hp.name);
+                super::wait_for_listener_activation(
+                    &state_path,
+                    &hp.name,
+                    &spec.runtime_generation,
+                    super::SUPERVISOR_ACTIVATION_PUBLICATION_BOUND,
+                )?;
+                let state = super::wait_for_listener_state(
+                    &state_path,
+                    &hp.name,
+                    &owner,
+                    Duration::from_secs(listener.readiness_timeout_secs)
+                        .saturating_add(super::TERMINAL_PUBLICATION_ALLOWANCE),
+                    route_table.as_deref().ok_or_else(|| {
+                        RunnerError::task_invocation(
+                            "managed host listener has no gateway route table",
+                        )
+                    })?,
+                )?;
+                listener_results.push(ManagedHostListenerResult {
+                    name: hp.name.clone(),
+                    status: state.status,
+                    runtime_generation: state.runtime_generation,
+                    generation: state.generation,
+                    address: state.address.unwrap_or_default(),
+                    internal_url: state.internal_url.unwrap_or_default(),
+                    public_url: state.public_url.unwrap_or_default(),
+                    declared_route_domain: listener.declared_route_domain.clone(),
+                    route_domain: state.route_domain.unwrap_or_default(),
+                    route_tls: listener.route_tls,
+                    state_file: state_path.display().to_string(),
+                });
+            }
+        }
+        Ok(())
+    })();
+    if let Err(error) = start_result {
+        // Dropping the owning pipes without a detach is the kernel's
+        // owner-loss stop; settle explicitly so the refusal is complete before
+        // it returns.
+        drop(started);
+        let report = stop_host_processes_for_container(repo_root, policy);
+        let residue = report.lines();
+        if report.complete() {
+            return Err(error);
+        }
+        return Err(RunnerError::task_invocation(format!(
+            "{error}\nhost-process rollback could not confirm every stop:\n{}",
+            residue.join("\n")
+        )));
+    }
+    // Every declared process is ready. The caller releases the owning pipes
+    // after a successful detach; a dropped client is the kernel's owner-loss
+    // stop.
+    Ok(HostProcessStart {
+        started,
+        listeners: listener_results,
+    })
+}
+
+/// The neutral CA variable every host process receives (effigy#321).
+const GATEWAY_CA_FILE_ENV: &str = "EFFIGY_GATEWAY_CA_FILE";
+/// The runtime trust variables Effigy fills in only when the operator has not.
+const GATEWAY_CA_TRUST_ENVS: [&str; 2] = ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"];
+
+/// One process's complete declared environment: resolved references, the
+/// active gateway's CA trust, and its own managed-listener URLs.
+fn resolved_host_process_environment(
+    process: &effigy_containers::EffectiveHostProcess,
+    facts: &HostProcessEnvFacts,
+) -> Result<BTreeMap<String, String>, RunnerError> {
+    let mut env = facts
+        .resolve(process)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+    env.extend(gateway_ca_environment(&env));
+    if let Some(urls) = facts.host_processes.get(&process.name) {
+        if let Some(public_url) = urls.public_url.as_ref() {
+            env.insert(
+                "EFFIGY_HOST_PROCESS_PUBLIC_URL".to_owned(),
+                public_url.clone(),
+            );
+        }
+        if let Some(internal_url) = urls.internal_url.as_ref() {
+            env.insert(
+                "EFFIGY_HOST_PROCESS_INTERNAL_URL".to_owned(),
+                internal_url.clone(),
+            );
+        }
+    }
+    Ok(env)
+}
+
+/// The active gateway's CA, for the common host runtimes (effigy#321).
+///
+/// `EFFIGY_GATEWAY_CA_FILE` is the neutral name a process reads itself. The
+/// runtime-specific variables are filled in only when the operator has not
+/// already set them in the environment Effigy was started from, and never
+/// over a value the process declares: host Node and Bun read
+/// `NODE_EXTRA_CA_CERTS`, while curl, Python and Ruby read `SSL_CERT_FILE`.
+fn gateway_ca_environment(declared: &BTreeMap<String, String>) -> Vec<(String, String)> {
+    gateway_ca_environment_from(
+        super::super::gateway_command::gateway_ca_file(),
+        declared,
+        |key| std::env::var_os(key).is_some(),
+    )
+}
+
+/// The same decision with its two inputs supplied, so the operator-set rule is
+/// provable without mutating this process's environment.
+fn gateway_ca_environment_from(
+    ca: Option<PathBuf>,
+    declared: &BTreeMap<String, String>,
+    operator_set: impl Fn(&str) -> bool,
+) -> Vec<(String, String)> {
+    let Some(ca) = ca else {
+        return Vec::new();
+    };
+    let ca = ca.display().to_string();
+    let mut env = Vec::new();
+    if !declared.contains_key(GATEWAY_CA_FILE_ENV) {
+        env.push((GATEWAY_CA_FILE_ENV.to_owned(), ca.clone()));
+    }
+    for key in GATEWAY_CA_TRUST_ENVS {
+        if declared.contains_key(key) || operator_set(key) {
+            continue;
+        }
+        env.push((key.to_owned(), ca.clone()));
+    }
+    env
+}
+
+/// A listener declaration with the port this run reserved, if it asked for a
+/// dynamic one.
+fn resolved_host_process_listener(
+    process: &effigy_containers::EffectiveHostProcess,
+    binds: &BTreeMap<String, String>,
+) -> Option<EffectiveManagedHostListener> {
+    let mut listener = process.listener.clone()?;
+    if let Some(bind) = binds.get(&process.name) {
+        listener.bind = bind.clone();
+    }
+    Some(listener)
+}
+
+/// `127.0.0.1:0` asks Effigy for a concrete port; any other port is the
+/// manifest's own and stays untouched.
+fn declared_bind_is_dynamic(bind: &str) -> bool {
+    bind.parse::<SocketAddr>()
+        .is_ok_and(|address| address.port() == 0)
+}
+
+/// Reserve one concrete loopback port per dynamic listener through the
+/// gateway endpoint store, before any child launches, and record each
+/// listener's internal URL as a fact later processes may reference.
+fn reserve_listener_binds(
+    policy: &EffectiveContainerPolicy,
+    facts: &mut HostProcessEnvFacts,
+) -> Result<BTreeMap<String, String>, RunnerError> {
+    let dynamic = policy
+        .host_processes
+        .iter()
+        .filter(|process| {
+            process
+                .listener
+                .as_ref()
+                .is_some_and(|listener| declared_bind_is_dynamic(&listener.bind))
+        })
+        .collect::<Vec<_>>();
+    let mut binds = BTreeMap::new();
+    if dynamic.is_empty() {
+        return Ok(binds);
+    }
+    let store = listener_port_store()?;
+    for process in dynamic {
+        let listener = process
+            .listener
+            .as_ref()
+            .expect("filtered dynamic listener");
+        let address = listener.bind.parse::<SocketAddr>().map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "managed listener bind address is invalid: {error}"
+            ))
+        })?;
+        let port = store
+            .reserve_listener_port(&ListenerPortRequest {
+                project_name: policy.project_name.clone(),
+                project_path: policy.repo_root.display().to_string(),
+                listener: process.name.clone(),
+            })
+            .map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "host process `{}` could not reserve a listener port: {error}",
+                    process.name
+                ))
+            })?;
+        let bind = SocketAddr::new(address.ip(), port);
+        facts.set_listener_internal_url(&process.name, format!("http://{bind}"));
+        binds.insert(process.name.clone(), bind.to_string());
+    }
+    Ok(binds)
+}
+
+fn listener_port_store() -> Result<EndpointStore, RunnerError> {
+    let home = crate::runner::task_engine::state_home_path().ok_or_else(|| {
+        RunnerError::task_invocation(
+            "HOME is unset; a managed listener port needs the machine endpoint store",
+        )
+    })?;
+    Ok(EndpointStore::for_effigy_home(&home.join(".effigy")))
+}
+
+/// Release this environment's listener ports on settle. A failure is residue
+/// the stop report names; a settled environment never silently keeps one.
+fn release_listener_reservations(policy: &EffectiveContainerPolicy) -> Vec<String> {
+    let reserved = policy
+        .host_processes
+        .iter()
+        .filter(|process| {
+            process
+                .listener
+                .as_ref()
+                .is_some_and(|listener| declared_bind_is_dynamic(&listener.bind))
+        })
+        .map(|process| process.name.clone())
+        .collect::<BTreeSet<_>>();
+    if reserved.is_empty() {
+        return Vec::new();
+    }
+    let store = match listener_port_store() {
+        Ok(store) => store,
+        Err(error) => return vec![error.to_string()],
+    };
+    let project_path = policy.repo_root.display().to_string();
+    reserved
+        .into_iter()
+        .filter_map(|name| {
+            store
+                .release_listener_port(&policy.project_name, &project_path, &name)
+                .err()
+                .map(|error| format!("host process `{name}` listener port release failed: {error}"))
+        })
+        .collect()
+}
+
+/// Stops every host process of the environment through the kernel.
+///
+/// Each stop is a fenced request to the live supervisor, then settlement as
+/// the gate holder when the supervisor is gone. A process that will not close
+/// is named with its recorded PID and the signal that was sent; residue is
+/// returned, never dropped.
+pub(in crate::runner) fn stop_host_processes_for_container(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> HostProcessStopReport {
+    let mut report = HostProcessStopReport {
+        environment: policy.name.clone(),
+        processes: Vec::new(),
+        residue: Vec::new(),
+    };
+    if policy.host_processes.is_empty() {
+        return report;
+    }
+    // Legacy supervisors first: their recorded identities are the only
+    // authority to stop them.
+    match stop_legacy_host_processes(repo_root, policy) {
+        Ok(stopped) => report.processes.extend(stopped),
+        Err(error) => report.residue.push(format!(
+            "legacy host-process supervisors could not be stopped: {error}"
+        )),
+    }
+    let mut ordered = order_host_processes(&policy.host_processes)
+        .unwrap_or_else(|_| policy.host_processes.iter().collect::<Vec<_>>());
+    ordered.reverse();
+    for hp in ordered {
+        let Ok(resource) = host_process_resource(policy, &hp.name) else {
+            report.residue.push(format!(
+                "host process `{}` has no resolvable kernel identity",
+                hp.name
+            ));
+            continue;
+        };
+        match stop_resource_run(repo_root, policy, &resource, &hp.name, "stop") {
+            Ok(Some(stop)) => report.processes.push(stop),
+            Ok(None) => {}
+            Err(error) => {
+                report.processes.push(HostProcessStop {
+                    name: hp.name.clone(),
+                    run: None,
+                    state: "failed".to_owned(),
+                    pid: None,
+                    signal: None,
+                    exit: None,
+                    detail: Some(error.to_string()),
+                });
+            }
+        }
+    }
+    report.residue.extend(release_listener_reservations(policy));
+    report
+}
+
+/// Stops the open run of one host-process resource, if any.
+fn stop_resource_run(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    resource: &ResourceId,
+    name: &str,
+    purpose: &str,
+) -> Result<Option<HostProcessStop>, RunnerError> {
+    let Some(run) = latest_open_run(repo_root, resource)? else {
+        return Ok(None);
+    };
+    let run_id = run.id;
+    let generation = run.generation;
+    let cx = effects()?;
+    let state_root = match journal_root(repo_root) {
+        Ok(root) => root,
+        Err(_) => return Ok(None),
+    };
+    let cleanup = cleanup(&cx)?;
+    let request = Request {
+        id: fresh_run_id()?,
+        run: run_id,
+        expected: Fence {
+            resource: resource.clone(),
+            generation,
+        },
+        action: RequestAction::Stop,
+    };
+    let requested = effigy_kernel::run::request(&cx, state_root, &request).is_ok();
+    let deadline = Instant::now() + STOP_PICKUP;
+    while let Ok(Some(current)) = latest_open_run(repo_root, resource) {
+        if current.id != run_id {
+            // A successor generation replaced this one; the predecessor
+            // settled before it could admit.
+            break;
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let closed = matches!(run_summary_of(repo_root, run_id), Some((_, Phase::Closed)));
+    let mut settled = false;
+    if !closed {
+        let next = recovery_invocation(&policy.name)?;
+        let mut adapter = HostProcessSettlement;
+        match settle_interrupted(
+            &cx,
+            state_root,
+            resource,
+            run_id,
+            next,
+            &cleanup,
+            &mut adapter,
+        ) {
+            Ok(_) => settled = true,
+            Err(effigy_kernel::run::RunError::Gate(_)) => {
+                return Ok(Some(HostProcessStop {
+                    name: name.to_owned(),
+                    run: Some(run_id.to_string()),
+                    state: "failed".to_owned(),
+                    pid: custody_pid(repo_root, run_id),
+                    signal: Some("TERM then KILL after grace".to_owned()),
+                    exit: custody_exit(repo_root, run_id),
+                    detail: Some(format!(
+                        "the live kernel run still holds its gate; no signal was sent ({purpose})"
+                    )),
+                }))
+            }
+            Err(error) => {
+                return Ok(Some(HostProcessStop {
+                    name: name.to_owned(),
+                    run: Some(run_id.to_string()),
+                    state: "failed".to_owned(),
+                    pid: custody_pid(repo_root, run_id),
+                    signal: Some("TERM then KILL after grace".to_owned()),
+                    exit: custody_exit(repo_root, run_id),
+                    detail: Some(error.to_string()),
+                }))
+            }
+        }
+    }
+    // A supervisor that stopped itself recorded the exact StopReport.
+    if let Some(report) = read_stop_report(repo_root, policy, name, run_id) {
+        return Ok(Some(HostProcessStop {
+            name: name.to_owned(),
+            run: Some(run_id.to_string()),
+            state: "stopped".to_owned(),
+            pid: Some(report.pid),
+            signal: Some(describe_signals(&report)),
+            exit: report.exit,
+            detail: report
+                .residue
+                .first()
+                .map(|reason| format!("group closure unverified: {reason}")),
+        }));
+    }
+    let pid = custody_pid(repo_root, run_id);
+    let exit = custody_exit(repo_root, run_id);
+    Ok(Some(HostProcessStop {
+        name: name.to_owned(),
+        run: Some(run_id.to_string()),
+        state: if settled { "settled" } else { "stopped" }.to_owned(),
+        pid,
+        signal: if settled || requested {
+            Some("TERM then KILL after grace".to_owned())
+        } else {
+            None
+        },
+        exit,
+        detail: requested.then(|| "settled by the requester as gate holder".to_owned()),
+    }))
+}
+
+fn describe_signals(report: &CustodyStop) -> String {
+    if report.signals.is_empty() {
+        return "no signal needed".to_owned();
+    }
+    let names = report
+        .signals
+        .iter()
+        .map(|signal| signal_name(*signal).to_owned())
+        .collect::<Vec<_>>();
+    names.join(" then ")
+}
+
+/// The newest run of `resource`, open or closed.
+fn latest_run(repo_root: &Path, resource: &ResourceId) -> Option<RunSummary> {
+    let observed = observe_root(repo_root)?;
+    let root = match observed {
+        Observed::Verified(root, _) => root,
+        _ => return None,
+    };
+    let reader = match Store::read(&observe(), &root) {
+        Observed::Verified(reader, _) => reader,
+        _ => return None,
+    };
+    match history(&reader, resource, 1) {
+        Observed::Verified(rows, _) => rows.into_iter().next(),
+        _ => None,
+    }
+}
+
+/// The newest run of `resource` that has not closed.
+fn latest_open_run(
+    repo_root: &Path,
+    resource: &ResourceId,
+) -> Result<Option<RunSummary>, RunnerError> {
+    let Some(observed) = observe_root(repo_root) else {
+        return Ok(None);
+    };
+    let root = match observed {
+        Observed::Verified(root, _) => root,
+        Observed::Absent(_) => return Ok(None),
+        Observed::Unknown(reason) => {
+            return Err(RunnerError::task_invocation(format!(
+                "the environment journal is unavailable ({reason})"
+            )))
+        }
+    };
+    let reader = match Store::read(&observe(), &root) {
+        Observed::Verified(reader, _) => reader,
+        _ => return Ok(None),
+    };
+    let rows = match history(&reader, resource, 4) {
+        Observed::Verified(rows, _) => rows,
+        _ => return Ok(None),
+    };
+    Ok(rows.into_iter().find(|row| row.phase != Phase::Closed))
+}
+
+/// Whether `id` has already closed in the checkout journal.
+fn run_is_closed(repo_root: &Path, id: RunId) -> bool {
+    matches!(run_summary_of(repo_root, id), Some((_, Phase::Closed)))
+}
+
+fn run_summary_of(repo_root: &Path, id: RunId) -> Option<(RunSummary, Phase)> {
+    let observed = observe_root(repo_root)?;
+    let root = match observed {
+        Observed::Verified(root, _) => root,
+        _ => return None,
+    };
+    let reader = match Store::read(&observe(), &root) {
+        Observed::Verified(reader, _) => reader,
+        _ => return None,
+    };
+    match summary(&reader, id) {
+        Observed::Verified(row, _) => Some((row.clone(), row.phase)),
+        _ => None,
+    }
+}
+
+/// Signals actually delivered to the group, as the supervisor recorded them.
+fn read_stop_report(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    name: &str,
+    run: RunId,
+) -> Option<CustodyStop> {
+    let path = stop_report_path(repo_root, policy, name);
+    let report: super::HostProcessStopRecord = read_private_json(&path).ok()?;
+    if report.run != run.to_string() {
+        return None;
+    }
+    report.custody
+}
+
+pub(in crate::runner) fn stop_report_path(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    name: &str,
+) -> PathBuf {
+    host_process_dir_for_policy(repo_root, policy)
+        .join(format!("{}.stop.json", super::sanitize(name)))
+}
+
+/// The recorded leader PID of the newest custody effect of `run`.
+fn custody_pid(repo_root: &Path, run: RunId) -> Option<u32> {
+    custody_effect(repo_root, run).and_then(|receipt| receipt.pid)
+}
+
+/// The recorded exit of the newest custody effect of `run`.
+fn custody_exit(repo_root: &Path, run: RunId) -> Option<i32> {
+    custody_effect(repo_root, run).and_then(|receipt| receipt.exit)
+}
+
+#[derive(Debug, Default)]
+struct ReceiptFacts {
+    pid: Option<u32>,
+    exit: Option<i32>,
+}
+
+fn custody_effect(repo_root: &Path, run: RunId) -> Option<ReceiptFacts> {
+    let observed = observe_root(repo_root)?;
+    let root = match observed {
+        Observed::Verified(root, _) => root,
+        _ => return None,
+    };
+    let reader = match Store::read(&observe(), &root) {
+        Observed::Verified(reader, _) => reader,
+        _ => return None,
+    };
+    let effects = match effigy_kernel::run::effects(&reader, run) {
+        Observed::Verified(effects, _) => effects,
+        _ => return None,
+    };
+    let custody = effects
+        .iter()
+        .rev()
+        .filter(|effect| effect.spec.kind == "kernel:process")
+        .filter_map(|effect| effect.receipt.as_ref())
+        .collect::<Vec<_>>();
+    let pid = custody
+        .first()
+        .and_then(|receipt| receipt.get("pgid"))
+        .and_then(serde_json::Value::as_u64)
+        .map(|pid| pid as u32);
+    // The last exit is the newest generation that actually ended; a running
+    // generation carries no exit until it does.
+    let exit = custody
+        .iter()
+        .find_map(|receipt| receipt.get("exit").and_then(serde_json::Value::as_i64))
+        .map(|exit| exit as i32);
+    Some(ReceiptFacts { pid, exit })
+}
+
+/// `container status` rows: each declared host process's run, state and last
+/// exit, plus a legacy PID-file supervisor that has not been migrated yet.
+pub(in crate::runner) fn host_process_status(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+) -> Vec<HostProcessStatus> {
+    let dir = host_process_dir_for_policy(repo_root, policy);
+    policy
+        .host_processes
+        .iter()
+        .map(|hp| {
+            let state_file = host_process_state_path(&dir, &hp.name);
+            let listener = fs::read(&state_file)
+                .ok()
+                .and_then(|raw| serde_json::from_slice::<HostListenerState>(&raw).ok())
+                .filter(|state| state.schema == HOST_LISTENER_STATE_SCHEMA)
+                .map(|state| state.status);
+            let resource = match host_process_resource(policy, &hp.name) {
+                Ok(resource) => resource,
+                Err(error) => {
+                    return HostProcessStatus {
+                        name: hp.name.clone(),
+                        run: None,
+                        state: "absent".to_owned(),
+                        phase: None,
+                        pid: None,
+                        last_exit: None,
+                        listener,
+                        log: Some(error.to_string()),
+                    }
+                }
+            };
+            let legacy = dir.join(format!("{}.pid", super::sanitize(&hp.name)));
+            if legacy.exists() {
+                let record = read_private_json::<super::HostProcessRecord>(&legacy).ok();
+                return HostProcessStatus {
+                    name: hp.name.clone(),
+                    run: None,
+                    state: "legacy".to_owned(),
+                    phase: None,
+                    pid: record.map(|record| record.pid),
+                    last_exit: None,
+                    listener,
+                    log: Some(format!(
+                        "v0.14.1 PID-file supervisor at {}; the next `up` or `down` stops it by its recorded identity",
+                        legacy.display()
+                    )),
+                };
+            }
+            let Some(run) = latest_run(repo_root, &resource) else {
+                return HostProcessStatus {
+                    name: hp.name.clone(),
+                    run: None,
+                    state: "absent".to_owned(),
+                    phase: None,
+                    pid: None,
+                    last_exit: None,
+                    listener,
+                    log: None,
+                };
+            };
+            let live = matches!(
+                observe_root(repo_root),
+                Some(Observed::Verified(root, _))
+                    if matches!(
+                        effigy_kernel::gate::Gate::probe(&observe(), &root, &resource),
+                        Observed::Verified(GateState::Held(_), _)
+                    )
+            );
+            let state = if run.phase == Phase::Closed {
+                "closed"
+            } else if live {
+                "running"
+            } else {
+                "interrupted"
+            };
+            HostProcessStatus {
+                name: hp.name.clone(),
+                run: Some(run.id.to_string()),
+                state: state.to_owned(),
+                phase: Some(phase_label(run.phase).to_owned()),
+                pid: custody_pid(repo_root, run.id),
+                last_exit: custody_exit(repo_root, run.id).or_else(|| run_exit(&run)),
+                listener,
+                log: Some(hp_log_path(repo_root, policy, &hp.name).display().to_string()),
+            }
+        })
+        .collect()
+}
+
+fn phase_label(phase: Phase) -> &'static str {
+    match phase {
+        Phase::Admitted => "admitted",
+        Phase::Starting => "starting",
+        Phase::Active => "active",
+        Phase::Stopping => "stopping",
+        Phase::Closed => "closed",
+    }
+}
+
+fn run_exit(run: &RunSummary) -> Option<i32> {
+    match run.workload.as_ref()? {
+        effigy_kernel::outcome::WorkloadOutcome::Succeeded => Some(0),
+        effigy_kernel::outcome::WorkloadOutcome::Failed { code } => Some(*code),
+        _ => None,
+    }
+}
+
+fn hp_log_path(repo_root: &Path, policy: &EffectiveContainerPolicy, name: &str) -> PathBuf {
+    host_process_dir_for_policy(repo_root, policy).join(format!("{}.log", super::sanitize(name)))
+}
+
+/// Whether a payload is a host-process supervisor payload (as opposed to a
+/// managed run's own engine payload).
+pub(in crate::runner) fn owns_supervise_payload(payload: &[u8]) -> bool {
+    serde_json::from_slice::<HostProcessRuntimeSpec>(payload).is_ok()
+}
+
+pub(super) fn fresh_run_id() -> Result<RunId, RunnerError> {
+    let milliseconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or_default();
+    let random = super::random_token()?;
+    let bytes = (0..10)
+        .map(|index| u8::from_str_radix(&random[index * 2..index * 2 + 2], 16).unwrap_or_default())
+        .collect::<Vec<_>>();
+    let random: [u8; 10] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| RunnerError::task_invocation("cannot obtain host-process run entropy"))?;
+    RunId::new(milliseconds, random)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))
+}
+
+fn signal_name(signal: i32) -> &'static str {
+    match signal {
+        libc::SIGTERM => "SIGTERM",
+        libc::SIGKILL => "SIGKILL",
+        libc::SIGINT => "SIGINT",
+        libc::SIGHUP => "SIGHUP",
+        libc::SIGCONT => "SIGCONT",
+        _ => "SIG",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use effigy_containers::{
+        EffectiveDnsRoute, EffectiveHostProcess, EffectiveManagedHostListener, HostProcessRestart,
+        HostProcessSignal,
+    };
+
+    fn listener(bind: &str, declared_route_domain: &str) -> EffectiveManagedHostListener {
+        EffectiveManagedHostListener {
+            bind: bind.to_owned(),
+            readiness_path: "/health".to_owned(),
+            readiness_status: 200,
+            readiness_timeout_secs: 5,
+            declared_route_domain: declared_route_domain.to_owned(),
+            route_domain: declared_route_domain.to_owned(),
+            route_tls: true,
+        }
+    }
+
+    fn host_process(
+        name: &str,
+        env: &[(&str, &str)],
+        listener: Option<EffectiveManagedHostListener>,
+    ) -> EffectiveHostProcess {
+        EffectiveHostProcess {
+            name: name.to_owned(),
+            run: "exec /bin/sleep 60".to_owned(),
+            cwd: PathBuf::new(),
+            env: env
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                .collect(),
+            depends_on: Vec::new(),
+            listener,
+            restart: HostProcessRestart::Never,
+            restart_delay_ms: 10,
+            shutdown_signal: HostProcessSignal::Sigterm,
+            shutdown_grace_secs: 1,
+        }
+    }
+
+    fn policy(
+        checkout: &Path,
+        project_name: &str,
+        processes: Vec<EffectiveHostProcess>,
+    ) -> EffectiveContainerPolicy {
+        let mut policy = crate::runner::test_support::effective_container_policy(
+            "web",
+            project_name,
+            "app",
+            checkout.join("compose.yml"),
+        );
+        policy.repo_root = checkout.to_path_buf();
+        policy.host_processes = processes;
+        policy
+    }
+
+    fn fixture_checkout() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("fixture dir");
+        let root = dir.path().canonicalize().expect("canonical fixture");
+        std::fs::write(
+            root.join("compose.yml"),
+            "services:\n  postgres:\n    image: postgres\n    ports:\n      - \"127.0.0.1:8140:5432\"\n",
+        )
+        .expect("compose");
+        dir
+    }
+
+    /// effigy#321: a `:0` listener receives a concrete port from the endpoint
+    /// store, keeps it across supervisor restarts, and releases it on settle.
+    #[test]
+    fn a_dynamic_listener_port_is_reserved_retained_and_released() {
+        let dir = fixture_checkout();
+        let checkout = dir.path().canonicalize().expect("checkout");
+        let project = format!("host-process-listener-port-{}", std::process::id());
+        let policy = policy(
+            &checkout,
+            &project,
+            vec![host_process(
+                "api",
+                &[],
+                Some(listener("127.0.0.1:0", "api.acme.test")),
+            )],
+        );
+
+        let mut facts = HostProcessEnvFacts::for_policy(&policy).expect("facts");
+        let binds = reserve_listener_binds(&policy, &mut facts).expect("reservation");
+        let bind = binds["api"].parse::<SocketAddr>().expect("concrete bind");
+        assert_ne!(bind.port(), 0, "a dynamic bind receives a concrete port");
+        assert_eq!(
+            facts.host_processes["api"].internal_url.as_deref(),
+            Some(format!("http://{bind}").as_str()),
+            "the reserved port is the listener's internal URL"
+        );
+
+        // A restart within the run asks again and keeps the assignment.
+        let mut restarted = HostProcessEnvFacts::for_policy(&policy).expect("facts");
+        let again = reserve_listener_binds(&policy, &mut restarted).expect("retained");
+        assert_eq!(again["api"], binds["api"], "a restart keeps its port");
+
+        let store = listener_port_store().expect("endpoint store");
+        let key = effigy_gateway::endpoint_store::listener_port_key("api");
+        assert!(store
+            .read_ports()
+            .expect("ports")
+            .get(&project)
+            .expect("the project owns the reservation")
+            .assigned_ports
+            .contains_key(&key));
+
+        assert!(
+            release_listener_reservations(&policy).is_empty(),
+            "settle releases the port without residue"
+        );
+        assert!(
+            store
+                .read_ports()
+                .expect("ports")
+                .get(&project)
+                .is_none_or(|allocation| !allocation.assigned_ports.contains_key(&key)),
+            "the settled environment no longer holds the listener port"
+        );
+    }
+
+    /// A declared fixed port is the manifest's own and is never re-reserved.
+    #[test]
+    fn a_fixed_listener_port_is_not_reserved_or_released() {
+        let dir = fixture_checkout();
+        let checkout = dir.path().canonicalize().expect("checkout");
+        let policy = policy(
+            &checkout,
+            "host-process-listener-fixed",
+            vec![host_process(
+                "api",
+                &[],
+                Some(listener("127.0.0.1:47123", "api.acme.test")),
+            )],
+        );
+        let mut facts = HostProcessEnvFacts::for_policy(&policy).expect("facts");
+        let binds = reserve_listener_binds(&policy, &mut facts).expect("no reservation");
+        assert!(binds.is_empty());
+        assert!(release_listener_reservations(&policy).is_empty());
+        assert_eq!(
+            resolved_host_process_listener(&policy.host_processes[0], &binds)
+                .expect("listener")
+                .bind,
+            "127.0.0.1:47123"
+        );
+    }
+
+    /// Declared `env` references arrive resolved: the service's published
+    /// port, the process's own public URL, and the shared cookie apex.
+    #[test]
+    fn declared_env_references_resolve_to_published_facts() {
+        let dir = fixture_checkout();
+        let checkout = dir.path().canonicalize().expect("checkout");
+        let mut policy = policy(
+            &checkout,
+            "host-process-env-facts",
+            vec![
+                host_process("api", &[], Some(listener("127.0.0.1:0", "api.acme.test"))),
+                host_process(
+                    "jobs",
+                    &[
+                        (
+                            "DATABASE_URL",
+                            "postgres://app@${service.postgres.host}:${service.postgres.port}/app",
+                        ),
+                        ("API_URL", "${route.api.acme.test.public_url}"),
+                        ("COOKIE_DOMAIN", ".${apex}"),
+                        ("INTERNAL", "${host_process.api.internal_url}"),
+                    ],
+                    None,
+                ),
+            ],
+        );
+        policy.dns_routes = vec![EffectiveDnsRoute {
+            domain: "api.acme.test".to_owned(),
+            declared_domain: "api.acme.test".to_owned(),
+            tls: true,
+            port: Some(3000),
+            service: Some("app".to_owned()),
+            target_host: None,
+        }];
+        policy.dns_base_domain = Some("acme.test".to_owned());
+
+        let mut facts = HostProcessEnvFacts::for_policy(&policy).expect("facts");
+        let binds = reserve_listener_binds(&policy, &mut facts).expect("reservation");
+        let bind = binds["api"].parse::<SocketAddr>().expect("concrete bind");
+        let env = resolved_host_process_environment(&policy.host_processes[1], &facts)
+            .expect("references resolve");
+        assert_eq!(env["DATABASE_URL"], "postgres://app@127.0.0.1:8140/app");
+        assert_eq!(env["API_URL"], "https://api.acme.test");
+        assert_eq!(env["COOKIE_DOMAIN"], ".acme.test");
+        assert_eq!(env["INTERNAL"], format!("http://{bind}"));
+        assert!(
+            !env.contains_key("EFFIGY_HOST_PROCESS_PUBLIC_URL"),
+            "a process without a listener gets no listener URLs"
+        );
+
+        let api_env = resolved_host_process_environment(&policy.host_processes[0], &facts)
+            .expect("own listener facts");
+        assert_eq!(
+            api_env["EFFIGY_HOST_PROCESS_PUBLIC_URL"],
+            "https://api.acme.test"
+        );
+        assert_eq!(
+            api_env["EFFIGY_HOST_PROCESS_INTERNAL_URL"],
+            format!("http://{bind}")
+        );
+        let _ = release_listener_reservations(&policy);
+    }
+
+    /// The CA trust variables point at the active gateway CA, and neither an
+    /// operator-set value nor a declared one is overwritten.
+    #[test]
+    fn gateway_ca_trust_fills_absent_variables_only() {
+        let ca = PathBuf::from("/gateway/ca/rootCA.pem");
+        let empty = BTreeMap::new();
+        let filled = gateway_ca_environment_from(Some(ca.clone()), &empty, |_| false);
+        let ca_text = ca.display().to_string();
+        assert_eq!(
+            filled,
+            vec![
+                (GATEWAY_CA_FILE_ENV.to_owned(), ca_text.clone()),
+                ("NODE_EXTRA_CA_CERTS".to_owned(), ca_text.clone()),
+                ("SSL_CERT_FILE".to_owned(), ca_text),
+            ]
+        );
+        assert!(
+            gateway_ca_environment_from(None, &empty, |_| false).is_empty(),
+            "no known CA adds no trust variable"
+        );
+
+        // An operator-set value is the operator's own trust store.
+        let operator = gateway_ca_environment_from(Some(ca.clone()), &empty, |key| {
+            key == "NODE_EXTRA_CA_CERTS"
+        });
+        assert!(!operator.iter().any(|(key, _)| key == "NODE_EXTRA_CA_CERTS"));
+        assert!(operator.iter().any(|(key, _)| key == "SSL_CERT_FILE"));
+
+        // A declared value is the process's own decision and wins.
+        let declared = BTreeMap::from([
+            (
+                "NODE_EXTRA_CA_CERTS".to_owned(),
+                "/operator/ca.pem".to_owned(),
+            ),
+            (
+                GATEWAY_CA_FILE_ENV.to_owned(),
+                "/declared/ca.pem".to_owned(),
+            ),
+        ]);
+        let resolved = gateway_ca_environment_from(Some(ca), &declared, |_| false);
+        assert!(!resolved
+            .iter()
+            .any(|(key, _)| key == "NODE_EXTRA_CA_CERTS" || key == GATEWAY_CA_FILE_ENV));
+        assert!(resolved.iter().any(|(key, _)| key == "SSL_CERT_FILE"));
+    }
+}

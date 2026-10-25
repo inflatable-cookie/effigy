@@ -723,15 +723,30 @@ mod tests {
             env: &BTreeMap<String, String>,
             _capture: bool,
         ) -> Result<crate::HostSuiteOutcome, BuiltinError> {
+            // Every scratch variable by name, then whatever else the custody
+            // environment carries: a count alone cannot say which variable
+            // appeared, and the invoking Effigy is added when the harness has
+            // one (EFFIGY_EXECUTABLE, set by an outer Effigy run).
+            let scratch = ["TMPDIR", "TMP", "TEMP"]
+                .iter()
+                .map(|key| env.get(*key).cloned().unwrap_or_default())
+                .collect::<Vec<_>>();
+            let extra = env
+                .keys()
+                .filter(|key| !["TMPDIR", "TMP", "TEMP"].contains(&key.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
             std::fs::write(
                 &self.marker,
                 format!(
-                    "{}|{}|{}|{}|{}",
+                    "{}|{}|{}|{}|{}|{}|{}",
                     self.label,
                     command,
                     cwd.display(),
-                    env.get("TMPDIR").cloned().unwrap_or_default(),
-                    env.len()
+                    scratch[0],
+                    scratch[1],
+                    scratch[2],
+                    extra.join(",")
                 ),
             )
             .expect("custody marker");
@@ -793,11 +808,21 @@ mod tests {
             "the suite starts outside the run's grant"
         );
         assert_eq!(
-            fields[3],
-            scratch.path().display().to_string(),
+            &fields[3..6],
+            [
+                scratch.path().display().to_string(),
+                scratch.path().display().to_string(),
+                scratch.path().display().to_string(),
+            ],
             "custody ran the suite with the run's temp environment: {recorded}"
         );
-        assert_eq!(fields[4], "3", "TMPDIR, TMP and TEMP");
+        // The run's three temp variables are the whole scratch environment; a
+        // host suite may also carry the invoking Effigy so its nested
+        // invocations share the binary that started the test run.
+        assert!(
+            fields[6].is_empty() || fields[6] == "EFFIGY_EXECUTABLE",
+            "no variable beyond the run's temp environment and the invoking Effigy: {recorded}"
+        );
     }
 
     #[test]

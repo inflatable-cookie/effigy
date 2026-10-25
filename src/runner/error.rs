@@ -304,6 +304,13 @@ impl RunnerError {
             // structured details are for `--json`; lifting them by key lost the
             // advice entirely (effigy#313).
             RunnerError::TaskLockConflict(details) => lock_conflict_human(details),
+            // An admission refusal's display sentence already names the task,
+            // the run, the hook's own reason and the next command. Its
+            // `effigy.admission.v1` details carry `decision`/`reason` but no
+            // `cause` or `message`, so lifting them by key reduced a deny or a
+            // timeout to ``task `heavy` failed`` and hid why the heavy task
+            // never ran (effigy#328).
+            RunnerError::AdmissionRefused { detail, .. } => human_error_from_display(detail),
             _ => match self
                 .json_error_details()
                 .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())

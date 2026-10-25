@@ -516,12 +516,20 @@ fn phpmyadmin_fragment_assembles() {
         .iter()
         .filter_map(serde_yaml::Value::as_str)
         .collect::<Vec<_>>();
-    assert_eq!(probe.first().copied(), Some("CMD"));
-    assert_eq!(probe.get(1).copied(), Some("php"), "{probe:?}");
-    let (interpolated, warnings) = compose_interpolate(probe.last().unwrap());
+    assert_eq!(
+        probe.first().copied(),
+        Some("CMD-SHELL"),
+        "phpMyAdmin's check runs on nerdctl, which joins a CMD exec form without quoting: {probe:?}"
+    );
+    let command = probe.get(1).copied().expect("healthcheck command");
+    assert!(
+        command.starts_with("php -r '") && command.ends_with(");'"),
+        "phpMyAdmin's PHP code should be one shell-quoted argument, got: {command}"
+    );
+    let (interpolated, warnings) = compose_interpolate(command);
     assert!(warnings.is_empty(), "{warnings:?}");
     assert!(
-        interpolated.contains("fsockopen('127.0.0.1', 80, $e, $s, 2)"),
+        interpolated.contains("fsockopen(\"127.0.0.1\", 80, $e, $s, 2)"),
         "{interpolated}"
     );
 
@@ -665,19 +673,8 @@ const IMAGE_TOOLS: &[(&str, &[&str])] = &[
 /// ships. A new fragment must declare its image's tools in [`IMAGE_TOOLS`].
 #[test]
 fn every_catalog_healthcheck_names_only_tools_its_image_ships() {
-    let catalog_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("catalog");
     let mut checked: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(&catalog_root)
-        .unwrap_or_else(|error| panic!("read {}: {error}", catalog_root.display()))
-    {
-        let entry = entry.unwrap();
-        if !entry.file_type().unwrap().is_dir() {
-            continue;
-        }
-        let catalog = entry.file_name().into_string().unwrap();
-        let Some(healthcheck) = fragment_healthcheck(&catalog) else {
-            continue;
-        };
+    for (catalog, healthcheck) in catalog_healthchecks() {
         let test = healthcheck
             .get("test")
             .unwrap_or_else(|| panic!("{catalog} declares a healthcheck with no `test`"));
@@ -712,11 +709,93 @@ fn every_catalog_healthcheck_names_only_tools_its_image_ships() {
             "IMAGE_TOOLS lists `{catalog}`, but its fragment declares no healthcheck"
         );
     }
+}
+
+/// A check is exact on every backend only when the fragment writes shell form
+/// itself, or keeps every `CMD` exec-form argument a plain shell word.
+///
+/// `nerdctl compose` does not support the exec form: it joins the argv with
+/// spaces into one unquoted `/bin/sh -c` command (effigy#324). An argument
+/// holding a space or a shell metacharacter then changes the command — a
+/// `node -e` or `php -r` probe fails to parse on every interval — so such a
+/// fragment writes `CMD-SHELL` with its own quoting instead.
+#[test]
+fn every_catalog_healthcheck_is_exact_on_nerdctl() {
+    let mut shell_form: Vec<String> = Vec::new();
+    let mut exec_form: Vec<String> = Vec::new();
+    for (catalog, healthcheck) in catalog_healthchecks() {
+        let test = healthcheck
+            .get("test")
+            .unwrap_or_else(|| panic!("{catalog} declares a healthcheck with no `test`"));
+        let Some(parts) = test.as_sequence() else {
+            // A bare string is the shell form Compose already runs.
+            shell_form.push(catalog);
+            continue;
+        };
+        let words = parts
+            .iter()
+            .map(|part| {
+                part.as_str().unwrap_or_else(|| {
+                    panic!("{catalog} healthcheck entry is not a string: {part:?}")
+                })
+            })
+            .collect::<Vec<_>>();
+        match words.first().copied() {
+            Some("CMD-SHELL") => shell_form.push(catalog),
+            Some("NONE") => {}
+            Some("CMD") => {
+                for argument in &words[1..] {
+                    assert!(
+                        is_plain_shell_word(argument),
+                        "{catalog} health check has the exec-form argument `{argument}`, which \
+                         `nerdctl compose` would split or expand when it joins the exec form into \
+                         an unquoted shell command. Write the check as `CMD-SHELL` with its own \
+                         quoting (effigy#324)"
+                    );
+                }
+                exec_form.push(catalog);
+            }
+            other => panic!("{catalog} has an unknown healthcheck form `{other:?}`: {test:?}"),
+        }
+    }
     assert!(
-        !checked.is_empty(),
+        shell_form.len() + exec_form.len() > 0,
+        "no catalog health check was classified"
+    );
+}
+
+/// A word a POSIX shell reads back unchanged when words are joined with
+/// spaces: no quoting, expansion or list operator can apply to it.
+fn is_plain_shell_word(word: &str) -> bool {
+    !word.is_empty()
+        && word
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "-_./:=@%+,".contains(character))
+}
+
+/// Every embedded fragment that declares a health check, with the catalog
+/// name that fragment's directory uses.
+fn catalog_healthchecks() -> Vec<(String, serde_yaml::Value)> {
+    let catalog_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("catalog");
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(&catalog_root)
+        .unwrap_or_else(|error| panic!("read {}: {error}", catalog_root.display()))
+    {
+        let entry = entry.unwrap();
+        if !entry.file_type().unwrap().is_dir() {
+            continue;
+        }
+        let catalog = entry.file_name().into_string().unwrap();
+        if let Some(healthcheck) = fragment_healthcheck(&catalog) {
+            found.push((catalog, healthcheck));
+        }
+    }
+    assert!(
+        !found.is_empty(),
         "no catalog fragment healthcheck was found under {}",
         catalog_root.display()
     );
+    found
 }
 
 /// Read the `healthcheck` block of one catalog fragment.
@@ -825,14 +904,29 @@ fn a_healthcheck_test_is_read_into_the_programs_it_names() {
     )
     .unwrap();
     assert_eq!(healthcheck_binaries(&probe), ["cargo", "bun"]);
+
+    // An interpreter probe quotes its program text, so the `;`, `:` and
+    // parentheses inside it are not further commands.
+    let javascript: serde_yaml::Value = serde_yaml::from_str(
+        r#"["CMD-SHELL", "node -e 'require(\"http\").get(\"http://127.0.0.1:3000/\",r=>{r.resume();process.exit(0)}).on(\"error\",e=>{console.error(e.message);process.exit(1)})'"]"#,
+    )
+    .unwrap();
+    assert_eq!(healthcheck_binaries(&javascript), ["node"]);
+
+    let php: serde_yaml::Value = serde_yaml::from_str(
+        r#"["CMD-SHELL", "php -r 'exit(@fsockopen(\"127.0.0.1\", 80, $e, $s, 2) ? 0 : 1);'"]"#,
+    )
+    .unwrap();
+    assert_eq!(healthcheck_binaries(&php), ["php"]);
 }
 
 /// The programs a shell health check runs: the command word of every pipeline
-/// or list segment, where `command -v <name>` names `<name>` instead.
+/// or list segment, where `command -v <name>` names `<name>` instead. Quoted
+/// text stays inside its segment, so the JavaScript or PHP a probe passes to
+/// an interpreter is not read as more commands.
 fn shell_command_binaries(command: &str) -> Vec<String> {
     let mut programs = Vec::new();
-    let normalized = command.replace("&&", "\n").replace("||", "\n");
-    for segment in normalized.split(['|', ';', '\n']) {
+    for segment in shell_segments(command) {
         let words: Vec<&str> = segment.split_whitespace().collect();
         let Some(first) = words.first().copied() else {
             continue;
@@ -864,6 +958,58 @@ fn shell_command_binaries(command: &str) -> Vec<String> {
         );
     }
     programs
+}
+
+/// Split a shell command where the shell starts a new list or pipeline
+/// segment: an unquoted `|`, `||`, `&&`, `;` or newline. Quoted runs — and
+/// backslash escapes — are kept, including a quote character inside the other
+/// quote style.
+fn shell_segments(command: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut characters = command.chars().peekable();
+    while let Some(character) = characters.next() {
+        match quote {
+            Some(open) if open == '"' && character == '\\' => {
+                current.push(character);
+                if let Some(escaped) = characters.next() {
+                    current.push(escaped);
+                }
+            }
+            Some(open) => {
+                current.push(character);
+                if character == open {
+                    quote = None;
+                }
+            }
+            None => match character {
+                '\'' | '"' => {
+                    quote = Some(character);
+                    current.push(character);
+                }
+                '\\' => {
+                    current.push(character);
+                    if let Some(escaped) = characters.next() {
+                        current.push(escaped);
+                    }
+                }
+                '|' | ';' | '\n' => {
+                    if matches!(character, '|') && characters.peek() == Some(&'|') {
+                        characters.next();
+                    }
+                    segments.push(std::mem::take(&mut current));
+                }
+                '&' if characters.peek() == Some(&'&') => {
+                    characters.next();
+                    segments.push(std::mem::take(&mut current));
+                }
+                other => current.push(other),
+            },
+        }
+    }
+    segments.push(current);
+    segments
 }
 
 #[test]

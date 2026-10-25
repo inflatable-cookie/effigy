@@ -4,13 +4,47 @@ use std::process::{Command, Output};
 
 use serde_json::Value;
 
+/// A private copy of the checked-in fixture checkout.
+///
+/// Durable checkout state belongs to the resolved invocation root (contract
+/// 052 §7.1), so every test that runs a task in the same checkout would share
+/// one journal and one task gate: two tests running `identity` together would
+/// refuse each other as "already running". A per-test copy, placed outside any
+/// Git checkout, gives each test its own state root and never writes to the
+/// checked-in fixture.
 fn fixture_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/skill-task-runner")
+    thread_local! {
+        static ROOT: std::cell::OnceCell<PathBuf> = const { std::cell::OnceCell::new() };
+    }
+    ROOT.with(|root| {
+        root.get_or_init(|| {
+            let source =
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/skill-task-runner");
+            let copy = unique_temp_root("fixture");
+            copy_tree(&source, &copy);
+            copy
+        })
+        .clone()
+    })
 }
 
-/// These proofs run tasks inside the checked-in fixture checkout, which they
-/// only read. Task gates live under `$HOME/.effigy/state`, so a private home
-/// per test keeps one test's running task from refusing another's.
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("create fixture directory");
+    for entry in std::fs::read_dir(from).expect("read the checked-in fixture") {
+        let entry = entry.expect("fixture entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("fixture entry type").is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).expect("copy fixture file");
+        }
+    }
+}
+
+/// These proofs run tasks inside a private copy of the checked-in fixture
+/// catalog, which they only read. A private home per test keeps machine-scope
+/// state apart, and the copy keeps checkout-scope state (journal and task
+/// gates) apart: no test's running task can refuse another's.
 fn skill_home() -> PathBuf {
     thread_local! {
         static HOME: std::cell::OnceCell<PathBuf> = const { std::cell::OnceCell::new() };

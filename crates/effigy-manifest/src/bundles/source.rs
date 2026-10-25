@@ -176,10 +176,13 @@ fn state_location(
     let root = effigy_core::resolver::resolve_target_root(parent(manifest).into(), None)
         .map_err(|err| error(manifest, err.to_string()))?
         .resolved_root;
-    let git_directory = effigy_core::worktree_scope::git_directory(&root)
+    // Prepared sources belong to the checkout that owns the manifest, never to
+    // a nested catalog's directory (contract 052 §7.1).
+    let checkout = effigy_core::worktree_scope::checkout_root(&root);
+    let git_directory = effigy_core::worktree_scope::git_directory(&checkout)
         .map_err(|err| error(manifest, err.to_string()))?;
     Ok(effigy_kernel::migration::CheckoutLocation {
-        root,
+        root: checkout,
         git_directory,
     })
 }

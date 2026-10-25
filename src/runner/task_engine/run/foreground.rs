@@ -2,7 +2,6 @@
 use super::*;
 use effigy_kernel::custody::{Custody, Exit, OwnedProcess, ProcessSpec, SpawnError};
 use effigy_kernel::inheritance::{MemoryLease, RunClass, RuntimeParent};
-use effigy_kernel::migration::CheckoutLocation;
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::run::ForegroundRun;
 
@@ -66,11 +65,8 @@ impl TaskRun {
         let plan = super::super::admission::plan(request.admission)?;
         // Hook custody is connected to the same memory record below; until
         // admitted it cannot grant a child permission to bypass admission.
-        let location = CheckoutLocation {
-            root: request.target.root.clone(),
-            git_directory: effigy_core::worktree_scope::git_directory(&request.target.root)
-                .map_err(|error| start_error(&error.to_string()))?,
-        };
+        let location = kernel::checkout_location(&request.target.root)
+            .map_err(|error| start_error(&error.to_string()))?;
         let cx = kernel::effects();
         let checkout = checkout::read(&request.target.root)
             .map_err(|error| start_error(&error.to_string()))?
@@ -303,11 +299,8 @@ impl TaskRun {
         let effigy_kernel::id::Scope::Checkout(checkout) = owner.scope() else {
             return Err(start_error("memory parent is not checkout-local"));
         };
-        let location = CheckoutLocation {
-            root: self.target.root.clone(),
-            git_directory: effigy_core::worktree_scope::git_directory(&self.target.root)
-                .map_err(|error| start_error(&error.to_string()))?,
-        };
+        let location = kernel::checkout_location(&self.target.root)
+            .map_err(|error| start_error(&error.to_string()))?;
         let root = StateRoot::foreground_effects(&kernel::effects(), &location)
             .map_err(|error| start_error(&error.to_string()))?;
         let step_owner = ResourceId::store(

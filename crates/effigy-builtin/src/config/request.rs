@@ -491,3 +491,26 @@ fn parse_user_config_key(context: &str, key: &str) -> Result<UserConfigKey, Buil
         ))),
     }
 }
+
+#[cfg(test)]
+mod retirement_message_tests {
+    use super::retired_config_target_demos;
+    use effigy_ui::human::MAX_EVIDENCE_BYTES;
+
+    /// A refusal is one human line. Past `MAX_EVIDENCE_BYTES` the renderer
+    /// truncates it and the CHANGELOG reference that ends the message is lost,
+    /// so the message must fit instead of being cut.
+    #[test]
+    fn the_retired_config_target_message_fits_one_human_line() {
+        let message = retired_config_target_demos();
+        assert!(
+            message.len() <= MAX_EVIDENCE_BYTES,
+            "the retirement message is {} bytes, past the {MAX_EVIDENCE_BYTES}-byte human line: {message}",
+            message.len()
+        );
+        assert!(
+            message.ends_with("CHANGELOG.md"),
+            "the removal reference must survive: {message}"
+        );
+    }
+}

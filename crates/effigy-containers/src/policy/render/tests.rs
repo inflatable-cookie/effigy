@@ -341,3 +341,76 @@ fn prepare_establishes_owned_cache_paths_before_admission() {
         admission.context_for_policy(&fresh).unwrap();
     });
 }
+
+/// A rendered health check has to run as written on the backend it names
+/// (effigy#324). `nerdctl compose` does not support the `CMD` exec form and
+/// joins the argv into one unquoted shell command, so a nerdctl render writes
+/// the quoted shell form itself. Docker keeps the exec form it honours.
+#[test]
+fn a_nerdctl_render_quotes_exec_form_health_checks_and_docker_keeps_them() {
+    let (_fixture, checkout, home) = fixture();
+    std::fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: example:one\n    healthcheck:\n      test: [\"CMD\", \"node\", \"-e\", \"process.exit(0)\"]\n  shell:\n    image: example:two\n    healthcheck:\n      test: [\"CMD-SHELL\", \"pg_isready -U postgres\"]\n  off:\n    image: example:three\n    healthcheck:\n      test: [\"NONE\"]\n",
+    )
+    .unwrap();
+    crate::with_test_effigy_home(&home, || {
+        let nerdctl = crate::compose::with_test_compose_backend(
+            crate::compose::ComposeBackend::ColimaNerdctl,
+            || prepare_container_policy(&checkout, Some("one")).unwrap(),
+        );
+        let rendered = healthcheck_tests(&nerdctl.read_compose(&nerdctl.compose_files[0]).unwrap());
+        assert_eq!(
+            rendered["app"],
+            ["CMD-SHELL", "'node' '-e' 'process.exit(0)'"],
+            "a nerdctl render quotes every exec-form argument"
+        );
+        assert_eq!(
+            rendered["shell"],
+            ["CMD-SHELL", "pg_isready -U postgres"],
+            "a health check already in shell form is left as written"
+        );
+        assert_eq!(
+            rendered["off"],
+            ["NONE"],
+            "a disabled health check is left as written"
+        );
+
+        let docker = crate::compose::with_test_compose_backend(
+            crate::compose::ComposeBackend::Docker,
+            || load_container_policy(&checkout, Some("one")).unwrap(),
+        );
+        let docker_rendered =
+            healthcheck_tests(&docker.read_compose(&docker.compose_files[0]).unwrap());
+        assert_eq!(
+            docker_rendered["app"],
+            ["CMD", "node", "-e", "process.exit(0)"],
+            "Docker honours the exec form, so its render keeps it"
+        );
+    });
+}
+
+/// The `healthcheck.test` of each service in a rendered Compose document, as
+/// the words Compose sees.
+fn healthcheck_tests(document: &str) -> BTreeMap<String, Vec<String>> {
+    let document: serde_yaml::Value = serde_yaml::from_str(document).unwrap();
+    document["services"]
+        .as_mapping()
+        .unwrap()
+        .iter()
+        .filter_map(|(name, service)| {
+            let test = service.get("healthcheck")?.get("test")?;
+            Some((
+                name.as_str().unwrap().to_owned(),
+                match test {
+                    serde_yaml::Value::Sequence(words) => words
+                        .iter()
+                        .map(|word| word.as_str().unwrap().to_owned())
+                        .collect(),
+                    serde_yaml::Value::String(command) => vec!["CMD-SHELL".into(), command.clone()],
+                    other => panic!("unexpected healthcheck test: {other:?}"),
+                },
+            ))
+        })
+        .collect()
+}

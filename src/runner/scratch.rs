@@ -1669,16 +1669,38 @@ mod tests {
         assert!(!volume.path().join("existing").join("missing").exists());
     }
 
+    /// A temporary directory that really sits on the internal disk.
+    ///
+    /// A configured `[scratch] root` moves every run's `TMPDIR`, so plain
+    /// `tempfile::tempdir()` can land on a separate volume and no longer
+    /// proves the internal-disk direction. The candidates below are the
+    /// platform's durable temp directories, independent of `TMPDIR`, and the
+    /// probe's own facts decide which one is internal.
+    fn internal_disk_tempdir() -> tempfile::TempDir {
+        for parent in ["/private/var/tmp", "/var/tmp", "/tmp"] {
+            let Ok(dir) = tempfile::Builder::new()
+                .prefix("effigy-internal-")
+                .tempdir_in(parent)
+            else {
+                continue;
+            };
+            let canonical = std::fs::canonicalize(dir.path()).expect("canonical");
+            let facts = probe(&canonical).expect("volume facts");
+            if facts.device == facts.boot_device || facts.data_device == Some(facts.device) {
+                return dir;
+            }
+        }
+        panic!(
+            "no writable temporary directory is on the internal disk; a test of the internal-disk \
+             refusal needs one"
+        );
+    }
+
     #[test]
     fn the_real_probe_refuses_a_directory_on_the_internal_disk() {
-        // The refusal direction needs no external drive: a directory on the
-        // boot disk is not a separately mounted volume. It asks for that disk
-        // explicitly, because the run's own temp directory is on the
-        // configured `[scratch]` volume when Effigy has one.
-        let root = tempfile::Builder::new()
-            .prefix("effigy-internal-")
-            .tempdir_in("/tmp")
-            .expect("internal-disk root");
+        // The refusal direction needs no external drive: a test directory on
+        // this machine is not a separately mounted volume.
+        let root = internal_disk_tempdir();
         let canonical = std::fs::canonicalize(root.path()).expect("canonical");
         let config = Config {
             root: canonical.clone(),
