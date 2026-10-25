@@ -297,6 +297,17 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- The managed listener ownership proof, about 1,100 lines of production code.
+  `effigy_gateway::managed_listener` is gone, with the process-identity
+  triples, the descendant walk, socket exclusivity, the availability-file
+  recheck, the adapter report (`EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`,
+  `effigy.managed.host-listener-report.v1`) and the gateway's per-connection
+  ownership recheck. A `ManagedListenerRouteOwner` is now the checkout,
+  environment and process name it always represented, its generations and its
+  reserved address; a record written by an earlier build is read once and
+  rewritten without the identity fields. `listener.json` keeps its start,
+  ready, unavailable, failed and stopped observations only, and its diagnostic
+  is one line instead of the ten-field observation record.
 - The online-backup snapshot behind a store read (effigy#339, Q-011): the
   in-memory copy, its restart counter and its fixed restart bound, the
   unchanged-source stamp check, the custom read-only Unix VFS, the second
@@ -1230,6 +1241,23 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- A managed host listener is ready when its reserved loopback port answers its
+  readiness request, and it stays published while the supervisor's run is alive
+  and that port keeps answering. The supervisor probes the port every five
+  seconds; three consecutive misses withdraw the route and a later answer
+  republishes it, while the child process itself is never killed or restarted
+  on a probe miss. A restart, a watch-mode respawn that replaces the serving
+  process, a double fork and a long compile therefore all leave the route
+  served. A dependent host process is replaced only when its dependency's
+  supervisor generation changes, so a momentary probe miss restarts nothing.
+  A reserved port another process already answers fails the start naming the
+  port; a child that never answers names the reserved address, the readiness
+  path and the status it asked for in one line.
+- A managed listener child receives `HOST`, `PORT` and
+  `EFFIGY_MANAGED_HOST_LISTENER_BIND` and nothing else Effigy-specific about its
+  listener: there is no adapter report file, report schema or generation
+  variable to write. The proxy forwards a managed listener route to its
+  published target exactly as it forwards any other route.
 - Reading a checkout journal or the machine store is one plain read-only SQLite
   connection in WAL mode with a short busy timeout: no copy and no custom VFS. A
   journal written throughout by another process no longer makes a read wait or

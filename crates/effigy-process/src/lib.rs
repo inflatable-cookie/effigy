@@ -23,8 +23,8 @@ pub use identity::{
     process_start_identity, process_start_identity_matches, BootIdentityComparison,
 };
 pub use signal::{
-    process_descendant_ids, process_group_member_ids, process_is_descendant_of, process_is_running,
-    surviving_group_member_ids, terminate_process_tree,
+    process_group_member_ids, process_is_running, surviving_group_member_ids,
+    terminate_process_tree,
 };
 const PROCESS_GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_millis(800);
 

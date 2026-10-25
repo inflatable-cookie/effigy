@@ -172,12 +172,6 @@ pub fn register_managed_listener_route(
         });
     }
     EndpointStore::for_routes(route_table_path).routes(|table| {
-        crate::managed_listener::verify_managed_listener_owner(&owner).map_err(|error| {
-            GatewayError::RouteTableReadError {
-                path: route_table_path.to_path_buf(),
-                reason: format!("managed listener ownership refused publication: {error}"),
-            }
-        })?;
         table.upsert(Route {
             domain: domain.to_owned(),
             target: Some(target.to_owned()),
