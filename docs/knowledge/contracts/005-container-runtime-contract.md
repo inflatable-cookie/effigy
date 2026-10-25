@@ -402,8 +402,9 @@ Prepare imports them, host Prepare paths refresh a stale pin, and
 `effigy bundle sync` explicitly updates selected pins.
 
 The Prepare stage of `up` and other Mutate commands publishes through kernel
-Objects under the environment owner gate. Files are sealed 0400 and directories
-0500. Compose receives `EFFIGY_RENDER_ROOT` for references to generated assets;
+Objects under the environment owner gate. Published files and directories keep
+Effigy's private modes (0600 and 0700); the digest proves integrity.
+Compose receives `EFFIGY_RENDER_ROOT` for references to generated assets;
 this adapter-owned value overrides a caller's environment without changing the
 process-global environment. Internal policy readers expand this reserved root
 before parsing bind syntax or estimating mount budgets; the immutable file bytes

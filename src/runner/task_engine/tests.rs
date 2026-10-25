@@ -342,10 +342,10 @@ fn a_host_run_uses_its_scratch_as_temp_and_the_settle_removes_it_on_success() {
     assert!(warnings.is_empty(), "{warnings:?}");
 }
 
-/// Publishes the immutable state objects Effigy's own fixtures leave in a temp
+/// Publishes the read-only state objects an older build left in a temp
 /// directory: mode-0500 directories holding mode-0400 files, which a plain
 /// `remove_dir_all` cannot clear.
-fn publish_immutable_objects(temp: &Path) {
+fn publish_old_read_only_objects(temp: &Path) {
     use std::os::unix::fs::PermissionsExt;
     let objects = temp.join("state/objects/ab");
     std::fs::create_dir_all(&objects).expect("objects");
@@ -357,11 +357,11 @@ fn publish_immutable_objects(temp: &Path) {
     }
 }
 
-/// A successful run whose temp tree holds Effigy's own read-only state objects
-/// is released completely, and the task's next run is admitted: nothing the
-/// predecessor left can refuse it.
+/// A successful run whose temp tree holds state objects an older build sealed
+/// read-only is released completely, and the task's next run is admitted:
+/// nothing the predecessor left can refuse it.
 #[test]
-fn a_successful_run_releases_a_read_only_scratch_tree_and_its_task_runs_again() {
+fn a_successful_run_releases_an_old_read_only_scratch_tree_and_its_task_runs_again() {
     let _guard = crate::contract_test_support::lock_test();
     let root = tempfile::tempdir().expect("root");
     let work = tempfile::tempdir().expect("work");
@@ -379,7 +379,7 @@ fn a_successful_run_releases_a_read_only_scratch_tree_and_its_task_runs_again() 
             let mut first = begin_scratching(&target);
             let (seen, wrote) = read_temp(&mut first, work.path());
             assert!(wrote, "the run writes into its own scratch");
-            publish_immutable_objects(Path::new(&seen));
+            publish_old_read_only_objects(Path::new(&seen));
             let warnings = first.close(WorkloadOutcome::Succeeded);
             assert!(warnings.is_empty(), "{warnings:?}");
             assert!(

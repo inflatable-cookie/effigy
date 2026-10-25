@@ -18,8 +18,9 @@ const MAX_FILES: usize = 4096;
 const MAX_DEPTH: usize = 16;
 const MAX_BYTES: usize = 64 << 20;
 
-/// A pure, canonical closure. Names are relative UTF-8 paths; files publish
-/// 0400 and directories 0500. No host path or registry enters the digest.
+/// A pure, canonical closure. Names are relative UTF-8 paths; publication
+/// keeps the private modes (files 0600, directories 0700) and the digest alone
+/// proves integrity. No host path or registry enters the digest.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Closure {
     files: BTreeMap<String, Vec<u8>>,
@@ -202,7 +203,7 @@ pub(crate) fn write(dir: &DirFd, closure: &Closure, cx: &EffectContext) -> Resul
         write_file(dir, &parts, bytes)?;
         crate::fault_point!(ObjectWriteAfter).map_err(|e| FsError::io("write", dir.path(), &e))?;
     }
-    seal(dir, MAX_DEPTH, false)?;
+    sync_tree(dir, MAX_DEPTH)?;
     Ok(())
 }
 fn write_file(dir: &DirFd, parts: &[&str], bytes: &[u8]) -> Result<(), StoreError> {
@@ -223,11 +224,11 @@ fn write_file(dir: &DirFd, parts: &[&str], bytes: &[u8]) -> Result<(), StoreErro
         .expect("created file");
     file.write_all(bytes)
         .map_err(|e| FsError::io("write", dir.path(), &e))?;
-    fs::fchmod(&file, 0o400).map_err(|e| FsError::io("chmod", dir.path(), &e))?;
     fs::fsync(&file).map_err(|e| FsError::io("fsync", dir.path(), &e))?;
     Ok(())
 }
-fn seal(dir: &DirFd, depth: usize, seal_self: bool) -> Result<(), StoreError> {
+/// Fsyncs every staged directory so the rename publishes a durable tree.
+fn sync_tree(dir: &DirFd, depth: usize) -> Result<(), StoreError> {
     if depth == 0 {
         return Err(invalid("object tree too deep"));
     }
@@ -244,11 +245,8 @@ fn seal(dir: &DirFd, depth: usize, seal_self: bool) -> Result<(), StoreError> {
             let child = dir
                 .child(name.as_str(), Trust::Private, false)?
                 .ok_or_else(|| invalid("object vanished"))?;
-            seal(&child, depth - 1, true)?;
+            sync_tree(&child, depth - 1)?;
         }
-    }
-    if seal_self {
-        dir.chmod(0o500)?;
     }
     dir.sync()?;
     Ok(())

@@ -179,6 +179,76 @@ fn publication_is_pure_to_read_and_idempotent_to_republish() {
         0
     );
 }
+/// Publication leaves ordinary owner-writable files, so any tree a run leaves
+/// behind is removable with a plain recursive delete.
+#[test]
+fn a_published_object_tree_is_owner_writable_and_plainly_removable() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = tempfile::tempdir().unwrap();
+    let value = closure("plain");
+    with_run(home.path(), "dev", 1, |run| {
+        Objects::publish_desired(run, &value).unwrap();
+        Objects::promote(run, value.digest()).unwrap();
+    });
+    let dir = home
+        .path()
+        .join(".effigy/state/objects")
+        .join(value.digest());
+    for (path, want) in [
+        (dir.clone(), 0o700),
+        (dir.join("catalog"), 0o700),
+        (dir.join("catalog/app"), 0o700),
+        (dir.join("compose.yaml"), 0o600),
+        (dir.join("catalog/app/Dockerfile"), 0o600),
+    ] {
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, want, "{} keeps a plain private mode", path.display());
+    }
+    std::fs::remove_dir_all(home.path().join(".effigy/state"))
+        .expect("a plain recursive delete removes the state root");
+}
+
+/// A tree an older build sealed read-only still reads without any write, and
+/// Effigy's own cleanup reclaims it.
+#[test]
+fn an_object_tree_written_read_only_by_an_older_build_reads_and_is_reclaimed() {
+    let home = tempfile::tempdir().unwrap();
+    let value = closure("legacy");
+    with_run(home.path(), "dev", 1, |run| {
+        Objects::publish_desired(run, &value).unwrap();
+        Objects::promote(run, value.digest()).unwrap();
+    });
+    let dir = home
+        .path()
+        .join(".effigy/state/objects")
+        .join(value.digest());
+    seal_like_an_older_build(&dir);
+    assert_eq!(
+        read(home.path(), "dev", Role::LastApplied)
+            .verified()
+            .unwrap()
+            .closure,
+        value
+    );
+    with_run(home.path(), "dev", 2, |run| Objects::reset(run).unwrap());
+    assert_eq!(retain(home.path()).objects, 1);
+    assert!(
+        !dir.exists(),
+        "retention reclaimed the read-only publication"
+    );
+}
+
+fn seal_like_an_older_build(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if std::fs::symlink_metadata(dir).unwrap().is_dir() {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            seal_like_an_older_build(&entry.unwrap().path());
+        }
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    } else {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o400)).unwrap();
+    }
+}
 fn super_snapshot(root: &Path) -> Vec<(PathBuf, u64, i64, i64)> {
     use std::os::unix::fs::MetadataExt;
     fn walk(root: &Path, out: &mut Vec<(PathBuf, u64, i64, i64)>) {

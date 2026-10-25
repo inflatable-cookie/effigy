@@ -29,8 +29,6 @@ points! {
     ObjectSealAfter,
     ObjectRenameBefore,
     ObjectRenameAfter,
-    ObjectRootSealBefore,
-    ObjectRootSealAfter,
     ObjectPublishBefore,
     ObjectPublishAfter,
     ObjectRefBefore,

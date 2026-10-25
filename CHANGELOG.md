@@ -297,6 +297,9 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- Object sealing: the 0400/0500 file and directory `chmod` in publication, the
+  mode-0500 expectation on a published object root and its two fault points.
+  Files and directories keep the modes they are created with.
 - Withdrawn gateway domain claims and the endpoint reuse quarantine.
   `effigy gateway repair`, the domain and route parts of its dead-owner plan,
   the `effigy.gateway.loopback-reclaim.v1` JSON payload, the owner-checkout
@@ -1204,6 +1207,13 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- Kernel object closures are published with Effigy's ordinary private modes —
+  files 0600, directories 0700 — instead of 0400 and 0500, and the post-rename
+  root seal is gone. The digest already proves integrity, and a read-only tree
+  broke every cleanup of the tree that held it: Effigy's own release, `rm -rf`,
+  `TempDir` drop and Oxide's slot eviction, which twice took the machine's slot
+  pool out with `unknown_accounting`. Objects an older build left read-only
+  still read, and Effigy's cleanup restores owner write before removing one.
 - Gateway route writes apply the dead-owner rule in the same locked
   transaction, and the daemon sweeps it on a timer so `gateway status` lists
   domains something still serves. A released loopback assignment is

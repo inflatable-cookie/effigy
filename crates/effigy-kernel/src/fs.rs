@@ -671,7 +671,8 @@ impl DirFd {
         let child = self
             .child(name.as_str(), Trust::Private, false)?
             .ok_or_else(|| FsError::untrusted(&self.join(name.as_str()), "vanished"))?;
-        // Published objects are read-only; removal needs write on the dir.
+        // A tree an older build sealed read-only is repaired here: removal
+        // needs write on the directory, never on the files in it.
         child.chmod(DIR_MODE)?;
         for entry in child.list(1 << 16)? {
             let entry = entry
