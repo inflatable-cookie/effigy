@@ -1129,9 +1129,8 @@ impl ProcessCore {
         // starts, so by the time its workload needs stopping the budget may be
         // spent; a spent budget says nothing about whether the group closed and
         // never stands in for observing it (effigy#357).
-        let stopped = cx.window(
-            Duration::from_millis(self.receipt.grace_millis).saturating_add(STOP_MARGIN),
-        );
+        let stopped =
+            cx.window(Duration::from_millis(self.receipt.grace_millis).saturating_add(STOP_MARGIN));
         let mut signals = Vec::new();
         let mut residue = Vec::new();
         if !self.reaped {

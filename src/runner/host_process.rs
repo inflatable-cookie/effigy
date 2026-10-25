@@ -2303,7 +2303,7 @@ mod tests {
     /// The leader exits on SIGTERM, the wrapper keeps its server alive, and the
     /// escalation closes the group instead of timing out on it (effigy#357).
     #[test]
-    fn host_process_nested_task_stop_closes_within_its_grace() {
+    fn host_process_owned_stop_of_a_nested_task_closes_within_its_grace() {
         let fixture = fixture();
         let mut nested = host_process(
             "api",
@@ -2328,7 +2328,10 @@ mod tests {
         let report =
             super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
         let elapsed = started.elapsed();
-        assert!(elapsed <= grace + Duration::from_secs(5), "down took {elapsed:?}, over grace plus five seconds");
+        assert!(
+            elapsed <= grace + Duration::from_secs(5),
+            "down took {elapsed:?}, over grace plus five seconds"
+        );
         assert!(
             report.complete(),
             "failed stop must be reported: {report:?}"
