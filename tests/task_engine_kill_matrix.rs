@@ -68,9 +68,16 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        // Short: a managed run's control socket lives under this home, and
-        // a Unix socket path is bounded (SUN_LEN); macOS's TMPDIR is long.
-        let home = effigy_test_support::Fixture::short_home("ekm-").expect("home");
+        // Short, and on the repo's volume: a managed run's control socket lives
+        // under this home and a Unix socket path is bounded (SUN_LEN), while a
+        // durable helper pins its startup image with a zero-copy clone, which a
+        // `clonefile` only performs within one volume. The repo is the external
+        // `/Users/Shared` fixture, so the home stays on `/tmp` beside it even
+        // when a `[scratch]` run puts `TMPDIR` on another disk (the pin then
+        // refuses with a cross-device link). `/tmp` is short enough for the
+        // socket; macOS's default `TMPDIR` is not.
+        let home =
+            effigy_test_support::Fixture::in_parent("ekm-", Path::new("/tmp")).expect("home");
         let repo = effigy_test_support::Fixture::workspace("effigy-kill-matrix-repo-")
             .expect("external task fixture");
         fs::write(repo.path().join("effigy.toml"), TASK).expect("manifest");
