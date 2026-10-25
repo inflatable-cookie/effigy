@@ -14,7 +14,7 @@ use effigy_kernel::run::{Fence, LogRead, Phase, Request, RequestAction, RunSumma
 use effigy_kernel::store::Store;
 
 use super::kernel::{self, TaskSettlement};
-use super::status::{project_foreground, project_run, RunView};
+use super::status::{project_foreground, project_run, project_terminal, RunView};
 use super::RunKey;
 use crate::runner::error::RunnerError;
 
@@ -38,21 +38,41 @@ pub(in crate::runner) struct RunRecord {
 enum RunSource {
     Journal(RunSummary),
     Foreground(ForegroundHolder),
+    /// The narrow Q-010 exception: a settled v2 hook-admitted foreground
+    /// run's journal row. Evidence, never a live or recoverable run.
+    Terminal(effigy_kernel::run::TerminalRecord),
 }
 
 impl RunRecord {
     pub(in crate::runner) fn summary(&self) -> Option<&RunSummary> {
         match &self.source {
             RunSource::Journal(summary) => Some(summary),
-            RunSource::Foreground(_) => None,
+            RunSource::Foreground(_) | RunSource::Terminal(_) => None,
         }
     }
     pub(in crate::runner) fn foreground(&self) -> bool {
         matches!(self.source, RunSource::Foreground(_))
     }
+    /// A terminal-record run: settled, with no live owner and no recoverable
+    /// process identity.
+    pub(in crate::runner) fn is_terminal_record(&self) -> bool {
+        matches!(self.source, RunSource::Terminal(_))
+    }
     pub(in crate::runner) fn closed(&self) -> bool {
-        self.summary()
-            .is_some_and(|summary| summary.phase == Phase::Closed)
+        match &self.source {
+            RunSource::Terminal(_) => true,
+            _ => self
+                .summary()
+                .is_some_and(|summary| summary.phase == Phase::Closed),
+        }
+    }
+    /// The time this run is ordered by in `effigy runs`.
+    pub(in crate::runner) fn sort_time(&self) -> i64 {
+        match &self.source {
+            RunSource::Journal(summary) => summary.created_at_ms,
+            RunSource::Foreground(_) => i64::MAX,
+            RunSource::Terminal(record) => record.closed_at_ms,
+        }
     }
     /// This observation says only that custody released its gate, never
     /// that the foreground workload succeeded or produced a retained result.
@@ -291,7 +311,37 @@ fn lookup_at(
             "run {id} has conflicting foreground and journal evidence"
         )),
         (Some(row), _) => Lookup::Found(Box::new(row)),
+        // A v2 hook-admitted foreground run's narrow terminal row lives in
+        // the same journal; it is the only post-exit evidence Q-010 keeps.
+        (None, Lookup::NotFound) => lookup_terminal(cx, root, id),
         (None, result) => result,
+    }
+}
+
+fn lookup_terminal(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    root: &effigy_kernel::root::StateRoot,
+    id: RunId,
+) -> Lookup {
+    let reader = match Store::read(cx, root) {
+        Observed::Verified(reader, _) => reader,
+        Observed::Absent(_) => return Lookup::NotFound,
+        Observed::Unknown(reason) => {
+            return Lookup::Unknown(format!("{}: {reason}", root.path().display()))
+        }
+    };
+    match effigy_kernel::run::terminal_record(&reader, id) {
+        Observed::Verified(Some(record), _) => Lookup::Found(Box::new(RunRecord {
+            id,
+            root: root.clone(),
+            view: project_terminal(&record),
+            task: record.task.clone(),
+            source: RunSource::Terminal(record),
+        })),
+        Observed::Verified(None, _) | Observed::Absent(_) => Lookup::NotFound,
+        Observed::Unknown(reason) => {
+            Lookup::Unknown(format!("{}: {reason}", root.path().display()))
+        }
     }
 }
 
@@ -432,7 +482,7 @@ pub(in crate::runner) fn list(
                 RunSource::Foreground(row) => {
                     row.coordinates.owner.kind() == ResourceKind::Task || row.coordinates.root
                 }
-                RunSource::Journal(_) => false,
+                RunSource::Journal(_) | RunSource::Terminal(_) => false,
             })),
             Err(reason) => omitted.push(reason),
         }
@@ -472,15 +522,29 @@ pub(in crate::runner) fn list(
                         || record.task.starts_with("qa-group:")
                 }),
         );
+        match effigy_kernel::run::terminal_records(&reader, limit.max(64)) {
+            Observed::Verified(terminals, _) => {
+                records.extend(terminals.into_iter().map(|terminal| {
+                    RunRecord {
+                        id: terminal
+                            .run_id
+                            .parse::<RunId>()
+                            .unwrap_or_else(|_| RunId::new(0, [0; 10]).expect("fixed run id")),
+                        root: state.clone(),
+                        view: project_terminal(&terminal),
+                        task: terminal.task.clone(),
+                        source: RunSource::Terminal(terminal),
+                    }
+                }));
+            }
+            Observed::Absent(_) => {}
+            Observed::Unknown(reason) => omitted.push(format!(
+                "{}: foreground terminal records unavailable: {reason}",
+                state.path().display()
+            )),
+        }
     }
-    records.sort_by_key(|record| {
-        std::cmp::Reverse((
-            record
-                .summary()
-                .map_or(i64::MAX, |summary| summary.created_at_ms),
-            record.id.to_string(),
-        ))
-    });
+    records.sort_by_key(|record| std::cmp::Reverse((record.sort_time(), record.id.to_string())));
     records.truncate(limit);
     Ok(RunListing {
         runs: records,

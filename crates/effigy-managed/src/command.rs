@@ -35,7 +35,20 @@ pub fn resolve_managed_task_plan<'a>(
         });
     }
 
-    let profile = profiles::select_concurrent_profile(selector, task, runtime_args)?;
+    let profile = match profiles::select_concurrent_profile(selector, task, runtime_args) {
+        Ok(profile) => profile,
+        Err(error) => {
+            // A plain `[tasks.dev]` bound to an environment is a managed
+            // session over that environment: no `concurrent` entry per
+            // process is needed (effigy#322).
+            match profiles::environment_only_profile(task, runtime_args) {
+                Some(profile) if plan::task_is_environment_bound(catalog, selector, task)? => {
+                    profile
+                }
+                _ => return Err(error),
+            }
+        }
+    };
     plan::resolve_managed_concurrent_task_plan(plan::ManagedConcurrentPlanInput {
         selector,
         catalog,

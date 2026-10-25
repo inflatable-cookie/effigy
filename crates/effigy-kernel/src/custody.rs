@@ -61,6 +61,11 @@ pub enum Lifetime {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Terminal {
     None,
+    /// The child's stdin is a pipe whose write end the owner keeps, so an
+    /// engine can send it framed messages. The owner can write bounded bytes
+    /// and the child sees EOF when the owner drops it. Stdout and stderr are
+    /// captured as for `None`.
+    Pipe,
     Pty,
     /// The owner's terminal as the child's stdin, with the child's own process
     /// group as the terminal's foreground group while it runs (a passphrase or
@@ -194,6 +199,14 @@ pub struct PartialSpawn {
     pub primary: SpawnError,
     pub cleanup: Vec<StopReport>,
 }
+/// A caller's last step between a spawned child's recorded receipt and its
+/// `go`. An engine uses it to deliver evidence about the exact group that is
+/// about to exec. A refusal stops the child before it can run: it is still
+/// behind the barrier, so it exits without exec and its group is reaped.
+pub trait SpawnGate {
+    fn before_go(&mut self, receipt: &ProcessReceipt) -> Result<(), SpawnError>;
+}
+
 #[derive(Debug)]
 pub struct Custody;
 #[derive(Debug)]
@@ -215,6 +228,8 @@ pub(crate) struct ProcessCore {
     queue_max: usize,
     stdout: Option<OwnedFd>,
     stderr: Option<OwnedFd>,
+    /// The owner's side of a `Terminal::Pipe` child's stdin.
+    stdin: Option<OwnedFd>,
     redactor: Redactor,
     tail: VecDeque<u8>,
     tail_max: usize,
@@ -460,6 +475,7 @@ impl Custody {
             crate::ctx::Capability::AdapterEffect,
             true,
             None,
+            None,
         )
     }
 
@@ -478,6 +494,7 @@ impl Custody {
             crate::ctx::Capability::AdapterEffect,
             false,
             None,
+            None,
         )
     }
 
@@ -493,6 +510,7 @@ impl Custody {
             None,
             crate::ctx::Capability::AdapterEffect,
             true,
+            None,
             None,
         )
     }
@@ -512,6 +530,7 @@ impl Custody {
             crate::ctx::Capability::AdapterEffect,
             false,
             None,
+            None,
         )
     }
     /// Acquire executable source under a Prepare run. This uses the same
@@ -530,6 +549,7 @@ impl Custody {
             crate::ctx::Capability::AcquireSource,
             true,
             None,
+            None,
         )
     }
     pub(crate) fn spawn_remote(
@@ -545,6 +565,7 @@ impl Custody {
             Some(registration),
             crate::ctx::Capability::AdapterEffect,
             true,
+            None,
             None,
         )
     }
@@ -565,6 +586,7 @@ impl Custody {
             crate::ctx::Capability::AdapterEffect,
             required,
             Some(lease),
+            None,
         )
     }
     pub fn spawn_foreground_with_lease(
@@ -582,8 +604,33 @@ impl Custody {
             crate::ctx::Capability::AdapterEffect,
             required,
             Some(lease),
+            None,
         )
     }
+    /// `spawn_foreground_with_lease` with a gate between the recorded receipt
+    /// and the child's `go`. A gate refusal leaves the child unexecuted.
+    pub fn spawn_foreground_with_lease_gated(
+        run: &mut crate::run::ForegroundRun,
+        spec: ProcessSpec,
+        cx: &EffectContext,
+        lease: &crate::inheritance::InheritedCapability,
+        required: bool,
+        gate: &mut dyn SpawnGate,
+    ) -> Result<OwnedProcess, SpawnError> {
+        Self::spawn_inner(
+            run,
+            spec,
+            cx,
+            None,
+            crate::ctx::Capability::AdapterEffect,
+            required,
+            Some(lease),
+            Some(gate),
+        )
+    }
+    // Every parameter is a distinct spawn knob the public entry points set;
+    // the gate is the one an engine adds between receipt and `go`.
+    #[allow(clippy::too_many_arguments)]
     fn spawn_inner(
         run: &mut impl ProcessOwner,
         spec: ProcessSpec,
@@ -592,6 +639,7 @@ impl Custody {
         capability: crate::ctx::Capability,
         required: bool,
         lease: Option<&crate::inheritance::InheritedCapability>,
+        gate: Option<&mut dyn SpawnGate>,
     ) -> Result<OwnedProcess, SpawnError> {
         cx.require(capability)
             .map_err(|_| SpawnError::Refused(format!("spawn needs {capability:?}")))?;
@@ -654,8 +702,17 @@ impl Custody {
             )
             .map_err(SpawnError::Unrecorded)?;
             crate::fault_point!(AnchorRecord)?;
-            run.ack_process(&ticket)?; // memory backup retains the receipt before go
+            // The memory backup retains the receipt before go.
+            run.ack_process(&ticket)?;
+            // The caller's gate runs while the child is still behind the
+            // barrier and before this process retains its core, so a refusal is
+            // settled from the recorded receipt: the child never execed and
+            // `Blocked::drop` leaves no live member of its group.
+            if let Some(gate) = gate {
+                gate.before_go(&receipt)?;
+            }
             let (stdout, stderr, terminal) = pending.take_streams();
+            let stdin = pending.take_input();
             let logs = [Stream::Stdout, Stream::Stderr]
                 .map(|stream| run.capture_log(ticket.sequence(), stream, cx.operation().limits()));
             let capture = if logs.iter().all(Result::is_ok) {
@@ -665,7 +722,7 @@ impl Custody {
             };
             let [stdout_log, stderr_log] = logs;
             let core = Arc::new(Mutex::new(ProcessCore {
-                receipt,
+                receipt: receipt.clone(),
                 anchor,
                 logs: [stdout_log.ok().flatten(), stderr_log.ok().flatten()],
                 output: VecDeque::new(),
@@ -673,6 +730,7 @@ impl Custody {
                 queue_max: cx.operation().limits().queue_bytes,
                 stdout: Some(stdout),
                 stderr: Some(stderr),
+                stdin,
                 redactor: Redactor::new(secrets),
                 tail: VecDeque::new(),
                 tail_max: cx.operation().limits().capture_tail,
@@ -801,6 +859,12 @@ impl OwnedProcess {
     /// have no input channel of their own.
     pub fn write_input(&self, bytes: &[u8]) -> io::Result<()> {
         lock(&self.core).write_input(bytes)
+    }
+    /// Writes one bounded message to a `Terminal::Pipe` child's stdin. It
+    /// never blocks past `deadline`; a child that stopped reading is a
+    /// delivery failure, not a stall.
+    pub fn write_stdin(&self, bytes: &[u8], deadline: Instant) -> io::Result<()> {
+        lock(&self.core).write_stdin(bytes, deadline)
     }
     pub fn stop(&mut self, cx: &CleanupContext) -> StopReport {
         lock(&self.core).stop(cx)
@@ -948,6 +1012,38 @@ impl ProcessCore {
             Ok(None) => Observed::Unknown(UnknownReason::Inconsistent("leader running".into())),
             Err(e) => Observed::Unknown(unknown(e)),
         }
+    }
+    fn write_stdin(&self, mut bytes: &[u8], deadline: Instant) -> io::Result<()> {
+        let Some(stdin) = &self.stdin else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "the child has no owner-written stdin",
+            ));
+        };
+        while !bytes.is_empty() {
+            // SAFETY: live nonblocking pipe write end and an initialized slice.
+            let count =
+                unsafe { libc::write(stdin.as_raw_fd(), bytes.as_ptr().cast(), bytes.len()) };
+            if count < 0 {
+                let error = io::Error::last_os_error();
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) {
+                    if Instant::now() >= deadline {
+                        return Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "the child did not read its stdin within the bound",
+                        ));
+                    }
+                    std::thread::sleep(Duration::from_millis(2));
+                    continue;
+                }
+                return Err(error);
+            }
+            bytes = &bytes[count as usize..];
+        }
+        Ok(())
     }
     fn write_input(&self, mut bytes: &[u8]) -> io::Result<()> {
         let master = match (&self.stdout, self.pty) {

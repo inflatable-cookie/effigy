@@ -316,6 +316,30 @@ blocks the affected owner until positively absent or explicitly acknowledged;
 acknowledgement for a foreground run lasts only in the current custodian.
 Guaranteed restartable recovery requires a durable class.
 
+**The narrow terminal-record exception (effigy#325).** One deliberate,
+bounded exception to "a foreground run leaves no durable record" (Tom,
+2026-10-24; Queue decision b3538091, chosen option verbatim: "the admission
+hook reports the workload's real process group and start identity, and Effigy
+records a terminal result for foreground runs. Then Queue can settle dead runs
+as lost and free slots on its own."). An orchestrator that opts in to
+`effigy.admission-request.v2` (contract [049](049-heavy-validation-admission-contract.md))
+makes Effigy write exactly one row to the owning checkout journal at settle,
+in an additive schema-1 `foreground_terminals` table. An older reader selects
+the columns it knows, so the addition needs no schema-version bump.
+
+The row holds the run id, the `CheckoutId`, the boot identity, the task, the
+outcome, the exit code or signal, `cleanup`, the acknowledged workload-group
+count and the closed time. It is **evidence, never authority**: it carries no
+PID, PGID or start identity, so no run, provider or built-in may signal,
+reclaim, recover or settle from it. `run status <id>` reports it with
+`evidence_source: "foreground-terminal-record.v1"`; `run logs` reports no
+retained log and `run stop` refuses. The only closure Effigy asserts from it is
+a terminal result with `cleanup: "complete"` (R5/I-R7). A run whose custodians
+all died before settle writes nothing and stays `not-recorded`; there is no
+replay. Every other foreground run keeps Q-010 unchanged, including no journal
+write at all. The provider-side release rule this evidence supports is
+contract 049's, and it is not an Effigy authority.
+
 **Views and fencing.** Foreground runs have random `RunId`s and an in-memory
 incarnation fence containing that id; persistent resource generations are not
 incremented. No persisted request can address a foreground incarnation.
@@ -2581,15 +2605,24 @@ file identity instead of a content digest, and holding the startup image open
 Effigy inside an Effigy sequence), a later sentinel re-execs the unchanged
 held startup image without copying its data. On macOS `fclonefileat` clones
 from the held fd into the verified state directory; the APFS CoW clone is
-removed only after the sentinel acknowledges. On Linux `execveat` with
+removed only after the sentinel acknowledges. A clone cannot leave its
+filesystem, and a state root apart from the running image is an ordinary
+operator setup — a project checkout on an external drive, or `[scratch]` on a
+second disk — so `EXDEV` (and `ENOTSUP` from a filesystem without cloning)
+falls back to a verified copy: the bytes come from the held descriptor, are
+flushed, compared byte for byte with the held image, and the copy is then made
+read-only, so the pin is exactly the running image and cannot change after it.
+A partially written copy is removed, and no other failure falls back, so a
+resource refusal still refuses and a same-volume pin still writes no data. On
+Linux `execveat` with
 `AT_EMPTY_PATH` executes the held fd directly; the sentinel verifies that
 inherited descriptor before acknowledging. Pinning checks device, inode,
 size, mtime and ctime before and after, and helper verification retains all
 five fields. As before, an unlink's ctime change is allowed only when
-recognising the replaced, otherwise unchanged held image. Unsupported clone
-filesystems, cross-volume clones and unsupported fd execution refuse with
-`HelperExited(NotStarted)` and no byte-copy fallback. Fault points cover
-pin preparation, clone/fd selection, post-pin identity and fd execution;
+recognising the replaced, otherwise unchanged held image. A copy that cannot
+be written or compared, and fd execution on a platform without it, refuse with
+`HelperExited(NotStarted)`; there is no laxer pin. Fault points cover
+pin preparation, clone/copy selection, post-pin identity and fd execution;
 a changed image still refuses. A replacement can also land
 between this process's verify and the sentinel's own (effigy#239: library
 tests' nested `cargo run --bin effigy` re-uplifts `target/debug/effigy` as a
@@ -2696,6 +2729,22 @@ and `--detach` are front ends over the same run. Row by row:
   request" message.
 - Remote stop of a bare PGID: narrowed by the nonce check above;
   `signal_session` on a registration stays open with §5.10.
+
+One dev session (effigy#322). A managed task bound to a container environment
+owns that environment: its `up`, readiness, stop or detach, and the
+environment's host processes as session tabs. The run's own output, one tab
+per `[[containers.<env>.host_processes]]` entry (status line plus its log) and
+one tab per workload are the session in hybrid and container placement alike,
+so a bundle needs no `*:tui` selector and no `concurrent` entry per process. A
+plain bound task with no `concurrent` entries runs its own `run` as the one
+workload, or the environment alone. Host processes stay environment-owned runs
+(adopted, effigy#320): the session reads the log their supervisor writes and
+the listener state file it publishes, and the environment's existing stop is
+their stop, in both directions (owned → stopped, borrowed → left running). A
+front end never scans a process tree for them. `start_after_ms` no longer
+orders a session — readiness does — and the manifest's one deprecation notice
+names `after = ["environment"]` / `depends_on`
+(`retired.toml` `managed-start-after-ordering`).
 
 ### 10.3 Environment reconciler
 

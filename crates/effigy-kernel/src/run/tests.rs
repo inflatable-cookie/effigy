@@ -1967,3 +1967,100 @@ fn run_machine_owner_refusal_precedes_database_creation_and_shared_runs_reject_p
     run.finish(WorkloadOutcome::Succeeded).unwrap();
     run.settle(&cleanup(&cx), &mut fake).unwrap();
 }
+
+/// The narrow Q-010 exception's row (effigy#325): one terminal result per v2
+/// hook-admitted foreground run, read back by run id, newest first, and
+/// absent — never unreadable — from a journal written before the table
+/// existed. The row carries no process identity to reclaim from.
+#[test]
+fn run_terminal_record_round_trips_and_an_older_journal_reads_absent() {
+    let fixture = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, fixture.path()).unwrap();
+    let observe = cx.child(Duration::from_secs(10));
+    let observe = observe.operation().observe().unwrap();
+
+    // A journal written before this exception has no such table, and that is
+    // absence, not an unreadable journal.
+    {
+        let store = Store::open(&cx, &root).unwrap();
+        store
+            .conn()
+            .execute_batch("DROP TABLE foreground_terminals")
+            .unwrap();
+    }
+    let reader = match Store::read(&observe, &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("journal: {other:?}"),
+    };
+    assert!(matches!(
+        terminal_record(&reader, id(9)),
+        Observed::Absent(AbsenceProof::NoRow { .. })
+    ));
+
+    // The next writer adds the additive table and records one row.
+    let record = TerminalRecord {
+        run_id: id(9).to_string(),
+        checkout: checkout().text(),
+        boot: "20a888e4-10fc-4798-a139-fe8e08758c34".into(),
+        task: "dev".into(),
+        outcome: "succeeded".into(),
+        exit_code: Some(0),
+        signal: None,
+        cleanup: "complete".into(),
+        workload_groups: 3,
+        // A closed time inside the retention window: an older record is
+        // pruned by its own write, which the CLI test covers.
+        closed_at_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis() as i64)
+            .unwrap_or_default(),
+    };
+    record_terminal(&cx, &root, &record).unwrap();
+    // Repeating a settle keeps the first evidence.
+    let mut relayed = record.clone();
+    relayed.outcome = "failed".into();
+    record_terminal(&cx, &root, &relayed).unwrap();
+
+    let reader = match Store::read(&observe, &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("journal: {other:?}"),
+    };
+    let read = match terminal_record(&reader, id(9)) {
+        Observed::Verified(Some(read), _) => read,
+        other => panic!("record: {other:?}"),
+    };
+    assert_eq!(read, record);
+    // Evidence for the provider's lease only: nothing here names a process.
+    let encoded = serde_json::to_value(&read).unwrap();
+    let keys: Vec<&str> = encoded
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "boot",
+            "checkout",
+            "cleanup",
+            "closed_at_ms",
+            "exit_code",
+            "outcome",
+            "run_id",
+            "signal",
+            "task",
+            "workload_groups"
+        ],
+        "{encoded}"
+    );
+    assert!(matches!(
+        terminal_record(&reader, id(8)),
+        Observed::Absent(AbsenceProof::NoRow { .. })
+    ));
+    match terminal_records(&reader, 10) {
+        Observed::Verified(records, _) => assert_eq!(records, vec![record]),
+        other => panic!("records: {other:?}"),
+    }
+}

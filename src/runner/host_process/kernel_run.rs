@@ -1202,6 +1202,27 @@ fn hp_log_path(repo_root: &Path, policy: &EffectiveContainerPolicy, name: &str) 
     host_process_dir_for_policy(repo_root, policy).join(format!("{}.log", super::sanitize(name)))
 }
 
+/// Where a managed session reads one host process's live output: the log its
+/// supervisor redirects every child generation into.
+pub(in crate::runner) fn host_process_log_path(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    name: &str,
+) -> PathBuf {
+    hp_log_path(repo_root, policy, name)
+}
+
+/// The listener state file a managed session reads to project a host
+/// process's readiness. Only a process that declares a listener has one.
+pub(in crate::runner) fn host_process_listener_state_path(
+    repo_root: &Path,
+    policy: &EffectiveContainerPolicy,
+    name: &str,
+) -> PathBuf {
+    let dir = host_process_dir_for_policy(repo_root, policy);
+    host_process_state_path(&dir, name)
+}
+
 /// Whether a payload is a host-process supervisor payload (as opposed to a
 /// managed run's own engine payload).
 pub(in crate::runner) fn owns_supervise_payload(payload: &[u8]) -> bool {

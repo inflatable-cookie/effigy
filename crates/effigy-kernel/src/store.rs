@@ -814,10 +814,14 @@ impl Store {
         let adds_index = ADDITIVE_INDEXES
             .iter()
             .any(|(name, _)| !has_index(&self.conn, name).unwrap_or(false));
+        let adds_table = ADDITIVE_TABLES
+            .iter()
+            .any(|(name, _)| !has_table(&self.conn, name).unwrap_or(false));
         if has_backend(&self.conn)?
             && has_column(&self.conn, "engine")?
             && !stale_build
             && !adds_index
+            && !adds_table
         {
             return Ok(());
         }
@@ -831,6 +835,11 @@ impl Store {
             if !has_column(txn.conn, "engine")? {
                 txn.conn
                     .execute_batch("ALTER TABLE resources ADD COLUMN engine TEXT")?;
+            }
+            for (name, sql) in ADDITIVE_TABLES {
+                if !has_table(txn.conn, name)? {
+                    txn.conn.execute_batch(sql)?;
+                }
             }
             for (name, sql) in ADDITIVE_INDEXES {
                 if !has_index(txn.conn, name)? {
@@ -1575,6 +1584,13 @@ fn has_column(conn: &Connection, column: &str) -> rusqlite::Result<bool> {
         |r| r.get(0),
     )
 }
+fn has_table(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+        [name],
+        |r| r.get(0),
+    )
+}
 fn has_index(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name=?1)",
@@ -1630,6 +1646,28 @@ fn resource_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResourceRecord> {
             .transpose()?,
     })
 }
+
+/// Additive schema-1 tables: an old reader selects explicit columns from the
+/// tables it knows, so a new table is invisible to it and needs no version
+/// bump. A new table is still created here, in the same bounded transaction
+/// that adds the additive indexes.
+const ADDITIVE_TABLES: [(&str, &str); 1] = [(
+    "foreground_terminals",
+    "CREATE TABLE IF NOT EXISTS foreground_terminals (
+  run_id TEXT PRIMARY KEY,
+  checkout TEXT NOT NULL,
+  boot TEXT NOT NULL,
+  task TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  exit_code INTEGER,
+  signal INTEGER,
+  cleanup TEXT NOT NULL,
+  workload_groups INTEGER NOT NULL,
+  closed_at INTEGER NOT NULL
+) STRICT;
+CREATE INDEX IF NOT EXISTS foreground_terminals_closed
+  ON foreground_terminals(closed_at)",
+)];
 
 /// Indexes §7.4 retention needs, as additive schema-1 changes. Retention's
 /// candidates and deletes are index-driven, so a sweep costs the same on a
@@ -1793,6 +1831,19 @@ CREATE TABLE object_refs (
   seq INTEGER NOT NULL,
   PRIMARY KEY (digest, resource, role)
 ) STRICT;
+CREATE TABLE foreground_terminals (
+  run_id TEXT PRIMARY KEY,
+  checkout TEXT NOT NULL,
+  boot TEXT NOT NULL,
+  task TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  exit_code INTEGER,
+  signal INTEGER,
+  cleanup TEXT NOT NULL,
+  workload_groups INTEGER NOT NULL,
+  closed_at INTEGER NOT NULL
+) STRICT;
+CREATE INDEX foreground_terminals_closed ON foreground_terminals(closed_at);
 CREATE TABLE logs (
   run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
   stream TEXT NOT NULL,

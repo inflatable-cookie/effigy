@@ -25,6 +25,11 @@ mod objects;
 mod settle;
 mod socket;
 pub use socket::{connect_control_socket, control_socket_path};
+mod terminal;
+pub use terminal::{
+    read as terminal_record, recent as terminal_records, record as record_terminal, TerminalRecord,
+    EVIDENCE as TERMINAL_RECORD_EVIDENCE, KEEP_MS as TERMINAL_RECORD_KEEP_MS,
+};
 
 pub use attachments::{
     AttachMode, AttachmentTicket, Attachments, Holder, Liveness, TransitionPermit,

@@ -476,6 +476,29 @@ During v0.x, MINOR bumps may include breaking changes.
   `simulate --version`. The refusal names the replacement.
 
 ### Added
+- An admission hook can report custody back (effigy#325). Setting
+  `EFFIGY_ADMISSION_PROTOCOL=2` next to `EFFIGY_ADMISSION_HOOK` opts a
+  launcher in to `effigy.admission-request.v2`; the hook then receives
+  acknowledged `effigy.admission-event.v1` reports on stdin — `custodians`
+  first, one `workload` per group with its real PGID and leader
+  `ProcessIdentity`, and one `terminal` at settle. Effigy writes event n+1
+  only after n is acknowledged, and sends a workload's `go` only after its
+  report is acknowledged, so the acknowledged seqs are a gap-free prefix and a
+  group whose report was not acknowledged never runs; a write failure, EOF, a
+  malformed or out-of-order ack and the ack timeout all stop the workload and
+  fail the run closed with `effigy.admission.v1`; a report that is not
+  delivered also ends the sequence, so the hook is never handed a later `seq`
+  and the acknowledged prefix keeps no gap. Such a run also writes one
+  narrow terminal row to its checkout journal at settle, returned by
+  `run status <run> --json` with `evidence_source:
+  "foreground-terminal-record.v1"`, `checkout_id` and `boot`. The row carries
+  no process identity: it is evidence for the provider's own lease, never
+  authority for Effigy to signal or reclaim, and runs without the opt-in keep
+  Q-010 unchanged (no journal write at all). v2 is the foreground class's
+  protocol: its `custodians` report names the memory guard, so a durable
+  `--run-id` run refuses the opt-in before the hook starts instead of
+  reporting an incomplete custodian set. Contracts 049 and 052 §3.1 define
+  the protocol, the coverage witness, and Tom's 2026-10-24 release ruling.
 - Host processes get resolved environment facts instead of a wrapper script
   (effigy#321). A `[[containers.<env>.host_processes]]` `env` value may embed
   `${...}` references to facts Effigy already resolved: a service's published
@@ -1143,6 +1166,27 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- A managed session bound to a container environment owns that environment, and
+  one `effigy dev` shows it the same way in hybrid and container placement
+  (effigy#322, Q-007). The session's tabs are the run's own output, one tab per
+  `[[containers.<env>.host_processes]]` entry in declaration order with a
+  status line (`starting`, `running`, `ready on <url>`, `restarting`,
+  `exited <code>`) and that process's live log, then its workloads and shells;
+  `--headless` prints the same facts as `[name] [host] <status>` and
+  `[name] <line>`. A plain `[tasks.dev]` with `mode = "tui"` and
+  `workspace = "app"` therefore needs no `concurrent` entry per process and no
+  wrapper task: its own `run` is the one workload, or it runs the environment
+  alone, and it brings the environment up, borrows an already-started one and
+  closes the same way whatever a workload's placement is.
+  `container_lifecycle = true` owns the environment with `concurrent` entries
+  (the `role = "lifecycle"` entry is no longer required), `container_lifecycle
+  = false` opts out, and `gateway`/`health_wait` now need a session that owns
+  its environment rather than a lifecycle entry. Readiness orders a session:
+  `[[tasks.<name>.concurrent]].after = ["environment"]` states that dependency
+  and environment host processes order by `depends_on`. `start_after_ms` no
+  longer orders anything; it still delays its entry for the v0.15 line and the
+  manifest's one deprecation notice names the replacement
+  (`docs/knowledge/retired.toml`, `managed-start-after-ordering`).
 - A managed session resolves vault access once, before any front end renders
   (TUI, headless or detach), and everything it starts uses that access on the
   internal env route: the environment `up`, the run's supervisor, every
@@ -1379,6 +1423,13 @@ During v0.x, MINOR bumps may include breaking changes.
   task's custody ends. A supervisor's store or capability failure also renders
   as that step and its cause, with a next step, instead of ``the run was
   refused: `…` is not a valid run request`` (effigy#332).
+- A run whose binary sits on another volume from its state root — a project
+  checkout on an external drive, or `[scratch]` on a second disk — starts its
+  supervisor and sentinel again. Pinning the replaced startup image relied on
+  an APFS clone, and a clone cannot leave its filesystem, so admission refused
+  with `Cross-device link`. The pin now falls back to a copy that is flushed,
+  compared byte for byte with the running image and made read-only, so the
+  helper still re-execs exactly the startup image (contract 052 §10.1).
 - An explicit `--json`, or the global `--json`, always emits the
   `effigy.command.v1` envelope, wherever the invocation runs. A nested Effigy
   invocation marked with `EFFIGY_INTERNAL_SUPPRESS_HEADER` used to print its

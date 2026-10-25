@@ -1,4 +1,4 @@
-//! Re-exec a replaced startup image without copying its data (I-SV4).
+//! Re-exec a replaced startup image (I-SV4); a same-volume pin copies no data.
 use super::*;
 
 pub(super) struct PrivateImage<'a> {
@@ -57,14 +57,22 @@ pub(super) fn private_image<'a>(
     prepare().map(Some).map_err(|error| {
         helper_not_started(
             SENTINEL,
-            io::Error::new(
-                error.kind(),
-                format!("startup image pin refused (no copy fallback): {error}"),
-            ),
+            io::Error::new(error.kind(), format!("startup image pin refused: {error}")),
         )
     })
 }
 
+/// Pin the running image into the state root.
+///
+/// An APFS clone is preferred: it copies no data and is the running image's
+/// content by construction. It only exists within one filesystem, so an
+/// operator whose checkout or `[scratch]` state root is on another volume —
+/// a project on an external drive, a build disk — cannot be cloned into. The
+/// kernel refuses that with `EXDEV`, and a filesystem without cloning support
+/// refuses with `ENOTSUP`; both fall back to a verified copy. The copy is read
+/// back against the held image, flushed, and made read-only, so the pin is
+/// exactly the running image and cannot change afterwards. Nothing else falls
+/// back: a resource error (space, permissions, descriptors) still refuses.
 #[cfg(target_os = "macos")]
 fn pin_image<'a>(
     root: &'a StateRoot,
@@ -78,10 +86,14 @@ fn pin_image<'a>(
     // SAFETY: both descriptors are live for this call, and cname owns the
     // initialized, NUL-terminated single-component destination. Flags are 0.
     if unsafe { libc::fclonefileat(image.as_raw_fd(), root.dir().raw(), cname.as_ptr(), 0) } != 0 {
-        return Err(io::Error::last_os_error());
+        let error = io::Error::last_os_error();
+        if !clone_capacity_refusal(&error) {
+            return Err(error);
+        }
+        copy_image(root, &name, image)?;
     }
-    // Install cleanup immediately after clone success, including capture and
-    // injected failures. Keep the clone until the helper acknowledges.
+    // Install cleanup immediately after the pin exists, including capture and
+    // injected failures. Keep the pin until the helper acknowledges.
     let mut pin = PrivateImage {
         dir: root.dir(),
         name: Some(name),
@@ -91,9 +103,92 @@ fn pin_image<'a>(
     pin.executable =
         Executable::capture(&root.dir().join(cname.to_str().map_err(io::Error::other)?))?;
     if pin.executable.size != executable.size {
-        return Err(io::Error::other("startup clone size changed"));
+        return Err(io::Error::other("startup pin size changed"));
     }
     Ok(pin)
+}
+
+/// A clone the destination filesystem cannot hold, as opposed to a failure to
+/// create the pin at all.
+#[cfg(target_os = "macos")]
+fn clone_capacity_refusal(error: &io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(code)
+            if code == libc::EXDEV || code == libc::ENOTSUP || code == libc::EOPNOTSUPP
+    )
+}
+
+/// Copy the held image into the state root and prove the copy is that image.
+///
+/// The bytes come from the descriptor the run captured at startup, never from
+/// the path, which a rebuild may already have replaced. After the copy is
+/// flushed it is compared byte for byte with the held image, then made
+/// read-only: the pin cannot change while the helper is deciding to exec it.
+/// A refused or failed copy leaves no partial pin behind.
+#[cfg(target_os = "macos")]
+fn copy_image(root: &StateRoot, name: &FileName, image: &std::fs::File) -> io::Result<()> {
+    let copy = copy_image_inner(root, name, image);
+    if copy.is_err() {
+        // The handle that failed is gone; the name is this process's own.
+        let _ = root.dir().remove(name, false);
+    }
+    copy
+}
+
+#[cfg(target_os = "macos")]
+fn copy_image_inner(root: &StateRoot, name: &FileName, image: &std::fs::File) -> io::Result<()> {
+    use std::os::unix::fs::FileExt as _;
+    let source = image.metadata()?;
+    if !source.is_file() {
+        return Err(io::Error::other("startup image is not a regular file"));
+    }
+    let (destination, _) = root
+        .dir()
+        .open_file(
+            name,
+            libc::O_RDWR | libc::O_TRUNC,
+            Some(0o600),
+            Trust::Private,
+        )
+        .map_err(io::Error::other)?
+        .ok_or_else(|| io::Error::other("startup image copy was not created"))?;
+    let mut buffer = vec![0u8; 1 << 20];
+    let mut copied = 0u64;
+    loop {
+        let read = image.read_at(&mut buffer, copied)?;
+        if read == 0 {
+            break;
+        }
+        destination.write_all_at(&buffer[..read], copied)?;
+        copied += read as u64;
+    }
+    if copied != source.len() {
+        return Err(io::Error::other("startup image copy is short"));
+    }
+    crate::fs::fsync(&destination)?;
+    let mut held = vec![0u8; 1 << 20];
+    let mut pinned = vec![0u8; 1 << 20];
+    let mut offset = 0u64;
+    loop {
+        let read = image.read_at(&mut held, offset)?;
+        if read == 0 {
+            break;
+        }
+        destination.read_exact_at(&mut pinned[..read], offset)?;
+        if held[..read] != pinned[..read] {
+            return Err(io::Error::other(
+                "startup image copy differs from the running image",
+            ));
+        }
+        offset += read as u64;
+    }
+    if offset != copied {
+        return Err(io::Error::other("startup image changed while copied"));
+    }
+    crate::fs::fchmod(&destination, 0o500)?;
+    crate::fs::fsync(&destination)?;
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]

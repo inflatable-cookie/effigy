@@ -454,6 +454,13 @@ declared `restart`, `restart_delay_ms`, `shutdown_signal` and
 declared readiness and then detaches; if the bring-up is interrupted, the
 kernel stops what it started.
 
+A managed session bound to this environment shows each host process as its own
+tab, in declaration order, with a status line and its live log, next to the
+session's workloads — in hybrid and container placement alike
+([guide 012](012-dev-process-manager-tui.md#3-managed-contract)). A plain
+`[tasks.dev]` bound to the environment needs no `concurrent` entry per host
+process; the environment's declaration is the tab set.
+
 `effigy container down`, `reset` and a session's settle stop host processes
 through the kernel and report every stop, for example
 `[host process] frontend stopped (run 7k2…, pid 47120, SIGTERM then SIGKILL, exit 137)`.

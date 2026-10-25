@@ -58,6 +58,75 @@ Nested heavy invocations inside an admitted run do not call the hook again:
 children inherit `EFFIGY_ADMITTED`, and QA-group members run inside the
 group's one admission.
 
+## Report custody back to the hook (protocol v2)
+
+An orchestrator that must settle a run whose Effigy process died needs more
+than the hook's own PID. Setting `EFFIGY_ADMISSION_PROTOCOL=2` next to the hook
+opts that launcher in to a second protocol; v1 consumers are untouched, since
+without the variable the request, stdin and behaviour are exactly what they
+were. Any other value refuses the run, naming the variable.
+
+v2 is for foreground runs, because its first report names the memory guard
+that keeps a foreground run's custody. A durable run (`--run-id`) refuses v2
+before the hook starts, naming the variable: unset it for those runs; they
+already record their own run row.
+
+Under v2 the request is `effigy.admission-request.v2` (every v1 field plus
+`"protocol": 2`), and Effigy sends newline-delimited
+`effigy.admission-event.v1` reports to the hook's **stdin**. Each report must
+be acknowledged with `ack <seq>` on stdout within 10 seconds:
+
+| Report | Carries | When |
+| --- | --- | --- |
+| `custodians` (seq 1) | the owner's and the guard's `ProcessIdentity` | after `admit`, before any workload |
+| `workload` | the group's real `pgid` and its leader `ProcessIdentity` | before that group's first instruction runs |
+| `terminal` | outcome, exit code or signal, cleanup, group count | at settle, before the hook is stopped |
+
+```sh
+#!/bin/sh
+# heavy-slot for an orchestrator that settles dead runs itself.
+slot=$(my-scheduler acquire --request "$EFFIGY_ADMISSION_REQUEST") || {
+  echo "deny no capacity"; exit 0; }
+trap 'my-scheduler release "$slot"; exit 0' TERM
+echo admit
+while IFS= read -r event; do
+  seq=$(printf '%s\n' "$event" | sed 's/.*"seq":\([0-9]*\).*/\1/')
+  my-scheduler record --slot "$slot" --event "$event"   # durably
+  echo "ack $seq"                                       # only after recording
+done
+```
+
+What the acknowledged sequence proves, even if Effigy and its guard are killed:
+
+- The acknowledged seqs are always a gap-free prefix `1..n`, because Effigy
+  never writes event n+1 before n is acknowledged.
+- A workload group's `go` is sent only after its own report is acknowledged,
+  so a group whose report was never acknowledged never runs. A child already
+  spawned is held at the barrier and exits without executing.
+- `custodians` plus two `workload` reports with no gaps means exactly those
+  custodians and groups existed; `custodians` alone means no workload group
+  ever started (a legitimate zero). No `custodians` means nothing is known.
+- `workload_groups` in the terminal report is only a cross-check.
+
+A report that is not acknowledged — a write failure, EOF, a malformed or
+out-of-order `ack`, or the timeout — stops the workload before it runs and
+fails the run closed with the usual `effigy.admission.v1` `failed` error.
+
+After a normal v2 settle, the run also leaves one terminal row in its checkout
+journal, so `run status` still answers once the process is gone:
+
+```sh
+effigy --json run status agqvltk3r7jktaa6vi23dpcu4a
+# "evidence_source": "foreground-terminal-record.v1",
+# "checkout_id": "4:6f0106cdfc7327d913ccf9dd28c91c7d", "boot": "..."
+```
+
+That record is evidence for your own lease, not an Effigy authority: it holds
+no PID, PGID or start identity, `run logs` reports no retained log and
+`run stop` refuses. Effigy never recovers or signals from it, and a provider
+release on this evidence is never shown as `cleanup: "complete"`. The release
+rule and its accepted risk are contract 049's.
+
 ## Name and control runs
 
 ```sh

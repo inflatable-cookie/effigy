@@ -41,6 +41,12 @@ pub(in crate::runner) struct RunView {
     pub(in crate::runner) finished_at_epoch_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(in crate::runner) duration_ms: Option<i64>,
+    /// Present on a foreground terminal record: the checkout whose journal
+    /// holds it, and the boot the run's custodians lived in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(in crate::runner) checkout_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(in crate::runner) boot: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -137,6 +143,36 @@ pub(super) fn project_foreground(row: &ForegroundHolder, run: String) -> RunView
         started_at_epoch_ms: None,
         finished_at_epoch_ms: None,
         duration_ms: None,
+        checkout_id: None,
+        boot: None,
+    }
+}
+
+/// The narrow Q-010 exception's view: one settled v2 hook-admitted
+/// foreground run, read from its checkout journal. It is evidence only —
+/// there is no process identity here, so nothing can be signalled from it.
+pub(in crate::runner) fn project_terminal(record: &effigy_kernel::run::TerminalRecord) -> RunView {
+    RunView {
+        evidence_source: effigy_kernel::run::TERMINAL_RECORD_EVIDENCE,
+        run_id: record.run_id.clone(),
+        step: None,
+        steps: Vec::new(),
+        state: record.outcome.clone(),
+        phase: Some("closed"),
+        profile: None,
+        exit_code: record.exit_code,
+        signal: record.signal,
+        cleanup: Some(match record.cleanup.as_str() {
+            "complete" => "complete",
+            "incomplete" => "incomplete",
+            _ => "unknown",
+        }),
+        pid: None,
+        started_at_epoch_ms: None,
+        finished_at_epoch_ms: Some(record.closed_at_ms),
+        duration_ms: None,
+        checkout_id: Some(record.checkout.clone()),
+        boot: Some(record.boot.clone()),
     }
 }
 
@@ -298,6 +334,8 @@ fn project(summary: &RunSummary, gate: Option<&Observed<GateState>>) -> RunView 
         duration_ms: summary
             .closed_at_ms
             .map(|closed| closed.saturating_sub(summary.created_at_ms)),
+        checkout_id: None,
+        boot: None,
     }
 }
 

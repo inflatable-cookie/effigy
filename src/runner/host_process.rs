@@ -48,8 +48,9 @@ use effigy_kernel::supervise::EngineSession;
 
 mod kernel_run;
 pub(in crate::runner) use kernel_run::{
-    host_process_status, owns_supervise_payload, start_host_processes_for_container,
-    stop_host_processes_for_container, CustodyStop, HostProcessStop, HostProcessStopReport,
+    host_process_listener_state_path, host_process_log_path, host_process_status,
+    owns_supervise_payload, start_host_processes_for_container, stop_host_processes_for_container,
+    CustodyStop, HostProcessStop, HostProcessStopReport,
 };
 
 const HOST_PROCESS_DIR: &str = ".effigy/runtime/host-processes";

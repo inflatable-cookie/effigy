@@ -1284,3 +1284,18 @@ allow = [
   "docs/guides/085-v0.15.0-consumer-migration.md",
   "docs/knowledge/questions.md",
 ]
+
+[[retired]]
+id = "managed-start-after-ordering"
+retired = "2026-10-21; ordered by observed readiness from v0.15 (effigy#322)"
+replacement = "Readiness orders a managed session: workloads start once the environment's `up` finished and its exec readiness answered, so a `[[tasks.<name>.concurrent]]` timer no longer decides order. Say what the session waits for with `after = [\"environment\"]` (the one accepted dependency), and order an environment's host processes with `depends_on`. For the v0.15 line `start_after_ms` still delays its entry, and the manifest's one deprecation notice names this replacement; the key is removed after v0.15."
+owner = "docs/guides/012-dev-process-manager-tui.md"
+terms = [
+  "start_after_ms ordering",
+  "start-after ordering",
+  "start_after_ms as ordering",
+  "fixed-timer ordering",
+  "timer-based session ordering",
+]
+paths = []
+config_keys = []
