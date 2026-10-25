@@ -624,7 +624,7 @@ fn wait_for_listener_state(
 
 /// What one dependency's published listener record says right now.
 enum DependencyRecord {
-    Present(HostListenerState),
+    Present(Box<HostListenerState>),
     /// The record is gone: the dependency was stopped or never started.
     Missing,
     /// The record is there but cannot be read as this owner's state.
@@ -638,7 +638,7 @@ fn read_dependency_record(dependency: &HostProcessDependency) -> DependencyRecor
                 if state.schema == HOST_LISTENER_STATE_SCHEMA
                     && state.owner == dependency.owner =>
             {
-                DependencyRecord::Present(state)
+                DependencyRecord::Present(Box::new(state))
             }
             Ok(_) | Err(_) => DependencyRecord::Unreadable,
         },
@@ -740,7 +740,7 @@ fn wait_for_dependency_environment(
                 DependencyRecord::Present(state)
                     if state.status == "ready" && state.route_owner.is_some() =>
                 {
-                    states.push(state);
+                    states.push(*state);
                 }
                 _ => {
                     states.clear();
