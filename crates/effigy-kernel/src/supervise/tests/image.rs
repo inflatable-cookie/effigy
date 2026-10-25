@@ -247,7 +247,9 @@ fn large_replaced_image_admission_shares_data_and_reports_before_after() {
         admission_bytes < offset / 100,
         "admission wrote {admission_bytes}"
     );
-    eprintln!("replaced-image measurement: image={offset} legacy_copy_bytes={copy_bytes} legacy_copy_wall={copy_time:?} legacy_admission_bytes={baseline_bytes} legacy_admission_wall={baseline_admission:?} clone_bytes={clone_bytes} clone_wall={clone_time:?} admission_bytes={admission_bytes} admission_wall={admission_time:?}");
+    eprintln!(
+        "replaced-image measurement: image={offset} legacy_copy_bytes={copy_bytes} legacy_copy_wall={copy_time:?} legacy_admission_bytes={baseline_bytes} legacy_admission_wall={baseline_admission:?} clone_bytes={clone_bytes} clone_wall={clone_time:?} admission_bytes={admission_bytes} admission_wall={admission_time:?}"
+    );
     run.interrupt(&cleanup(&cx), WorkloadOutcome::NotStarted)
         .unwrap();
     run.settle(&cleanup(&cx), &mut Strict).unwrap();
@@ -282,4 +284,109 @@ fn retained_native_helper_preserves_explicit_capability_after_descriptor_prepara
     assert!(command.status().unwrap().success());
     drop(lease);
     assert!(!command.status().unwrap().success());
+}
+
+/// A fresh temporary directory on a filesystem other than `device`.
+#[cfg(target_os = "macos")]
+fn other_device_tempdir(device: u64) -> Option<tempfile::TempDir> {
+    let mut parents = vec![std::env::temp_dir()];
+    parents.push(std::path::PathBuf::from("/Users/Shared"));
+    parents.push(std::path::PathBuf::from("/var/tmp"));
+    for parent in parents {
+        if !parent.is_dir() {
+            continue;
+        }
+        let Ok(dir) = tempfile::Builder::new().prefix("kx-").tempdir_in(&parent) else {
+            continue;
+        };
+        let Ok(metadata) = std::fs::metadata(dir.path()) else {
+            continue;
+        };
+        if metadata.dev() != device {
+            return Some(dir);
+        }
+    }
+    None
+}
+
+/// A state root on another volume from the running image is an ordinary
+/// operator setup — a project on an external drive, or `[scratch]` on a build
+/// disk — and `fclonefileat` cannot cross filesystems there. The pin must
+/// still be exactly the running image: a copy read back against the held
+/// image, flushed and made read-only, that the sentinel re-execs and removes
+/// after it acknowledges.
+#[cfg(target_os = "macos")]
+#[test]
+fn cross_volume_replaced_image_is_pinned_by_a_verified_copy() {
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let state_device = std::fs::metadata(root.path()).unwrap().dev();
+    let Some(other) = other_device_tempdir(state_device) else {
+        eprintln!("skip: this host offers one filesystem only, so no cross-volume pin is provable");
+        return;
+    };
+    let path = other.path().join("bin/helper");
+    std::fs::create_dir(other.path().join("bin")).unwrap();
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\necho $$ > '{}'\nprintf '\\001'; exec cat >/dev/null\n",
+            world.pid_file().display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let plan = LifecyclePlan {
+        executable: Executable::capture(&path).unwrap(),
+        placement: crate::supervise::Placement::Inline,
+    };
+    assert_ne!(std::fs::metadata(&path).unwrap().dev(), state_device);
+    // The rebuild replaces the path on the image's own volume: a rename across
+    // devices is the very thing a pin cannot do.
+    std::fs::rename(&path, other.path().join("old-helper")).unwrap();
+    std::fs::write(&path, "replacement must never execute").unwrap();
+
+    let held = plan.executable.replaced_image().expect("held image");
+    let mut expected = Vec::new();
+    std::io::Read::read_to_end(&mut &*held, &mut expected).unwrap();
+    let pin = private_image(&root, &plan.executable).unwrap().unwrap();
+    let pinned = std::fs::metadata(&pin.executable.path).unwrap();
+    assert_eq!(
+        pinned.dev(),
+        state_device,
+        "the pin belongs to the state root's filesystem"
+    );
+    assert_eq!(
+        std::fs::read(&pin.executable.path).unwrap(),
+        expected,
+        "the pin is exactly the running image's bytes"
+    );
+    assert_eq!(
+        pinned.permissions().mode() & 0o222,
+        0,
+        "a copied pin cannot be rewritten"
+    );
+    drop(pin);
+    world.assert_no_residue();
+
+    // The sentinel re-execs the copy and the admitted run behaves as it does
+    // with a same-volume clone.
+    let mut run = Run::begin(
+        &cx,
+        &root,
+        &inv("cross-volume"),
+        opts(1, Some(plan)),
+        &cleanup(&cx),
+        &mut Strict,
+    )
+    .unwrap();
+    assert!(run.has_sentinel());
+    world.assert_no_residue();
+    run.interrupt(&cleanup(&cx), WorkloadOutcome::NotStarted)
+        .unwrap();
+    run.settle(&cleanup(&cx), &mut Strict).unwrap();
+    world.assert_helper_reaped();
+    world.assert_owner_free(&root, "cross-volume", 2);
+    world.assert_no_residue();
 }

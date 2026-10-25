@@ -2579,15 +2579,24 @@ file identity instead of a content digest, and holding the startup image open
 Effigy inside an Effigy sequence), a later sentinel re-execs the unchanged
 held startup image without copying its data. On macOS `fclonefileat` clones
 from the held fd into the verified state directory; the APFS CoW clone is
-removed only after the sentinel acknowledges. On Linux `execveat` with
+removed only after the sentinel acknowledges. A clone cannot leave its
+filesystem, and a state root apart from the running image is an ordinary
+operator setup — a project checkout on an external drive, or `[scratch]` on a
+second disk — so `EXDEV` (and `ENOTSUP` from a filesystem without cloning)
+falls back to a verified copy: the bytes come from the held descriptor, are
+flushed, compared byte for byte with the held image, and the copy is then made
+read-only, so the pin is exactly the running image and cannot change after it.
+A partially written copy is removed, and no other failure falls back, so a
+resource refusal still refuses and a same-volume pin still writes no data. On
+Linux `execveat` with
 `AT_EMPTY_PATH` executes the held fd directly; the sentinel verifies that
 inherited descriptor before acknowledging. Pinning checks device, inode,
 size, mtime and ctime before and after, and helper verification retains all
 five fields. As before, an unlink's ctime change is allowed only when
-recognising the replaced, otherwise unchanged held image. Unsupported clone
-filesystems, cross-volume clones and unsupported fd execution refuse with
-`HelperExited(NotStarted)` and no byte-copy fallback. Fault points cover
-pin preparation, clone/fd selection, post-pin identity and fd execution;
+recognising the replaced, otherwise unchanged held image. A copy that cannot
+be written or compared, and fd execution on a platform without it, refuse with
+`HelperExited(NotStarted)`; there is no laxer pin. Fault points cover
+pin preparation, clone/copy selection, post-pin identity and fd execution;
 a changed image still refuses. A replacement can also land
 between this process's verify and the sentinel's own (effigy#239: library
 tests' nested `cargo run --bin effigy` re-uplifts `target/debug/effigy` as a
