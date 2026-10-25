@@ -1789,13 +1789,18 @@ fn setup_file_watcher(
 
     // Watch the database directory, including rollback-journal removal: that
     // removal marks a commit whose earlier writes could still be unreadable.
-    let database = crate::endpoint_store::EndpointStore::for_routes(path).database_path();
+    let store = crate::endpoint_store::EndpointStore::for_routes(path);
+    let database = store.database_path();
     let watch_dir = database.parent().expect("kernel database parent");
-    if watch_dir.exists() {
-        watcher
-            .watch(watch_dir, RecursiveMode::NonRecursive)
-            .map_err(|e| GatewayError::WatcherError(e.to_string()))?;
-    }
+    // A gateway normally starts before any publisher (a fresh machine, and
+    // `up`/`dev` start it themselves), so the store directory it must watch
+    // need not exist yet. Creating it is the same private directory the
+    // store's first transaction would create; the watcher then sees that
+    // first commit instead of serving an empty table.
+    store.prepare_directory()?;
+    watcher
+        .watch(watch_dir, RecursiveMode::NonRecursive)
+        .map_err(|e| GatewayError::WatcherError(e.to_string()))?;
 
     Ok(watcher)
 }

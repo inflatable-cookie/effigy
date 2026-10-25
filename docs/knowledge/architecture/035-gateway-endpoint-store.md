@@ -85,7 +85,9 @@ callback cannot withdraw a successor generation. Retirement and `down` remove
 the checkout's routes by path, listener routes included.
 
 The daemon reads Store snapshots and watches the kernel database directory for
-reload. The kernel's owner and path checks protect the Store; there is no
+reload. Startup creates that directory when no publisher has yet, so a daemon
+started before the first route still sees it committed. The kernel's owner and
+path checks protect the Store; there is no
 legacy file to import or verify. Unknown observations retain the last applied
 daemon table and report an error instead of falling back to a file.
 Status uses the same pure snapshot reader.

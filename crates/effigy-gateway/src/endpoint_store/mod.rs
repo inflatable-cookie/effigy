@@ -91,6 +91,19 @@ impl EndpointStore {
         self.home.join(".effigy/state/machine.db")
     }
 
+    /// Create the store's own directory (`<home>/.effigy/state`, 0700) before
+    /// anything has been published. It is the directory the kernel store
+    /// creates on its first transaction, and a gateway that starts first
+    /// watches it for that transaction; no record is written here.
+    pub fn prepare_directory(&self) -> Result<(), GatewayError> {
+        let op = operator::context(Duration::from_secs(3), EffectClass::Mutate);
+        let cx = op
+            .effects()
+            .map_err(|failure| error(format!("{failure}")))?;
+        StateRoot::machine_effects(&cx, &self.home).map_err(error)?;
+        Ok(())
+    }
+
     /// Pure observation: no gate, recovery, directory or file creation.
     pub fn read(&self) -> Observed<EndpointSnapshot> {
         let op = operator::context(Duration::from_secs(3), EffectClass::Observe);
