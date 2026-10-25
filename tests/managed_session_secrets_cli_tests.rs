@@ -1,7 +1,7 @@
 //! One managed session, one vault question: a locked vault prompts once,
-//! before any front end renders, and everything the session starts uses that
-//! access without prompting (contract 032, Q-007 "Secrets before the TUI";
-//! Tom 2026-10-23).
+//! before any front end renders, and Effigy's own children use that access
+//! without prompting while a user workload never receives it (contract 032,
+//! Q-007 "Secrets before the TUI"; Tom 2026-10-23; effigy#338).
 //!
 //! These proofs drive the real binary on a private pseudo terminal, because
 //! the prompt is the thing under test: the session must write it on the
@@ -22,39 +22,71 @@ use nix::pty::{openpty, Winsize};
 
 const PROMPT: &str = "Vault passphrase";
 const SECRET_VALUE: &str = "postgres://session-shared-value";
-/// How long the session gets to reach each milestone.
-const WAIT: Duration = Duration::from_secs(180);
+/// How long the session gets to reach each milestone. Kept well inside the
+/// test runner's termination budget (180s for this selector): the fixture must
+/// reach its own cleanup and stop its process group before the runner kills
+/// the test process, or a hung session would outlive the test (effigy#338).
+const WAIT: Duration = Duration::from_secs(60);
 
 /// Every source a caller could set to answer without a terminal. Each child
 /// starts without them so the proof is about the session's own resolution.
-const PASSHRASE_SOURCES: [&str; 3] = [
+const PASSHRASE_SOURCES: [&str; 5] = [
     "EFFIGY_SECRET_PASSPHRASE",
     "EFFIGY_INTERNAL_SECRET_PASSPHRASE",
     "EFFIGY_TEST_SECRETS_PASSPHRASE",
+    "EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS",
+    "EFFIGY_INTERNAL_SECRET_GRANT",
 ];
 
+/// The session asks once, before it renders, and that access never reaches a
+/// workload: the workload's own environment and its `ps -ww` argv view hold
+/// neither the passphrase nor a session-access key, while the required secret
+/// the session resolved for it does arrive (effigy#338).
 #[test]
-fn a_managed_session_prompts_once_before_it_renders_and_shares_that_access() {
+fn a_managed_session_prompts_once_before_it_renders_and_keeps_the_access_off_the_workload() {
     let fixture = SessionFixture::new("effigy-session-secrets-", "e319h.");
     let mut session = PtySession::spawn(&fixture.root, fixture.home.path());
     session.wait_for(PROMPT);
     // The question arrives before the front end has shown any of the run.
     assert!(
-        !session.output().contains("probe saw"),
+        !session.output().contains("workload saw"),
         "a workload started before the session asked for the vault: {}",
         session.output()
     );
     session.send_line("vault-passphrase");
 
-    // The tab's nested `effigy probe` — a non-`dev` task with
-    // `secrets = "required"` — resolves the stored value through the access
-    // the session shared, and never asks for the passphrase itself.
-    session.wait_for("probe saw");
+    // The supervisor is Effigy's own child. It resolved the task's required
+    // secret through the session's access, so the workload received the value
+    // without the session asking a second time.
+    session.wait_for("workload saw");
     let transcript = session.output();
+    let dump: Vec<&str> = transcript
+        .lines()
+        .filter(|line| line.contains("[dump]"))
+        .collect();
     assert!(
-        transcript.contains(SECRET_VALUE),
-        "the nested run did not resolve the shared secret: {transcript}"
+        dump.iter().any(|line| line.contains("workload saw")),
+        "the workload's own output did not reach the session: {transcript}"
     );
+    // The required secret was delivered (its value is redacted in the log),
+    // and the passphrase is nowhere in the workload's environment or argv.
+    assert!(
+        dump.iter()
+            .any(|line| line.contains("DATABASE_URL=[REDACTED]")),
+        "the session's resolved secret did not reach the workload: {transcript}"
+    );
+    for forbidden in [
+        "vault-passphrase",
+        "EFFIGY_INTERNAL_SECRET_PASSPHRASE",
+        "EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS",
+        "EFFIGY_INTERNAL_SECRET_GRANT",
+        "EFFIGY_SECRET_PASSPHRASE",
+    ] {
+        assert!(
+            dump.iter().all(|line| !line.contains(forbidden)),
+            "`{forbidden}` reached the workload's environment or argv: {transcript}"
+        );
+    }
     assert_eq!(
         transcript.matches(PROMPT).count(),
         1,
@@ -74,6 +106,7 @@ fn a_managed_session_prompts_once_before_it_renders_and_shares_that_access() {
         "session exit: {status}: {}",
         session.output()
     );
+    assert_session_stopped(&mut session);
     assert!(
         !credential.exists(),
         "the session wrote a sealed credential"
@@ -130,6 +163,8 @@ fn a_managed_session_without_a_terminal_or_source_refuses_before_starting() {
 
 /// A caller-supplied passphrase answers the session without a terminal, and
 /// the nested run in its tab uses it too.
+/// A caller-supplied passphrase answers the session without a terminal, and
+/// the run's Effigy children resolve through it without asking.
 #[test]
 fn a_managed_session_uses_a_caller_supplied_passphrase() {
     let fixture = SessionFixture::new("effigy-session-secrets-env-", "e319j.");
@@ -138,15 +173,61 @@ fn a_managed_session_uses_a_caller_supplied_passphrase() {
         fixture.home.path(),
         Some("vault-passphrase"),
     );
-    session.wait_for("probe saw");
+    session.wait_for("workload saw");
     let transcript = session.output();
+    let dump: Vec<&str> = transcript
+        .lines()
+        .filter(|line| line.contains("[dump]"))
+        .collect();
     assert!(
-        transcript.contains(SECRET_VALUE),
-        "the nested run did not resolve the shared secret: {transcript}"
+        dump.iter()
+            .any(|line| line.contains("DATABASE_URL=[REDACTED]")),
+        "the run did not resolve the session's secret: {transcript}"
     );
     assert!(
         !transcript.contains(PROMPT),
         "a supplied passphrase must not be asked for again: {transcript}"
+    );
+    for forbidden in ["vault-passphrase", "EFFIGY_SECRET_PASSPHRASE"] {
+        assert!(
+            dump.iter().all(|line| !line.contains(forbidden)),
+            "`{forbidden}` reached the workload: {transcript}"
+        );
+    }
+    session.stop();
+    let status = session.finish();
+    assert!(
+        status.success(),
+        "session exit: {status}: {}",
+        session.output()
+    );
+    assert_session_stopped(&mut session);
+}
+
+/// A nested `effigy` started from user code is a top-level invocation: it does
+/// not inherit the session's access, so it asks for the passphrase itself
+/// (effigy#338). The session's own prompt is the only one Effigy answers.
+#[test]
+fn a_nested_effigy_run_started_by_user_code_never_inherits_the_session_access() {
+    let fixture = SessionFixture::new_user_code_nested_run();
+    let mut session = PtySession::spawn_with_passphrase_source(
+        &fixture.root,
+        fixture.home.path(),
+        Some("vault-passphrase"),
+    );
+    // The session itself resolved from the caller's source. Its tab's nested
+    // `effigy probe` is user code: it inherits no access. It either reports a
+    // refusal or waits on its own terminal for a passphrase nobody types, so
+    // this observes a bounded window instead of waiting for its exit.
+    session.settle_for(Duration::from_secs(20));
+    let transcript = session.output();
+    assert!(
+        !transcript.contains("probe saw"),
+        "a user-code nested run received the session's access: {transcript}"
+    );
+    assert!(
+        !transcript.contains(SECRET_VALUE),
+        "a user-code nested run received the session's secret: {transcript}"
     );
     session.stop();
     let status = session.finish();
@@ -155,6 +236,7 @@ fn a_managed_session_uses_a_caller_supplied_passphrase() {
         "session exit: {status}: {}",
         session.output()
     );
+    assert_session_stopped(&mut session);
 }
 
 /// A private checkout, private HOME and a locked vault holding one value.
@@ -166,12 +248,26 @@ struct SessionFixture {
 
 impl SessionFixture {
     fn new(prefix: &str, home_prefix: &str) -> Self {
+        Self::from_manifest(prefix, home_prefix, probe_manifest())
+    }
+
+    /// A session whose tab runs a nested `effigy probe` as user code, to prove
+    /// that route is a top-level invocation rather than a shared session.
+    fn new_user_code_nested_run() -> Self {
+        Self::from_manifest(
+            "effigy-session-secrets-user-code-",
+            "e319k.",
+            user_code_manifest(),
+        )
+    }
+
+    fn from_manifest(prefix: &str, home_prefix: &str, manifest: String) -> Self {
         let workspace =
             effigy_test_support::Fixture::workspace(prefix).expect("private session fixture");
         let root = fs::canonicalize(workspace.path()).expect("canonical fixture root");
         let home =
             effigy_test_support::Fixture::short_home(home_prefix).expect("short private home");
-        write_locked_fixture(&root);
+        write_locked_fixture(&root, &manifest);
         Self {
             _workspace: workspace,
             root,
@@ -184,24 +280,23 @@ impl SessionFixture {
     }
 }
 
-fn write_locked_fixture(root: &Path) {
-    let effigy = env!("CARGO_BIN_EXE_effigy");
-    fs::write(
-        root.join("effigy.toml"),
-        format!(
-            r#"
+/// The session's workload dumps everything a `ps` listing and an environment
+/// dump would show, then prints the required secret the session resolved.
+fn probe_manifest() -> String {
+    r#"
 [catalog]
 alias = "root"
 
 [tasks.dev]
 mode = "tui"
+secrets = "required"
 concurrent = [
-  {{ name = "probe", run = "'{effigy}' probe", start = 1, tab = 1 }},
+  { name = "dump", run = "/usr/bin/env; /bin/ps -ww -o args= -p $$; printf 'workload saw %s\\n' \"$DATABASE_URL\"", start = 1, tab = 1 },
 ]
 
 [tasks.probe]
 secrets = "required"
-run = "printf 'probe saw %s\n' \"$DATABASE_URL\""
+run = "printf 'probe saw %s\\n' \"$DATABASE_URL\""
 
 [secrets]
 backend = "effigy-vault"
@@ -213,9 +308,42 @@ path = ".effigy/secrets/local.vault"
 required = true
 targets = ["tasks"]
 "#
-        ),
+    .to_owned()
+}
+
+/// A session whose tab runs a nested `effigy probe` as user code.
+fn user_code_manifest() -> String {
+    format!(
+        r#"
+[catalog]
+alias = "root"
+
+[tasks.dev]
+mode = "tui"
+concurrent = [
+  {{ name = "probe", run = "'{effigy}' probe; printf 'nested exit %s\\n' \"$?\"", start = 1, tab = 1 }},
+]
+
+[tasks.probe]
+secrets = "required"
+run = "printf 'probe saw %s\\n' \"$DATABASE_URL\""
+
+[secrets]
+backend = "effigy-vault"
+
+[secrets.vault]
+path = ".effigy/secrets/local.vault"
+
+[secrets.keys.database_url]
+required = true
+targets = ["tasks"]
+"#,
+        effigy = env!("CARGO_BIN_EXE_effigy")
     )
-    .expect("write session manifest");
+}
+
+fn write_locked_fixture(root: &Path, manifest: &str) {
+    fs::write(root.join("effigy.toml"), manifest).expect("write session manifest");
     write_locked_vault(root, "vault-passphrase", SECRET_VALUE);
 }
 
@@ -235,6 +363,27 @@ fn write_locked_vault(root: &Path, passphrase: &str, value: &str) {
         envelope.to_json_pretty().expect("serialize vault"),
     )
     .expect("write locked vault");
+}
+
+/// Opens descriptors until this process holds every slot below the kernel's
+/// handoff descriptor, and leaves them open (not CLOEXEC) until the caller has
+/// spawned the child that should inherit them.
+fn occupy_below_handoff() -> Vec<std::os::fd::OwnedFd> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let slot = effigy_kernel::custody::HANDOFF_FD;
+    let mut held = Vec::new();
+    loop {
+        // SAFETY: a plain open of a static path; ownership transfers.
+        let fd = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
+        assert!(fd >= 0, "open /dev/null");
+        // SAFETY: the successful open returned a fresh owned descriptor.
+        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        let raw = fd.as_raw_fd();
+        held.push(fd);
+        if raw >= slot - 1 {
+            return held;
+        }
+    }
 }
 
 /// A private pseudo terminal: the child gets the slave as its stdin, stdout
@@ -298,7 +447,13 @@ impl PtySession {
                 Ok(())
             });
         }
+        // Hand the session descriptors 3..=10, so its own one-shot grant pipe
+        // lands on the kernel's handoff slot itself (11). That is the shape
+        // where `dup2` onto the same number must still clear CLOEXEC for the
+        // supervisor to find its grant after exec (effigy#338).
+        let inherited = occupy_below_handoff();
         let child = command.spawn().expect("spawn session on a PTY");
+        drop(inherited);
         Self {
             child,
             master,
@@ -326,12 +481,31 @@ impl PtySession {
                 );
                 return;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for {needle:?}: {}",
-                self.output()
-            );
+            if Instant::now() >= deadline {
+                // Never panic while the session is still running: this test
+                // process's death must not leave a `dev --headless` behind.
+                self.kill_group();
+                self.drain();
+                panic!("timed out waiting for {needle:?}: {}", self.output());
+            }
         }
+    }
+
+    /// Stops the fixture and everything it started in this session. The child
+    /// is its own session leader (`setsid` in `pre_exec`), so its group is the
+    /// pid it recorded at spawn.
+    fn kill_group(&mut self) {
+        if self.child.try_wait().ok().flatten().is_some() {
+            return;
+        }
+        let pid = self.child.id() as i32;
+        // SAFETY: only this test's own child, its own process group, recorded
+        // at spawn. Both signals are idempotent here.
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+            libc::kill(pid, libc::SIGKILL);
+        }
+        let _ = self.child.wait();
     }
 
     fn send_line(&mut self, line: &str) {
@@ -359,17 +533,18 @@ impl PtySession {
                 return status;
             }
             if Instant::now() >= deadline {
-                // SAFETY: only this test's own child is signalled, then reaped.
-                unsafe {
-                    libc::kill(self.child.id() as i32, libc::SIGKILL);
-                }
-                let status = self.child.wait().expect("reap session");
+                self.kill_group();
                 self.drain();
-                panic!(
-                    "session did not settle after TERM: {} ({status})",
-                    self.output()
-                );
+                panic!("session did not settle after TERM: {}", self.output());
             }
+        }
+    }
+
+    /// Reads output for a fixed window without waiting for any milestone.
+    fn settle_for(&mut self, window: Duration) {
+        let deadline = Instant::now() + window;
+        while Instant::now() < deadline {
+            self.read_available(Duration::from_millis(100));
         }
     }
 
@@ -417,12 +592,17 @@ impl PtySession {
 
 impl Drop for PtySession {
     fn drop(&mut self) {
-        if self.child.try_wait().ok().flatten().is_none() {
-            // SAFETY: only this test's own child, which it started on the PTY.
-            unsafe {
-                libc::kill(self.child.id() as i32, libc::SIGKILL);
-            }
-            let _ = self.child.wait();
-        }
+        // Every exit path, panics included, stops the fixture's own session
+        // before this test process can die and orphan it.
+        self.kill_group();
     }
+}
+
+/// The run's own settle stops everything; this only proves the fixture process
+/// itself is gone, so a leaked session fails the test that made it.
+fn assert_session_stopped(session: &mut PtySession) {
+    assert!(
+        session.child.try_wait().expect("poll session").is_some(),
+        "the session fixture is still running after the test stopped it"
+    );
 }

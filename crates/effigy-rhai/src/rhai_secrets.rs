@@ -360,6 +360,36 @@ pub(crate) fn active_test_rhai_secret_passphrase() -> Option<SecretValue> {
     TEST_SECRET_PASSPHRASE.with(|active| active.borrow().clone())
 }
 
+/// The session access the hosting binary adopted at startup: the vault
+/// passphrase and local-dev marker it read from its own descriptor. A script
+/// resolves with this instead of any global environment, so no passphrase is
+/// ever a process environment value (contract 032, 052 K12). The provider is
+/// a function, not a snapshot, because a binary's local-dev access is
+/// activated after startup.
+type SessionAccessProvider = fn() -> (Option<SecretValue>, bool);
+static SESSION_ACCESS: std::sync::OnceLock<SessionAccessProvider> = std::sync::OnceLock::new();
+
+/// Registers the hosting binary's session access. Idempotent: the first
+/// registration wins, and a process that registers none resolves from the
+/// caller-supplied and test sources only.
+pub fn install_session_access_provider(provider: SessionAccessProvider) {
+    let _ = SESSION_ACCESS.set(provider);
+}
+
+fn session_access() -> Option<(Option<SecretValue>, bool)> {
+    SESSION_ACCESS.get().map(|provider| provider())
+}
+
+/// The passphrase the hosting binary holds in memory, if any.
+pub(crate) fn session_access_passphrase() -> Option<SecretValue> {
+    session_access().and_then(|(passphrase, _)| passphrase)
+}
+
+/// Whether the hosting binary holds active local-dev secret access.
+pub(crate) fn session_access_local_dev() -> bool {
+    session_access().is_some_and(|(_, local_dev)| local_dev)
+}
+
 pub(crate) fn read_rhai_secret_passphrase(
     vault_path: &Path,
     optional_only: bool,
@@ -373,8 +403,8 @@ pub(crate) fn read_rhai_secret_passphrase(
     if let Ok(value) = std::env::var("EFFIGY_TEST_SECRETS_PASSPHRASE") {
         return Ok(Some(SecretValue::new(value)));
     }
-    if let Ok(value) = std::env::var("EFFIGY_INTERNAL_SECRET_PASSPHRASE") {
-        return Ok(Some(SecretValue::new(value)));
+    if let Some(passphrase) = session_access_passphrase() {
+        return Ok(Some(passphrase));
     }
     if let Some(passphrase) = read_local_unlock_passphrase(vault_path)
         .map_err(|error| RhaiHostError::new(error.to_string()))?
@@ -406,7 +436,7 @@ fn read_rhai_secret_vault_payload(
 }
 
 fn local_dev_secret_access_active() -> bool {
-    std::env::var_os("EFFIGY_INTERNAL_LOCAL_DEV_SECRET_ACCESS").is_some()
+    session_access_local_dev()
 }
 
 fn read_rhai_local_dev_vault_payload(

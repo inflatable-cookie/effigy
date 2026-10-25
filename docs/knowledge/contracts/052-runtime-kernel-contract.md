@@ -1085,6 +1085,7 @@ pub struct ProcessSpec {
     label: String,
 }
 
+
 // Store runs publish engine-journalled file effects through
 // Run::replace_record(dir, name, bytes, ReplaceOpts), retaining their owner gate.
 // DirFd::prepare_child(cx, name) creates source directories no-follow and syncs
@@ -1119,6 +1120,14 @@ impl RouterHandle {
     pub fn root_cancel(&self) -> CancelToken;
 }
 ```
+
+A spawn may hand its child one short-lived reader at `HANDOFF_FD` (11), above
+the capability reader (9) and the cleanup pin (10). The child reads one framed
+payload and closes it; the parent keeps no copy once the spawn returns, and the
+anchor process never holds it. That is how a session secret reaches an Effigy
+child without argv or a persistent environment (contract 032; effigy#338), and
+a workload never receives one. An engine helper receives the same slot through
+`EngineLaunch::handoff`.
 
 Spawn protocol:
 

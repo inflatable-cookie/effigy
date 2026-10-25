@@ -477,15 +477,14 @@ fn start_host_processes_inner(
             };
             let payload = serde_json::to_vec(&spec)
                 .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-            let mut environment: Vec<(OsString, OsString)> = std::env::vars_os()
-                .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
-                .collect();
-            if let Some(passphrase) = crate::runner::secret_session::session_passphrase() {
-                environment.push((
-                    OsString::from(crate::runner::secret_session::internal_secret_passphrase_env()),
-                    OsString::from(passphrase.expose()),
-                ));
-            }
+            // A host-process supervisor starts users' applications, so it is
+            // never a route for session access: its environment carries no
+            // vault passphrase, and the processes it starts are workloads
+            // (effigy#338, K12).
+            let environment: Vec<(OsString, OsString)> =
+                crate::runner::secret_session::workload_ambient_environment()
+                    .filter(|(key, _)| key != "EFFIGY_CUSTODY_NONCE" && key != "EFFIGY_PROBE_NONCE")
+                    .collect();
             let client = effigy_kernel::supervise::start_engine_at(
                 &cx,
                 state_root,
@@ -498,6 +497,7 @@ fn start_host_processes_inner(
                     // lease ends with its custody. The environment owns this
                     // run, not the starter's lease (effigy#332).
                     inheritance: effigy_kernel::supervise::SupervisorInheritance::Independent,
+                    handoff: None,
                 },
                 &executable,
                 effigy_kernel::supervise::ClientMode::Owning,
@@ -867,7 +867,7 @@ fn stop_resource_run(
                     detail: Some(format!(
                         "the live kernel run still holds its gate; no signal was sent ({purpose})"
                     )),
-                }))
+                }));
             }
             Err(error) => {
                 return Ok(Some(HostProcessStop {
@@ -878,7 +878,7 @@ fn stop_resource_run(
                     signal: Some("TERM then KILL after grace".to_owned()),
                     exit: custody_exit(repo_root, run_id),
                     detail: Some(error.to_string()),
-                }))
+                }));
             }
         }
     }
@@ -957,7 +957,7 @@ fn latest_open_run(
         Observed::Unknown(reason) => {
             return Err(RunnerError::task_invocation(format!(
                 "the environment journal is unavailable ({reason})"
-            )))
+            )));
         }
     };
     let reader = match Store::read(&observe(), &root) {
