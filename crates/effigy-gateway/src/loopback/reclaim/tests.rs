@@ -56,22 +56,18 @@ fn planned_release_removes_the_assignment_and_keeps_a_pre_edit_backup() {
     let assignment = seed(&store);
     let before_revision = store.read_compatible().unwrap().revision;
 
-    let (outcome, released) =
-        edit_locked::<_, GatewayError>(&store, |registry, _routes| {
-            let assignment = registry
-                .get("project:gone:/gone/project")
-                .expect("planned assignment");
-            Ok((
-                DeadClaimEdit {
-                    assignments: vec![(
-                        "project:gone:/gone/project".to_owned(),
-                        assignment.clone(),
-                    )],
-                },
-                assignment.ip,
-            ))
-        })
-        .expect("release dead assignment");
+    let (outcome, released) = edit_locked::<_, GatewayError>(&store, |registry, _routes| {
+        let assignment = registry
+            .get("project:gone:/gone/project")
+            .expect("planned assignment");
+        Ok((
+            DeadClaimEdit {
+                assignments: vec![("project:gone:/gone/project".to_owned(), assignment.clone())],
+            },
+            assignment.ip,
+        ))
+    })
+    .expect("release dead assignment");
 
     assert_eq!(outcome.released_assignments, ["project:gone:/gone/project"]);
     assert_eq!(outcome.released_addresses, [assignment.ip]);

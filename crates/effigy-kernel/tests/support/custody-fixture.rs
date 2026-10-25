@@ -565,6 +565,7 @@ fn engine_launch(home: &Path) -> EngineLaunch {
         cwd: home.into(),
         env: vec![("FIXTURE_ENGINE_ENV".into(), "present".into())],
         inheritance: SupervisorInheritance::ClientLease,
+        handoff: None,
     }
 }
 

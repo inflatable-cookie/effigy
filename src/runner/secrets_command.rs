@@ -254,7 +254,7 @@ fn run_secrets_lock(
                 return Err(RunnerError::task_invocation(format!(
                     "failed to remove local unlock state {}: {error}",
                     path.display()
-                )))
+                )));
             }
         }
     }
@@ -937,7 +937,10 @@ fn render_import_result(
         format.label(),
         vault_path.display(),
         summary,
-        payload["imported"].as_array().map(|items| items.len()).unwrap_or(0),
+        payload["imported"]
+            .as_array()
+            .map(|items| items.len())
+            .unwrap_or(0),
         payload["skipped_undeclared"]
             .as_array()
             .map(|items| items.len())
@@ -1127,9 +1130,7 @@ fn remove_local_unlock_credential(vault_path: &Path) -> Result<(), RunnerError> 
 }
 
 fn read_secret_input(prompt: &str, test_env: &str) -> Result<SecretValue, RunnerError> {
-    if test_env == crate::runner::secret_session::internal_secret_passphrase_env()
-        || test_env == "EFFIGY_TEST_SECRETS_PASSPHRASE"
-    {
+    if test_env == "EFFIGY_TEST_SECRETS_PASSPHRASE" {
         return crate::runner::secret_session::read_secret_passphrase(
             false,
             prompt,

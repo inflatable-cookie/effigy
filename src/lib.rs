@@ -74,6 +74,10 @@ mod testing_tests;
 /// Main-only kernel helper and signal dispatch, before command discovery.
 pub fn run_main(raw_args: Vec<String>) -> std::io::Result<()> {
     use effigy_kernel::signal::{RouterPolicy, SignalRouter};
+    // The session access a parent Effigy process handed this one is read from
+    // its one-shot descriptor here, before any command or helper runs: never
+    // argv, never the environment (contract 032, 052 K12; effigy#338).
+    runner::adopt_session_secret_access();
     let entry = raw_args.first().map(String::as_str).unwrap_or("");
     // The per-run sentinel, supervisor and probe guard re-exec this binary
     // (contract 052 §5.8) before any CLI parsing, signal handling or spawn.

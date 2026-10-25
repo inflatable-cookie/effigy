@@ -3,7 +3,9 @@ use super::{context::ExecutionTaskContext, preflight::ExecutionPreflight};
 use crate::runner::command_context::EmbeddedRepoOverrideMode;
 use crate::runner::embedded_runner::{parse_embedded_command, run_embedded_task_with_output_mode};
 use crate::runner::error::RunnerError;
-use crate::runner::task_engine::{run_plain, CustodyWait, PlainCommand, SpawnScope, TaskRun};
+use crate::runner::task_engine::{
+    run_effigy_child, run_plain, CustodyWait, PlainCommand, SpawnScope, TaskRun,
+};
 use effigy_cli::{Command, TaskInvocation};
 use effigy_env::{resolver::ResolvedEnv, secret::SecretString};
 use effigy_kernel::outcome::WorkloadOutcome;
@@ -615,16 +617,21 @@ fn execute_step(
                     ));
                 }
             }
-            let exit = run_plain(
-                run,
-                PlainCommand {
-                    command: &command,
-                    cwd,
-                    env: environment,
-                    capture: preflight.output_json || helper,
-                    timeout_ms,
-                },
-            )?;
+            let plain = PlainCommand {
+                command: &command,
+                cwd,
+                env: environment,
+                capture: preflight.output_json || helper,
+                timeout_ms,
+            };
+            // A builtin or script step is Effigy's own child process: it
+            // receives the session grant. A user command is a workload and
+            // never does.
+            let exit = if helper {
+                run_effigy_child(run, plain)?
+            } else {
+                run_plain(run, plain)?
+            };
             if helper && !preflight.output_json {
                 print!("{}", String::from_utf8_lossy(&exit.stdout));
                 if exit.code == 0 {
@@ -912,7 +919,9 @@ mod tests {
         assert!(!classify_manifest(
             "[tasks.start]\nscratch = false\ndurable = true\nrun = 'effigy --run-id child inner'\n"
         ));
-        assert!(!classify_manifest("[tasks.start]\nscratch = false\nrun = [{task = 'inner'}]\n[tasks.inner]\ndurable = true\nrun = 'true'\n"));
+        assert!(!classify_manifest(
+            "[tasks.start]\nscratch = false\nrun = [{task = 'inner'}]\n[tasks.inner]\ndurable = true\nrun = 'true'\n"
+        ));
     }
 
     #[test]
@@ -928,7 +937,9 @@ mod tests {
 
     #[test]
     fn deferred_config_reference_stays_durable_before_execution() {
-        assert!(!classify_manifest("[defer]\nrun = 'true'\nbuiltins = ['config']\n[tasks.start]\nscratch = false\nrun = [{task = 'config'}]\n"));
+        assert!(!classify_manifest(
+            "[defer]\nrun = 'true'\nbuiltins = ['config']\n[tasks.start]\nscratch = false\nrun = [{task = 'config'}]\n"
+        ));
     }
 
     fn vault_generate_prelude(generate: Option<&str>) -> String {
@@ -977,7 +988,9 @@ mod tests {
 
     #[test]
     fn diagnostic_builtin_sequence_is_foreground_but_qa_execution_is_durable() {
-        assert!(classify_manifest("[tasks.start]\nscratch = false\nrun = [{task = 'tasks'}, {task = 'help test'}, {task = 'gateway status'}]\n"));
+        assert!(classify_manifest(
+            "[tasks.start]\nscratch = false\nrun = [{task = 'tasks'}, {task = 'help test'}, {task = 'gateway status'}]\n"
+        ));
         assert!(!classify_manifest(
             "[tasks.start]\nscratch = false\nrun = [{task = 'tasks qa-group run checks'}]\n"
         ));

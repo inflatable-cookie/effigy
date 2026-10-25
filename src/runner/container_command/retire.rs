@@ -762,9 +762,7 @@ mod tests {
         assert_eq!(observe_routes(&record).unwrap().len(), 1);
         assert!(delete_routes_and_owned_certs(&record).unwrap());
         assert!(observe_routes(&record).unwrap().is_empty());
-        let snapshot = EndpointStore::for_routes(&path)
-            .read_compatible()
-            .unwrap();
+        let snapshot = EndpointStore::for_routes(&path).read_compatible().unwrap();
         assert!(snapshot.routes().unwrap().is_empty());
 
         // Retire followed by an immediate claim of the same domain succeeds:

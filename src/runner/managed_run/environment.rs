@@ -175,7 +175,7 @@ impl RouteHealth {
                 None => {
                     return Health::Failed(
                         "`health_wait` needs `curl` on PATH to probe routes".to_owned(),
-                    )
+                    );
                 }
             };
             match observed {
@@ -234,6 +234,15 @@ fn run_up(
             EnvValue::Plain(OsString::from(run.id().to_string())),
         );
     }
+    // `up` is Effigy's own child, so it receives this session's vault access
+    // through the one-shot descriptor handoff rather than its environment:
+    // the passphrase is never in argv, never in a shell string, and never in
+    // the environment a workload inherits (effigy#338).
+    let grant = crate::runner::secret_session::take_child_grant();
+    if let Some(grant) = &grant {
+        let (key, value) = grant.env_entry();
+        env.insert(OsString::from(key), EnvValue::Plain(OsString::from(value)));
+    }
     let spec = ProcessSpec {
         argv: vec!["/bin/sh".into(), "-c".into(), plan.up.clone().into()],
         cwd: plan.repo.clone(),
@@ -245,7 +254,7 @@ fn run_up(
     };
     let started = Instant::now();
     let mut process = run
-        .spawn(spec, false)
+        .spawn_with_handoff(spec, false, grant.map(|grant| grant.into_reader()))
         .map_err(|error| NotReady::Failed(format!("environment up did not start: {error}")))?;
     loop {
         run.verify_admission()

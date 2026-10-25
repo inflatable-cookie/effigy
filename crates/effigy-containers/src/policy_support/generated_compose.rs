@@ -1772,7 +1772,9 @@ mod tests {
 
             assert_eq!(probes, 1, "an exhausted pool probes ownership once");
             assert!(
-                allocated.expect("the released addresses are reusable").is_some(),
+                allocated
+                    .expect("the released addresses are reusable")
+                    .is_some(),
                 "the new project takes a released address"
             );
             let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(home.path());

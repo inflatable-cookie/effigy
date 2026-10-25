@@ -628,9 +628,16 @@ fn anchor_recovery_reaped_nonce_free_descendant_and_lost_anchor() {
         };
         let root = StateRoot::effects(&cx, home.path()).unwrap();
         let image = crate::supervise::anchor::Image::prepare(&root, &executable()).unwrap();
-        let mut child =
-            spawn::Blocked::fork(&spec, "anchor-proof", cx.operation(), &image, None, None)
-                .unwrap();
+        let mut child = spawn::Blocked::fork(
+            &spec,
+            "anchor-proof",
+            cx.operation(),
+            &image,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let anchor = fixture_identity(child.anchor.unwrap());
         let r = ProcessReceipt {
             identity: fixture_identity(child.pid),
@@ -840,6 +847,7 @@ fn anchor_spawn_overhead_is_measured() {
                     "overhead",
                     cx.operation(),
                     image.as_ref().unwrap(),
+                    None,
                     None,
                     None,
                 )
