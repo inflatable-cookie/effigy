@@ -1342,18 +1342,23 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     );
     assert!(delayed_state["child_pid"].is_null());
 
+    // Another checkout that is still there and still answers owns the domain:
+    // its checkout path exists and its target accepts connections, so it is not
+    // a dead claim this checkout may reclaim.
+    let foreign_checkout = fixture.path().join("foreign-route-owner");
+    fs::create_dir_all(&foreign_checkout).expect("foreign checkout fixture");
+    let foreign_listener = TcpListener::bind("127.0.0.1:0").expect("foreign live listener");
+    let foreign_address = foreign_listener
+        .local_addr()
+        .expect("foreign live listener address");
     let foreign_claim = effigy_gateway::routes::Route {
         domain: "claimed.host.test".to_owned(),
-        target: Some("127.0.0.1:48081".to_owned()),
+        target: Some(foreign_address.to_string()),
         dns_ip: None,
         tcp_port: None,
         tcp_target: None,
         source: RouteSource::Manual,
-        project: fixture
-            .path()
-            .join("foreign-route-owner")
-            .display()
-            .to_string(),
+        project: foreign_checkout.display().to_string(),
         scope: None,
         managed_listener: None,
         tls: true,
@@ -1378,13 +1383,16 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     );
     assert!(
         !claimed.status.success(),
-        "a foreign hostname claim must refuse startup"
+        "a foreign hostname claim must refuse startup: stdout={} stderr={}",
+        String::from_utf8_lossy(&claimed.stdout),
+        String::from_utf8_lossy(&claimed.stderr)
     );
     let routes = effigy_gateway::routes::RouteTable::load(&route_path).unwrap();
     assert_eq!(routes.lookup("claimed.host.test"), Some(&foreign_claim));
     edit_live_fixture_routes(&route_path, |routes| {
         routes.deregister("claimed.host.test").unwrap();
     });
+    drop(foreign_listener);
 
     write_listener_fixture_manifest(ListenerFixtureManifest {
         checkout: primary_checkout,
