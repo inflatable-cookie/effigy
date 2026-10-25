@@ -28,7 +28,7 @@ impl<'de> Deserialize<'de> for TaskManifest {
         // `start_after_ms` still delays its entry for the v0.15 line, but it no
         // longer orders a managed session: workloads start once the
         // environment is observed ready. The notice names the replacement
-        // (`retired.toml`, `managed-start-after-timer`).
+        // (`retired.toml`, `managed-start-after-ordering`).
         let retired_timers = manifest.retired_start_after_entries();
         if !retired_timers.is_empty() {
             let declared = retired_timers

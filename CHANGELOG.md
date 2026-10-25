@@ -1163,7 +1163,7 @@ During v0.x, MINOR bumps may include breaking changes.
   and environment host processes order by `depends_on`. `start_after_ms` no
   longer orders anything; it still delays its entry for the v0.15 line and the
   manifest's one deprecation notice names the replacement
-  (`/docs/knowledge/retired.toml`, `managed-start-after-ordering`).
+  (`docs/knowledge/retired.toml`, `managed-start-after-ordering`).
 - A managed session resolves vault access once, before any front end renders
   (TUI, headless or detach), and everything it starts uses that access on the
   internal env route: the environment `up`, the run's supervisor, every

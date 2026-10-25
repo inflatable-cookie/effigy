@@ -1162,11 +1162,10 @@ fn authority_matrix(authority: Authority) {
         Authority::ExplicitDown => {
             let down = case.run(&["container", "stack", "down"]);
             assert!(!down.status.success(), "down under a live holder");
-            assert!(
-                String::from_utf8_lossy(&down.stderr).contains("while runs hold it"),
-                "{}",
-                String::from_utf8_lossy(&down.stderr)
-            );
+            // The reconciler names the live holder count and each holder's
+            // run; this fixture has exactly the one managed owner.
+            let refusal = String::from_utf8_lossy(&down.stderr);
+            assert!(refusal.contains("while 1 run holds it:"), "{refusal}");
         }
         Authority::Reaper => {
             let dir = case

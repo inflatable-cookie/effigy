@@ -117,7 +117,8 @@ container environment (`workspace = "app"` resolving to a
 `[containers.<name>]` environment) owns that environment, and its tabs are the
 environment's own:
 
-- the run's own output tab (`[environment]`, readiness, starts and exits),
+- the run's own output tab (named `lifecycle` by default; it carries the
+  `[environment]` readiness lines, starts and exits),
 - one tab per `[[containers.<env>.host_processes]]` entry, in declaration
   order, with a status line (`starting`, `running`, `ready on <url>`,
   `restarting`, `exited <code>`) and that process's live log,
