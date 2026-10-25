@@ -255,7 +255,10 @@ mod tests {
         assert_eq!(short_parent(scratch.clone(), "e235g."), scratch);
         let platform_default =
             PathBuf::from("/private/var/folders/ng/5rcw8k5s24j50my4x2rqf8sm0000gn/T");
-        assert_eq!(short_parent(platform_default, "e235g."), PathBuf::from("/tmp"));
+        assert_eq!(
+            short_parent(platform_default, "e235g."),
+            PathBuf::from("/tmp")
+        );
     }
 
     #[test]
