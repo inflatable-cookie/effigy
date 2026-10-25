@@ -927,12 +927,17 @@ fn a_nested_catalog_directory_opens_the_enclosing_checkouts_state_root() {
     // its own declares no second checkout. The state root and the Git
     // directory the kernel binds must agree, or every run in a subdirectory
     // refuses as untrusted state.
-    let checkout = tempfile::tempdir().unwrap();
-    std::fs::create_dir(checkout.path().join(".git")).unwrap();
-    let nested = checkout.path().join("tests/fixtures/nested-catalog");
+    let fixture = tempfile::tempdir().unwrap();
+    std::fs::create_dir(fixture.path().join(".git")).unwrap();
+    // The state root is opened through a directory descriptor, which
+    // canonicalizes: macOS `tempfile` hands back `/var/...` for
+    // `/private/var/...`, so both sides of every comparison below are the
+    // resolved checkout.
+    let checkout = std::fs::canonicalize(fixture.path()).unwrap();
+    let nested = checkout.join("tests/fixtures/nested-catalog");
     std::fs::create_dir_all(&nested).unwrap();
 
-    let enclosing = super::kernel::effects_root(checkout.path()).unwrap();
+    let enclosing = super::kernel::effects_root(&checkout).unwrap();
     let from_nested = super::kernel::effects_root(&nested).unwrap();
     assert_eq!(
         from_nested.state_directory().path(),
@@ -941,14 +946,14 @@ fn a_nested_catalog_directory_opens_the_enclosing_checkouts_state_root() {
     );
     assert_eq!(
         from_nested.owning_directory().path(),
-        checkout.path(),
+        checkout.as_path(),
         "the journal is owned by the checkout, not the nested catalog's cwd"
     );
     assert!(
         enclosing
             .state_directory()
             .path()
-            .starts_with(checkout.path().join(".effigy")),
+            .starts_with(checkout.join(".effigy")),
         "the checkout keeps its own state: {}",
         enclosing.state_directory().path().display()
     );
