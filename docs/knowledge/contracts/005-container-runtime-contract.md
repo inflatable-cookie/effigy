@@ -243,9 +243,9 @@ mount. This ruling changes no scheduler credential or admission boundary.
 `[[containers.<name>.host_processes]]` may opt a process into Effigy's
 language-neutral listener contract. The manifest selects the process, bind
 preference, HTTP readiness request and browser route. Effigy reserves the
-address and verifies that the current child generation serves it; an ordinary
-server that listens on the reserved `HOST`/`PORT` needs no adapter. A wrapper
-may still write a versioned report, which Effigy uses as a claim to verify.
+address, waits for it to answer, and publishes the route. An ordinary server
+that listens on the reserved `HOST`/`PORT` needs no Effigy-specific convention:
+the answering port is the whole readiness and ownership story.
 
 ```toml
 [[containers.web.host_processes]]
@@ -268,19 +268,19 @@ domain = "frontend.example.test"
 tls = true
 ```
 
-The adapter contract receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`,
-`EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`, `EFFIGY_MANAGED_HOST_LISTENER_GENERATION`,
-`HOST` and `PORT`, and the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and
-`EFFIGY_HOST_PROCESS_INTERNAL_URL`. `HOST`/`PORT` are the reserved, verified
-address: they replace an ambient value inherited from the caller's environment,
-because a process reading them must bind the port the published route targets.
-Only a value the manifest declares outranks them. Port
+The child receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`, `HOST` and `PORT`, and
+the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and
+`EFFIGY_HOST_PROCESS_INTERNAL_URL`. `HOST`/`PORT` are the reserved address:
+they replace an ambient value inherited from the caller's environment, because
+a process reading them must bind the port the published route targets. Only a
+value the manifest declares outranks them. Port
 `0` asks Effigy for a concrete port: `container up` reserves one loopback port
 in the environment's generated range through the gateway endpoint store before
 any child launches, passes it as the bind, keeps the assignment across
 supervisor restarts within the run, and releases it when the environment
 settles. A fixed preference is the manifest's own, is never reserved, must be
-bound exactly, and collisions fail startup.
+bound exactly, and a preference another process already answers fails the start
+naming that port.
 
 ## Host process environment
 
@@ -300,31 +300,10 @@ Each process also receives the active gateway's CA in `EFFIGY_GATEWAY_CA_FILE`.
 `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` are filled in only when the operator
 has not exported them and the process does not declare them, so an operator
 trust store is never replaced. The gateway contract records which runtimes read
-which variable and why. A report is optional. A wrapper that writes one writes
-a bounded JSON report to the provided report file, echoing the generation value
-exactly:
-
-```json
-{
-  "schema": "effigy.managed.host-listener-report.v1",
-  "generation": "child-generation-token",
-  "address": "127.0.0.1:4173"
-}
-```
-
-Effigy treats a report as a claim to verify. With no report it verifies the
-reserved address by observation: the listening socket must be at exactly the
-reserved loopback address, held by a process in the current child generation's
-process group or descendant set, and not shareable with another same-user
-process. A report that also exists must agree with the reserved address and
-with the observed owner. It checks the loopback socket against the recorded
-supervisor, child generation, listener PID/start identity, process ancestry
-and exclusive kernel socket ownership. Only an owned listener that passes the
-declared HTTP readiness request receives a gateway route. A successful HTTP
-response, open-port probe, free-port check, or report by itself cannot publish a
-route. A child that binds a different address fails startup, and a reserved
-address held by a process outside the generation is refused, naming the
-process that holds it.
+which variable and why. There is no adapter report, report schema or generation
+variable: only the reserved address answering publishes the route. A child that
+binds a different address fails startup, naming the reserved address and the
+readiness request it never answered.
 
 Routes publish to the caller's private gateway when
 `EFFIGY_GATEWAY_PRIVATE_STATE_ROOT` selects one, and otherwise to the shared
@@ -568,15 +547,22 @@ and address. The internal URL uses HTTP to the actual loopback socket. The
 public URL is `http[s]://<domain>`; the gateway terminates TLS when `tls = true`.
 
 Before a child is stopped or replaced, its state becomes unavailable and its
-exact route generation is removed. The gateway checks process identity and
-socket ownership after connecting and before forwarding HTTP or WebSocket
-bytes. A foreign process reusing the old port therefore receives no request.
-Stale stop callbacks can remove only their route generation. Teardown signals
-recorded supervisor/child generations and removes only their recorded routes.
-Missing or uncertain identity remains held; it is not replaced by age-based
-cleanup.
+exact route generation is removed. Stale stop callbacks can remove only their
+route generation. Teardown signals recorded supervisor/child generations and
+removes only their recorded routes. Nothing about a listener is re-proved per
+connection: the gateway forwards the route to its published target like any
+other route.
 
-Readiness is one bounded HTTP/1.1 `GET` on the owned loopback socket. Effigy
+A published listener stays published while the supervisor's run is alive and
+the reserved port answers. The supervisor connects to that port every five
+seconds; three consecutive misses withdraw the route and record `unavailable`,
+and the next answer republishes it and records `ready` again. A probe miss never
+kills or restarts the child, and never replaces a dependent: the child's own
+exit drives restarts, and a dependent is replaced only when its dependency's
+supervisor generation changes. A restart, a watch-mode respawn that replaces the
+process serving the port, a double fork and a long compile are all ordinary.
+
+Readiness is one bounded HTTP/1.1 `GET` on the reserved loopback socket. Effigy
 reads the first status line and accepts only the configured status. The line
 must be `HTTP/1.<digit>`, a space, a three-digit code, and a space before the
 reason phrase. The reason phrase may be empty and may contain only tabs,
@@ -586,68 +572,22 @@ server may drop a response it sees as abandoned after EOF. A status line split
 across writes is read to its line break within a bounded response deadline.
 Connection failure, write failure, EOF or silence before a status line,
 malformed status and any other status keep the listener not ready. The probe
-does not retry within one attempt; the startup deadline governs repeated
-attempts.
+does not retry within one attempt; the declared readiness deadline governs
+repeated attempts, and a closed port is not a failure while the child is alive.
 
-A failed generation keeps a `diagnostic` object in its state file after report
-and child cleanup, and a settling supervisor does not replace that evidence with
-a blank terminal record. It records the last startup observation for that exact
-generation: `report` (`not_observed`, `absent`, `unreadable`, `unsafe`,
-`schema_or_generation_mismatch`, `invalid_address`, `bind_mismatch`,
-`accepted`), `claimed_address` (the adapter's loopback claim, when parsed),
-`expected_address` (the reserved loopback address Effigy verifies),
-`observed_addresses` (every other TCP address the child generation was seen
-serving, when it bound somewhere else), `ownership` (`not_reached`,
-`no_owner_observed`, `exclusive_owner_observed`,
-`supervisor_unavailable`, `supervisor_changed`, `child_unavailable`,
-`child_changed`, `identity_unavailable`, `identity_changed`,
-`ancestry_changed`, `ancestry_unavailable`, `listener_outside_generation`,
-`socket_inspection_failed`, `exclusivity_unproven`; `*_unavailable` means the
-identity could not be read now, `*_changed` means it was read and differs from
-the recorded identity), `candidates_inspected`, `observed_listener_pid`,
-`http_probe` (`ready`, `connect_failed`, `write_failed`, `no_status_line`,
-`malformed_status`, `status_mismatch`, or absent when not attempted),
-`http_status` (only for a parsed status line), and `route` (`not_reached`,
-`prepare_failed`, `ownership_changed`, `publication_failed`). The object has
-exactly these ten fields. It keeps no response body, headers, environment, or
-credentials, and it is not replaced by a later observation until the next
-generation starts.
+A generation that fails keeps a one-line `diagnostic` string in its state file
+after its child is cleaned up, and a settling supervisor does not replace that
+evidence with a blank terminal record. The line names the reserved address, the
+readiness path and status, and the last probe outcome (`connect_failed`,
+`write_failed`, `no_status_line`, `malformed_status` or `status_mismatch`); a
+start refused because the port already answered names that port, and one whose
+child exited first names the exit code. It keeps no response body, headers,
+environment or credentials, and it is evidence, never authority: read the
+top-level `status` for current state.
 
-The diagnostic is evidence, never authority. `observed_listener_pid` is a
-non-authoritative number; the identity fields remain null for a failed
-generation, and no process is signaled, reclaimed or published from a
-diagnostic. A value is what was last seen, not current state; read the
-top-level `status` for current state. `not_reached` and `not_attempted` mean the
-phase was not observed, not that it succeeded or failed. Ownership observations
-depend on the Linux procfs or macOS libproc interfaces described below.
-
-### Managed listener socket ownership
-
-Socket ownership uses Linux procfs and macOS libproc interfaces.
-On macOS, the same-user process inventory from `ps -Ao pid=,uid=` may print a
-UID in signed 32-bit form (for example `-2` for a system daemon). Effigy maps
-that presentation to its unsigned UID before comparing it with the effective
-UID. Any other malformed or out-of-range row fails the inventory closed. Other
-platforms fail closed when process or kernel socket ownership cannot be
-proved. `target_host` routes remain static external targets and do not gain
-managed-child ownership.
-The macOS `PROC_PIDLISTFDS` data query distinguishes a successful empty list
-from libproc's zero-on-error result by clearing and immediately capturing the
-calling thread's errno. A live descriptorless same-user process does not make
-an otherwise exclusive listener unverifiable. Permission and unknown errors,
-partial records and out-of-bounds results still refuse inspection. Socket-detail
-queries require one complete fixed-size record: a zero result preserves the
-native error, and only the existing exact `EBADF`/`ESRCH` race policy can skip
-a vanished descriptor or process. Readiness deadlines, UID selection, listener
-identity/ancestry checks and repeated exclusivity verification do not change.
-The return contracts are pinned to Apple XNU
-[`proc_pidfdlist`](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/proc_info.c)
-and the public
-[`libproc` wrappers](https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/libsyscall/wrappers/libproc/libproc.c).
-Private native controls retain a genuinely descriptorless owned child through
-the production exclusivity scan, preserve invalid-descriptor errors and settle
-that exact child before returning. This counterexample does not establish the
-cause of historical CI failures whose native inspection error was not retained.
+The gateway's process and socket interfaces (`socket_ownership`, `macos_socket`
+and `linux_net`) stay for the container loopback reclaim and the gateway's
+listener handoff. A managed listener no longer reads them.
 Existing container defaults and non-listener host-process behavior are
 unchanged; core does not select a framework or add a built-in dev verb.
 
@@ -2343,8 +2283,8 @@ inventory, which retains only member PIDs and whether each holds workload.
 Captured output, arguments, environment and credentials are excluded.
 
 The controlled public proof publishes both a dependency and its dependent,
-selects dependency unavailability in the published phase, then requires a new
-dependent generation with the current dependency assignments after actual
+replaces the dependency's child generation in the published phase, then requires
+a new dependent generation with the current dependency assignments after actual
 owned-group settlement. Scoped teardown must preserve sibling and foreign
 listeners. It uses private host fixtures and the production native observer;
 it does not certify consumer VM cleanup, real Linux or remote cancellation.

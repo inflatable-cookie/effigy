@@ -2,21 +2,18 @@
 //!
 //! Each `[[containers.<name>.host_processes]]` entry resolves to an
 //! `EffectiveHostProcess`. Effigy runs one detached supervisor per entry.
-//! Listener processes own a reserved loopback address: the supervisor finds
-//! the listening socket in that exact child generation and verifies it, then
-//! waits for HTTP readiness and publishes an owned route. A versioned endpoint
-//! report written by an adapter is optional; when one arrives it is verified
-//! the same way and must agree with the reserved address. State, logs, reports,
-//! specs, and process identities live under the checkout's runtime directory,
-//! with listener state separated by container profile. Shutdown withdraws the
-//! exact route generation before stopping the recorded child process group.
+//! A listener process serves a reserved loopback address. The supervisor waits
+//! until that address answers its readiness request, publishes the route, and
+//! keeps it published while the address answers and the child is alive. State,
+//! logs and specs live under the checkout's runtime directory, with listener
+//! state separated by container profile. Shutdown withdraws the route before
+//! stopping the recorded child process group.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs;
 use std::io::Read;
 use std::net::SocketAddr;
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -30,13 +27,8 @@ use effigy_containers::{
     EffectiveContainerPolicy, EffectiveHostProcess, EffectiveManagedHostListener,
 };
 use effigy_gateway::identity::{read_live_process_identity, GatewayStartIdentity};
-use effigy_gateway::registration::{
-    deregister_managed_listener_route,
-};
+use effigy_gateway::registration::deregister_managed_listener_route;
 use effigy_gateway::routes::{ManagedListenerRouteOwner, RouteTable};
-use effigy_gateway::socket_ownership::{
-    process_listening_endpoints, GatewayEndpoint, GatewayTransport,
-};
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
 
@@ -56,11 +48,13 @@ pub(in crate::runner) use kernel_run::{
 const HOST_PROCESS_DIR: &str = ".effigy/runtime/host-processes";
 const HOST_PROCESS_SPEC_SCHEMA: &str = "effigy.managed.host-process-spec.v1";
 const HOST_PROCESS_RECORD_SCHEMA: &str = "effigy.managed.host-process-record.v1";
-const HOST_LISTENER_REPORT_SCHEMA: &str = "effigy.managed.host-listener-report.v1";
 const HOST_LISTENER_STATE_SCHEMA: &str = "effigy.managed.host-listener-state.v1";
 const HOST_LISTENER_BIND_ENV: &str = "EFFIGY_MANAGED_HOST_LISTENER_BIND";
-const HOST_LISTENER_REPORT_ENV: &str = "EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE";
-const HOST_LISTENER_GENERATION_ENV: &str = "EFFIGY_MANAGED_HOST_LISTENER_GENERATION";
+/// How often a published listener's reserved port is polled, and how many
+/// consecutive misses withdraw its route. A miss never restarts the child; the
+/// child's own exit does.
+const LISTENER_PROBE_INTERVAL: Duration = Duration::from_secs(5);
+const LISTENER_PROBE_MISSES: u32 = 3;
 
 /// Bounded wait for a supervisor to publish its own activation record. This is
 /// a supervision admission bound, not a readiness budget: the listener's
@@ -131,7 +125,6 @@ struct HostProcessDependency {
     name: String,
     owner: String,
     state_file: PathBuf,
-    route_table_file: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,16 +136,10 @@ pub(super) struct HostProcessRecord {
     start_identity: GatewayStartIdentity,
 }
 
+/// One supervisor's latest listener observation. Unknown fields stay readable
+/// so a record written by an earlier build is read once and rewritten without
+/// its retired identity proofs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct HostListenerReport {
-    schema: String,
-    generation: String,
-    address: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct HostListenerState {
     schema: String,
     owner: String,
@@ -164,17 +151,15 @@ struct HostListenerState {
     public_url: Option<String>,
     route_domain: Option<String>,
     supervisor_pid: u32,
-    supervisor_boot_identity: String,
-    supervisor_start_identity: GatewayStartIdentity,
+    /// The child generation's leader, so a stop that outlives its supervisor
+    /// can still settle the group it started.
     child_pid: Option<u32>,
     child_boot_identity: Option<String>,
     child_start_identity: Option<GatewayStartIdentity>,
-    listener_pid: Option<u32>,
-    listener_boot_identity: Option<String>,
-    listener_start_identity: Option<GatewayStartIdentity>,
     route_owner: Option<ManagedListenerRouteOwner>,
+    /// Why the last generation failed, in one line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    diagnostic: Option<HostListenerDiagnostic>,
+    diagnostic: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -432,10 +417,7 @@ fn managed_host_process_owner(
     policy: &EffectiveContainerPolicy,
     process: &EffectiveHostProcess,
 ) -> Result<String, RunnerError> {
-    Ok(format!(
-        "{project_path}|{}|{}",
-        policy.name, process.name
-    ))
+    Ok(format!("{project_path}|{}|{}", policy.name, process.name))
 }
 
 fn order_host_processes(
@@ -594,15 +576,9 @@ fn wait_for_listener_state(
                 "ready" => {
                     let route_owner = state.route_owner.as_ref().ok_or_else(|| {
                         RunnerError::task_invocation(format!(
-                            "managed host listener state for `{process_name}` is ready without an owned route identity"
+                            "managed host listener state for `{process_name}` is ready without a published route"
                         ))
                     })?;
-                    effigy_gateway::managed_listener::verify_managed_listener_owner(route_owner)
-                        .map_err(|error| {
-                            RunnerError::task_invocation(format!(
-                                "managed host listener `{process_name}` ownership is unavailable: {error}"
-                            ))
-                        })?;
                     let public_scheme = if route_owner.route_tls {
                         "https"
                     } else {
@@ -630,7 +606,7 @@ fn wait_for_listener_state(
                 "failed" => {
                     return Err(RunnerError::ManagedHostReadiness {
                         process: process_name.to_owned(),
-                        diagnostic: state.diagnostic.clone().unwrap_or_default().summary(),
+                        diagnostic: state.diagnostic.clone().unwrap_or_default(),
                     });
                 }
                 _ => {}
@@ -646,100 +622,29 @@ fn wait_for_listener_state(
     }
 }
 
-fn dependency_states(
-    dependencies: &[HostProcessDependency],
-) -> Result<Option<Vec<HostListenerState>>, RunnerError> {
-    let mut states = Vec::with_capacity(dependencies.len());
-    for dependency in dependencies {
-        let file = match fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-            .open(&dependency.state_file)
-        {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(None);
+/// What one dependency's published listener record says right now.
+enum DependencyRecord {
+    Present(Box<HostListenerState>),
+    /// The record is gone: the dependency was stopped or never started.
+    Missing,
+    /// The record is there but cannot be read as this owner's state.
+    Unreadable,
+}
+
+fn read_dependency_record(dependency: &HostProcessDependency) -> DependencyRecord {
+    match fs::read(&dependency.state_file) {
+        Ok(raw) => match serde_json::from_slice::<HostListenerState>(&raw) {
+            Ok(state)
+                if state.schema == HOST_LISTENER_STATE_SCHEMA
+                    && state.owner == dependency.owner =>
+            {
+                DependencyRecord::Present(Box::new(state))
             }
-            Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
-                return Err(RunnerError::task_invocation(format!(
-                    "managed dependency state for `{}` is not a regular file",
-                    dependency.name
-                )));
-            }
-            Err(error) => {
-                return Err(RunnerError::task_invocation_failed_read(
-                    &dependency.state_file,
-                    error,
-                ));
-            }
-        };
-        let metadata = file.metadata().map_err(|error| {
-            RunnerError::task_invocation_failed_read(&dependency.state_file, error)
-        })?;
-        if !metadata.is_file() || metadata.len() > 1_048_576 {
-            return Err(RunnerError::task_invocation(format!(
-                "managed dependency state for `{}` is not a bounded regular file",
-                dependency.name
-            )));
-        }
-        let mut raw = Vec::with_capacity(metadata.len() as usize);
-        file.take(1_048_577)
-            .read_to_end(&mut raw)
-            .map_err(|error| {
-                RunnerError::task_invocation_failed_read(&dependency.state_file, error)
-            })?;
-        if raw.len() > 1_048_576 {
-            return Err(RunnerError::task_invocation(format!(
-                "managed dependency state for `{}` is not a bounded regular file",
-                dependency.name
-            )));
-        }
-        let state: HostListenerState = serde_json::from_slice(&raw).map_err(|error| {
-            RunnerError::task_invocation_failed_parse(&dependency.state_file, error)
-        })?;
-        if state.schema != HOST_LISTENER_STATE_SCHEMA || state.owner != dependency.owner {
-            return Err(RunnerError::task_invocation(format!(
-                "managed dependency state for `{}` has an unsupported schema or owner",
-                dependency.name
-            )));
-        }
-        if state.status != "ready" {
-            return Ok(None);
-        }
-        let Some(owner) = state.route_owner.as_ref() else {
-            return Ok(None);
-        };
-        if owner.owner != dependency.owner
-            || owner.runtime_generation != state.runtime_generation
-            || owner.generation != state.generation
-            || state.address.as_deref() != Some(owner.address.as_str())
-            || state.internal_url.as_deref() != Some(format!("http://{}", owner.address).as_str())
-            || state.public_url.as_deref()
-                != Some(
-                    format!(
-                        "{}://{}",
-                        if owner.route_tls { "https" } else { "http" },
-                        state.route_domain.as_deref().unwrap_or_default()
-                    )
-                    .as_str(),
-                )
-        {
-            return Err(RunnerError::task_invocation(format!(
-                "managed dependency state for `{}` has inconsistent current addresses",
-                dependency.name
-            )));
-        }
-        if effigy_gateway::managed_listener::verify_managed_listener_owner(owner).is_err() {
-            return Ok(None);
-        }
-        let route_matches =
-            managed_route_matches(&dependency.route_table_file, &state, &dependency.owner)?;
-        if !route_matches {
-            return Ok(None);
-        }
-        states.push(state);
+            Ok(_) | Err(_) => DependencyRecord::Unreadable,
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => DependencyRecord::Missing,
+        Err(_) => DependencyRecord::Unreadable,
     }
-    Ok(Some(states))
 }
 
 fn managed_route_matches(
@@ -761,11 +666,18 @@ fn managed_route_matches(
             && route.managed_listener.as_ref() == Some(owner)
             && owner.owner == stable_owner
             && owner.runtime_generation == state.runtime_generation
-            && owner.generation == state.generation
     }))
 }
 
 type DependencyEnvironment = (BTreeMap<String, String>, Vec<String>);
+
+/// A dependent's view of one dependency generation.
+fn dependency_generation(dependency: &HostProcessDependency, state: &HostListenerState) -> String {
+    format!(
+        "{}:{}:{}",
+        dependency.name, state.runtime_generation, state.generation
+    )
+}
 
 fn dependency_environment(
     spec: &HostProcessRuntimeSpec,
@@ -788,15 +700,30 @@ fn dependency_environment(
             dependency.state_file.display().to_string(),
         );
         env.insert(format!("{prefix}_GENERATION"), state.generation.clone());
-        generations.push(format!(
-            "{}:{}:{}:{}",
-            dependency.name,
-            state.runtime_generation,
-            state.generation,
-            state.address.as_deref().unwrap_or_default()
-        ));
+        generations.push(dependency_generation(dependency, state));
     }
     (env, generations)
+}
+
+/// The dependency generations a dependent is currently running against.
+/// `None` means one dependency's record could not be read now, so nothing is
+/// concluded from it.
+fn dependency_generations(spec: &HostProcessRuntimeSpec) -> Option<Vec<String>> {
+    let mut generations = Vec::with_capacity(spec.dependencies.len());
+    for dependency in &spec.dependencies {
+        match read_dependency_record(dependency) {
+            DependencyRecord::Present(state) => {
+                generations.push(dependency_generation(dependency, &state));
+            }
+            // A dependency that is gone was stopped or replaced.
+            DependencyRecord::Missing => {
+                generations.push(format!("{}:missing", dependency.name));
+            }
+            // An unreadable record is never a state change.
+            DependencyRecord::Unreadable => return None,
+        }
+    }
+    Some(generations)
 }
 
 fn wait_for_dependency_environment(
@@ -807,7 +734,21 @@ fn wait_for_dependency_environment(
         if stop() {
             return Ok(None);
         }
-        if let Some(states) = dependency_states(&spec.dependencies)? {
+        let mut states = Vec::with_capacity(spec.dependencies.len());
+        for dependency in &spec.dependencies {
+            match read_dependency_record(dependency) {
+                DependencyRecord::Present(state)
+                    if state.status == "ready" && state.route_owner.is_some() =>
+                {
+                    states.push(*state);
+                }
+                _ => {
+                    states.clear();
+                    break;
+                }
+            }
+        }
+        if states.len() == spec.dependencies.len() {
             return Ok(Some(dependency_environment(spec, &states)));
         }
         thread::sleep(Duration::from_millis(100));
@@ -821,15 +762,16 @@ enum HostChildWait {
     Shutdown,
 }
 
-/// Unavailable dependencies or changed generation tuples require replacement.
+/// A dependent is replaced only when its dependency's supervisor replaced its
+/// child generation. A momentary probe miss or an unreadable dependency record
+/// is not a change.
 fn dependency_transition(
     spec: &HostProcessRuntimeSpec,
     expected_dependencies: &[String],
 ) -> Result<bool, RunnerError> {
-    let Some(states) = dependency_states(&spec.dependencies)? else {
-        return Ok(true);
+    let Some(current) = dependency_generations(spec) else {
+        return Ok(false);
     };
-    let (_, current) = dependency_environment(spec, &states);
     Ok(current != expected_dependencies)
 }
 
@@ -1372,10 +1314,10 @@ fn spawn_generation(
     cx: &effigy_kernel::ctx::EffectContext,
     spec: &HostProcessRuntimeSpec,
     dependency_env: &[(String, String)],
-    listener: Option<(&str, &Path, &str)>,
+    listener_bind: Option<&str>,
 ) -> Result<effigy_kernel::custody::OwnedProcess, effigy_kernel::custody::SpawnError> {
     use effigy_kernel::custody::{Custody, Lifetime, ProcessSpec, Terminal};
-    let environment = child_environment(std::env::vars_os(), spec, dependency_env, listener);
+    let environment = child_environment(std::env::vars_os(), spec, dependency_env, listener_bind);
     let process = ProcessSpec {
         argv: vec![
             OsString::from("/bin/sh"),
@@ -1400,13 +1342,13 @@ fn spawn_generation(
 /// reserved listener `HOST`/`PORT`, Effigy's listener and process identity
 /// variables, then the ambient environment the supervisor was started with.
 /// `HOST`/`PORT` from a reserved bind replace an ambient value because the
-/// process must serve the port Effigy reserved and verified; only a value the
-/// manifest itself declares outranks them.
+/// process must serve the port Effigy reserved; only a value the manifest
+/// itself declares outranks them.
 fn child_environment(
     ambient: impl Iterator<Item = (OsString, OsString)>,
     spec: &HostProcessRuntimeSpec,
     dependency_env: &[(String, String)],
-    listener: Option<(&str, &Path, &str)>,
+    listener_bind: Option<&str>,
 ) -> BTreeMap<OsString, effigy_kernel::custody::EnvValue> {
     use effigy_kernel::custody::EnvValue;
     let mut environment: BTreeMap<OsString, EnvValue> = ambient
@@ -1426,18 +1368,10 @@ fn child_environment(
         OsString::from("EFFIGY_HOST_PROCESS_NAME"),
         EnvValue::Plain(OsString::from(spec.process_name.clone())),
     );
-    if let Some((bind, report, generation)) = listener {
+    if let Some(bind) = listener_bind {
         environment.insert(
             OsString::from(HOST_LISTENER_BIND_ENV),
             EnvValue::Plain(OsString::from(bind)),
-        );
-        environment.insert(
-            OsString::from(HOST_LISTENER_REPORT_ENV),
-            EnvValue::Plain(report.as_os_str().to_owned()),
-        );
-        environment.insert(
-            OsString::from(HOST_LISTENER_GENERATION_ENV),
-            EnvValue::Plain(OsString::from(generation)),
         );
         // Effigy reserved this listener's concrete port, so the process
         // receives it as `HOST`/`PORT` (effigy#321). The reserved address
@@ -1465,21 +1399,6 @@ struct ChildProcessIdentity {
     start_identity: GatewayStartIdentity,
 }
 
-struct OwnedHostListener {
-    address: SocketAddr,
-    listener_pid: u32,
-    listener_boot_identity: String,
-    listener_start_identity: GatewayStartIdentity,
-}
-
-struct ListenerReportCleanup(PathBuf);
-
-impl Drop for ListenerReportCleanup {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
-
 /// Fixture barrier for proofs about the activation-publication seam. Debug
 /// builds only, and inert unless the suite asks for it, so production startup
 /// never sleeps here.
@@ -1494,36 +1413,99 @@ fn hold_start_publication() {
     thread::sleep(Duration::from_millis(millis.min(30_000)));
 }
 
-/// A completed teardown makes no endpoint, child or listener claim: the
-/// terminal record must not retain a generation an explicit start would have
-/// to reconcile.
+/// One child generation's published listener state. Every write is one of
+/// these, so a generation's address, route claim and child identity cannot
+/// drift apart between writes.
+struct ListenerGeneration<'a> {
+    spec: &'a HostProcessRuntimeSpec,
+    supervisor: &'a HostProcessRecord,
+    generation: String,
+    child: Option<ChildProcessIdentity>,
+    address: Option<SocketAddr>,
+    route_owner: Option<ManagedListenerRouteOwner>,
+    diagnostic: Option<String>,
+}
+
+impl<'a> ListenerGeneration<'a> {
+    fn new(
+        spec: &'a HostProcessRuntimeSpec,
+        supervisor: &'a HostProcessRecord,
+        generation: &str,
+    ) -> Self {
+        Self {
+            spec,
+            supervisor,
+            generation: generation.to_owned(),
+            child: None,
+            address: None,
+            route_owner: None,
+            diagnostic: None,
+        }
+    }
+
+    fn record(&self, status: &str) -> HostListenerState {
+        let route_domain = self
+            .spec
+            .listener
+            .as_ref()
+            .map(|listener| listener.route_domain.clone());
+        let public_url = match (
+            self.address,
+            route_domain.as_deref(),
+            self.route_owner.as_ref(),
+        ) {
+            (Some(_), Some(domain), Some(owner)) => Some(format!(
+                "{}://{domain}",
+                if owner.route_tls { "https" } else { "http" }
+            )),
+            _ => None,
+        };
+        HostListenerState {
+            schema: HOST_LISTENER_STATE_SCHEMA.to_owned(),
+            owner: self.spec.owner.clone(),
+            runtime_generation: self.spec.runtime_generation.clone(),
+            generation: self.generation.clone(),
+            status: status.to_owned(),
+            address: self.address.map(|address| address.to_string()),
+            internal_url: self.address.map(|address| format!("http://{address}")),
+            public_url,
+            route_domain,
+            supervisor_pid: self.supervisor.pid,
+            child_pid: self.child.as_ref().map(|child| child.pid),
+            child_boot_identity: self.child.as_ref().map(|child| child.boot_identity.clone()),
+            child_start_identity: self
+                .child
+                .as_ref()
+                .map(|child| child.start_identity.clone()),
+            route_owner: self.route_owner.clone(),
+            diagnostic: self.diagnostic.clone(),
+        }
+    }
+
+    /// Write this generation's observation under `status`. The only statuses a
+    /// generation writes are its start, readiness, withdrawal and failure.
+    fn write(&self, status: &str) -> Result<(), RunnerError> {
+        write_listener_state(&self.spec.listener_state_file, self.record(status))
+    }
+}
+
+/// A completed teardown makes no endpoint or child claim: the terminal record
+/// must not retain a generation an explicit start would have to reconcile.
 fn write_terminal_listener_state(
     spec: &HostProcessRuntimeSpec,
     supervisor: &HostProcessRecord,
 ) -> Result<(), RunnerError> {
-    // A generation that failed before readiness keeps the diagnostic naming the
-    // phase it stopped in (contract 005). A settling supervisor must not replace
-    // that evidence with a blank `stopped` record, or a listener whose child
-    // bound the wrong address would lose the address that explains it. Only
-    // this supervisor's own last generation counts: a later activation writes
-    // its own `starting` record before it can fail.
+    // A generation that failed keeps the one line that explains it. Only this
+    // supervisor's own last generation counts: a later activation writes its
+    // own `starting` record before it can fail.
     if fs::read(&spec.listener_state_file)
         .ok()
         .and_then(|raw| serde_json::from_slice::<HostListenerState>(&raw).ok())
-        .is_some_and(|state| {
-            state.status == "failed"
-                && state.diagnostic.is_some()
-                && state.supervisor_pid == supervisor.pid
-        })
+        .is_some_and(|state| state.status == "failed" && state.supervisor_pid == supervisor.pid)
     {
         return Ok(());
     }
-    write_listener_state(
-        &spec.listener_state_file,
-        listener_state(
-            spec, supervisor, "stopped", None, None, None, None, None, None, None,
-        ),
-    )
+    ListenerGeneration::new(spec, supervisor, "").write("stopped")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1542,247 +1524,118 @@ fn supervise_managed_host_listener(
     let listener = spec.listener.as_ref().ok_or_else(|| {
         RunnerError::task_invocation("managed listener supervisor has no listener declaration")
     })?;
-    let report_dir = spec
-        .listener_state_file
-        .parent()
-        .ok_or_else(|| RunnerError::task_invocation("listener state path has no parent"))?;
+    let address = listener.bind.parse::<SocketAddr>().map_err(|error| {
+        RunnerError::task_invocation(format!("managed listener bind address is invalid: {error}"))
+    })?;
     let log_path = spec.log_file.clone();
     #[cfg(debug_assertions)]
     hold_start_publication();
 
     if stop_requested(run, watch) || shutdown.load(Ordering::SeqCst) {
         shutdown.store(true, Ordering::SeqCst);
-        write_listener_state(
-            &spec.listener_state_file,
-            listener_state(
-                spec, supervisor, "stopped", None, None, None, None, None, None, None,
-            ),
-        )?;
+        ListenerGeneration::new(spec, supervisor, "").write("stopped")?;
         return Ok(GenerationEnd::Stopped);
     }
     // Publish this activation's record before waiting on dependencies or
-    // spawning a child. Callers wait for it as the barrier between
-    // supervision admission and the declared readiness budget; publishing
-    // it after the dependency wait would charge that wait to readiness.
+    // spawning a child. Callers wait for it as the barrier between supervision
+    // admission and readiness, so the dependency wait is not charged to it.
     let generation = random_token()?;
-    let mut diagnostic = HostListenerDiagnostic::default();
-    let report_path = report_dir.join(format!(
-        "{}.{}.listener-report.json",
-        sanitize(&spec.process_name),
-        generation
-    ));
-    let _report_cleanup = ListenerReportCleanup(report_path.clone());
-    write_listener_state(
-        &spec.listener_state_file,
-        listener_state(
-            spec,
-            supervisor,
-            "starting",
-            Some(&generation),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ),
-    )?;
+    let mut state = ListenerGeneration::new(spec, supervisor, &generation);
+    state.write("starting")?;
     let dependencies = {
         let mut stop = || stop_requested(run, watch);
         wait_for_dependency_environment(spec, &mut stop)?
     };
     let Some((dependency_env, dependency_generations)) = dependencies else {
-        write_listener_state(
-            &spec.listener_state_file,
-            listener_state(
-                spec, supervisor, "stopped", None, None, None, None, None, None, None,
-            ),
-        )?;
+        state.write("stopped")?;
         shutdown.store(true, Ordering::SeqCst);
         return Ok(GenerationEnd::Stopped);
     };
     let dependency_env = dependency_env
         .into_iter()
         .collect::<Vec<(String, String)>>();
-    let mut child = match spawn_generation(
-        run,
-        cx,
-        spec,
-        &dependency_env,
-        Some((&listener.bind, &report_path, &generation)),
-    ) {
-        Ok(child) => child,
-        Err(error) => {
-            write_listener_state(
-                &spec.listener_state_file,
-                listener_state(
-                    spec,
-                    supervisor,
-                    "failed",
-                    Some(&generation),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                ),
-            )?;
-            append_log_line(
-                &log_path,
-                &format!("[effigy host-process] managed listener launch failed: {error}"),
-            );
-            return Ok(GenerationEnd::Exited(127));
-        }
-    };
+    if let Err(error) = reserved_port_is_free(&listener.bind) {
+        return finish_failed_generation(
+            &mut state,
+            &log_path,
+            spec.process_name.as_str(),
+            error.to_string(),
+        );
+    }
+    let mut child =
+        match spawn_generation(run, cx, spec, &dependency_env, Some(listener.bind.as_str())) {
+            Ok(child) => child,
+            Err(error) => {
+                return finish_failed_generation(
+                    &mut state,
+                    &log_path,
+                    spec.process_name.as_str(),
+                    format!("managed listener could not start: {error}"),
+                )
+            }
+        };
     activate_once(active, run, session)?;
     let pid = child.identity().identity.pid;
-    let live = match read_live_process_identity(pid) {
-        Ok(identity) => identity,
-        Err(error) => {
-            let _ = stop_generation(run, cleanup, spec, &mut child, false);
-            return Err(RunnerError::task_invocation(format!(
-                "cannot record managed listener child identity: {error}"
-            )));
+    // The leader's exact identity lets a stop that outlives this supervisor
+    // settle the group it started. An identity that cannot be read here only
+    // costs that guard; the generation still serves.
+    match read_live_process_identity(pid) {
+        Ok(live) => {
+            state.child = Some(ChildProcessIdentity {
+                pid,
+                boot_identity: live.boot_identity,
+                start_identity: live.start_identity,
+            });
         }
-    };
-    let root_identity = ChildProcessIdentity {
-        pid,
-        boot_identity: live.boot_identity.clone(),
-        start_identity: live.start_identity.clone(),
-    };
-    write_listener_state(
-        &spec.listener_state_file,
-        listener_state(
-            spec,
-            supervisor,
-            "starting",
-            Some(&generation),
-            None,
-            None,
-            None,
-            Some(&root_identity),
-            None,
-            None,
-        ),
-    )?;
-    append_log_line(
+        Err(error) => append_log_line(
             &log_path,
             &format!(
-                "[effigy host-process] started managed listener `{}` generation {generation} (pid {pid})",
-                spec.process_name
+                "[effigy host-process] managed listener child identity is unavailable: {error}"
             ),
-        );
+        ),
+    }
+    state.write("starting")?;
+    append_log_line(
+        &log_path,
+        &format!(
+            "[effigy host-process] started managed listener `{}` generation {generation} (pid {pid})",
+            spec.process_name
+        ),
+    );
 
-    let owned = {
+    let ready = {
         let mut stop = || stop_requested(run, watch) || shutdown.load(Ordering::SeqCst);
-        wait_for_owned_listener(
-            OwnedHostListenerWait {
-                supervisor,
-                root_pid: pid,
-                root_boot_identity: &live.boot_identity,
-                root_start_identity: &live.start_identity,
-                report_path: &report_path,
-                generation: &generation,
-                config: listener,
-                stop: &mut stop,
-            },
-            &mut diagnostic,
-        )
+        wait_for_ready_listener(address, listener, &mut stop, &mut child)
     };
-    let owned = match owned {
-        Ok(owned) => {
-            if diagnostic.report == ReportObservation::Absent {
-                append_log_line(
-                    &log_path,
-                    &format!(
-                        "[effigy host-process] listener `{}` is served at {} by its own child generation without an adapter report",
-                        spec.process_name, owned.address
-                    ),
-                );
-            }
-            owned
-        }
-        Err(error) => {
-            let terminal_status = error.status();
-            write_listener_state(
-                &spec.listener_state_file,
-                with_diagnostic(
-                    listener_state(
-                        spec,
-                        supervisor,
-                        "unavailable",
-                        Some(&generation),
-                        None,
-                        None,
-                        None,
-                        Some(&root_identity),
-                        None,
-                        None,
-                    ),
-                    &diagnostic,
-                ),
-            )?;
-            if let Some(report) = stop_generation(run, cleanup, spec, &mut child, true) {
-                *last = Some(report);
-            }
-            append_log_line(
-                &log_path,
-                &format!("[effigy host-process] listener failed: {error}"),
-            );
-            write_listener_state(
-                &spec.listener_state_file,
-                with_diagnostic(
-                    listener_state(
-                        spec,
-                        supervisor,
-                        terminal_status,
-                        Some(&generation),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    ),
-                    &diagnostic,
-                ),
-            )?;
-            if matches!(error, ListenerStartupFailure::Stopped) {
-                shutdown.store(true, Ordering::SeqCst);
-                return Ok(GenerationEnd::Stopped);
-            }
-            return Ok(GenerationEnd::Exited(1));
-        }
-    };
-    let pre_publication = match dependency_transition(spec, &dependency_generations) {
-        Ok(transition) => transition,
-        Err(inspection) => {
-            let _ = stop_generation(run, cleanup, spec, &mut child, false);
-            return Err(inspection);
-        }
-    };
-    if pre_publication {
-        let stopping = stop_requested(run, watch);
-        write_listener_state(
-            &spec.listener_state_file,
-            listener_state(
-                spec,
-                supervisor,
-                "unavailable",
-                Some(&generation),
-                None,
-                None,
-                None,
-                Some(&root_identity),
-                Some(&owned),
-                None,
-            ),
-        )?;
+    if let Err(error) = ready {
+        let stopped = matches!(error, ListenerStartupFailure::Stopped);
         if let Some(report) = stop_generation(run, cleanup, spec, &mut child, true) {
             *last = Some(report);
         }
-        if stopping {
+        state.child = None;
+        append_log_line(
+            &log_path,
+            &format!("[effigy host-process] listener failed: {error}"),
+        );
+        if stopped {
+            shutdown.store(true, Ordering::SeqCst);
+            write_terminal_listener_state(spec, supervisor)?;
+            return Ok(GenerationEnd::Stopped);
+        }
+        state.diagnostic = Some(error.to_string());
+        state.write("failed")?;
+        return Ok(GenerationEnd::Exited(1));
+    }
+
+    // A dependency may have been replaced while this generation was becoming
+    // ready; the dependent is replaced before it publishes.
+    if dependency_transition(spec, &dependency_generations)? {
+        state.write("unavailable")?;
+        if let Some(report) = stop_generation(run, cleanup, spec, &mut child, true) {
+            *last = Some(report);
+        }
+        state.child = None;
+        if stop_requested(run, watch) {
             write_terminal_listener_state(spec, supervisor)?;
             shutdown.store(true, Ordering::SeqCst);
             return Ok(GenerationEnd::Stopped);
@@ -1791,568 +1644,273 @@ fn supervise_managed_host_listener(
     }
     if let Err(error) = prepare_managed_listener_route(spec, listener) {
         let _ = stop_generation(run, cleanup, spec, &mut child, true);
-        append_log_line(
+        state.child = None;
+        return finish_failed_generation(
+            &mut state,
             &log_path,
-            &format!("[effigy host-process] listener route preparation failed: {error}"),
+            spec.process_name.as_str(),
+            format!("listener route preparation failed: {error}"),
         );
-        diagnostic.route = RouteObservation::PrepareFailed;
-        write_listener_state(
-            &spec.listener_state_file,
-            with_diagnostic(
-                listener_state(
-                    spec,
-                    supervisor,
-                    "failed",
-                    Some(&generation),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                ),
-                &diagnostic,
-            ),
-        )?;
-        return Ok(GenerationEnd::Exited(1));
     }
     let owner = ManagedListenerRouteOwner {
-        run: None,
         owner: spec.owner.clone(),
         runtime_generation: spec.runtime_generation.clone(),
         generation: generation.clone(),
-        supervisor_pid: supervisor.pid,
-        supervisor_boot_identity: supervisor.boot_identity.clone(),
-        supervisor_start_identity: supervisor.start_identity.clone(),
-        root_pid: pid,
-        root_boot_identity: live.boot_identity.clone(),
-        root_start_identity: live.start_identity.clone(),
-        listener_pid: owned.listener_pid,
-        listener_boot_identity: owned.listener_boot_identity.clone(),
-        listener_start_identity: owned.listener_start_identity.clone(),
-        address: owned.address.to_string(),
+        address: address.to_string(),
         route_tls: listener.route_tls,
-        availability_file: spec.listener_state_file.display().to_string(),
     };
-    if stop_requested(run, watch) {
-        write_listener_state(
-            &spec.listener_state_file,
-            listener_state(
-                spec,
-                supervisor,
-                "unavailable",
-                Some(&generation),
-                None,
-                None,
-                None,
-                Some(&root_identity),
-                Some(&owned),
-                None,
-            ),
-        )?;
-        if let Some(report) = stop_generation(run, cleanup, spec, &mut child, true) {
-            *last = Some(report);
-        }
-        write_terminal_listener_state(spec, supervisor)?;
-        shutdown.store(true, Ordering::SeqCst);
-        return Ok(GenerationEnd::Stopped);
-    }
-    let internal_url = format!("http://{}", owned.address);
-    let public_scheme = if listener.route_tls { "https" } else { "http" };
-    let public_url = format!("{public_scheme}://{}", listener.route_domain);
-    write_listener_state(
-        &spec.listener_state_file,
-        listener_state(
-            spec,
-            supervisor,
-            "ready",
-            Some(&generation),
-            Some(&owned.address),
-            Some(&internal_url),
-            Some(&public_url),
-            Some(&root_identity),
-            Some(&owned),
-            Some(&owner),
-        ),
-    )?;
-    if let Err(error) = effigy_gateway::managed_listener::verify_managed_listener_owner(&owner) {
-        write_listener_state(
-            &spec.listener_state_file,
-            listener_state(
-                spec,
-                supervisor,
-                "unavailable",
-                Some(&generation),
-                None,
-                None,
-                None,
-                Some(&root_identity),
-                Some(&owned),
-                Some(&owner),
-            ),
-        )?;
+    state.address = Some(address);
+    state.route_owner = Some(owner.clone());
+    if let Err(error) = publish_managed_listener_route(spec, listener, &owner) {
         let _ = stop_generation(run, cleanup, spec, &mut child, true);
-        append_log_line(
+        state.child = None;
+        state.route_owner = None;
+        return finish_failed_generation(
+            &mut state,
             &log_path,
-            &format!(
-                "[effigy host-process] listener ownership changed before publication: {error}"
-            ),
+            spec.process_name.as_str(),
+            format!("route publication failed: {error}"),
         );
-        diagnostic.route = RouteObservation::OwnershipChanged;
-        write_listener_state(
-            &spec.listener_state_file,
-            with_diagnostic(
-                listener_state(
-                    spec,
-                    supervisor,
-                    "failed",
-                    Some(&generation),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                ),
-                &diagnostic,
-            ),
-        )?;
-        return Ok(GenerationEnd::Exited(1));
     }
-    match publish_managed_listener_route(spec, listener, &owner) {
-        Ok(()) => {}
-        Err(error) => {
-            write_listener_state(
-                &spec.listener_state_file,
-                listener_state(
-                    spec,
-                    supervisor,
-                    "unavailable",
-                    Some(&generation),
-                    None,
-                    None,
-                    None,
-                    Some(&root_identity),
-                    Some(&owned),
-                    Some(&owner),
-                ),
-            )?;
-            deregister_managed_listener_route(
-                &listener_route_table_path(spec)?,
-                &spec.project_path,
-                &listener.route_domain,
-                &spec.owner,
-                &generation,
-            )
-            .map_err(|cleanup_error| RunnerError::task_invocation(cleanup_error.to_string()))?;
-            let _ = stop_generation(run, cleanup, spec, &mut child, true);
-            append_log_line(
-                &log_path,
-                &format!("[effigy host-process] route publication failed: {error}"),
-            );
-            diagnostic.route = RouteObservation::PublicationFailed;
-            write_listener_state(
-                &spec.listener_state_file,
-                with_diagnostic(
-                    listener_state(
-                        spec,
-                        supervisor,
-                        "failed",
-                        Some(&generation),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    ),
-                    &diagnostic,
-                ),
-            )?;
-            return Ok(GenerationEnd::Exited(1));
-        }
-    }
-
-    let child_wait = {
-        let mut stop = || stop_requested(run, watch);
-        wait_for_host_child(&mut child, spec, &dependency_generations, &mut stop)
-    };
-    let child_wait = match child_wait {
-        Ok(wait) => wait,
-        Err(inspection) => {
-            let error = inspection;
-            let _ = write_listener_state(
-                &spec.listener_state_file,
-                listener_state(
-                    spec,
-                    supervisor,
-                    "unavailable",
-                    Some(&generation),
-                    None,
-                    None,
-                    None,
-                    Some(&root_identity),
-                    Some(&owned),
-                    Some(&owner),
-                ),
-            );
-            let _ = deregister_managed_listener_route(
-                &listener_route_table_path(spec)?,
-                &spec.project_path,
-                &listener.route_domain,
-                &spec.owner,
-                &generation,
-            );
-            let _ = stop_generation(run, cleanup, spec, &mut child, true);
-            return Err(error);
-        }
-    };
-    let stopping = matches!(&child_wait, HostChildWait::Shutdown) || stop_requested(run, watch);
-    if stopping {
-        shutdown.store(true, Ordering::SeqCst);
-    }
-    let exit = match child_wait {
-        HostChildWait::Exited(code) => Some(code),
-        HostChildWait::DependencyChanged | HostChildWait::Shutdown => {
-            write_listener_state(
-                &spec.listener_state_file,
-                listener_state(
-                    spec,
-                    supervisor,
-                    "unavailable",
-                    Some(&generation),
-                    None,
-                    None,
-                    None,
-                    Some(&root_identity),
-                    Some(&owned),
-                    Some(&owner),
-                ),
-            )?;
-            let _ = deregister_managed_listener_route(
-                &listener_route_table_path(spec)?,
-                &spec.project_path,
-                &listener.route_domain,
-                &spec.owner,
-                &generation,
-            )
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-            if let Some(report) = stop_generation(run, cleanup, spec, &mut child, true) {
-                *last = Some(report);
-            }
-            if stopping {
-                write_terminal_listener_state(spec, supervisor)?;
-                return Ok(GenerationEnd::Stopped);
-            }
-            write_listener_state(
-                &spec.listener_state_file,
-                listener_state(
-                    spec,
-                    supervisor,
-                    "unavailable",
-                    Some(&generation),
-                    None,
-                    None,
-                    None,
-                    Some(&root_identity),
-                    Some(&owned),
-                    Some(&owner),
-                ),
-            )?;
-            return Ok(GenerationEnd::DependencyChanged);
-        }
-    };
-    write_listener_state(
-        &spec.listener_state_file,
-        listener_state(
-            spec,
-            supervisor,
-            "unavailable",
-            Some(&generation),
-            None,
-            None,
-            None,
-            Some(&root_identity),
-            Some(&owned),
-            Some(&owner),
+    state.write("ready")?;
+    append_log_line(
+        &log_path,
+        &format!(
+            "[effigy host-process] listener `{}` is ready at {address}",
+            spec.process_name
         ),
-    )?;
-    let _ = deregister_managed_listener_route(
-        &listener_route_table_path(spec)?,
-        &spec.project_path,
-        &listener.route_domain,
-        &spec.owner,
-        &generation,
-    )
-    .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    if let Some(report) = stop_generation(run, cleanup, spec, &mut child, false) {
+    );
+
+    // The route stays published while this run is alive and the port answers.
+    // A miss only withdraws it; nothing restarts the child on a probe miss.
+    let mut liveness = ListenerLiveness::new(address);
+    let mut stopping = false;
+    let exit = loop {
+        if let effigy_kernel::observe::Observed::Verified(exit, _) = child.poll() {
+            break Some(exit.code);
+        }
+        if stop_requested(run, watch) {
+            shutdown.store(true, Ordering::SeqCst);
+            stopping = true;
+            break None;
+        }
+        if dependency_transition(spec, &dependency_generations)? {
+            break None;
+        }
+        match liveness.poll() {
+            Some(true) => {
+                // The port answers again: republish the route this generation
+                // had withdrawn. A failed republication keeps the generation
+                // withdrawn and is retried on the next answer, so a gateway
+                // store that is briefly unavailable never costs the child.
+                match publish_managed_listener_route(spec, listener, &owner) {
+                    Ok(()) => {
+                        state.route_owner = Some(owner.clone());
+                        state.write("ready")?;
+                        append_log_line(
+                            &log_path,
+                            &format!(
+                                "[effigy host-process] listener `{}` answers again at {address}; route republished",
+                                spec.process_name
+                            ),
+                        );
+                    }
+                    Err(error) => {
+                        state.route_owner = None;
+                        state.write("unavailable")?;
+                        append_log_line(
+                            &log_path,
+                            &format!(
+                                "[effigy host-process] listener `{}` answers at {address} but its route could not be republished: {error}",
+                                spec.process_name
+                            ),
+                        );
+                    }
+                }
+            }
+            Some(false) => {
+                // Three consecutive misses: withdraw the route and keep the
+                // child running. A later answer republishes it.
+                withdraw_managed_listener_route(spec, listener, &owner)?;
+                state.route_owner = None;
+                state.write("unavailable")?;
+                append_log_line(
+                    &log_path,
+                    &format!(
+                        "[effigy host-process] listener `{}` is not answering at {address}; route withdrawn",
+                        spec.process_name
+                    ),
+                );
+            }
+            None => {}
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+
+    // Withdraw before stopping, so a successor never shares a route with the
+    // generation it replaces.
+    withdraw_managed_listener_route(spec, listener, &owner)?;
+    state.route_owner = None;
+    state.write("unavailable")?;
+    if let Some(report) = stop_generation(run, cleanup, spec, &mut child, stopping) {
         *last = Some(report);
+    }
+    state.child = None;
+    if stopping {
+        write_terminal_listener_state(spec, supervisor)?;
+        return Ok(GenerationEnd::Stopped);
     }
 
     // The leader has been reaped by custody. Observation excludes it and any
-    // zombie outright: the exited leader is never a surviving member of its own
-    // group, so only another live process keeps this generation unavailable.
+    // zombie outright, so only another live process keeps this generation
+    // unavailable.
     let remaining_group_members = effigy_process::surviving_group_member_ids(pid).map_err(
-            |error| {
-                RunnerError::task_invocation(format!(
-                    "managed child group is uncertain after its leader exited; retaining the unavailable generation: {error}"
-                ))
-            },
-        )?;
+        |error| {
+            RunnerError::task_invocation(format!(
+                "managed child group is uncertain after its leader exited; retaining the unavailable generation: {error}"
+            ))
+        },
+    )?;
     if !remaining_group_members.is_empty() {
         return Err(RunnerError::task_invocation(format!(
-                "managed child leader exited while process group {pid} still has surviving members {remaining_group_members:?}; route withdrawn and generation retained"
-            )));
+            "managed child leader exited while process group {pid} still has surviving members {remaining_group_members:?}; route withdrawn and generation retained"
+        )));
     }
-
     if shutdown.load(Ordering::SeqCst) {
         write_terminal_listener_state(spec, supervisor)?;
         return Ok(GenerationEnd::Stopped);
     }
     // A generation that may be replaced leaves `unavailable`; the supervisor
     // writes the terminal `stopped` record only when the policy ends here.
-    Ok(GenerationEnd::Exited(exit.unwrap_or(-1)))
-}
-
-// The serialized state intentionally mirrors each independent availability field;
-// keeping this projection explicit makes it harder to conflate a missing address,
-// child identity, discovered listener, or route claim during failure handling.
-#[allow(clippy::too_many_arguments)]
-fn listener_state(
-    spec: &HostProcessRuntimeSpec,
-    supervisor: &HostProcessRecord,
-    status: &str,
-    generation: Option<&str>,
-    address: Option<&SocketAddr>,
-    internal_url: Option<&str>,
-    public_url: Option<&str>,
-    child: Option<&ChildProcessIdentity>,
-    listener: Option<&OwnedHostListener>,
-    route_owner: Option<&ManagedListenerRouteOwner>,
-) -> HostListenerState {
-    HostListenerState {
-        schema: HOST_LISTENER_STATE_SCHEMA.to_owned(),
-        owner: spec.owner.clone(),
-        runtime_generation: spec.runtime_generation.clone(),
-        generation: generation.unwrap_or_default().to_owned(),
-        status: status.to_owned(),
-        address: address.map(ToString::to_string),
-        internal_url: internal_url.map(str::to_owned),
-        public_url: public_url.map(str::to_owned),
-        route_domain: spec
-            .listener
-            .as_ref()
-            .map(|listener| listener.route_domain.clone()),
-        supervisor_pid: supervisor.pid,
-        supervisor_boot_identity: supervisor.boot_identity.clone(),
-        supervisor_start_identity: supervisor.start_identity.clone(),
-        child_pid: child.map(|identity| identity.pid),
-        child_boot_identity: child.map(|identity| identity.boot_identity.clone()),
-        child_start_identity: child.map(|identity| identity.start_identity.clone()),
-        listener_pid: listener.map(|identity| identity.listener_pid),
-        listener_boot_identity: listener.map(|identity| identity.listener_boot_identity.clone()),
-        listener_start_identity: listener.map(|identity| identity.listener_start_identity.clone()),
-        route_owner: route_owner.cloned(),
-        diagnostic: None,
-    }
-}
-
-/// Attaches the last startup observation to a terminal generation state.
-fn with_diagnostic(
-    mut state: HostListenerState,
-    diagnostic: &HostListenerDiagnostic,
-) -> HostListenerState {
-    state.diagnostic = Some(diagnostic.clone());
-    state
-}
-
-struct OwnedHostListenerWait<'a> {
-    supervisor: &'a HostProcessRecord,
-    root_pid: u32,
-    root_boot_identity: &'a str,
-    root_start_identity: &'a GatewayStartIdentity,
-    report_path: &'a Path,
-    generation: &'a str,
-    config: &'a EffectiveManagedHostListener,
-    stop: &'a mut dyn FnMut() -> bool,
-}
-
-/// Records the latest startup observation for one child generation so a
-/// failed generation keeps evidence after its report file and child are gone.
-/// Tokens describe what was last seen; they never authorize ownership,
-/// signaling, publication or release, and they are not read back as identity.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct HostListenerDiagnostic {
-    report: ReportObservation,
-    claimed_address: Option<SocketAddr>,
-    expected_address: Option<SocketAddr>,
-    observed_addresses: Option<Vec<SocketAddr>>,
-    ownership: OwnershipObservation,
-    candidates_inspected: Option<u32>,
-    observed_listener_pid: Option<u32>,
-    http_probe: Option<HttpReadinessOutcome>,
-    http_status: Option<u16>,
-    route: RouteObservation,
-}
-
-impl Default for HostListenerDiagnostic {
-    fn default() -> Self {
-        Self {
-            report: ReportObservation::NotObserved,
-            claimed_address: None,
-            expected_address: None,
-            observed_addresses: None,
-            ownership: OwnershipObservation::NotReached,
-            candidates_inspected: None,
-            observed_listener_pid: None,
-            http_probe: None,
-            http_status: None,
-            route: RouteObservation::NotReached,
-        }
-    }
-}
-
-impl HostListenerDiagnostic {
-    fn summary(&self) -> String {
-        let probe = match (self.http_probe, self.http_status) {
-            (Some(outcome), Some(status)) => format!("{}:{status}", outcome.as_str()),
-            (Some(outcome), None) => outcome.as_str().to_owned(),
-            (None, _) => "not_attempted".to_owned(),
-        };
-        let mut summary = format!(
-            "report={}, ownership={}",
-            self.report.as_str(),
-            self.ownership.as_str()
-        );
-        // The reserved address is what Effigy verifies itself when no adapter
-        // report arrives, and what any report must agree with. A listener that
-        // bound something else is named here instead of only timing out.
-        if let Some(expected) = self.expected_address {
-            summary.push_str(&format!(", expected={expected}"));
-        }
-        if let Some(observed) = self.observed_addresses.as_deref() {
-            if !observed.is_empty() {
-                let observed = observed
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(",");
-                summary.push_str(&format!(", observed={observed}"));
-            }
-        }
-        format!(
-            "{summary}, http_probe={probe}, route={}",
-            self.route.as_str()
-        )
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ReportObservation {
-    NotObserved,
-    Absent,
-    Unreadable,
-    Unsafe,
-    SchemaOrGenerationMismatch,
-    InvalidAddress,
-    BindMismatch,
-    Accepted,
-}
-
-impl ReportObservation {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::NotObserved => "not_observed",
-            Self::Absent => "absent",
-            Self::Unreadable => "unreadable",
-            Self::Unsafe => "unsafe",
-            Self::SchemaOrGenerationMismatch => "schema_or_generation_mismatch",
-            Self::InvalidAddress => "invalid_address",
-            Self::BindMismatch => "bind_mismatch",
-            Self::Accepted => "accepted",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum OwnershipObservation {
-    NotReached,
-    NoOwnerObserved,
-    ExclusiveOwnerObserved,
-    SupervisorChanged,
-    ChildUnavailable,
-    ChildChanged,
-    SupervisorUnavailable,
-    AncestryChanged,
-    AncestryUnavailable,
-    IdentityUnavailable,
-    IdentityChanged,
-    ListenerOutsideGeneration,
-    SocketInspectionFailed,
-    ExclusivityUnproven,
-}
-
-impl OwnershipObservation {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::NotReached => "not_reached",
-            Self::NoOwnerObserved => "no_owner_observed",
-            Self::ExclusiveOwnerObserved => "exclusive_owner_observed",
-            Self::SupervisorChanged => "supervisor_changed",
-            Self::ChildUnavailable => "child_unavailable",
-            Self::ChildChanged => "child_changed",
-            Self::SupervisorUnavailable => "supervisor_unavailable",
-            Self::AncestryChanged => "ancestry_changed",
-            Self::AncestryUnavailable => "ancestry_unavailable",
-            Self::IdentityUnavailable => "identity_unavailable",
-            Self::IdentityChanged => "identity_changed",
-            Self::ListenerOutsideGeneration => "listener_outside_generation",
-            Self::SocketInspectionFailed => "socket_inspection_failed",
-            Self::ExclusivityUnproven => "exclusivity_unproven",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum RouteObservation {
-    NotReached,
-    PrepareFailed,
-    OwnershipChanged,
-    PublicationFailed,
-}
-
-impl RouteObservation {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::NotReached => "not_reached",
-            Self::PrepareFailed => "prepare_failed",
-            Self::OwnershipChanged => "ownership_changed",
-            Self::PublicationFailed => "publication_failed",
-        }
-    }
-}
-
-/// Records an identity failure as unavailable or changed, never both.
-fn observe_identity(
-    diagnostic: &mut HostListenerDiagnostic,
-    unavailable: OwnershipObservation,
-    changed: OwnershipObservation,
-    result: Result<(), IdentityFailure>,
-) -> Result<(), RunnerError> {
-    result.map_err(|failure| match failure {
-        IdentityFailure::Unavailable(error) => {
-            diagnostic.ownership = unavailable;
-            error
-        }
-        IdentityFailure::Changed(error) => {
-            diagnostic.ownership = changed;
-            error
-        }
+    Ok(match exit {
+        Some(code) => GenerationEnd::Exited(code),
+        None => GenerationEnd::DependencyChanged,
     })
+}
+
+/// Record one generation that failed before it could serve, and report the
+/// generation as a failed exit so the declared restart policy applies.
+fn finish_failed_generation(
+    state: &mut ListenerGeneration<'_>,
+    log_path: &Path,
+    process_name: &str,
+    message: String,
+) -> Result<GenerationEnd, RunnerError> {
+    append_log_line(
+        log_path,
+        &format!("[effigy host-process] listener `{process_name}` failed: {message}"),
+    );
+    state.diagnostic = Some(message);
+    state.write("failed")?;
+    Ok(GenerationEnd::Exited(1))
+}
+
+/// A reserved port that already answers belongs to another process. This is
+/// the only "someone else owns it" check: fail the start naming the port,
+/// rather than serving someone else's socket as this child's.
+fn reserved_port_is_free(bind: &str) -> Result<(), RunnerError> {
+    let Ok(address) = bind.parse::<SocketAddr>() else {
+        return Ok(());
+    };
+    if address.port() == 0 {
+        return Ok(());
+    }
+    match std::net::TcpStream::connect_timeout(&address, Duration::from_millis(200)) {
+        Ok(_) => Err(RunnerError::task_invocation(format!(
+            "managed listener port {address} already answers before its child starts; another process holds it"
+        ))),
+        Err(_) => Ok(()),
+    }
+}
+
+/// Wait until the reserved address answers the declared readiness request.
+/// A closed port is not a failure while the child is alive: an app that
+/// compiles before it serves takes as long as the declared timeout allows.
+fn wait_for_ready_listener(
+    address: SocketAddr,
+    config: &EffectiveManagedHostListener,
+    stop: &mut dyn FnMut() -> bool,
+    child: &mut effigy_kernel::custody::OwnedProcess,
+) -> Result<(), ListenerStartupFailure> {
+    let timeout = Duration::from_secs(config.readiness_timeout_secs);
+    let deadline = Instant::now() + timeout;
+    loop {
+        if stop() {
+            return Err(ListenerStartupFailure::Stopped);
+        }
+        if let effigy_kernel::observe::Observed::Verified(exit, _) = child.poll() {
+            return Err(RunnerError::task_invocation(format!(
+                "managed listener at {address} exited with code {} before it answered {}",
+                exit.code, config.readiness_path
+            ))
+            .into());
+        }
+        let probe = probe_http_readiness(address, &config.route_domain, config);
+        if probe.outcome == HttpReadinessOutcome::Ready {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(listener_readiness_timeout(address, config, timeout, probe.outcome).into());
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn listener_readiness_timeout(
+    address: SocketAddr,
+    config: &EffectiveManagedHostListener,
+    timeout: Duration,
+    last: HttpReadinessOutcome,
+) -> RunnerError {
+    RunnerError::task_invocation(format!(
+        "timed out after {}s waiting for the managed listener at {address} to answer {} with {} ({})",
+        timeout.as_secs(),
+        config.readiness_path,
+        config.readiness_status,
+        last.as_str()
+    ))
+}
+
+/// Polls the reserved port while one generation serves. Three consecutive
+/// misses withdraw the route; the next answer republishes it.
+struct ListenerLiveness {
+    address: SocketAddr,
+    misses: u32,
+    next_probe: Instant,
+    published: bool,
+}
+
+impl ListenerLiveness {
+    fn new(address: SocketAddr) -> Self {
+        Self {
+            address,
+            misses: 0,
+            next_probe: Instant::now() + LISTENER_PROBE_INTERVAL,
+            published: true,
+        }
+    }
+
+    /// `Some(true)` republishes, `Some(false)` withdraws, `None` is no change.
+    fn poll(&mut self) -> Option<bool> {
+        let now = Instant::now();
+        if now < self.next_probe {
+            return None;
+        }
+        self.next_probe = now + LISTENER_PROBE_INTERVAL;
+        if std::net::TcpStream::connect_timeout(&self.address, Duration::from_millis(300)).is_ok() {
+            self.misses = 0;
+            return (!self.published).then(|| {
+                self.published = true;
+                true
+            });
+        }
+        self.misses += 1;
+        if self.published && self.misses >= LISTENER_PROBE_MISSES {
+            self.published = false;
+            return Some(false);
+        }
+        None
+    }
 }
 
 /// Keeps a diagnostic observation at the point it is seen, then passes the
@@ -2360,15 +1918,6 @@ fn observe_identity(
 enum ListenerStartupFailure {
     Stopped,
     Failed(RunnerError),
-}
-
-impl ListenerStartupFailure {
-    fn status(&self) -> &'static str {
-        match self {
-            Self::Stopped => "stopped",
-            Self::Failed(_) => "failed",
-        }
-    }
 }
 
 impl From<RunnerError> for ListenerStartupFailure {
@@ -2388,378 +1937,22 @@ impl std::fmt::Display for ListenerStartupFailure {
     }
 }
 
-fn wait_for_owned_listener(
-    wait: OwnedHostListenerWait<'_>,
-    diagnostic: &mut HostListenerDiagnostic,
-) -> Result<OwnedHostListener, ListenerStartupFailure> {
-    let OwnedHostListenerWait {
-        supervisor,
-        root_pid,
-        root_boot_identity,
-        root_start_identity,
-        report_path,
-        generation,
-        config,
-        stop,
-    } = wait;
-    let timeout = Duration::from_secs(config.readiness_timeout_secs);
-    let deadline = Instant::now() + timeout;
-    let expected = config.bind.parse::<SocketAddr>().map_err(|error| {
-        RunnerError::task_invocation(format!("managed listener bind address is invalid: {error}"))
-    })?;
-    diagnostic.expected_address = Some(expected);
-    // Every listening address the child generation bound that is not the
-    // reserved one. Retained across observations, so a failure names what the
-    // generation actually served instead of only timing out.
-    let mut observed: BTreeSet<SocketAddr> = BTreeSet::new();
-    let mut exclusivity: Option<std::io::Error>;
-    loop {
-        // Per observation: an earlier iteration's sharer is not this one's.
-        exclusivity = None;
-        if stop() {
-            return Err(ListenerStartupFailure::Stopped);
-        }
-        observe_identity(
-            diagnostic,
-            OwnershipObservation::SupervisorUnavailable,
-            OwnershipObservation::SupervisorChanged,
-            checked_supervisor_identity(supervisor),
-        )?;
-        observe_identity(
-            diagnostic,
-            OwnershipObservation::ChildUnavailable,
-            OwnershipObservation::ChildChanged,
-            checked_child_identity(root_pid, root_boot_identity, root_start_identity),
-        )?;
-        if !effigy_process::process_is_descendant_of(root_pid, supervisor.pid) {
-            diagnostic.ownership = OwnershipObservation::AncestryChanged;
-            return Err(RunnerError::task_invocation(
-                "managed host child is no longer beneath its recorded supervisor",
-            )
-            .into());
-        }
-        let address = match observe_listener_report(report_path, generation, expected, diagnostic) {
-            Ok(Some(reported)) => reported,
-            // No adapter report: the reserved address itself is the claim to
-            // verify (effigy#334). Effigy finds the listening socket in the
-            // child generation and proves ownership exactly as it does for a
-            // reported address. A report that does arrive is still used, and
-            // it must agree with the reserved address.
-            Ok(None) => expected,
-            Err(error) => return Err(error.into()),
-        };
-        let mut candidates = vec![root_pid];
-        let descendants = effigy_process::process_descendant_ids(root_pid).map_err(|error| {
-            diagnostic.ownership = OwnershipObservation::AncestryUnavailable;
-            RunnerError::task_invocation(format!(
-                "managed listener process ancestry is unavailable: {error}"
-            ))
-        })?;
-        candidates.extend(descendants);
-        candidates.sort_unstable();
-        candidates.dedup();
-        diagnostic.candidates_inspected = u32::try_from(candidates.len()).ok();
-        diagnostic.ownership = OwnershipObservation::NoOwnerObserved;
-        diagnostic.observed_listener_pid = None;
-        diagnostic.http_probe = None;
-        diagnostic.http_status = None;
-        let mut found = None;
-        for pid in &candidates {
-            let pid = *pid;
-            let identity = match read_live_process_identity(pid) {
-                Ok(identity) => identity,
-                Err(error)
-                    if error.kind() == std::io::ErrorKind::NotFound
-                        || error.raw_os_error() == Some(libc::ESRCH) =>
-                {
-                    continue;
-                }
-                Err(error) => {
-                    diagnostic.ownership = OwnershipObservation::IdentityUnavailable;
-                    return Err(RunnerError::task_invocation(format!(
-                        "managed listener process identity is unavailable for PID {pid}: {error}"
-                    ))
-                    .into());
-                }
-            };
-            let endpoints = match process_listening_endpoints(pid) {
-                Ok(endpoints) => endpoints,
-                // A descendant can exit between the ancestry read and this
-                // inspection; a vanished process owns no socket now.
-                Err(error)
-                    if error.kind() == std::io::ErrorKind::NotFound
-                        || error.raw_os_error() == Some(libc::ESRCH) =>
-                {
-                    continue;
-                }
-                Err(error) => {
-                    diagnostic.ownership = OwnershipObservation::SocketInspectionFailed;
-                    return Err(RunnerError::task_invocation(format!(
-                        "cannot inspect listener sockets for PID {pid}: {error}"
-                    ))
-                    .into());
-                }
-            };
-            for endpoint in &endpoints {
-                if endpoint.transport == GatewayTransport::Tcp && endpoint.addr != address {
-                    observed.insert(endpoint.addr);
-                }
-            }
-            if endpoints.contains(&GatewayEndpoint {
-                transport: GatewayTransport::Tcp,
-                addr: address,
-            }) {
-                if pid != root_pid && !effigy_process::process_is_descendant_of(pid, root_pid) {
-                    diagnostic.ownership = OwnershipObservation::ListenerOutsideGeneration;
-                    return Err(RunnerError::task_invocation(
-                        "managed listener process is outside its recorded child generation",
-                    )
-                    .into());
-                }
-                observe_identity(
-                    diagnostic,
-                    OwnershipObservation::ChildUnavailable,
-                    OwnershipObservation::ChildChanged,
-                    checked_child_identity(root_pid, root_boot_identity, root_start_identity),
-                )?;
-                let current = match read_live_process_identity(pid) {
-                    Ok(current) => current,
-                    Err(error) => {
-                        diagnostic.ownership = OwnershipObservation::IdentityUnavailable;
-                        return Err(RunnerError::task_invocation(format!(
-                            "managed listener owner identity changed during discovery: {error}"
-                        ))
-                        .into());
-                    }
-                };
-                if current.boot_identity != identity.boot_identity
-                    || current.start_identity != identity.start_identity
-                {
-                    diagnostic.ownership = OwnershipObservation::IdentityChanged;
-                    return Err(RunnerError::task_invocation(
-                        "managed listener owner PID was reused during discovery",
-                    )
-                    .into());
-                }
-                // Another same-user process can hold the listening socket
-                // for a moment (a forked helper before it closes inherited
-                // descriptors). Exclusivity is observed, never assumed: poll
-                // until it holds, and fail with it at the deadline
-                // (papercut 629e8cdc).
-                if let Err(error) =
-                    effigy_gateway::socket_ownership::verify_process_listener_exclusive(
-                        pid,
-                        &GatewayEndpoint {
-                            transport: GatewayTransport::Tcp,
-                            addr: address,
-                        },
-                    )
-                {
-                    diagnostic.ownership = OwnershipObservation::ExclusivityUnproven;
-                    diagnostic.observed_listener_pid = Some(pid);
-                    exclusivity = Some(error);
-                    break;
-                }
-                exclusivity = None;
-                diagnostic.ownership = OwnershipObservation::ExclusiveOwnerObserved;
-                diagnostic.observed_listener_pid = Some(pid);
-                found = Some(OwnedHostListener {
-                    address,
-                    listener_pid: pid,
-                    listener_boot_identity: identity.boot_identity,
-                    listener_start_identity: identity.start_identity,
-                });
-                break;
-            }
-        }
-        if let Some(found) = found {
-            let probe = probe_http_readiness(found.address, &config.route_domain, config);
-            diagnostic.http_probe = Some(probe.outcome);
-            diagnostic.http_status = probe.status;
-            if probe.outcome == HttpReadinessOutcome::Ready {
-                observe_identity(
-                    diagnostic,
-                    OwnershipObservation::SupervisorUnavailable,
-                    OwnershipObservation::SupervisorChanged,
-                    checked_supervisor_identity(supervisor),
-                )?;
-                observe_identity(
-                    diagnostic,
-                    OwnershipObservation::ChildUnavailable,
-                    OwnershipObservation::ChildChanged,
-                    checked_child_identity(root_pid, root_boot_identity, root_start_identity),
-                )?;
-                if !effigy_process::process_is_descendant_of(root_pid, supervisor.pid) {
-                    diagnostic.ownership = OwnershipObservation::AncestryChanged;
-                    return Err(RunnerError::task_invocation(
-                        "managed host child ancestry changed during readiness",
-                    )
-                    .into());
-                }
-                return Ok(found);
-            }
-        }
-        if Instant::now() >= deadline {
-            diagnostic.observed_addresses =
-                (!observed.is_empty()).then(|| observed.iter().copied().collect());
-            if let Some(error) = exclusivity {
-                return Err(RunnerError::task_invocation(format!(
-                    "cannot prove exclusive managed listener ownership within {}s: {error}",
-                    timeout.as_secs()
-                ))
-                .into());
-            }
-            // The reserved address is held, just not by this generation.
-            // Never accept it; name who holds it instead.
-            if let Some(pid) = foreign_listener_owner(address, &candidates, diagnostic) {
-                return Err(RunnerError::task_invocation(format!(
-                    "managed listener address {address} is held by process {pid}, which is outside the child generation"
-                ))
-                .into());
-            }
-            return Err(listener_readiness_timeout(timeout, address, &observed).into());
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-}
-
-/// Observe the adapter report for one child generation. `Ok(None)` means no
-/// report is readable this observation: the reserved address is verified by
-/// observation instead (effigy#334). A report that exists is a claim Effigy
-/// still validates against the reserved address before anything else.
-fn observe_listener_report(
-    report_path: &Path,
-    generation: &str,
-    expected: SocketAddr,
-    diagnostic: &mut HostListenerDiagnostic,
-) -> Result<Option<SocketAddr>, RunnerError> {
-    let metadata = match fs::symlink_metadata(report_path) {
-        Ok(metadata) => metadata,
-        Err(error) => {
-            diagnostic.report = if error.kind() == std::io::ErrorKind::NotFound {
-                ReportObservation::Absent
-            } else {
-                ReportObservation::Unreadable
-            };
-            return Ok(None);
-        }
-    };
-    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 4096 {
-        diagnostic.report = ReportObservation::Unsafe;
-        return Err(RunnerError::task_invocation(
-            "managed listener report is not a small regular file",
-        ));
-    }
-    let report: HostListenerReport = match read_private_json(report_path) {
-        Ok(report) => report,
-        Err(error) => {
-            diagnostic.report = ReportObservation::Unreadable;
-            return Err(error);
-        }
-    };
-    if report.schema != HOST_LISTENER_REPORT_SCHEMA || report.generation != generation {
-        diagnostic.report = ReportObservation::SchemaOrGenerationMismatch;
-        return Err(RunnerError::task_invocation(
-            "managed listener report has an unsupported schema or stale generation",
-        ));
-    }
-    let address = match report.address.parse::<SocketAddr>() {
-        Ok(address) => address,
-        Err(_) => {
-            diagnostic.report = ReportObservation::InvalidAddress;
-            return Err(RunnerError::task_invocation(
-                "managed listener report address is not a socket address",
-            ));
-        }
-    };
-    diagnostic.claimed_address = Some(address);
-    if !address.ip().is_loopback()
-        || address.port() == 0
-        || address.ip() != expected.ip()
-        || (expected.port() != 0 && address.port() != expected.port())
-    {
-        diagnostic.report = ReportObservation::BindMismatch;
-        return Err(RunnerError::task_invocation(
-            "managed listener report does not match its declared loopback bind preference",
-        ));
-    }
-    diagnostic.report = ReportObservation::Accepted;
-    Ok(Some(address))
-}
-
-/// A process that listens on the reserved address but is not in the child
-/// generation. `listening_process_ids` scans this user's processes, so it runs
-/// only once a generation has already failed to take its own reservation.
-fn foreign_listener_owner(
-    address: SocketAddr,
-    candidates: &[u32],
-    diagnostic: &mut HostListenerDiagnostic,
-) -> Option<u32> {
-    let owners = effigy_gateway::socket_ownership::listening_process_ids(&GatewayEndpoint {
-        transport: GatewayTransport::Tcp,
-        addr: address,
-    })
-    .ok()?;
-    let foreign = owners.into_iter().find(|pid| !candidates.contains(pid))?;
-    diagnostic.ownership = OwnershipObservation::ListenerOutsideGeneration;
-    diagnostic.observed_listener_pid = Some(foreign);
-    Some(foreign)
-}
-
-fn listener_readiness_timeout(
-    timeout: Duration,
-    expected: SocketAddr,
-    observed: &BTreeSet<SocketAddr>,
-) -> RunnerError {
-    let mut message = format!(
-        "timed out after {}s waiting for an owned ready managed host listener at {expected}",
-        timeout.as_secs()
-    );
-    if !observed.is_empty() {
-        let observed = observed
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
-        message.push_str(&format!(
-            "; the child generation listens on {observed} instead"
-        ));
-    }
-    RunnerError::task_invocation(message)
-}
-
-/// A recorded process identity that could not be confirmed. `Unavailable`
-/// means the process could not be read now; `Changed` means it was read and
-/// does not match the recorded identity. Diagnostics keep them distinct.
-enum IdentityFailure {
-    Unavailable(RunnerError),
-    Changed(RunnerError),
-}
-
-impl From<IdentityFailure> for RunnerError {
-    fn from(failure: IdentityFailure) -> Self {
-        match failure {
-            IdentityFailure::Unavailable(error) | IdentityFailure::Changed(error) => error,
-        }
-    }
-}
-
-fn checked_child_identity(
-    pid: u32,
-    boot_identity: &str,
-    start_identity: &GatewayStartIdentity,
-) -> Result<(), IdentityFailure> {
-    let current = read_live_process_identity(pid).map_err(|error| {
-        IdentityFailure::Unavailable(RunnerError::task_invocation(format!(
-            "managed host child identity is unavailable: {error}"
-        )))
-    })?;
-    if current.boot_identity != boot_identity || &current.start_identity != start_identity {
-        return Err(IdentityFailure::Changed(RunnerError::task_invocation(
-            "managed host child PID was reused during listener discovery",
-        )));
-    }
-    Ok(())
+/// Withdraw this generation's route. A stale stop or exit cannot remove a
+/// successor's route: the deregistration names the owner and generation.
+fn withdraw_managed_listener_route(
+    spec: &HostProcessRuntimeSpec,
+    listener: &EffectiveManagedHostListener,
+    owner: &ManagedListenerRouteOwner,
+) -> Result<(), RunnerError> {
+    deregister_managed_listener_route(
+        &listener_route_table_path(spec)?,
+        &spec.project_path,
+        &listener.route_domain,
+        &spec.owner,
+        &owner.generation,
+    )
+    .map(|_| ())
+    .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
 
 fn verify_child_identity(
@@ -2767,21 +1960,15 @@ fn verify_child_identity(
     boot_identity: &str,
     start_identity: &GatewayStartIdentity,
 ) -> Result<(), RunnerError> {
-    Ok(checked_child_identity(pid, boot_identity, start_identity)?)
-}
-
-fn checked_supervisor_identity(record: &HostProcessRecord) -> Result<(), IdentityFailure> {
-    let current = read_live_process_identity(record.pid).map_err(|error| {
-        IdentityFailure::Unavailable(RunnerError::task_invocation(format!(
-            "managed host supervisor identity is unavailable: {error}"
-        )))
+    let current = read_live_process_identity(pid).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "managed host child identity is unavailable: {error}"
+        ))
     })?;
-    if current.boot_identity != record.boot_identity
-        || current.start_identity != record.start_identity
-    {
-        return Err(IdentityFailure::Changed(RunnerError::task_invocation(
-            "managed host supervisor PID was reused during listener discovery",
-        )));
+    if current.boot_identity != boot_identity || &current.start_identity != start_identity {
+        return Err(RunnerError::task_invocation(
+            "managed host child PID was reused; refusing to signal its process group",
+        ));
     }
     Ok(())
 }
@@ -2979,8 +2166,6 @@ fn cleanup_stopped_listener_routes(
             && state.owner == spec.owner
             && state.runtime_generation == spec.runtime_generation
             && state.supervisor_pid == record.pid
-            && state.supervisor_boot_identity == record.boot_identity
-            && state.supervisor_start_identity == record.start_identity
         {
             let mut unavailable = state.clone();
             unavailable.status = "unavailable".to_owned();
@@ -2995,39 +2180,33 @@ fn cleanup_stopped_listener_routes(
     } else {
         None
     };
-    if let Some(state) = state.as_ref() {
-        if let Some(pid) = state.child_pid {
-            let identity = ChildProcessIdentity {
+    if let (Some(pid), Some(boot_identity), Some(start_identity)) =
+        state.as_ref().map_or((None, None, None), |state| {
+            (
+                state.child_pid,
+                state.child_boot_identity.clone(),
+                state.child_start_identity.clone(),
+            )
+        })
+    {
+        stop_recorded_child_group(
+            &ChildProcessIdentity {
                 pid,
-                boot_identity: state.child_boot_identity.clone().ok_or_else(|| {
-                    RunnerError::task_invocation(
-                        "managed child cleanup is held because its boot identity is missing",
-                    )
-                })?,
-                start_identity: state.child_start_identity.clone().ok_or_else(|| {
-                    RunnerError::task_invocation(
-                        "managed child cleanup is held because its start identity is missing",
-                    )
-                })?,
-            };
-            stop_recorded_child_group(&identity, Duration::from_secs(2))?;
-        } else if state.status == "ready" || state.route_owner.is_some() {
-            return Err(RunnerError::task_invocation(
-                "managed child cleanup is held because a published generation has no child identity",
-            ));
-        }
+                boot_identity,
+                start_identity,
+            },
+            Duration::from_secs(2),
+        )?;
     }
     let route_table_path = listener_route_table_path(&spec)?;
     let table = RouteTable::load(&route_table_path)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     if let Some(route) = table.lookup(&listener.route_domain) {
-        if let Some(owner) = route.managed_listener.as_ref().filter(|owner| {
-            owner.owner == spec.owner
-                && owner.runtime_generation == spec.runtime_generation
-                && owner.supervisor_pid == record.pid
-                && owner.supervisor_boot_identity == record.boot_identity
-                && owner.supervisor_start_identity == record.start_identity
-        }) {
+        if let Some(owner) = route
+            .managed_listener
+            .as_ref()
+            .filter(|owner| owner.owner == spec.owner)
+        {
             let _ = deregister_managed_listener_route(
                 &route_table_path,
                 &spec.project_path,
@@ -3052,9 +2231,6 @@ fn cleanup_stopped_listener_routes(
         state.child_pid = None;
         state.child_boot_identity = None;
         state.child_start_identity = None;
-        state.listener_pid = None;
-        state.listener_boot_identity = None;
-        state.listener_start_identity = None;
         write_listener_state(&spec.listener_state_file, state)?;
     }
     Ok(())
@@ -3271,7 +2447,6 @@ mod tests {
     use effigy_containers::{HostProcessRestart, HostProcessSignal};
 
     fn published_listener_state(runtime_generation: &str, status: &str) -> serde_json::Value {
-        let identity = read_live_process_identity(std::process::id()).unwrap();
         serde_json::json!({
             "schema": HOST_LISTENER_STATE_SCHEMA,
             "owner": "fixture|web|app",
@@ -3283,14 +2458,9 @@ mod tests {
             "public_url": null,
             "route_domain": null,
             "supervisor_pid": std::process::id(),
-            "supervisor_boot_identity": identity.boot_identity,
-            "supervisor_start_identity": identity.start_identity,
             "child_pid": null,
             "child_boot_identity": null,
             "child_start_identity": null,
-            "listener_pid": null,
-            "listener_boot_identity": null,
-            "listener_start_identity": null,
             "route_owner": null,
         })
     }
@@ -3577,11 +2747,11 @@ mod tests {
         });
     }
 
-    /// A loopback listener child that publishes the generation report Effigy's
-    /// supervisor expects and answers every request with 200, so a managed
-    /// listener reaches its declared readiness without a container backend.
+    /// A loopback listener child that serves the reserved address and answers
+    /// every request with 200, so a managed listener reaches its declared
+    /// readiness without a container backend or any adapter convention.
     const LISTENER_CHILD: &str = r#"
-import http.server, json, os
+import http.server, os
 bind = os.environ["EFFIGY_MANAGED_HOST_LISTENER_BIND"]
 host, port = bind.rsplit(":", 1)
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -3593,13 +2763,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
     def log_message(self, *args):
         pass
-server = http.server.HTTPServer((host, int(port)), Handler)
-report = {"schema": "effigy.managed.host-listener-report.v1",
-          "generation": os.environ["EFFIGY_MANAGED_HOST_LISTENER_GENERATION"],
-          "address": "127.0.0.1:%d" % server.server_address[1]}
-with open(os.environ["EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE"], "w") as handle:
-    json.dump(report, handle)
-server.serve_forever()
+http.server.HTTPServer((host, int(port)), Handler).serve_forever()
 "#;
 
     /// A fixture listener port outside the OS ephemeral range, seeded by the
@@ -3670,6 +2834,22 @@ server.serve_forever()
         (guard, policy)
     }
 
+    /// The listener state record one listener policy's supervisor writes.
+    fn listener_state(policy: &EffectiveContainerPolicy) -> PathBuf {
+        super::host_process_state_path(
+            &host_process_dir_for_policy(policy.repo_root.as_path(), policy),
+            "app",
+        )
+    }
+
+    fn read_json(path: &Path) -> serde_json::Value {
+        serde_json::from_slice(
+            &fs::read(path)
+                .unwrap_or_else(|error| panic!("listener state {}: {error}", path.display())),
+        )
+        .unwrap_or_else(|error| panic!("listener state {} is not JSON: {error}", path.display()))
+    }
+
     fn route_table_path() -> PathBuf {
         super::super::gateway_command::standard_gateway_dir()
             .expect("test gateway dir")
@@ -3686,8 +2866,12 @@ server.serve_forever()
 
     /// Kill the recorded run abruptly: the supervisor first, so it cannot
     /// withdraw its route, then its child group. Only PIDs this test started.
-    fn kill_recorded_run(owner: &ManagedListenerRouteOwner, leader: u32) {
-        kill(Pid::from_raw(owner.supervisor_pid as i32), Signal::SIGKILL)
+    fn kill_recorded_run(state_path: &Path, leader: u32) {
+        let state = read_json(state_path);
+        let supervisor = state["supervisor_pid"]
+            .as_u64()
+            .expect("the listener state names its supervisor") as u32;
+        kill(Pid::from_raw(supervisor as i32), Signal::SIGKILL)
             .expect("kill the recorded supervisor");
         kill(Pid::from_raw(-(leader as i32)), Signal::SIGKILL)
             .expect("kill the recorded child group");
@@ -3709,10 +2893,10 @@ server.serve_forever()
             .find(|process| process.listener.is_some())
             .expect("listener declaration");
         let project = fixture.checkout.display().to_string();
-        let first = super::managed_host_process_owner(&project, &policy, process)
-            .expect("owner identity");
-        let second = super::managed_host_process_owner(&project, &policy, process)
-            .expect("owner identity");
+        let first =
+            super::managed_host_process_owner(&project, &policy, process).expect("owner identity");
+        let second =
+            super::managed_host_process_owner(&project, &policy, process).expect("owner identity");
         assert_eq!(first, second);
         assert_eq!(first, format!("{project}|{}|{}", policy.name, process.name));
     }
@@ -3726,12 +2910,12 @@ server.serve_forever()
         let (_gateway_home, policy) = listener_policy(&fixture.checkout, domain, "down");
         super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
             .expect("the managed listener starts and publishes its route");
-        let owner = published_owner(domain);
+        assert!(published_owner(domain).address.starts_with("127.0.0.1:"));
         let leader = super::kernel_run::host_process_status(&fixture.checkout, &policy)
             .first()
             .and_then(|status| status.pid)
             .expect("custody receipt names the child group");
-        kill_recorded_run(&owner, leader);
+        kill_recorded_run(&listener_state(&policy), leader);
 
         // Nothing withdrew the route: it outlived the supervisor that published
         // it, which is exactly the residue `down` has to clear.
@@ -3805,7 +2989,7 @@ server.serve_forever()
             .first()
             .and_then(|status| status.pid)
             .expect("custody receipt names the child group");
-        kill_recorded_run(&first, leader);
+        kill_recorded_run(&listener_state(&policy), leader);
         assert!(
             RouteTable::load(&route_table_path())
                 .expect("route table")
@@ -3823,7 +3007,10 @@ server.serve_forever()
             successor.generation, first_generation,
             "the route records the successor generation"
         );
-        assert_ne!(successor.supervisor_pid, first.supervisor_pid);
+        assert_eq!(
+            read_json(&listener_state(&policy))["generation"],
+            serde_json::Value::String(successor.generation.clone())
+        );
 
         let report =
             super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
@@ -4002,32 +3189,117 @@ server.serve_forever()
         }
     }
 
-    /// A failed generation names the reserved address and every other address
-    /// its child generation actually served, so a listener bound elsewhere is
-    /// diagnosed instead of only timing out (effigy#334).
+    /// A generation that never answers names the reserved address, the path it
+    /// was asked for and the status it was asked to return.
     #[test]
-    fn host_process_listener_summary_names_expected_and_observed_addresses() {
-        let mut diagnostic = HostListenerDiagnostic {
-            report: ReportObservation::Absent,
-            ownership: OwnershipObservation::NoOwnerObserved,
-            ..HostListenerDiagnostic::default()
+    fn host_process_listener_timeout_names_the_reserved_address() {
+        let config = EffectiveManagedHostListener {
+            bind: "127.0.0.1:9400".to_owned(),
+            readiness_path: "/health".to_owned(),
+            readiness_status: 200,
+            readiness_timeout_secs: 1,
+            declared_route_domain: "timeout.host.test".to_owned(),
+            route_domain: "timeout.host.test".to_owned(),
+            route_tls: false,
         };
-        assert_eq!(
-            diagnostic.summary(),
-            "report=absent, ownership=no_owner_observed, http_probe=not_attempted, route=not_reached"
-        );
-        diagnostic.expected_address = Some(
+        let message = listener_readiness_timeout(
             "127.0.0.1:9400"
                 .parse::<SocketAddr>()
                 .expect("reserved address"),
-        );
-        diagnostic.observed_addresses = Some(vec!["0.0.0.0:9500"
-            .parse::<SocketAddr>()
-            .expect("observed address")]);
+            &config,
+            Duration::from_secs(1),
+            HttpReadinessOutcome::ConnectFailed,
+        )
+        .to_string();
+        assert!(message.contains("127.0.0.1:9400"), "{message}");
+        assert!(message.contains("/health"), "{message}");
+        assert!(message.contains("200"), "{message}");
+        assert!(message.contains("connect_failed"), "{message}");
+    }
+
+    /// The published route is withdrawn only after three consecutive probe
+    /// misses, and the next answer republishes it.
+    #[test]
+    fn listener_liveness_withdraws_after_three_misses_and_republishes() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("fixture listener");
+        let address = listener.local_addr().expect("fixture address");
+        let mut liveness = ListenerLiveness::new(address);
+        liveness.next_probe = Instant::now();
+        assert_eq!(liveness.poll(), None, "an answering port changes nothing");
+        drop(listener);
+        for miss in 1..LISTENER_PROBE_MISSES {
+            liveness.next_probe = Instant::now();
+            assert_eq!(liveness.poll(), None, "miss {miss} only counts");
+        }
+        liveness.next_probe = Instant::now();
         assert_eq!(
-            diagnostic.summary(),
-            "report=absent, ownership=no_owner_observed, expected=127.0.0.1:9400, observed=0.0.0.0:9500, http_probe=not_attempted, route=not_reached"
+            liveness.poll(),
+            Some(false),
+            "the third consecutive miss withdraws the route"
         );
+        liveness.next_probe = Instant::now();
+        assert_eq!(liveness.poll(), None, "a withdrawn route stays withdrawn");
+        // The port answers again: the route is republished exactly once.
+        let listener = std::net::TcpListener::bind(address).expect("rebound fixture listener");
+        liveness.next_probe = Instant::now();
+        assert_eq!(liveness.poll(), Some(true), "a later answer republishes");
+        liveness.next_probe = Instant::now();
+        assert_eq!(liveness.poll(), None, "an answer with no change is quiet");
+        drop(listener);
+    }
+
+    /// A dependent is replaced only when its dependency's supervisor replaced
+    /// its child generation; a probe miss on the dependency is not a change.
+    #[test]
+    fn dependency_transition_only_follows_a_changed_generation() {
+        let dir = tempfile::tempdir().expect("fixture dir");
+        let state_file = dir.path().join("app.listener.json");
+        let spec = HostProcessRuntimeSpec {
+            dependencies: vec![HostProcessDependency {
+                name: "app".to_owned(),
+                owner: "fixture|web|app".to_owned(),
+                state_file: state_file.clone(),
+            }],
+            ..runtime_spec(&[])
+        };
+        let write = |generation: &str, status: &str| {
+            write_private_json(
+                &state_file,
+                &serde_json::json!({
+                    "schema": HOST_LISTENER_STATE_SCHEMA,
+                    "owner": "fixture|web|app",
+                    "runtime_generation": "runtime",
+                    "generation": generation,
+                    "status": status,
+                    "address": null,
+                    "internal_url": null,
+                    "public_url": null,
+                    "route_domain": null,
+                    "supervisor_pid": std::process::id(),
+                    "child_pid": null,
+                    "child_boot_identity": null,
+                    "child_start_identity": null,
+                    "route_owner": null,
+                }),
+            )
+            .expect("dependency state");
+        };
+        write("child-1", "ready");
+        let expected = dependency_generations(&spec).expect("dependency generations");
+        assert!(!dependency_transition(&spec, &expected).expect("no transition"));
+        // The dependency's liveness probe misses and its route is withdrawn:
+        // the child generation is unchanged, so the dependent keeps running.
+        write("child-1", "unavailable");
+        assert!(
+            !dependency_transition(&spec, &expected).expect("no transition"),
+            "a probe miss is not a generation change"
+        );
+        // An unreadable record is never a change either.
+        fs::write(&state_file, b"{not json").expect("corrupt dependency state");
+        assert!(!dependency_transition(&spec, &expected).expect("no transition"));
+        // A replaced child generation is.
+        write("child-2", "ready");
+        assert!(dependency_transition(&spec, &expected).expect("transition"));
     }
 
     /// The reserved listener port reaches the child as `HOST`/`PORT` even when
@@ -4036,18 +3308,12 @@ server.serve_forever()
     #[test]
     fn reserved_listener_host_and_port_outrank_an_ambient_value() {
         let bind = "127.0.0.1:8311";
-        let report = PathBuf::from("/checkout/report.json");
         let ambient = vec![
             (OsString::from("HOST"), OsString::from("0.0.0.0")),
             (OsString::from("PORT"), OsString::from("9999")),
         ];
         let spec = runtime_spec(&[]);
-        let environment = child_environment(
-            ambient.clone().into_iter(),
-            &spec,
-            &[],
-            Some((bind, &report, "generation")),
-        );
+        let environment = child_environment(ambient.clone().into_iter(), &spec, &[], Some(bind));
         assert_eq!(
             plain_env(environment.clone(), "HOST").as_deref(),
             Some("127.0.0.1")
@@ -4064,12 +3330,7 @@ server.serve_forever()
 
         // A declared value is the process's own decision and wins.
         let declared = runtime_spec(&[("HOST", "0.0.0.0"), ("PORT", "3000")]);
-        let environment = child_environment(
-            ambient.into_iter(),
-            &declared,
-            &[],
-            Some((bind, &report, "generation")),
-        );
+        let environment = child_environment(ambient.into_iter(), &declared, &[], Some(bind));
         assert_eq!(
             plain_env(environment.clone(), "HOST").as_deref(),
             Some("0.0.0.0")

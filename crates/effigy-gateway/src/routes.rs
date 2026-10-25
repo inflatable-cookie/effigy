@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::fs::OpenOptions;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -77,42 +77,38 @@ pub struct Route {
     pub registered: DateTime<Utc>,
 }
 
-/// Kernel identity for a managed host listener route. Publication proves the
-/// owner, and the proxy prepares verified connections in the background for
-/// this exact route revision. Revocation guards also apply to reused sockets.
+/// The recorded owner of a managed host listener route: the checkout path,
+/// environment and process name in `owner`, the supervisor and child
+/// generations that published it, and the reserved loopback address.
+///
+/// A listener is live while its address answers, so this record is a route
+/// claim and nothing more. Unknown fields stay readable so a record written by
+/// an earlier build is read once and rewritten without its retired identity
+/// proofs.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub struct ManagedListenerRouteOwner {
     /// Stable owner identity for one checkout/container/profile/process.
     pub owner: String,
-    /// Ignored legacy field: pre-0.15 owners recorded the publishing run. The
-    /// owner is its checkout path, environment and process name, so this is
-    /// dropped on the next write and always `None`.
-    #[serde(default, skip_serializing)]
-    pub run: Option<String>,
     /// Container lifecycle generation that launched this supervisor.
     pub runtime_generation: String,
     /// Child restart generation.
     pub generation: String,
-    /// Detached Effigy supervisor PID and exact generation identity.
-    pub supervisor_pid: u32,
-    pub supervisor_boot_identity: String,
-    pub supervisor_start_identity: crate::identity::GatewayStartIdentity,
-    /// Recorded managed shell leader PID and exact generation identity.
-    pub root_pid: u32,
-    pub root_boot_identity: String,
-    pub root_start_identity: crate::identity::GatewayStartIdentity,
-    /// Process that owns the listening socket and exact generation identity.
-    pub listener_pid: u32,
-    pub listener_boot_identity: String,
-    pub listener_start_identity: crate::identity::GatewayStartIdentity,
     /// Exact loopback address checked against the route target.
     pub address: String,
     /// Whether the public route terminates TLS at the gateway.
     pub route_tls: bool,
-    /// Generation state file that makes a cached route unavailable before
-    /// its child group is stopped or replaced.
-    pub availability_file: String,
+}
+
+impl ManagedListenerRouteOwner {
+    /// Whether the listener this route names is live. A managed listener is
+    /// ready while its reserved port accepts a connection; nothing else is
+    /// proved about the process behind it.
+    pub fn answers(&self) -> bool {
+        let Ok(address) = self.address.parse::<SocketAddr>() else {
+            return false;
+        };
+        std::net::TcpStream::connect_timeout(&address, Duration::from_millis(300)).is_ok()
+    }
 }
 
 /// Process-wide and cross-process lock for route-table read/check/write.

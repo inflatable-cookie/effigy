@@ -1093,7 +1093,6 @@ fn foreign_teardown_preserves_tls_material_and_tcp_alias() {
 #[test]
 fn container_down_removes_the_checkouts_listener_route_and_the_next_up_takes_the_domain() {
     with_test_home("container-down-after-handover", || {
-        use effigy_gateway::identity::GatewayStartIdentity;
         use effigy_gateway::routes::ManagedListenerRouteOwner;
 
         let root = tempfile::tempdir().unwrap();
@@ -1116,27 +1115,14 @@ fn container_down_removes_the_checkouts_listener_route_and_the_next_up_takes_the
         // The container publishes `clientname.test`, then hybrid mode hands the
         // route to a managed listener while the container keeps running.
         reconcile_gateway_routes(&table_path, &checkout, &[route("clientname.test")]).unwrap();
-        let start = GatewayStartIdentity::Linux { start_ticks: 1 };
         let owner = ManagedListenerRouteOwner {
-            run: None,
             owner: "main|web|test|app".to_owned(),
             runtime_generation: "runtime-1".to_owned(),
             generation: "child-1".to_owned(),
-            supervisor_pid: 10,
-            supervisor_boot_identity: "boot".to_owned(),
-            supervisor_start_identity: start.clone(),
-            root_pid: 11,
-            root_boot_identity: "boot".to_owned(),
-            root_start_identity: start.clone(),
-            listener_pid: 11,
-            listener_boot_identity: "boot".to_owned(),
-            listener_start_identity: start,
             address: "127.0.0.1:43123".to_owned(),
             route_tls: false,
-            availability_file: root.path().join("app.listener.json").display().to_string(),
         };
-        // Seed a previously committed generation; this test exercises teardown,
-        // not the public writer's live-listener publication proof.
+        // Seed a previously committed generation; this test exercises teardown.
         effigy_gateway::endpoint_store::EndpointStore::for_routes(&table_path)
             .routes::<_, effigy_gateway::GatewayError>(|table| {
                 let mut route = table.lookup("clientname.test").unwrap().clone();

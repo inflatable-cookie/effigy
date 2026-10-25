@@ -16,27 +16,15 @@ fn container_registration(project: &str, target: &str) -> RouteRegistration {
     }
 }
 
-/// A managed listener route owner that is structurally valid but not backed by
-/// a live process, so publication's process proof refuses it.
+/// A managed listener route owner: the checkout, environment and process that
+/// published the route, its generations and the reserved address.
 fn synthetic_owner(generation: &str, address: &str) -> ManagedListenerRouteOwner {
-    let start = crate::identity::GatewayStartIdentity::Linux { start_ticks: 1 };
     ManagedListenerRouteOwner {
-        run: None,
         owner: "main|web|app".to_owned(),
         runtime_generation: "runtime-1".to_owned(),
         generation: generation.to_owned(),
-        supervisor_pid: 10,
-        supervisor_boot_identity: "boot".to_owned(),
-        supervisor_start_identity: start.clone(),
-        root_pid: 11,
-        root_boot_identity: "boot".to_owned(),
-        root_start_identity: start.clone(),
-        listener_pid: 11,
-        listener_boot_identity: "boot".to_owned(),
-        listener_start_identity: start,
         address: address.to_owned(),
         route_tls: false,
-        availability_file: "/fixture/state.json".to_owned(),
     }
 }
 
@@ -55,22 +43,25 @@ fn linked_checkout(root: &Path, name: &str) -> (std::path::PathBuf, std::path::P
 }
 
 #[test]
-fn publication_refuses_an_unverified_listener_and_keeps_the_route_absent() {
+fn publication_records_the_owner_generation_and_reserved_address() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("routes.json");
-    assert!(register_managed_listener_route(
+    register_managed_listener_route(
         &path,
         "/fixture",
-        "refused.test",
+        "published.test",
         "127.0.0.1:43123",
         false,
         synthetic_owner("child", "127.0.0.1:43123"),
     )
-    .is_err());
-    assert!(RouteTable::load(&path)
-        .unwrap()
-        .lookup("refused.test")
-        .is_none());
+    .expect("a listener route publishes without a process proof");
+    let table = RouteTable::load(&path).unwrap();
+    let route = table.lookup("published.test").expect("published route");
+    assert_eq!(route.target.as_deref(), Some("127.0.0.1:43123"));
+    assert_eq!(
+        route.managed_listener,
+        Some(synthetic_owner("child", "127.0.0.1:43123"))
+    );
 }
 
 #[test]

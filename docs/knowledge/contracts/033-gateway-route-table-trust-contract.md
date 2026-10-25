@@ -97,16 +97,13 @@ Consequences:
   upstream `target`, `tcp_target`, `dns_ip`, `tcp_port`, `tls`, `source`, and
   `project`. It is never trusted to expand the daemon's privilege, change its
   bind addresses, or name a privileged action beyond proxy/DNS/alias routing.
-- Managed host-listener routes also carry the exact recorded process and
-  listener generation needed for read-time ownership verification. The proxy
-  checks that identity and the bound loopback socket after connecting and
-  before forwarding request bytes, including WebSocket upgrades. This data
-  does not authorize the daemon to launch or signal a process.
-- A managed route is unavailable when its matching state record is not
-  `ready`, its process identity changes, its ancestry is lost, its socket no
-  longer belongs to the recorded process, or another same-user process shares
-  the endpoint. Static `target_host` routes remain external route intent and
-  are not certified as managed child listeners.
+- A managed host-listener route carries its owner token, its supervisor and
+  child generations and its reserved address, and nothing about the process
+  behind it. The proxy forwards it to its published target like any other
+  route, including WebSocket upgrades: a listener is live while its reserved
+  port answers, and the supervisor withdraws the route when it stops
+  answering. This data does not authorize the daemon to launch or signal a
+  process. Static `target_host` routes remain external route intent.
 - Trust verification is a read-path gate, not a one-time setup check; it runs on
   initial load and on every watcher-triggered reload.
 - The verification must not add friction to the normal single-user flow: a
