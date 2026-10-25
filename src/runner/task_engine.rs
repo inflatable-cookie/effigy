@@ -22,10 +22,9 @@ mod status;
 
 pub(in crate::runner) use admission::AdmissionInheritance;
 pub(in crate::runner) use control::{
-    effects as run_effects, list as list_runs, lookup as lookup_run, lookup_checkout,
-    lookup_within as lookup_run_within, read_log as read_run_log, request_stop,
-    resolve as resolve_run, signal_owner, workload_process, Lookup, RunRecord, StopStarted,
-    POLL as RUN_POLL,
+    effects_in as run_effects, list as list_runs, lookup_checkout,
+    lookup_within as lookup_run_within, read_log as read_run_log, request_stop, resolve_in,
+    signal_owner, Lookup, RunRecord, StopStarted, POLL as RUN_POLL,
 };
 pub(in crate::runner) use holders::{live_holders, HolderKind};
 pub(in crate::runner) use identity::TaskTarget;

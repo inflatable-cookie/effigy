@@ -320,6 +320,10 @@ impl ForegroundRun {
     }
 }
 
+/// Foreground admission warns about a journal it cannot read and proceeds: the
+/// owner flock is the only exclusion that matters, and an unreadable journal is
+/// not evidence of a live predecessor (K1, Q-011). A predecessor that is proved
+/// and unsettled still refuses.
 fn check_predecessors(
     cx: &EffectContext,
     root: &StateRoot,
@@ -330,24 +334,25 @@ fn check_predecessors(
         .operation()
         .observe()
         .map_err(|_| RunError::Invalid("foreground predecessor read context".into()))?;
-    match Store::read(&observe, root) {
-        Observed::Verified(reader, _) => {
-            for owner in owners {
-                for previous in journal::predecessors(reader.conn(), owner)? {
-                    if !previous.acknowledged {
-                        return Err(RunError::PredecessorUnsettled {
-                            run: previous.id,
-                            effects: journal::effects(reader.conn(), previous.id)?,
-                        });
-                    }
-                }
-            }
-        }
-        Observed::Absent(_) => {}
+    let reader = match Store::read(&observe, root) {
+        Observed::Verified(reader, _) => reader,
+        Observed::Absent(_) => return Ok(()),
         Observed::Unknown(reason) => {
-            return Err(RunError::Invalid(format!(
-                "foreground predecessor evidence unavailable: {reason}"
-            )))
+            eprintln!(
+                "[warn] {}: the checkout journal is unreadable ({reason}); continuing without its recorded state",
+                root.path().join(root.database_name()).display()
+            );
+            return Ok(());
+        }
+    };
+    for owner in owners {
+        for previous in journal::predecessors(reader.conn(), owner)? {
+            if !previous.acknowledged {
+                return Err(RunError::PredecessorUnsettled {
+                    run: previous.id,
+                    effects: journal::effects(reader.conn(), previous.id)?,
+                });
+            }
         }
     }
     Ok(())

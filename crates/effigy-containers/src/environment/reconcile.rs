@@ -390,7 +390,6 @@ fn unknown_label(reason: &UnknownReason) -> &'static str {
         UnknownReason::Injected => "injected",
         UnknownReason::Untrusted(_) => "untrusted",
         UnknownReason::HostAuthorityRequired => "host-authority-required",
-        UnknownReason::StoreNeedsRecovery => "store-needs-recovery",
         UnknownReason::StoreUnreadable(_) => "store-unreadable",
     }
 }
