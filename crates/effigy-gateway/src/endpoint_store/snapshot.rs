@@ -2,41 +2,16 @@ use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
 
 use effigy_kernel::id::{EndpointKind, ResourceId};
-use effigy_kernel::observe::Observed;
-use effigy_kernel::store::BootDeadline;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::{error, OPERATION_BUDGET, REUSE_QUARANTINE};
+use super::error;
 use crate::loopback::LoopbackRegistry;
 use crate::ports::PortRegistry;
-use crate::routes::{Route, RouteTable};
+use crate::routes::RouteTable;
 use crate::GatewayError;
 
 pub(super) type ClaimSet = BTreeMap<String, (ResourceId, Value)>;
-
-/// A released resource remains unavailable even after its engine entry is
-/// removed. Unknown clock observations preserve this protection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Quarantine {
-    pub resource: ResourceId,
-    pub kind: String,
-    pub key: String,
-    pub boot: String,
-    pub nanos: u64,
-}
-impl Quarantine {
-    pub fn reusable(&self) -> bool {
-        matches!(
-            (BootDeadline {
-                boot: self.boot.clone(),
-                nanos: self.nanos
-            })
-            .passed(&effigy_kernel::ident::boot_clock()),
-            Observed::Verified(true, _)
-        )
-    }
-}
 
 /// Explicit cutover; ordinary edits never write the legacy registries.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,54 +33,14 @@ pub struct EndpointSnapshot {
     pub(super) authority: Authority,
     pub revision: u64,
     documents: BTreeMap<String, Value>,
-    #[serde(default)]
-    domains: BTreeMap<String, DomainOwner>,
     pub imported_sha256: BTreeMap<String, String>,
-    pub quarantined: BTreeMap<String, Quarantine>,
-}
-/// Persistent domain ownership survives withdrawal of its active listener.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-struct DomainOwner {
-    project: String,
-    scope: Option<String>,
-    listener: Option<String>,
-    #[serde(default)]
-    route: Option<Route>,
-}
-impl DomainOwner {
-    fn from_route(route: &Route) -> Self {
-        Self {
-            project: route.project.clone(),
-            scope: route.scope.clone(),
-            route: Some(route.clone()),
-            listener: route
-                .managed_listener
-                .as_ref()
-                .map(|owner| owner.owner.clone()),
-        }
-    }
-}
-
-/// An owner a person can find again: the checkout path, and its scope when one
-/// was recorded, never a bare token.
-fn owner_label(project: &str, scope: Option<&str>) -> String {
-    match scope {
-        Some(scope) => format!("checkout {project} (scope {scope})"),
-        None => format!("checkout {project}"),
-    }
-}
-/// One persistent domain claim and the exact owner that reserved it. Withdrawn
-/// claims have no active route and are only visible through this record.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct DomainClaim {
-    /// Claimed domain, lowercased by the store.
-    pub domain: String,
-    /// Exact checkout path that owns the claim.
-    pub project: String,
-    /// Recorded checkout generation token, when the claim carries one.
-    pub scope: Option<String>,
-    /// Stable managed-listener owner token, when a listener reserved it.
-    pub listener: Option<String>,
+    /// Pre-0.15 store records kept withdrawn domain owners and released
+    /// endpoints. Both are read and dropped; the route table is the whole
+    /// claim on a domain.
+    #[serde(rename = "domains", default, skip_serializing)]
+    legacy_domains: Value,
+    #[serde(rename = "quarantined", default, skip_serializing)]
+    legacy_quarantined: Value,
 }
 impl EndpointSnapshot {
     pub(super) fn imported(
@@ -126,9 +61,9 @@ impl EndpointSnapshot {
             authority: Authority::Store,
             revision: 0,
             documents,
-            domains: BTreeMap::new(),
             imported_sha256: hashes,
-            quarantined: BTreeMap::new(),
+            legacy_domains: Value::Null,
+            legacy_quarantined: Value::Null,
         };
         snapshot.claims()?;
         Ok(snapshot)
@@ -171,97 +106,31 @@ impl EndpointSnapshot {
     pub fn ports(&self) -> Result<PortRegistry, GatewayError> {
         serde_json::from_value(self.document("ports")?.clone()).map_err(error)
     }
-    pub fn reserve_domain(
-        &mut self,
-        domain: &str,
-        project: &str,
-        scope: Option<&str>,
-        listener: Option<&str>,
-    ) -> Result<(), GatewayError> {
-        let domain = domain.to_ascii_lowercase();
-        if let Some(current) = self.domains.get(&domain) {
-            if current.project != project || current.scope.as_deref() != scope {
-                let routes = self.routes()?;
-                match routes.lookup(&domain) {
-                    Some(route) if current.project == route.project && current.scope == route.scope => crate::registration::check_claim(route, project, scope)?,
-                    Some(route) => {
-                        return Err(error(format!(
-                            "domain {domain} is still reserved for {} while {} is listed as its successor in the route table. Release the stale reservation with `effigy gateway repair --owner-checkout {}`",
-                            owner_label(&current.project, current.scope.as_deref()),
-                            owner_label(&route.project, route.scope.as_deref()),
-                            current.project
-                        )))
-                    }
-                    None => {
-                        return Err(error(format!(
-                            "domain {domain} belongs to {}; retire that owner explicitly, or release it with `effigy gateway repair --owner-checkout {}` once the checkout is gone",
-                            owner_label(&current.project, current.scope.as_deref()),
-                            current.project
-                        )))
-                    }
-                }
-            } else if listener.is_some()
-                && current.listener.is_some()
-                && current.listener.as_deref() != listener
-                && !self.routes()?.lookup(&domain).is_some_and(|route| {
-                    route.project == project && route.scope.as_deref() == scope
-                })
-            {
-                // A withdrawn claim with no route keeps its listener owner: only
-                // explicit retirement releases it. A route this checkout
-                // generation already owns proves the route-table transaction
-                // authorized the replacement (a settled predecessor or a
-                // container handover), so the claim follows the route.
-                return Err(error(format!(
-                    "domain {domain} belongs to another stable listener owner ({}); stop that listener, then retry",
-                    current.listener.as_deref().unwrap_or("unnamed")
-                )));
-            }
-        }
-        let reserved_route = self
-            .domains
-            .get(&domain)
-            .filter(|owner| owner.project == project && owner.scope.as_deref() == scope)
-            .and_then(|owner| owner.route.clone());
-        self.domains.insert(
-            domain,
-            DomainOwner {
-                project: project.into(),
-                scope: scope.map(str::to_owned),
-                listener: listener.map(str::to_owned),
-                route: reserved_route,
-            },
-        );
-        Ok(())
-    }
-    /// Withdrawn routes retain their domain. Explicit retirement releases it.
+    /// Last writer wins for the same checkout path. A different checkout path
+    /// takes the domain over only when the recorded owner is dead: its checkout
+    /// path is gone, or its target is not listening.
     pub fn set_routes(&mut self, table: &RouteTable) -> Result<(), GatewayError> {
         let current = self.routes()?;
-        for route in current.all_routes() {
-            self.domains
-                .entry(route.domain.to_ascii_lowercase())
-                .or_insert_with(|| DomainOwner::from_route(route));
-        }
         for route in table.all_routes() {
-            // An existing route carried over unchanged is not a new claim. Only
-            // added or changed routes are checked against domain owners, so
-            // one stale route can't refuse every other project's write.
             if current.lookup(&route.domain) == Some(route) {
                 continue;
             }
-            self.reserve_domain(
-                &route.domain,
-                &route.project,
-                route.scope.as_deref(),
-                route
-                    .managed_listener
-                    .as_ref()
-                    .map(|owner| owner.owner.as_str()),
-            )?;
-            self.domains
-                .get_mut(&route.domain.to_ascii_lowercase())
-                .expect("reserved domain")
-                .route = Some(route.clone());
+            let Some(existing) = current.lookup(&route.domain) else {
+                continue;
+            };
+            if existing.project == route.project {
+                continue;
+            }
+            let Some(reason) = crate::registration::dead_claim_reason(existing) else {
+                return Err(GatewayError::ForeignRoute {
+                    domain: route.domain.clone(),
+                    project: existing.project.clone(),
+                });
+            };
+            eprintln!(
+                "[info] gateway domain `{}` taken over from checkout `{}`: {}",
+                route.domain, existing.project, reason
+            );
         }
         self.replace(
             "routes",
@@ -281,98 +150,6 @@ impl EndpointSnapshot {
                 "registered",
             ],
         )
-    }
-    /// Include withdrawn claims in retirement inventory. Absence from active
-    /// routing never means that its persistent owner has released the domain.
-    pub fn owned_domains(
-        &self,
-        project: &str,
-        scope: Option<&str>,
-    ) -> Result<Vec<String>, GatewayError> {
-        let mut domains = self
-            .domains
-            .iter()
-            .filter(|(_, owner)| owner.project == project && owner.scope.as_deref() == scope)
-            .map(|(domain, _)| domain.clone())
-            .collect::<std::collections::BTreeSet<_>>();
-        domains.extend(
-            self.routes()?
-                .all_routes()
-                .into_iter()
-                .filter(|route| crate::registration::owned_by(route, project, scope))
-                .map(|route| route.domain.clone()),
-        );
-        Ok(domains.into_iter().collect())
-    }
-    /// Every persistent domain claim, ordered by domain, with the exact owner
-    /// that reserved it. A claim survives withdrawal of its route, so it stays
-    /// in ownership inventory when nothing is routed to it.
-    pub fn domain_claims(&self) -> Vec<DomainClaim> {
-        self.domains
-            .iter()
-            .map(|(domain, owner)| DomainClaim {
-                domain: domain.clone(),
-                project: owner.project.clone(),
-                scope: owner.scope.clone(),
-                listener: owner.listener.clone(),
-            })
-            .collect()
-    }
-    /// Explicit repair ends one exact withdrawn claim's persistent ownership.
-    /// The reviewed owner must still hold it and its domain must still be
-    /// unrouted, so a successor claim published between review and apply is
-    /// never released.
-    pub fn release_domain_claim(&mut self, claim: &DomainClaim) -> Result<(), GatewayError> {
-        let key = claim.domain.to_ascii_lowercase();
-        match self.domains.get(&key) {
-            Some(current) if current.project == claim.project && current.scope == claim.scope => {}
-            _ => {
-                return Err(GatewayError::DeadClaimChanged {
-                    entry: claim.domain.clone(),
-                })
-            }
-        }
-        if self.routes()?.lookup(&claim.domain).is_some() {
-            return Err(GatewayError::DeadClaimChanged {
-                entry: claim.domain.clone(),
-            });
-        }
-        self.domains.remove(&key);
-        Ok(())
-    }
-    /// Explicit repair ends one exact route's persistent ownership. Routine
-    /// down/up uses set_routes and retains the conflict set instead.
-    pub fn release_route(&mut self, route: &Route) -> Result<(), GatewayError> {
-        let mut table = self.routes()?;
-        if table.lookup(&route.domain) != Some(route) {
-            return Err(error(
-                "route changed before explicit release; read and retry",
-            ));
-        }
-        table.deregister(&route.domain)?;
-        self.set_routes(&table)?;
-        self.domains.remove(&route.domain.to_ascii_lowercase());
-        Ok(())
-    }
-    pub fn release_domains(
-        &mut self,
-        project: &str,
-        scope: Option<&str>,
-    ) -> Result<(), GatewayError> {
-        let mut table = self.routes()?;
-        self.set_routes(&table)?;
-        table
-            .routes
-            .retain(|_, route| !crate::registration::owned_by(route, project, scope));
-        self.replace(
-            "routes",
-            "routes",
-            serde_json::to_value(table).map_err(error)?,
-            &[],
-        )?;
-        self.domains
-            .retain(|_, owner| owner.project != project || owner.scope.as_deref() != scope);
-        Ok(())
     }
     pub fn set_loopback(&mut self, registry: &LoopbackRegistry) -> Result<(), GatewayError> {
         self.replace(
@@ -439,83 +216,6 @@ impl EndpointSnapshot {
         root.insert(key.into(), Value::Object(entries));
         Ok(())
     }
-    pub fn unavailable_addresses(&self) -> Vec<Ipv4Addr> {
-        self.quarantined
-            .values()
-            .filter(|q| q.kind == "address" && !q.reusable())
-            .filter_map(|q| q.key.parse().ok())
-            .collect()
-    }
-    pub fn unavailable_ports(&self) -> std::collections::HashSet<u16> {
-        self.quarantined
-            .values()
-            .filter(|q| q.kind == "port" && !q.reusable())
-            .filter_map(|q| q.key.parse().ok())
-            .collect()
-    }
-    pub fn port_unavailable(&self, port: u16) -> bool {
-        ResourceId::endpoint(EndpointKind::Port, &port.to_string())
-            .ok()
-            .is_some_and(|id| {
-                self.quarantined
-                    .get(&id.name().to_string())
-                    .is_some_and(|q| !q.reusable())
-            })
-    }
-    pub(super) fn update_quarantine(
-        &mut self,
-        before: &ClaimSet,
-        desired: &ClaimSet,
-    ) -> Result<(), GatewayError> {
-        self.quarantined.retain(|_, q| !q.reusable());
-        for name in desired.keys().filter(|name| !before.contains_key(*name)) {
-            if self.quarantined.contains_key(name) {
-                return Err(error("endpoint is quarantined; choose another address or port, or retry after its reuse budget"));
-            }
-        }
-        for (name, (_, details)) in desired {
-            if details["kind"] != "domain"
-                && before
-                    .get(name)
-                    .is_some_and(|(_, previous)| previous["owner"] != details["owner"])
-            {
-                return Err(error(
-                    "address or port owner changed without release and quarantine",
-                ));
-            }
-        }
-        let removed = before
-            .iter()
-            .filter(|(name, _)| !desired.contains_key(*name))
-            .collect::<Vec<_>>();
-        if !removed.is_empty() {
-            let Observed::Verified(now, _) = effigy_kernel::ident::boot_clock() else {
-                return Err(error("quarantine clock is unknown"));
-            };
-            // The engine's conservative allocation hint expires after even the
-            // latest possible kernel commit in this operation, never before it.
-            let deadline = BootDeadline::after(&now, REUSE_QUARANTINE + OPERATION_BUDGET);
-            for (name, (resource, details)) in removed {
-                self.quarantined.insert(
-                    name.clone(),
-                    Quarantine {
-                        resource: resource.clone(),
-                        kind: details["kind"]
-                            .as_str()
-                            .ok_or_else(|| error("missing claim kind"))?
-                            .into(),
-                        key: details["key"]
-                            .as_str()
-                            .ok_or_else(|| error("missing claim key"))?
-                            .into(),
-                        boot: deadline.boot.clone(),
-                        nanos: deadline.nanos,
-                    },
-                );
-            }
-        }
-        Ok(())
-    }
     pub(super) fn claims(&self) -> Result<ClaimSet, GatewayError> {
         let mut claims = ClaimSet::new();
         let mut assigned = BTreeMap::new();
@@ -554,27 +254,8 @@ impl EndpointSnapshot {
                 )?;
             }
         }
-        let active = self.routes()?;
-        let mut routes = active.clone();
-        for (domain, holder) in &self.domains {
-            if active.lookup(domain).is_none() {
-                if let Some(route) = &holder.route {
-                    routes.upsert(route.clone());
-                    continue;
-                }
-                let name = add(
-                    &mut claims,
-                    EndpointKind::Domain,
-                    domain,
-                    &holder.project,
-                    domain,
-                )?;
-                claims.get_mut(&name).expect("inserted domain").1["lifetime"] =
-                    serde_json::to_value(holder).map_err(error)?;
-            }
-        }
         let mut listeners = BTreeMap::new();
-        for (key, route) in routes.routes {
+        for (key, route) in self.routes()?.routes {
             if !key.eq_ignore_ascii_case(&route.domain) {
                 return Err(error("route key does not match its domain"));
             }
@@ -587,7 +268,6 @@ impl EndpointSnapshot {
             )?;
             let details = &mut claims.get_mut(&name).expect("domain was inserted").1;
             details["route"] = serde_json::to_value(&route).map_err(error)?;
-            details["active"] = json!(active.lookup(&route.domain).is_some());
             if let Some(port) = route.tcp_port {
                 let target = route
                     .tcp_target
@@ -663,84 +343,4 @@ fn add(
         );
     }
     Ok(name)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::routes::RouteSource;
-
-    fn route(domain: &str, project: &str, scope: Option<&str>) -> Route {
-        Route {
-            domain: domain.to_owned(),
-            target: Some("127.0.0.1:8105".to_owned()),
-            dns_ip: None,
-            tcp_port: None,
-            tcp_target: None,
-            source: RouteSource::Container,
-            project: project.to_owned(),
-            scope: scope.map(str::to_owned),
-            managed_listener: None,
-            tls: false,
-            registered: chrono::Utc::now(),
-        }
-    }
-
-    fn snapshot_with(claim: DomainOwner, route: Route) -> EndpointSnapshot {
-        let mut snapshot =
-            EndpointSnapshot::imported(BTreeMap::new(), BTreeMap::new()).expect("empty snapshot");
-        snapshot.domains.insert("acme.test".to_owned(), claim);
-        let mut table = snapshot.routes().expect("empty route table");
-        table.upsert(route);
-        snapshot
-            .documents
-            .insert("routes".to_owned(), serde_json::to_value(&table).unwrap());
-        snapshot
-    }
-
-    #[test]
-    fn a_stale_reservation_names_the_owner_the_successor_and_the_repair() {
-        // Before: `gateway endpoint store: domain acme.test has a reserved
-        // successor owner` — no owner, no successor, no next command.
-        let mut snapshot = snapshot_with(
-            DomainOwner {
-                project: "/stale/checkout".to_owned(),
-                scope: Some("abc".to_owned()),
-                listener: None,
-                route: None,
-            },
-            route("acme.test", "/new/checkout", None),
-        );
-        let refused = snapshot
-            .reserve_domain("acme.test", "/new/checkout", None, None)
-            .expect_err("a stale reservation refuses its successor");
-        assert_eq!(
-            refused.to_string(),
-            "gateway endpoint store: domain acme.test is still reserved for checkout /stale/checkout \
-             (scope abc) while checkout /new/checkout is listed as its successor in the route table. \
-             Release the stale reservation with `effigy gateway repair --owner-checkout /stale/checkout`"
-        );
-    }
-
-    #[test]
-    fn a_withdrawn_reservation_names_its_owner_and_the_release_command() {
-        let mut snapshot = snapshot_with(
-            DomainOwner {
-                project: "/gone/checkout".to_owned(),
-                scope: None,
-                listener: None,
-                route: None,
-            },
-            route("other.test", "/gone/checkout", None),
-        );
-        let refused = snapshot
-            .reserve_domain("acme.test", "/new/checkout", None, None)
-            .expect_err("a stale reservation refuses its successor");
-        assert_eq!(
-            refused.to_string(),
-            "gateway endpoint store: domain acme.test belongs to checkout /gone/checkout; retire that \
-             owner explicitly, or release it with `effigy gateway repair --owner-checkout /gone/checkout` \
-             once the checkout is gone"
-        );
-    }
 }

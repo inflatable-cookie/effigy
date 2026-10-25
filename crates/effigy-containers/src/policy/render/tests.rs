@@ -1,5 +1,4 @@
 use super::*;
-use crate::policy::admission::PolicyAdmission;
 use crate::policy::load::{load_container_policy, prepare_container_policy};
 use std::os::unix::fs::PermissionsExt;
 
@@ -74,30 +73,7 @@ fn resolution_is_a_pure_complete_closure_and_prepare_seals_it() {
     });
 }
 #[test]
-fn admission_pins_immutable_inputs_and_refuses_a_new_desired_generation() {
-    let (_fixture, checkout, home) = fixture();
-    crate::with_test_effigy_home(&home, || {
-        let policy = prepare_container_policy(&checkout, Some("one")).unwrap();
-        let admission = PolicyAdmission::capture(&policy).unwrap();
-        let frozen = std::fs::read(&policy.compose_files[0]).unwrap();
-        std::fs::write(
-            checkout.join("compose.yml"),
-            "services:\n  app:\n    image: example:two\n",
-        )
-        .unwrap();
-        admission.verify().unwrap();
-        assert_eq!(std::fs::read(&policy.compose_files[0]).unwrap(), frozen);
-        let next = prepare_container_policy(&checkout, Some("one")).unwrap();
-        assert_ne!(
-            next.render.as_ref().unwrap().closure.digest(),
-            policy.render.as_ref().unwrap().closure.digest()
-        );
-        assert!(admission.verify().is_err());
-        assert_eq!(std::fs::read(&policy.compose_files[0]).unwrap(), frozen);
-    });
-}
-#[test]
-fn a_partial_generation_matches_across_state_home_paths() {
+fn a_render_generation_matches_across_state_home_paths() {
     let (fixture, checkout, home) = fixture();
     let other_home = fixture.path().join("other-home/.effigy");
     std::fs::create_dir_all(&other_home).unwrap();
@@ -109,11 +85,9 @@ fn a_partial_generation_matches_across_state_home_paths() {
     });
     let first_render = first.render.as_ref().unwrap();
     let second_render = second.render.as_ref().unwrap();
-    // A detached activation recorded as partial under one state home is
-    // reconciled by a plain `container up` from another: the generation
-    // digest never depends on where the state home lives. Q-010 moved the
-    // published generation into the checkout's own journal, so both renders
-    // name the same immutable path instead of one per state home.
+    // The render digest never depends on where the state home lives. Q-010
+    // moved the published generation into the checkout's own journal, so both
+    // renders name the same immutable path instead of one per state home.
     assert_eq!(
         first_render.closure.digest(),
         second_render.closure.digest()
@@ -194,43 +168,6 @@ fn concurrent_engine_publication_preserves_admitted_readers() {
 }
 
 #[test]
-fn legacy_admission_import_verifies_inputs_and_rewrites_only_in_prepare() {
-    let (fixture, checkout, home) = fixture();
-    crate::with_test_effigy_home(&home, || {
-        let policy = prepare_container_policy(&checkout, Some("one")).unwrap();
-        let current = crate::policy::admission::generation_context(&policy).unwrap();
-        let mut legacy = current.clone();
-        let map = legacy.as_object_mut().unwrap();
-        map.remove("generation");
-        map.remove("path");
-        map.insert(
-            "schema".into(),
-            "effigy.container-partial-activation.v2".into(),
-        );
-        let source = checkout.join("compose.yml");
-        map.insert("inputs".into(), serde_json::json!([{"path":source,"sha256":effigy_gateway::ports::sha256_hex(&std::fs::read(&source).unwrap())}]));
-        let markers = fixture.path().join("markers");
-        let marker = markers
-            .join(&policy.profile)
-            .join(&policy.project_name)
-            .join("one.partial.json");
-        std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
-        let original = serde_json::to_vec(&legacy).unwrap();
-        std::fs::write(&marker, &original).unwrap();
-        assert_eq!(
-            crate::policy::admission::normalize_context(legacy.clone(), &policy).unwrap(),
-            current
-        );
-        assert_eq!(std::fs::read(&marker).unwrap(), original);
-        PolicyAdmission::capture(&policy).unwrap();
-        // Admission never rewrites a legacy receipt (contract 052 M3).
-        assert_eq!(std::fs::read(&marker).unwrap(), original);
-        std::fs::write(source, "services: {}\n").unwrap();
-        assert!(crate::policy::admission::normalize_context(legacy, &policy).is_err());
-    });
-}
-
-#[test]
 fn declaration_bytes_are_part_of_the_generation() {
     let (_fixture, checkout, home) = fixture();
     crate::with_test_effigy_home(&home, || {
@@ -243,41 +180,6 @@ fn declaration_bytes_are_part_of_the_generation() {
         assert_ne!(
             policy.render.unwrap().closure.digest(),
             next.render.unwrap().closure.digest()
-        );
-    });
-}
-
-#[test]
-fn retained_admission_refuses_once_a_changed_declaration_is_admitted() {
-    let (fixture, checkout, home) = fixture();
-    crate::with_test_effigy_home(&home, || {
-        let policy = prepare_container_policy(&checkout, Some("one")).unwrap();
-        let markers = fixture.path().join("markers");
-        let marker = markers
-            .join(&policy.profile)
-            .join(&policy.project_name)
-            .join("one.partial.json");
-        std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
-        let context = crate::policy::admission::generation_context(&policy).unwrap();
-        std::fs::write(&marker, serde_json::to_vec(&context).unwrap()).unwrap();
-        let mut admission = PolicyAdmission::capture(&policy).unwrap();
-        std::fs::write(
-            checkout.join("compose.yml"),
-            "services:\n  app:\n    image: changed\n",
-        )
-        .unwrap();
-        // A changed declaration admits a new generation; the earlier
-        // admission refuses to adopt it.
-        crate::policy::load::load_admitted_container_policy(&checkout, Some("one")).unwrap();
-        assert!(crate::policy::load::refresh_admitted_container_policy(
-            &checkout,
-            "one",
-            &mut admission
-        )
-        .is_err());
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&std::fs::read(marker).unwrap()).unwrap(),
-            context
         );
     });
 }
@@ -322,7 +224,7 @@ fn internal_path_consumers_resolve_generated_asset_mounts() {
 }
 
 #[test]
-fn prepare_establishes_owned_cache_paths_before_admission() {
+fn prepare_establishes_owned_cache_paths_before_publication() {
     let (fixture, checkout, _) = fixture();
     let real = fixture.path().join("real/home");
     std::fs::create_dir_all(&real).unwrap();
@@ -335,10 +237,13 @@ fn prepare_establishes_owned_cache_paths_before_admission() {
         assert!(!home.join("shared/composer-cache").exists());
         let prepared = prepare_container_policy(&checkout, None).unwrap();
         assert!(home.join("shared/composer-cache").exists());
-        let admission = PolicyAdmission::capture(&prepared).unwrap();
         crate::policy::mounts::prepare_container_mount_sources(&prepared).unwrap();
+        crate::policy::render::verify(&prepared).unwrap();
         let fresh = load_container_policy(&checkout, None).unwrap();
-        admission.context_for_policy(&fresh).unwrap();
+        assert_eq!(
+            fresh.render.as_ref().unwrap().closure.digest(),
+            prepared.render.as_ref().unwrap().closure.digest()
+        );
     });
 }
 

@@ -257,6 +257,11 @@ impl StateRoot {
 }
 
 impl MachineGates {
+    /// The retained address names this process's machine home directory. Only
+    /// the inode is compared: the mount-time device number changes at a
+    /// renumbering and would otherwise look like a replaced directory. This
+    /// address never crosses a process boundary, so it is an invariant about
+    /// this run, not about a boot (effigy#337).
     fn verify_home(&self) -> Result<(), FsError> {
         if let Some(reason) = &self.address.unavailable {
             return Err(FsError::untrusted(&self.address.home, reason));
@@ -265,7 +270,7 @@ impl MachineGates {
         if self
             .address
             .owner
-            .is_some_and(|expected| expected != current)
+            .is_some_and(|expected| !expected.is_same_directory(&current))
         {
             return Err(FsError::untrusted(
                 &self.address.home,
@@ -287,7 +292,7 @@ impl MachineGates {
                     if self
                         .address
                         .state
-                        .is_none_or(|expected| expected == identity) =>
+                        .is_none_or(|expected| expected.is_same_directory(&identity)) =>
                 {
                     Observed::Verified(root, evidence)
                 }

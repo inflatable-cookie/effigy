@@ -306,25 +306,6 @@ fn collect_runtime_diagnostics(
             .push(format!("docker context probe failed: {error}")),
     }
 
-    for policy in &policies {
-        if !matches!(
-            is_primary_service_running_with_deadline(resolved_root, policy, deadline),
-            Ok(true)
-        ) {
-            continue;
-        }
-        match effigy_containers::exec::probe_mount_drift(
-            resolved_root,
-            policy,
-            deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(15)),
-        ) {
-            Ok(drift) => diagnostics.warnings.extend(drift),
-            Err(error) => diagnostics.warnings.push(format!(
-                "container `{}` mount drift unavailable: {error}",
-                policy.name
-            )),
-        }
-    }
     append_workspace_ownership_diagnostics(resolved_root, &policies, deadline, &mut diagnostics);
 
     Ok(diagnostics)
@@ -530,8 +511,7 @@ fn append_gateway_tcp_alias_diagnostics(diagnostics: &mut DoctorRuntimeDiagnosti
     let Ok(route_table) = RouteTable::load(&route_table_path) else {
         return;
     };
-    let plan = crate::runner::gateway_command::gateway_repair_plan(&route_table, None);
-    for conflict in &plan.conflicts {
+    for conflict in &crate::runner::gateway_command::gateway_tcp_bind_conflicts(&route_table) {
         let routes = conflict
             .routes
             .iter()
@@ -545,7 +525,7 @@ fn append_gateway_tcp_alias_diagnostics(diagnostics: &mut DoctorRuntimeDiagnosti
             .collect::<Vec<_>>()
             .join(", ");
         diagnostics.warnings.push(format!(
-            "gateway TCP bind {}:{} is claimed by aliases with different mapped-port fallbacks ({}); only one listener wins and the other alias hangs while its mapped port stays ready. Run `effigy gateway repair` to inspect.",
+            "gateway TCP bind {}:{} is claimed by aliases with different mapped-port fallbacks ({}); only one listener wins and the other alias hangs while its mapped port stays ready. Retry `effigy container up` for the environment that owns the alias.",
             conflict.bind_ip, conflict.bind_port, routes,
         ));
     }

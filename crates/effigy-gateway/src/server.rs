@@ -41,6 +41,9 @@ use crate::tls::{
 
 const IDLE_SHUTDOWN_DELAY: Duration = Duration::from_secs(5 * 60);
 
+/// How often the daemon drops routes whose recorded owner is gone.
+const DEAD_ROUTE_SWEEP: Duration = Duration::from_secs(30);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IdleShutdownAction {
     None,
@@ -1518,6 +1521,17 @@ async fn run_gateway_with_cancel(
         ("TCP alias manager", result)
     });
 
+    // Drop routes whose checkout path is gone or whose target stopped
+    // listening, so `gateway status` lists domains something still serves.
+    let sweep_path = runtime_config.route_table_path.clone();
+    let sweep_shutdown = shutdown_rx.clone();
+    server_tasks.spawn(async move {
+        (
+            "dead route sweep",
+            run_dead_route_sweep(sweep_path, sweep_shutdown).await,
+        )
+    });
+
     // Optionally start the HTTPS proxy.
     let _tls_watcher = if let (Some(tls_addr), Some(tls_config)) =
         (runtime_config.proxy.tls_bind_addr, &runtime_config.tls)
@@ -1705,6 +1719,35 @@ async fn run_gateway_with_cancel(
 
     info!("gateway stopped");
     Ok(())
+}
+
+/// Remove dead routes on a timer until the daemon stops.
+async fn run_dead_route_sweep(
+    path: PathBuf,
+    mut shutdown: watch::Receiver<bool>,
+) -> Result<(), GatewayError> {
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(DEAD_ROUTE_SWEEP) => {}
+            result = shutdown.changed() => {
+                if result.is_err() || *shutdown.borrow() {
+                    return Ok(());
+                }
+            }
+        }
+        let path = path.clone();
+        let swept =
+            tokio::task::spawn_blocking(move || crate::registration::prune_dead_routes(&path))
+                .await
+                .map_err(|error| GatewayError::WatcherError(error.to_string()))?;
+        match swept {
+            Ok(domains) if !domains.is_empty() => {
+                debug!(domains = ?domains, "released dead gateway routes")
+            }
+            Ok(_) => {}
+            Err(error) => debug!(error = %error, "dead route sweep skipped"),
+        }
+    }
 }
 
 fn joined_server_task_result(

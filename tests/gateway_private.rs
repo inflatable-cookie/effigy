@@ -1621,15 +1621,16 @@ fn managed_host_dependent_replacement_route_edits_exclude_lifecycle_writers() {
 }
 
 /// A checkout can switch container -> hybrid -> container in either direction
-/// without refusal while a route is handed over, and a still-live managed
-/// listener is refused as a real conflict. Every mutation goes through the
-/// production route-table transaction, which takes the route-table lock.
+/// without refusal: the checkout path is the whole route owner, so its own
+/// route is always replaced. Another checkout that still serves the domain is
+/// refused by name. Every mutation goes through the production route-table
+/// transaction, which takes the route-table lock.
 #[test]
-fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listener() {
+fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_foreign_owner() {
     use effigy_gateway::identity::{read_live_process_identity, GatewayStartIdentity};
     use effigy_gateway::registration::{
-        check_managed_listener_route_claim, deregister_managed_listener_route, deregister_route,
-        register_managed_listener_route, register_route, RouteRegistration,
+        deregister_managed_listener_route, register_managed_listener_route, register_route,
+        RouteRegistration,
     };
     use effigy_gateway::routes::ManagedListenerRouteOwner;
 
@@ -1640,7 +1641,7 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
     let dead_start = GatewayStartIdentity::Linux { start_ticks: 1 };
     let dead_owner = |generation: &str, address: &str| ManagedListenerRouteOwner {
         run: None,
-        owner: "main|web|test|app".to_owned(),
+        owner: format!("{project}|web|app"),
         runtime_generation: "runtime-1".to_owned(),
         generation: generation.to_owned(),
         supervisor_pid: 10,
@@ -1671,18 +1672,9 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
         source: RouteSource::Container,
     };
 
-    // Container -> hybrid: a same-checkout container route neither refuses the
-    // preflight claim nor the publication transaction.
+    // Container -> hybrid: the same checkout's container route is replaced by
+    // the listener publication with no claim proof.
     register_route(&route_path, &container_registration("127.0.0.1:48081")).unwrap();
-    check_managed_listener_route_claim(
-        &route_path,
-        &project,
-        "switch.example.test",
-        "main|web|test|app",
-    )
-    .expect("a same-checkout container route must not refuse the hybrid claim");
-    // A pre-existing dead generation is imported as durable state; a new
-    // publication of this dead owner must now fail at the engine boundary.
     assert!(register_managed_listener_route(
         &route_path,
         &project,
@@ -1690,7 +1682,6 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
         "127.0.0.1:48082",
         false,
         dead_owner("child-1", "127.0.0.1:48082"),
-        None
     )
     .is_err());
     effigy_gateway::endpoint_store::EndpointStore::for_routes(&route_path)
@@ -1703,22 +1694,11 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
             Ok(())
         })
         .unwrap();
-    assert!(
-        !deregister_route(&route_path, "switch.example.test", &project).unwrap(),
-        "container teardown must not remove the successor route"
-    );
 
-    // Hybrid -> container once the listener generation is gone.
-    assert!(deregister_managed_listener_route(
-        &route_path,
-        &project,
-        "switch.example.test",
-        "main|web|test|app",
-        "child-1",
-    )
-    .unwrap());
+    // Hybrid -> container: the same checkout always replaces its own route,
+    // whether the recorded listener generation is alive or dead.
     register_route(&route_path, &container_registration("127.0.0.1:48083"))
-        .expect("the container may reclaim the domain once the listener is gone");
+        .expect("the same checkout replaces its own listener route");
     let reclaimed = RouteTable::load(&route_path)
         .unwrap()
         .lookup("switch.example.test")
@@ -1726,9 +1706,20 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
         .expect("reclaimed container route");
     assert_eq!(reclaimed.source, RouteSource::Container);
     assert!(reclaimed.managed_listener.is_none());
+    assert_eq!(reclaimed.target.as_deref(), Some("127.0.0.1:48083"));
+    assert!(!deregister_managed_listener_route(
+        &route_path,
+        &project,
+        "switch.example.test",
+        &format!("{project}|web|app"),
+        "child-1",
+    )
+    .unwrap());
 
-    // A live managed listener is a real conflict. The refusal names the running
-    // managed process and how to stop it, never the claimant's own path.
+    // Another checkout that still serves the domain is a live owner: the
+    // refusal names it and the command that stops it.
+    let foreign = fixture.path().join("foreign");
+    fs::create_dir_all(&foreign).expect("foreign checkout fixture");
     let listener = TcpListener::bind("127.0.0.1:0").expect("live listener fixture");
     let live_address = listener.local_addr().expect("live listener address");
     let identity = read_live_process_identity(std::process::id()).expect("test process identity");
@@ -1737,7 +1728,7 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
         &availability,
         serde_json::to_vec(&serde_json::json!({
             "schema": "effigy.managed.host-listener-state.v1",
-            "owner": "main|web|test|app",
+            "owner": format!("{}|web|app", foreign.display()),
             "runtime_generation": "runtime-1",
             "generation": "child-live",
             "status": "ready",
@@ -1747,7 +1738,7 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
     .unwrap();
     let live_owner = ManagedListenerRouteOwner {
         run: None,
-        owner: "main|web|test|app".to_owned(),
+        owner: format!("{}|web|app", foreign.display()),
         runtime_generation: "runtime-1".to_owned(),
         generation: "child-live".to_owned(),
         supervisor_pid: std::process::id(),
@@ -1765,20 +1756,25 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
     };
     register_managed_listener_route(
         &route_path,
-        &project,
+        &foreign.display().to_string(),
         "switch.example.test",
         &live_address.to_string(),
         false,
         live_owner,
-        None,
     )
     .unwrap();
     let conflict = register_route(&route_path, &container_registration("127.0.0.1:48084"))
-        .expect_err("a live managed listener must refuse the container environment");
+        .expect_err("a live foreign checkout keeps the domain");
     let rendered = conflict.to_string();
-    assert!(rendered.contains("main|web|test|app"), "{rendered}");
+    assert!(
+        rendered.contains(&foreign.display().to_string()),
+        "{rendered}"
+    );
     assert!(rendered.contains("effigy container down"), "{rendered}");
-    assert!(!rendered.contains(&project), "{rendered}");
+    assert!(
+        !rendered.contains(&format!("checkout `{project}`")),
+        "{rendered}"
+    );
     drop(listener);
 }
 
@@ -2616,6 +2612,232 @@ fn managed_host_readiness_terminal_failure_retains_phase_evidence() {
     }
 }
 
+/// A leader that exits is replaced per its declared policy: an `on-failure`
+/// listener comes back on its reserved port with its route republished, while a
+/// `never` listener settles closed and withdraws its route. The exited leader is
+/// never counted as a surviving member of its own group (effigy#336).
+#[test]
+fn managed_host_listener_leader_exit_restarts_by_policy() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    fs::create_dir(&home).expect("fixture home");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+    let ca_path = private_gateway.join("ca/rootCA.pem");
+    let route_table = private_gateway.join("routes.json");
+
+    let checkout = fixture.path().join("leader-exit");
+    fs::create_dir(&checkout).expect("leader exit checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Listener Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "listener-fixture@example.invalid"],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+
+    let profile = "host-listener-leader-exit";
+    let child_binary = std::env::current_exe().expect("integration test binary");
+    let replaced_control = fixture.path().join("replaced-control");
+    let settled_control = fixture.path().join("settled-control");
+    for control in [&replaced_control, &settled_control] {
+        fs::create_dir(control).expect("listener control directory");
+    }
+    let replaced_bind = fixture_listener_address(&format!(
+        "leader-exit-replaced:{}",
+        fixture.path().display()
+    ));
+    let settled_bind =
+        fixture_listener_address(&format!("leader-exit-settled:{}", fixture.path().display()));
+    let replaced_domain = "restart.leader-exit.host.test";
+    let settled_domain = "settled.leader-exit.host.test";
+    write_leader_exit_manifest(
+        &checkout,
+        profile,
+        &child_binary,
+        &[
+            LeaderExitListener {
+                name: "replaced",
+                restart: "on-failure",
+                bind: &replaced_bind,
+                domain: replaced_domain,
+                body: "restart-body",
+                control_dir: &replaced_control,
+            },
+            LeaderExitListener {
+                name: "settled",
+                restart: "never",
+                bind: &settled_bind,
+                domain: settled_domain,
+                body: "settled-body",
+                control_dir: &settled_control,
+            },
+        ],
+    );
+
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+
+    let started = run_container_cli(&checkout, &cleanup, &["up", "--detach", "--json"]);
+    assert!(
+        started.status.success(),
+        "leader-exit startup failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&started.stdout),
+        String::from_utf8_lossy(&started.stderr)
+    );
+
+    let state_path = |name: &str| {
+        checkout
+            .join(".effigy/runtime/host-processes/web")
+            .join(profile)
+            .join(format!("{name}.listener.json"))
+    };
+    let replaced = wait_for_listener_generation(
+        &state_path("replaced"),
+        &route_table,
+        replaced_domain,
+        "",
+        Duration::from_secs(30),
+    );
+    let settled = wait_for_listener_generation(
+        &state_path("settled"),
+        &route_table,
+        settled_domain,
+        "",
+        Duration::from_secs(30),
+    );
+    let replaced_pid = u32::try_from(replaced["child_pid"].as_u64().expect("recorded leader pid"))
+        .expect("leader pid fits a process id");
+    let settled_pid = u32::try_from(settled["child_pid"].as_u64().expect("recorded leader pid"))
+        .expect("leader pid fits a process id");
+
+    // The operator's own signal ends the child leader: its group is that leader,
+    // so the supervisor must apply the policy instead of reporting a group that
+    // still contains the exited leader.
+    // SAFETY: this test signals only the exact child leader Effigy recorded.
+    let sent = unsafe { nix::libc::kill(replaced_pid as i32, nix::libc::SIGTERM) };
+    assert_eq!(sent, 0, "terminate the owned listener leader");
+    let successor = wait_for_listener_generation(
+        &state_path("replaced"),
+        &route_table,
+        replaced_domain,
+        replaced["generation"]
+            .as_str()
+            .expect("recorded generation"),
+        Duration::from_secs(30),
+    );
+    assert_eq!(
+        successor["address"], replaced["address"],
+        "an `on-failure` restart keeps the port the endpoint store reserved"
+    );
+    assert_ne!(
+        successor["child_pid"], replaced["child_pid"],
+        "the successor generation is a new child generation"
+    );
+    assert_generation_withdrawn(
+        &route_table,
+        replaced_domain,
+        &replaced,
+        &successor,
+        "leader exit restart",
+    );
+    let response = curl_https_response(https_address, &ca_path, replaced_domain, "/");
+    assert!(
+        response.contains("200 OK")
+            && response.contains(&format!(
+                "restart-body@{}",
+                successor["generation"]
+                    .as_str()
+                    .expect("successor generation")
+            )),
+        "the republished route must reach the restarted listener: {response}"
+    );
+
+    // SAFETY: this test signals only the exact child leader Effigy recorded.
+    let sent = unsafe { nix::libc::kill(settled_pid as i32, nix::libc::SIGTERM) };
+    assert_eq!(sent, 0, "terminate the never-policy listener leader");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let settled_state = loop {
+        let state = read_json_file(&state_path("settled"));
+        if state["status"] == "stopped" {
+            break state;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "a `never` listener settles closed after its leader exits: {state}"
+        );
+        thread::sleep(Duration::from_millis(25));
+    };
+    assert!(
+        settled_state["address"].is_null() && settled_state["route_owner"].is_null(),
+        "a settled generation retains no endpoint or route claim: {settled_state}"
+    );
+    let table = RouteTable::load(&route_table).expect("load published route table");
+    assert!(
+        table.lookup(settled_domain).is_none(),
+        "a `never` generation withdraws its route instead of restarting"
+    );
+    assert!(
+        !effigy_process::process_is_running(settled_pid),
+        "`never` starts no successor generation: {settled_state}"
+    );
+    assert_eq!(
+        read_json_file(&state_path("replaced"))["status"],
+        "ready",
+        "the restarted listener keeps serving while the other settles"
+    );
+
+    let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
+    assert!(
+        down.status.success(),
+        "explicit teardown failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&down.stdout),
+        String::from_utf8_lossy(&down.stderr)
+    );
+    let successor_pid = u32::try_from(successor["child_pid"].as_u64().expect("successor pid"))
+        .expect("successor pid fits a process id");
+    for pid in [successor_pid, settled_pid] {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while effigy_process::process_is_running(pid) {
+            assert!(
+                Instant::now() < deadline,
+                "teardown must stop the recorded child generation {pid}"
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+}
+
 fn private_root(parent: &Path, name: &str) -> PathBuf {
     let root = parent.join(name);
     fs::create_dir(&root).expect("create private root");
@@ -2749,6 +2971,71 @@ fn write_listener_fixture_manifest(fixture: ListenerFixtureManifest<'_>) {
         toml_quote(domain),
     );
     fs::write(checkout.join("effigy.toml"), manifest).expect("write managed listener config");
+}
+
+/// One managed listener in the leader-exit fixture: its declared restart
+/// policy, its reserved address and route, its response body, and its own
+/// control directory (effigy#336).
+struct LeaderExitListener<'a> {
+    name: &'a str,
+    restart: &'a str,
+    bind: &'a str,
+    domain: &'a str,
+    body: &'a str,
+    control_dir: &'a Path,
+}
+
+/// Each listener runs the fixture child directly (`exec`, so the child is its
+/// own group leader), which lets the test signal a leader the way an operator
+/// would and observe what the supervisor does next.
+fn write_leader_exit_manifest(
+    checkout: &Path,
+    profile: &str,
+    child_binary: &Path,
+    listeners: &[LeaderExitListener<'_>],
+) {
+    let mut manifest = format!(
+        "[containers]\ndefault = \"web\"\n\n[containers.web]\ndriver = \"colima\"\nprofile = {}\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n",
+        toml_quote(profile)
+    );
+    for listener in listeners {
+        manifest.push_str(&format!(
+            "\n[[containers.web.host_processes]]\nname = {}\nrun = {}\nrestart = {}\nrestart_delay_ms = 100\n\n[containers.web.host_processes.env]\nFIXTURE_BINARY = {}\nFIXTURE_BODY = {}\nFIXTURE_PREVIOUS_PORT_FILE = {}\nFIXTURE_RESTART_FILE = {}\nFIXTURE_PAUSED_FILE = {}\nFIXTURE_CONTINUE_FILE = {}\nFIXTURE_READINESS_REFUSED_FILE = {}\n\n[containers.web.host_processes.listener]\nbind = {}\n\n[containers.web.host_processes.listener.readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = 20\n\n[containers.web.host_processes.listener.route]\ndomain = {}\ntls = true\n",
+            toml_quote(listener.name),
+            toml_quote(
+                "exec \"$FIXTURE_BINARY\" --ignored --exact managed_listener_fixture_child --nocapture"
+            ),
+            toml_quote(listener.restart),
+            toml_quote(&child_binary.display().to_string()),
+            toml_quote(listener.body),
+            toml_quote(&listener.control_dir.join("previous-port").display().to_string()),
+            toml_quote(&listener.control_dir.join("restart").display().to_string()),
+            toml_quote(
+                &listener
+                    .control_dir
+                    .join("listener-paused")
+                    .display()
+                    .to_string()
+            ),
+            toml_quote(
+                &listener
+                    .control_dir
+                    .join("continue-exit")
+                    .display()
+                    .to_string()
+            ),
+            toml_quote(
+                &listener
+                    .control_dir
+                    .join("readiness-refused")
+                    .display()
+                    .to_string()
+            ),
+            toml_quote(listener.bind),
+            toml_quote(listener.domain),
+        ));
+    }
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write leader exit config");
 }
 
 fn toml_quote(value: &str) -> String {
@@ -4553,12 +4840,13 @@ fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
             Some(RouteSource::Task),
             "the live hybrid listener holds the domain"
         );
-        assert!(
-            route_owner_environment("switch.test")
-                .expect("managed listener owner")
-                .ends_with("|hybrid|switch|app"),
-            "the listener owner names the hybrid environment"
+        let owner = route_owner_environment("switch.test").expect("managed listener owner");
+        assert_eq!(
+            owner.split('|').nth(1),
+            Some("hybrid"),
+            "the listener owner names the hybrid environment: {owner}"
         );
+        assert!(owner.ends_with("|app"), "{owner}");
 
         // Stack up takes the domain back from the live listener without
         // refusing: the whole hybrid environment is handed over first.
@@ -4605,19 +4893,23 @@ fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
         .expect("foreign scope")
         .unwrap_or_else(|| "main".to_owned());
     let _keep_foreign_scope = foreign_scope;
-    // A routine down retains switch.test's persistent owner. Use a fresh
-    // foreign claim and point the requested hybrid configuration at it.
+    // A foreign checkout that still serves the domain refuses the handover.
     let manifest = fs::read_to_string(checkout.join("effigy.toml")).unwrap();
     fs::write(
         checkout.join("effigy.toml"),
         manifest.replace("switch.test", "foreign-switch.test"),
     )
     .unwrap();
+    let foreign_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("foreign listener");
+    let foreign_target = foreign_listener
+        .local_addr()
+        .expect("foreign listener address")
+        .to_string();
     effigy_gateway::registration::register_route(
         &routes_path,
         &effigy_gateway::registration::RouteRegistration {
             domain: "foreign-switch.test".to_owned(),
-            target: Some("127.0.0.1:49999".to_owned()),
+            target: Some(foreign_target.clone()),
             dns_ip: None,
             tcp_port: None,
             tcp_target: None,
@@ -4654,6 +4946,7 @@ fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
         !active(&hybrid_project),
         "the refused handover starts nothing"
     );
+    drop(foreign_listener);
 
     // Leave the checkout stopped: idempotent downs stop any live environment.
     for env in ["stack", "hybrid"] {

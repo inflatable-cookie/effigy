@@ -129,147 +129,24 @@ fn parse_gateway_bind_overrides_require_explicit_private_root() {
 }
 
 #[test]
-fn parse_gateway_repair_accepts_yes_and_json() {
-    let cmd = parse_command(vec![
-        "gateway".to_owned(),
-        "repair".to_owned(),
-        "--yes".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse");
-
-    assert_eq!(
-        cmd,
-        Command::Gateway(GatewayArgs {
-            subcommand: GatewaySubcommand::Repair {
-                yes: true,
-                expect_plan: None,
-                owner_checkout: None,
-            },
-            private: None,
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_gateway_repair_accepts_a_reviewed_plan_digest() {
-    let cmd = parse_command(vec![
-        "gateway".to_owned(),
-        "repair".to_owned(),
-        "--yes".to_owned(),
-        "--expect-plan".to_owned(),
-        "abc123".to_owned(),
-    ])
-    .expect("parse");
-
-    assert_eq!(
-        cmd,
-        Command::Gateway(GatewayArgs {
-            subcommand: GatewaySubcommand::Repair {
-                yes: true,
-                expect_plan: Some("abc123".to_owned()),
-                owner_checkout: None,
-            },
-            private: None,
-            output_json: false,
-        })
-    );
-}
-
-#[test]
-fn parse_gateway_repair_accepts_an_exact_owner_checkout() {
-    let cmd = parse_command(vec![
-        "gateway".to_owned(),
-        "repair".to_owned(),
-        "--owner-checkout".to_owned(),
-        "/Users/me/worktrees/deleted".to_owned(),
-        "--json".to_owned(),
-    ])
-    .expect("parse");
-
-    assert_eq!(
-        cmd,
-        Command::Gateway(GatewayArgs {
-            subcommand: GatewaySubcommand::Repair {
-                yes: false,
-                expect_plan: None,
-                owner_checkout: Some("/Users/me/worktrees/deleted".to_owned()),
-            },
-            private: None,
-            output_json: true,
-        })
-    );
-}
-
-#[test]
-fn parse_gateway_repair_accepts_the_owner_filter_with_a_reviewed_digest() {
-    let cmd = parse_command(vec![
-        "gateway".to_owned(),
-        "repair".to_owned(),
-        "--owner-checkout".to_owned(),
-        "/worktrees/deleted".to_owned(),
-        "--yes".to_owned(),
-        "--expect-plan".to_owned(),
-        "abc123".to_owned(),
-    ])
-    .expect("parse");
-
-    assert_eq!(
-        cmd,
-        Command::Gateway(GatewayArgs {
-            subcommand: GatewaySubcommand::Repair {
-                yes: true,
-                expect_plan: Some("abc123".to_owned()),
-                owner_checkout: Some("/worktrees/deleted".to_owned()),
-            },
-            private: None,
-            output_json: false,
-        })
-    );
-}
-
-#[test]
-fn parse_gateway_repair_refuses_a_relative_owner_checkout() {
-    let error = parse_command(vec![
-        "gateway".to_owned(),
-        "repair".to_owned(),
-        "--owner-checkout".to_owned(),
-        "worktrees/deleted".to_owned(),
-    ])
-    .expect_err("a relative owner checkout must refuse");
-
-    let message = error.to_string();
-    assert!(message.contains("--owner-checkout"), "{message}");
-    assert!(message.contains("absolute"), "{message}");
-}
-
-#[test]
-fn parse_gateway_repair_refuses_the_owner_filter_twice() {
-    let error = parse_command(vec![
-        "gateway".to_owned(),
-        "repair".to_owned(),
-        "--owner-checkout".to_owned(),
-        "/one".to_owned(),
-        "--owner-checkout".to_owned(),
-        "/two".to_owned(),
-    ])
-    .expect_err("a repeated owner filter must refuse");
-
-    assert!(error.to_string().contains("--owner-checkout"), "{error}");
-}
-
-#[test]
-fn parse_gateway_repair_refuses_a_plan_digest_without_apply() {
-    let error = parse_command(vec![
-        "gateway".to_owned(),
-        "repair".to_owned(),
-        "--expect-plan".to_owned(),
-        "abc123".to_owned(),
-    ])
-    .expect_err("a digest without --yes must refuse");
-
-    assert!(error.to_string().contains("requires `--yes`"), "{error}");
+fn parse_gateway_repair_is_retired_with_its_replacement_named() {
+    for args in [
+        vec!["gateway", "repair"],
+        vec!["gateway", "repair", "--yes"],
+        vec![
+            "gateway",
+            "repair",
+            "--owner-checkout",
+            "/worktrees/deleted",
+        ],
+        vec!["gateway", "repair", "--yes", "--expect-plan", "abc123"],
+    ] {
+        let args = args.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let error = parse_command(args).expect_err("`gateway repair` is retired in v0.15");
+        let message = error.to_string();
+        assert!(message.contains("retired in v0.15"), "{message}");
+        assert!(message.contains("reclaimed automatically"), "{message}");
+    }
 }
 
 #[test]

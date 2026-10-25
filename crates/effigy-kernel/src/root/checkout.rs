@@ -64,26 +64,41 @@ impl RetainedCheckout {
         Ok(())
     }
     fn identity(&self, owner: &DirFd) -> Result<CheckoutId, StoreError> {
-        filesystem_identity(
-            owner.identity()?,
-            self.git.as_ref().map(DirFd::identity).transpose()?,
-        )
+        filesystem_identity(owner.path(), self.git.as_ref().map(DirFd::path))
     }
 }
 
+/// The local gate identity of a checkout: a domain-separated digest of its
+/// canonical location and its resolved per-checkout Git directory.
+///
+/// The location is the identity. A device number is assigned at every mount
+/// and an inode changes when a directory is replaced or moved, so neither may
+/// name a gate: a reboot would rename every lock a checkout holds (effigy#337).
+/// The `Filesystem` kind keeps these names separate from persisted tokens and
+/// is never itself persisted.
 pub(super) fn filesystem_identity(
-    checkout: DirectoryIdentity,
-    git: Option<DirectoryIdentity>,
+    checkout: &Path,
+    git: Option<&Path>,
 ) -> Result<CheckoutId, StoreError> {
-    let mut bytes = b"effigy-filesystem-checkout-v1\0".to_vec();
-    bytes.extend(
-        serde_json::to_vec(&(checkout, git))
-            .map_err(|error| StoreError::Corrupt(error.to_string()))?,
-    );
+    let mut bytes = b"effigy-filesystem-checkout-v2\0".to_vec();
+    // Canonical paths, so the same directory spelled another way (a resolved
+    // symlink, a trailing `.`) keeps one name. Hash each length-prefixed, so no
+    // two different pairs encode the same bytes.
+    let paths = [Some(canonical(checkout)), git.map(canonical)];
+    for path in paths.into_iter().flatten() {
+        let encoded = path.as_os_str().as_encoded_bytes();
+        bytes.extend((encoded.len() as u64).to_le_bytes());
+        bytes.extend(encoded);
+    }
     let digest = Digest::of(&bytes);
     let mut token = [0; 16];
     token.copy_from_slice(&digest.0[..16]);
     Ok(CheckoutId::new(CheckoutKind::Filesystem, token))
+}
+
+/// A path as the filesystem resolves it, never touching what it names.
+fn canonical(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 impl StateRoot {
@@ -103,14 +118,14 @@ impl StateRoot {
             return Ok(Some(identity));
         }
         crate::migration::adoption::checkout_filesystem_facts(cx, self)?
-            .map(|(checkout, git)| filesystem_identity(checkout, git))
+            .map(|(checkout, git)| filesystem_identity(&checkout, git.as_deref()))
             .transpose()
     }
     /// Exclusion also follows the owning directory across a Git locator
     /// replacement. A running old generation keeps this alias until cleanup.
     pub(crate) fn directory_gate_identity(&self) -> Result<CheckoutId, StoreError> {
         self.verify_binding()?;
-        filesystem_identity(self.owner.identity()?, None)
+        filesystem_identity(self.owner.path(), None)
     }
 
     /// Pure local gate identity; no token, state directory or machine lookup.

@@ -6,7 +6,7 @@ mod reservations;
 pub use reservations::{listener_port_key, ListenerPortRequest};
 mod snapshot;
 
-pub use snapshot::{DomainClaim, EndpointSnapshot, Quarantine};
+pub use snapshot::EndpointSnapshot;
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -22,8 +22,6 @@ use effigy_kernel::store::Store;
 
 use crate::{operator, GatewayError};
 
-/// DNS TTL (60 seconds) plus the proxy's ten-second drain budget.
-pub const REUSE_QUARANTINE: Duration = Duration::from_secs(70);
 const OPERATION_BUDGET: Duration = Duration::from_secs(120);
 const CLEANUP_BUDGET: Duration = Duration::from_secs(60);
 
@@ -225,17 +223,11 @@ impl EndpointStore {
             .into());
         }
         let before = snapshot.clone();
-        let before_claims = if importing {
-            Default::default()
-        } else {
-            before.claims()?
-        };
         let value = edit(&mut snapshot)?;
         if !importing && snapshot == before {
             return Ok(value);
         }
         let desired = snapshot.claims()?;
-        snapshot.update_quarantine(&before_claims, &desired)?;
         let generation = facts.next_generation().map_err(error)?;
         snapshot.revision = generation.get();
         facts
@@ -243,7 +235,7 @@ impl EndpointStore {
                 generation,
                 &desired.into_values().collect::<Vec<_>>(),
                 &serde_json::to_value(snapshot).map_err(error)?,
-                REUSE_QUARANTINE,
+                Duration::ZERO,
             )
             .map_err(error)?;
         Ok(value)
@@ -294,7 +286,6 @@ impl EndpointStore {
                 return Ok(value);
             }
             let desired = snapshot.claims()?;
-            snapshot.update_quarantine(&before_claims, &desired)?;
             let wanted = desired
                 .iter()
                 .filter(|(name, _)| !before_claims.contains_key(*name))
@@ -303,9 +294,8 @@ impl EndpointStore {
             let token = if wanted.is_empty() {
                 None
             } else {
-                // No external consumer sees these rows before publication.
-                // Failed unpublished reservations can therefore release at
-                // once; published releases use REUSE_QUARANTINE below.
+                // No external consumer sees these rows before publication, so
+                // an unpublished reservation releases at once.
                 Some(Claims::reserve(run, &wanted, Duration::ZERO).map_err(error)?)
             };
             // Reserve before any journaled external publication, so settle
@@ -330,7 +320,7 @@ impl EndpointStore {
                 token.as_ref(),
                 &desired.into_values().collect::<Vec<_>>(),
                 &serde_json::to_value(snapshot).map_err(error)?,
-                REUSE_QUARANTINE,
+                Duration::ZERO,
             )
             .map_err(error)?;
             Ok(value)
@@ -379,7 +369,7 @@ impl EndpointStore {
 
     pub fn import(&self) -> Result<EndpointSnapshot, GatewayError> {
         // Settle imported claims before a caller can release or republish
-        // them. Even a first-command retirement must quarantine old endpoints.
+        // them.
         self.transact_facts(None, |_| Ok::<_, GatewayError>(()))?;
         self.read_compatible()
     }

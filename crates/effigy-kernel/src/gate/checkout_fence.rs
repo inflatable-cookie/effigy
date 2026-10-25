@@ -5,8 +5,20 @@ use super::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CheckoutFenceIdentity {
+    /// The mount-time device number, recorded for diagnostics only. macOS
+    /// assigns it at every mount, so it never identifies a lease across a
+    /// reboot (effigy#337).
     pub device: u64,
     pub inode: u64,
+}
+impl CheckoutFenceIdentity {
+    /// Whether a recorded identity still names the lease file `current`
+    /// describes. The inode is the lease; the device number is not evidence,
+    /// because a reboot that renumbers the volume would otherwise look like a
+    /// replaced lease and refuse a custody handover (effigy#337).
+    pub fn is_same_lease(&self, current: &Self) -> bool {
+        self.inode == current.inode
+    }
 }
 #[derive(Debug)]
 pub struct CheckoutFenceGuard {
@@ -165,7 +177,7 @@ fn checkout_fence(
         reason: "checkout fence missing; ownership remains unknown".into(),
     })?;
     let actual = identity(&file)?;
-    if expected.is_some_and(|expected| expected != actual) {
+    if expected.is_some_and(|expected| !expected.is_same_lease(&actual)) {
         return Err(GateError::Untrusted {
             path: gates.path().into(),
             reason: "checkout fence inode replaced".into(),

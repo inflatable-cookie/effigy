@@ -8,7 +8,7 @@ use effigy_kernel::migration;
 use effigy_kernel::observe::Observed;
 use effigy_kernel::root::StateRoot;
 use effigy_kernel::store::{Store, StoreError};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use support::*;
 
 fn location(root: &std::path::Path) -> migration::CheckoutLocation {
@@ -97,7 +97,7 @@ fn runtime_routing_ignores_the_retired_store_once_a_manifest_committed() {
 }
 
 #[test]
-fn runtime_checkout_routing_is_local_and_rejects_replaced_git_generation() {
+fn runtime_checkout_routing_is_local_and_rebinds_a_replaced_git_directory() {
     let machine = home();
     let checkout = home();
     let git = checkout.path().join(".git");
@@ -115,18 +115,6 @@ fn runtime_checkout_routing_is_local_and_rejects_replaced_git_generation() {
         StateRoot::checkout_observe(&observe(), &location),
         Observed::Verified(_, _)
     ));
-    // The old Git directory still exists, but a new resolution may not select it.
-    let alternate = checkout.path().join("alternate-git");
-    std::fs::create_dir(&alternate).unwrap();
-    let retargeted = migration::CheckoutLocation {
-        root: checkout.path().into(),
-        git_directory: Some(alternate.clone()),
-    };
-    assert!(matches!(
-        StateRoot::checkout_observe(&observe(), &retargeted),
-        Observed::Unknown(_)
-    ));
-    std::fs::remove_dir(&alternate).unwrap();
     let before = snapshot(checkout.path());
     StateRoot::checkout_effects(&cx, machine.path(), &location).unwrap();
     assert_eq!(
@@ -134,16 +122,40 @@ fn runtime_checkout_routing_is_local_and_rejects_replaced_git_generation() {
         before,
         "warm routing writes nothing"
     );
+    // The checkout's Git directory is recreated where it was. The journal opens
+    // by its location and records the generation that is here now instead of
+    // refusing every run after a renumbering (effigy#337).
     std::fs::rename(&git, checkout.path().join("old-git")).unwrap();
     std::fs::create_dir(&git).unwrap();
-    let before = snapshot(checkout.path());
-    assert!(StateRoot::checkout_effects(&cx, machine.path(), &location).is_err());
+    assert!(matches!(
+        StateRoot::checkout_observe(&observe(), &location),
+        Observed::Verified(_, _)
+    ));
+    drop(
+        StateRoot::checkout_effects(&cx, machine.path(), &location)
+            .expect("the journal rebinds the recreated Git directory"),
+    );
+    assert_eq!(
+        json_at(&checkout.path().join(".effigy/state/checkout.json"))["git"][1]["inode"],
+        json_u64(std::fs::metadata(&git).unwrap().ino()),
+        "the binding records the Git generation that is here now"
+    );
+    // A live custodian still refuses to continue through a replaced locator:
+    // that invariant is about this process's retained descriptor, not a boot.
     assert!(matches!(
         Store::read(&observe(), &root),
         Observed::Unknown(_)
     ));
     assert!(Store::open(&cx, &root).is_err());
-    assert_eq!(snapshot(checkout.path()), before);
+    // A resolution that disagrees with the checkout's own `.git` is still
+    // refused, whatever the binding says.
+    let alternate = checkout.path().join("alternate-git");
+    std::fs::create_dir(&alternate).unwrap();
+    let retargeted = migration::CheckoutLocation {
+        root: checkout.path().into(),
+        git_directory: Some(alternate),
+    };
+    assert!(StateRoot::checkout_effects(&cx, machine.path(), &retargeted).is_err());
 }
 #[test]
 fn runtime_checkout_routing_rejects_unbound_database_and_masks_guest_before_io() {
@@ -309,7 +321,7 @@ fn runtime_foreground_root_allocates_gates_without_a_token_or_durable_binding() 
     drop(gate);
 }
 #[test]
-fn runtime_retained_linked_git_pointer_refuses_later_reads_gates_and_writes() {
+fn runtime_retained_git_pointer_refuses_a_stale_custodian_and_rebinds() {
     let checkout = home();
     let machine = home();
     let git = checkout.path().join("git-one");
@@ -337,16 +349,24 @@ fn runtime_retained_linked_git_pointer_refuses_later_reads_gates_and_writes() {
         Store::read(&observe(), &root),
         Observed::Unknown(_)
     ));
+    assert_eq!(
+        snapshot(checkout.path()),
+        before,
+        "a stale custodian writes nothing"
+    );
+    // The effect still refuses, because the checkout's own `.git` pointer and
+    // the supplied Git directory disagree about the same live generation.
     assert!(StateRoot::checkout_effects(&cx, machine.path(), &location).is_err());
+    // A resolution that matches the pointer the checkout carries now opens: the
+    // binding's recorded locator is provenance, not a gate (effigy#337).
     let new_location = migration::CheckoutLocation {
         root: checkout.path().into(),
         git_directory: Some(other),
     };
     assert!(matches!(
         StateRoot::checkout_observe(&observe(), &new_location),
-        Observed::Unknown(_)
+        Observed::Verified(_, _)
     ));
-    assert_eq!(snapshot(checkout.path()), before);
     // Restore this fixture's pointer before helper-drain observation.
     std::fs::write(checkout.path().join(".git"), "gitdir: git-one\n").unwrap();
 }
@@ -551,4 +571,244 @@ fn runtime_foreground_adopts_a_legacy_open_state_root_mode() {
         .expect("the foreground path adopts a legacy open state root");
     assert_eq!(mode(root.path()), 0o700);
     assert_eq!(mode(&state), 0o700);
+}
+
+/// A checkout whose state root carries a real journal, a resolved Git
+/// directory and a published `checkout.json` binding.
+fn bound_checkout() -> (
+    effigy_test_support::Fixture,
+    effigy_test_support::Fixture,
+    migration::CheckoutLocation,
+) {
+    let checkout = home();
+    let machine = home();
+    let git = checkout.path().join(".git");
+    std::fs::create_dir(&git).unwrap();
+    let location = migration::CheckoutLocation {
+        root: checkout.path().into(),
+        git_directory: Some(git),
+    };
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::checkout_effects(&cx, machine.path(), &location)
+        .expect("a fresh checkout binds");
+    drop(Store::open(&cx, &root).expect("open journal"));
+    (checkout, machine, location)
+}
+
+fn json_at(path: &std::path::Path) -> serde_json::Value {
+    serde_json::from_slice(&std::fs::read(path).expect("read record")).expect("decode record")
+}
+
+fn json_u64(value: u64) -> serde_json::Value {
+    serde_json::Value::from(value)
+}
+
+/// Rewrite a binding the way the volume renumbering of 2026-10-25 did: the same
+/// directories, with the device number they had before the mount changed it.
+/// Returns the binding as it was.
+fn rebind_as_previous_boot(path: &std::path::Path, renumber_inode: bool) -> serde_json::Value {
+    let live = json_at(path);
+    let mut stale = live.clone();
+    for prefix in ["checkout", "git"] {
+        let identity = if prefix == "checkout" {
+            &mut stale["checkout"]
+        } else if live["git"].is_array() {
+            &mut stale["git"][1]
+        } else {
+            continue;
+        };
+        let live_identity = if prefix == "checkout" {
+            &live["checkout"]
+        } else {
+            &live["git"][1]
+        };
+        identity["device"] = json_u64(live_identity["device"].as_u64().unwrap() + 1);
+        if renumber_inode {
+            identity["inode"] = json_u64(live_identity["inode"].as_u64().unwrap() + 1);
+        }
+    }
+    std::fs::write(path, serde_json::to_vec(&stale).unwrap()).unwrap();
+    live
+}
+
+#[test]
+fn runtime_renumbered_checkout_binding_is_rewritten_and_keeps_its_journal() {
+    let (checkout, machine, location) = bound_checkout();
+    let cx = effects(EffectClass::Mutate);
+    let owner = ResourceId::store(
+        Scope::Checkout(StateRoot::filesystem_checkout(&observe(), &location).unwrap()),
+        "history",
+    )
+    .unwrap();
+    {
+        let root = StateRoot::checkout_effects(&cx, machine.path(), &location).unwrap();
+        let mut store = Store::open(&cx, &root).unwrap();
+        store
+            .txn(&cx, |txn| txn.resource(&owner, "test").map(|_| ()))
+            .expect("journal history");
+    }
+
+    // A pre-reboot binding is not a refusal: the journal opens by its location
+    // (effigy#337). The local gate identity is the location too, so the
+    // renumbering cannot rename this checkout's gates.
+    let gates = StateRoot::filesystem_checkout(&observe(), &location).unwrap();
+    let binding = checkout.path().join(".effigy/state/checkout.json");
+    let live = rebind_as_previous_boot(&binding, false);
+    assert!(
+        matches!(
+            StateRoot::checkout_observe(&observe(), &location),
+            Observed::Verified(_, _)
+        ),
+        "a renumbered volume must not hide the journal"
+    );
+
+    let root = StateRoot::checkout_effects(&cx, machine.path(), &location)
+        .expect("a renumbered volume keeps its journal");
+    let reader = match Store::read(&observe(), &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("journal must stay readable: {other:?}"),
+    };
+    assert!(
+        matches!(reader.resource(&owner), Observed::Verified(_, _)),
+        "the journal keeps the history it recorded before the reboot"
+    );
+    drop(reader);
+    assert_eq!(
+        json_at(&binding),
+        live,
+        "the binding is rewritten to the generation that is here now"
+    );
+    assert_eq!(
+        StateRoot::filesystem_checkout(&observe(), &location).unwrap(),
+        gates,
+        "a renumbered volume keeps one gate identity"
+    );
+}
+
+#[test]
+fn runtime_unreadable_checkout_binding_is_repaired_not_a_journal_error() {
+    // A broken binding is provenance that went bad, never a reason to archive a
+    // healthy journal through `Store::repair` (effigy#337).
+    let (checkout, machine, location) = bound_checkout();
+    let cx = effects(EffectClass::Mutate);
+    let binding = checkout.path().join(".effigy/state/checkout.json");
+    let live = json_at(&binding);
+    std::fs::write(&binding, b"{not a binding").unwrap();
+    assert!(matches!(
+        StateRoot::checkout_observe(&observe(), &location),
+        Observed::Verified(_, _)
+    ));
+    let root = StateRoot::checkout_effects(&cx, machine.path(), &location)
+        .expect("the journal opens by its location");
+    drop(root);
+    assert_eq!(json_at(&binding), live, "the binding is rewritten");
+}
+
+#[test]
+fn runtime_moved_checkout_opens_at_its_new_location() {
+    // A plain `mv` of a checkout moves its state root with it. The journal opens
+    // at the new location and records the paths that are here now; the absolute
+    // Git directory path in the binding is stale evidence, not a refusal
+    // (effigy#337).
+    let space = home();
+    let first = space.path().join("first");
+    std::fs::create_dir(&first).unwrap();
+    let git = first.join(".git");
+    std::fs::create_dir(&git).unwrap();
+    let machine = home();
+    let cx = effects(EffectClass::Mutate);
+    let before = migration::CheckoutLocation {
+        root: first.clone(),
+        git_directory: Some(git),
+    };
+    let owner = ResourceId::store(
+        Scope::Checkout(StateRoot::filesystem_checkout(&observe(), &before).unwrap()),
+        "history",
+    )
+    .unwrap();
+    {
+        let root = StateRoot::checkout_effects(&cx, machine.path(), &before).unwrap();
+        let mut store = Store::open(&cx, &root).unwrap();
+        store
+            .txn(&cx, |txn| txn.resource(&owner, "test").map(|_| ()))
+            .expect("journal history");
+    }
+    let second = space.path().join("second");
+    std::fs::rename(&first, &second).unwrap();
+    let after = migration::CheckoutLocation {
+        root: second.clone(),
+        git_directory: Some(second.join(".git")),
+    };
+    assert!(matches!(
+        StateRoot::checkout_observe(&observe(), &after),
+        Observed::Verified(_, _)
+    ));
+    let root = StateRoot::checkout_effects(&cx, machine.path(), &after)
+        .expect("a moved checkout opens at its new location");
+    let reader = match Store::read(&observe(), &root) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("journal must stay readable: {other:?}"),
+    };
+    assert!(matches!(reader.resource(&owner), Observed::Verified(_, _)));
+    drop(reader);
+    assert_eq!(
+        json_at(&second.join(".effigy/state/checkout.json"))["git"][0],
+        serde_json::Value::from(
+            std::fs::canonicalize(second.join(".git"))
+                .unwrap()
+                .to_str()
+                .unwrap()
+        )
+    );
+}
+
+#[test]
+fn runtime_checkout_binding_rewritten_to_the_current_generation_is_accepted_as_is() {
+    // The 2026-10-25 stopgap rewrote real checkouts' bindings to the device
+    // number they have now. Those are used exactly as they are: no rewrite, and
+    // no replacement of the journal's own record.
+    let (checkout, machine, location) = bound_checkout();
+    let binding = checkout.path().join(".effigy/state/checkout.json");
+    let before = std::fs::read(&binding).unwrap();
+    let inode = std::fs::metadata(&binding).unwrap().ino();
+    StateRoot::checkout_effects(&effects(EffectClass::Mutate), machine.path(), &location)
+        .expect("a current binding is accepted");
+    assert_eq!(std::fs::read(&binding).unwrap(), before);
+    assert_eq!(std::fs::metadata(&binding).unwrap().ino(), inode);
+}
+
+#[test]
+fn runtime_recreated_checkout_binding_is_rewritten_not_refused() {
+    // State lives inside the checkout, so a state directory preserved across a
+    // checkout's deletion and recreation is a deliberate copy. It opens by its
+    // location and rebinds: the binding is provenance, never a gate.
+    let (checkout, machine, location) = bound_checkout();
+    let binding = checkout.path().join(".effigy/state/checkout.json");
+    let live = rebind_as_previous_boot(&binding, true);
+    let root =
+        StateRoot::checkout_effects(&effects(EffectClass::Mutate), machine.path(), &location)
+            .expect("a stale generation is rewritten, not refused");
+    drop(root);
+    assert_eq!(json_at(&binding), live);
+}
+
+#[test]
+fn runtime_renumbered_machine_home_rebinds_the_layout_marker() {
+    let machine = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::runtime_machine_effects(&cx, machine.path()).unwrap();
+    let marker = root.path().join("machine-format.json");
+    let live = json_at(&marker);
+    let mut stale = live.clone();
+    stale["home"]["device"] = json_u64(live["home"]["device"].as_u64().unwrap() + 1);
+    std::fs::write(&marker, serde_json::to_vec(&stale).unwrap()).unwrap();
+    assert!(
+        matches!(
+            StateRoot::runtime_machine_observe(&observe(), machine.path()),
+            Observed::Verified(_, _)
+        ),
+        "a renumbered machine home still routes shared facts"
+    );
+    let root = StateRoot::runtime_machine_effects(&cx, machine.path()).unwrap();
+    assert_eq!(json_at(&root.path().join("machine-format.json")), live);
 }

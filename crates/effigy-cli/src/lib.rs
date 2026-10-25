@@ -576,19 +576,10 @@ pub enum BundleSubcommand {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GatewaySubcommand {
-    Setup {
-        suffixes: Vec<String>,
-        remove: bool,
-    },
+    Setup { suffixes: Vec<String>, remove: bool },
     Up,
     Down,
     Status,
-    Repair {
-        yes: bool,
-        expect_plan: Option<String>,
-        /// Exact owner checkout the dead-owner plan is narrowed to.
-        owner_checkout: Option<String>,
-    },
     SetupTls,
 }
 

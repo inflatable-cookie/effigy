@@ -54,36 +54,21 @@ impl Record for Binding {
 
 impl StateRoot {
     /// Pure checkout routing with the current Git resolution supplied by the
-    /// engine. A copied token or retargeted `.git` file cannot select an old
-    /// journal whose original Git directory still happens to exist.
+    /// engine. The journal opens by its location; a binding or import seal that
+    /// no longer matches is stale provenance the next effect rewrites, never a
+    /// reason to hide the journal (effigy#337).
     pub fn checkout_observe(cx: &ObserveContext, location: &CheckoutLocation) -> Observed<Self> {
         let root = match Self::observe(cx, &location.root) {
             Observed::Verified(root, _) => root,
             other => return other,
         };
         let checked = (|| {
-            let expected = binding(&root, location)?;
+            // A journal opens by its location. A binding or import seal which
+            // no longer names this checkout's current generations or path is
+            // stale evidence, not a refusal: the next effect rewrites the
+            // binding and the journal keeps its runs (effigy#337).
             match authority(cx, &root) {
-                Observed::Verified(Authority::Committed { .. }, _) => {
-                    crate::migration::adoption::check_git_location(cx, &root, &expected.git)?
-                }
-                Observed::Verified(Authority::Fresh, _) => {
-                    match read_record::<Binding>(cx, root.dir(), &FileName::new(BINDING)?) {
-                        Observed::Verified(existing, _) if existing == expected => {}
-                        Observed::Absent(_)
-                            if root
-                                .dir()
-                                .entry(&FileName::new(root.database_name())?)?
-                                .is_none() => {}
-                        other => {
-                            return Err(unreadable(format!(
-                                "{}: the checkout generation disagrees with its binding ({})",
-                                location.root.display(),
-                                other.unproven()
-                            )))
-                        }
-                    }
-                }
+                Observed::Verified(Authority::Committed { .. } | Authority::Fresh, _) => {}
                 other => {
                     return Err(unreadable(format!(
                         "{}: the checkout publication could not be proved ({})",
@@ -133,10 +118,9 @@ impl StateRoot {
             .route_machine_gates(&observe, machine_home);
         let expected = binding(&root, location)?;
         match authority(&observe, &root) {
-            Observed::Verified(Authority::Committed { .. }, _) => {
-                crate::migration::adoption::check_git_location(&observe, &root, &expected.git)?;
-                return Ok(root);
-            }
+            // A sealed import opens by its location too; its recorded
+            // destination generations are provenance (effigy#337).
+            Observed::Verified(Authority::Committed { .. }, _) => return Ok(root),
             Observed::Verified(Authority::Fresh, _) => {}
             other => {
                 return Err(unreadable(format!(
@@ -147,16 +131,23 @@ impl StateRoot {
             }
         }
         let name = FileName::new(BINDING)?;
-        match read_record::<Binding>(&observe, root.dir(), &name) {
-            Observed::Verified(existing, _) if existing == expected => return Ok(root),
-            Observed::Absent(_) => {}
-            other => {
-                return Err(unreadable(format!(
-                    "{}: the checkout generation disagrees with its binding ({})",
-                    location.root.display(),
-                    other.unproven()
-                )))
-            }
+        // What the state root records about itself. A stale or unreadable
+        // record is provenance that went bad, never a refusal: it is rewritten
+        // below (effigy#337). Only absence is different, because a database this
+        // binary never bound is still not adopted silently.
+        #[derive(PartialEq)]
+        enum Recorded {
+            Current,
+            Stale,
+            Absent,
+        }
+        let recorded = |cx: &ObserveContext| match read_record::<Binding>(cx, root.dir(), &name) {
+            Observed::Verified(existing, _) if existing == expected => Recorded::Current,
+            Observed::Verified(..) | Observed::Unknown(_) => Recorded::Stale,
+            Observed::Absent(_) => Recorded::Absent,
+        };
+        if recorded(&observe) == Recorded::Current {
+            return Ok(root);
         }
         // All first durable initializers meet the same filesystem scope,
         // independently of whether a persisted token exists yet.
@@ -168,38 +159,29 @@ impl StateRoot {
             "checkout-binding",
         )?;
         let guard = Gate::acquire(cx, &root, &[id], Wait::FailFast)?;
-        match read_record::<Binding>(&observe, root.dir(), &name) {
-            Observed::Verified(existing, _) if existing == expected => {}
-            Observed::Absent(_) => {
-                if root
+        let current = recorded(&observe);
+        if current != Recorded::Current {
+            if current == Recorded::Absent
+                && root
                     .dir()
                     .entry(&FileName::new(root.database_name())?)?
                     .is_some()
-                {
-                    return Err(unreadable(
-                        "unbound checkout database; explicit migration is required",
-                    ));
-                }
-                let bytes =
-                    serde_json::to_vec(&expected).map_err(|error| unreadable(error.to_string()))?;
-                atomic_replace(
-                    cx,
-                    &guard,
-                    root.dir(),
-                    &name,
-                    &bytes,
-                    ReplaceOpts::default(),
-                )?;
+            {
+                return Err(unreadable(
+                    "unbound checkout database; explicit migration is required",
+                ));
             }
-            other => {
-                return Err(unreadable(format!(
-                    "{}: the checkout generation disagrees with its binding ({})",
-                    location.root.display(),
-                    other.unproven()
-                )))
-            }
+            let bytes =
+                serde_json::to_vec(&expected).map_err(|error| unreadable(error.to_string()))?;
+            atomic_replace(
+                cx,
+                &guard,
+                root.dir(),
+                &name,
+                &bytes,
+                ReplaceOpts::default(),
+            )?;
         }
-        verify(&observe, &root)?;
         Ok(root)
     }
 
@@ -264,7 +246,11 @@ fn format_gate() -> Result<ResourceId, StoreError> {
 }
 fn machine_format(cx: &ObserveContext, root: &StateRoot) -> Result<bool, StoreError> {
     match read_record::<MachineFormat>(cx, root.dir(), &FileName::new(MACHINE_FORMAT)?) {
-        Observed::Verified(record, _) if record.home == root.owner.identity()? => Ok(true),
+        // The marker records the home directory's generation for diagnostics.
+        // A home whose generation moved since the record was written (a reboot
+        // renumbers its volume) is rebound by the caller, never refused
+        // (effigy#337).
+        Observed::Verified(record, _) => Ok(record.home == root.owner.identity()?),
         Observed::Absent(_) => Ok(false),
         other => Err(unreadable(format!(
             "{}: the machine format binding could not be read ({})",
@@ -280,19 +266,15 @@ pub(super) fn binding_identity(
 ) -> Result<Option<CheckoutId>, StoreError> {
     match read_record::<Binding>(cx, root.dir(), &FileName::new(BINDING)?) {
         Observed::Verified(binding, _) => {
-            verify(cx, root)?;
-            super::checkout::filesystem_identity(
-                binding.checkout,
-                binding.git.map(|(_, identity)| identity),
-            )
-            .map(Some)
+            // The binding names which Git directory this checkout journals. The
+            // gate identity is the location, so a reboot that renumbers a volume
+            // cannot split a checkout's gates (effigy#337).
+            let git = binding.git.map(|(path, _)| path);
+            super::checkout::filesystem_identity(root.owner.path(), git.as_deref()).map(Some)
         }
-        Observed::Absent(_) => Ok(None),
-        other => Err(unreadable(format!(
-            "{}: the checkout binding could not be read ({})",
-            root.path().display(),
-            other.unproven()
-        ))),
+        // An unreadable binding proves nothing about the location either: the
+        // caller falls through to the seal, then to the checkout path alone.
+        Observed::Absent(_) | Observed::Unknown(_) => Ok(None),
     }
 }
 
@@ -425,31 +407,6 @@ fn cutover_root(
             ))
         }
         other => Ok(other),
-    }
-}
-
-pub(crate) fn verify(cx: &ObserveContext, root: &StateRoot) -> Result<(), StoreError> {
-    if root.is_machine() || !root.requires_adoption() {
-        return Ok(());
-    }
-    match read_record::<Binding>(cx, root.dir(), &FileName::new(BINDING)?) {
-        Observed::Absent(_) => Ok(()), // primitive fixtures and import seals
-        Observed::Verified(binding, _) => {
-            if root.owner.identity()? != binding.checkout {
-                return Err(unreadable("checkout directory generation changed"));
-            }
-            if let Some((path, identity)) = binding.git {
-                if DirFd::open(&path)?.identity()? != identity {
-                    return Err(unreadable("checkout Git directory generation changed"));
-                }
-            }
-            Ok(())
-        }
-        other => Err(unreadable(format!(
-            "{}: the checkout binding could not be read ({})",
-            root.path().display(),
-            other.unproven()
-        ))),
     }
 }
 

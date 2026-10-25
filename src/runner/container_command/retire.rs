@@ -462,11 +462,13 @@ fn observe_routes(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerE
     let path = super::gateway_registration::gateway_route_table_path()?;
     let snapshot = EndpointStore::for_routes(&path).read_compatible()?;
     Ok(snapshot
-        .owned_domains(&record.checkout, Some(&record.token))?
+        .routes()?
+        .all_routes()
         .into_iter()
-        .map(|domain| ObservedResource {
+        .filter(|route| route.project == record.checkout)
+        .map(|route| ObservedResource {
             kind: ObservedKind::Route,
-            name: domain,
+            name: route.domain.clone(),
             scope_label: Some(record.token.clone()),
             project_label: Some(record.checkout.clone()),
             persist: false,
@@ -552,7 +554,7 @@ fn observe_tls_certs(record: &ScopeRecord) -> Result<Vec<ObservedResource>, Runn
                 return false;
             }
             match table.lookup(domain) {
-                Some(route) => owned_by(route, &record.checkout, Some(&record.token)),
+                Some(route) => owned_by(route, &record.checkout),
                 None => true,
             }
         })
@@ -664,7 +666,6 @@ fn delete_routes_and_owned_certs(record: &ScopeRecord) -> Result<bool, RunnerErr
     cleanup_owned_routes_and_certs(
         &path,
         &record.checkout,
-        Some(&record.token),
         None,
         &record.pending_tls_certs,
         |domain| match delete_tls_cert(domain) {
@@ -680,9 +681,6 @@ fn delete_routes_and_owned_certs(record: &ScopeRecord) -> Result<bool, RunnerErr
         },
     )
     .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    EndpointStore::for_routes(&path).edit(None, |snapshot| {
-        snapshot.release_domains(&record.checkout, Some(&record.token))
-    })?;
     Ok(true)
 }
 
@@ -742,26 +740,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn retirement_observes_and_releases_a_withdrawn_domain() {
+    fn retirement_observes_and_releases_the_checkouts_routes() {
         let root = tempfile::tempdir().unwrap();
         let _home = crate::runner::gateway_command::set_test_gateway_home(root.path());
         let path = super::super::gateway_registration::gateway_route_table_path().unwrap();
-        let store = EndpointStore::for_routes(&path);
         let record = sample_record();
-        store
-            .edit(None, |snapshot| {
-                snapshot.reserve_domain("dormant.test", &record.checkout, Some(&record.token), None)
-            })
-            .unwrap();
+        effigy_gateway::registration::register_route(
+            &path,
+            &effigy_gateway::registration::RouteRegistration {
+                domain: "dormant.test".to_owned(),
+                target: Some("127.0.0.1:19900".to_owned()),
+                dns_ip: None,
+                tcp_port: None,
+                tcp_target: None,
+                tls: false,
+                project_path: record.checkout.clone(),
+                source: effigy_gateway::routes::RouteSource::Container,
+            },
+        )
+        .unwrap();
         assert_eq!(observe_routes(&record).unwrap().len(), 1);
         assert!(delete_routes_and_owned_certs(&record).unwrap());
         assert!(observe_routes(&record).unwrap().is_empty());
-        assert!(store
-            .read_compatible()
-            .unwrap()
-            .quarantined
-            .values()
-            .any(|q| q.kind == "domain"));
+        let snapshot = EndpointStore::for_routes(&path).read_compatible().unwrap();
+        assert!(snapshot.routes().unwrap().is_empty());
+
+        // Retire followed by an immediate claim of the same domain succeeds:
+        // there is no withdrawn claim or quarantine left behind.
+        effigy_gateway::registration::register_route(
+            &path,
+            &effigy_gateway::registration::RouteRegistration {
+                domain: "dormant.test".to_owned(),
+                target: Some("127.0.0.1:19901".to_owned()),
+                dns_ip: None,
+                tcp_port: None,
+                tcp_target: None,
+                tls: false,
+                project_path: "/successor".to_owned(),
+                source: effigy_gateway::routes::RouteSource::Container,
+            },
+        )
+        .expect("the retired checkout's domain is free at once");
     }
 
     #[test]

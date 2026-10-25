@@ -270,7 +270,9 @@ fn handle_dns_query(
             let resolved_ip = route_dns_ip.unwrap_or(config.resolve_to);
             debug!(domain = %query_domain, "DNS: resolving to {}", resolved_ip);
 
-            let record = Record::from_rdata(name.clone(), 60, RData::A(A(resolved_ip)));
+            // A one-second TTL lets a domain move to another checkout
+            // immediately; the route table is the claim, so no reuse window.
+            let record = Record::from_rdata(name.clone(), 1, RData::A(A(resolved_ip)));
             response.add_answer(record);
             answered = true;
             resolved_route = true;

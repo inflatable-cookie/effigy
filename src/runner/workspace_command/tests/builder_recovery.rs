@@ -645,8 +645,7 @@ fn preserve_tree(dir: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
 fn write_legacy_partial_marker(root: &Path, policy: &effigy_containers::EffectiveContainerPolicy) {
     let dir = crate::runner::environment::legacy_marker_dir(root, policy);
     std::fs::create_dir_all(&dir).unwrap();
-    let context = effigy_containers::policy::admission::generation_context(policy)
-        .unwrap_or_else(|_| json!({"schema": "effigy.container-partial-activation.v2"}));
+    let context = json!({"schema": "effigy.container-partial-activation.v2"});
     std::fs::write(
         dir.join(format!("{}.partial.json", policy.name)),
         serde_json::to_vec_pretty(&context).unwrap(),
@@ -787,8 +786,6 @@ fn assert_invalid_builder_refuses_before_build(case: &str) {
         "missing_scope" => fixture.mutate(|row| { row["Config"]["Labels"].as_object_mut().unwrap().remove("com.effigy.scope"); }),
         "stopped" => fixture.mutate(|row| { row["State"]["Running"] = json!(false); row["State"]["Status"] = json!("exited"); }),
         "ports" => fixture.mutate(|row| row["NetworkSettings"]["Ports"] = json!({"80/tcp": [{"HostIp": "127.0.0.1", "HostPort": "12345"}]})),
-        "bad_id" => fixture.mutate(|row| row["Id"] = json!("abc")),
-        "missing" => std::fs::remove_file(fixture.root.join("state/identity.json")).unwrap(),
         "bad_bind" => fixture.mutate(|row| row["Mounts"][0]["Source"] = json!(fixture.root.join("state"))),
         "readonly_bind" => fixture.mutate(|row| row["Mounts"][0]["RW"] = json!(false)),
         "missing_bind" => fixture.mutate(|row| row["Mounts"] = json!([])),
@@ -801,6 +798,29 @@ fn assert_invalid_builder_refuses_before_build(case: &str) {
         "{case}: {error}"
     );
     fixture.assert_preserved();
+}
+
+/// An owned builder whose canonical identity cannot be read (a deleted or
+/// restarted runtime profile) is stopped and recreated by the next build,
+/// never refused for a manual `down`.
+#[test]
+fn an_owned_builder_with_a_bad_or_missing_identity_is_recreated() {
+    let _lock = crate::contract_test_support::lock_test();
+    for case in ["bad_id", "missing"] {
+        let fixture = Fixture::new(true, true, "docker");
+        match case {
+            "bad_id" => fixture.mutate(|row| row["Id"] = json!("abc")),
+            _ => std::fs::remove_file(fixture.root.join("state/identity.json")).unwrap(),
+        }
+        fixture
+            .task()
+            .unwrap_or_else(|error| panic!("{case}: {error}"));
+        assert!(
+            fixture.root.join("state/build-effect").exists(),
+            "{case}: the recreated builder built"
+        );
+        fixture.assert_preserved();
+    }
 }
 
 // Each adversarial identity gets its own nextest deadline and failure name.
@@ -826,8 +846,6 @@ mod invalid_builders {
         malformed_list,
         change_name,
         unlabelled,
-        bad_id,
-        missing,
         bad_bind,
         readonly_bind,
         missing_bind,
@@ -1022,18 +1040,6 @@ fn extra_declared_service_refuses_and_legacy_receipts_stay_inert() {
         }
         fixture.assert_preserved();
     }
-}
-
-#[test]
-fn concurrent_admission_or_source_change_refuses_before_exec() {
-    let _lock = crate::contract_test_support::lock_test();
-    let fixture = Fixture::new(true, true, "docker");
-    fixture.mode("change_inputs");
-    fixture
-        .task()
-        .expect_err("a changing context cannot authorize a build");
-    assert!(!fixture.root.join("state/build-effect").exists());
-    fixture.assert_preserved();
 }
 
 #[test]

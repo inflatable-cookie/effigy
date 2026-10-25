@@ -130,8 +130,17 @@ impl std::error::Error for FsError {}
 /// Filesystem identity of a verified open directory, independent of its path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirectoryIdentity {
+    /// The mount-time device number (`st_dev`). macOS assigns it at every
+    /// mount, so it is never evidence across a reboot (effigy#337).
     pub device: u64,
     pub inode: u64,
+}
+impl DirectoryIdentity {
+    /// Whether both identities name the same directory object. Only the inode
+    /// is compared: a reboot renumbers the device of an unchanged directory.
+    pub fn is_same_directory(&self, other: &Self) -> bool {
+        self.inode == other.inode
+    }
 }
 
 /// A single path component: no separator, NUL, `.` or `..`.

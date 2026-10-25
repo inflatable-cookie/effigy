@@ -79,14 +79,14 @@ fn import_is_pure_until_mutation_idempotent_and_preserves_every_field() {
     }
 }
 #[test]
-fn persistent_owners_survive_prepare_and_releases_avoid_quarantined_ips_and_ranges() {
+fn persistent_owners_survive_prepare_and_releases_are_immediately_reusable() {
     let (_dir, store) = fixture();
     let first = store.reserve_loopback("first", "/owner-a").unwrap();
     assert_eq!(store.retain_loopback("first", "/owner-a").unwrap(), first);
     assert!(store.release_loopback("first", "/foreign").is_err());
     assert!(store.release_loopback("first", "/owner-a").unwrap());
     let second = store.reserve_loopback("second", "/owner-b").unwrap();
-    assert_ne!(first, second);
+    assert_eq!(first, second, "a released address is immediately reusable");
     assert!(store
         .edit(None, |s| {
             let mut registry = s.loopback()?;
@@ -116,7 +116,11 @@ fn persistent_owners_survive_prepare_and_releases_avoid_quarantined_ips_and_rang
     assert!(store.release_ports("first", "/foreign").is_err());
     store.release_ports("first", "/first").unwrap();
     let next = store.reserve_ports(&[request("next")]).unwrap();
-    assert!(next.get("next").unwrap().base >= first.base + first.range);
+    assert_eq!(
+        next.get("next").unwrap().base,
+        first.base,
+        "a released range is immediately reusable"
+    );
     assert_eq!(next.get("next").unwrap().range, 100);
 }
 #[test]
@@ -306,8 +310,32 @@ fn redacted_operator_files_preserve_every_mapping() {
     );
 }
 
+/// A store written before v0.15 still decodes: its withdrawn domain owners and
+/// released-endpoint quarantine are read and dropped.
 #[test]
-fn withdrawal_retains_domain_across_restart_and_retirement_quarantines_release() {
+fn a_pre_v015_snapshot_ignores_withdrawn_claims_and_quarantine() {
+    let value = json!({
+        "schema": 1,
+        "revision": 3,
+        "documents": {
+            "routes": {"routes": {}},
+            "loopback": {"assignments": {}},
+            "ports": {"allocations": {}},
+        },
+        "imported_sha256": {},
+        "domains": {"gone.test": {"project": "/gone", "scope": null, "listener": null, "route": null}},
+        "quarantined": {"endpoint:port:5432": {"kind": "port", "key": "5432", "boot": "b", "nanos": 1}},
+    });
+    let snapshot =
+        super::snapshot::EndpointSnapshot::from_value(value).expect("a pre-0.15 snapshot decodes");
+    assert!(snapshot.claims().unwrap().is_empty());
+    let written = serde_json::to_value(&snapshot).unwrap();
+    assert!(written.get("domains").is_none());
+    assert!(written.get("quarantined").is_none());
+}
+
+#[test]
+fn a_route_is_the_whole_claim_and_removing_it_frees_the_domain() {
     let (_dir, store) = fixture();
     inputs(&store, documents());
     store.import().unwrap();
@@ -317,43 +345,41 @@ fn withdrawal_retains_domain_across_restart_and_retirement_quarantines_release()
             Ok(())
         })
         .unwrap();
-    let withdrawn = store.read_compatible().unwrap();
-    assert!(withdrawn.routes().unwrap().is_empty());
-    assert!(withdrawn
-        .claims()
-        .unwrap()
-        .values()
-        .any(|(_, details)| details["kind"] == "domain"));
-    store
-        .edit(None, |snapshot| {
-            snapshot.reserve_domain("import.test", "/foreign", None, None)
-        })
-        .expect_err("withdrawal does not end persistent ownership");
+    let freed = store.read_compatible().unwrap();
+    assert!(freed.routes().unwrap().is_empty());
+    assert!(
+        !freed
+            .claims()
+            .unwrap()
+            .values()
+            .any(|(_, details)| details["kind"] == "domain"),
+        "no withdrawn claim outlives its route"
+    );
+    // Another checkout takes the freed domain at once.
     let route: crate::routes::Route =
         serde_json::from_value(documents()[0]["routes"]["import.test"].clone()).unwrap();
+    let mut route = crate::routes::Route {
+        project: "/successor".into(),
+        ..route
+    };
+    route.target = Some("127.0.0.1:8101".into());
     store
         .routes(|table| -> Result<(), GatewayError> {
             table.upsert(route);
             Ok(())
         })
         .unwrap();
-    assert_eq!(store.read_compatible().unwrap().routes().unwrap().len(), 1);
-    store
-        .edit(None, |snapshot| {
-            snapshot.release_domains("/redacted/project", None)
-        })
-        .unwrap();
-    assert!(store
-        .read_compatible()
-        .unwrap()
-        .routes()
-        .unwrap()
-        .is_empty());
-    store
-        .edit(None, |snapshot| {
-            snapshot.reserve_domain("import.test", "/foreign", None, None)
-        })
-        .expect_err("explicit release commits quarantine with removal");
+    assert_eq!(
+        store
+            .read_compatible()
+            .unwrap()
+            .routes()
+            .unwrap()
+            .lookup("import.test")
+            .unwrap()
+            .project,
+        "/successor"
+    );
 }
 
 #[test]
@@ -387,7 +413,7 @@ fn live_reload_uses_committed_store_and_ignores_backup_edits() {
 }
 
 #[test]
-fn withdrawn_tcp_alias_keeps_address_and_port_claims_until_retirement() {
+fn removing_a_route_frees_its_address_and_port_claims() {
     let (_dir, store) = fixture();
     let mut docs = documents();
     docs[0]["routes"]["import.test"]["dns_ip"] = json!("127.0.0.1");
@@ -395,41 +421,27 @@ fn withdrawn_tcp_alias_keeps_address_and_port_claims_until_retirement() {
     docs[0]["routes"]["import.test"]["tcp_target"] = json!("127.0.0.1:15432");
     inputs(&store, docs);
     let before = store.import().unwrap();
-    let route = before
-        .routes()
+    assert!(before
+        .claims()
         .unwrap()
-        .lookup("import.test")
-        .unwrap()
-        .clone();
+        .values()
+        .any(|(_, details)| details["kind"] == "port" && details["key"] == "5432"));
     store
         .routes(|table| -> Result<(), GatewayError> {
             table.deregister("import.test")?;
             Ok(())
         })
         .unwrap();
-    let withdrawn = store.read_compatible().unwrap();
-    assert!(withdrawn.routes().unwrap().is_empty());
-    assert_eq!(
-        withdrawn.claims().unwrap().keys().collect::<Vec<_>>(),
-        before.claims().unwrap().keys().collect::<Vec<_>>()
+    let after = store.read_compatible().unwrap();
+    assert!(after.routes().unwrap().is_empty());
+    assert!(
+        !after
+            .claims()
+            .unwrap()
+            .values()
+            .any(|(_, details)| details["kind"] == "port" && details["key"] == "5432"),
+        "a removed route releases its port claim"
     );
-    assert!(withdrawn.quarantined.is_empty());
-    store
-        .routes(|table| -> Result<(), GatewayError> {
-            table.upsert(route.clone());
-            Ok(())
-        })
-        .unwrap();
-    store
-        .edit(None, |snapshot| snapshot.release_route(&route))
-        .unwrap();
-    assert!(store
-        .read_compatible()
-        .unwrap()
-        .owned_domains("/redacted/project", None)
-        .unwrap()
-        .is_empty());
-    assert!(store.read_compatible().unwrap().port_unavailable(5432));
 }
 
 #[test]
@@ -447,7 +459,11 @@ fn reading_a_committed_loopback_assignment_does_not_admit_writer_runs() {
     );
     assert!(store.reserve_loopback("policy-read", "/foreign").is_err());
     store.release_loopback("policy-read", "/owner").unwrap();
-    assert_ne!(store.reserve_loopback("replacement", "/other").unwrap(), ip);
+    assert_eq!(
+        store.reserve_loopback("replacement", "/other").unwrap(),
+        ip,
+        "a released address is immediately reusable"
+    );
 }
 
 mod downgrade;
@@ -522,20 +538,14 @@ fn machine_store_write_budget() {
 }
 
 #[test]
-fn an_unchanged_route_reserved_by_a_successor_never_refuses_another_projects_write() {
+fn an_unchanged_dead_route_never_refuses_another_projects_write() {
     let (_dir, store) = fixture();
     let _ = inputs(&store, documents());
-    let imported = store.import().unwrap();
-    // A successor reserved the domain while the old owner's route still sits in
-    // the table (a deleted checkout's stale route).
+    store.import().unwrap();
+    // The imported route's checkout does not exist, so a different checkout's
+    // write of its own domain is never blocked by it.
     store
-        .edit(Some(imported.revision), |snapshot| {
-            snapshot.reserve_domain("import.test", "/successor", None, None)
-        })
-        .unwrap();
-    let current = store.read_compatible().unwrap();
-    store
-        .edit(Some(current.revision), |snapshot| {
+        .edit(None, |snapshot| {
             let mut table = snapshot.routes()?;
             let mut other = table.lookup("import.test").cloned().expect("stale route");
             other.domain = "other.test".into();

@@ -215,129 +215,49 @@ fn prepare_gateway_state_leaves_endpoint_import_to_the_writer() {
 }
 
 #[test]
-fn gateway_repair_plan_marks_inactive_and_missing_target_routes_repairable() {
-    let root = tempfile::tempdir().expect("tempdir");
-    let live_project = root.path().join("live");
-    let stale_project = root.path().join("stale");
-    std::fs::create_dir_all(&live_project).expect("mkdir live");
-    std::fs::create_dir_all(&stale_project).expect("mkdir stale");
-
+fn gateway_tcp_bind_conflicts_lists_only_divergent_targets() {
+    let route = |domain: &str, target: &str| {
+        (
+            domain.to_owned(),
+            Route {
+                domain: domain.to_owned(),
+                target: None,
+                dns_ip: Some("127.1.0.7".parse().expect("ip")),
+                tcp_port: Some(5432),
+                tcp_target: Some(target.to_owned()),
+                source: RouteSource::Container,
+                project: "/tmp/app".to_owned(),
+                tls: false,
+                scope: None,
+                managed_listener: None,
+                registered: Utc::now(),
+            },
+        )
+    };
     let table = RouteTable {
         revision: 0,
         routes: [
-            (
-                "postgres.live.test".to_owned(),
-                Route {
-                    domain: "postgres.live.test".to_owned(),
-                    target: None,
-                    dns_ip: Some("127.1.0.7".parse().expect("ip")),
-                    tcp_port: Some(5432),
-                    tcp_target: Some("127.0.0.1:15432".to_owned()),
-                    source: RouteSource::Container,
-                    project: live_project.display().to_string(),
-                    tls: false,
-                    scope: None,
-                    managed_listener: None,
-                    registered: Utc::now(),
-                },
-            ),
-            (
-                "postgres.stale.test".to_owned(),
-                Route {
-                    domain: "postgres.stale.test".to_owned(),
-                    target: None,
-                    dns_ip: Some("127.1.0.7".parse().expect("ip")),
-                    tcp_port: Some(5432),
-                    tcp_target: Some("127.0.0.1:25432".to_owned()),
-                    source: RouteSource::Container,
-                    project: stale_project.display().to_string(),
-                    tls: false,
-                    scope: None,
-                    managed_listener: None,
-                    registered: Utc::now(),
-                },
-            ),
-            (
-                "postgres.missing.test".to_owned(),
-                Route {
-                    domain: "postgres.missing.test".to_owned(),
-                    target: None,
-                    dns_ip: Some("127.1.0.7".parse().expect("ip")),
-                    tcp_port: Some(5432),
-                    tcp_target: None,
-                    source: RouteSource::Container,
-                    project: "/tmp/missing".to_owned(),
-                    tls: false,
-                    scope: None,
-                    managed_listener: None,
-                    registered: Utc::now(),
-                },
-            ),
+            route("postgres.one.test", "127.0.0.1:15432"),
+            route("postgres.two.test", "127.0.0.1:25432"),
         ]
         .into_iter()
         .collect(),
     };
+    let conflicts = gateway_tcp_bind_conflicts(&table);
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].bind_port, 5432);
+    assert_eq!(conflicts[0].routes.len(), 2);
 
-    let active = [live_project.display().to_string()].into_iter().collect();
-    let plan = gateway_repair_plan(&table, Some(active));
-
-    assert_eq!(plan.conflicts.len(), 1);
-    assert!(plan
-        .repairable_domains
-        .contains(&"postgres.stale.test".to_owned()));
-    assert!(plan
-        .repairable_domains
-        .contains(&"postgres.missing.test".to_owned()));
-    assert!(!plan
-        .repairable_domains
-        .contains(&"postgres.live.test".to_owned()));
-}
-
-#[test]
-fn gateway_repair_plan_ignores_duplicate_bind_when_upstream_matches() {
-    let table = RouteTable {
+    let matching = RouteTable {
         revision: 0,
         routes: [
-            (
-                "postgres.app1.test".to_owned(),
-                Route {
-                    domain: "postgres.app1.test".to_owned(),
-                    target: None,
-                    dns_ip: Some("127.1.0.7".parse().expect("ip")),
-                    tcp_port: Some(5432),
-                    tcp_target: Some("127.0.0.1:15432".to_owned()),
-                    source: RouteSource::Container,
-                    project: "/tmp/app1".to_owned(),
-                    tls: false,
-                    scope: None,
-                    managed_listener: None,
-                    registered: Utc::now(),
-                },
-            ),
-            (
-                "postgres.app2.test".to_owned(),
-                Route {
-                    domain: "postgres.app2.test".to_owned(),
-                    target: None,
-                    dns_ip: Some("127.1.0.7".parse().expect("ip")),
-                    tcp_port: Some(5432),
-                    tcp_target: Some("127.0.0.1:15432".to_owned()),
-                    source: RouteSource::Container,
-                    project: "/tmp/app2".to_owned(),
-                    tls: false,
-                    scope: None,
-                    managed_listener: None,
-                    registered: Utc::now(),
-                },
-            ),
+            route("postgres.one.test", "127.0.0.1:15432"),
+            route("postgres.two.test", "127.0.0.1:15432"),
         ]
         .into_iter()
         .collect(),
     };
-
-    let plan = gateway_repair_plan(&table, None);
-    assert!(plan.conflicts.is_empty());
-    assert!(plan.repairable_domains.is_empty());
+    assert!(gateway_tcp_bind_conflicts(&matching).is_empty());
 }
 
 fn tcp_alias_route(domain: &str, tcp_target: Option<&str>) -> (String, Route) {
@@ -2005,147 +1925,6 @@ fn private_status_json_refusal_carries_observation_labels() {
     assert_eq!(refusal["pid"], 4242);
     assert_eq!(refusal["observations"]["record"], "legacy-pid-only");
     assert_eq!(refusal["headless"]["satisfied"], false);
-}
-
-fn dead_loopback_report(
-    assignment_decision: effigy_containers::Decision,
-    route_decision: effigy_containers::Decision,
-    claim_decision: effigy_containers::Decision,
-    applied: bool,
-) -> effigy_containers::LoopbackReclaimReport {
-    let assignment = effigy_containers::LoopbackRecoveryRow {
-        identity: "project:gone:/gone".to_owned(),
-        ip: "127.1.0.9".parse().expect("address"),
-        scope: "/gone".to_owned(),
-        owner_path: Some("/gone".to_owned()),
-        path_state: effigy_containers::PathState::Missing,
-        decision: assignment_decision,
-        reason: "owner path is missing".to_owned(),
-    };
-    let route = effigy_containers::StaleRouteRow {
-        domain: "gone.test".to_owned(),
-        project: "/gone".to_owned(),
-        scope: None,
-        source: effigy_gateway::routes::RouteSource::Container,
-        target: Some("127.0.0.1:19900".to_owned()),
-        dns_ip: Some("127.1.0.9".parse().expect("address")),
-        tcp_port: Some(8109),
-        path_state: effigy_containers::PathState::Missing,
-        decision: route_decision,
-        reason: "project path is missing".to_owned(),
-    };
-    let claim = effigy_containers::DomainClaimRow {
-        domain: "withdrawn.test".to_owned(),
-        project: "/gone".to_owned(),
-        scope: None,
-        listener: None,
-        path_state: effigy_containers::PathState::Missing,
-        decision: claim_decision,
-        reason: "owner path is missing".to_owned(),
-    };
-    let plan = effigy_containers::LoopbackRecoveryPlan {
-        assignments: vec![assignment],
-        routes: vec![route],
-        domain_claims: vec![claim],
-        owner_checkout: applied.then(|| "/gone".to_owned()),
-        global_hold: None,
-        unreadable_checkouts: Vec::new(),
-        digest: "digest".to_owned(),
-    };
-    let reclaiming = assignment_decision == effigy_containers::Decision::Reclaim;
-    let edit = if applied && reclaiming {
-        effigy_gateway::loopback::reclaim::DeadClaimOutcome {
-            released_assignments: vec!["project:gone:/gone".to_owned()],
-            released_routes: vec!["gone.test".to_owned()],
-            released_domains: vec!["withdrawn.test".to_owned()],
-            released_addresses: vec!["127.1.0.9".parse().expect("address")],
-            backup: Some(std::path::PathBuf::from(
-                "/gateway/loopback-dead-reclaim-backup-1.json",
-            )),
-            sha256_before: Some("before".to_owned()),
-            sha256_after: Some("after".to_owned()),
-        }
-    } else {
-        Default::default()
-    };
-    effigy_containers::LoopbackReclaimReport {
-        mode: if applied { "apply" } else { "preview" },
-        gateway_dir: std::path::PathBuf::from("/gateway"),
-        plan,
-        edit,
-    }
-}
-
-#[test]
-fn gateway_repair_preview_lists_dead_owners_with_their_reasons() {
-    let report = dead_loopback_report(
-        effigy_containers::Decision::Reclaim,
-        effigy_containers::Decision::Reclaim,
-        effigy_containers::Decision::Reclaim,
-        false,
-    );
-    let lines = render_dead_loopback_preview(&report).join("\n");
-
-    assert!(lines.contains("dead owners: 3 reclaimable, 0 held, 0 retained"));
-    assert!(lines.contains(
-        "repair would release 1 loopback assignment(s), 1 stale container route(s) and 1 withdrawn domain claim(s)"
-    ));
-    assert!(lines
-        .contains("- assignment 127.1.0.9 project:gone:/gone (reclaim, owner path is missing)"));
-    assert!(lines.contains("- route gone.test (reclaim, project path is missing)"));
-    assert!(lines.contains("- domain claim withdrawn.test (reclaim, owner path is missing)"));
-    assert!(lines.contains("--expect-plan digest"));
-    assert!(!lines.contains("backup"));
-}
-
-#[test]
-fn gateway_repair_preview_names_the_owner_filter_in_the_apply_command() {
-    let report = dead_loopback_report(
-        effigy_containers::Decision::Reclaim,
-        effigy_containers::Decision::Reclaim,
-        effigy_containers::Decision::Reclaim,
-        true,
-    );
-    let lines = render_dead_loopback_preview(&report).join("\n");
-
-    assert!(lines.contains("dead-owner plan limited to checkout /gone"));
-    assert!(
-        lines.contains("effigy gateway repair --owner-checkout /gone --yes --expect-plan digest"),
-        "{lines}"
-    );
-}
-
-#[test]
-fn gateway_repair_apply_reports_released_entries_and_the_backup() {
-    let report = dead_loopback_report(
-        effigy_containers::Decision::Reclaim,
-        effigy_containers::Decision::Reclaim,
-        effigy_containers::Decision::Reclaim,
-        true,
-    );
-    let lines = render_dead_loopback_apply(&report).join("\n");
-
-    assert!(lines.contains(
-        "released 1 dead loopback assignment(s), 1 stale container route(s) and 1 withdrawn domain claim(s)"
-    ));
-    assert!(lines.contains("- assignment project:gone:/gone"));
-    assert!(lines.contains("- route gone.test"));
-    assert!(lines.contains("- domain claim withdrawn.test"));
-    assert!(lines.contains("backup /gateway/loopback-dead-reclaim-backup-1.json"));
-}
-
-#[test]
-fn gateway_repair_preview_reports_nothing_reclaimable_when_every_owner_is_live() {
-    let report = dead_loopback_report(
-        effigy_containers::Decision::Retain,
-        effigy_containers::Decision::Retain,
-        effigy_containers::Decision::Retain,
-        false,
-    );
-    let lines = render_dead_loopback_preview(&report).join("\n");
-
-    assert!(lines.contains("dead owners: 0 reclaimable, 0 held, 3 retained"));
-    assert!(lines.contains("no dead owners were identified"));
 }
 
 #[test]
