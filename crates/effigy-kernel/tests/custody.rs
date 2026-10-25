@@ -1220,7 +1220,6 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
             payload: home.path().as_os_str().as_encoded_bytes().to_vec(),
             cwd: home.path().into(),
             env: vec![],
-            inheritance: SupervisorInheritance::ClientLease,
             handoff: None,
         },
         &Executable::capture(&fixture()).unwrap(),
@@ -1243,7 +1242,6 @@ fn custody_engine_frames_round_trip_and_a_second_start_is_refused() {
             payload: home.path().as_os_str().as_encoded_bytes().to_vec(),
             cwd: home.path().into(),
             env: vec![],
-            inheritance: SupervisorInheritance::ClientLease,
             handoff: None,
         },
         &Executable::capture(&fixture()).unwrap(),
@@ -1869,99 +1867,38 @@ fn foreground_auxiliary_custody_is_not_a_completion_obligation() {
     assert!(!root.path().join("kernel.db").exists());
 }
 
+/// Q-011: custody hands a workload no parent capability, leaves slot 9 empty
+/// and does not stop it opening a durable journal of its own. A nested run is
+/// an ordinary invocation.
 #[test]
-fn inheritance_custody_exports_one_reader_to_sibling_foreground_children() {
+fn a_foreground_child_receives_no_parent_capability_and_opens_its_own_journal() {
     let home = home();
     let cx = context();
-    let root = StateRoot::effects(&cx, home.path()).unwrap();
-    let mut run = foreground_begin(&cx, &root);
-    let lease = effigy_kernel::inheritance::MemoryLease::new(
+    let root = StateRoot::foreground_effects(
         &cx,
-        &serde_json::json!({"admitted": true, "class": "foreground"}),
+        &effigy_kernel::migration::CheckoutLocation {
+            root: home.path().into(),
+            git_directory: None,
+        },
     )
     .unwrap();
-    let reader = lease.capability();
-    let mut children = Vec::new();
-    for _ in 0..2 {
-        let mut spec = spec(home.path(), "unused");
-        spec.argv = vec![fixture().into_os_string(), "inheritance-check".into()];
-        children.push(
-            Custody::spawn_foreground_with_lease(&mut run, spec, &cx, &reader, true, None).unwrap(),
-        );
-    }
-    for child in &mut children {
-        let exit = child.wait(cx.operation()).verified().copied().unwrap();
-        assert_eq!(exit.code, 0);
-        child.complete_foreground(&mut run, exit).unwrap();
-    }
-    run.finish(WorkloadOutcome::Succeeded).unwrap();
-    assert_eq!(
-        run.settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
-            .unwrap()
-            .cleanup(),
-        CleanupOutcome::Complete
-    );
-    assert!(!root.path().join("kernel.db").exists());
-    assert!(!root.path().join("runs").exists());
-    assert!(!root.path().join("sock").exists());
-}
-
-#[test]
-fn inheritance_foreground_class_refuses_durable_factories_in_a_native_child() {
-    let home = home();
-    let cx = context();
-    let root = StateRoot::effects(&cx, home.path()).unwrap();
     let mut run = foreground_begin(&cx, &root);
-    let grant = effigy_kernel::inheritance::RuntimeParent::new(
-        id(1),
-        effigy_kernel::inheritance::RunClass::Foreground,
-        None,
-    );
-    let lease = effigy_kernel::inheritance::MemoryLease::new(&cx, &grant).unwrap();
-    let mut command = spec(home.path(), "unused");
-    command.argv = vec![
-        fixture().into_os_string(),
-        "runtime-open".into(),
-        home.path().join("forbidden").into_os_string(),
-    ];
-    let mut process = Custody::spawn_foreground_with_lease(
-        &mut run,
-        command,
-        &cx,
-        &lease.capability(),
-        true,
-        None,
-    )
-    .unwrap();
-    let exit = process.wait(cx.operation()).verified().copied().unwrap();
-    assert_eq!(exit.code, 0);
-    process.complete_foreground(&mut run, exit).unwrap();
-    run.finish(WorkloadOutcome::Succeeded).unwrap();
-    run.settle(&cx.operation().cleanup(Duration::from_secs(5)).unwrap())
-        .unwrap();
-    assert!(!home.path().join("forbidden").exists());
-    assert!(!root.path().join("kernel.db").exists());
-}
-
-#[test]
-fn inheritance_ambient_marker_cannot_export_an_unowned_descriptor() {
-    let home = home();
-    let cx = context();
-    let root = StateRoot::effects(&cx, home.path()).unwrap();
-    let mut run = foreground_begin(&cx, &root);
+    let journal_home = home.path().join("child-journal");
+    std::fs::create_dir(&journal_home).unwrap();
     let mut spec = spec(home.path(), "unused");
-    spec.argv = vec![fixture().into_os_string(), "inheritance-check".into()];
-    spec.env.insert(
-        effigy_kernel::inheritance::ENV.into(),
-        EnvValue::Plain("forged parent grant".into()),
-    );
+    spec.argv = vec![fixture().into_os_string(), "capability-free".into()];
+    spec.argv.push(journal_home.clone().into_os_string());
     let mut child = Custody::spawn_foreground(&mut run, spec, &cx).unwrap();
     let exit = child.wait(cx.operation()).verified().copied().unwrap();
-    assert_eq!(exit.code, 41);
+    assert_eq!(exit.code, 0, "the child ran as an ordinary invocation");
     child.complete_foreground(&mut run, exit).unwrap();
-    run.finish(WorkloadOutcome::Failed { code: 41 }).unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
     run.settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
         .unwrap();
+    assert!(
+        journal_home.join(".effigy/state/kernel.db").is_file(),
+        "a nested workload journals on its own"
+    );
     assert!(!root.path().join("kernel.db").exists());
 }
 

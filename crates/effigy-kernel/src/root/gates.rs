@@ -191,9 +191,6 @@ impl StateRoot {
                 ))
             };
         };
-        crate::inheritance::require_durable(cx.operation()).map_err(|error| {
-            FsError::io("machine gate runtime class", &domain.address.home, &error)
-        })?;
         cx.require(Capability::HostAuthority)
             .map_err(|_| FsError::HostAuthorityRequired)?;
         domain.verify_home()?;

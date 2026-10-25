@@ -32,8 +32,6 @@ impl<'a> MachineFacts<'a> {
         cleanup: &CleanupContext,
         adapter: &mut impl SettlementAdapter,
     ) -> Result<Self, RunError> {
-        crate::inheritance::require_durable(cx.operation())
-            .map_err(|error| RunError::Invalid(error.to_string()))?;
         cx.require(crate::ctx::Capability::AdapterEffect)
             .map_err(|_| RunError::Invalid("machine facts require Mutate".into()))?;
         cx.require(crate::ctx::Capability::HostAuthority)

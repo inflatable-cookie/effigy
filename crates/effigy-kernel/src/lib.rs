@@ -8,6 +8,7 @@
 #[cfg(feature = "fault-injection")]
 pub mod fault_injection;
 
+mod closure;
 pub mod ctx;
 pub mod custody;
 pub mod fs;
@@ -15,7 +16,6 @@ pub mod gate;
 pub mod human;
 pub mod id;
 pub mod ident;
-pub mod inheritance;
 pub mod migration;
 pub mod objects;
 pub mod observe;
@@ -39,7 +39,7 @@ mod fault;
 mod fault_tests;
 #[cfg(all(test, feature = "fault-injection"))]
 mod faults;
-#[cfg(test)]
+#[cfg(all(test, feature = "fault-injection"))]
 mod fixture;
 
 /// A named fault point (§12.1): `io::Result<()>`, always `Ok` outside

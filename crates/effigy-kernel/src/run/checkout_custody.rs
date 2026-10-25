@@ -1,8 +1,8 @@
 //! Shared checkout lifetime remains protected through native process cleanup,
 //! even after the checkout and its journal are externally deleted.
 use super::*;
+use crate::closure::ClosurePin;
 use crate::gate::{CheckoutFenceGuard, CheckoutFenceIdentity};
-use crate::inheritance::{ClosureIdentity, ClosurePin};
 use crate::supervise::memory::{MemoryGuard, MemoryPurpose};
 
 #[derive(Debug)]
@@ -77,10 +77,6 @@ impl Run<'_> {
             None => Ok(self.ancestor_closure.clone()),
         }
     }
-    /// The current anonymous cleanup pin, for authenticated nested grants.
-    pub fn cleanup_closure_identity(&self) -> Result<Option<ClosureIdentity>, RunError> {
-        Ok(self.checkout_closure_pin()?.map(|pin| pin.identity()))
-    }
     /// Current inode stamp for the environment's external ownership labels.
     pub fn checkout_fence_identity(&self) -> Option<CheckoutFenceIdentity> {
         self.checkout_custody.as_ref().map(|c| c.lease.identity())
@@ -117,13 +113,4 @@ impl Run<'_> {
         self.ancestor_closure.take();
         Ok(())
     }
-}
-pub(super) fn ancestor_closure(
-    cx: &crate::ctx::OperationContext,
-) -> Result<Option<ClosurePin>, RunError> {
-    crate::inheritance::RuntimeParent::inherited(cx)?
-        .and_then(|parent| parent.closure)
-        .map(ClosurePin::capture)
-        .transpose()
-        .map_err(RunError::from)
 }

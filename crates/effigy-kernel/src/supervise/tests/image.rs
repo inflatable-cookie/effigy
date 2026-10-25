@@ -258,7 +258,7 @@ fn large_replaced_image_admission_shares_data_and_reports_before_after() {
 
 #[test]
 #[cfg(target_os = "linux")]
-fn retained_native_helper_preserves_explicit_capability_after_descriptor_preparation() {
+fn retained_native_helper_runs_from_the_pinned_image_after_descriptor_preparation() {
     let world = World::new();
     let cx = cx();
     let root = StateRoot::effects(&cx, &world.home()).unwrap();
@@ -270,20 +270,12 @@ fn retained_native_helper_preserves_explicit_capability_after_descriptor_prepara
     };
     replace(&world, &plan);
     let pin = private_image(&root, &plan.executable).unwrap().unwrap();
-    let lease = crate::inheritance::MemoryLease::new(
-        &cx,
-        &serde_json::json!({"admitted": true, "class": "foreground"}),
-    )
-    .unwrap();
-    let mut command = helper(&pin.executable, "inheritance-check").unwrap();
-    lease
-        .capability()
-        .forward_command(cx.operation(), &mut command)
-        .unwrap();
-    prepare_helper_exec(&mut command, &pin.executable, "inheritance-check").unwrap();
+    let home = world.dir.path().join("capability-free-home");
+    std::fs::create_dir(&home).unwrap();
+    let mut command = helper(&pin.executable, "capability-free").unwrap();
+    command.arg(&home);
+    prepare_helper_exec(&mut command, &pin.executable, "capability-free").unwrap();
     assert!(command.status().unwrap().success());
-    drop(lease);
-    assert!(!command.status().unwrap().success());
 }
 
 /// A fresh temporary directory on a filesystem other than `device`.

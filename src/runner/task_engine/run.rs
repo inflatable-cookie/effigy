@@ -209,8 +209,6 @@ impl RunKey {
 pub(in crate::runner) struct TaskRun {
     run: Option<Arc<Mutex<Run<'static>>>>,
     memory: Option<Arc<Mutex<effigy_kernel::run::ForegroundRun>>>,
-    lease: Option<effigy_kernel::inheritance::MemoryLease>,
-    prior_leases: Vec<effigy_kernel::inheritance::MemoryLease>,
     shared: Option<Run<'static>>,
     target: TaskTarget,
     ancestors: Vec<ResourceId>,
@@ -237,9 +235,7 @@ struct Parent {
 thread_local! {
     static PARENTS: RefCell<Vec<Parent>> = const { RefCell::new(Vec::new()) };
 }
-pub(in crate::runner) struct ParentScope {
-    _runtime: effigy_kernel::inheritance::RunScope,
-}
+pub(in crate::runner) struct ParentScope;
 impl Drop for ParentScope {
     fn drop(&mut self) {
         PARENTS.with(|parents| {
@@ -426,7 +422,6 @@ impl TaskRun {
         task_gate: bool,
         placement: LifecyclePlacement,
     ) -> Result<Self, RunnerError> {
-        foreground::require_durable_parent()?;
         let admission = super::admission::plan(request.admission)?;
         let parent = PARENTS.with(|parents| parents.borrow().last().cloned());
         let root = kernel::effects_root(&request.target.root)?;
@@ -526,8 +521,6 @@ impl TaskRun {
             let mut run = Self {
                 run: shared.map(|run| Arc::new(Mutex::new(run))),
                 memory: None,
-                lease: None,
-                prior_leases: Vec::new(),
                 shared: None,
                 target: request.target.clone(),
                 ancestors,
@@ -602,8 +595,6 @@ impl TaskRun {
         let mut run = Self {
             run: Some(Arc::new(Mutex::new(run))),
             memory: None,
-            lease: None,
-            prior_leases: Vec::new(),
             shared,
             target: request.target.clone(),
             ancestors,
@@ -642,7 +633,6 @@ impl TaskRun {
         let admitted = super::admission::admit(self, &target, class, &command, timeout, &cwd);
         match admitted {
             Ok(admission) => {
-                self.lease = None;
                 self.admission = Some(admission);
                 Ok(())
             }
@@ -652,8 +642,6 @@ impl TaskRun {
                     Self {
                         run: None,
                         memory: None,
-                        lease: None,
-                        prior_leases: Vec::new(),
                         shared: None,
                         target,
                         ancestors: Vec::new(),
@@ -721,7 +709,7 @@ impl TaskRun {
             .as_ref()
             .ok_or_else(|| {
                 RunnerError::task_invocation(
-                    "late durable effect refused: this tree was admitted as foreground",
+                    "this run keeps its record in memory, so it has no journal",
                 )
             })
             .map(|run| {
@@ -730,21 +718,9 @@ impl TaskRun {
             })
     }
 
-    /// Lexical nesting carries native handles on this thread.
-    pub(in crate::runner) fn enter(&self) -> Result<ParentScope, RunnerError> {
-        let runtime = effigy_kernel::inheritance::RunScope::enter(
-            effigy_kernel::inheritance::RuntimeParent::new(
-                self.id(),
-                if self.memory.is_some() {
-                    effigy_kernel::inheritance::RunClass::Foreground
-                } else {
-                    effigy_kernel::inheritance::RunClass::CheckoutDurable
-                },
-                super::admission::current_hook()?,
-            )
-            .with_closure(self.runtime_closure()?),
-        )
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    /// Lexical nesting carries the parent's run and memory handle on this
+    /// thread, so an in-process step is a child of this run.
+    pub(in crate::runner) fn enter(&self) -> ParentScope {
         let mut ancestors = self.ancestors.clone();
         ancestors.push(self.owner());
         PARENTS.with(|parents| {
@@ -755,7 +731,7 @@ impl TaskRun {
                 shared_owners: self.shared_owners.clone(),
             })
         });
-        Ok(ParentScope { _runtime: runtime })
+        ParentScope
     }
 
     pub(in crate::runner) fn step(&self, index: usize, label: &str) -> Result<Self, RunnerError> {
@@ -826,8 +802,6 @@ impl TaskRun {
         Ok(Self {
             run: Some(Arc::new(Mutex::new(run))),
             memory: None,
-            lease: None,
-            prior_leases: Vec::new(),
             shared: None,
             target,
             ancestors,

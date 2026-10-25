@@ -427,7 +427,7 @@ fn run_steps(
         let mut child = run.step(index, &label)?;
         let child_id = child.id();
         let result = {
-            let _parent = child.enter()?;
+            let _parent = child.enter();
             let _env = SpawnScope::enter(&env, secrets, preflight.output_json, timeout);
             execute_step(
                 &action,

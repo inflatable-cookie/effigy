@@ -338,7 +338,7 @@ trait ProcessOwner {
     fn id(&self) -> crate::id::RunId;
     fn fence(&self) -> &crate::run::Fence;
     fn has_sentinel(&self) -> bool;
-    fn closure_pin(&self) -> Result<Option<crate::inheritance::ClosurePin>, RunError> {
+    fn closure_pin(&self) -> Result<Option<crate::closure::ClosurePin>, RunError> {
         Ok(None)
     }
     fn verify_custody(&self) -> Result<(), RunError>;
@@ -355,7 +355,7 @@ trait ProcessOwner {
     fn retain_process(&mut self, sequence: i64, core: Arc<Mutex<ProcessCore>>);
 }
 impl ProcessOwner for Run<'_> {
-    fn closure_pin(&self) -> Result<Option<crate::inheritance::ClosurePin>, RunError> {
+    fn closure_pin(&self) -> Result<Option<crate::closure::ClosurePin>, RunError> {
         self.checkout_closure_pin()
     }
     fn id(&self) -> crate::id::RunId {
@@ -396,7 +396,7 @@ impl ProcessOwner for Run<'_> {
     }
 }
 impl ProcessOwner for crate::run::ForegroundRun {
-    fn closure_pin(&self) -> Result<Option<crate::inheritance::ClosurePin>, RunError> {
+    fn closure_pin(&self) -> Result<Option<crate::closure::ClosurePin>, RunError> {
         self.closure_pin().map(Some)
     }
     fn id(&self) -> crate::id::RunId {
@@ -486,7 +486,6 @@ impl Custody {
             true,
             None,
             None,
-            None,
         )
     }
 
@@ -506,7 +505,6 @@ impl Custody {
             false,
             None,
             None,
-            None,
         )
     }
 
@@ -522,7 +520,6 @@ impl Custody {
             None,
             crate::ctx::Capability::AdapterEffect,
             true,
-            None,
             None,
             None,
         )
@@ -544,7 +541,6 @@ impl Custody {
             false,
             None,
             None,
-            None,
         )
     }
     /// Acquire executable source under a Prepare run. This uses the same
@@ -564,7 +560,6 @@ impl Custody {
             true,
             None,
             None,
-            None,
         )
     }
     pub(crate) fn spawn_remote(
@@ -582,18 +577,15 @@ impl Custody {
             true,
             None,
             None,
-            None,
         )
     }
-    /// The caller owns this memory lease; only its reading descriptor reaches
-    /// the workload. `required` distinguishes workload and auxiliary custody.
-    /// `handoff` is one short-lived reader the caller hands the child at
-    /// [`HANDOFF_FD`]; the caller keeps no copy after this returns.
-    pub fn spawn_with_lease(
+    /// A spawn that hands its child one short-lived reader at [`HANDOFF_FD`];
+    /// the caller keeps no copy after this returns. `required` distinguishes
+    /// workload and auxiliary custody.
+    pub fn spawn_with_handoff(
         run: &mut Run<'_>,
         spec: ProcessSpec,
         cx: &EffectContext,
-        lease: &crate::inheritance::InheritedCapability,
         required: bool,
         handoff: Option<OwnedFd>,
     ) -> Result<OwnedProcess, SpawnError> {
@@ -604,16 +596,14 @@ impl Custody {
             None,
             crate::ctx::Capability::AdapterEffect,
             required,
-            Some(lease),
             None,
             handoff,
         )
     }
-    pub fn spawn_foreground_with_lease(
+    pub fn spawn_foreground_with_handoff(
         run: &mut crate::run::ForegroundRun,
         spec: ProcessSpec,
         cx: &EffectContext,
-        lease: &crate::inheritance::InheritedCapability,
         required: bool,
         handoff: Option<OwnedFd>,
     ) -> Result<OwnedProcess, SpawnError> {
@@ -624,19 +614,16 @@ impl Custody {
             None,
             crate::ctx::Capability::AdapterEffect,
             required,
-            Some(lease),
             None,
             handoff,
         )
     }
-    /// `spawn_foreground_with_lease` with a gate between the recorded receipt
+    /// `spawn_foreground_with_handoff` with a gate between the recorded receipt
     /// and the child's `go`. A gate refusal leaves the child unexecuted.
-    pub fn spawn_foreground_with_lease_gated(
+    pub fn spawn_foreground_gated(
         run: &mut crate::run::ForegroundRun,
         spec: ProcessSpec,
         cx: &EffectContext,
-        lease: &crate::inheritance::InheritedCapability,
-        required: bool,
         gate: &mut dyn SpawnGate,
         handoff: Option<OwnedFd>,
     ) -> Result<OwnedProcess, SpawnError> {
@@ -646,8 +633,7 @@ impl Custody {
             cx,
             None,
             crate::ctx::Capability::AdapterEffect,
-            required,
-            Some(lease),
+            true,
             Some(gate),
             handoff,
         )
@@ -662,7 +648,6 @@ impl Custody {
         registration: Option<Arc<Mutex<crate::remote::stream::RegistrationStream>>>,
         capability: crate::ctx::Capability,
         required: bool,
-        lease: Option<&crate::inheritance::InheritedCapability>,
         gate: Option<&mut dyn SpawnGate>,
         handoff: Option<OwnedFd>,
     ) -> Result<OwnedProcess, SpawnError> {
@@ -689,7 +674,6 @@ impl Custody {
             &nonce,
             cx.operation(),
             &image,
-            lease,
             closure.as_ref(),
             handoff.as_ref(),
         )?;
@@ -776,9 +760,6 @@ impl Custody {
             }));
             run.retain_process(ticket.sequence(), core.clone());
             run.verify_custody()?;
-            if let Some(lease) = lease {
-                lease.verify(cx.operation())?;
-            }
             pending.transfer();
             crate::fault_point!(SpawnBeforeGo)?;
             pending.go()?;

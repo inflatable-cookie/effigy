@@ -323,7 +323,6 @@ impl ReleaseSession {
         let cleanup = op.cleanup(CLEANUP_BUDGET).map_err(|_| {
             ReleaseError::TaskInvocation("release cleanup budget is unusable".into())
         })?;
-        effigy_kernel::inheritance::require_durable(&op).map_err(storage_error)?;
         let root =
             StateRoot::checkout_effects(&cx, home, &location(repo_root)?).map_err(storage_error)?;
         effigy_core::runtime_dir::ensure_effigy_ignored_in_git_root(repo_root)

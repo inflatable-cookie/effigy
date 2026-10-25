@@ -169,24 +169,10 @@ fn a_handoff_reader_already_at_the_slot_survives_exec() {
     let home = home();
     let root = StateRoot::effects(&cx, home.path()).unwrap();
     let mut run = foreground_begin(&cx, &root);
-    let lease = effigy_kernel::inheritance::MemoryLease::new(
-        &cx,
-        &serde_json::json!({"admitted": true, "class": "foreground"}),
-    )
-    .unwrap();
-    let capability = lease.capability();
-
     let mut process = spec(home.path(), "cat <&11 > handoff.out");
     process.lifetime = Lifetime::Finite(Duration::from_secs(10));
-    let mut child = Custody::spawn_foreground_with_lease(
-        &mut run,
-        process,
-        &cx,
-        &capability,
-        true,
-        Some(reader),
-    )
-    .unwrap();
+    let mut child =
+        Custody::spawn_foreground_with_handoff(&mut run, process, &cx, true, Some(reader)).unwrap();
     let exit = child.wait(cx.operation()).verified().copied().unwrap();
     assert_eq!(exit.code, 0, "the child read its handoff after exec");
     child.complete_foreground(&mut run, exit).unwrap();

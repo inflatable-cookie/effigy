@@ -38,7 +38,7 @@ with tempfile.TemporaryDirectory(prefix="q010-foreground-") as temporary:
     # The installed selector owns host admission. Fixture CLI children start
     # independent private runs; explicit tests below supply their own hook.
     for name in ["EFFIGY_ADMITTED", "EFFIGY_ADMISSION_HOOK", "EFFIGY_ADMISSION_HOOK_TIMEOUT_MS",
-                 "EFFIGY_PARENT_CAPABILITY", "EFFIGY_CUSTODY_NONCE", "EFFIGY_PROBE_NONCE",
+                 "EFFIGY_CUSTODY_NONCE", "EFFIGY_PROBE_NONCE",
                  "EFFIGY_MANAGED_RUN_TOKEN", "EFFIGY_LOCK_WAIT_MS"]:
         env.pop(name, None)
     projects = []

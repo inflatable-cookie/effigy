@@ -86,22 +86,21 @@ with `decision` (`deny`, `timeout`, `failed` or `cancelled`), `reason`,
 `task` and `run_id`.
 
 Nested calls never queue twice. Every child an admitted run spawns gets
-`EFFIGY_ADMITTED`, an opaque marker naming the admitting run; an in-process
-nested run (a sequence step or a QA member) is already inside the admission.
-A nested heavy invocation with a live marker skips the hook. A marker whose
-run has ended does not bypass the hook. Under Q-010, a foreground marker
-is an opaque capability bound to an inherited lease descriptor and the live
-hook's verified identity, not a run id looked up in SQLite. A child receives
-only the lease-observation end, never the lifetime writer; it cannot prolong
-admission after the holder exits. A forged token, missing/closed descriptor,
-unknown hook identity or dead lease cannot bypass admission. Durable runs use
-the same live-capability test, not a global journal lookup. The in-process
-marker is held per thread, the same way run nesting is (sequence steps and QA members run on
-the thread that admitted their parent): two runs that share one Effigy
-process but not a thread never see each other's marker, so a heavy run on
-one thread is always gated by its own hook. A nested run that moved to
-another thread is not inside this thread's admission and queues again,
-which fails closed.
+`EFFIGY_ADMITTED=<admitting run id>`; a heavy invocation that sees the marker
+does not call the hook again, and an in-process nested run (a sequence step or
+a QA member) is already inside the admission. The marker is advisory: there is
+no liveness check and no descriptor behind it, so it carries nothing a child
+could renew or prolong, and nothing a closed descriptor, a sleeping parent or a
+dead hook can invalidate part-way through a run. A forged marker only lets a
+run skip the local orchestrator's queue, which is the orchestrator's risk on a
+single-user machine (Q-011). Effigy keeps no record of it: there is no run id
+looked up in SQLite and no journal read.
+The in-process marker is held per thread, the same way run nesting is
+(sequence steps and QA members run on the thread that admitted their parent):
+two runs that share one Effigy process but not a thread never see each other's
+marker, so a heavy run on one thread is always gated by its own hook. A nested
+run that moved to another thread is not inside this thread's admission and
+queues again.
 
 
 ## Reported custody protocol (v2)
@@ -372,7 +371,6 @@ Queue's migration to the hook is described in
 | Terminal run without logs; expired bytes; unreadable journal | `test:run-control`; `test:run-control:cli` |
 | Log segments, offsets, expiry, truncation, read fault | `test:kernel:run` |
 
-Q-010 implementation adds the classification, zero-write, multi-checkout
-discovery and admission-capability proofs in contract 052 §12.6 to these same
-run-control selectors. These are future acceptance requirements, not Phase 1
+Q-010 implementation adds the classification, zero-write and multi-checkout
+discovery proofs in contract 052 §12.6 to these same run-control selectors. These are future acceptance requirements, not Phase 1
 proof results.
