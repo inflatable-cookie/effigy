@@ -287,6 +287,7 @@ mod tests {
         )
         .expect("write availability record");
         ManagedListenerRouteOwner {
+            run: None,
             owner: "fixture|web|app".to_owned(),
             runtime_generation: "runtime-generation".to_owned(),
             generation: "generation".to_owned(),

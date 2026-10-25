@@ -107,6 +107,7 @@ fn unknown_listener_owner(domain: &str) -> ManagedListenerRouteOwner {
     let identity =
         effigy_gateway::identity::read_live_process_identity(pid).expect("test process identity");
     ManagedListenerRouteOwner {
+        run: None,
         owner: "main|web|effigy|listener".to_owned(),
         runtime_generation: "runtime-1".to_owned(),
         generation: "child-1".to_owned(),

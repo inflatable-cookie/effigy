@@ -2773,6 +2773,19 @@ and `--detach` are front ends over the same run. Row by row:
   as `RunError::StepFailed { step, cause }` — the store error with its cause
   and a next step — never `RunError::Invalid` and never a "not a valid run
   request" message.
+  A listener route records the kernel run that published it. The next run of
+  the same checkout scope reclaims a route only when this checkout's journal
+  proves that recorded run settled — its run row closed, or its resource gate
+  free, because the gate is held for exactly the supervisor's lifetime. A
+  route owned by a live run is refused by name (its run, its state and the
+  settle command), never as a foreign checkout; a run the journal cannot
+  observe (no recorded run, an absent or unreadable journal) is refused with
+  the same supported settle command, never reclaimed on a guess. `down`,
+  `reset` and session settle withdraw every listener route the environment's
+  declared host processes published, whatever generation or run published it
+  and whether or not that supervisor is still alive, and report each
+  withdrawal in the `HostProcessStopReport`. A process whose stop failed keeps
+  its route, because its run may still be live (effigy#335).
 - Remote stop of a bare PGID: narrowed by the nonce check above;
   `signal_session` on a registration stays open with §5.10.
 

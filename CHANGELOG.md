@@ -1437,6 +1437,21 @@ During v0.x, MINOR bumps may include breaking changes.
   dependents refreshed, after a crash, a signal or a non-zero exit; a genuinely
   live member other than the leader still keeps the generation unavailable.
   `restart = "never"` settles closed with its exit recorded (effigy#336).
+- A managed listener route left by a previous run of the same checkout is
+  reclaimed by the next run, and `down`, `reset` and settle withdraw listener
+  routes even when the supervisor that published them is gone. Since
+  environment-owned host processes became kernel runs (effigy#320), a route's
+  recorded owner generation could never be replaced by a new run, and the
+  refusal rendered as ``gateway domain `…` is owned by live checkout
+  `…` `` naming the claimant's own checkout. A route now records the kernel
+  run that published it; a successor reclaims it in the publication
+  transaction only when this checkout's journal proves that run closed or its
+  gate free, a live run is refused by name with the state and the settle
+  command, and an unobservable run is refused with that same command instead
+  of being reclaimed on a guess. `down`, `reset` and session settle also
+  withdraw every listener route the environment's declared host processes
+  published, whatever run published it and whether or not its supervisor is
+  still alive, and report each withdrawal (effigy#335; Acow #756).
 - An environment-owned host-process supervisor no longer inherits the
   revocable admission lease of the `container up` that started it. When `up`
   ran as a step of a durable task (Acowtancy's `dev:hybrid`), the supervisor's

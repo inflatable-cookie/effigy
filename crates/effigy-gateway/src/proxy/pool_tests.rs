@@ -161,6 +161,7 @@ async fn cached_managed_connection_refuses_revocation_and_changed_identity() {
     let state = |status| serde_json::json!({"schema":"effigy.managed.host-listener-state.v1", "owner":"pool", "runtime_generation":"runtime", "generation":"child", "status":status});
     std::fs::write(&availability, state("ready").to_string()).unwrap();
     let owner = crate::routes::ManagedListenerRouteOwner {
+        run: None,
         owner: "pool".into(),
         runtime_generation: "runtime".into(),
         generation: "child".into(),

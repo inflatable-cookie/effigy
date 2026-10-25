@@ -85,6 +85,12 @@ pub struct Route {
 pub struct ManagedListenerRouteOwner {
     /// Stable owner identity for one checkout/container/profile/process.
     pub owner: String,
+    /// The checkout-journal run that published this route, when the publisher
+    /// recorded one. A successor reclaims the route only by observing this
+    /// run in its own journal; a route without it can be withdrawn or
+    /// repaired, never reclaimed on a guess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
     /// Container lifecycle generation that launched this supervisor.
     pub runtime_generation: String,
     /// Child restart generation.
