@@ -1356,6 +1356,75 @@ fn store_repair_moves_the_write_ahead_log_and_index_aside() {
 }
 
 #[test]
+fn store_snapshot_of_a_source_written_throughout_reports_busy_within_its_bound() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    let store = Store::open(&cx, &root).unwrap();
+    drop(store);
+    let path = root.path().join(DB_NAME);
+    // Enough pages that one online backup needs many steps to cross: the
+    // writer gets a chance to restart the copy at every step boundary.
+    {
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE churn (id INTEGER PRIMARY KEY, blob BLOB);\
+                 INSERT INTO churn(blob) \
+                 WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 8000) \
+                 SELECT randomblob(4096) FROM c;",
+            )
+            .unwrap();
+    }
+    // A second connection writes without pause, exactly what a busy sibling
+    // checkout journal does to a run start's sweep.
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writing = stop.clone();
+    let writer = std::thread::spawn(move || {
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection.busy_timeout(Duration::from_secs(5)).unwrap();
+        while !writing.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = connection.execute(
+                "UPDATE churn SET blob = randomblob(4096) WHERE id = (abs(random()) % 8000) + 1",
+                [],
+            );
+        }
+    });
+    let mut busy = 0;
+    let mut slowest = Duration::ZERO;
+    for _ in 0..10 {
+        let cx = operation(
+            EffectClass::Observe,
+            Placement::Host,
+            Duration::from_millis(400),
+        )
+        .observe()
+        .unwrap();
+        let started = Instant::now();
+        let observed = Store::read(&cx, &root);
+        slowest = slowest.max(started.elapsed());
+        match observed {
+            // A restart bound reached: the bounded answer this test exists for.
+            Observed::Unknown(UnknownReason::Busy { .. }) => busy += 1,
+            // A restart bound not reached: the writer paused between steps and
+            // one coherent snapshot was still available.
+            Observed::Verified(_, _) => {}
+            other => panic!("unexpected live read: {other:?}"),
+        }
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    writer.join().unwrap();
+    assert!(
+        busy > 0,
+        "a source written throughout the copy reports busy"
+    );
+    assert!(
+        slowest < Duration::from_secs(3),
+        "a snapshot took {slowest:?} against a 400 ms observation budget"
+    );
+}
+
+#[test]
 fn store_closed_snapshot_stays_coherent_after_a_new_writer() {
     let home = home();
     let cx = effects(EffectClass::Mutate);

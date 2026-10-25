@@ -381,6 +381,7 @@ fn holder_state_label(state: &Observed<ProcessState>) -> &'static str {
 fn unknown_label(reason: &UnknownReason) -> &'static str {
     match reason {
         UnknownReason::TimedOut { .. } => "timed-out",
+        UnknownReason::Busy { .. } => "busy",
         UnknownReason::PermissionDenied => "permission-denied",
         UnknownReason::ToolUnavailable(_) => "tool-unavailable",
         UnknownReason::Unparsable(_) => "unparsable",

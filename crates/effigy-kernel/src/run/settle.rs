@@ -19,10 +19,16 @@ pub trait SettlementAdapter {
     /// not grant authority to stop an environment; that requires its own run.
     fn reconcile(&mut self, effect: &Effect, cx: &CleanupContext) -> Observed<Reconciled>;
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reconciled {
     Released,
     Retained,
+    /// The engine could not finish undoing what it owns and says why, by name.
+    /// The effect settles as `Retained` with this reason: it is terminal (I-R7),
+    /// so a residue the engine cannot act on never blocks the owner's next run,
+    /// and the reason stays on the effect for the operator. The scratch engine
+    /// uses it for a retained directory a later sweep will retry (§5.6).
+    Residue(String),
 }
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Settled {
@@ -341,6 +347,7 @@ fn resolve(
             (EffectState::Released, None)
         }
         Observed::Verified(Reconciled::Retained, _) => (EffectState::Retained, None),
+        Observed::Verified(Reconciled::Residue(reason), _) => (EffectState::Retained, Some(reason)),
         Observed::Unknown(reason) => residue(reason),
     }
 }

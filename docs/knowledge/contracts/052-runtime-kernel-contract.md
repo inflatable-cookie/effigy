@@ -807,7 +807,13 @@ effigy#275 after concurrent runs refused each other with `Busy`.
 Reads create no files: `Store::read` uses SQLite's read-only WAL shared-memory
 index (`readonly_shm=1`) through a Unix VFS that refuses file creation,
 writable opens and deletion. Its live WAL view is copied through SQLite backup
-into memory before closing the filesystem connection. A checkpointed store without that index
+into memory before closing the filesystem connection. SQLite restarts an online
+backup from the source's first page whenever another connection writes it, so
+the copy counts restarts and gives up after `SNAPSHOT_RESTARTS` of them with
+`Unknown(Busy)`, which every reader already treats as `Unknown`: a checkout
+journal under a continuous writer (a busy sibling worktree) answers in bounded
+time instead of spinning for the whole observation budget (effigy#333).
+A checkpointed store without that index
 is copied into memory through a verified descriptor. Its identity, size and
 nanosecond modification/change times must remain unchanged across the bounded
 copy, with no hot WAL or rollback journal before or after it. A race is
@@ -963,6 +969,44 @@ Effect states:
 Settle steps: advance to `Stopping`; walk effects in reverse sequence,
 recording each result before the next; commit `Closed`; close the sentinel
 pipe; release the gates.
+
+#### Scratch effect settlement (`scratch:run-dir`)
+
+A run's scratch directory is a `Reconcile` effect of this journal (effigy#244,
+effigy#253; the operator-facing surface is
+[069](../../guides/069-workspace-host-integration.md)). Its settle decides from the
+marker the owning run wrote before it settled, never from a second journal:
+
+- `keep: false` — the run succeeded — the directory is removed. The removal
+  first restores owner write permission through the tree, without following a
+  symlink and without leaving it, because Effigy's own fixtures publish
+  immutable objects inside a run's temp directory (mode-0500 directories,
+  mode-0400 files) that a plain recursive removal cannot clear. A symlink, a
+  mount point inside the tree and an entry owned by another user stop the walk.
+- Anything else is retained: for 24 hours from the conclusion the marker
+  records, or from the journal's own close time when the owner died before
+  concluding.
+- A tree that is still not removable after the permission repair is reported
+  once, by name, with the path and the failing entry, and settles as
+  `Retained` with that reason (`Reconciled::Residue`). It is terminal (I-R7), so
+  the owner's next run is admitted: residue Effigy has no authority over —
+  another owner's entry, another device — costs a later sweep a retry, never a
+  refused run. The reason stays on the effect row for the operator.
+
+The sweep that removes expired retained directories is a Prepare step of a later
+run's admission, and it is bounded in cost, not only in count:
+
+- It decides from each marker wherever the marker can decide: a recorded
+  verdict plus its conclusion time is enough, so a root holding hundreds of
+  retained directories costs marker reads, not journal reads.
+- It reads a journal only for a marker that records no verdict (a run killed
+  before deciding) or no conclusion time, at most `SWEEP_JOURNAL_MAX` reads in
+  one sweep, each through an observation context bounded to
+  `SWEEP_JOURNAL_BUDGET`.
+- It stops at `SWEEP_BUDGET`; work it did not reach is a later run's. A journal
+  it cannot read — including a sibling checkout's journal under a continuous
+  writer, which reports `Unknown(Busy)` (§5.11) — skips that directory. The
+  sweep never waits and never retries inside one run's start.
 
 Status is a projection of the run row, the owner gate probe and fresh
 bounded observations. History never stands in for current state.
@@ -1724,8 +1768,10 @@ pub enum AbsenceProof {
 }
 
 pub enum UnknownReason {
-    TimedOut { phase: String }, PermissionDenied, ToolUnavailable(String),
-    Unparsable(String), Inconsistent(String), GuardUnavailable, Injected,
+    TimedOut { phase: String }, Busy { phase: String }, PermissionDenied,
+    ToolUnavailable(String), Unparsable(String), Inconsistent(String),
+    GuardUnavailable, Injected, Untrusted(String), HostAuthorityRequired,
+    StoreNeedsRecovery, StoreUnreadable(String),
 }
 
 pub trait Probe {

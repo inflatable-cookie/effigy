@@ -250,15 +250,24 @@ pub(in crate::runner) fn lookup_checkout(checkout: &Path, id: RunId) -> Lookup {
 }
 
 pub(in crate::runner) fn lookup(id: RunId) -> Lookup {
-    let cx = kernel::observe();
+    lookup_within(&kernel::observe(), id)
+}
+
+/// A lookup bounded by the caller's own observation context. The scratch sweep
+/// asks about a directory whose marker cannot decide, so a busy sibling
+/// checkout journal answers `Unknown` rather than holding a run's start.
+pub(in crate::runner) fn lookup_within(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    id: RunId,
+) -> Lookup {
     // Current-checkout authority wins before cross-checkout discovery. An
     // unreadable cwd journal is Unknown, never permission to select a peer.
     if let Ok(cwd) = std::env::current_dir() {
         let current = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
             .map(|resolved| resolved.resolved_root)
             .unwrap_or(cwd);
-        match kernel::observe_root(&cx, &current) {
-            Observed::Verified(root, _) => match lookup_at(&cx, &root, id) {
+        match kernel::observe_root(cx, &current) {
+            Observed::Verified(root, _) => match lookup_at(cx, &root, id) {
                 Lookup::NotFound => {}
                 result => return result,
             },
@@ -268,14 +277,14 @@ pub(in crate::runner) fn lookup(id: RunId) -> Lookup {
             }
         }
     }
-    let roots = match kernel::known_roots(&cx) {
+    let roots = match kernel::known_roots(cx) {
         Ok(roots) => roots,
         Err(error) => return Lookup::Unknown(error.to_string()),
     };
     let mut found: Option<Box<RunRecord>> = None;
     let mut unknown = Vec::new();
     for root in roots {
-        match lookup_at(&cx, &root, id) {
+        match lookup_at(cx, &root, id) {
             Lookup::Found(record) => {
                 if let Some(previous) = found {
                     return Lookup::Unknown(format!("run {id} is ambiguous between {} and {}; run the query in its owning checkout",

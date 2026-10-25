@@ -22,10 +22,10 @@
 //! never removes a directory it did not name and mark itself.
 
 use std::cell::RefCell;
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use effigy_kernel::ctx::CleanupContext;
 use effigy_kernel::observe::{AbsenceProof, Evidence, Observed, UnknownReason};
@@ -44,9 +44,26 @@ const MARKER: &str = ".effigy-scratch.json";
 const RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 /// Directory-name length, taken from the run id's base32 rendering.
 const NAME_LEN: usize = 8;
-/// Most directories one sweep reads or removes.
-const SWEEP_SCAN_MAX: usize = 256;
+/// Most directories one sweep removes.
 const SWEEP_REMOVE_MAX: usize = 8;
+/// Most root entries one sweep examines. Reading a marker is cheap, so the
+/// scan covers a root holding hundreds of retained directories in one pass;
+/// the time budget below, not this bound, is what a busy host hits first.
+const SWEEP_SCAN_MAX: usize = 4096;
+/// Most journals one sweep reads. A marker decides almost every directory, so
+/// only a run that died before recording a verdict needs its journal, and a
+/// busy sibling journal must never cost a run start more than this many reads.
+const SWEEP_JOURNAL_MAX: usize = 8;
+/// Hard budget for the run-start sweep. Work it has not reached by then is a
+/// later run's; the sweep never waits for a journal and never finishes a
+/// directory it has begun removing.
+const SWEEP_BUDGET: Duration = Duration::from_millis(250);
+/// Budget for one journal read the sweep is forced to make. A journal under a
+/// continuous writer answers `Unknown(Busy)` rather than spinning.
+const SWEEP_JOURNAL_BUDGET: Duration = Duration::from_millis(50);
+/// Bounds for the removal walk of one scratch tree.
+const TREE_DEPTH_MAX: usize = 128;
+const TREE_ENTRY_MAX: usize = 1 << 16;
 /// A mounted volume's root, recorded by macOS. Effigy never creates it.
 const DATA_VOLUME: &str = "/System/Volumes/Data";
 
@@ -840,7 +857,7 @@ fn create(run: &mut TaskRun) -> Option<Arc<RunScratch>> {
         // marker claims is removed, and the settle's ownership check is the
         // same one.
         if owned_dir(&payload).is_some() {
-            let _ = std::fs::remove_dir_all(&dir);
+            let _ = remove(&dir);
         }
         return None;
     }
@@ -1014,7 +1031,10 @@ pub(in crate::runner) fn release(effect: &Effect, _cx: &CleanupContext) -> Obser
         Err(reason) => return Observed::Unknown(reason),
     };
     match owned_dir(&payload) {
-        Some(dir) => remove(&dir),
+        Some(dir) => match remove(&dir) {
+            Ok(()) => Observed::Verified((), evidence()),
+            Err(unremoved) => Observed::Unknown(UnknownReason::Inconsistent(unremoved.describe())),
+        },
         // No directory of this run exists, so there is nothing to release.
         None => Observed::Verified((), evidence()),
     }
@@ -1023,6 +1043,11 @@ pub(in crate::runner) fn release(effect: &Effect, _cx: &CleanupContext) -> Obser
 /// The run's decision, read from the marker the engine wrote before settling: a
 /// run that succeeded releases its directory, everything else retains it for
 /// the sweep. Only the exact owning directory is ever removed.
+///
+/// A tree that is still not removable after the owner-write repair is reported
+/// once, by name, and settles as `Retained` with that reason: it is no longer
+/// this run's to remove, and the owner's next run must not be blocked by it
+/// (contract 052 §5.6). The sweep retries the directory on a later run.
 pub(in crate::runner) fn reconcile(effect: &Effect, _cx: &CleanupContext) -> Observed<Reconciled> {
     let payload = match payload(effect) {
         Ok(payload) => payload,
@@ -1034,7 +1059,14 @@ pub(in crate::runner) fn reconcile(effect: &Effect, _cx: &CleanupContext) -> Obs
         });
     };
     match read_marker(&dir) {
-        Some(marker) if marker.keep == Some(false) => remove(&dir).map(|()| Reconciled::Released),
+        Some(marker) if marker.keep == Some(false) => match remove(&dir) {
+            Ok(()) => Observed::Verified(Reconciled::Released, evidence()),
+            Err(unremoved) => {
+                let residue = unremoved.describe();
+                eprintln!("warning: {residue}");
+                Observed::Verified(Reconciled::Residue(residue), evidence())
+            }
+        },
         _ => Observed::Verified(Reconciled::Retained, evidence()),
     }
 }
@@ -1065,51 +1097,138 @@ fn file_name(dir: &Path) -> String {
         .unwrap_or_else(|| dir.display().to_string())
 }
 
+/// Why a scratch tree Effigy proved it owns is still there: where it is and
+/// which entry stopped the removal. Reported once as named residue; a later
+/// sweep retries it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Unremoved {
+    path: PathBuf,
+    detail: String,
+}
+
+impl Unremoved {
+    fn new(path: &Path, detail: impl Into<String>) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            detail: detail.into(),
+        }
+    }
+
+    fn describe(&self) -> String {
+        format!(
+            "scratch tree `{}` was left in place: {}",
+            self.path.display(),
+            self.detail
+        )
+    }
+}
+
 /// Removes one scratch tree: only a real directory Effigy named, never a
 /// symlink or a file, and the result is verified before it is reported.
-fn remove(dir: &Path) -> Observed<()> {
-    match std::fs::symlink_metadata(dir) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Observed::Verified((), evidence())
-        }
-        Err(error) => {
-            return Observed::Unknown(UnknownReason::Inconsistent(format!(
-                "scratch directory `{}` is unreadable: {error}",
-                dir.display()
-            )))
-        }
-        Ok(metadata) if metadata.file_type().is_symlink() => {
-            return Observed::Unknown(UnknownReason::Untrusted(format!(
-                "`{}` is a symlink, not a scratch directory",
-                dir.display()
-            )))
-        }
-        Ok(metadata) if !metadata.is_dir() => {
-            return Observed::Unknown(UnknownReason::Untrusted(format!(
-                "`{}` is not a scratch directory",
-                dir.display()
-            )))
-        }
-        Ok(_) => {}
+///
+/// The tree is made removable first. Effigy's own fixtures publish immutable
+/// state objects under a run's temp directory (mode-0500 directories, mode-0400
+/// files), and a plain `remove_dir_all` fails on them with EACCES, which left
+/// the run's effect unsettled and blocked the next run of that task. The repair
+/// descends without following a symlink and without leaving the tree: an entry
+/// on another device (a mount point) or owned by another user ends it.
+fn remove(dir: &Path) -> Result<(), Unremoved> {
+    let metadata = match std::fs::symlink_metadata(dir) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(Unremoved::new(dir, format!("it is unreadable: {error}"))),
+        Ok(metadata) => metadata,
+    };
+    if metadata.file_type().is_symlink() {
+        return Err(Unremoved::new(
+            dir,
+            "it is a symlink, not a scratch directory",
+        ));
     }
+    if !metadata.is_dir() {
+        return Err(Unremoved::new(dir, "it is not a scratch directory"));
+    }
+    make_removable(dir, metadata.dev(), current_uid(), TREE_DEPTH_MAX)?;
     match std::fs::remove_dir_all(dir) {
         Ok(()) => match std::fs::symlink_metadata(dir) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Observed::Verified((), evidence())
-            }
-            _ => Observed::Unknown(UnknownReason::Inconsistent(format!(
-                "scratch directory `{}` survived its removal",
-                dir.display()
-            ))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            _ => Err(Unremoved::new(dir, "it survived its removal")),
         },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Observed::Verified((), evidence())
-        }
-        Err(error) => Observed::Unknown(UnknownReason::Inconsistent(format!(
-            "scratch directory `{}` could not be removed: {error}",
-            dir.display()
-        ))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(Unremoved::new(
+            dir,
+            format!("it could not be removed: {error}"),
+        )),
     }
+}
+
+/// Restores owner write permission through a tree Effigy owns so [`remove`] can
+/// clear it. The walk never follows a symlink (a link is removed as a link, by
+/// the removal that follows) and never leaves the tree: an entry on another
+/// device or owned by another user stops it, naming that entry.
+fn make_removable(dir: &Path, device: u64, uid: u32, depth: usize) -> Result<(), Unremoved> {
+    if depth == 0 {
+        return Err(Unremoved::new(
+            dir,
+            format!("its tree is deeper than {TREE_DEPTH_MAX} directories"),
+        ));
+    }
+    let metadata = std::fs::symlink_metadata(dir)
+        .map_err(|error| Unremoved::new(dir, format!("it is unreadable: {error}")))?;
+    if metadata.dev() != device {
+        return Err(Unremoved::new(
+            dir,
+            "it is on another device, so it is a mount point or not this tree's",
+        ));
+    }
+    if metadata.uid() != uid {
+        return Err(Unremoved::new(
+            dir,
+            format!("it is owned by user {}, not by this user", metadata.uid()),
+        ));
+    }
+    // A mode-0500 directory can be listed and walked, not written: removal
+    // needs write on it, and a mode-0400 file needs nothing of its own.
+    let mode = metadata.mode();
+    if mode & 0o300 != 0o300 {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode | 0o300))
+            .map_err(|error| Unremoved::new(dir, format!("it cannot be made writable: {error}")))?;
+    }
+    let entries = std::fs::read_dir(dir)
+        .map_err(|error| Unremoved::new(dir, format!("it cannot be listed: {error}")))?;
+    let mut seen = 0usize;
+    for entry in entries {
+        seen += 1;
+        if seen > TREE_ENTRY_MAX {
+            return Err(Unremoved::new(
+                dir,
+                format!("it holds more than {TREE_ENTRY_MAX} entries"),
+            ));
+        }
+        let entry =
+            entry.map_err(|error| Unremoved::new(dir, format!("it cannot be listed: {error}")))?;
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|error| Unremoved::new(&path, format!("it is unreadable: {error}")))?;
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.dev() != device {
+            return Err(Unremoved::new(
+                &path,
+                "it is on another device, so it is a mount point or not this tree's",
+            ));
+        }
+        if metadata.uid() != uid {
+            return Err(Unremoved::new(
+                &path,
+                format!("it is owned by user {}, not by this user", metadata.uid()),
+            ));
+        }
+        if metadata.is_dir() {
+            make_removable(&path, device, uid, depth - 1)?;
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1158,10 +1277,14 @@ fn now_ms() -> i64 {
 }
 
 /// What one sweep did.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(in crate::runner) struct SweepReport {
     pub(in crate::runner) scanned: usize,
     pub(in crate::runner) removed: usize,
+    /// Directories whose marker could not decide, and whose journal was read.
+    pub(in crate::runner) journals: usize,
+    /// The first tree this sweep decided to remove and could not, by name.
+    pub(in crate::runner) residue: Option<String>,
 }
 
 /// What the journal says about the run that owns one directory.
@@ -1175,6 +1298,15 @@ pub(in crate::runner) enum RunState {
     Unknown,
 }
 
+/// What one marker decides on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    /// The owning run concluded that its directory may go: remove it now.
+    Release,
+    /// Retained from `ended_ms`: removal waits for the retention window.
+    Retain { ended_ms: i64 },
+}
+
 /// Removes this root's own retained directories whose run is closed and whose
 /// retention has passed. Bounded, and only ever inside the configured root: a
 /// directory must be a run-named directory carrying this engine's marker.
@@ -1182,18 +1314,43 @@ pub(in crate::runner) enum RunState {
 /// Retention starts when the run ended, never when it started: a long run that
 /// fails late keeps its full 24 hours. The marker records the conclusion; a run
 /// whose owner died before concluding uses the journal's close time instead.
+///
+/// Every directive here is about not making a run wait for scratch:
+///
+/// - the marker decides wherever it can, so a root holding hundreds of
+///   retained directories costs marker reads, not journal reads;
+/// - a journal is read only for a marker that records no verdict, under its own
+///   small budget, with at most [`SWEEP_JOURNAL_MAX`] reads in one sweep;
+/// - the whole sweep stops at [`SWEEP_BUDGET`], and work it did not reach is a
+///   later run's;
+/// - `Unknown` (a journal that cannot be read, or that says nothing) skips the
+///   directory and tries again on a later run, and never waits.
 pub(in crate::runner) fn sweep_at(
     root: &Path,
     now_ms: i64,
     budget: usize,
     state: impl Fn(&str) -> RunState,
 ) -> SweepReport {
+    sweep_within(root, now_ms, budget, SWEEP_BUDGET, state)
+}
+
+fn sweep_within(
+    root: &Path,
+    now_ms: i64,
+    removals: usize,
+    within: Duration,
+    state: impl Fn(&str) -> RunState,
+) -> SweepReport {
+    let deadline = Instant::now() + within;
     let mut report = SweepReport::default();
     let Ok(entries) = std::fs::read_dir(root) else {
         return report;
     };
     for entry in entries.flatten() {
-        if report.scanned >= SWEEP_SCAN_MAX || report.removed >= budget {
+        if report.scanned >= SWEEP_SCAN_MAX
+            || report.removed >= removals
+            || Instant::now() >= deadline
+        {
             break;
         }
         report.scanned += 1;
@@ -1216,18 +1373,57 @@ pub(in crate::runner) fn sweep_at(
         if scratch_name_of(&marker.run).as_deref() != Some(name.as_str()) {
             continue;
         }
-        let RunState::Closed { at_ms } = state(&marker.run) else {
+        let Some(verdict) = verdict(&marker, &mut report, deadline, &state) else {
             continue;
         };
-        let ended_ms = marker.concluded_ms.or(at_ms).unwrap_or(marker.created_ms);
-        if now_ms.saturating_sub(ended_ms) < RETENTION.as_millis() as i64 {
-            continue;
+        if let Verdict::Retain { ended_ms } = verdict {
+            if now_ms.saturating_sub(ended_ms) < RETENTION.as_millis() as i64 {
+                continue;
+            }
         }
-        if remove(&path).verified().is_some() {
-            report.removed += 1;
+        match remove(&path) {
+            Ok(()) => report.removed += 1,
+            Err(unremoved) => {
+                // Named once, then left for a later run: a sweep never waits on
+                // a tree it cannot clear.
+                report.residue = Some(unremoved.describe());
+            }
         }
     }
     report
+}
+
+/// What one directory's marker decides, reading its journal only when the
+/// marker records no verdict (a run killed before deciding) or no time to date
+/// its retention from. `None` means this sweep leaves the directory alone.
+fn verdict(
+    marker: &Marker,
+    report: &mut SweepReport,
+    deadline: Instant,
+    state: &impl Fn(&str) -> RunState,
+) -> Option<Verdict> {
+    match (marker.keep, marker.concluded_ms) {
+        // The run concluded that its directory may go and its settle did not
+        // manage it: remove it now, whatever the retention window says.
+        (Some(false), _) => return Some(Verdict::Release),
+        // The owning run dated its own retention: no journal can say more.
+        (Some(true), Some(concluded_ms)) => {
+            return Some(Verdict::Retain {
+                ended_ms: concluded_ms,
+            })
+        }
+        _ => {}
+    }
+    if report.journals >= SWEEP_JOURNAL_MAX || Instant::now() >= deadline {
+        return None;
+    }
+    report.journals += 1;
+    match state(&marker.run) {
+        RunState::Closed { at_ms } => Some(Verdict::Retain {
+            ended_ms: at_ms.unwrap_or(marker.created_ms),
+        }),
+        RunState::Open | RunState::Unknown => None,
+    }
 }
 
 /// Whether `name` is in the scratch directory's alphabet.
@@ -1236,17 +1432,20 @@ fn is_run_name(name: &str) -> bool {
 }
 
 /// The bounded sweep a run's admission performs: a Prepare step, once per
-/// process, over the root that run is about to use.
+/// process, over the root that run is about to use. Its journal reads get an
+/// observation context of their own, so one busy sibling checkout answers
+/// `Unknown` instead of holding the run's start.
 fn sweep(root: &Path) {
     static SWEPT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if SWEPT.swap(true, std::sync::atomic::Ordering::AcqRel) {
         return;
     }
+    let cx = crate::runner::task_engine::observe_within(SWEEP_JOURNAL_BUDGET);
     sweep_at(root, now_ms(), SWEEP_REMOVE_MAX, |run| {
         let Ok(id) = run.parse::<effigy_kernel::id::RunId>() else {
             return RunState::Unknown;
         };
-        match crate::runner::task_engine::lookup_run(id) {
+        match crate::runner::task_engine::lookup_run_within(&cx, id) {
             crate::runner::task_engine::Lookup::Found(record) => match record.summary() {
                 Some(summary) if summary.phase == effigy_kernel::run::Phase::Closed => {
                     RunState::Closed {
@@ -2139,10 +2338,10 @@ mod tests {
         let id = run_id(22);
         std::os::unix::fs::symlink(outside.path(), root.path().join(name_of(&id)))
             .expect("symlink");
-        assert!(matches!(
-            remove(&root.path().join(name_of(&id))),
-            Observed::Unknown(_)
-        ));
+        assert!(
+            remove(&root.path().join(name_of(&id))).is_err(),
+            "a symlink is never removed as a scratch directory"
+        );
         let cx = cleanup();
         assert!(matches!(
             reconcile(&effect(&root.path().join(name_of(&id)), &id), &cx),
@@ -2156,5 +2355,208 @@ mod tests {
         assert!(owns(EFFECT));
         assert!(!owns("managed:environment"));
         assert!(!owns("kernel:custody"));
+    }
+
+    /// Distinct run ids beyond one byte of entropy, for a root holding
+    /// hundreds of retained directories.
+    fn run_id_at(n: usize) -> effigy_kernel::id::RunId {
+        let mut random = [0u8; 10];
+        random[0] = (n >> 8) as u8;
+        random[1] = n as u8;
+        effigy_kernel::id::RunId::new(0, random).expect("run id")
+    }
+
+    /// Effigy's own immutable state objects, published under a run's temp
+    /// directory as the kernel publishes them: mode-0500 directories holding
+    /// mode-0400 files, which a plain `remove_dir_all` cannot clear.
+    fn publish_immutable_objects(dir: &Path) {
+        let objects = dir.join("state/objects/aa");
+        std::fs::create_dir_all(&objects).expect("objects");
+        let object = objects.join("blob");
+        std::fs::write(&object, b"immutable object").expect("object");
+        std::fs::set_permissions(&object, std::fs::Permissions::from_mode(0o400))
+            .expect("object mode");
+        std::fs::set_permissions(&objects, std::fs::Permissions::from_mode(0o500))
+            .expect("objects mode");
+        std::fs::set_permissions(
+            dir.join("state/objects"),
+            std::fs::Permissions::from_mode(0o500),
+        )
+        .expect("objects parent mode");
+    }
+
+    #[test]
+    fn a_released_tree_of_read_only_objects_is_removed_and_leaves_no_residue() {
+        let root = tempfile::tempdir().expect("root");
+        let old = now_ms() - RETENTION.as_millis() as i64 - 1;
+        let id = run_id(27);
+        let dir = hold_marker(
+            root.path(),
+            &id,
+            Marker {
+                keep: Some(false),
+                ..marker(&id, old, Some(now_ms()))
+            },
+        );
+        publish_immutable_objects(&dir);
+
+        let releasing = release(&effect(&dir, &id), &cleanup());
+        assert!(
+            matches!(releasing, Observed::Verified((), _)),
+            "a mode-0500 tree is released: {releasing:?}"
+        );
+        assert!(!dir.exists(), "the released tree is gone");
+
+        // The same tree on the reconcile path: the settle's own decision.
+        let again = run_id(28);
+        let dir = hold_marker(
+            root.path(),
+            &again,
+            Marker {
+                keep: Some(false),
+                ..marker(&again, old, Some(now_ms()))
+            },
+        );
+        publish_immutable_objects(&dir);
+        let released = matches!(
+            reconcile(&effect(&dir, &again), &cleanup()),
+            Observed::Verified(Reconciled::Released, _)
+        );
+        assert!(released, "a mode-0500 tree is released");
+        assert!(!dir.exists(), "the reconciled tree is gone");
+    }
+
+    #[test]
+    fn a_tree_that_cannot_be_removed_is_named_once_and_left_for_a_later_sweep() {
+        let root = tempfile::tempdir().expect("root");
+        let old = now_ms() - RETENTION.as_millis() as i64 - 1;
+        let id = run_id(29);
+        let dir = hold_marker(
+            root.path(),
+            &id,
+            Marker {
+                keep: Some(false),
+                ..marker(&id, old, Some(now_ms()))
+            },
+        );
+        // A walk one removal cannot finish (a tree deeper than any fixture
+        // makes) names the entry that stopped it and leaves it in place.
+        let mut deep = dir.clone();
+        for _ in 0..TREE_DEPTH_MAX {
+            deep.push("d");
+            std::fs::create_dir(&deep).expect("deep directory");
+        }
+        match reconcile(&effect(&dir, &id), &cleanup()) {
+            Observed::Verified(Reconciled::Residue(reason), _) => {
+                assert!(reason.contains(&dir.display().to_string()), "{reason}");
+                assert!(
+                    reason.contains("deeper"),
+                    "the failing entry is named: {reason}"
+                );
+            }
+            _ => panic!("an unremovable tree is not named residue"),
+        }
+        assert!(dir.exists(), "a tree it cannot remove is left where it is");
+        let report = sweep_at(root.path(), now_ms(), 8, closed);
+        assert_eq!(report.removed, 0);
+        let residue = report.residue.expect("the sweep names the same residue");
+        assert!(residue.contains(&dir.display().to_string()), "{residue}");
+    }
+
+    #[test]
+    fn a_retained_directory_is_decided_from_its_marker_without_a_journal() {
+        let root = tempfile::tempdir().expect("root");
+        // What 24-hour failure retention leaves: hundreds of young directories,
+        // each of which a journal read used to cost the next run's start.
+        for n in 0..120 {
+            let id = run_id_at(n);
+            hold_marker(
+                root.path(),
+                &id,
+                Marker {
+                    keep: Some(true),
+                    ..marker(&id, now_ms() - 60_000, Some(now_ms() - 60_000))
+                },
+            );
+        }
+        let report = sweep_at(root.path(), now_ms(), 8, |run| {
+            panic!("the marker decides this directory: {run}")
+        });
+        assert_eq!(
+            report.journals, 0,
+            "no journal is read for a decided marker"
+        );
+        assert_eq!(report.removed, 0, "every directory is still retained");
+        assert_eq!(report.scanned, 120, "every directory was examined");
+    }
+
+    #[test]
+    fn the_sweep_finishes_within_its_budget_when_sibling_journals_are_busy() {
+        let root = tempfile::tempdir().expect("root");
+        // 300 retained directories, all of them from runs killed before they
+        // recorded a verdict, so only a journal can date them.
+        for n in 0..300 {
+            let id = run_id_at(n);
+            hold_marker(
+                root.path(),
+                &id,
+                Marker {
+                    keep: None,
+                    ..marker(&id, now_ms() - 7 * 24 * 60 * 60 * 1000, None)
+                },
+            );
+        }
+        let budget = Duration::from_millis(150);
+        let started = Instant::now();
+        let report = sweep_within(root.path(), now_ms(), 8, budget, |_| {
+            // A sibling checkout's journal under a writer: the bounded read
+            // spends its own budget and answers nothing, never waiting.
+            std::thread::sleep(Duration::from_millis(100));
+            RunState::Unknown
+        });
+        let elapsed = started.elapsed();
+        assert!(
+            report.journals <= SWEEP_JOURNAL_MAX,
+            "{} journals",
+            report.journals
+        );
+        assert!(
+            elapsed < budget + Duration::from_millis(300),
+            "the sweep spent {elapsed:?} of a {budget:?} budget"
+        );
+        assert_eq!(report.removed, 0, "an unreadable journal removes nothing");
+    }
+
+    #[test]
+    fn the_sweep_removes_expired_read_only_trees_and_dates_a_crash_from_its_journal() {
+        let root = tempfile::tempdir().expect("root");
+        let old = now_ms() - RETENTION.as_millis() as i64 - 1;
+        // Retained and expired, with an immutable object inside.
+        let retained = run_id(30);
+        let retained_dir = hold_marker(
+            root.path(),
+            &retained,
+            Marker {
+                keep: Some(true),
+                ..marker(&retained, old, Some(old))
+            },
+        );
+        publish_immutable_objects(&retained_dir);
+        // A run killed before deciding: the journal's close time dates it.
+        let crashed = run_id(31);
+        let crashed_dir = hold(root.path(), &crashed, None);
+        assert!(
+            read_marker(&crashed_dir).is_some_and(|marker| marker.concluded_ms.is_none()),
+            "a run killed before deciding records no conclusion"
+        );
+        let report = sweep_at(root.path(), now_ms(), 8, closed);
+        assert_eq!(
+            report.journals, 1,
+            "only the undecided directory needed one"
+        );
+        assert_eq!(report.removed, 2);
+        assert!(!retained_dir.exists());
+        assert!(!crashed_dir.exists());
+        assert_eq!(report.residue, None);
     }
 }

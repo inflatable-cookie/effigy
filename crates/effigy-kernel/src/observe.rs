@@ -83,7 +83,15 @@ pub struct InventoryRef {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UnknownReason {
-    TimedOut { phase: String },
+    TimedOut {
+        phase: String,
+    },
+    /// The observation could not be taken because the thing observed was being
+    /// written for its whole window (a store backup restarted by its writer).
+    /// It means "try again when the writer is quiet", never a failure.
+    Busy {
+        phase: String,
+    },
     PermissionDenied,
     ToolUnavailable(String),
     Unparsable(String),
@@ -103,6 +111,10 @@ impl std::fmt::Display for UnknownReason {
             Self::TimedOut { phase } => write!(
                 f,
                 "could not tell: the observation timed out during {phase}; retry once the host is less busy"
+            ),
+            Self::Busy { phase } => write!(
+                f,
+                "could not tell: the state was being written throughout {phase}; retry once nothing else is writing it"
             ),
             Self::PermissionDenied => f.write_str(
                 "could not tell: this user may not read the state; check the checkout's `.effigy/state` ownership and permissions",

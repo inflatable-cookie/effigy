@@ -1420,6 +1420,26 @@ During v0.x, MINOR bumps may include breaking changes.
   with `Cross-device link`. The pin now falls back to a copy that is flushed,
   compared byte for byte with the running image and made read-only, so the
   helper still re-execs exactly the startup image (contract 052 §10.1).
+- A scratch run no longer leaves residue that refuses the task's next run, and a
+  run start no longer pays for retained scratch or for a busy sibling journal
+  (effigy#333). Three defects, found with `[scratch]` on and 203 retained
+  directories: releasing a directory holding Effigy's own immutable objects
+  (mode-`0500` directories, mode-`0400` files under `TMPDIR`) failed with
+  permission denied, so the effect stayed unsettled and blocked the task's next
+  run; the retention sweep read *every* directory's run journal, including 178
+  kept failures whose marker already decided; and a journal under a continuous
+  writer restarted SQLite's online backup from its first page for the whole
+  observation budget (one `effigy fmt:check` was sampled at 100% CPU for 13+
+  minutes). Release and sweep now restore owner write permission through a tree
+  they own before removing it, without following a symlink or leaving the tree;
+  a tree they still cannot clear is reported once, by name, with the failing
+  entry, settles as retained residue that never blocks the next run, and is
+  retried by a later sweep. The sweep decides from each marker, reads a journal
+  only for a run that died before recording a verdict (bounded reads in their
+  own small observation context), reads at most 8 per sweep and stops at a
+  250 ms budget; a journal it cannot read is skipped and retried later. A live
+  store snapshot counts restarts and gives up with `Unknown(Busy)` after a
+  bounded number, which also protects `runs --all`, `run status` and doctor.
 - An explicit `--json`, or the global `--json`, always emits the
   `effigy.command.v1` envelope, wherever the invocation runs. A nested Effigy
   invocation marked with `EFFIGY_INTERNAL_SUPPRESS_HEADER` used to print its
