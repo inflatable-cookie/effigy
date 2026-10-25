@@ -472,21 +472,6 @@ fn discover(
             }
         }
     }
-    if let Some(home) = effigy_containers::effigy_home() {
-        let registry = PortRegistry::load(&home.join("ports.json")).map_err(invalid)?;
-        for node in inventory {
-            if let Some((token, project)) = scope(node) {
-                if let Some(allocation) = registry.get(project) {
-                    if let Some(checkout) = path(&allocation.project) {
-                        paths
-                            .entry(token.into())
-                            .or_default()
-                            .insert(checkout.display().to_string());
-                    }
-                }
-            }
-        }
-    }
     for node in inventory {
         let Some((token, project)) = scope(node) else {
             continue;
@@ -650,7 +635,6 @@ fn retire_inner(
     }
     let mut resources = observed(&record, profile, &inventory);
     resources.extend(observe_routes(&record)?);
-    resources.extend(observe_ports(&record)?);
     resources.extend(observe_loopbacks(&record)?);
     resources.extend(observe_tls_certs(&record)?);
     let plan = plan_retirement(&record, &resources);
@@ -694,13 +678,6 @@ fn retire_inner(
                     true
                 }
             }
-            ObservedKind::Port => {
-                if done.insert("ports") {
-                    delete_ports(&record)?
-                } else {
-                    true
-                }
-            }
             ObservedKind::Loopback => {
                 if done.insert("loopbacks") {
                     delete_loopbacks(&record)?
@@ -718,7 +695,6 @@ fn retire_inner(
     let after = nodes(root, profile)?;
     let mut resources = observed(&record, profile, &after);
     resources.extend(observe_routes(&record)?);
-    resources.extend(observe_ports(&record)?);
     resources.extend(observe_loopbacks(&record)?);
     resources.extend(observe_tls_certs(&record)?);
     let remaining = remaining_after(&record, &resources);

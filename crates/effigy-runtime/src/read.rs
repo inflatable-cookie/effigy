@@ -17,9 +17,8 @@ use effigy_containers::{
     validate_compose_backend_runtime, validate_container_policy,
 };
 use effigy_containers::{
-    port_capacity_note, stats_global_report, status_global_report, ContainerServiceHealth,
-    ContainerStatsAllEntry, ContainerStatsService, ContainerStatusService,
-    EffectiveContainerPolicy,
+    stats_global_report, status_global_report, ContainerServiceHealth, ContainerStatsAllEntry,
+    ContainerStatsService, ContainerStatusService, EffectiveContainerPolicy,
 };
 use effigy_containers::{ContainerAction, ContainerRuntimeState};
 use effigy_containers::{
@@ -128,11 +127,6 @@ pub fn run_container_status(
     }
     // Which backend this environment uses and why, and its record.
     effigy_containers::environment::EnvironmentView::read(repo_root, &policy).annotate(&mut report);
-    // Text-only discoverability breadcrumb; the status JSON schema is unchanged.
-    if let Some(note) = port_capacity_note() {
-        report.success_text.push('\n');
-        report.success_text.push_str(&note);
-    }
     Ok(render_container_report(report, output_json))
 }
 

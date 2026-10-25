@@ -1397,11 +1397,11 @@ fn child_environment(
             OsString::from(HOST_LISTENER_GENERATION_ENV),
             EnvValue::Plain(OsString::from(generation)),
         );
-        // Effigy reserved this listener's concrete port, so the process
-        // receives it as `HOST`/`PORT` (effigy#321). The reserved address
-        // outranks an ambient value, because the process must serve the port
-        // Effigy reserved and then verified; only a value the manifest itself
-        // declares is the process's own decision and wins.
+        // Effigy assigned this listener its concrete port (the OS picked it),
+        // so the process receives it as `HOST`/`PORT` (effigy#321, effigy#346).
+        // That address outranks an ambient value, because the process must
+        // serve the port Effigy bound on its behalf; only a value the manifest
+        // itself declares is the process's own decision and wins.
         if let Ok(address) = bind.parse::<SocketAddr>() {
             for (key, value) in [
                 ("HOST", address.ip().to_string()),

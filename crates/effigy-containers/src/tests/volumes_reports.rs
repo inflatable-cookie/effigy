@@ -110,14 +110,6 @@ fn status_global_report_renders_environment_inventory() {
         dns_domain: Some("demo.test".to_owned()),
         dns_tls: true,
         declared_ports: vec!["18080:80".to_owned()],
-        allocated_ports: Some(AllocatedPortsSummary {
-            base: 8100,
-            http: 8100,
-            mysql: 8106,
-            postgres: 8132,
-            redis: 8179,
-            memcached: 8111,
-        }),
         services: vec![ContainerStatusService {
             name: "app".to_owned(),
             container_name: "demo-app-1".to_owned(),
@@ -129,7 +121,6 @@ fn status_global_report_renders_environment_inventory() {
 
     assert!(report.success_text.contains("running Effigy-managed"));
     assert!(report.success_text.contains("demo.test (tls)"));
-    assert!(report.success_text.contains("allocated_ports: base=8100"));
     assert_eq!(report.json["environment_count"], 1);
     assert_eq!(report.json["environments"][0]["container"], "web");
 }
@@ -313,16 +304,6 @@ primary_service = "app"
     assert_eq!(
         report.json["shared_services"][0]["project_name"],
         "effigy-shared-mariadb-deadbeef"
-    );
-    policy.shared_services[0].host_port = 0;
-    let unassigned = status_report(&policy, "containerd", true, None, None, None, None);
-    assert!(unassigned
-        .success_text
-        .contains(crate::policy::ports::UNASSIGNED_PORT_LABEL));
-    assert!(unassigned.json["shared_services"][0]["target_port"].is_null());
-    assert_eq!(
-        unassigned.json["shared_services"][0]["allocation"],
-        crate::policy::ports::UNASSIGNED_PORT_LABEL
     );
 }
 

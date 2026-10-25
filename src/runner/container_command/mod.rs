@@ -46,7 +46,6 @@ mod lifecycle;
 mod liveness;
 mod migrate;
 pub(in crate::runner) mod policy;
-mod ports;
 mod profile;
 mod readiness;
 mod render;
@@ -293,9 +292,6 @@ fn run_container_with(
         ),
         ContainerSubcommand::Scope => {
             scope::run_container_scope(args.repo_override.clone(), args.output_json)
-        }
-        ContainerSubcommand::Ports { subcommand } => {
-            ports::run_container_ports(&subcommand, args.output_json)
         }
         ContainerSubcommand::Retire {
             name,

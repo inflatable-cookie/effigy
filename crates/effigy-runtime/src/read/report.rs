@@ -1,9 +1,4 @@
-use std::path::Path;
-
-use effigy_containers::{
-    AllocatedPortsSummary, ContainerCommandReport, ContainerStatusAllEntry, ContainerStatusService,
-};
-use effigy_gateway::ports::PortRegistry;
+use effigy_containers::{ContainerCommandReport, ContainerStatusAllEntry, ContainerStatusService};
 
 use super::DiscoveredRunningEnvironment;
 
@@ -41,17 +36,6 @@ pub(super) fn environment_status_entry(
         dns_domain: policy.dns_domain.clone(),
         dns_tls: policy.dns_tls,
         declared_ports: policy.declared_ports.clone(),
-        allocated_ports: load_port_registry()
-            .as_ref()
-            .and_then(|value| value.port_map(&policy.project_name))
-            .map(|ports| AllocatedPortsSummary {
-                base: ports.base,
-                http: ports.http,
-                mysql: ports.mysql,
-                postgres: ports.postgres,
-                redis: ports.redis,
-                memcached: ports.memcached,
-            }),
         services: environment
             .services
             .iter()
@@ -67,10 +51,4 @@ pub(super) fn environment_status_entry(
             })
             .collect(),
     }
-}
-
-fn load_port_registry() -> Option<PortRegistry> {
-    let home = std::env::var_os("HOME")?;
-    let path = Path::new(&home).join(".effigy/ports.json");
-    PortRegistry::load(&path).ok()
 }

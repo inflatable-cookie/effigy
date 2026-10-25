@@ -19,7 +19,6 @@ use std::time::{Duration, Instant};
 use effigy_containers::{
     EffectiveContainerPolicy, EffectiveManagedHostListener, HostProcessEnvFacts,
 };
-use effigy_gateway::endpoint_store::{EndpointStore, ListenerPortRequest};
 use effigy_kernel::ctx::{CleanupContext, EffectClass, EffectContext, OpenReason, Placement};
 use effigy_kernel::gate::GateState;
 use effigy_kernel::id::{CheckoutId, ResolvedInvocation, ResourceId, RunId};
@@ -394,8 +393,8 @@ fn start_host_processes_inner(
         .map_err(super::super::environment::error)?
         .checkout;
     // Resolved environment facts every host-process `env` may reference, and
-    // one concrete loopback port per dynamic listener, reserved through the
-    // gateway endpoint store before any child launches (effigy#321).
+    // one concrete loopback port per dynamic listener, taken from the OS before
+    // any child launches (effigy#321, effigy#346).
     let mut facts = HostProcessEnvFacts::for_policy(policy)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     facts.set_gateway_https_port(super::super::gateway_command::gateway_https_port());
@@ -645,7 +644,7 @@ fn gateway_ca_environment_from(
     env
 }
 
-/// A listener declaration with the port this run reserved, if it asked for a
+/// A listener declaration with the port this run assigned, if it asked for a
 /// dynamic one.
 fn resolved_host_process_listener(
     process: &effigy_containers::EffectiveHostProcess,
@@ -665,50 +664,30 @@ fn declared_bind_is_dynamic(bind: &str) -> bool {
         .is_ok_and(|address| address.port() == 0)
 }
 
-/// Reserve one concrete loopback port per dynamic listener through the
-/// gateway endpoint store, before any child launches, and record each
-/// listener's internal URL as a fact later processes may reference.
+/// Give each dynamic listener a concrete loopback port before any child
+/// launches.
+///
+/// `127.0.0.1:0` means "any free port": this process binds it once to learn
+/// the port, releases it immediately, and hands the address to the listener.
+/// Nothing is recorded, so a restart simply asks the OS again.
 fn reserve_listener_binds(
     policy: &EffectiveContainerPolicy,
     facts: &mut HostProcessEnvFacts,
 ) -> Result<BTreeMap<String, String>, RunnerError> {
-    let dynamic = policy
-        .host_processes
-        .iter()
-        .filter(|process| {
-            process
-                .listener
-                .as_ref()
-                .is_some_and(|listener| declared_bind_is_dynamic(&listener.bind))
-        })
-        .collect::<Vec<_>>();
     let mut binds = BTreeMap::new();
-    if dynamic.is_empty() {
-        return Ok(binds);
-    }
-    let store = listener_port_store()?;
-    for process in dynamic {
-        let listener = process
-            .listener
-            .as_ref()
-            .expect("filtered dynamic listener");
+    for process in &policy.host_processes {
+        let Some(listener) = process.listener.as_ref() else {
+            continue;
+        };
+        if !declared_bind_is_dynamic(&listener.bind) {
+            continue;
+        }
         let address = listener.bind.parse::<SocketAddr>().map_err(|error| {
             RunnerError::task_invocation(format!(
                 "managed listener bind address is invalid: {error}"
             ))
         })?;
-        let port = store
-            .reserve_listener_port(&ListenerPortRequest {
-                project_name: policy.project_name.clone(),
-                project_path: policy.repo_root.display().to_string(),
-                listener: process.name.clone(),
-            })
-            .map_err(|error| {
-                RunnerError::task_invocation(format!(
-                    "host process `{}` could not reserve a listener port: {error}",
-                    process.name
-                ))
-            })?;
+        let port = free_loopback_port(address.ip())?;
         let bind = SocketAddr::new(address.ip(), port);
         facts.set_listener_internal_url(&process.name, format!("http://{bind}"));
         binds.insert(process.name.clone(), bind.to_string());
@@ -716,46 +695,21 @@ fn reserve_listener_binds(
     Ok(binds)
 }
 
-fn listener_port_store() -> Result<EndpointStore, RunnerError> {
-    let home = crate::runner::task_engine::state_home_path().ok_or_else(|| {
-        RunnerError::task_invocation(
-            "HOME is unset; a managed listener port needs the machine endpoint store",
-        )
+/// A port the OS reports as free on `ip`, released before it is handed over.
+fn free_loopback_port(ip: std::net::IpAddr) -> Result<u16, RunnerError> {
+    let probe = std::net::TcpListener::bind(SocketAddr::new(ip, 0)).map_err(|error| {
+        RunnerError::task_invocation(format!(
+            "could not ask the OS for a free listener port on {ip}: {error}"
+        ))
     })?;
-    Ok(EndpointStore::for_effigy_home(&home.join(".effigy")))
-}
-
-/// Release this environment's listener ports on settle. A failure is residue
-/// the stop report names; a settled environment never silently keeps one.
-fn release_listener_reservations(policy: &EffectiveContainerPolicy) -> Vec<String> {
-    let reserved = policy
-        .host_processes
-        .iter()
-        .filter(|process| {
-            process
-                .listener
-                .as_ref()
-                .is_some_and(|listener| declared_bind_is_dynamic(&listener.bind))
-        })
-        .map(|process| process.name.clone())
-        .collect::<BTreeSet<_>>();
-    if reserved.is_empty() {
-        return Vec::new();
-    }
-    let store = match listener_port_store() {
-        Ok(store) => store,
-        Err(error) => return vec![error.to_string()],
-    };
-    let project_path = policy.repo_root.display().to_string();
-    reserved
-        .into_iter()
-        .filter_map(|name| {
-            store
-                .release_listener_port(&policy.project_name, &project_path, &name)
-                .err()
-                .map(|error| format!("host process `{name}` listener port release failed: {error}"))
-        })
-        .collect()
+    let port = probe
+        .local_addr()
+        .map_err(|error| {
+            RunnerError::task_invocation(format!("free listener port has no address: {error}"))
+        })?
+        .port();
+    drop(probe);
+    Ok(port)
 }
 
 /// Stops every host process of the environment through the kernel.
@@ -827,7 +781,6 @@ pub(in crate::runner) fn stop_host_processes_for_container(
         .routes
         .extend(withdrawn.iter().map(describe_withdrawn_route));
     report.residue.extend(residue);
-    report.residue.extend(release_listener_reservations(policy));
     report
 }
 
@@ -1420,16 +1373,15 @@ mod tests {
         dir
     }
 
-    /// effigy#321: a `:0` listener receives a concrete port from the endpoint
-    /// store, keeps it across supervisor restarts, and releases it on settle.
+    /// A `:0` listener gets a concrete port from the OS, and a restart asks
+    /// again rather than recording one.
     #[test]
-    fn a_dynamic_listener_port_is_reserved_retained_and_released() {
+    fn a_dynamic_listener_port_comes_from_the_os() {
         let dir = fixture_checkout();
         let checkout = dir.path().canonicalize().expect("checkout");
-        let project = format!("host-process-listener-port-{}", std::process::id());
         let policy = policy(
             &checkout,
-            &project,
+            "host-process-listener-port",
             vec![host_process(
                 "api",
                 &[],
@@ -1438,47 +1390,23 @@ mod tests {
         );
 
         let mut facts = HostProcessEnvFacts::for_policy(&policy).expect("facts");
-        let binds = reserve_listener_binds(&policy, &mut facts).expect("reservation");
+        let binds = reserve_listener_binds(&policy, &mut facts).expect("allocate");
         let bind = binds["api"].parse::<SocketAddr>().expect("concrete bind");
         assert_ne!(bind.port(), 0, "a dynamic bind receives a concrete port");
         assert_eq!(
             facts.host_processes["api"].internal_url.as_deref(),
             Some(format!("http://{bind}").as_str()),
-            "the reserved port is the listener's internal URL"
-        );
-
-        // A restart within the run asks again and keeps the assignment.
-        let mut restarted = HostProcessEnvFacts::for_policy(&policy).expect("facts");
-        let again = reserve_listener_binds(&policy, &mut restarted).expect("retained");
-        assert_eq!(again["api"], binds["api"], "a restart keeps its port");
-
-        let store = listener_port_store().expect("endpoint store");
-        let key = effigy_gateway::endpoint_store::listener_port_key("api");
-        assert!(store
-            .read_ports()
-            .expect("ports")
-            .get(&project)
-            .expect("the project owns the reservation")
-            .assigned_ports
-            .contains_key(&key));
-
-        assert!(
-            release_listener_reservations(&policy).is_empty(),
-            "settle releases the port without residue"
+            "the assigned port is the listener's internal URL"
         );
         assert!(
-            store
-                .read_ports()
-                .expect("ports")
-                .get(&project)
-                .is_none_or(|allocation| !allocation.assigned_ports.contains_key(&key)),
-            "the settled environment no longer holds the listener port"
+            std::net::TcpListener::bind(bind).is_ok(),
+            "the assigned port is free for the listener to bind"
         );
     }
 
-    /// A declared fixed port is the manifest's own and is never re-reserved.
+    /// A declared fixed port is the manifest's own and is used untouched.
     #[test]
-    fn a_fixed_listener_port_is_not_reserved_or_released() {
+    fn a_fixed_listener_port_is_used_as_written() {
         let dir = fixture_checkout();
         let checkout = dir.path().canonicalize().expect("checkout");
         let policy = policy(
@@ -1491,9 +1419,8 @@ mod tests {
             )],
         );
         let mut facts = HostProcessEnvFacts::for_policy(&policy).expect("facts");
-        let binds = reserve_listener_binds(&policy, &mut facts).expect("no reservation");
+        let binds = reserve_listener_binds(&policy, &mut facts).expect("no allocation");
         assert!(binds.is_empty());
-        assert!(release_listener_reservations(&policy).is_empty());
         assert_eq!(
             resolved_host_process_listener(&policy.host_processes[0], &binds)
                 .expect("listener")
@@ -1562,7 +1489,6 @@ mod tests {
             api_env["EFFIGY_HOST_PROCESS_INTERNAL_URL"],
             format!("http://{bind}")
         );
-        let _ = release_listener_reservations(&policy);
     }
 
     /// The CA trust variables point at the active gateway CA, and neither an

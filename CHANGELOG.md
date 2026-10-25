@@ -20,8 +20,36 @@ During v0.x, MINOR bumps may include breaking changes.
   process name; no run id is recorded.
 - `effigy gateway repair` (with `--owner-checkout`, `--yes` and `--expect-plan`)
   is retired: automatic reclaim replaces it, and a dead loopback assignment is
-  collected once at allocation time. `effigy container ports reclaim` is
-  unchanged.
+  collected once at allocation time.
+- **Host ports come from the OS or Compose.** A generated service publishes
+  `127.0.0.1::<container-port>` and `up` reads the assigned port back into its
+  route; nothing is reserved across runs. A `[containers.<NAME>.host].ports`
+  pin is still used as written and a collision now fails naming the process
+  that holds it. `[containers.<NAME>.host].stable_ports = true` derives one
+  stable, probed port per published container port from the checkout path
+  instead, and never records it. Shared backing services derive their port the
+  same way.
+- **One endpoint table and one transaction.** The gateway keeps its routes and
+  loopback aliases in one committed snapshot written by one plain transaction.
+  The second commit path, the endpoint quarantine, the v0.14.1 handback and the
+  legacy `routes.json`/`loopback-ips.json`/`ports.json` import are gone; the
+  Store is the only source and the route file is no longer a privilege boundary
+  the daemon re-verifies.
+- **A loopback alias lives from `up` to `down`.** `down` releases it, and the
+  next allocation reclaims one whose checkout path is gone, so a deleted
+  worktree's address is reused without a repair command.
+- **`container up` starts the gateway** when it is not running, and `up`
+  reconciles a gateway whose cleanup an interruption left incomplete. One line
+  names it.
+- **A managed listener gets a port the same way.** Effigy binds
+  `127.0.0.1:0`, reads the port, and hands the address to the listener. A
+  restart may get a new port and the route follows it.
+- Removed: the 100-port project ranges and their permanent ownership, the port
+  registry and `effigy container ports status|reclaim` (with `--apply
+  --expect-plan`), port and loopback dead-owner repair (`port_recovery`,
+  `loopback_recovery`, the reclaim modules), the dead loopback pruner, and the
+  listener port reservation. Tests for ranges, reclaim plans and repair went
+  with them.
 - `effigy deploy model` and `effigy deploy export` are environment-aware:
   `deploy model <ENV>` and `deploy export <PROVIDER> <ENV>` describe the named
   `[deploy.<env>]` environment by resolving sparse `[deploy.<env>.model]`
