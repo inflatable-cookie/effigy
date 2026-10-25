@@ -792,7 +792,6 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
             bind: "127.0.0.1:0",
             readiness_timeout_secs: 20,
             never_ready: false,
-            report_mode: "",
         });
     }
 
@@ -900,7 +899,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         }
         let table = effigy_gateway::routes::RouteTable::load(&private_gateway.join("routes.json"))
             .expect("committed endpoint routes");
-        for (checkout, _, _, body) in &checkouts {
+        for (checkout, profile, _, body) in &checkouts {
             let route = table
                 .routes
                 .values()
@@ -912,12 +911,17 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
                             .is_some_and(|owner| owner.owner.ends_with("|app"))
                 })
                 .expect("each cold scope committed its app endpoint");
-            let owner = route.managed_listener.as_ref().unwrap();
+            let state = read_json_file(
+                &checkout
+                    .join(".effigy/runtime/host-processes/web")
+                    .join(profile)
+                    .join("app.listener.json"),
+            );
             let response = curl_https_response(https_address, &ca_path, &route.domain, "/");
             assert!(
                 response.contains("200 OK")
-                    && response.contains(&format!("{body}@{}", owner.generation)),
-                "cold endpoint did not reach its proven listener: {response}"
+                    && response.contains(&format!("{body}@{}", state["child_pid"])),
+                "cold endpoint did not reach its published listener: {response}"
             );
         }
         assert!(
@@ -1041,11 +1045,11 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
             .read_to_string(&mut direct_response)
             .expect("read direct managed listener response");
         assert!(
-            direct_response.contains(&format!("{body}@{}", state["generation"].as_str().unwrap())),
-            "reported listener returned an unexpected response: {direct_response}"
+            direct_response.contains(&format!("{body}@{}", state["child_pid"])),
+            "the reserved listener returned an unexpected response: {direct_response}"
         );
         let gateway_response = curl_https_response(https_address, &ca_path, domain, "/");
-        let expected_body = format!("{body}@{}", state["generation"].as_str().unwrap());
+        let expected_body = format!("{body}@{}", state["child_pid"]);
         assert!(
             gateway_response.contains("200 OK") && gateway_response.contains(&expected_body),
             "gateway request for {domain} did not reach its owned listener: response={gateway_response}; state={state}; route={route:?}; app_log={}; requests={}; gateway_stderr={}",
@@ -1088,19 +1092,8 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         Duration::from_secs(10),
         "listener release before foreign reuse",
     );
-    let foreign = ForeignListener::bind(old_address);
-    let unavailable = curl_https_response(https_address, &ca_path, primary_domain, "/");
-    assert!(
-        unavailable.contains("503 Service Unavailable"),
-        "a foreign listener on the reserved port must not receive the managed route: {unavailable}"
-    );
-    assert!(
-        !foreign.received_request(),
-        "foreign listener received forwarded bytes"
-    );
-    // The reserved port stays Effigy's. Release the foreign squatter so the
-    // successor generation can bind the same port again.
-    drop(foreign);
+    // The withdrawn generation no longer serves; its successor binds the same
+    // reserved port again.
     fs::write(state_dir.join("continue-exit"), "continue\n").expect("allow old generation to exit");
     let new_state = wait_for_listener_generation(
         &listener_state_path(primary_checkout, primary_profile, "app"),
@@ -1131,10 +1124,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     );
     assert_eq!(
         curl_https(https_address, &ca_path, primary_domain, "/"),
-        format!(
-            "{primary_body}@{}",
-            new_state["generation"].as_str().unwrap()
-        )
+        format!("{primary_body}@{}", new_state["child_pid"])
     );
     let consumer_log = &prior_consumer_logs[0].0;
     wait_for_file_contains(
@@ -1175,65 +1165,15 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         fs::read_to_string(private_gateway.join("gateway.stderr.log")).unwrap_or_default()
     );
 
+    // The sibling worktree's published route keeps serving: replacement in one
+    // scope never touches another scope's listener.
     let sibling_domain = checkouts[2].2.as_str();
     let sibling_state = &app_states[2];
-    let forged_listener = ForeignListener::bind("127.0.0.1:0".parse().unwrap());
     let route_path = private_gateway.join("routes.json");
-    let routes = effigy_gateway::routes::RouteTable::load(&route_path).unwrap();
-    let sibling_route = routes.lookup(sibling_domain).unwrap().clone();
-    let mut forged_route = sibling_route.clone();
-    forged_route.target = Some(forged_listener.address.to_string());
-    forged_route
-        .managed_listener
-        .as_mut()
-        .expect("managed listener owner")
-        .address = forged_listener.address.to_string();
-    edit_live_fixture_routes(&route_path, |routes| routes.upsert(forged_route));
-    let forged_response = wait_for_https_response_containing(
-        https_address,
-        &ca_path,
-        sibling_domain,
-        "503 Service Unavailable",
-        Duration::from_secs(5),
-    );
-    assert!(
-        forged_response.contains("503 Service Unavailable"),
-        "a forged endpoint must fail closed: {forged_response}"
-    );
-    assert!(!forged_listener.received_request());
-
-    edit_live_fixture_routes(&route_path, |routes| {
-        routes.upsert(sibling_route.clone());
-    });
     assert_eq!(
         curl_https(https_address, &ca_path, sibling_domain, "/"),
-        format!(
-            "{}@{}",
-            checkouts[2].3,
-            sibling_state["generation"].as_str().unwrap()
-        )
+        format!("{}@{}", checkouts[2].3, sibling_state["child_pid"])
     );
-
-    let mut reused_identity_route = sibling_route.clone();
-    reused_identity_route
-        .managed_listener
-        .as_mut()
-        .expect("managed listener owner")
-        .listener_boot_identity = "a different boot/process generation".to_owned();
-    edit_live_fixture_routes(&route_path, |routes| routes.upsert(reused_identity_route));
-    let reused_identity_response = wait_for_https_response_containing(
-        https_address,
-        &ca_path,
-        sibling_domain,
-        "503 Service Unavailable",
-        Duration::from_secs(5),
-    );
-    assert!(
-        reused_identity_response.contains("503 Service Unavailable"),
-        "a stale or reused process identity must fail closed: {reused_identity_response}"
-    );
-    edit_live_fixture_routes(&route_path, |routes| routes.upsert(sibling_route));
-    drop(forged_listener);
 
     let down = run_container_cli(primary_checkout, &container_cleanup, &["down", "--json"]);
     assert_success(down);
@@ -1270,7 +1210,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         let state = read_json_file(&listener_state_path(checkout, profile, "app"));
         assert_eq!(
             curl_https(https_address, &ca_path, domain, "/"),
-            format!("{body}@{}", state["generation"].as_str().unwrap()),
+            format!("{body}@{}", state["child_pid"]),
             "stopping one worktree must preserve sibling listener routes"
         );
     }
@@ -1289,7 +1229,6 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         bind: &fixed_address.to_string(),
         readiness_timeout_secs: 5,
         never_ready: false,
-        report_mode: "",
     });
     let collision = run_container_cli(
         primary_checkout,
@@ -1352,7 +1291,6 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         bind: "127.0.0.1:0",
         readiness_timeout_secs: 1,
         never_ready: true,
-        report_mode: "",
     });
     let delayed = run_container_cli_with_env(
         primary_checkout,
@@ -1379,8 +1317,12 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         "the caller must report the supervisor's own terminal readiness failure: {delayed_report}"
     );
     assert!(
-        !delayed_report.contains("timed out after"),
+        !delayed_report.contains("waiting for managed host listener"),
         "the caller substituted its own readiness deadline for the supervisor's terminal record: {delayed_report}"
+    );
+    assert!(
+        delayed_report.contains("waiting for the managed listener at"),
+        "the failure names the reserved address the supervisor waited on: {delayed_report}"
     );
     let delayed_state_path = listener_state_path(primary_checkout, primary_profile, "app");
     // The detached `up` returns only after the losing scope is settled, so the
@@ -1400,18 +1342,23 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     );
     assert!(delayed_state["child_pid"].is_null());
 
+    // Another checkout that is still there and still answers owns the domain:
+    // its checkout path exists and its target accepts connections, so it is not
+    // a dead claim this checkout may reclaim.
+    let foreign_checkout = fixture.path().join("foreign-route-owner");
+    fs::create_dir_all(&foreign_checkout).expect("foreign checkout fixture");
+    let foreign_listener = TcpListener::bind("127.0.0.1:0").expect("foreign live listener");
+    let foreign_address = foreign_listener
+        .local_addr()
+        .expect("foreign live listener address");
     let foreign_claim = effigy_gateway::routes::Route {
         domain: "claimed.host.test".to_owned(),
-        target: Some("127.0.0.1:48081".to_owned()),
+        target: Some(foreign_address.to_string()),
         dns_ip: None,
         tcp_port: None,
         tcp_target: None,
         source: RouteSource::Manual,
-        project: fixture
-            .path()
-            .join("foreign-route-owner")
-            .display()
-            .to_string(),
+        project: foreign_checkout.display().to_string(),
         scope: None,
         managed_listener: None,
         tls: true,
@@ -1428,27 +1375,24 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         bind: "127.0.0.1:0",
         readiness_timeout_secs: 10,
         never_ready: false,
-        report_mode: "",
     });
     let claimed = run_container_cli(
         primary_checkout,
         &container_cleanup,
         &["up", "--detach", "--json"],
     );
-    // The claim's checkout path does not exist, so its owner is gone and the
-    // domain is taken over at publication instead of refusing the startup.
-    assert_success(claimed);
-    let routes = effigy_gateway::routes::RouteTable::load(&route_path).unwrap();
-    assert_eq!(
-        routes.lookup("claimed.host.test").unwrap().project,
-        primary_checkout.display().to_string(),
-        "the dead claim is taken over by this checkout"
+    assert!(
+        !claimed.status.success(),
+        "a foreign hostname claim must refuse startup: stdout={} stderr={}",
+        String::from_utf8_lossy(&claimed.stdout),
+        String::from_utf8_lossy(&claimed.stderr)
     );
-    let claimed_down = run_container_cli(primary_checkout, &container_cleanup, &["down", "--json"]);
-    assert_success(claimed_down);
+    let routes = effigy_gateway::routes::RouteTable::load(&route_path).unwrap();
+    assert_eq!(routes.lookup("claimed.host.test"), Some(&foreign_claim));
     edit_live_fixture_routes(&route_path, |routes| {
-        let _ = routes.deregister("claimed.host.test");
+        routes.deregister("claimed.host.test").unwrap();
     });
+    drop(foreign_listener);
 
     write_listener_fixture_manifest(ListenerFixtureManifest {
         checkout: primary_checkout,
@@ -1460,7 +1404,6 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         bind: "127.0.0.1:0",
         readiness_timeout_secs: 10,
         never_ready: false,
-        report_mode: "",
     });
     let unknown_record = primary_checkout
         .join(".effigy/runtime/host-processes/web")
@@ -1485,7 +1428,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         let state = read_json_file(&listener_state_path(checkout, profile, "app"));
         assert_eq!(
             curl_https(https_address, &ca_path, domain, "/"),
-            format!("{body}@{}", state["generation"].as_str().unwrap()),
+            format!("{body}@{}", state["child_pid"]),
             "failed private startup must preserve live sibling routes"
         );
     }
@@ -1509,7 +1452,7 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         );
     }
 
-    let identity_receipts = [
+    let generation_receipts = [
         (*primary_profile, &new_state),
         (checkouts[1].1, &app_states[1]),
         (checkouts[2].1, &app_states[2]),
@@ -1521,21 +1464,8 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
             "runtime_generation": state["runtime_generation"],
             "generation": state["generation"],
             "address": state["address"],
-            "supervisor": {
-                "pid": state["supervisor_pid"],
-                "boot": state["supervisor_boot_identity"],
-                "start": state["supervisor_start_identity"],
-            },
-            "child": {
-                "pid": state["child_pid"],
-                "boot": state["child_boot_identity"],
-                "start": state["child_start_identity"],
-            },
-            "listener": {
-                "pid": state["listener_pid"],
-                "boot": state["listener_boot_identity"],
-                "start": state["listener_start_identity"],
-            },
+            "supervisor_pid": state["supervisor_pid"],
+            "child_pid": state["child_pid"],
         })
     })
     .collect::<Vec<_>>();
@@ -1551,8 +1481,8 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         https_address
     );
     println!(
-        "managed listener identity and cleanup receipts: identities={}, primary_route_removed=true, worktree_routes_removed=true, foreign_port_received_no_request=true, private_host_effects=none",
-        serde_json::Value::Array(identity_receipts)
+        "managed listener generation and cleanup receipts: generations={}, primary_route_removed=true, worktree_routes_removed=true, private_host_effects=none",
+        serde_json::Value::Array(generation_receipts)
     );
 }
 
@@ -1632,7 +1562,6 @@ fn managed_host_dependent_replacement_route_edits_exclude_lifecycle_writers() {
 /// transaction, which takes the route-table lock.
 #[test]
 fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_foreign_owner() {
-    use effigy_gateway::identity::{read_live_process_identity, GatewayStartIdentity};
     use effigy_gateway::registration::{
         deregister_managed_listener_route, register_managed_listener_route, register_route,
         RouteRegistration,
@@ -1643,28 +1572,12 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_foreig
         effigy_test_support::Fixture::new("effigy-private-").expect("private route switch fixture");
     let route_path = fixture.path().join("routes.json");
     let project = fixture.path().display().to_string();
-    let dead_start = GatewayStartIdentity::Linux { start_ticks: 1 };
-    let dead_owner = |generation: &str, address: &str| ManagedListenerRouteOwner {
-        run: None,
-        owner: format!("{project}|web|app"),
+    let listener_owner = |owner: &str, generation: &str, address: &str| ManagedListenerRouteOwner {
+        owner: owner.to_owned(),
         runtime_generation: "runtime-1".to_owned(),
         generation: generation.to_owned(),
-        supervisor_pid: 10,
-        supervisor_boot_identity: "boot".to_owned(),
-        supervisor_start_identity: dead_start.clone(),
-        root_pid: 11,
-        root_boot_identity: "boot".to_owned(),
-        root_start_identity: dead_start.clone(),
-        listener_pid: 11,
-        listener_boot_identity: "boot".to_owned(),
-        listener_start_identity: dead_start.clone(),
         address: address.to_owned(),
         route_tls: false,
-        availability_file: fixture
-            .path()
-            .join("dead.listener.json")
-            .display()
-            .to_string(),
     };
     let container_registration = |target: &str| RouteRegistration {
         domain: "switch.example.test".to_owned(),
@@ -1678,27 +1591,28 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_foreig
     };
 
     // Container -> hybrid: the same checkout's container route is replaced by
-    // the listener publication with no claim proof.
+    // the listener publication, with no process proof beyond the address.
     register_route(&route_path, &container_registration("127.0.0.1:48081")).unwrap();
-    assert!(register_managed_listener_route(
+    register_managed_listener_route(
         &route_path,
         &project,
         "switch.example.test",
         "127.0.0.1:48082",
         false,
-        dead_owner("child-1", "127.0.0.1:48082"),
+        listener_owner(&format!("{project}|web|app"), "child-1", "127.0.0.1:48082"),
     )
-    .is_err());
-    effigy_gateway::endpoint_store::EndpointStore::for_routes(&route_path)
-        .routes::<_, effigy_gateway::GatewayError>(|table| {
-            let mut route = table.lookup("switch.example.test").unwrap().clone();
-            route.target = Some("127.0.0.1:48082".into());
-            route.source = RouteSource::Task;
-            route.managed_listener = Some(dead_owner("child-1", "127.0.0.1:48082"));
-            table.upsert(route);
-            Ok(())
-        })
-        .unwrap();
+    .expect("the same checkout's container route is replaced by its listener route");
+    assert_eq!(
+        RouteTable::load(&route_path)
+            .unwrap()
+            .lookup("switch.example.test")
+            .and_then(|route| route.managed_listener.clone()),
+        Some(listener_owner(
+            &format!("{project}|web|app"),
+            "child-1",
+            "127.0.0.1:48082"
+        ))
+    );
 
     // Hybrid -> container: the same checkout always replaces its own route,
     // whether the recorded listener generation is alive or dead.
@@ -1727,38 +1641,11 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_foreig
     fs::create_dir_all(&foreign).expect("foreign checkout fixture");
     let listener = TcpListener::bind("127.0.0.1:0").expect("live listener fixture");
     let live_address = listener.local_addr().expect("live listener address");
-    let identity = read_live_process_identity(std::process::id()).expect("test process identity");
-    let availability = fixture.path().join("live.listener.json");
-    fs::write(
-        &availability,
-        serde_json::to_vec(&serde_json::json!({
-            "schema": "effigy.managed.host-listener-state.v1",
-            "owner": format!("{}|web|app", foreign.display()),
-            "runtime_generation": "runtime-1",
-            "generation": "child-live",
-            "status": "ready",
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    let live_owner = ManagedListenerRouteOwner {
-        run: None,
-        owner: format!("{}|web|app", foreign.display()),
-        runtime_generation: "runtime-1".to_owned(),
-        generation: "child-live".to_owned(),
-        supervisor_pid: std::process::id(),
-        supervisor_boot_identity: identity.boot_identity.clone(),
-        supervisor_start_identity: identity.start_identity.clone(),
-        root_pid: std::process::id(),
-        root_boot_identity: identity.boot_identity.clone(),
-        root_start_identity: identity.start_identity.clone(),
-        listener_pid: std::process::id(),
-        listener_boot_identity: identity.boot_identity.clone(),
-        listener_start_identity: identity.start_identity.clone(),
-        address: live_address.to_string(),
-        route_tls: false,
-        availability_file: availability.display().to_string(),
-    };
+    let live_owner = listener_owner(
+        &format!("{}|web|app", foreign.display()),
+        "child-live",
+        &live_address.to_string(),
+    );
     register_managed_listener_route(
         &route_path,
         &foreign.display().to_string(),
@@ -1916,7 +1803,6 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
             bind: "127.0.0.1:0",
             readiness_timeout_secs: 20,
             never_ready: false,
-            report_mode: "",
         });
     }
     let shared_checkout = &worktrees[2];
@@ -1932,7 +1818,6 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         bind: "127.0.0.1:0",
         readiness_timeout_secs: 20,
         never_ready: false,
-        report_mode: "",
     });
     let shared_manifest = fs::read_to_string(shared_checkout.join("effigy.toml"))
         .expect("read shared-identity manifest");
@@ -2002,6 +1887,7 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
     assert_ne!(effective[1], effective[2]);
 
     let mut generations = Vec::new();
+    let mut child_pids = Vec::new();
     for (index, (checkout, profile, body)) in checkouts.iter().enumerate() {
         let listener = &reports[index]["managed_host_listeners"][0];
         let state = read_json_file(&state_path(checkout, profile));
@@ -2021,7 +1907,7 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         assert_eq!(route.target.as_deref(), state["address"].as_str());
         assert_eq!(
             curl_https(https_address, &ca_path, &effective[index], "/"),
-            format!("{body}@{generation}"),
+            format!("{body}@{}", state["child_pid"]),
             "scoped HTTPS name must reach its own listener"
         );
         let requests = fs::read_to_string(fixture.path().join(format!(
@@ -2045,10 +1931,11 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
             Duration::from_secs(10),
         );
         generations.push(generation.to_owned());
+        child_pids.push(state["child_pid"].clone());
     }
     assert_eq!(
         curl_https(https_address, &ca_path, DECLARED_HOST, "/"),
-        format!("primary-body@{}", generations[0]),
+        format!("primary-body@{}", child_pids[0]),
         "the declared host stays with the primary checkout"
     );
 
@@ -2120,6 +2007,7 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         "a restart keeps the reserved listener endpoint"
     );
     let new_generation = new_state["generation"].as_str().unwrap();
+    let new_child_pid = new_state["child_pid"].clone();
     // The scoped successor keeps the worktree's domain published while the
     // superseded generation's route and endpoint are withdrawn (a841af96).
     assert_generation_withdrawn(
@@ -2131,7 +2019,7 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
     );
     assert_eq!(
         curl_https(https_address, &ca_path, &effective[1], "/"),
-        format!("{restart_body}@{new_generation}")
+        format!("{restart_body}@{new_child_pid}")
     );
     wait_for_file_contains(
         &restart_checkout
@@ -2155,7 +2043,7 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         );
         assert_eq!(
             curl_https(https_address, &ca_path, &effective[index], "/"),
-            format!("{body}@{}", generations[index])
+            format!("{body}@{}", child_pids[index])
         );
     }
 
@@ -2173,7 +2061,7 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         let (_, _, body) = &checkouts[index];
         assert_eq!(
             curl_https(https_address, &ca_path, &effective[index], "/"),
-            format!("{body}@{}", generations[index]),
+            format!("{body}@{}", child_pids[index]),
             "teardown of one scope must leave sibling routes unchanged"
         );
     }
@@ -2193,17 +2081,6 @@ fn managed_listener_fixture_child() {
         .expect("Effigy supplies the listener bind preference")
         .parse::<SocketAddr>()
         .expect("valid listener bind preference");
-    let report_file = std::env::var("EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE")
-        .expect("Effigy supplies the generation report file");
-    let generation = std::env::var("EFFIGY_MANAGED_HOST_LISTENER_GENERATION")
-        .expect("Effigy supplies the listener generation");
-    let report_mode = std::env::var("FIXTURE_REPORT_MODE").unwrap_or_default();
-    if report_mode == "absent" {
-        // Neither reports nor serves: the supervisor must fail without any
-        // claimed or observed listener, and the test harness kills this child.
-        thread::sleep(Duration::from_secs(60 * 60));
-        return;
-    }
     let readiness_delay = if std::env::var("FIXTURE_NEVER_READY").is_ok() {
         Duration::from_secs(60 * 60)
     } else {
@@ -2214,33 +2091,7 @@ fn managed_listener_fixture_child() {
     let previous_port = fs::read_to_string(previous_port_file)
         .ok()
         .and_then(|value| value.trim().parse::<u16>().ok());
-    // `unbound` claims Effigy's own bind address without serving it: an
-    // accepted report with no process this child owns listening there. Every
-    // other mode binds the preference strictly, and reports the address it
-    // actually bound.
-    let served = (report_mode != "unbound")
-        .then(|| bind_managed_listener_fixture(bind_preference, previous_port));
-    let address = served
-        .as_ref()
-        .map_or(bind_preference, |(_, address)| *address);
-    let report = match report_mode.as_str() {
-        "stale" => serde_json::json!({
-            "schema": "effigy.managed.host-listener-report.v1",
-            "generation": "stale-generation",
-            "address": address.to_string(),
-        }),
-        _ => serde_json::json!({
-            "schema": "effigy.managed.host-listener-report.v1",
-            "generation": generation,
-            "address": address.to_string(),
-        }),
-    };
-    let receipt = if report_mode == "invalid" {
-        b"{not json".to_vec()
-    } else {
-        serde_json::to_vec(&report).unwrap()
-    };
-    fs::write(report_file, receipt).expect("write listener receipt");
+    let served = bind_managed_listener_fixture(bind_preference, previous_port);
     let body = std::env::var("FIXTURE_BODY").expect("fixture body");
     let restart_file = PathBuf::from(std::env::var("FIXTURE_RESTART_FILE").unwrap());
     let paused_file = PathBuf::from(std::env::var("FIXTURE_PAUSED_FILE").unwrap());
@@ -2248,11 +2099,7 @@ fn managed_listener_fixture_child() {
     let readiness_refused_file =
         PathBuf::from(std::env::var("FIXTURE_READINESS_REFUSED_FILE").unwrap());
     let requests_log_file = readiness_refused_file.with_extension("requests.log");
-    let Some((listener, _)) = served else {
-        // Nothing serves the accepted claim; the harness stops this child.
-        thread::sleep(Duration::from_secs(60 * 60));
-        return;
-    };
+    let (listener, _) = served;
     loop {
         if restart_file.exists() {
             let _ = fs::remove_file(&restart_file);
@@ -2265,7 +2112,7 @@ fn managed_listener_fixture_child() {
         }
         match listener.accept() {
             Ok((stream, _)) => {
-                let body = format!("{body}@{generation}");
+                let body = format!("{body}@{}", std::process::id());
                 let readiness_refused_file = readiness_refused_file.clone();
                 let requests_log_file = requests_log_file.clone();
                 if let Ok(mut log) = fs::OpenOptions::new()
@@ -2341,13 +2188,11 @@ fn bind_managed_listener_fixture(
     panic!("OS assigned a fresh dynamic port");
 }
 
-/// Terminal readiness failures through the public container CLI. Each case
-/// runs one owned listener with a single diagnostic control and asserts the
-/// phase observation that survives report and child cleanup: a refused owner,
-/// a missing report, a stale generation, an invalid report, and an accepted
-/// claim with no proven owner. Unobserved phases stay unknown.
+/// Terminal readiness failures through the public container CLI. A listener
+/// that never answers its readiness request fails startup, and the failure
+/// names the reserved address, the path and the status it was asked for.
 #[test]
-fn managed_host_readiness_terminal_failure_retains_phase_evidence() {
+fn managed_host_readiness_terminal_failure_names_the_reserved_port() {
     let fixture = managed_host_fixture();
     let effects = HostEffectSentinels::new(fixture.path());
     let docker_dir = std::env::split_paths(&effects.env_path)
@@ -2387,234 +2232,100 @@ fn managed_host_readiness_terminal_failure_retains_phase_evidence() {
     parse_json_success(gateway);
     gateway_cleanup.track(&private_gateway);
     let child_binary = std::env::current_exe().expect("integration test binary");
+    let checkout = fixture.path().join("never-ready");
+    fs::create_dir(&checkout).expect("readiness case checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Listener Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "listener-fixture@example.invalid"],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
 
-    // (case, report mode, refuse readiness with 503 instead of a report control)
-    let cases = [
-        ("refused-owner", "", true),
-        ("absent-report", "absent", false),
-        ("stale-report", "stale", false),
-        ("invalid-report", "invalid", false),
-        ("unbound-claim", "unbound", false),
-    ];
-    for (case, report_mode, never_ready) in cases {
-        let checkout = fixture.path().join(case);
-        fs::create_dir(&checkout).expect("readiness case checkout");
-        fs::write(
-            checkout.join("compose.yml"),
-            "services:\n  app:\n    image: fixture\n",
-        )
-        .expect("write fixture compose file");
-        fs::write(
-            checkout.join("effigy.toml"),
-            "[containers]\ndefault = \"web\"\n",
-        )
-        .expect("seed manifest before git commit");
-        git(&checkout, &["init", "--initial-branch=main"]);
-        git(&checkout, &["config", "user.name", "Listener Fixture"]);
-        git(
-            &checkout,
-            &["config", "user.email", "listener-fixture@example.invalid"],
-        );
-        git(&checkout, &["add", "compose.yml", "effigy.toml"]);
-        git(&checkout, &["commit", "-m", "fixture base"]);
+    let control_dir = fixture.path().join("never-ready-control");
+    fs::create_dir(&control_dir).expect("listener control directory");
+    let profile = "host-listener-failure";
+    let domain = "never-ready.readiness.host.test";
+    let bind = fixture_listener_address(&format!("never-ready:{}", fixture.path().display()));
+    write_listener_fixture_manifest(ListenerFixtureManifest {
+        checkout: &checkout,
+        profile,
+        domain,
+        body: "failure-body",
+        child_binary: &child_binary,
+        control_dir: &control_dir,
+        bind: &bind,
+        readiness_timeout_secs: 1,
+        never_ready: true,
+    });
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
 
-        let control_dir = fixture.path().join(format!("{case}-control"));
-        fs::create_dir(&control_dir).expect("listener control directory");
-        let profile = "host-listener-failure";
-        let domain = format!("{case}.readiness.host.test");
-        // These cases observe terminal phase evidence, not port reservation:
-        // the fixture declares the port its adapter must bind, so the proof
-        // never depends on winning a shared dynamic one.
-        let bind = fixture_listener_address(&format!("{case}:{}", fixture.path().display()));
-        write_listener_fixture_manifest(ListenerFixtureManifest {
-            checkout: &checkout,
-            profile,
-            domain: &domain,
-            body: "failure-body",
-            child_binary: &child_binary,
-            control_dir: &control_dir,
-            bind: &bind,
-            readiness_timeout_secs: 1,
-            never_ready,
-            report_mode,
-        });
-        let cleanup = ManagedContainerCleanup {
-            checkouts: vec![checkout.clone()],
-            home: home.clone(),
-            private_gateway: private_gateway.clone(),
-            foreign_ca: foreign_ca.clone(),
-            effects_path: effects.env_path.clone(),
-            mkcert: effects.private_mkcert.clone(),
-            effect_log: effects.log.clone(),
-            mkcert_calls: effects.mkcert_calls.clone(),
-            docker_log: docker_log.clone(),
-        };
+    let failed = run_container_cli(&checkout, &cleanup, &["up", "--detach", "--json"]);
+    let message = format!(
+        "{}{}",
+        String::from_utf8_lossy(&failed.stdout),
+        String::from_utf8_lossy(&failed.stderr)
+    );
+    assert!(
+        !failed.status.success(),
+        "a listener that never answers must fail startup: {message}"
+    );
+    assert!(
+        message.contains(&bind),
+        "the failure names the reserved address: {message}"
+    );
+    assert!(
+        message.contains("/health") && message.contains("status_mismatch"),
+        "the failure names the readiness request and what it answered: {message}"
+    );
+    let state_path = checkout
+        .join(".effigy/runtime/host-processes/web")
+        .join(profile)
+        .join("app.listener.json");
+    let state = read_json_file(&state_path);
+    assert_eq!(state["status"], "failed", "{state}");
+    assert!(
+        state["address"].is_null()
+            && state["route_owner"].is_null()
+            && state["child_pid"].is_null(),
+        "a terminal failure retains no endpoint or child claim: {state}"
+    );
 
-        let failed = run_container_cli(&checkout, &cleanup, &["up", "--detach", "--json"]);
-        let message = format!(
-            "{}{}",
-            String::from_utf8_lossy(&failed.stdout),
-            String::from_utf8_lossy(&failed.stderr)
-        );
-        assert!(
-            !failed.status.success(),
-            "{case}: a listener without a ready owned generation must fail startup: {message}"
-        );
-        let state_path = checkout
-            .join(".effigy/runtime/host-processes/web")
-            .join(profile)
-            .join("app.listener.json");
-        let state = read_json_file(&state_path);
-        assert_eq!(state["status"], "failed", "{case}: {state}");
-        assert!(
-            state["address"].is_null()
-                && state["route_owner"].is_null()
-                && state["child_pid"].is_null()
-                && state["listener_pid"].is_null(),
-            "{case}: terminal failure must not retain endpoint or identity claims: {state}"
-        );
-
-        let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
-        assert!(down.status.success(), "{case}: explicit teardown failed");
-        let after_down = read_json_file(&state_path);
-        assert_eq!(
-            after_down["status"], "failed",
-            "{case}: teardown must preserve failure outcome"
-        );
-        assert_eq!(
-            after_down["diagnostic"], state["diagnostic"],
-            "{case}: teardown must preserve phase evidence"
-        );
-
-        let diagnostic = &state["diagnostic"];
-        let mut keys = diagnostic
-            .as_object()
-            .unwrap_or_else(|| panic!("{case}: diagnostic object: {state}"))
-            .keys()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
-        keys.sort_unstable();
-        assert_eq!(
-            keys,
-            [
-                "candidates_inspected",
-                "claimed_address",
-                "expected_address",
-                "http_probe",
-                "http_status",
-                "observed_addresses",
-                "observed_listener_pid",
-                "ownership",
-                "report",
-                "route",
-            ],
-            "{case}: diagnostic must stay within its documented bounded shape"
-        );
-        assert!(
-            !state.to_string().contains("failure-body"),
-            "{case}: diagnostic must not retain fixture response bodies: {state}"
-        );
-        assert_eq!(diagnostic["route"], "not_reached", "{case}: {state}");
-
-        match case {
-            "refused-owner" => {
-                assert_eq!(diagnostic["report"], "accepted", "{state}");
-                assert_eq!(
-                    diagnostic["ownership"], "exclusive_owner_observed",
-                    "{state}"
-                );
-                assert_eq!(diagnostic["http_probe"], "status_mismatch", "{state}");
-                assert_eq!(diagnostic["http_status"], 503, "{state}");
-                assert!(diagnostic["observed_listener_pid"].is_u64(), "{state}");
-                assert!(
-                    diagnostic["candidates_inspected"]
-                        .as_u64()
-                        .is_some_and(|count| count >= 1),
-                    "{state}"
-                );
-                assert!(
-                    diagnostic["claimed_address"]
-                        .as_str()
-                        .is_some_and(|address| address.starts_with("127.0.0.1:")),
-                    "{state}"
-                );
-                assert!(
-                    message.contains("http_probe=status_mismatch:503"),
-                    "startup error should name the terminal probe observation: {message}"
-                );
-            }
-            "absent-report" => {
-                // No report at all: Effigy verifies the reserved address itself,
-                // so it inspects the child generation and names what it
-                // expected. Nothing serves the reservation, nothing is probed.
-                assert_eq!(diagnostic["report"], "absent", "{state}");
-                assert_eq!(diagnostic["ownership"], "no_owner_observed", "{state}");
-                assert!(diagnostic["claimed_address"].is_null(), "{state}");
-                assert!(
-                    diagnostic["expected_address"]
-                        .as_str()
-                        .is_some_and(|address| address == bind),
-                    "the reserved address must be named: {state}"
-                );
-                assert!(diagnostic["observed_addresses"].is_null(), "{state}");
-                assert!(
-                    diagnostic["candidates_inspected"]
-                        .as_u64()
-                        .is_some_and(|count| count >= 1),
-                    "{state}"
-                );
-                assert!(diagnostic["observed_listener_pid"].is_null(), "{state}");
-                assert!(diagnostic["http_probe"].is_null(), "{state}");
-                assert!(
-                    message.contains(&format!(
-                        "report=absent, ownership=no_owner_observed, expected={bind}"
-                    )),
-                    "{case}: {message}"
-                );
-            }
-            "stale-report" => {
-                assert_eq!(
-                    diagnostic["report"], "schema_or_generation_mismatch",
-                    "{state}"
-                );
-                assert_eq!(diagnostic["ownership"], "not_reached", "{state}");
-                assert!(diagnostic["claimed_address"].is_null(), "{state}");
-                assert!(diagnostic["http_probe"].is_null(), "{state}");
-            }
-            "invalid-report" => {
-                assert_eq!(diagnostic["report"], "unreadable", "{state}");
-                assert_eq!(diagnostic["ownership"], "not_reached", "{state}");
-                assert!(diagnostic["claimed_address"].is_null(), "{state}");
-                assert!(diagnostic["http_probe"].is_null(), "{state}");
-            }
-            "unbound-claim" => {
-                // The report is accepted as a claim, but nothing this child
-                // owns listens there: no owner is proven and no probe runs.
-                assert_eq!(diagnostic["report"], "accepted", "{state}");
-                assert_eq!(diagnostic["ownership"], "no_owner_observed", "{state}");
-                assert!(diagnostic["claimed_address"].is_string(), "{state}");
-                assert!(diagnostic["observed_listener_pid"].is_null(), "{state}");
-                assert!(diagnostic["http_probe"].is_null(), "{state}");
-                assert!(
-                    diagnostic["candidates_inspected"]
-                        .as_u64()
-                        .is_some_and(|count| count >= 1),
-                    "{state}"
-                );
-            }
-            other => unreachable!("unknown readiness case {other}"),
-        }
-
-        let generation = state["generation"].as_str().expect("generation");
-        let report_path = checkout
-            .join(".effigy/runtime/host-processes/web")
-            .join(profile)
-            .join(format!("app.{generation}.listener-report.json"));
-        assert!(
-            !report_path.exists(),
-            "{case}: generation cleanup should remove the report while the diagnostic remains"
-        );
-    }
+    let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
+    assert!(down.status.success(), "explicit teardown failed");
+    let after_down = read_json_file(&state_path);
+    assert_eq!(after_down["status"], "failed", "{after_down}");
+    assert_eq!(
+        after_down["diagnostic"], state["diagnostic"],
+        "teardown preserves the failure that explains the generation"
+    );
+    assert!(
+        after_down["diagnostic"]
+            .as_str()
+            .is_some_and(|diagnostic| diagnostic.contains(&bind)),
+        "the retained failure names the reserved address: {after_down}"
+    );
 }
 
 /// A leader that exits is replaced per its declared policy: an `on-failure`
@@ -2779,12 +2490,7 @@ fn managed_host_listener_leader_exit_restarts_by_policy() {
     let response = curl_https_response(https_address, &ca_path, replaced_domain, "/");
     assert!(
         response.contains("200 OK")
-            && response.contains(&format!(
-                "restart-body@{}",
-                successor["generation"]
-                    .as_str()
-                    .expect("successor generation")
-            )),
+            && response.contains(&format!("restart-body@{}", successor["child_pid"])),
         "the republished route must reach the restarted listener: {response}"
     );
 
@@ -2922,9 +2628,6 @@ struct ListenerFixtureManifest<'a> {
     bind: &'a str,
     readiness_timeout_secs: u64,
     never_ready: bool,
-    /// Empty for the normal adapter report; otherwise a terminal-diagnostic
-    /// control mode read by `managed_listener_fixture_child`.
-    report_mode: &'a str,
 }
 
 fn write_listener_fixture_manifest(fixture: ListenerFixtureManifest<'_>) {
@@ -2938,7 +2641,6 @@ fn write_listener_fixture_manifest(fixture: ListenerFixtureManifest<'_>) {
         bind,
         readiness_timeout_secs,
         never_ready,
-        report_mode,
     } = fixture;
     let consumer_run = "printf 'internal=%s public=%s generation=%s\\n' \"$EFFIGY_MANAGED_HOST_APP_INTERNAL_URL\" \"$EFFIGY_MANAGED_HOST_APP_PUBLIC_URL\" \"$EFFIGY_MANAGED_HOST_APP_GENERATION\"; exec sleep 60";
     let app_run =
@@ -2948,16 +2650,9 @@ fn write_listener_fixture_manifest(fixture: ListenerFixtureManifest<'_>) {
     } else {
         ""
     };
-    let report_mode_env = if report_mode.is_empty() {
-        String::new()
-    } else {
-        format!("FIXTURE_REPORT_MODE = {}\n", toml_quote(report_mode))
-    };
     let fixture_env = format!(
-        "FIXTURE_READINESS_REFUSED_FILE = {}\n{}{}",
+        "FIXTURE_READINESS_REFUSED_FILE = {}\n{never_ready_env}",
         toml_quote(&control_dir.join("readiness-refused").display().to_string()),
-        never_ready_env,
-        report_mode_env,
     );
     let manifest = format!(
         "[containers]\ndefault = \"web\"\n\n[containers.web]\ndriver = \"colima\"\nprofile = {}\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n[[containers.web.host_processes]]\nname = \"consumer\"\nrun = {}\ndepends_on = [\"app\"]\nrestart = \"always\"\nrestart_delay_ms = 100\n\n[[containers.web.host_processes]]\nname = \"app\"\nrun = {}\nrestart = \"on-failure\"\nrestart_delay_ms = 100\n\n[containers.web.host_processes.env]\nFIXTURE_BINARY = {}\nFIXTURE_BODY = {}\nFIXTURE_PREVIOUS_PORT_FILE = {}\nFIXTURE_RESTART_FILE = {}\nFIXTURE_PAUSED_FILE = {}\nFIXTURE_CONTINUE_FILE = {}\n{}\n[containers.web.host_processes.listener]\nbind = {}\n\n[containers.web.host_processes.listener.readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = {}\n\n[containers.web.host_processes.listener.route]\ndomain = {}\ntls = true\n",
@@ -3378,27 +3073,6 @@ fn wait_for_path_exists(path: &Path, timeout: Duration, label: &str) {
     let deadline = Instant::now() + timeout;
     while !path.exists() {
         assert!(Instant::now() < deadline, "timed out waiting for {label}");
-        thread::sleep(Duration::from_millis(25));
-    }
-}
-
-fn wait_for_https_response_containing(
-    address: SocketAddr,
-    ca: &Path,
-    hostname: &str,
-    expected: &str,
-    timeout: Duration,
-) -> String {
-    let deadline = Instant::now() + timeout;
-    loop {
-        let response = curl_https_response(address, ca, hostname, "/");
-        if response.contains(expected) {
-            return response;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "HTTPS gateway for {hostname} did not return {expected:?}; last response: {response}"
-        );
         thread::sleep(Duration::from_millis(25));
     }
 }
@@ -5848,7 +5522,7 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
     assert_ne!(first_address.port(), 0);
     let first_response = curl_https_response(https_address, &ca_path, domain, "/");
     assert!(
-        first_response.contains(&format!("{body}@{}", first["generation"].as_str().unwrap())),
+        first_response.contains(&format!("{body}@{}", first["child_pid"])),
         "the first generation serves its published route: {first_response}"
     );
 
@@ -5900,10 +5574,7 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
     );
     let successor_response = curl_https_response(https_address, &ca_path, domain, "/");
     assert!(
-        successor_response.contains(&format!(
-            "{body}@{}",
-            successor["generation"].as_str().unwrap()
-        )),
+        successor_response.contains(&format!("{body}@{}", successor["child_pid"])),
         "the restarted generation serves its published route: {successor_response}"
     );
     let log = fs::read_to_string(&log_path).unwrap_or_default();

@@ -196,28 +196,11 @@ fn downgrade_names_managed_domains_without_silently_dropping_their_fence() {
                 .get_mut("import.test")
                 .unwrap()
                 .managed_listener = Some(crate::routes::ManagedListenerRouteOwner {
-                run: None,
                 owner: "fixture".into(),
                 runtime_generation: "runtime".into(),
                 generation: "generation".into(),
-                supervisor_pid: 1,
-                supervisor_boot_identity: "boot".into(),
-                supervisor_start_identity: crate::identity::GatewayStartIdentity::Linux {
-                    start_ticks: 1,
-                },
-                root_pid: 2,
-                root_boot_identity: "boot".into(),
-                root_start_identity: crate::identity::GatewayStartIdentity::Linux {
-                    start_ticks: 2,
-                },
-                listener_pid: 3,
-                listener_boot_identity: "boot".into(),
-                listener_start_identity: crate::identity::GatewayStartIdentity::Linux {
-                    start_ticks: 3,
-                },
                 address: "127.0.0.1:8100".into(),
                 route_tls: false,
-                availability_file: "/fixture/availability".into(),
             });
             snapshot.set_routes(&table)
         })
