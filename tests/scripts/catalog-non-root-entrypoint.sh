@@ -71,7 +71,9 @@ command -v python3 >/dev/null 2>&1 || {
   exit 1
 }
 
-FIXTURE="$(mktemp -d)"
+# An explicit template: macOS `mktemp -d` without one ignores TMPDIR and
+# writes to the internal disk instead of the run's scratch directory.
+FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/effigy-non-root.XXXXXX")"
 trap 'rm -rf "$FIXTURE"' EXIT
 
 note "Harness fixture: $FIXTURE"

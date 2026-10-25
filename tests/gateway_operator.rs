@@ -11,8 +11,7 @@ use std::time::{Duration, Instant};
 /// socket needs a short external pathname.
 fn operator_fixture(prefix: &str) -> (effigy_test_support::Fixture, GatewayConfig) {
     use std::os::unix::fs::PermissionsExt;
-    let home = effigy_test_support::Fixture::in_parent(prefix, std::path::Path::new("/tmp"))
-        .expect("private operator home");
+    let home = effigy_test_support::Fixture::short_home(prefix).expect("private operator home");
     let gateway = home.path().join(".effigy/gateway");
     std::fs::create_dir_all(gateway.join("certs")).expect("gateway cert directory");
     let mut config = GatewayConfig::standard(gateway.clone());

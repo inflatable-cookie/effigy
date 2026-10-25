@@ -160,8 +160,7 @@ impl<'a> Case<'a> {
         let port = proxy.address.port();
         let state = root.join("engine");
         let short_home =
-            effigy_test_support::Fixture::in_parent("e235-", std::path::Path::new("/tmp"))
-                .expect("short private home");
+            effigy_test_support::Fixture::short_home("e235-").expect("short private home");
         let home = short_home.path().canonicalize().expect("canonical home");
         fs::create_dir(&state).expect("private engine state");
         let bin = std::env::split_paths(&effects.env_path)

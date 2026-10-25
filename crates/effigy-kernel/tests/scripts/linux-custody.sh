@@ -10,7 +10,13 @@ case "$proof_mode" in
     custody|gate-shared|probe|helpers|runtime-storage|qualification|final-runtime|task-engine|fixtures|task-engine-fixtures) ;;
     *) printf 'Unknown Linux proof mode: %s\n' "$proof_mode" >&2; exit 2 ;;
 esac
-proof_dir=$(mktemp -d /tmp/k208.XXXXXX)
+# This fixture hosts a Lima VM, and a Lima instance socket path must stay under
+# the platform's 104-byte limit, so a long platform temp directory (macOS
+# `/private/var/folders/.../T`) cannot hold it. A run's `[scratch]` TMPDIR is
+# short and is used when it fits; the platform's `/tmp` is the fallback.
+temp_root=${TMPDIR:-/tmp}
+[ ${#temp_root} -le 40 ] || temp_root=/tmp
+proof_dir=$(mktemp -d "$temp_root/k208.XXXXXX")
 printf 'Linux qualification artifacts: %s\n' "$proof_dir"
 export COLIMA_HOME="$proof_dir/c"
 export COLIMA_CACHE_HOME="$proof_dir/cache"

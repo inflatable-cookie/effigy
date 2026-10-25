@@ -285,6 +285,8 @@ fn tcp_alias_host_pairs(
 }
 
 fn render_tcp_alias_hosts_script(pairs: &[(String, String)]) -> String {
+    // This script runs inside the service container, so its `mktemp` writes to
+    // the guest's own temp directory; it deliberately leaves TMPDIR alone.
     let mut script = String::from(
         r#"set -eu
 patch_alias() {
