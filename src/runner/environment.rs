@@ -25,8 +25,6 @@ use crate::runner::error::RunnerError;
 
 /// A managed run's task-run id: the bring-up it started attaches it.
 pub(in crate::runner) const HOLDER_ENV: &str = "EFFIGY_INTERNAL_ENVIRONMENT_HOLDER";
-/// The settling run whose own stop this is (R4's one exemption).
-pub(in crate::runner) const EXEMPT_ENV: &str = "EFFIGY_INTERNAL_ENVIRONMENT_EXEMPT";
 /// Opts task-started environments out of holder-based idle stop.
 const KEEP_RUNNING_ENV: &str = "EFFIGY_DISABLE_HOST_CONTAINER_LEASE";
 /// The longest a first Mutate waits for a v0.14.1 idle-stop lease to end.
@@ -369,26 +367,19 @@ pub(in crate::runner) fn requested_holder() -> Option<RunId> {
         .and_then(|value| value.trim().parse().ok())
 }
 
-fn exempt_run() -> Option<RunId> {
-    std::env::var(EXEMPT_ENV)
-        .ok()
-        .and_then(|value| value.trim().parse().ok())
-}
-
-/// One stop transition. The calling run's own stop is exempt once that run
-/// is settling (`EFFIGY_INTERNAL_ENVIRONMENT_EXEMPT`); every other holder
-/// refuses it (R4). `effect` is the host teardown plus the backend stop.
+/// One stop transition. A run settling in this process exempts its own hold by
+/// id ([`stop_exempting`]); every other holder refuses it (R4). `effect` is the
+/// host teardown plus the backend stop.
 pub(in crate::runner) fn stop(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     op: Operation,
     effect: impl FnOnce() -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
-    stop_exempting(repo_root, policy, op, exempt_run(), effect)
+    stop_exempting(repo_root, policy, op, None, effect)
 }
 
-/// [`stop`] for a run settling in this process: its own hold is exempt by
-/// id, as `EFFIGY_INTERNAL_ENVIRONMENT_EXEMPT` names it for a child.
+/// [`stop`] for a run settling in this process: its own hold is exempt by id.
 pub(in crate::runner) fn stop_exempting(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -425,7 +416,7 @@ pub(in crate::runner) fn stop_peer(
         &backend(repo_root, policy),
         project,
         Operation::Handover,
-        exempt_run(),
+        None,
         effect,
     )
 }
@@ -521,7 +512,7 @@ pub(in crate::runner) fn stop_hook(
     &EffectiveContainerPolicy,
     effigy_runtime::write::ShutdownEffect<'_>,
 ) -> Result<(), effigy_runtime::EffigyRuntimeError> {
-    stop_hook_exempting(op, exempt_run())
+    stop_hook_exempting(op, None)
 }
 
 /// [`stop_hook`] exempting `exempt`, a run settling in this process.

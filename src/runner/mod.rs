@@ -79,9 +79,6 @@ pub(in crate::runner) use format_command::run_fmt;
 pub(in crate::runner) use gateway_command::{
     run_gateway, run_internal_gateway, run_internal_gateway_identity,
 };
-pub(in crate::runner) use host_process::{
-    run_internal_host_process_stop, run_internal_host_process_supervise,
-};
 pub(in crate::runner) use release_command::run_release;
 pub(in crate::runner) use rhai_command::run_rhai;
 pub(in crate::runner) use script_command::run_internal_script_run;

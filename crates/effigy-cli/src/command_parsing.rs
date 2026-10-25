@@ -31,9 +31,8 @@ use crate::{
     ContractsSelectionPrintMode, ContractsSubcommand, DeferArgs, DepsArgs, DepsManager,
     DepsSubcommand, DoctorArgs, GatewayPrivateArgs, HelpGroup, HelpTopic,
     InternalContainerLeaseReaperArgs, InternalGatewayArgs, InternalGatewayIdentityArgs,
-    InternalHostProcessStopArgs, InternalHostProcessSuperviseArgs, InternalScriptRunArgs, RhaiArgs,
-    RhaiSubcommand, RunsAction, RunsArgs, SkillArgs, SkillStdioMode, SkillSubcommand,
-    TaskInvocation, TasksArgs, TasksQaCommand, UninstallArgs,
+    InternalScriptRunArgs, RhaiArgs, RhaiSubcommand, RunsAction, RunsArgs, SkillArgs,
+    SkillStdioMode, SkillSubcommand, TaskInvocation, TasksArgs, TasksQaCommand, UninstallArgs,
 };
 use bootstrap::parse_bootstrap_command;
 use changelog::parse_changelog_command;
@@ -125,8 +124,6 @@ where
         "__gateway-run" => parse_internal_gateway_command(args),
         "__gateway-identity" => parse_internal_gateway_identity_command(args),
         "__container-lease-reaper" => parse_internal_container_lease_reaper_command(args),
-        "__host-process-supervise" => parse_internal_host_process_supervise_command(args),
-        "__host-process-stop" => parse_internal_host_process_stop_command(args),
         _ if cmd.starts_with('-') => Err(unknown_argument(cmd)),
         _ => parse_task_command(cmd, args),
     }
@@ -677,198 +674,6 @@ where
             token: token.ok_or_else(|| CliParseError::MissingFlagValue {
                 flag: "--token".to_owned(),
             })?,
-        },
-    ))
-}
-
-fn parse_internal_host_process_supervise_command<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut repo_root: Option<PathBuf> = None;
-    let mut container_name: Option<String> = None;
-    let mut process_name: Option<String> = None;
-    let mut run: Option<String> = None;
-    let mut pid_file: Option<PathBuf> = None;
-    let mut log_file: Option<PathBuf> = None;
-    let mut spec_file: Option<PathBuf> = None;
-    let mut restart: Option<String> = None;
-    let mut restart_delay_ms: Option<u64> = None;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--repo-root" => {
-                repo_root = Some(PathBuf::from(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--repo-root".to_owned(),
-                    },
-                )?));
-            }
-            "--container" => {
-                container_name = Some(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--container".to_owned(),
-                    },
-                )?);
-            }
-            "--name" => {
-                process_name = Some(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--name".to_owned(),
-                    },
-                )?);
-            }
-            "--run" => {
-                run = Some(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--run".to_owned(),
-                    },
-                )?);
-            }
-            "--pid-file" => {
-                pid_file = Some(PathBuf::from(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--pid-file".to_owned(),
-                    },
-                )?));
-            }
-            "--log-file" => {
-                log_file = Some(PathBuf::from(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--log-file".to_owned(),
-                    },
-                )?));
-            }
-            "--spec-file" => {
-                spec_file = Some(PathBuf::from(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--spec-file".to_owned(),
-                    },
-                )?));
-            }
-            "--restart" => {
-                restart = Some(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--restart".to_owned(),
-                    },
-                )?);
-            }
-            "--restart-delay-ms" => {
-                let raw = next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--restart-delay-ms".to_owned(),
-                    },
-                )?;
-                restart_delay_ms =
-                    Some(
-                        raw.parse::<u64>()
-                            .map_err(|_| CliParseError::InvalidFlagValue {
-                                flag: "--restart-delay-ms".to_owned(),
-                                value: raw,
-                                expected: "non-negative integer milliseconds".to_owned(),
-                            })?,
-                    );
-            }
-            other if other.starts_with('-') => return Err(unknown_argument(other)),
-            other => return Err(unknown_argument(other)),
-        }
-    }
-
-    Ok(Command::InternalHostProcessSupervise(
-        InternalHostProcessSuperviseArgs {
-            repo_root: repo_root.ok_or_else(|| CliParseError::MissingFlagValue {
-                flag: "--repo-root".to_owned(),
-            })?,
-            container_name: container_name.ok_or_else(|| CliParseError::MissingFlagValue {
-                flag: "--container".to_owned(),
-            })?,
-            process_name: process_name.ok_or_else(|| CliParseError::MissingFlagValue {
-                flag: "--name".to_owned(),
-            })?,
-            run: run.ok_or_else(|| CliParseError::MissingFlagValue {
-                flag: "--run".to_owned(),
-            })?,
-            pid_file: pid_file.ok_or_else(|| CliParseError::MissingFlagValue {
-                flag: "--pid-file".to_owned(),
-            })?,
-            log_file: log_file.ok_or_else(|| CliParseError::MissingFlagValue {
-                flag: "--log-file".to_owned(),
-            })?,
-            spec_file: spec_file.ok_or_else(|| CliParseError::MissingFlagValue {
-                flag: "--spec-file".to_owned(),
-            })?,
-            restart: restart.unwrap_or_else(|| "on-failure".to_owned()),
-            restart_delay_ms: restart_delay_ms.unwrap_or(1_000),
-        },
-    ))
-}
-
-fn parse_internal_host_process_stop_command<I>(args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    let mut args = args.into_iter();
-    let mut pid_file: Option<PathBuf> = None;
-    let mut signal: Option<String> = None;
-    let mut grace_secs: Option<u64> = None;
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--pid-file" => {
-                pid_file = Some(PathBuf::from(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--pid-file".to_owned(),
-                    },
-                )?));
-            }
-            "--signal" => {
-                signal = Some(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--signal".to_owned(),
-                    },
-                )?);
-            }
-            "--grace-secs" => {
-                let raw = next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--grace-secs".to_owned(),
-                    },
-                )?;
-                grace_secs =
-                    Some(
-                        raw.parse::<u64>()
-                            .map_err(|_| CliParseError::InvalidFlagValue {
-                                flag: "--grace-secs".to_owned(),
-                                value: raw,
-                                expected: "non-negative integer seconds".to_owned(),
-                            })?,
-                    );
-            }
-            other if other.starts_with('-') => return Err(unknown_argument(other)),
-            other => return Err(unknown_argument(other)),
-        }
-    }
-
-    Ok(Command::InternalHostProcessStop(
-        InternalHostProcessStopArgs {
-            pid_file: pid_file.ok_or_else(|| CliParseError::MissingFlagValue {
-                flag: "--pid-file".to_owned(),
-            })?,
-            signal: signal.unwrap_or_else(|| "SIGTERM".to_owned()),
-            grace_secs: grace_secs.unwrap_or(10),
         },
     ))
 }

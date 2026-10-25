@@ -15,8 +15,6 @@ use super::super::run_exec;
 use super::super::run_gateway;
 use super::super::run_internal_gateway;
 use super::super::run_internal_gateway_identity;
-use super::super::run_internal_host_process_stop;
-use super::super::run_internal_host_process_supervise;
 use super::super::run_internal_script_run;
 use super::super::run_release;
 use super::super::run_rhai;
@@ -116,8 +114,6 @@ pub(super) fn run_command_with_cwd(cmd: Command, cwd: &Path) -> Result<String, R
         Command::InternalContainerLeaseReaper(_) => Err(RunnerError::task_invocation(
             "`__container-lease-reaper` is retired: held environments stop when the last run using them ends",
         )),
-        Command::InternalHostProcessSupervise(args) => run_internal_host_process_supervise(args),
-        Command::InternalHostProcessStop(args) => run_internal_host_process_stop(args),
         Command::Task(task) => {
             let runtime_context = crate::runner::command_context::active_runtime_context()
                 .unwrap_or_else(|| {

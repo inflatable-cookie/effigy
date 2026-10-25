@@ -272,9 +272,7 @@ pub fn apply_global_cli_options(
             | Command::InternalGateway(_)
             | Command::InternalGatewayIdentity(_)
             | Command::InternalScriptRun(_)
-            | Command::InternalContainerLeaseReaper(_)
-            | Command::InternalHostProcessSupervise(_)
-            | Command::InternalHostProcessStop(_) => return Err(unknown_argument("--repo")),
+            | Command::InternalContainerLeaseReaper(_) => return Err(unknown_argument("--repo")),
             Command::Help(_) | Command::HelpGroup(_) => {}
         }
     }
@@ -383,8 +381,6 @@ pub(super) fn apply_global_json_flag(mut cmd: Command, json_mode: bool) -> Comma
         Command::InternalGatewayIdentity(_) => {}
         Command::InternalScriptRun(_) => {}
         Command::InternalContainerLeaseReaper(_) => {}
-        Command::InternalHostProcessSupervise(_) => {}
-        Command::InternalHostProcessStop(_) => {}
         Command::Help(_) | Command::HelpGroup(_) => {}
     }
     cmd
@@ -424,8 +420,6 @@ pub(super) fn command_requests_json(cmd: &Command, global_json_mode: bool) -> bo
         Command::InternalGatewayIdentity(_) => false,
         Command::InternalScriptRun(_) => false,
         Command::InternalContainerLeaseReaper(_) => false,
-        Command::InternalHostProcessSupervise(_) => false,
-        Command::InternalHostProcessStop(_) => false,
         Command::Help(_) | Command::HelpGroup(_) => false,
     }
 }
