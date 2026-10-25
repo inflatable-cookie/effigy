@@ -919,3 +919,37 @@ fn checkout_journals_are_independent_while_another_checkout_writer_is_busy() {
         .unwrap();
     assert!(run_a.close(WorkloadOutcome::Succeeded).is_empty());
 }
+
+#[test]
+fn a_nested_catalog_directory_opens_the_enclosing_checkouts_state_root() {
+    // Contract 052 §7.1: durable checkout state belongs to the resolved
+    // invocation root, so a nested catalog directory with no Git metadata of
+    // its own declares no second checkout. The state root and the Git
+    // directory the kernel binds must agree, or every run in a subdirectory
+    // refuses as untrusted state.
+    let checkout = tempfile::tempdir().unwrap();
+    std::fs::create_dir(checkout.path().join(".git")).unwrap();
+    let nested = checkout.path().join("tests/fixtures/nested-catalog");
+    std::fs::create_dir_all(&nested).unwrap();
+
+    let enclosing = super::kernel::effects_root(checkout.path()).unwrap();
+    let from_nested = super::kernel::effects_root(&nested).unwrap();
+    assert_eq!(
+        from_nested.state_directory().path(),
+        enclosing.state_directory().path(),
+        "a nested catalog shares the enclosing checkout's journal"
+    );
+    assert_eq!(
+        from_nested.owning_directory().path(),
+        checkout.path(),
+        "the journal is owned by the checkout, not the nested catalog's cwd"
+    );
+    assert!(
+        enclosing
+            .state_directory()
+            .path()
+            .starts_with(checkout.path().join(".effigy")),
+        "the checkout keeps its own state: {}",
+        enclosing.state_directory().path().display()
+    );
+}

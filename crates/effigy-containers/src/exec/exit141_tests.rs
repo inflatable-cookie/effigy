@@ -765,6 +765,25 @@ fn inventory_and_ownership_child() {
     })
     .expect("private container policy");
     crate::with_test_compose_backend(crate::compose::ComposeBackend::Docker, || {
+        // Warm the private runtime first. Its first spawn pays interpreter
+        // startup and the first read of a script on whichever volume `TMPDIR`
+        // points at (a configured scratch root may be a separate drive), and
+        // neither cost belongs to the observation this case bounds. The
+        // recorded call count is the baseline the bounded case adds to.
+        fixture.control(json!({
+            "ps": {"mode": "running"},
+            "inspect": {"mode": "owned"},
+            "up": {"mode": "ok"},
+        }));
+        crate::exec::list_compose_containers_for_policy_including_stopped_with_deadline(
+            &root,
+            &policy,
+            Some(Instant::now() + Duration::from_secs(10)),
+        )
+        .expect("the warmed runtime answers its first inventory");
+        let warmed = fixture.calls().len();
+        assert_eq!(warmed, 1, "the warm-up is exactly one observation");
+
         // A pending inventory is an unavailable observation: bounded, refused,
         // and it never reaches an activation.
         fixture.control(json!({
@@ -792,10 +811,10 @@ fn inventory_and_ownership_child() {
         let pending = fixture.calls();
         assert_eq!(
             pending.len(),
-            1,
+            warmed + 1,
             "one bounded observation ran: {pending:#?}"
         );
-        assert_eq!(pending[0]["command"], "ps");
+        assert_eq!(pending[warmed]["command"], "ps");
         for call in &pending {
             assert!(
                 !matches!(
