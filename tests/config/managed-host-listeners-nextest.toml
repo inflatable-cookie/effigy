@@ -21,6 +21,12 @@ slow-timeout = { period = "180s", terminate-after = 1, grace-period = "2s" }
 filter = "test(managed_host_dependent_replacement_) | test(container_hybrid_environment_switch_) | test(container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clone)"
 slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }
 
+# The adapter-less proofs start plain servers, restart one on its reserved port
+# and settle the environment through the public CLI (effigy#334).
+[[profile.default.overrides]]
+filter = "test(managed_host_adapterless_) | test(managed_host_listener_outside_generation_)"
+slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }
+
 # The 108-cell managed matrix runs nine cases per test with an immediate
 # restart each; one takes about 300s on a quiet host. A sweep that selects
 # gateway_private under this profile must not terminate it at the 45s default.

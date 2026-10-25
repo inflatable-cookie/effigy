@@ -379,8 +379,8 @@ If the question is instead:
 ### Managed host listeners
 
 Host processes that serve a browser route can declare the listener they own.
-The language-specific adapter reads Effigy's bind and report variables, binds
-the address itself, and reports the actual socket. Port `0` asks Effigy for a
+Effigy reserves the address, finds the listening socket in the child generation
+itself, and verifies it: no adapter is needed. Port `0` asks Effigy for a
 concrete port: before anything launches, Effigy reserves one loopback port in
 the environment's generated range through the gateway endpoint store, keeps
 that reservation across supervisor restarts within the run, and releases it
@@ -505,9 +505,12 @@ and port, `EFFIGY_HOST_PROCESS_PUBLIC_URL`
 and `EFFIGY_HOST_PROCESS_INTERNAL_URL` to its own route origin and reserved
 endpoint, `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE` to a private report path,
 and `EFFIGY_MANAGED_HOST_LISTENER_GENERATION` to the current child generation.
-Effigy verifies that the reported socket is exactly the address it reserved,
-belongs to the current child generation, and accepts connections before it
-publishes the route.
+Any ordinary server that listens on `$HOST`/`$PORT` is a managed listener, with
+no language-specific adapter and no report: Effigy looks for a listening socket
+at exactly the address it reserved among the child generation's process group
+and descendants, proves no other same-user process can also accept on it, and
+then sends the readiness request. `run = 'exec effigy profile:api'` is enough
+(effigy#334).
 
 `HOST` and `PORT` are the address Effigy reserved and verified, so they replace
 an ambient `HOST`/`PORT` inherited from the shell Effigy was started in: a
@@ -515,11 +518,15 @@ server that reads them binds the port the gateway route points at. Only a value
 the manifest itself declares outranks them (for example an adapter that must
 see a specific `HOST`), and `EFFIGY_MANAGED_HOST_LISTENER_BIND` always carries
 the reserved address unconditionally.
-The adapter must bind strictly to the requested address and write the report
-after the socket is listening. Readiness is an HTTP `GET` to the configured
-path with the effective route domain as `Host`; only the configured status makes the
-listener ready. A failed or timed-out startup returns an error and leaves a
-`failed` or held `unavailable` state instead of publishing an endpoint.
+The process must bind strictly to the requested address: a wildcard bind
+(`0.0.0.0:<port>`) is a different address and fails startup. Readiness is an
+HTTP `GET` to the configured path with the effective route domain as `Host`;
+only the configured status makes the listener ready. A failed or timed-out
+startup returns an error and leaves a `failed` or held `unavailable` state
+instead of publishing an endpoint, and the diagnostic names the reserved
+address (`expected_address`) and every other address the generation served
+(`observed_addresses`). A reserved address that is held by a process outside
+the child generation is never accepted; startup fails naming that process.
 
 The versioned state file remains the current status source after startup.
 Use `depends_on = ["frontend"]` on another host process to wait for readiness
@@ -531,7 +538,8 @@ dependent process restarts with its new endpoint environment. Effigy checks
 actual process and socket ownership before publishing the gateway route and
 withdraws it before stopping or replacing a child generation.
 
-Adapters write a report like this to the path in
+An adapter report is optional. A wrapper that needs to tell Effigy which socket
+it bound can write one to the path in
 `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`, echoing the exact supplied
 generation token and the address that is actually bound. Write the complete
 versioned document before exposing readiness to Effigy:
@@ -543,6 +551,10 @@ versioned document before exposing readiness to Effigy:
   "address": "127.0.0.1:4173"
 }
 ```
+
+When a report exists Effigy uses it as a claim it still verifies, and it must
+agree with the reserved address and with the socket the generation is serving.
+A listener that writes no report is verified by observation alone.
 
 Fixed ports must bind exactly and fail on collision. Ownership proof is
 currently supported on Linux and macOS; other platforms refuse when the

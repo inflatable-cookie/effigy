@@ -8,6 +8,9 @@ mod env_test_support;
 #[path = "gateway_private/managed_matrix.rs"]
 mod managed_matrix;
 
+#[path = "gateway_private/adapterless_listener.rs"]
+mod adapterless_listener;
+
 use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
@@ -2493,8 +2496,10 @@ fn managed_host_readiness_terminal_failure_retains_phase_evidence() {
             [
                 "candidates_inspected",
                 "claimed_address",
+                "expected_address",
                 "http_probe",
                 "http_status",
+                "observed_addresses",
                 "observed_listener_pid",
                 "ownership",
                 "report",
@@ -2536,15 +2541,31 @@ fn managed_host_readiness_terminal_failure_retains_phase_evidence() {
                 );
             }
             "absent-report" => {
-                // No report: nothing is claimed, scanned or probed.
+                // No report at all: Effigy verifies the reserved address itself,
+                // so it inspects the child generation and names what it
+                // expected. Nothing serves the reservation, nothing is probed.
                 assert_eq!(diagnostic["report"], "absent", "{state}");
-                assert_eq!(diagnostic["ownership"], "not_reached", "{state}");
+                assert_eq!(diagnostic["ownership"], "no_owner_observed", "{state}");
                 assert!(diagnostic["claimed_address"].is_null(), "{state}");
-                assert!(diagnostic["candidates_inspected"].is_null(), "{state}");
+                assert!(
+                    diagnostic["expected_address"]
+                        .as_str()
+                        .is_some_and(|address| address == bind),
+                    "the reserved address must be named: {state}"
+                );
+                assert!(diagnostic["observed_addresses"].is_null(), "{state}");
+                assert!(
+                    diagnostic["candidates_inspected"]
+                        .as_u64()
+                        .is_some_and(|count| count >= 1),
+                    "{state}"
+                );
                 assert!(diagnostic["observed_listener_pid"].is_null(), "{state}");
                 assert!(diagnostic["http_probe"].is_null(), "{state}");
                 assert!(
-                    message.contains("report=absent, ownership=not_reached"),
+                    message.contains(&format!(
+                        "report=absent, ownership=no_owner_observed, expected={bind}"
+                    )),
                     "{case}: {message}"
                 );
             }
