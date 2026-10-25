@@ -2715,6 +2715,22 @@ and `--detach` are front ends over the same run. Row by row:
 - Remote stop of a bare PGID: narrowed by the nonce check above;
   `signal_session` on a registration stays open with §5.10.
 
+One dev session (effigy#322). A managed task bound to a container environment
+owns that environment: its `up`, readiness, stop or detach, and the
+environment's host processes as session tabs. The run's own output, one tab
+per `[[containers.<env>.host_processes]]` entry (status line plus its log) and
+one tab per workload are the session in hybrid and container placement alike,
+so a bundle needs no `*:tui` selector and no `concurrent` entry per process. A
+plain bound task with no `concurrent` entries runs its own `run` as the one
+workload, or the environment alone. Host processes stay environment-owned runs
+(adopted, effigy#320): the session reads the log their supervisor writes and
+the listener state file it publishes, and the environment's existing stop is
+their stop, in both directions (owned → stopped, borrowed → left running). A
+front end never scans a process tree for them. `start_after_ms` no longer
+orders a session — readiness does — and the manifest's one deprecation notice
+names `after = ["environment"]` / `depends_on`
+(`retired.toml` `managed-start-after-ordering`).
+
 ### 10.3 Environment reconciler
 
 | Current mechanism | Evidence | Kernel replacement |

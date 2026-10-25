@@ -110,6 +110,49 @@ ad-hoc shell steps.
 
 The shipped managed-task additions live directly under `[tasks.<name>]`.
 
+### The environment is the session
+
+`effigy dev` is the session in both placements. A managed task bound to a
+container environment (`workspace = "app"` resolving to a
+`[containers.<name>]` environment) owns that environment, and its tabs are the
+environment's own:
+
+- the run's own output tab (named `lifecycle` by default; it carries the
+  `[environment]` readiness lines, starts and exits),
+- one tab per `[[containers.<env>.host_processes]]` entry, in declaration
+  order, with a status line (`starting`, `running`, `ready on <url>`,
+  `restarting`, `exited <code>`) and that process's live log,
+- one tab per declared workload (`concurrent` entries or the task's own
+  `run`), and a local shell tab when the profile declares one.
+
+Placement is the environment's property, not the selector's. Whether a
+workload `run_in = "host"` or execs into the environment's primary service,
+the session brings the environment up the same way, shows the same host
+process tabs, and closes the same way. A bundle therefore needs no `*:tui`
+selector and no wrapper task: `effigy dev` in hybrid and container mode is one
+session.
+
+A plain task needs no `concurrent` entry per process:
+
+```toml
+[tasks.dev]
+mode = "tui"
+workspace = "app"
+run = "bun run dev"          # optional: the one workload of the session
+```
+
+That session owns the environment because it declares no entries of its own.
+A task that does list `concurrent` entries keeps the older shape unless it
+says `container_lifecycle = true` (then the environment is owned, and the
+entries add tabs), or `container_lifecycle = false` (the environment is
+whoever else started it). `role = "lifecycle"` keeps working, and is no longer
+required for `gateway`, `health_wait` or a plain bound session.
+
+Readiness orders the session: workloads start after the environment's `up`
+finished and its exec readiness answered. Declare that dependency with
+`after = ["environment"]` when you want it written down, and order an
+environment's host processes with their own `depends_on`.
+
 Current bounded fields:
 
 - `container_lifecycle = true`
@@ -158,7 +201,13 @@ Profile entries support:
 - optional profile overrides via `[tasks.dev.profiles.<name>]` with their own
   `concurrent = [...]`
 - `start = <N>` controls spawn order. Equal ranks keep manifest order.
-  `start_after_ms` remains an additional delay before that entry is spawned.
+- `after = ["environment"]` states the ordering dependency the session already
+  has: the environment phase finishes before any workload starts. It is the
+  one accepted value; order environment host processes with `depends_on`.
+- `start_after_ms` still delays its entry for the v0.15 line, but it no longer
+  orders a managed session. The manifest's one deprecation notice names the
+  replacement, and the key is removed after v0.15
+  (`docs/knowledge/retired.toml`, `managed-start-after-ordering`).
 
 Run-array note:
 
@@ -215,7 +264,15 @@ concurrent = [
 
 ## 6) Runtime Behavior
 
-- One tab per managed process or role.
+- One tab per managed process or role, and one per environment host process
+  when the session owns its environment. Host process tabs show the status the
+  process's own supervisor reports and follow its log; the status line is
+  `starting`, `running`, `ready on <url>` (a declared listener that published
+  its route), `restarting` (the restart policy replaces the exited generation)
+  or `exited <code>`.
+- `--headless` shows the same facts as text: `[name] [host] <status>` and
+  `[name] <line>` for each environment host process, beside each workload's
+  `[name] <line>`.
 - If a process has `shutdown_on_exit = true`, its exit becomes a full-session
   stop signal for the rest of the managed stack.
 - `role = "lifecycle"` owns the task's resolved workspace container bring-up
@@ -311,6 +368,13 @@ the environment. With `health_wait = true`, the task's routes are probed once
 every workload has started, since the workloads serve them; the ready
 message prints when they answer, and a route that never answers within the
 budget fails the run.
+
+The environment's host processes belong to the run's environment, so the same
+close applies to them in both placements: a run that started the environment
+stops its host processes and the backend, and a run that borrowed an
+environment leaves both running. `effigy <task> status` lists the run's
+workloads; `effigy container status` lists the environment's host process runs,
+their PIDs and their last exits.
 
 A run holds its environment while it lives, so `container down`, handover
 and recovery refuse until it settles. A run that brought its environment up

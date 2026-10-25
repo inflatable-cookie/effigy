@@ -230,11 +230,25 @@ pub struct ManifestManagedConcurrentEntry {
     pub start: Option<usize>,
     #[serde(default)]
     pub tab: Option<usize>,
+    /// What this entry must wait for before it starts. `environment` names
+    /// the managed run's environment phase, which always completes (or is
+    /// observed ready) before any workload starts; declaring it is optional
+    /// and states the dependency the session already has. Ordering between
+    /// host processes is `depends_on` on the container's declaration.
+    #[serde(default)]
+    pub after: Vec<String>,
+    /// Retired ordering timer (see `docs/knowledge/retired.toml`): a
+    /// managed session starts workloads after observed readiness, never on a
+    /// fixed delay. It still delays the entry for the v0.15 line and warns
+    /// towards `after`/`depends_on`.
     #[serde(default)]
     pub start_after_ms: Option<u64>,
     #[serde(default)]
     pub shutdown_on_exit: Option<bool>,
 }
+
+/// The one ordering dependency `after` accepts today: the environment phase.
+pub const MANAGED_ENTRY_AFTER_ENVIRONMENT: &str = "environment";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ManifestManagedRun {

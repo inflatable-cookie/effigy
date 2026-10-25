@@ -16,8 +16,8 @@ use crate::runner::error::RunnerError;
 use crate::runner::execute::sequence_run::run_in_process_sequence_steps;
 use crate::runner::execute::workspace_seeded::inside_container_handoff;
 use crate::runner::managed_run::{
-    self, Addressed, Binding, ClientStart, EnvironmentPlan, ExecGroupSpec, Front, ManagedTab,
-    OwnedRun, TabSource, WorkloadSpec,
+    self, Addressed, Binding, ClientStart, EnvironmentPlan, ExecGroupSpec, Front, HostProcessTab,
+    ManagedTab, OwnedRun, TabSource, WorkloadSpec,
 };
 use crate::runner::task_engine::{
     refuse_live_legacy_holder, resolve_lock_wait_ms, RunKey, TaskRun, TaskRunRequest, TaskTarget,
@@ -205,7 +205,12 @@ fn run_managed_control(
         | ManagedInvocation::Stop { profile } => profile,
         ManagedInvocation::Run { .. } => return Ok(None),
     };
-    if !effigy_managed::has_concurrent_profile(selection.task, profile) {
+    let environment_bound = effigy_managed::task_has_environment_binding(
+        selection.catalog,
+        &preflight.selector.task_name,
+        selection.task,
+    )?;
+    if !effigy_managed::has_managed_profile(selection.task, profile, environment_bound) {
         return Err(effigy_managed::ManagedError::TaskManagedProfileNotFound {
             task: preflight.selector.task_name.clone(),
             profile: profile.to_owned(),
@@ -314,6 +319,16 @@ fn start_managed_run(
     let terminal = (front == Front::Tui)
         .then(crossterm::terminal::size)
         .and_then(Result::ok);
+    // What each front end shows is resolved before the run starts, so a
+    // front-end resolution failure never leaves a supervisor running.
+    let tui = match front {
+        Front::Tui => Some(tui_tabs(context, &plan)?),
+        _ => None,
+    };
+    let text_hosts = match front {
+        Front::Text => environment_host_processes(context, &plan)?,
+        _ => Vec::new(),
+    };
     let started = managed_run::start(&ClientStart {
         addressed: Addressed {
             target: &target,
@@ -327,15 +342,19 @@ fn start_managed_run(
     })?;
     match front {
         Front::Detached => managed_run::detach(started, &addressed),
-        Front::Text => managed_run::attach_text(started, &addressed),
+        Front::Text => managed_run::attach_text(started, &addressed, text_hosts),
         Front::Tui => {
-            let (tabs, shells) = tui_tabs(context, &plan)?;
+            let ManagedTabs {
+                tabs,
+                order,
+                shells,
+            } = tui.expect("the TUI front end resolves its tabs before the run starts");
             managed_run::attach_tui(
                 started,
                 &addressed,
                 context.repo().to_path_buf(),
                 tabs,
-                plan.tab_order.clone(),
+                order,
                 shells,
             )
         }
@@ -420,43 +439,177 @@ fn displayed_plan(
     Ok(plan)
 }
 
-/// The TUI's tabs: the lifecycle tab shows the run's own output, workloads
-/// show their logs, and shell tabs are local interactive terminals.
+/// Whether this managed run owns (or borrows) the task's container
+/// environment. The plan says whether the session asked for the environment
+/// (a `role = "lifecycle"` entry, `container_lifecycle = true`, or a plain
+/// bound session with no entries of its own); the runner only checks that the
+/// binding resolves to an environment policy. Placement is the environment's
+/// property, so both placements own it the same way (effigy#322, Q-007).
+fn environment_owned(
+    context: &ManagedContext<'_, '_>,
+    plan: &effigy_managed::ManagedTaskPlan,
+) -> Result<bool, RunnerError> {
+    if context.container_handoff || !plan.owns_environment {
+        return Ok(false);
+    }
+    Ok(environment_policy(context)?.is_some())
+}
+
+/// The environment policy a session resolves for its tabs and for `up`: the
+/// task's inline workspace container first, then its named environment.
+fn environment_policy(
+    context: &ManagedContext<'_, '_>,
+) -> Result<Option<EffectiveContainerPolicy>, RunnerError> {
+    match inline_policy(context)? {
+        Some(policy) => Ok(Some(policy)),
+        None => named_policy(context),
+    }
+}
+
+/// The environment's host processes as tabs and followed logs. They are the
+/// environment's own (`[[containers.<env>.host_processes]]`), started by its
+/// `up`, so every placement of the run shows them the same way.
+fn environment_host_processes(
+    context: &ManagedContext<'_, '_>,
+    plan: &effigy_managed::ManagedTaskPlan,
+) -> Result<Vec<HostProcessTab>, RunnerError> {
+    if !environment_owned(context, plan)? {
+        return Ok(Vec::new());
+    }
+    let Some(policy) = environment_policy(context)? else {
+        return Ok(Vec::new());
+    };
+    Ok(HostProcessTab::for_environment(context.repo(), &policy))
+}
+
+/// A managed session's TUI front end: the tabs, the order that names every
+/// one of them, and the local shell tabs this client runs itself.
+struct ManagedTabs {
+    tabs: Vec<ManagedTab>,
+    order: Vec<String>,
+    shells: Vec<effigy_process::ProcessSpec>,
+}
+
+/// The TUI's tabs: the run's own output, one tab per environment host process
+/// with its status line and live log, then the task's workloads and shells.
+/// The order names every tab, so a session whose first tab is the
+/// environment's also finishes its startup projection.
 fn tui_tabs(
     context: &ManagedContext<'_, '_>,
     plan: &effigy_managed::ManagedTaskPlan,
-) -> Result<(Vec<ManagedTab>, Vec<effigy_process::ProcessSpec>), RunnerError> {
-    let mut tabs = Vec::new();
+) -> Result<ManagedTabs, RunnerError> {
+    let owns_environment = environment_owned(context, plan)?;
+    let hosts = environment_host_processes(context, plan)?;
+    let (tabs, tab_order) = session_tabs(owns_environment, hosts, &plan.processes, &plan.tab_order);
     let mut shells = Vec::new();
-    for process in &plan.processes {
+    for process in plan
+        .processes
+        .iter()
+        .filter(|process| process.role == ManagedProcessRole::Shell)
+    {
+        shells.push(effigy_process::ProcessSpec {
+            name: process.name.clone(),
+            run: shell_command(context, process)?,
+            cwd: process.cwd.clone(),
+            start_after_ms: 0,
+            shutdown_on_exit: process.shutdown_on_exit,
+            pty: true,
+            // A shell tab is an interactive terminal this session opens: a
+            // nested Effigy run inside it inherits the access the session
+            // resolved before it rendered (K12), so it never asks for the
+            // passphrase in the tab.
+            env: shell_tab_env(),
+        });
+    }
+    Ok(ManagedTabs {
+        tabs,
+        order: tab_order,
+        shells,
+    })
+}
+
+/// The tab set and its order, without any shell command to render: the run's
+/// own output when this session owns its environment, the environment's host
+/// processes in their declaration order, then every declared process. A host
+/// process whose name a workload already uses keeps its own tab name.
+fn session_tabs(
+    owns_environment: bool,
+    hosts: Vec<HostProcessTab>,
+    processes: &[effigy_managed::ManagedProcessSpec],
+    declared_tab_order: &[String],
+) -> (Vec<ManagedTab>, Vec<String>) {
+    let mut tabs = Vec::new();
+    let lifecycle = processes
+        .iter()
+        .find(|process| process.role == ManagedProcessRole::Lifecycle);
+    let lifecycle_name = lifecycle
+        .map(|process| process.name.clone())
+        .unwrap_or_else(|| super::super::super::managed_run::OUTPUT_LOG.to_owned());
+    if owns_environment {
+        tabs.push(ManagedTab {
+            name: lifecycle_name.clone(),
+            pty: false,
+            shutdown_on_exit: lifecycle.is_some_and(|process| process.shutdown_on_exit),
+            source: TabSource::Output,
+        });
+    }
+    let mut taken = processes
+        .iter()
+        .map(|process| process.name.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    taken.insert(lifecycle_name.clone());
+    let mut host_names = Vec::new();
+    for host in hosts {
+        let mut name = host.name.clone();
+        if taken.contains(&name) {
+            name = format!("host:{name}");
+        }
+        taken.insert(name.clone());
+        host_names.push(name.clone());
+        tabs.push(ManagedTab {
+            name,
+            pty: false,
+            // A host process belongs to the environment, not to a workload's
+            // exit policy: its lifecycle is the environment's.
+            shutdown_on_exit: false,
+            source: TabSource::HostProcess(host),
+        });
+    }
+    for process in processes {
         let source = match process.role {
-            ManagedProcessRole::Lifecycle => TabSource::Output,
+            ManagedProcessRole::Lifecycle => continue,
             ManagedProcessRole::Standard => TabSource::Workload,
             ManagedProcessRole::Shell => TabSource::Shell,
         };
-        if source == TabSource::Shell {
-            shells.push(effigy_process::ProcessSpec {
-                name: process.name.clone(),
-                run: shell_command(context, process)?,
-                cwd: process.cwd.clone(),
-                start_after_ms: 0,
-                shutdown_on_exit: process.shutdown_on_exit,
-                pty: true,
-                // A shell tab is an interactive terminal this session opens:
-                // a nested Effigy run inside it inherits the access the
-                // session resolved before it rendered (K12), so it never
-                // asks for the passphrase in the tab.
-                env: shell_tab_env(),
-            });
-        }
         tabs.push(ManagedTab {
             name: process.name.clone(),
-            pty: process.role != ManagedProcessRole::Lifecycle,
+            pty: true,
             shutdown_on_exit: process.shutdown_on_exit,
             source,
         });
     }
-    Ok((tabs, shells))
+    let mut order = declared_tab_order.to_vec();
+    if owns_environment && !order.iter().any(|name| name == &lifecycle_name) {
+        order.insert(0, lifecycle_name.clone());
+    }
+    // The environment's host processes sit next to the run's own output, in
+    // their declaration order; `tab` on a workload entry still positions it.
+    let anchor = order
+        .iter()
+        .position(|name| name == &lifecycle_name)
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    for (offset, name) in host_names.iter().enumerate() {
+        if !order.contains(name) {
+            order.insert(anchor + offset, name.clone());
+        }
+    }
+    for tab in &tabs {
+        if !order.contains(&tab.name) {
+            order.push(tab.name.clone());
+        }
+    }
+    (tabs, order)
 }
 
 /// A shell tab's interactive attach, run by the TUI client itself.
@@ -842,11 +995,7 @@ fn environment_plan(
     token: &str,
     schema_env: &BTreeMap<String, String>,
 ) -> Result<Option<EnvironmentPlan>, RunnerError> {
-    let owns_environment = plan
-        .processes
-        .iter()
-        .any(|process| process.role == ManagedProcessRole::Lifecycle);
-    if !owns_environment || context.container_handoff {
+    if !environment_owned(context, plan)? {
         return Ok(None);
     }
     let repo = context.repo().to_path_buf();
@@ -1394,14 +1543,17 @@ fn default_handoff_managed_shell_run() -> String {
 mod tests {
     use super::{
         default_handoff_managed_shell_run, managed_dns_route_lines, managed_role_schema_env,
-        managed_task_scratch, render_handoff_managed_standard_command, shell_tab_env,
+        managed_task_scratch, render_handoff_managed_standard_command, session_tabs, shell_tab_env,
         should_open_workspace_shell_for_non_managed_task, ContainerExecutionBinding,
+        HostProcessTab, ManagedProcessRole, TabSource,
     };
     use crate::runner::execute::workspace_seeded::render_workspace_seeded_task_command;
     use crate::runner::managed_shell::managed_readiness_probe_urls;
+    use effigy_containers::HostProcessRestart;
     use effigy_containers::{
         EffectiveComposeSource, EffectiveContainerPolicy, EffectiveDnsRoute, EffectiveServiceAlias,
     };
+    use effigy_managed::ManagedProcessSpec;
     use effigy_manifest::{
         LoadedCatalog, ManifestContainerDriver, ManifestContainerOnTaskExit,
         ManifestContainerShutdownMode, ManifestContainerStartup,
@@ -1681,6 +1833,115 @@ mod tests {
             detach_timeout_secs: 10,
             host_processes: Vec::new(),
         }
+    }
+
+    fn process(name: &str, role: ManagedProcessRole) -> ManagedProcessSpec {
+        ManagedProcessSpec {
+            name: name.to_owned(),
+            role,
+            run: format!("run-{name}"),
+            secret_env: Default::default(),
+            setup: None,
+            setup_steps: Vec::new(),
+            cwd: std::path::PathBuf::from("/repo"),
+            service: None,
+            start_after_ms: 0,
+            after: Vec::new(),
+            shutdown_on_exit: role == ManagedProcessRole::Lifecycle,
+            run_on_host: false,
+        }
+    }
+
+    fn host(name: &str) -> HostProcessTab {
+        HostProcessTab {
+            name: name.to_owned(),
+            log: std::path::PathBuf::from(format!("/repo/.effigy/{name}.log")),
+            listener_state: None,
+            restart: HostProcessRestart::Never,
+            restart_delay_ms: 0,
+        }
+    }
+
+    /// effigy#322: a session bound to an environment shows the run's own
+    /// output, the environment's host processes in declaration order, and its
+    /// workloads — in both placements, since the tabs never ask where a
+    /// workload runs.
+    #[test]
+    fn session_tabs_put_the_environments_host_processes_before_its_workloads() {
+        let processes = vec![
+            process("lifecycle", ManagedProcessRole::Lifecycle),
+            process("api", ManagedProcessRole::Standard),
+            process("terminal", ManagedProcessRole::Shell),
+        ];
+        let (tabs, order) = session_tabs(
+            true,
+            vec![host("tunnel"), host("frontend")],
+            &processes,
+            &[
+                "lifecycle".to_owned(),
+                "api".to_owned(),
+                "terminal".to_owned(),
+            ],
+        );
+        assert_eq!(
+            order,
+            vec![
+                "lifecycle".to_owned(),
+                "tunnel".to_owned(),
+                "frontend".to_owned(),
+                "api".to_owned(),
+                "terminal".to_owned(),
+            ],
+            "declaration order, next to the run's own output"
+        );
+        assert_eq!(tabs.len(), 5);
+        assert_eq!(tabs[0].source, TabSource::Output);
+        assert!(matches!(tabs[1].source, TabSource::HostProcess(_)));
+        assert_eq!(tabs[2].name, "frontend");
+        assert!(matches!(tabs[3].source, TabSource::Workload));
+        assert!(matches!(tabs[4].source, TabSource::Shell));
+        assert!(
+            !tabs[1].pty,
+            "a host process tab renders its log, not a terminal"
+        );
+    }
+
+    /// An environment-only session still opens the run's own output tab, so
+    /// its environment phase is visible.
+    #[test]
+    fn an_environment_only_session_opens_the_run_output_tab() {
+        let (tabs, order) = session_tabs(true, vec![host("api")], &[], &[]);
+        assert_eq!(order, vec!["lifecycle".to_owned(), "api".to_owned()]);
+        assert_eq!(tabs[0].source, TabSource::Output);
+    }
+
+    /// A host process and a workload may share a declared name without
+    /// sharing a tab.
+    #[test]
+    fn a_host_process_tab_keeps_its_name_when_a_workload_uses_it() {
+        let processes = vec![process("api", ManagedProcessRole::Standard)];
+        let (tabs, order) = session_tabs(true, vec![host("api")], &processes, &["api".to_owned()]);
+        assert_eq!(
+            order,
+            vec![
+                "lifecycle".to_owned(),
+                "host:api".to_owned(),
+                "api".to_owned()
+            ]
+        );
+        assert_eq!(tabs[1].name, "host:api");
+        assert_eq!(tabs[2].name, "api");
+    }
+
+    /// A run that does not own an environment shows only its workloads: the
+    /// environment's host processes belong to whoever runs it.
+    #[test]
+    fn a_session_without_its_environment_shows_no_host_process_tabs() {
+        let processes = vec![process("api", ManagedProcessRole::Standard)];
+        let (tabs, order) = session_tabs(false, Vec::new(), &processes, &["api".to_owned()]);
+        assert_eq!(order, vec!["api".to_owned()]);
+        assert_eq!(tabs.len(), 1);
+        assert!(matches!(tabs[0].source, TabSource::Workload));
     }
 
     /// A shell tab is spawned by this client, whose global environment never

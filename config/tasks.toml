@@ -881,6 +881,25 @@
 "test:managed:process-inventory" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "managed-process-inventory-rows", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(process_inventory_row_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
+# One dev session (effigy#322): a plain managed task bound to a hybrid
+# environment (one container service, two host processes) shows the host
+# processes and its workload in TUI and headless form, stops everything it
+# started and leaves a borrowed environment running. Private fake-backend
+# fixtures only; the in-process cases own no live VM or container.
+"test:managed:plain-environment" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { id = "plain-environment-session-e2e", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_plain_environment_session_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
+  { id = "plain-environment-session-in-process", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_headless_plain_environment_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
+  { id = "plain-environment-session-tabs", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(session_tabs_) | test(a_host_process_tab_) | test(an_environment_only_session_) | test(a_session_without_its_environment_)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 300000 },
+  { id = "plain-environment-session-plan", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-managed --lib --filterset 'test(plan::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 300000 },
+  { id = "plain-environment-start-after-notice", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest --lib --filterset 'test(retired_keys::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 300000 },
+] }
+"test:managed:plain-environment:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { id = "plain-environment-session-e2e", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_plain_environment_session_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
+  { id = "plain-environment-session-in-process", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(managed_headless_plain_environment_)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
+  { id = "plain-environment-session-tabs", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(session_tabs_) | test(a_host_process_tab_) | test(an_environment_only_session_) | test(a_session_without_its_environment_)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 300000 },
+  { id = "plain-environment-session-plan", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-managed --lib --filterset 'test(plan::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 300000 },
+  { id = "plain-environment-start-after-notice", run = "cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-manifest --lib --filterset 'test(retired_keys::tests::)' --no-capture --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 300000 },
+] }
 # Managed headless container lifecycle (headless dev:container children):
 # exec-readiness render contract (plan-timeout budget plus wait-while-starting
 # gate), up-stage workspace permission preparation, and in-container

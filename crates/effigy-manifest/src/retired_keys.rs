@@ -25,6 +25,23 @@ impl<'de> Deserialize<'de> for TaskManifest {
         reject_retired_tables(&value).map_err(serde::de::Error::custom)?;
         retired.merge(crate::retired_bootstrap::translate(&mut value));
         let mut manifest = TaskManifest::deserialize(value).map_err(serde::de::Error::custom)?;
+        // `start_after_ms` still delays its entry for the v0.15 line, but it no
+        // longer orders a managed session: workloads start once the
+        // environment is observed ready. The notice names the replacement
+        // (`retired.toml`, `managed-start-after-ordering`).
+        let retired_timers = manifest.retired_start_after_entries();
+        if !retired_timers.is_empty() {
+            let declared = retired_timers
+                .iter()
+                .map(|(task, profile, entry)| {
+                    format!("task `{task}` profile `{profile}` entry `{entry}`")
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            retired.record(format!(
+                "`start_after_ms` no longer orders a managed session ({declared}): workloads start after observed environment readiness, so replace it with `after = [\"environment\"]` (host processes order by `depends_on`)"
+            ));
+        }
         manifest.retired_config = retired;
         Ok(manifest)
     }
@@ -105,6 +122,48 @@ fn reject_draft_in_task(value: &Value) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use crate::TaskManifest;
+
+    /// effigy#322: the ordering timer still loads for the v0.15 line and its
+    /// one notice names the replacement.
+    #[test]
+    fn start_after_ms_still_loads_and_names_its_replacement() {
+        let manifest = toml::from_str::<TaskManifest>(
+            "[tasks.dev]\nmode = 'tui'\nconcurrent = [\n  { name = 'api', run = 'a', start_after_ms = 1500 },\n  { name = 'jobs', run = 'b' }\n]\n\n[tasks.dev.profiles.admin]\nconcurrent = [{ name = 'admin', run = 'c', start_after_ms = 10 }]\n",
+        )
+        .expect("retired timer still loads");
+        let notice = manifest
+            .retired_config
+            .notice(std::path::Path::new("effigy.toml"))
+            .expect("one notice");
+        assert!(
+            notice.contains("`start_after_ms` no longer orders a managed session"),
+            "{notice}"
+        );
+        assert!(
+            notice.contains("task `dev` profile `default` entry `api`"),
+            "{notice}"
+        );
+        assert!(
+            notice.contains("task `dev` profile `admin` entry `admin`"),
+            "{notice}"
+        );
+        assert!(
+            !notice.contains("entry `jobs`"),
+            "only declarations are named: {notice}"
+        );
+        assert!(notice.contains("after = [\"environment\"]"), "{notice}");
+        assert!(notice.contains("depends_on"), "{notice}");
+    }
+
+    /// A manifest that does not declare the timer gets no notice for it.
+    #[test]
+    fn a_manifest_without_start_after_ms_has_no_ordering_notice() {
+        let manifest = toml::from_str::<TaskManifest>(
+            "[tasks.dev]\nmode = 'tui'\nconcurrent = [{ name = 'api', run = 'a' }]\n",
+        )
+        .expect("manifest");
+        assert!(manifest.retired_config.is_empty());
+    }
 
     #[test]
     fn drafts_table_is_refused_with_the_task_namespace_replacement() {

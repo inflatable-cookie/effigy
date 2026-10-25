@@ -31,13 +31,13 @@ pub use effigy_core::builtin_tasks::BUILTIN_TASKS;
 pub use invocation::{parse_managed_invocation, ManagedInvocation, ParsedManagedInvocation};
 pub use plan::{
     invalid_managed_process_definition, resolve_managed_concurrent_task_plan,
-    ManagedConcurrentPlanInput,
+    task_has_environment_binding, ManagedConcurrentPlanInput,
 };
 pub use presentation::{managed_execution_mode, render_managed_plan, ManagedExecutionMode};
 pub use profiles::{
-    available_concurrent_profiles, has_concurrent_profile, has_concurrent_schema,
-    resolve_concurrent_profile, select_concurrent_profile, ResolvedConcurrentProfile,
-    DEFAULT_MANAGED_PROFILE,
+    available_concurrent_profiles, environment_only_profile, environment_only_profile_for,
+    has_concurrent_profile, has_concurrent_schema, has_managed_profile, resolve_concurrent_profile,
+    select_concurrent_profile, ResolvedConcurrentProfile, DEFAULT_MANAGED_PROFILE,
 };
 pub use run_spec::{
     render_builtin_reference_invocation, render_run_step_sequence, render_step_command_template,
@@ -66,6 +66,10 @@ pub struct ManagedProcessSpec {
     pub cwd: PathBuf,
     pub service: Option<String>,
     pub start_after_ms: u64,
+    /// What this entry declared it waits for (`after`). `environment` names
+    /// the run's environment phase, which already precedes every workload;
+    /// host processes order among themselves through `depends_on`.
+    pub after: Vec<String>,
     pub shutdown_on_exit: bool,
     /// When `true`, the runner skips the parent task's container wrap
     /// (compose exec / handoff prefix) for this process and runs the
@@ -85,6 +89,12 @@ pub struct ManagedTaskPlan {
     pub mode: String,
     pub profile: String,
     pub processes: Vec<ManagedProcessSpec>,
+    /// Whether this session owns (or borrows) the environment its task is
+    /// bound to: an explicit `role = "lifecycle"` entry, `container_lifecycle
+    /// = true`, or a plain bound session that declares no entries of its own
+    /// (effigy#322). Placement is the environment's; this decides only
+    /// whether the session runs its phase and shows its host processes.
+    pub owns_environment: bool,
     pub tab_order: Vec<String>,
     pub fail_on_non_zero: bool,
     pub passthrough: Vec<String>,
@@ -115,6 +125,10 @@ impl Default for ManagedTaskReadiness {
 /// omits `run`. Mirrors the runner-local default from before the
 /// extraction.
 pub const DEFAULT_MANAGED_SHELL_RUN: &str = "exec ${SHELL:-/bin/zsh} -i";
+
+/// The one ordering dependency a `concurrent` entry's `after` may name: the
+/// managed run's environment phase.
+pub const MANAGED_ENTRY_AFTER_ENVIRONMENT: &str = "environment";
 
 /// Error raised by the managed orchestration crate.
 ///

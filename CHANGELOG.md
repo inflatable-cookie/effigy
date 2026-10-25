@@ -1166,6 +1166,27 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- A managed session bound to a container environment owns that environment, and
+  one `effigy dev` shows it the same way in hybrid and container placement
+  (effigy#322, Q-007). The session's tabs are the run's own output, one tab per
+  `[[containers.<env>.host_processes]]` entry in declaration order with a
+  status line (`starting`, `running`, `ready on <url>`, `restarting`,
+  `exited <code>`) and that process's live log, then its workloads and shells;
+  `--headless` prints the same facts as `[name] [host] <status>` and
+  `[name] <line>`. A plain `[tasks.dev]` with `mode = "tui"` and
+  `workspace = "app"` therefore needs no `concurrent` entry per process and no
+  wrapper task: its own `run` is the one workload, or it runs the environment
+  alone, and it brings the environment up, borrows an already-started one and
+  closes the same way whatever a workload's placement is.
+  `container_lifecycle = true` owns the environment with `concurrent` entries
+  (the `role = "lifecycle"` entry is no longer required), `container_lifecycle
+  = false` opts out, and `gateway`/`health_wait` now need a session that owns
+  its environment rather than a lifecycle entry. Readiness orders a session:
+  `[[tasks.<name>.concurrent]].after = ["environment"]` states that dependency
+  and environment host processes order by `depends_on`. `start_after_ms` no
+  longer orders anything; it still delays its entry for the v0.15 line and the
+  manifest's one deprecation notice names the replacement
+  (`docs/knowledge/retired.toml`, `managed-start-after-ordering`).
 - A managed session resolves vault access once, before any front end renders
   (TUI, headless or detach), and everything it starts uses that access on the
   internal env route: the environment `up`, the run's supervisor, every
