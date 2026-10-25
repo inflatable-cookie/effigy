@@ -1337,6 +1337,16 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- A stop counts its own window, from the grace the custody receipt recorded,
+  instead of inheriting the caller's cleanup budget. A host-process supervisor
+  mints that budget when its run begins, so stopping a workload that had been
+  up longer than the budget reported `group closure unverified: … timed out
+  after 3m30s during group closure` (the supervisor's whole lifetime, not the
+  wait) and never escalated, although every member had closed or was about to.
+  The observation now always precedes the deadline, a still-busy group is
+  killed before the window ends, and the supervisor takes a fresh budget for
+  each stop and for its own settle, so a long-lived host process stops within
+  its grace, closes its run and reports closure verified (effigy#357).
 - `scripts/check-cargo-routes.py` (`qa:docs:cargo-routes`) no longer skips
   `:cargo` escape siblings, because the catalog has none. It still fails on a
   plain-`cargo` route that

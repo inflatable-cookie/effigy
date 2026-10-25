@@ -22,6 +22,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub(crate) const KIND: &str = "kernel:process";
+/// Beyond its declared grace, a stop still drains bounded capture, reaps the
+/// leader and stops the anchor. The margin bounds those; it is never a second
+/// grace and it never replaces observing the group (effigy#357).
+const STOP_MARGIN: Duration = Duration::from_secs(30);
 /// The descriptor slot a spawn hands its optional one-shot reader to (K12).
 /// It sits above the capability reader (9) and cleanup pin (10) slots, so a
 /// caller can hand one short-lived payload to its own child without either
@@ -1120,6 +1124,13 @@ impl ProcessCore {
         cx: &CleanupContext,
         escalate: &mut impl FnMut() -> bool,
     ) -> StopReport {
+        // The stop takes its own window, counted from the declared grace. A
+        // caller's cleanup context can be minted when a long-lived owner
+        // starts, so by the time its workload needs stopping the budget may be
+        // spent; a spent budget says nothing about whether the group closed and
+        // never stands in for observing it (effigy#357).
+        let stopped =
+            cx.window(Duration::from_millis(self.receipt.grace_millis).saturating_add(STOP_MARGIN));
         let mut signals = Vec::new();
         let mut residue = Vec::new();
         if !self.reaped {
@@ -1145,9 +1156,8 @@ impl ProcessCore {
             if matches!(state, Observed::Verified(..) | Observed::Absent(_)) {
                 break state;
             }
-            if let Err(e) = cx.operation().check("group closure") {
-                break Observed::Unknown(unknown(format!("{e}")));
-            }
+            // Escalation precedes the deadline: a group that is still busy at
+            // the end of the window is killed before the observation gives up.
             if (Instant::now() >= grace || crate::signal::escalated() || escalate())
                 && (!killed || self.anchor.is_some())
                 && !self.reaped
@@ -1159,11 +1169,14 @@ impl ProcessCore {
                 }
                 killed = true;
             }
+            if let Err(e) = stopped.operation().check("group closure") {
+                break Observed::Unknown(unknown(format!("{e}")));
+            }
             std::thread::sleep(Duration::from_millis(5));
         };
         while self.stdout.is_some() || self.stderr.is_some() {
             self.drain();
-            if cx.operation().check("capture drain").is_err() {
+            if stopped.operation().check("capture drain").is_err() {
                 self.capture = CaptureState::Truncated("drain deadline".into());
                 self.stdout = None;
                 self.stderr = None;
@@ -1172,7 +1185,7 @@ impl ProcessCore {
             std::thread::sleep(Duration::from_millis(2));
         }
         let group = if matches!(group, Observed::Verified(..) | Observed::Absent(_)) {
-            anchor::stop(&self.receipt, self.anchor.as_ref(), cx)
+            anchor::stop(&self.receipt, self.anchor.as_ref(), &stopped)
         } else {
             group
         };
@@ -1192,7 +1205,7 @@ impl ProcessCore {
                     }
                     Ok(None) => {}
                 }
-                if let Err(error) = cx.operation().check("leader reap") {
+                if let Err(error) = stopped.operation().check("leader reap") {
                     residue.push(unknown(format!("{error}")));
                     break;
                 }

@@ -768,8 +768,11 @@ fn sanitize(value: &str) -> String {
         .collect()
 }
 
-/// The settlement budget for one host-process run.
-const HOST_PROCESS_SETTLE_BUDGET: Duration = Duration::from_secs(120);
+/// The budget for one cleanup step of a host-process run: admission, a stop or
+/// the settle. Each step takes its own, so a supervisor that has been up for
+/// hours still has a whole budget when its workload needs stopping or its run
+/// needs closing (effigy#357).
+const HOST_PROCESS_CLEANUP_BUDGET: Duration = Duration::from_secs(120);
 
 /// A supervisor step failed for a store, file, identity or capability reason.
 /// The request is well formed, so the outcome names the failing step and the
@@ -834,7 +837,7 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
                 return Err(RunError::Invalid(error.to_string()));
             }
         };
-    let cleanup = crate::runner::task_engine::cleanup_context(HOST_PROCESS_SETTLE_BUDGET);
+    let cleanup = crate::runner::task_engine::cleanup_context(HOST_PROCESS_CLEANUP_BUDGET);
     let invocation = match kernel_run::invocation(checkout, &resource, &spec) {
         Ok(invocation) => invocation,
         Err(error) => {
@@ -887,11 +890,15 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         supervisor_pid,
         watch.as_ref(),
     );
+    // Closing the run takes its own budget. The one above was minted when the
+    // run began, so a workload that outlived it would otherwise leave the run
+    // open and force the environment to settle it (effigy#357).
+    let settle = crate::runner::task_engine::cleanup_context(HOST_PROCESS_CLEANUP_BUDGET);
     let (workload, custody) = match started {
         Ok(result) => result,
         Err(error) => {
             let _ = run.interrupt(
-                &cleanup,
+                &settle,
                 effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 },
             );
             let _ = write_stop_report(&spec, &run, None);
@@ -913,11 +920,11 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
     let outcome = match workload {
         Some(outcome) => {
             run.finish(outcome)?;
-            run.settle(&cleanup, &mut adapter)?
+            run.settle(&settle, &mut adapter)?
         }
         None => {
-            run.interrupt(&cleanup, stop_workload())?;
-            run.settle(&cleanup, &mut adapter)?
+            run.interrupt(&settle, stop_workload())?;
+            run.settle(&settle, &mut adapter)?
         }
     };
     session.closed(&outcome);
@@ -2288,6 +2295,64 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(leftovers.is_empty(), "no PID files remain: {leftovers:?}");
         assert!(log.exists(), "the host process log keeps its location");
+    }
+
+    /// A host process whose `run` is a nested task - it starts a long-lived
+    /// server through an intermediate wrapper, the shape an app build and run
+    /// takes - stops within its declared grace and reports closure verified.
+    /// The leader exits on SIGTERM, the wrapper keeps its server alive, and the
+    /// escalation closes the group instead of timing out on it (effigy#357).
+    #[test]
+    fn host_process_owned_stop_of_a_nested_task_closes_within_its_grace() {
+        let fixture = fixture();
+        let mut nested = host_process(
+            "api",
+            r#"printf 'nested task starting\n'
+               /bin/sh -c 'trap "" TERM; printf "server up\n"; exec /bin/sleep 120' &
+               exec /bin/sh -c 'printf "supervisor up\n"; while :; do /bin/sleep 1; done'"#,
+            HostProcessRestart::Never,
+        );
+        nested.shutdown_grace_secs = 1;
+        let grace = Duration::from_secs(nested.shutdown_grace_secs);
+        let policy = policy(&fixture.checkout, vec![nested]);
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            .expect("host process starts");
+        let log = host_process_dir_for_policy(&fixture.checkout, &policy).join("api.log");
+        wait_until("the nested task's server to start", || {
+            fs::read_to_string(&log).is_ok_and(|text| text.contains("server up"))
+        });
+        let pid = super::kernel_run::host_process_status(&fixture.checkout, &policy)[0]
+            .pid
+            .expect("recorded leader pid");
+        let started = Instant::now();
+        let report =
+            super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed <= grace + Duration::from_secs(5),
+            "down took {elapsed:?}, over grace plus five seconds"
+        );
+        assert!(
+            report.complete(),
+            "failed stop must be reported: {report:?}"
+        );
+        let stop = report
+            .processes
+            .iter()
+            .find(|process| process.name == "api")
+            .expect("the stop report lists the process");
+        assert_eq!(
+            stop.detail, None,
+            "a stop within its grace is verified closed: {report:?}"
+        );
+        let signal = stop.signal.as_deref().unwrap_or_default();
+        assert!(
+            signal.contains("SIGKILL"),
+            "the wrapper that ignored SIGTERM is named with its kill: {report:?}"
+        );
+        wait_until("the process group to close", || {
+            group_members(pid).is_empty()
+        });
     }
 
     /// A process that exits by itself is recorded with its exit and its last

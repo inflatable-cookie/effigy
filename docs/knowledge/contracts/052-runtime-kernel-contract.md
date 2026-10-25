@@ -586,7 +586,10 @@ pub struct Limits {
   transactions, before the next effect, or by stopping owned processes. It
   never detaches a writer.
 - I-CX4: cleanup runs under its own bounded `CleanupContext`. A first
-  cancellation never cancels cleanup. A second signal escalates it (§5.7).
+  cancellation never cancels cleanup. A second signal escalates it (§5.7). A
+  cleanup step takes its window from the moment it begins: a context minted
+  when a long-lived owner started bounds nothing about a stop or settle that
+  follows hours later.
 - I-CX5: no process-global state carries context. It is passed explicitly.
 
 #### Failure model
@@ -1201,7 +1204,11 @@ no live workload member remains. Group closure is then verified, and only
 then is the leader reaped. Output EOF and exit are separate events; capture
 drains under its own deadline. Unanchored custody retains the unreaped-leader
 group-signal path. `ESRCH` proves absence; unreadable observations remain
-`Unknown`. Leader exit alone is never closure.
+`Unknown`. Leader exit alone is never closure. A stop counts its window from
+the recorded grace plus the drain, reap and anchor margin, and it never reads
+the caller's cleanup budget as evidence about the group: a supervisor that
+mints one budget when its run begins must not report that spent budget as
+unverified closure while the group was closing (effigy#357).
 
 Recovery stop. A sentinel or successor settles after the owner died; the
 leader was reparented and its number is no longer pinned.
@@ -2780,7 +2787,10 @@ and `--detach` are front ends over the same run. Row by row:
   settle stop a run with a fenced `StopRequest`, wait for the live supervisor,
   and settle as the gate holder when it is gone, returning a
   `HostProcessStopReport` that names each PID, the signals the kernel sent
-  (including a SIGKILL after the declared grace), the exit and any residue. A
+  (including a SIGKILL after the declared grace), the exit and any residue. The
+  supervisor takes a fresh cleanup budget for each stop and for its settle, so
+  a process that has been up for hours still stops and closes its run without
+  the environment having to settle it (effigy#357). A
   process that exits is recorded with its exit in the custody receipt and its
   last log lines in the unchanged `.effigy/runtime/host-processes/<env>/`
   log; `container status` projects the run, state and last exit. A v0.14.1
