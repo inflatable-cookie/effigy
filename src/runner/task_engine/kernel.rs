@@ -256,7 +256,9 @@ pub(in crate::runner) fn effects_root(checkout: &Path) -> Result<&'static StateR
         .get_or_init(Default::default)
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(root) = roots.get(checkout.path()) {
+    // Keyed by the checkout that owns the state, so two nested catalogs of one
+    // checkout share one retained handle and never look ambiguous to each other.
+    if let Some(root) = roots.get(&location.root) {
         let identity = |dir: &effigy_kernel::fs::DirFd| {
             dir.identity()
                 .map_err(|error| RunnerError::task_invocation(error.to_string()))
@@ -271,7 +273,7 @@ pub(in crate::runner) fn effects_root(checkout: &Path) -> Result<&'static StateR
         return Ok(root);
     }
     let root = Box::leak(Box::new(current));
-    roots.insert(checkout.path().into(), root);
+    roots.insert(location.root.clone(), root);
     Ok(root)
 }
 
