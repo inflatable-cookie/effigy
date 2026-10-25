@@ -1161,11 +1161,12 @@ fn authority_matrix(authority: Authority) {
         Authority::ExplicitDown => {
             let down = case.run(&["container", "stack", "down"]);
             assert!(!down.status.success(), "down under a live holder");
-            assert!(
-                String::from_utf8_lossy(&down.stderr).contains("while runs hold it"),
-                "{}",
-                String::from_utf8_lossy(&down.stderr)
-            );
+            // The refusal counts its holders (one live run here) and names the
+            // exact command that ends it, so the reader is never left to guess
+            // which command stops the run that blocked the transition.
+            let stderr = String::from_utf8_lossy(&down.stderr);
+            assert!(stderr.contains("while 1 run holds it"), "{stderr}");
+            assert!(stderr.contains("effigy run stop"), "{stderr}");
         }
         Authority::Reaper => {
             let dir = case
