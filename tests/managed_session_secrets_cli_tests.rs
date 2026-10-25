@@ -22,8 +22,11 @@ use nix::pty::{openpty, Winsize};
 
 const PROMPT: &str = "Vault passphrase";
 const SECRET_VALUE: &str = "postgres://session-shared-value";
-/// How long the session gets to reach each milestone.
-const WAIT: Duration = Duration::from_secs(180);
+/// How long the session gets to reach each milestone. Kept well inside the
+/// test runner's termination budget (180s for this selector): the fixture must
+/// reach its own cleanup and stop its process group before the runner kills
+/// the test process, or a hung session would outlive the test (effigy#338).
+const WAIT: Duration = Duration::from_secs(60);
 
 /// Every source a caller could set to answer without a terminal. Each child
 /// starts without them so the proof is about the session's own resolution.
@@ -103,6 +106,7 @@ fn a_managed_session_prompts_once_before_it_renders_and_keeps_the_access_off_the
         "session exit: {status}: {}",
         session.output()
     );
+    assert_session_stopped(&mut session);
     assert!(
         !credential.exists(),
         "the session wrote a sealed credential"
@@ -197,6 +201,7 @@ fn a_managed_session_uses_a_caller_supplied_passphrase() {
         "session exit: {status}: {}",
         session.output()
     );
+    assert_session_stopped(&mut session);
 }
 
 /// A nested `effigy` started from user code is a top-level invocation: it does
@@ -231,6 +236,7 @@ fn a_nested_effigy_run_started_by_user_code_never_inherits_the_session_access() 
         "session exit: {status}: {}",
         session.output()
     );
+    assert_session_stopped(&mut session);
 }
 
 /// A private checkout, private HOME and a locked vault holding one value.
@@ -359,6 +365,27 @@ fn write_locked_vault(root: &Path, passphrase: &str, value: &str) {
     .expect("write locked vault");
 }
 
+/// Opens descriptors until this process holds every slot below the kernel's
+/// handoff descriptor, and leaves them open (not CLOEXEC) until the caller has
+/// spawned the child that should inherit them.
+fn occupy_below_handoff() -> Vec<std::os::fd::OwnedFd> {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    let slot = effigy_kernel::custody::HANDOFF_FD;
+    let mut held = Vec::new();
+    loop {
+        // SAFETY: a plain open of a static path; ownership transfers.
+        let fd = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
+        assert!(fd >= 0, "open /dev/null");
+        // SAFETY: the successful open returned a fresh owned descriptor.
+        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        let raw = fd.as_raw_fd();
+        held.push(fd);
+        if raw >= slot - 1 {
+            return held;
+        }
+    }
+}
+
 /// A private pseudo terminal: the child gets the slave as its stdin, stdout
 /// and stderr *and* adopts it as its controlling terminal, which is what
 /// makes the passphrase prompt (an `/dev/tty` read) ask here rather than
@@ -420,7 +447,13 @@ impl PtySession {
                 Ok(())
             });
         }
+        // Hand the session descriptors 3..=10, so its own one-shot grant pipe
+        // lands on the kernel's handoff slot itself (11). That is the shape
+        // where `dup2` onto the same number must still clear CLOEXEC for the
+        // supervisor to find its grant after exec (effigy#338).
+        let inherited = occupy_below_handoff();
         let child = command.spawn().expect("spawn session on a PTY");
+        drop(inherited);
         Self {
             child,
             master,
@@ -448,12 +481,31 @@ impl PtySession {
                 );
                 return;
             }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for {needle:?}: {}",
-                self.output()
-            );
+            if Instant::now() >= deadline {
+                // Never panic while the session is still running: this test
+                // process's death must not leave a `dev --headless` behind.
+                self.kill_group();
+                self.drain();
+                panic!("timed out waiting for {needle:?}: {}", self.output());
+            }
         }
+    }
+
+    /// Stops the fixture and everything it started in this session. The child
+    /// is its own session leader (`setsid` in `pre_exec`), so its group is the
+    /// pid it recorded at spawn.
+    fn kill_group(&mut self) {
+        if self.child.try_wait().ok().flatten().is_some() {
+            return;
+        }
+        let pid = self.child.id() as i32;
+        // SAFETY: only this test's own child, its own process group, recorded
+        // at spawn. Both signals are idempotent here.
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+            libc::kill(pid, libc::SIGKILL);
+        }
+        let _ = self.child.wait();
     }
 
     fn send_line(&mut self, line: &str) {
@@ -481,16 +533,9 @@ impl PtySession {
                 return status;
             }
             if Instant::now() >= deadline {
-                // SAFETY: only this test's own child is signalled, then reaped.
-                unsafe {
-                    libc::kill(self.child.id() as i32, libc::SIGKILL);
-                }
-                let status = self.child.wait().expect("reap session");
+                self.kill_group();
                 self.drain();
-                panic!(
-                    "session did not settle after TERM: {} ({status})",
-                    self.output()
-                );
+                panic!("session did not settle after TERM: {}", self.output());
             }
         }
     }
@@ -547,12 +592,17 @@ impl PtySession {
 
 impl Drop for PtySession {
     fn drop(&mut self) {
-        if self.child.try_wait().ok().flatten().is_none() {
-            // SAFETY: only this test's own child, which it started on the PTY.
-            unsafe {
-                libc::kill(self.child.id() as i32, libc::SIGKILL);
-            }
-            let _ = self.child.wait();
-        }
+        // Every exit path, panics included, stops the fixture's own session
+        // before this test process can die and orphan it.
+        self.kill_group();
     }
+}
+
+/// The run's own settle stops everything; this only proves the fixture process
+/// itself is gone, so a leaked session fails the test that made it.
+fn assert_session_stopped(session: &mut PtySession) {
+    assert!(
+        session.child.try_wait().expect("poll session").is_some(),
+        "the session fixture is still running after the test stopped it"
+    );
 }

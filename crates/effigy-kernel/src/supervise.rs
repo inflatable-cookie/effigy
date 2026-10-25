@@ -277,7 +277,12 @@ fn spawn_helper(
                 // slot is the only one the supervisor keeps.
                 unsafe {
                     command.pre_exec(move || {
-                        if libc::dup2(raw, crate::custody::HANDOFF_FD) < 0 {
+                        // `dup2` onto the descriptor's own number is a no-op,
+                        // so the flag is cleared on the slot explicitly: the
+                        // supervisor must still find the grant after exec.
+                        if libc::dup2(raw, crate::custody::HANDOFF_FD) < 0
+                            || libc::fcntl(crate::custody::HANDOFF_FD, libc::F_SETFD, 0) < 0
+                        {
                             return Err(io::Error::last_os_error());
                         }
                         Ok(())

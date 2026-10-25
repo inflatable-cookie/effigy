@@ -341,17 +341,23 @@ pub(in crate::runner) fn grant_command(command: &mut Command) {
     let Some(grant) = take_child_grant() else {
         return;
     };
-    let (key, value) = grant.env_entry();
-    let reader = grant.into_reader();
+    grant_command_with(command, grant.into_reader());
+}
+
+/// [`grant_command`] for a grant the caller already took, so a proof can pin
+/// the descriptor the child receives.
+fn grant_command_with(command: &mut Command, reader: OwnedFd) {
+    command.env(SECRET_GRANT_ENV, "1");
     let slot = reader.as_raw_fd();
-    command.env(key, value);
     // SAFETY: `pre_exec` runs in the forked child before `exec`, where `dup2`
-    // is async-signal-safe. The closure owns the reader, so the parent's copy
-    // closes when the `Command` drops after the spawn.
+    // and `fcntl` are async-signal-safe. The closure owns the reader, so the
+    // parent's copy closes when the `Command` drops after the spawn.
     unsafe {
         command.pre_exec(move || {
             let _owns_reader = &reader;
-            if libc::dup2(slot, effigy_kernel::custody::HANDOFF_FD) < 0 {
+            if libc::dup2(slot, effigy_kernel::custody::HANDOFF_FD) < 0
+                || libc::fcntl(effigy_kernel::custody::HANDOFF_FD, libc::F_SETFD, 0) < 0
+            {
                 return Err(std::io::Error::last_os_error());
             }
             Ok(())
@@ -424,13 +430,14 @@ fn read_grant(reader: OwnedFd) -> Option<Grant> {
 mod tests {
     use super::{
         activate_local_dev_secret_access, adopt_local_dev_secret_access,
-        forget_session_passphrase_for_tests, internal_local_dev_secret_access_env,
-        internal_secret_passphrase_env, is_session_access_key, local_dev_secret_access_active,
-        read_secret_passphrase, session_passphrase, take_child_grant, workload_ambient_environment,
-        ChildGrant,
+        forget_session_passphrase_for_tests, grant_command_with,
+        internal_local_dev_secret_access_env, internal_secret_passphrase_env,
+        is_session_access_key, local_dev_secret_access_active, read_secret_passphrase,
+        session_passphrase, take_child_grant, workload_ambient_environment, ChildGrant,
     };
     use std::ffi::OsStr;
     use std::io::Read;
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
     struct ScopedEnv {
         key: &'static str,
@@ -463,6 +470,50 @@ mod tests {
                 None => unsafe { std::env::remove_var(self.key) },
             }
         }
+    }
+
+    /// Occupies every descriptor up to and including the handoff slot, so the
+    /// proof controls that number rather than inheriting a lucky one.
+    fn occupy_through_the_handoff_slot() -> Vec<OwnedFd> {
+        let slot = effigy_kernel::custody::HANDOFF_FD;
+        let mut held = Vec::new();
+        loop {
+            // SAFETY: a plain open of a static path; ownership transfers.
+            let fd = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
+            assert!(fd >= 0, "open /dev/null");
+            // SAFETY: the successful open returned a fresh owned descriptor.
+            let fd = unsafe { OwnedFd::from_raw_fd(fd) };
+            let raw = fd.as_raw_fd();
+            held.push(fd);
+            assert!(
+                raw <= slot,
+                "the proof process already held descriptor {slot}"
+            );
+            if raw == slot {
+                return held;
+            }
+        }
+    }
+
+    /// Moves the taken reader onto the handoff slot itself, freeing the slot
+    /// first: this is the shape that used to lose the flag at exec.
+    fn move_to_handoff_slot(reader: OwnedFd, held: &mut Vec<OwnedFd>) -> OwnedFd {
+        let slot = effigy_kernel::custody::HANDOFF_FD;
+        let owned_slot = held
+            .iter()
+            .position(|fd| fd.as_raw_fd() == slot)
+            .expect("the proof occupies the slot");
+        drop(held.remove(owned_slot));
+        // SAFETY: `slot` is now free and the reader is live; ownership of the
+        // duplicate transfers to the returned descriptor.
+        let moved = unsafe { libc::dup2(reader.as_raw_fd(), slot) };
+        assert_eq!(moved, slot, "move the reader onto the handoff slot");
+        // The parent's copy must not leak into unrelated children: only the
+        // child's own spawn clears the flag.
+        // SAFETY: live descriptor and a valid flag request.
+        assert!(unsafe { libc::fcntl(slot, libc::F_SETFD, libc::FD_CLOEXEC) } >= 0);
+        // SAFETY: the duplicate at `slot` is now the owned reader.
+        unsafe { OwnedFd::from_raw_fd(slot) }
     }
 
     fn read_frame(grant: ChildGrant) -> Vec<u8> {
@@ -554,6 +605,43 @@ mod tests {
         assert!(adopted.local_dev);
 
         drop(local_dev);
+        forget_session_passphrase_for_tests();
+    }
+
+    /// The grant's reader can already be the handoff slot itself (a session
+    /// with descriptors up to 10 open). `dup2` onto the same number is a
+    /// no-op that leaves CLOEXEC set, so the slot's flag must be cleared
+    /// explicitly: the child still reads its grant after exec (effigy#338).
+    #[test]
+    fn a_grant_survives_exec_when_its_reader_is_already_the_handoff_slot() {
+        let _test_passphrase =
+            ScopedEnv::set("EFFIGY_TEST_SECRETS_PASSPHRASE", Some("vault-passphrase"));
+        let _public_passphrase = ScopedEnv::set("EFFIGY_SECRET_PASSPHRASE", None);
+        forget_session_passphrase_for_tests();
+
+        let mut held = occupy_through_the_handoff_slot();
+        let grant = take_child_grant().expect("a session with access grants it");
+        let reader = move_to_handoff_slot(grant.into_reader(), &mut held);
+        assert_eq!(reader.as_raw_fd(), effigy_kernel::custody::HANDOFF_FD);
+
+        // The child's own `cat` reads the slot after exec: if the flag were
+        // left set, the descriptor would be gone and the read would fail.
+        let mut command = std::process::Command::new("/bin/sh");
+        command.arg("-c").arg("cat <&11");
+        grant_command_with(&mut command, reader);
+        let output = command.output().expect("run the granted child");
+        let frame = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert!(
+            output.status.success(),
+            "the child could not read the slot: {frame}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            frame.starts_with("EFFGRNT1") && frame.ends_with("vault-passphrase"),
+            "the child read the grant frame after exec: {frame:?}"
+        );
+
+        drop(held);
         forget_session_passphrase_for_tests();
     }
 

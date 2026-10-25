@@ -398,7 +398,13 @@ impl Blocked {
                 {
                     libc::_exit(125);
                 }
-                if handoff_fd >= 0 && libc::dup2(handoff_fd, HANDOFF_FD) < 0 {
+                // A source that is already the target slot makes `dup2` a
+                // no-op, so the descriptor keeps CLOEXEC and the payload would
+                // never survive exec. Clear the flag on the slot itself.
+                if handoff_fd >= 0
+                    && (libc::dup2(handoff_fd, HANDOFF_FD) < 0
+                        || libc::fcntl(HANDOFF_FD, libc::F_SETFD, 0) < 0)
+                {
                     libc::_exit(125);
                 }
                 let close_from = if anchor_fd >= 0 { 6 } else { 5 };
