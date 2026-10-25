@@ -818,7 +818,8 @@ fn cli_text_mode_failing_rhai_task_streams_output_without_envelope() {
 }
 
 /// v0.14 task state is never read or deleted; `doctor` lists what remains so
-/// the operator knows it is safe to remove (contract 052 §11).
+/// the operator knows it is safe to remove (contract 052 §11). Only retired
+/// cache files are listed: `cache/sources` and `cache/bundles` are live.
 #[test]
 fn cli_doctor_lists_v014_task_state_families_in_json_and_text() {
     let root = temp_workspace("cli-doctor-legacy-task-state");
@@ -829,8 +830,12 @@ fn cli_doctor_lists_v014_task_state_families_in_json_and_text() {
     .expect("write manifest");
     fs::create_dir_all(root.join(".effigy/locks")).expect("mkdir locks");
     fs::write(root.join(".effigy/locks/task-build.lock"), "{}").expect("write v0.14 lock");
-    fs::create_dir_all(root.join(".effigy/cache")).expect("mkdir cache");
-    fs::write(root.join(".effigy/cache/task-cache-v1.json"), "{}").expect("write v0.14 cache");
+    for directory in [".effigy/cache/sources/generation", ".effigy/cache/bundles"] {
+        fs::create_dir_all(root.join(directory)).expect("mkdir live cache");
+    }
+    for file in ["task-cache-v1.json", "catalog-discovery-v1.json"] {
+        fs::write(root.join(".effigy/cache").join(file), "{}").expect("write v0.14 cache");
+    }
 
     let output = run_json_cli_command(&root, &["doctor"]);
     let parsed = parse_stdout_json(&output);
@@ -838,12 +843,17 @@ fn cli_doctor_lists_v014_task_state_families_in_json_and_text() {
     for family in [
         "tasks.legacy-state.task-lease-locks",
         "tasks.legacy-state.task-cache",
+        "tasks.legacy-state.cache-catalog-discovery-v1",
     ] {
         assert!(
             rendered.contains(family),
             "json doctor misses {family}: {rendered}"
         );
     }
+    assert!(
+        !rendered.contains("delete the directory"),
+        "doctor advises deleting live cache directories: {rendered}"
+    );
 
     let text = run_cli_command(&root, &["doctor"]);
     let stdout = String::from_utf8_lossy(&text.stdout);

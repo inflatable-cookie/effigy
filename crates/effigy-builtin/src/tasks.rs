@@ -63,7 +63,7 @@ pub(crate) const RETIRED_UNLOCK: &str =
     that run";
 pub(crate) const RETIRED_CACHE: &str = "`effigy tasks cache` was removed in v0.15 with the task \
     cache. Effigy no longer skips tasks from a fingerprint; let the tool's own cache decide, and \
-    delete `.effigy/cache`";
+    delete the retired `.effigy/cache/task-cache-v1.json`";
 
 enum NestedTasksBuiltin {
     /// Removed in v0.15; one-release refusal naming the replacement.

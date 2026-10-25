@@ -281,6 +281,7 @@ impl Run<'_> {
                 staging
                     .remove_tree(
                         &FileName::new(&self.id.to_string()).map_err(StoreError::from)?,
+                        crate::fs::Trust::Private,
                         20,
                     )
                     .map_err(StoreError::from)?;
@@ -298,7 +299,8 @@ impl Run<'_> {
                     .read_family(Family::Objects)
                     .map_err(StoreError::from)?
                 {
-                    dir.remove_tree(&name, 20).map_err(StoreError::from)?;
+                    dir.remove_tree(&name, crate::fs::Trust::Private, 20)
+                        .map_err(StoreError::from)?;
                     dir.sync().map_err(StoreError::from)?;
                 }
                 self.store.txn(cx, |txn| {

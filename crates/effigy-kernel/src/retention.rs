@@ -7,7 +7,7 @@
 //! machine, so an admission pays a few milliseconds at most, and a backlog
 //! catches up in short passes instead of one long write lock.
 use crate::ctx::{EffectClass, EffectContext};
-use crate::fs::FileName;
+use crate::fs::{FileName, Trust};
 use crate::gate::{self, Gate, ScopeRemoval};
 use crate::id::{CheckoutId, CheckoutKind, Scope};
 use crate::ident;
@@ -273,7 +273,7 @@ pub fn retain(
                 .execute("DELETE FROM logs WHERE run_id=?1", [&id])?;
             Ok(())
         })?;
-        runs_dir.remove_tree(&FileName::new(&id)?, TREE_DEPTH)?;
+        runs_dir.remove_tree(&FileName::new(&id)?, Trust::Private, TREE_DEPTH)?;
         report.log_sets += 1;
         left -= 1;
     }
@@ -299,7 +299,7 @@ pub fn retain(
     if !objects.is_empty() {
         let object_guard = crate::objects::lock(cx, root)?;
         for digest in &objects {
-            objects_dir.remove_tree(&FileName::new(digest)?, TREE_DEPTH + 4)?;
+            objects_dir.remove_tree(&FileName::new(digest)?, Trust::Private, TREE_DEPTH + 4)?;
             objects_dir.sync()?;
             in_batch(store, cx, |txn| {
                 txn.conn()
@@ -522,7 +522,7 @@ fn delete_runs(
             Ok(())
         })?;
         for id in batch {
-            runs_dir.remove_tree(&FileName::new(id)?, TREE_DEPTH)?;
+            runs_dir.remove_tree(&FileName::new(id)?, Trust::Private, TREE_DEPTH)?;
         }
         report.runs += batch.len();
         left = left.saturating_sub(batch.len());
