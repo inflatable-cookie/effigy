@@ -1,9 +1,10 @@
-#[cfg(test)]
-use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 use std::net::Ipv4Addr;
-use std::path::Path;
 
 use super::*;
+
+fn checkout() -> tempfile::TempDir {
+    tempfile::tempdir().expect("tempdir")
+}
 
 #[test]
 fn allocate_first_identity_uses_pool_start() {
@@ -55,135 +56,59 @@ fn allocate_fills_gaps_after_deallocate() {
 }
 
 #[test]
-fn save_and_load_roundtrip_preserves_assignments() {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("loopback-ips.json");
-
+fn a_deleted_worktrees_address_is_reclaimed_for_the_next_allocation() {
+    let live = checkout();
+    let gone = checkout().path().join("deleted-worktree");
     let mut registry = LoopbackRegistry::new();
     registry
-        .allocate("app-a", "/projects/app-a")
-        .expect("app-a");
+        .allocate("project:app:live", &live.path().display().to_string())
+        .expect("live");
     registry
-        .allocate("shared-db", "shared:db")
-        .expect("shared-db");
-    registry.save(&path).expect("save");
+        .allocate("project:app:gone", &gone.display().to_string())
+        .expect("gone");
+    assert_eq!(registry.len(), 2);
 
-    let loaded = LoopbackRegistry::load(&path).expect("load");
-    assert_eq!(loaded.len(), 2);
-    assert_eq!(
-        loaded.get("app-a").map(|entry| entry.ip),
-        Some(DEFAULT_LOOPBACK_START)
-    );
-    assert_eq!(
-        loaded.get("shared-db").map(|entry| entry.scope.as_str()),
-        Some("shared:db")
-    );
+    registry.reclaim_absent_paths();
+
+    assert_eq!(registry.get("project:app:gone"), None);
+    assert!(registry.get("project:app:live").is_some());
+    let reused = registry
+        .allocate("project:app:new", &live.path().display().to_string())
+        .expect("new")
+        .ip;
+    assert_eq!(reused, Ipv4Addr::new(127, 1, 0, 2));
 }
 
 #[test]
-fn load_nonexistent_returns_empty_registry() {
-    let registry =
-        LoopbackRegistry::load(Path::new("/nonexistent/loopback-ips.json")).expect("load missing");
-    assert!(registry.is_empty());
+fn release_scope_removes_only_that_checkout() {
+    let live = checkout();
+    let other = checkout();
+    let mut registry = LoopbackRegistry::new();
+    registry
+        .allocate("project:app:live", &live.path().display().to_string())
+        .expect("live");
+    registry
+        .allocate("project:app:other", &other.path().display().to_string())
+        .expect("other");
+
+    assert_eq!(
+        registry.release_scope(&live.path().display().to_string()),
+        1
+    );
+    assert!(registry.get("project:app:live").is_none());
+    assert!(registry.get("project:app:other").is_some());
 }
 
 #[test]
-fn allocate_reports_pool_exhaustion() {
+fn an_exhausted_pool_is_reported_rather_than_overridden() {
     let mut registry = LoopbackRegistry::new();
-    for index in DEFAULT_LOOPBACK_START.octets()[3]..=DEFAULT_LOOPBACK_END.octets()[3] {
+    for octet in DEFAULT_LOOPBACK_START.octets()[3]..=DEFAULT_LOOPBACK_END.octets()[3] {
         registry
-            .allocate(&format!("app-{index}"), &format!("/projects/app-{index}"))
-            .expect("bounded allocation");
+            .allocate(&format!("app-{octet}"), "/projects/app")
+            .expect("allocate");
     }
-
     let error = registry
-        .allocate("overflow", "/projects/overflow")
-        .expect_err("pool should exhaust");
-    assert!(matches!(error, GatewayError::LoopbackPoolExhausted { .. }));
-}
-
-#[test]
-fn allocate_avoiding_skips_reserved_ips() {
-    let mut registry = LoopbackRegistry::new();
-    let reserved = [DEFAULT_LOOPBACK_START].into_iter().collect();
-
-    let assignment = registry
-        .allocate_avoiding("app-a", "/projects/app-a", &reserved)
-        .expect("allocate with reserved");
-
-    assert_eq!(assignment.ip, Ipv4Addr::new(127, 1, 0, 2));
-}
-
-#[test]
-fn reserved_ips_cover_only_other_projects_container_routes() {
-    use crate::routes::{Route, RouteSource, RouteTable};
-    use chrono::Utc;
-
-    fn alias(domain: &str, project: &str, ip: Ipv4Addr, source: RouteSource) -> (String, Route) {
-        (
-            domain.to_owned(),
-            Route {
-                domain: domain.to_owned(),
-                target: None,
-                dns_ip: Some(ip),
-                tcp_port: Some(5432),
-                tcp_target: Some("127.0.0.1:15432".to_owned()),
-                source,
-                project: project.to_owned(),
-                tls: false,
-                scope: None,
-                managed_listener: None,
-                registered: Utc::now(),
-            },
-        )
-    }
-
-    let table = RouteTable {
-        revision: 0,
-        routes: [
-            alias(
-                "stale.test",
-                "/projects/stale",
-                Ipv4Addr::new(127, 1, 0, 2),
-                RouteSource::Container,
-            ),
-            alias(
-                "own.test",
-                "/projects/mine",
-                Ipv4Addr::new(127, 1, 0, 3),
-                RouteSource::Container,
-            ),
-            alias(
-                "manual.test",
-                "/projects/stale",
-                Ipv4Addr::new(127, 1, 0, 4),
-                RouteSource::Manual,
-            ),
-        ]
-        .into_iter()
-        .collect(),
-    };
-
-    let reserved = reserved_loopback_ips_for_other_projects(&table, "/projects/mine");
-
-    assert_eq!(
-        reserved,
-        [Ipv4Addr::new(127, 1, 0, 2)].into_iter().collect()
-    );
-}
-
-#[test]
-fn deallocate_if_reserved_drops_only_colliding_identities() {
-    let mut registry = LoopbackRegistry::new();
-    registry
-        .allocate("colliding", "/projects/mine")
-        .expect("colliding");
-    registry.allocate("clear", "/projects/mine").expect("clear");
-    let reserved = [Ipv4Addr::new(127, 1, 0, 1)].into_iter().collect();
-
-    assert!(registry.deallocate_if_reserved("colliding", &reserved));
-    assert!(!registry.deallocate_if_reserved("clear", &reserved));
-    assert!(!registry.deallocate_if_reserved("missing", &reserved));
-    assert!(registry.get("colliding").is_none());
-    assert!(registry.get("clear").is_some());
+        .allocate("one-too-many", "/projects/app")
+        .expect_err("pool exhausted");
+    assert!(error.to_string().contains("loopback pool exhausted"));
 }

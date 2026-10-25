@@ -134,9 +134,6 @@ pub fn daemon_entry(addresses: Option<[std::net::SocketAddr; 3]>) -> io::Result<
         config.proxy.tls_bind_addr = Some(https);
     }
     crate::setup::read_receipt(&home)?;
-    crate::endpoint_store::EndpointStore::new(&home)
-        .require_active()
-        .map_err(error)?;
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
@@ -507,9 +504,6 @@ pub fn up_with_executable_within(
     }
     let home = home(config)?;
     crate::setup::read_receipt(home)?;
-    crate::endpoint_store::EndpointStore::new(home)
-        .require_active()
-        .map_err(error)?;
     let executable = Executable::capture(executable_path)?;
     let mut env: BTreeMap<OsString, EnvValue> = std::env::vars_os()
         .map(|(key, value)| (key, EnvValue::Plain(value)))

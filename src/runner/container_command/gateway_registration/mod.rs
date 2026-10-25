@@ -7,23 +7,16 @@ use effigy_containers::exec::{
     list_compose_containers_for_policy_including_stopped_with_timeout,
     list_running_compose_containers_for_policy,
     list_running_compose_containers_for_policy_with_timeout, ContainerExecError,
-    RunningComposeContainer, RunningComposeContainerInventory,
+    RunningComposeContainer,
 };
-#[cfg(test)]
-use effigy_containers::prune_loopback_assignments_with_rows;
-#[cfg(test)]
-use effigy_containers::{prune_loopback_assignments, LoopbackPruneOutcome};
 use effigy_containers::{EffectiveContainerPolicy, EffectiveDnsRoute, SharedServiceBinding};
 use effigy_gateway::endpoint_store::EndpointStore;
-#[cfg(test)]
-use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::loopback::{project_loopback_identity, shared_loopback_identity};
 use effigy_gateway::managed_listener::observe_managed_listener_owner;
 use effigy_gateway::registration::{dead_claim_reason, owned_by, project_scope};
 #[cfg(test)]
 use effigy_gateway::registration::{deregister_route, register_route, RouteRegistration};
 use effigy_gateway::routes::{Route, RouteSource, RouteTable};
-use serde_yaml::Value as YamlValue;
 
 use crate::runner::error::RunnerError;
 use crate::runner::gateway_command::{
@@ -168,8 +161,9 @@ pub(in crate::runner) fn preflight_route_claims(
     let project_path = repo_root.display().to_string();
     let mut conflicts = Vec::new();
     if !claims.is_empty() {
-        let snapshot = EndpointStore::for_routes(&route_table_path).read_compatible()?;
-        let table = snapshot.routes()?;
+        let table = EndpointStore::for_routes(&route_table_path)
+            .snapshot()?
+            .routes()?;
         for claim in &claims {
             let Some(existing) = table.lookup(&claim.domain) else {
                 continue;
@@ -233,7 +227,12 @@ pub(in crate::runner) fn register_gateway_routes_for_verified_container(
             Instant::now() + crate::runner::container_runtime_prep::OWNED_EXEC_VERIFICATION_TIMEOUT,
         )?;
     }
-    let mut routes = resolve_gateway_routes_against_rows(repo_root, policy, &rows)?;
+    let mut routes = resolve_gateway_routes_against_rows(repo_root, policy, &rows)?.ok_or_else(|| {
+        gateway_runtime_target_error(format!(
+            "container `{}` published no host port for a declared gateway route",
+            policy.name
+        ))
+    })?;
     let project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, true, Some(&rows))?;
     let shared_alias_routes = resolve_gateway_shared_service_alias_routes(
@@ -345,7 +344,12 @@ fn gateway_routes_readiness_detail(
     policy: &EffectiveContainerPolicy,
     rows: &[RunningComposeContainer],
 ) -> Result<Option<String>, RunnerError> {
-    let routes = resolve_gateway_routes_against_rows(repo_root, policy, rows)?;
+    let Some(routes) = resolve_gateway_routes_against_rows(repo_root, policy, rows)? else {
+        return Ok(Some(format!(
+            "container `{}` has not published a host port for every declared gateway route yet",
+            policy.name
+        )));
+    };
     if let Err(error) = validate_gateway_routes_against_rows(repo_root, policy, &routes, rows) {
         return Ok(Some(error.to_string()));
     }
@@ -413,7 +417,12 @@ pub(in crate::runner) fn gateway_routes_registered_for_container(
         Err(error) if exec_error_means_runtime_not_running(&error) => return Ok(false),
         Err(error) => return Err(gateway_runtime_rows_error(error.to_string())),
     };
-    let mut routes = resolve_gateway_routes_against_rows(repo_root, policy, &rows)?;
+    let mut routes = resolve_gateway_routes_against_rows(repo_root, policy, &rows)?.ok_or_else(|| {
+        gateway_runtime_target_error(format!(
+            "container `{}` published no host port for a declared gateway route",
+            policy.name
+        ))
+    })?;
     let project_alias_routes =
         resolve_gateway_service_alias_routes(repo_root, policy, false, Some(&rows))?;
     if project_alias_routes.len() != expected_project_alias_route_count(policy) {
@@ -692,45 +701,23 @@ fn registered_gateway_routes_match_project(
     }))
 }
 
-#[cfg(test)]
-fn resolve_gateway_routes(
-    policy: &EffectiveContainerPolicy,
-) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
-    let mut routes = Vec::new();
-    for dns_route in &policy.dns_routes {
-        let target = if let Some(host_target) = dns_route.target_host.as_deref() {
-            host_target.trim().to_owned()
-        } else {
-            let host_port = selected_host_port_for_route(policy, dns_route)?;
-            format!("127.0.0.1:{host_port}")
-        };
-        routes.push(RegisteredGatewayRoute {
-            domain: dns_route.domain.clone(),
-            target: Some(target),
-            dns_ip: None,
-            tcp_port: None,
-            tcp_target: None,
-            tls: dns_route.tls,
-            service: dns_route.service.clone(),
-            external_target: dns_route.target_host.is_some(),
-        });
-    }
-    Ok(routes)
-}
-
+/// Resolve each declared route's target from the host port Compose actually
+/// published. `None` means a declared route has no published port yet, which
+/// the readiness wait keeps retrying; the OS assigns that port at `up`, so
+/// there is no earlier value to guess.
 fn resolve_gateway_routes_against_rows(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
     rows: &[RunningComposeContainer],
-) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
+) -> Result<Option<Vec<RegisteredGatewayRoute>>, RunnerError> {
     let mut routes = Vec::new();
     for dns_route in &policy.dns_routes {
         let target = if let Some(host_target) = dns_route.target_host.as_deref() {
             host_target.trim().to_owned()
         } else {
-            let host_port = match runtime_host_port_for_route(repo_root, policy, dns_route, rows)? {
-                Some(port) => port,
-                None => selected_host_port_for_route(policy, dns_route)?,
+            let Some(host_port) = runtime_host_port_for_route(repo_root, policy, dns_route, rows)?
+            else {
+                return Ok(None);
             };
             format!("127.0.0.1:{host_port}")
         };
@@ -745,7 +732,7 @@ fn resolve_gateway_routes_against_rows(
             external_target: dns_route.target_host.is_some(),
         });
     }
-    Ok(routes)
+    Ok(Some(routes))
 }
 
 fn resolve_gateway_service_alias_routes(
@@ -1202,7 +1189,6 @@ fn load_or_allocate_project_loopback_ip(
 ) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
     load_or_allocate_loopback_ip(
         &project_loopback_identity(&policy.project_name, repo_root),
-        Some(&policy.project_name),
         &repo_root.display().to_string(),
         allocate_if_missing,
     )
@@ -1215,7 +1201,6 @@ fn load_or_allocate_shared_loopback_ip(
 ) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
     load_or_allocate_loopback_ip(
         &shared_loopback_identity(&shared.project_name, repo_root),
-        Some(&format!("shared:{}", shared.project_name)),
         &repo_root.display().to_string(),
         allocate_if_missing,
     )
@@ -1223,64 +1208,22 @@ fn load_or_allocate_shared_loopback_ip(
 
 fn load_or_allocate_loopback_ip(
     identity: &str,
-    legacy_identity: Option<&str>,
-    project_path: &str,
+    scope: &str,
     allocate_if_missing: bool,
-) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
-    load_or_allocate_loopback_ip_with_inventory(
-        identity,
-        legacy_identity,
-        project_path,
-        allocate_if_missing,
-        effigy_containers::loopback_ownership_inventory,
-    )
-}
-
-fn load_or_allocate_loopback_ip_with_inventory(
-    identity: &str,
-    legacy_identity: Option<&str>,
-    project_path: &str,
-    allocate_if_missing: bool,
-    discover_inventory: impl FnOnce() -> RunningComposeContainerInventory,
 ) -> Result<Option<std::net::Ipv4Addr>, RunnerError> {
     let store = EndpointStore::for_routes(&gateway_route_table_path()?);
     if allocate_if_missing {
-        // A full pool releases provably dead owners once, then retries. Live
-        // owners are never touched.
-        return effigy_containers::reserve_loopback_collecting_dead(
-            &store,
-            identity,
-            legacy_identity,
-            project_path,
-            || effigy_containers::LoopbackRecoveryFacts::with_inventory(discover_inventory()),
-        )
-        .map(|(ip, _)| Some(ip))
-        .map_err(|error| gateway_loopback_error("registry load", error.to_string()));
+        return store
+            .allocate_loopback(identity, scope)
+            .map(Some)
+            .map_err(|error| gateway_loopback_error("registry load", error.to_string()));
     }
-    let registry = store.read_compatible()?.loopback()?;
-    Ok(registry
+    Ok(store
+        .snapshot()?
+        .loopback()?
         .get(identity)
-        .or_else(|| legacy_identity.and_then(|key| registry.get(key)))
-        .filter(|assignment| assignment.scope == project_path)
+        .filter(|assignment| assignment.scope == scope)
         .map(|assignment| assignment.ip))
-}
-
-#[cfg(test)]
-fn prune_stale_loopback_assignments_with_inventory(
-    registry: &mut LoopbackRegistry,
-    route_table: &RouteTable,
-    inventory: &RunningComposeContainerInventory,
-) -> LoopbackPruneOutcome {
-    prune_loopback_assignments(registry, route_table, inventory)
-}
-
-#[cfg(test)]
-fn prune_stale_loopback_assignments_with_runtime(
-    registry: &mut LoopbackRegistry,
-    route_table: &RouteTable,
-    rows: &[RunningComposeContainer],
-) -> bool {
-    prune_loopback_assignments_with_rows(registry, route_table, rows)
 }
 
 fn occupied_service_alias_domains<'a>(
@@ -1485,221 +1428,6 @@ fn listener_command_looks_runtime_managed(command: &str) -> bool {
     ]
     .iter()
     .any(|marker| lowered.contains(marker))
-}
-
-fn selected_host_port_for_route(
-    policy: &EffectiveContainerPolicy,
-    dns_route: &EffectiveDnsRoute,
-) -> Result<u16, RunnerError> {
-    if let Some(port) = dns_route.port {
-        return if policy.ports_declared_explicitly {
-            selected_declared_host_port(policy, port)
-        } else if let Some(service) = dns_route.service.as_deref() {
-            selected_effective_container_port_for_service(policy, service, port)
-        } else {
-            selected_effective_container_port(policy, port)
-        };
-    }
-    if let Some(service) = dns_route.service.as_deref() {
-        return first_effective_http_host_port_for_service(policy, service);
-    }
-    if !policy.ports_declared_explicitly {
-        return first_effective_http_host_port(policy);
-    }
-    let Some(raw) = policy.declared_ports.first() else {
-        return Err(gateway_route_shape_error(format!(
-            "container `{}` declares gateway DNS routes but no `host.ports`; declare an explicit host HTTP port before enabling gateway registration",
-            policy.name
-        )));
-    };
-    let host = raw.split(':').next().unwrap_or_default().trim();
-    host.parse::<u16>().map_err(|error| {
-        gateway_route_shape_error(format!(
-            "container `{}` has invalid host port mapping `{raw}` for gateway registration: {error}",
-            policy.name
-        ))
-    })
-}
-
-fn selected_declared_host_port(
-    policy: &EffectiveContainerPolicy,
-    selected_port: u16,
-) -> Result<u16, RunnerError> {
-    if policy
-        .declared_ports
-        .iter()
-        .any(|raw| parse_host_port(policy, raw).ok() == Some(selected_port))
-    {
-        return Ok(selected_port);
-    }
-    Err(gateway_route_shape_error(format!(
-            "container `{}` declares a gateway DNS route on host port {selected_port} but `host.ports` does not expose that host port",
-            policy.name
-        )))
-}
-
-fn selected_effective_container_port(
-    policy: &EffectiveContainerPolicy,
-    selected_port: u16,
-) -> Result<u16, RunnerError> {
-    for raw in &policy.declared_ports {
-        let binding = parse_port_binding(policy, raw)?;
-        if binding.1 == selected_port {
-            return Ok(binding.0);
-        }
-    }
-    Err(gateway_runtime_target_error(format!(
-            "container `{}` declares a gateway DNS route for container port {selected_port} but the generated compose does not expose that container port",
-            policy.name
-        )))
-}
-
-fn first_effective_http_host_port(policy: &EffectiveContainerPolicy) -> Result<u16, RunnerError> {
-    let mut first_binding: Option<u16> = None;
-    for raw in &policy.declared_ports {
-        let (host, container) = parse_port_binding(policy, raw)?;
-        if first_binding.is_none() {
-            first_binding = Some(host);
-        }
-        if matches!(container, 80 | 3000 | 8025 | 9000 | 9001 | 9200) {
-            return Ok(host);
-        }
-    }
-    first_binding.ok_or_else(|| {
-        gateway_runtime_target_error(format!(
-            "container `{}` declares gateway DNS routes but no effective published ports are available for gateway registration",
-            policy.name
-        ))
-    })
-}
-
-fn selected_effective_container_port_for_service(
-    policy: &EffectiveContainerPolicy,
-    service: &str,
-    selected_port: u16,
-) -> Result<u16, RunnerError> {
-    let bindings = service_port_bindings(policy, service)?;
-    if bindings.is_empty() {
-        return selected_effective_container_port(policy, selected_port);
-    }
-    for (host, container) in bindings {
-        if container == selected_port {
-            return Ok(host);
-        }
-    }
-    Err(gateway_runtime_target_error(format!(
-        "container `{}` declares a gateway DNS route for service `{service}` on container port {selected_port} but the generated compose does not expose that port for the selected service",
-        policy.name
-    )))
-}
-
-fn first_effective_http_host_port_for_service(
-    policy: &EffectiveContainerPolicy,
-    service: &str,
-) -> Result<u16, RunnerError> {
-    let bindings = service_port_bindings(policy, service)?;
-    if bindings.is_empty() {
-        return first_effective_http_host_port(policy);
-    }
-    let mut first_binding: Option<u16> = None;
-    for (host, container) in bindings {
-        if first_binding.is_none() {
-            first_binding = Some(host);
-        }
-        if matches!(container, 80 | 3000 | 8025 | 9000 | 9001 | 9200) {
-            return Ok(host);
-        }
-    }
-    first_binding.ok_or_else(|| {
-        gateway_runtime_target_error(format!(
-            "container `{}` declares a gateway DNS route for service `{service}` but no effective published ports are available for that service",
-            policy.name
-        ))
-    })
-}
-
-fn service_port_bindings(
-    policy: &EffectiveContainerPolicy,
-    service: &str,
-) -> Result<Vec<(u16, u16)>, RunnerError> {
-    for compose_file in &policy.compose_files {
-        let content = match policy.read_compose(compose_file) {
-            Ok(content) => content,
-            Err(_) => continue,
-        };
-        let parsed: YamlValue = match serde_yaml::from_str(&content) {
-            Ok(parsed) => parsed,
-            Err(_) => continue,
-        };
-        let Some(services) = parsed
-            .as_mapping()
-            .and_then(|root| root.get(YamlValue::String("services".to_owned())))
-            .and_then(YamlValue::as_mapping)
-        else {
-            continue;
-        };
-        let Some(service_entry) = services
-            .get(YamlValue::String(service.to_owned()))
-            .and_then(YamlValue::as_mapping)
-        else {
-            continue;
-        };
-        let Some(ports) = service_entry
-            .get(YamlValue::String("ports".to_owned()))
-            .and_then(YamlValue::as_sequence)
-        else {
-            return Ok(Vec::new());
-        };
-        let mut bindings = Vec::new();
-        for entry in ports {
-            let Some(raw) = entry.as_str() else {
-                continue;
-            };
-            bindings.push(parse_port_binding(policy, raw)?);
-        }
-        return Ok(bindings);
-    }
-    Ok(Vec::new())
-}
-
-fn parse_host_port(policy: &EffectiveContainerPolicy, raw: &str) -> Result<u16, RunnerError> {
-    parse_port_binding(policy, raw).map(|binding| binding.0)
-}
-
-fn parse_port_binding(
-    policy: &EffectiveContainerPolicy,
-    raw: &str,
-) -> Result<(u16, u16), RunnerError> {
-    let parts = raw.split(':').map(str::trim).collect::<Vec<_>>();
-    let (host, container) = match parts.as_slice() {
-        [host, container] => (*host, *container),
-        [_ip, host, container] => (*host, *container),
-        _ => {
-            return Err(gateway_route_shape_error(format!(
-                "container `{}` has invalid host port mapping `{raw}` for gateway registration",
-                policy.name
-            )))
-        }
-    };
-    if host.is_empty() || container.is_empty() {
-        return Err(gateway_route_shape_error(format!(
-            "container `{}` has invalid host port mapping `{raw}` for gateway registration",
-            policy.name
-        )));
-    }
-    let host_port = host.parse::<u16>().map_err(|error| {
-        gateway_route_shape_error(format!(
-            "container `{}` has invalid host port mapping `{raw}` for gateway registration: {error}",
-            policy.name
-        ))
-    })?;
-    let container_port = container.parse::<u16>().map_err(|error| {
-        gateway_route_shape_error(format!(
-            "container `{}` has invalid container port mapping `{raw}` for gateway registration: {error}",
-            policy.name
-        ))
-    })?;
-    Ok((host_port, container_port))
 }
 
 pub(super) fn gateway_route_table_path() -> Result<PathBuf, RunnerError> {

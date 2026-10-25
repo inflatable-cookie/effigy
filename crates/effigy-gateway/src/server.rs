@@ -1193,20 +1193,9 @@ async fn run_gateway_with_cancel(
     // Check if already running.
     check_existing_gateway_pid(&config, probe_gateway_process)?;
 
-    if config.is_private()
-        && config.route_table_path.exists()
-        && crate::trust::load_trusted(&config.route_table_path)?.is_none()
-    {
-        return Err(GatewayError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "private gateway refuses an untrusted route table and preserves it",
-        )));
-    }
-
     // Private listeners are bound before publishing process identity. A
     // collision therefore leaves no live-generation record and reports only
     // endpoints held by this private fixture.
-    crate::endpoint_store::EndpointStore::for_routes(&config.route_table_path).import()?;
     let live_table = LiveRouteTable::new(config.route_table_path.clone())?;
     let shared_table = live_table.shared_table();
     if config.is_private() {
@@ -1815,11 +1804,7 @@ fn reload_route_table_and_maybe_schedule_shutdown(
     shutdown_tx: &watch::Sender<bool>,
     private: bool,
 ) -> Result<(), GatewayError> {
-    // Enforce the read-path trust gate (contract 033). An untrusted file keeps
-    // the last-known-good in-memory table rather than being adopted.
-    let Some(new_table) = crate::trust::load_trusted(path)? else {
-        return Ok(());
-    };
+    let new_table = RouteTable::load(path)?;
     if private {
         validate_private_routes(&new_table)?;
     }

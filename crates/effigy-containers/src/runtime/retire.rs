@@ -12,7 +12,6 @@ pub enum ObservedKind {
     Volume,
     Network,
     Route,
-    Port,
     Loopback,
     TlsCert,
 }
@@ -158,14 +157,6 @@ fn classify(record: &ScopeRecord, resource: &ObservedResource) -> ResourceClass 
     }
     if resource.kind == ObservedKind::Route
         && record.routes.iter().any(|route| route == &resource.name)
-    {
-        return ResourceClass::Delete;
-    }
-    if resource.kind == ObservedKind::Port
-        && resource
-            .project_label
-            .as_deref()
-            .is_some_and(|project| record.project_names.iter().any(|name| name == project))
     {
         return ResourceClass::Delete;
     }

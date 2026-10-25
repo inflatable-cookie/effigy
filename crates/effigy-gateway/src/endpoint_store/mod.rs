@@ -1,27 +1,27 @@
-//! Gateway-owned endpoint authority. Legacy JSON changes only at explicit cutovers.
-mod downgrade;
-pub(crate) mod import;
-mod reservations;
-
-pub use reservations::{listener_port_key, ListenerPortRequest};
+//! Gateway-owned endpoint authority: one table and one transaction.
+//!
+//! The Store holds the gateway's routes and loopback aliases. Host ports are
+//! not part of it: the OS or Compose assigns them, and a route names the port
+//! that is actually publishing.
 mod snapshot;
 
 pub use snapshot::EndpointSnapshot;
 
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use effigy_kernel::ctx::{EffectClass, OperationContext};
+use effigy_kernel::ctx::EffectClass;
 use effigy_kernel::gate::Wait;
-use effigy_kernel::id::{ResourceId, Scope};
+use effigy_kernel::id::{Generation, ResourceId, Scope};
 use effigy_kernel::observe::{Evidence, Observed, UnknownReason};
-use effigy_kernel::outcome::WorkloadOutcome;
 use effigy_kernel::root::StateRoot;
-use effigy_kernel::run::{BeginOpts, Claims, FactOptions, MachineFacts, Run};
+use effigy_kernel::run::{FactOptions, MachineFacts};
 use effigy_kernel::store::Store;
 
 use crate::{operator, GatewayError};
 
+/// One endpoint write's own budget; the caller never waits longer than this.
 const OPERATION_BUDGET: Duration = Duration::from_secs(120);
 const CLEANUP_BUDGET: Duration = Duration::from_secs(60);
 
@@ -36,7 +36,7 @@ pub(crate) fn owner() -> ResourceId {
 fn evidence(revision: u64) -> Evidence {
     Evidence::new(
         "gateway endpoint store".into(),
-        Some((owner(), effigy_kernel::id::Generation::new(revision))),
+        Some((owner(), Generation::new(revision))),
     )
     .expect("fixed evidence source")
 }
@@ -46,68 +46,52 @@ fn evidence(revision: u64) -> Evidence {
 #[derive(Debug, Clone)]
 pub struct EndpointStore {
     home: PathBuf,
-    sources: import::Sources,
 }
+
 impl EndpointStore {
     pub fn new(home: impl Into<PathBuf>) -> Self {
-        let home = home.into();
-        Self {
-            sources: import::Sources::standard(&home),
-            home,
-        }
+        Self { home: home.into() }
     }
+
     /// Resolve the existing Effigy-home convention, including isolated
     /// private fixtures whose root intentionally is not named `.effigy`.
     pub fn for_effigy_home(root: &Path) -> Self {
         if root.file_name().is_some_and(|name| name == ".effigy") {
             return Self::new(root.parent().expect("Effigy home has a parent"));
         }
-        Self {
-            home: root.to_owned(),
-            sources: import::Sources {
-                routes: root.join("gateway/routes.json"),
-                loopback: root.join("gateway/loopback-ips.json"),
-                ports: root.join("ports.json"),
-            },
-        }
+        Self::new(root)
     }
-    /// The path identifies legacy cutover input/output, never a routine writer.
+
+    /// Resolve the store from the route table path the gateway config carries.
     pub fn for_routes(path: &Path) -> Self {
         let directory = path.parent().expect("route source has a parent");
         if directory.file_name().is_some_and(|name| name == "gateway") {
             return Self::for_effigy_home(directory.parent().expect("gateway has a parent"));
         }
-        Self {
-            home: directory.to_owned(),
-            sources: import::Sources {
-                routes: path.to_owned(),
-                loopback: directory.join("loopback-ips.json"),
-                ports: directory.join("ports.json"),
-            },
-        }
+        Self::new(directory)
     }
-    pub fn for_ports(path: &Path) -> Self {
-        Self::for_effigy_home(path.parent().expect("port source has a parent"))
-    }
+
     pub fn routes<T, E: From<GatewayError>>(
         &self,
         edit: impl FnOnce(&mut crate::routes::RouteTable) -> Result<T, E>,
     ) -> Result<T, E> {
-        self.transaction(None, |snapshot| {
+        self.transaction(|snapshot| {
             let mut table = snapshot.routes()?;
             let result = edit(&mut table)?;
             snapshot.set_routes(&table)?;
             Ok(result)
         })
     }
+
     pub fn home(&self) -> &Path {
         &self.home
     }
+
     pub fn database_path(&self) -> PathBuf {
         self.home.join(".effigy/state/machine.db")
     }
 
-    /// Pure observation: no import, gate, recovery, directory or file creation.
+    /// Pure observation: no gate, recovery, directory or file creation.
     pub fn read(&self) -> Observed<EndpointSnapshot> {
         let op = operator::context(Duration::from_secs(3), EffectClass::Observe);
         let cx = op.observe().expect("Observe context");
@@ -143,42 +127,20 @@ impl EndpointStore {
         }
     }
 
-    /// Before import and after explicit handback, legacy reads remain pure. Unknown kernel state
-    /// never falls back to a legacy file or an empty registry.
-    pub fn read_compatible(&self) -> Result<EndpointSnapshot, GatewayError> {
+    /// The committed snapshot, or the empty one before the first write.
+    /// Unreadable state is reported, never replaced.
+    pub fn snapshot(&self) -> Result<EndpointSnapshot, GatewayError> {
         match self.read() {
-            Observed::Verified(snapshot, _)
-                if snapshot.authority == snapshot::Authority::Legacy =>
-            {
-                self.sources.read()
-            }
             Observed::Verified(snapshot, _) => Ok(snapshot),
-            Observed::Absent(_) => self.sources.read(),
+            Observed::Absent(_) => Ok(EndpointSnapshot::default()),
             Observed::Unknown(reason) => Err(error(format!("observation unknown: {reason}"))),
         }
     }
 
-    /// Import automatically, then mutate one complete snapshot under the
-    /// kernel owner gate. A supplied revision provides optimistic fencing for
-    /// callers that prepared their edit outside the owner gate.
-    pub fn edit<T>(
-        &self,
-        expected_revision: Option<u64>,
-        edit: impl FnOnce(&mut EndpointSnapshot) -> Result<T, GatewayError>,
-    ) -> Result<T, GatewayError> {
-        self.transaction(expected_revision, edit)
-    }
-
+    /// The one write path: read the snapshot under the owner gate, apply one
+    /// edit, publish it and its endpoint claims together.
     pub fn transaction<T, E: From<GatewayError>>(
         &self,
-        expected_revision: Option<u64>,
-        edit: impl FnOnce(&mut EndpointSnapshot) -> Result<T, E>,
-    ) -> Result<T, E> {
-        self.transact_facts(expected_revision, edit)
-    }
-    fn transact_facts<T, E: From<GatewayError>>(
-        &self,
-        expected_revision: Option<u64>,
         edit: impl FnOnce(&mut EndpointSnapshot) -> Result<T, E>,
     ) -> Result<T, E> {
         let op = operator::context(OPERATION_BUDGET, EffectClass::Mutate);
@@ -201,30 +163,13 @@ impl EndpointStore {
             &mut operator::Adapter,
         )
         .map_err(error)?;
-        let state = facts.state().map_err(error)?;
-        let importing = state.is_none();
-        let _legacy_locks = if importing {
-            Some(self.sources.lock(op.remaining().unwrap_or_default())?)
-        } else {
-            None
-        };
-        let mut snapshot = match state {
+        let mut snapshot = match facts.state().map_err(error)? {
             Some(value) => EndpointSnapshot::from_value(value)?,
-            None => self.sources.read()?,
+            None => EndpointSnapshot::default(),
         };
-        if snapshot.authority != snapshot::Authority::Store {
-            return Err(error("gateway endpoints were exported or export is incomplete; finish `effigy gateway setup --remove`, or re-import after stopping v0.14.1").into());
-        }
-        if expected_revision.is_some_and(|expected| expected != snapshot.revision) {
-            return Err(error(format!(
-                "endpoint revision changed (current {}); read and retry",
-                snapshot.revision
-            ))
-            .into());
-        }
         let before = snapshot.clone();
         let value = edit(&mut snapshot)?;
-        if !importing && snapshot == before {
+        if snapshot == before {
             return Ok(value);
         }
         let desired = snapshot.claims()?;
@@ -240,138 +185,44 @@ impl EndpointStore {
             .map_err(error)?;
         Ok(value)
     }
-    pub(crate) fn transaction_with_backup<T, E: From<GatewayError>>(
+
+    /// Allocate the alias IP for `identity` when its environment comes up.
+    ///
+    /// Assignments whose checkout path is gone are reclaimed first, so a
+    /// deleted worktree's address is reused on the next allocation. The
+    /// assignment lives until `down` releases it.
+    pub fn allocate_loopback(
         &self,
-        expected_revision: Option<u64>,
-        edit: impl FnOnce(&mut EndpointSnapshot) -> Result<(T, Option<(PathBuf, Vec<u8>)>), E>,
-    ) -> Result<T, E> {
-        self.import()?;
-        self.transact(expected_revision, edit)
-    }
-    fn transact<T, E: From<GatewayError>>(
-        &self,
-        expected_revision: Option<u64>,
-        edit: impl FnOnce(&mut EndpointSnapshot) -> Result<(T, Option<(PathBuf, Vec<u8>)>), E>,
-    ) -> Result<T, E> {
-        self.with_run(|run, op| {
-            let state = run.resource_state().map_err(error)?;
-            let importing = state.is_none();
-            let _legacy_locks = if importing {
-                Some(self.sources.lock(op.remaining().unwrap_or_default())?)
-            } else {
-                None
-            };
-            let mut snapshot = match state {
-                Some(value) => EndpointSnapshot::from_value(value)?,
-                None => self.sources.read()?,
-            };
-            if snapshot.authority != snapshot::Authority::Store {
-                return Err(error("gateway endpoints were exported or export is incomplete; finish `effigy gateway setup --remove`, or run `effigy gateway setup` to re-import after stopping v0.14.1").into());
-            }
-            if expected_revision.is_some_and(|revision| revision != snapshot.revision) {
-                return Err(error(format!(
-                    "endpoint revision changed (current {}); read and retry",
-                    snapshot.revision
-                ))
-                .into());
-            }
-            let before = snapshot.clone();
-            let before_claims = if importing {
-                Default::default()
-            } else {
-                before.claims()?
-            };
-            let (value, backup) = edit(&mut snapshot)?;
-            if !importing && snapshot == before && backup.is_none() {
-                return Ok(value);
-            }
-            let desired = snapshot.claims()?;
-            let wanted = desired
-                .iter()
-                .filter(|(name, _)| !before_claims.contains_key(*name))
-                .map(|(_, (resource, _))| resource.clone())
-                .collect::<Vec<_>>();
-            let token = if wanted.is_empty() {
-                None
-            } else {
-                // No external consumer sees these rows before publication, so
-                // an unpublished reservation releases at once.
-                Some(Claims::reserve(run, &wanted, Duration::ZERO).map_err(error)?)
-            };
-            // Reserve before any journaled external publication, so settle
-            // resolves file effects before transferring the claim reservation.
-            if let Some((path, bytes)) = backup {
-                let dir = effigy_kernel::fs::DirFd::open(
-                    path.parent().ok_or_else(|| error("backup has no parent"))?,
-                )
-                .map_err(error)?;
-                let name = effigy_kernel::fs::FileName::new(
-                    path.file_name()
-                        .and_then(|name| name.to_str())
-                        .ok_or_else(|| error("invalid backup name"))?,
-                )
-                .map_err(error)?;
-                run.replace_file(&dir, &name, &bytes, Default::default())
-                    .map_err(error)?;
-            }
-            snapshot.revision = run.fence().generation.get();
-            Claims::publish_retained(
-                run,
-                token.as_ref(),
-                &desired.into_values().collect::<Vec<_>>(),
-                &serde_json::to_value(snapshot).map_err(error)?,
-                Duration::ZERO,
-            )
-            .map_err(error)?;
-            Ok(value)
+        identity: &str,
+        scope: &str,
+    ) -> Result<Ipv4Addr, GatewayError> {
+        self.transaction(|snapshot| {
+            let mut registry = snapshot.loopback()?;
+            registry.reclaim_absent_paths();
+            let ip = registry.allocate(identity, scope)?.ip;
+            snapshot.set_loopback(&registry)?;
+            Ok(ip)
         })
     }
 
-    fn with_run<T, E: From<GatewayError>>(
-        &self,
-        work: impl FnOnce(&mut Run<'_>, &OperationContext) -> Result<T, E>,
-    ) -> Result<T, E> {
-        let op = operator::context(OPERATION_BUDGET, EffectClass::Mutate);
-        let cx = op.effects().map_err(|e| error(format!("{e}")))?;
-        let recovery = op
-            .cleanup(OPERATION_BUDGET + CLEANUP_BUDGET)
-            .map_err(|e| error(format!("{e}")))?;
-        let root = StateRoot::runtime_machine_effects(&cx, &self.home).map_err(error)?;
-        let mut adapter = operator::Adapter;
-        let mut run = Run::begin(
-            &cx,
-            &root,
-            &operator::invocation(owner()),
-            BeginOpts {
-                id: operator::run_id().map_err(error)?,
-                wait: Wait::Until(Instant::now() + OPERATION_BUDGET),
-                acknowledge: vec![],
-                next: operator::next(),
-                custody: None,
-            },
-            &recovery,
-            &mut adapter,
-        )
-        .map_err(error)?;
-        let result = work(&mut run, &op).and_then(|value| {
-            run.finish(WorkloadOutcome::Succeeded).map_err(error)?;
-            Ok(value)
-        });
-        // Gate admission and the edit must not consume settlement's budget.
-        let cleanup = op.cleanup(CLEANUP_BUDGET).expect("fixed cleanup budget");
-        let settled = run.settle(&cleanup, &mut adapter).map_err(error)?;
-        settled
-            .result()
-            .as_ref()
-            .map_err(|e| error(format!("{e:?}")))?;
-        result
+    /// Release one alias when its environment goes down.
+    pub fn release_loopback(&self, identity: &str) -> Result<bool, GatewayError> {
+        self.transaction(|snapshot| {
+            let mut registry = snapshot.loopback()?;
+            let removed = registry.deallocate(identity).is_some();
+            snapshot.set_loopback(&registry)?;
+            Ok(removed)
+        })
     }
 
-    pub fn import(&self) -> Result<EndpointSnapshot, GatewayError> {
-        // Settle imported claims before a caller can release or republish
-        // them.
-        self.transact_facts(None, |_| Ok::<_, GatewayError>(()))?;
-        self.read_compatible()
+    /// Release every alias owned by one checkout path.
+    pub fn release_loopback_for_path(&self, scope: &str) -> Result<usize, GatewayError> {
+        self.transaction(|snapshot| {
+            let mut registry = snapshot.loopback()?;
+            let released = registry.release_scope(scope);
+            snapshot.set_loopback(&registry)?;
+            Ok(released)
+        })
     }
 }
 

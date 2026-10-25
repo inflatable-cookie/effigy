@@ -673,9 +673,6 @@ pub enum ContainerSubcommand {
         dead: bool,
         yes: bool,
     },
-    Ports {
-        subcommand: ContainerPortsSubcommand,
-    },
 }
 
 /// Strict caller-supplied limits for the opt-in bounded finite named
@@ -716,15 +713,6 @@ impl BoundedExecLimits {
         }
         Ok(())
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ContainerPortsSubcommand {
-    Status,
-    Reclaim {
-        apply: bool,
-        expect_plan: Option<String>,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

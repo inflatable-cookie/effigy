@@ -1,6 +1,4 @@
 //! Typed route snapshots; the gateway endpoint Store owns persistence.
-//! Legacy JSON is used only at explicit import/export cutovers. `RouteTableLock`
-//! quiesces legacy writers and remains available for unrelated legacy records.
 
 use std::collections::HashMap;
 use std::fs::OpenOptions;
@@ -15,13 +13,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::error::GatewayError;
-
-/// Provenance marker Effigy stamps into the route table envelope on save.
-///
-/// The gateway's read-path trust check (see [`crate::trust`]) requires this
-/// marker before an elevated daemon will trust the file. See
-/// `docs/knowledge/contracts/033-gateway-route-table-trust-contract.md`.
-pub const ROUTE_TABLE_MANAGED_MARKER: &str = "effigy-gateway-route-table-v1";
 
 /// A single route entry mapping a domain to an upstream target.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -224,10 +215,10 @@ impl RouteTable {
         }
     }
 
-    /// Observe the Store, or the legacy inputs before the first import.
+    /// Observe the gateway endpoint Store.
     pub fn load(path: &Path) -> Result<Self, GatewayError> {
         crate::endpoint_store::EndpointStore::for_routes(path)
-            .read_compatible()?
+            .snapshot()?
             .routes()
     }
 
@@ -311,9 +302,7 @@ impl LiveRouteTable {
     /// Loads the current contents from disk. If the file doesn't exist,
     /// starts with an empty table.
     pub fn new(path: PathBuf) -> Result<Self, GatewayError> {
-        // Enforce the read-path trust gate (contract 033). An untrusted file at
-        // startup yields an empty table — there is no last-known-good yet.
-        let table = crate::trust::load_trusted(&path)?.unwrap_or_default();
+        let table = RouteTable::load(&path)?;
         Ok(Self {
             path,
             table: Arc::new(RwLock::new(table)),
@@ -329,11 +318,9 @@ impl LiveRouteTable {
     ///
     /// Called by the file watcher when the route table file changes.
     pub fn reload(&self) -> Result<(), GatewayError> {
-        // Untrusted file: keep the last-known-good in-memory table (contract 033).
-        if let Some(new_table) = crate::trust::load_trusted(&self.path)? {
-            let mut guard = crate::locks::write_tolerant(&self.table);
-            *guard = new_table;
-        }
+        let new_table = RouteTable::load(&self.path)?;
+        let mut guard = crate::locks::write_tolerant(&self.table);
+        *guard = new_table;
         Ok(())
     }
 

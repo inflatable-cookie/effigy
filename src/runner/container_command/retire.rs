@@ -1,5 +1,4 @@
 #[cfg(test)]
-use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 #[cfg(test)]
 use effigy_containers::upsert_scope_record;
 use std::path::PathBuf;
@@ -15,8 +14,6 @@ use effigy_containers::{
     PROJECT_LABEL, SCOPE_LABEL,
 };
 use effigy_gateway::endpoint_store::EndpointStore;
-use effigy_gateway::loopback::LoopbackRegistry;
-use effigy_gateway::ports::PortRegistry;
 use effigy_gateway::registration::{cleanup_owned_routes_and_certs, owned_by};
 use effigy_gateway::routes::RouteTable;
 
@@ -126,20 +123,14 @@ fn retire_one_record(
     let plan = plan_retirement(&record, &observed);
     let mut removed = Vec::new();
     let mut routes_cleared = false;
-    let mut ports_cleared = false;
     let mut loopbacks_cleared = false;
     for resource in &plan.delete {
         let deleted = match resource.kind {
             ObservedKind::Route | ObservedKind::TlsCert if routes_cleared => true,
-            ObservedKind::Port if ports_cleared => true,
             ObservedKind::Loopback if loopbacks_cleared => true,
             ObservedKind::Route | ObservedKind::TlsCert => {
                 routes_cleared = true;
                 delete_routes_and_owned_certs(&record)?
-            }
-            ObservedKind::Port => {
-                ports_cleared = true;
-                delete_ports(&record)?
             }
             ObservedKind::Loopback => {
                 loopbacks_cleared = true;
@@ -219,7 +210,6 @@ fn observe_scope(
         observed.extend(observe_volumes(&scoped)?);
     }
     observed.extend(observe_routes(record)?);
-    observed.extend(observe_ports(record)?);
     observed.extend(observe_loopbacks(record)?);
     observed.extend(observe_tls_certs(record)?);
     Ok(observed)
@@ -460,7 +450,7 @@ fn container_ps_args(label: &str) -> Vec<String> {
 
 fn observe_routes(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerError> {
     let path = super::gateway_registration::gateway_route_table_path()?;
-    let snapshot = EndpointStore::for_routes(&path).read_compatible()?;
+    let snapshot = EndpointStore::for_routes(&path).snapshot()?;
     Ok(snapshot
         .routes()?
         .all_routes()
@@ -478,33 +468,10 @@ fn observe_routes(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerE
         .collect())
 }
 
-fn observe_ports(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerError> {
-    let Some(home) = effigy_containers::effigy_home() else {
-        return Ok(Vec::new());
-    };
-    let path = home.join("ports.json");
-    let registry = PortRegistry::load(&path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    Ok(record
-        .project_names
-        .iter()
-        .filter(|name| registry.get(name).is_some())
-        .map(|name| ObservedResource {
-            kind: ObservedKind::Port,
-            name: name.clone(),
-            scope_label: Some(record.token.clone()),
-            project_label: Some(name.clone()),
-            persist: false,
-            external: false,
-            profile: None,
-        })
-        .collect())
-}
-
 fn observe_loopbacks(record: &ScopeRecord) -> Result<Vec<ObservedResource>, RunnerError> {
-    let path = gateway_dir()?.join("loopback-ips.json");
-    let registry = LoopbackRegistry::load(&path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    let store =
+        EndpointStore::for_routes(&super::gateway_registration::gateway_route_table_path()?);
+    let registry = store.snapshot()?.loopback()?;
     let mut identities = record
         .loopback_identities
         .iter()
@@ -684,46 +651,13 @@ fn delete_routes_and_owned_certs(record: &ScopeRecord) -> Result<bool, RunnerErr
     Ok(true)
 }
 
-fn delete_ports(record: &ScopeRecord) -> Result<bool, RunnerError> {
-    let Some(home) = effigy_containers::effigy_home() else {
-        return Ok(true);
-    };
-    let store = EndpointStore::for_effigy_home(&home);
-    store.transaction(None, |snapshot| -> Result<_, RunnerError> {
-        let mut registry = snapshot.ports()?;
-        for project in &record.project_names {
-            if registry
-                .get(project)
-                .is_some_and(|allocation| allocation.project == record.checkout)
-            {
-                registry.deallocate(project);
-            }
-        }
-        snapshot.set_ports(&registry)?;
-        Ok(true)
-    })
-}
-
 fn delete_loopbacks(record: &ScopeRecord) -> Result<bool, RunnerError> {
     let store =
         EndpointStore::for_routes(&super::gateway_registration::gateway_route_table_path()?);
-    store.transaction(None, |snapshot| -> Result<_, RunnerError> {
-        let mut registry = snapshot.loopback()?;
-        for identity in record
-            .loopback_identities
-            .iter()
-            .chain(record.project_names.iter())
-        {
-            if registry
-                .get(identity)
-                .is_some_and(|assignment| assignment.scope == record.checkout)
-            {
-                registry.deallocate(identity);
-            }
-        }
-        snapshot.set_loopback(&registry)?;
-        Ok(true)
-    })
+    let released = store
+        .release_loopback_for_path(&record.checkout)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    Ok(released > 0 || record.loopback_identities.is_empty())
 }
 
 fn observation_cwd(record: &ScopeRecord) -> PathBuf {
@@ -763,7 +697,7 @@ mod tests {
         assert!(delete_routes_and_owned_certs(&record).unwrap());
         assert!(observe_routes(&record).unwrap().is_empty());
         let snapshot = EndpointStore::for_routes(&path)
-            .read_compatible()
+            .snapshot()
             .unwrap();
         assert!(snapshot.routes().unwrap().is_empty());
 
@@ -783,30 +717,6 @@ mod tests {
             },
         )
         .expect("the retired checkout's domain is free at once");
-    }
-
-    #[test]
-    fn retirement_releases_only_the_scope_port_allocation_in_the_isolated_home() {
-        let temp = tempfile::tempdir().expect("temporary fixture root");
-        let home = temp.path().join("home").join(".effigy");
-        std::fs::create_dir_all(&home).expect("isolated effigy home");
-        let owned = "app-dev-wt-aaaaaaaaaaaa";
-        let kept = "app-dev-wt-bbbbbbbbbbbb";
-        let registry = format!(
-            "{{\"allocations\": {{\"{owned}\": {{\"base\": 8100, \"range\": 100, \"project\": \"/tmp/missing-worker\"}}, \"{kept}\": {{\"base\": 8200, \"range\": 100, \"project\": \"/tmp/other\"}}}}}}"
-        );
-        std::fs::write(home.join("ports.json"), registry).expect("isolated registry");
-
-        effigy_containers::with_test_effigy_home(&home, || {
-            delete_ports(&sample_record()).expect("scope port release");
-        });
-
-        let after = PortRegistry::load(&home.join("ports.json")).expect("registry after release");
-        assert!(
-            after.get(owned).is_none(),
-            "scope allocation should be released"
-        );
-        assert!(after.get(kept).is_some(), "other allocations must survive");
     }
 
     #[test]
@@ -993,7 +903,7 @@ mod tests {
     }
 
     #[test]
-    fn retirement_clears_qualified_and_owned_legacy_loopbacks_only() {
+    fn retirement_releases_only_the_checkouts_own_aliases() {
         let home = std::env::temp_dir().join(format!(
             "effigy-loopback-retirement-{}-{}",
             std::process::id(),
@@ -1004,42 +914,35 @@ mod tests {
         ));
         std::fs::create_dir_all(&home).expect("create test home");
         let _gateway_home = crate::runner::gateway_command::set_test_gateway_home(&home);
-        let path = gateway_dir()
-            .expect("gateway dir")
-            .join("loopback-ips.json");
-        let mut registry = LoopbackRegistry::new();
-        registry
-            .allocate("project:demo:/tmp/missing-worker", "/tmp/missing-worker")
-            .expect("qualified assignment");
-        registry
-            .allocate("demo", "/tmp/missing-worker")
-            .expect("legacy assignment");
-        registry
-            .allocate("project:foreign:/tmp/foreign", "/tmp/foreign")
-            .expect("foreign assignment");
-        registry
-            .allocate("shared:demo:/tmp/missing-worker", "/tmp/missing-worker")
-            .expect("shared assignment");
-        registry.save(&path).expect("save registry");
+        let checkout = home.join("checkout");
+        let foreign = home.join("foreign");
+        std::fs::create_dir_all(&checkout).expect("checkout");
+        std::fs::create_dir_all(&foreign).expect("foreign checkout");
+        let store = effigy_gateway::endpoint_store::EndpointStore::for_routes(
+            &gateway_dir().expect("gateway dir").join("routes.json"),
+        );
+        store
+            .allocate_loopback("project:demo:owned", &checkout.display().to_string())
+            .expect("owned alias");
+        store
+            .allocate_loopback("project:foreign:owned", &foreign.display().to_string())
+            .expect("foreign alias");
 
         let mut record = sample_record();
-        record.project_names = vec!["demo".to_owned()];
-        record.loopback_identities = vec!["project:demo:/tmp/missing-worker".to_owned()];
+        record.checkout = checkout.display().to_string();
+        record.loopback_identities = vec!["project:demo:owned".to_owned()];
         let observed = observe_loopbacks(&record).expect("observe loopbacks");
         let observed_names = observed
             .iter()
             .map(|resource| resource.name.as_str())
             .collect::<std::collections::BTreeSet<_>>();
-        assert!(observed_names.contains("project:demo:/tmp/missing-worker"));
-        assert!(observed_names.contains("demo"));
-        assert!(!observed_names.contains("project:foreign:/tmp/foreign"));
+        assert!(observed_names.contains("project:demo:owned"));
+        assert!(!observed_names.contains("project:foreign:owned"));
 
-        delete_loopbacks(&record).expect("retire owned loopbacks");
-        let remaining = LoopbackRegistry::load(&path).expect("reload registry");
-        assert!(remaining.get("project:demo:/tmp/missing-worker").is_none());
-        assert!(remaining.get("demo").is_none());
-        assert!(remaining.get("project:foreign:/tmp/foreign").is_some());
-        assert!(remaining.get("shared:demo:/tmp/missing-worker").is_some());
+        delete_loopbacks(&record).expect("retire owned aliases");
+        let remaining = store.snapshot().expect("snapshot").loopback().expect("aliases");
+        assert!(remaining.get("project:demo:owned").is_none());
+        assert!(remaining.get("project:foreign:owned").is_some());
         let _ = std::fs::remove_dir_all(home);
     }
 }

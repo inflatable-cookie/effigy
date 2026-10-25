@@ -45,11 +45,6 @@ pub(super) fn prepare_shutdown(
 }
 
 /// The backend effect of a shutdown: the policy's Compose stop commands.
-/// Teardown never publishes a port, but Compose interpolates the whole render
-/// before it reads the project, so a render whose ports were never assigned
-/// carries [`effigy_containers::policy::ports::teardown_interpolation_env`]'s
-/// teardown value instead of failing on its deliberate refusal (effigy#286).
-/// Nothing here assigns, reserves or reclaims a port.
 pub(super) fn run_shutdown_compose(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -66,7 +61,6 @@ pub(super) fn run_shutdown_compose_watched(
     policy: &EffectiveContainerPolicy,
     on_line: &mut dyn FnMut(&str),
 ) -> Result<(), EffigyRuntimeError> {
-    let env = effigy_containers::policy::ports::teardown_interpolation_env();
     for (args, label) in shutdown_compose_commands(policy) {
         let plan = compose_invocation_plan_from_args(
             repo_root,
@@ -81,7 +75,7 @@ pub(super) fn run_shutdown_compose_watched(
             &plan.program,
             &plan.args,
             &plan.label,
-            &env,
+            &[],
             None,
             on_line,
         )

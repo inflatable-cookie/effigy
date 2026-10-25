@@ -5,8 +5,7 @@
 //! This module provides the logic for those operations:
 //!
 //! - Building route entries from container configuration
-//! - Atomic registration/deregistration with the route table file
-//! - Port mapping integration (using allocated ports when available)
+//! - Registration and deregistration in one endpoint transaction
 //!
 //! A route is one claim: `domain → (checkout path, target)`. The checkout path
 //! is the whole owner, so the same checkout always replaces its own route and
@@ -22,7 +21,6 @@ use chrono::Utc;
 
 use crate::endpoint_store::EndpointStore;
 use crate::error::GatewayError;
-use crate::ports::PortRegistry;
 use crate::routes::{ManagedListenerRouteOwner, Route, RouteSource};
 use effigy_core::worktree_scope;
 
@@ -362,35 +360,6 @@ pub fn prune_dead_routes(route_table_path: &Path) -> Result<Vec<String>, Gateway
         }
         Ok(dead.into_iter().map(|route| route.domain).collect())
     })
-}
-
-/// Build a route registration from container and port configuration.
-///
-/// If a port registry is available and the project has an allocation,
-/// uses the allocated HTTP port. Otherwise, uses the provided default port.
-pub fn build_registration(
-    domain: &str,
-    project_name: &str,
-    project_path: &str,
-    default_port: u16,
-    tls: bool,
-    port_registry: Option<&PortRegistry>,
-) -> RouteRegistration {
-    let port = port_registry
-        .and_then(|reg| reg.port_map(project_name))
-        .map(|pm| pm.http)
-        .unwrap_or(default_port);
-
-    RouteRegistration {
-        domain: domain.to_string(),
-        target: Some(format!("127.0.0.1:{port}")),
-        dns_ip: None,
-        tcp_port: None,
-        tcp_target: None,
-        tls,
-        project_path: project_path.to_string(),
-        source: RouteSource::Container,
-    }
 }
 
 #[cfg(test)]

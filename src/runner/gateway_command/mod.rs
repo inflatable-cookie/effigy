@@ -685,18 +685,6 @@ fn run_gateway_down_with_config(
     })
 }
 
-/// Map a route-table trust verdict to a status label and optional reason.
-fn route_table_trust_fields(
-    trust: &effigy_gateway::trust::RouteTableTrust,
-) -> (&'static str, Option<String>) {
-    use effigy_gateway::trust::RouteTableTrust;
-    match trust {
-        RouteTableTrust::Absent => ("absent", None),
-        RouteTableTrust::Trusted => ("trusted", None),
-        RouteTableTrust::Untrusted { reason } => ("untrusted", Some(reason.clone())),
-    }
-}
-
 /// Structured refusal for a gateway status this caller cannot prove.
 ///
 /// The truth stays `unknown`: `ok` is false and the command exits non-zero, so
@@ -846,9 +834,6 @@ fn run_gateway_status_with_config(
     let routes = gateway_route_dashboard(config, &route_table, &tls);
     let conflicts = gateway_tcp_bind_conflicts(&route_table);
     let unbound_aliases = gateway_tcp_alias_unbound_routes(&route_table);
-    let (trust_state, trust_reason) = route_table_trust_fields(
-        &effigy_gateway::trust::inspect_route_table_trust(&config.route_table_path),
-    );
 
     if output_json {
         return Ok(json!({
@@ -874,8 +859,6 @@ fn run_gateway_status_with_config(
             "private": config.is_private(),
             "gateway_dir": config_dir_display(config),
             "tls": render_tls_json(&tls),
-            "route_table_trust": trust_state,
-            "route_table_trust_reason": trust_reason,
             "route_count": routes.len(),
             "tcp_bind_conflict_count": conflicts.len(),
             "tcp_bind_conflicts": render_gateway_tcp_conflicts_json(&conflicts),
@@ -920,14 +903,8 @@ fn run_gateway_status_with_config(
                 .unwrap_or_else(|| "disabled".to_owned())
         ),
         format!("tls: {}", render_tls_status_line(&tls)),
-        format!("route_table_trust: {trust_state}"),
         format!("route_count: {}", routes.len()),
     ];
-    if let Some(reason) = trust_reason.as_deref() {
-        lines.push(format!(
-            "[warn] route table untrusted: {reason}; gateway keeps last-known-good routes. Restore owner-only permissions or re-register routes with `effigy container up`."
-        ));
-    }
     if let Some(ref running) = status {
         lines.push(format!("pid: {}", running.pid));
         if let Some(version) = running.binary_version.as_deref() {
@@ -1832,11 +1809,6 @@ fn run_gateway_setup(
         setup::session(&home, false, |run, cx| {
             if remove {
                 setup_step("stopping the gateway", |_| operator::down(&config))?;
-                setup_step("exporting gateway endpoint state for v0.14.1", |_| {
-                    effigy_gateway::endpoint_store::EndpointStore::new(&home)
-                        .export_legacy()
-                        .map_err(std::io::Error::other)
-                })?;
             }
             // mkcert uses this operator's preserved CA. It is never run by the daemon.
             if !remove && !TlsConfig::mkcert_available() {
@@ -1875,13 +1847,6 @@ fn run_gateway_setup(
                     setup::remove_receipt(run, cx, &home)
                 });
             }
-            setup_step("importing gateway endpoint state", |_| {
-                effigy_gateway::endpoint_store::EndpointStore::new(&home)
-                    .reimport_legacy()
-                    .map_err(std::io::Error::other)
-            })?;
-            // Re-read the now operator-owned legacy state, preserving every manual route.
-            suffixes.extend(setup::approved_suffixes(&config, extra)?);
             suffixes.sort();
             suffixes.dedup();
             setup_step("recording the setup receipt", |_| {
@@ -1889,7 +1854,7 @@ fn run_gateway_setup(
             })
         })?;
         if remove {
-            return Ok("Gateway setup removed; routes, loopback IPs and port pins exported for v0.14.1; certificates preserved. Start the v0.14.1 gateway with `effigy gateway up`".into());
+            return Ok("Gateway setup removed; certificates preserved.".into());
         }
         let result = setup_step("starting the gateway", |step| {
             step.set_label("starting the gateway as the operator");
