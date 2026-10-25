@@ -253,7 +253,9 @@ unrelated file). A present descriptor with a wrong, dead or mismatched grant
 still refuses.
 The typed runtime grant identifies its protocol purpose, run class, run id
 and optional native hook identity. Durable factories, journal open, supervisor
-launch and migration check the inherited grant before work. Lexical engine
+launch and migration check the inherited grant before work. A supervisor
+launched for an environment-owned run inherits no grant at all (§10.2): the
+environment owns that run, not the starter's revocable lease. Lexical engine
 scopes impose the same restriction inside one process; dropping another scope
 cannot lift a live foreground restriction. An existing writable handle cannot
 write from a foreground scope. Already-admitted durable owners retain their
@@ -2679,6 +2681,19 @@ and `--detach` are front ends over the same run. Row by row:
   log; `container status` projects the run, state and last exit. A v0.14.1
   PID/spec supervisor is stopped by its recorded identity on the next `up` or
   `down`, never by a process-name pattern.
+  That supervisor is launched with `SupervisorInheritance::Independent`: it
+  outlives the `up` that started it, so it never inherits that process's
+  parent capability. When `up` runs as a step of a durable task, that lease is
+  revoked with the task's custody; a supervisor that kept it failed its own
+  endpoint-store opens (`parent capability was revoked`), stopped the
+  listener and left the environment unsettled (effigy#332, Acow #756). A host
+  process's own heavy work still runs its own admission hook, so nothing
+  bypasses admission. A managed run's supervisor keeps
+  `SupervisorInheritance::ClientLease`: the client owns that run and its death
+  is the run's stop. A store or capability failure while supervising renders
+  as `RunError::StepFailed { step, cause }` — the store error with its cause
+  and a next step — never `RunError::Invalid` and never a "not a valid run
+  request" message.
 - Remote stop of a bare PGID: narrowed by the nonce check above;
   `signal_session` on a registration stays open with §5.10.
 

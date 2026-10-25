@@ -254,6 +254,8 @@ fn helper_not_started(entry: &str, cause: io::Error) -> RunError {
 /// Verifies the image and spawns `entry` with stderr to `log`. Refusal and
 /// spawn failure are typed, never store I/O. An engine supervisor gets its
 /// client's working directory and environment explicitly, never inherited.
+/// Which admission authority it inherits from that client is explicit too:
+/// only `SupervisorInheritance::ClientLease` forwards the parent capability.
 fn spawn_helper(
     op: &OperationContext,
     executable: &Executable,
@@ -269,9 +271,13 @@ fn spawn_helper(
                 .envs(launch.env.iter().map(|(k, v)| (k, v)))
                 .current_dir(&launch.cwd);
         }
-        if entry == SENTINEL {
+        if entry == SENTINEL
+            || launch.is_some_and(|launch| launch.inheritance == SupervisorInheritance::Independent)
+        {
             // A registered sentinel owns fenced recovery, independent of an
             // ancestor's revocable admission lease. It never starts a workload.
+            // An environment-owned supervisor is the same: it outlives the
+            // `up` that started it, so it never keeps that process's lease.
             command.env_remove(crate::inheritance::ENV);
         } else if let Some(marker) = launch.and_then(|launch| {
             launch
@@ -474,11 +480,13 @@ fn sentinel_attempt(
     let log = helper_log(root)?;
     // A detached owner runs in the environment its client handed over; its
     // sentinel settles the same effects, so it gets that environment too.
-    // An inline owner's sentinel keeps a cleared environment.
+    // An inline owner's sentinel keeps a cleared environment. A sentinel never
+    // inherits a parent capability, whichever placement spawns it.
     let inherited = (plan.placement == Placement::Detached).then(|| EngineLaunch {
         payload: Vec::new(),
         cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
         env: std::env::vars_os().collect(),
+        inheritance: SupervisorInheritance::Independent,
     });
     let mut child = spawn_helper(
         run.operation(),
@@ -1127,18 +1135,35 @@ pub fn start_detached_at(
     launch(cx, root, work, None, (id, fence), executable, client)
 }
 
+/// The admission authority a detached supervisor inherits from the process
+/// that starts it (§5.8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SupervisorInheritance {
+    /// Keep the client's revocable parent capability. A managed run's
+    /// supervisor runs as its client's owner: the client's death is that
+    /// run's stop, so the lease is the same authority, and re-admitting the
+    /// client's invocation is checked against it.
+    ClientLease,
+    /// Start with no parent capability at all. An environment-owned
+    /// supervisor outlives the `up` that started it, so its store and journal
+    /// opens must never depend on that process's revocable admission lease.
+    /// Heavy work it starts itself falls back to its own admission hook.
+    Independent,
+}
 /// What an engine's detached supervisor is started with besides its binary:
-/// an opaque payload, and the client's working directory and environment,
-/// handed over explicitly at spawn. The engine admits its own run (§5.8).
+/// an opaque payload, the client's working directory and environment handed
+/// over explicitly at spawn, and the admission authority it inherits from that
+/// client. The engine admits its own run (§5.8).
 #[derive(Clone)]
 pub struct EngineLaunch {
     pub payload: Vec<u8>,
     pub cwd: PathBuf,
     pub env: Vec<(OsString, OsString)>,
+    pub inheritance: SupervisorInheritance,
 }
 impl std::fmt::Debug for EngineLaunch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("EngineLaunch { payload/cwd/env: [REDACTED] }")
+        f.write_str("EngineLaunch { payload/cwd/env/inheritance: [REDACTED] }")
     }
 }
 /// One detached engine supervisor per run, in its own session. The returned
@@ -1194,8 +1219,12 @@ fn launch(
     executable: &Executable,
     client: ClientMode,
 ) -> Result<SupervisorClient, RunError> {
-    crate::inheritance::require_durable(cx.operation())
-        .map_err(|error| RunError::Invalid(error.to_string()))?;
+    // A revoked or unreadable parent capability is a store failure, not a
+    // malformed request: name the admission step and the capability's cause.
+    crate::inheritance::require_durable(cx.operation()).map_err(|error| RunError::StepFailed {
+        step: "detached run admission".into(),
+        cause: error.to_string(),
+    })?;
     cx.require(crate::ctx::Capability::AdapterEffect)
         .map_err(|_| RunError::Invalid("detached spawn needs Mutate".into()))?;
     cx.require(crate::ctx::Capability::HostAuthority)
@@ -1249,7 +1278,14 @@ fn launch(
             result.run = run;
             result.fence = fence;
         }
-        Ok(Event::Refused(reason)) => return Err(RunError::Invalid(reason)),
+        Ok(Event::Refused(reason)) => {
+            // The supervisor refused to admit its run and said why. That reason
+            // is a store, gate or capability refusal, never an invalid request.
+            return Err(RunError::StepFailed {
+                step: "supervisor admission".into(),
+                cause: reason,
+            });
+        }
         Ok(_) => return Err(RunError::Invalid("invalid admission event".into())),
         Err(error) => return Err(helper_failed(SUPERVISOR, &mut result.child, &log, error)),
     }

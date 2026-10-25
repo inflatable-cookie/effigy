@@ -1009,6 +1009,16 @@
   { id = "owned-stop-observation", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process_owned_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
 "format:host-process:owned-stop" = { visibility = "internal", group = "Maintenance", run = "rustfmt --edition 2021 --config skip_children=true src/runner/host_process.rs tests/gateway_private.rs" }
+# An environment-owned host-process supervisor started by a task's
+# `container <env> up --detach` step keeps restarting, republishing and
+# settling after that task's revocable lease ends, and `down` releases its
+# reserved port (effigy#332).
+"test:host-process:environment-owned" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { id = "environment-owned-task-lease", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(environment_owned_supervisor_outlives_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
+] }
+"test:host-process:environment-owned:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { id = "environment-owned-task-lease-cargo", run = "cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(environment_owned_supervisor_outlives_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
+] }
 "test:host-process:exit-observation" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "owned-exit-observation", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process_exit_observation_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }

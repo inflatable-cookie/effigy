@@ -20,7 +20,8 @@ use effigy_kernel::id::RunId;
 use effigy_kernel::observe::Observed;
 use effigy_kernel::run::RunError;
 use effigy_kernel::supervise::{
-    start_engine_at, ClientMode, EngineLaunch, Event, SupervisorClient, OUTPUT_SEQUENCE,
+    start_engine_at, ClientMode, EngineLaunch, Event, SupervisorClient, SupervisorInheritance,
+    OUTPUT_SEQUENCE,
 };
 
 use super::control::{self, Addressed};
@@ -93,6 +94,10 @@ pub(in crate::runner) fn start(request: &ClientStart<'_>) -> Result<Started, Run
             payload: wire::encode(&payload),
             cwd: request.cwd.clone(),
             env,
+            // A managed run's supervisor runs as its client's owner, so it
+            // keeps that client's lease. Its death is the run's stop, and its
+            // re-admitted invocation is checked against the same authority.
+            inheritance: SupervisorInheritance::ClientLease,
         },
         &executable,
         ClientMode::Owning,
