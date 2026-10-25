@@ -2208,46 +2208,21 @@ fn managed_listener_fixture_child() {
     let previous_port = fs::read_to_string(previous_port_file)
         .ok()
         .and_then(|value| value.trim().parse::<u16>().ok());
-    let mut listener = None;
-    for _ in 0..32 {
-        let candidate = std::net::TcpListener::bind(bind_preference)
-            .expect("strictly bind the declared loopback preference");
-        let address = candidate
-            .local_addr()
-            .expect("read assigned socket address");
-        // Effigy now reserves a concrete port from the endpoint store, so a
-        // restart deliberately reuses it. Only an unstipulated `:0`
-        // preference still asks the OS for a fresh port.
-        if bind_preference.port() == 0 && previous_port == Some(address.port()) {
-            drop(candidate);
-            continue;
-        }
-        candidate
-            .set_nonblocking(true)
-            .expect("nonblocking listener");
-        listener = Some((candidate, address));
-        break;
-    }
-    let (listener, address) = listener.expect("OS assigned a fresh dynamic port");
+    // `unbound` claims Effigy's own bind address without serving it: an
+    // accepted report with no process this child owns listening there. Every
+    // other mode binds the preference strictly, and reports the address it
+    // actually bound.
+    let served = (report_mode != "unbound")
+        .then(|| bind_managed_listener_fixture(bind_preference, previous_port));
+    let address = served
+        .as_ref()
+        .map_or(bind_preference, |(_, address)| *address);
     let report = match report_mode.as_str() {
         "stale" => serde_json::json!({
             "schema": "effigy.managed.host-listener-report.v1",
             "generation": "stale-generation",
             "address": address.to_string(),
         }),
-        "unbound" => {
-            // A loopback address nothing listens on: an accepted claim with no
-            // proven owner.
-            let free = {
-                let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("free port probe");
-                probe.local_addr().expect("free port address")
-            };
-            serde_json::json!({
-                "schema": "effigy.managed.host-listener-report.v1",
-                "generation": generation,
-                "address": free.to_string(),
-            })
-        }
         _ => serde_json::json!({
             "schema": "effigy.managed.host-listener-report.v1",
             "generation": generation,
@@ -2267,6 +2242,11 @@ fn managed_listener_fixture_child() {
     let readiness_refused_file =
         PathBuf::from(std::env::var("FIXTURE_READINESS_REFUSED_FILE").unwrap());
     let requests_log_file = readiness_refused_file.with_extension("requests.log");
+    let Some((listener, _)) = served else {
+        // Nothing serves the accepted claim; the harness stops this child.
+        thread::sleep(Duration::from_secs(60 * 60));
+        return;
+    };
     loop {
         if restart_file.exists() {
             let _ = fs::remove_file(&restart_file);
@@ -2305,6 +2285,54 @@ fn managed_listener_fixture_child() {
             Err(error) => panic!("managed fixture listener failed: {error}"),
         }
     }
+}
+
+/// A loopback address for a fixture listener, outside the OS ephemeral range
+/// (49152 and above on macOS) and below Effigy's generated ranges' upper
+/// reaches, so only another explicit listener can hold it. The seed carries
+/// the fixture's own unique directory and the case name, so two fixtures
+/// running in parallel probe different ports, and a port a live process
+/// already holds is skipped rather than handed to an adapter that must bind
+/// it strictly.
+fn fixture_listener_address(seed: &str) -> String {
+    let start = seed.bytes().fold(0u32, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(u32::from(byte))
+    });
+    for offset in 0..1024 {
+        let port = 20_000 + (start.wrapping_add(offset) % 4_000);
+        let port = u16::try_from(port).expect("fixture listener port");
+        if TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).is_ok() {
+            return format!("127.0.0.1:{port}");
+        }
+    }
+    panic!("no free fixture listener port outside the ephemeral range");
+}
+
+/// Bind the declared loopback preference exactly. A `:0` preference asks the
+/// OS for a fresh port, and a restart avoids the port it has just released.
+fn bind_managed_listener_fixture(
+    bind_preference: SocketAddr,
+    previous_port: Option<u16>,
+) -> (TcpListener, SocketAddr) {
+    for _ in 0..32 {
+        let candidate = TcpListener::bind(bind_preference)
+            .expect("strictly bind the declared loopback preference");
+        let address = candidate
+            .local_addr()
+            .expect("read assigned socket address");
+        // Effigy reserves a concrete port from the endpoint store, so a
+        // restart deliberately reuses it. Only an unstipulated `:0`
+        // preference still asks the OS for a fresh port.
+        if bind_preference.port() == 0 && previous_port == Some(address.port()) {
+            drop(candidate);
+            continue;
+        }
+        candidate
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        return (candidate, address);
+    }
+    panic!("OS assigned a fresh dynamic port");
 }
 
 /// Terminal readiness failures through the public container CLI. Each case
@@ -2388,6 +2416,10 @@ fn managed_host_readiness_terminal_failure_retains_phase_evidence() {
         fs::create_dir(&control_dir).expect("listener control directory");
         let profile = "host-listener-failure";
         let domain = format!("{case}.readiness.host.test");
+        // These cases observe terminal phase evidence, not port reservation:
+        // the fixture declares the port its adapter must bind, so the proof
+        // never depends on winning a shared dynamic one.
+        let bind = fixture_listener_address(&format!("{case}:{}", fixture.path().display()));
         write_listener_fixture_manifest(ListenerFixtureManifest {
             checkout: &checkout,
             profile,
@@ -2395,7 +2427,7 @@ fn managed_host_readiness_terminal_failure_retains_phase_evidence() {
             body: "failure-body",
             child_binary: &child_binary,
             control_dir: &control_dir,
-            bind: "127.0.0.1:0",
+            bind: &bind,
             readiness_timeout_secs: 1,
             never_ready,
             report_mode,

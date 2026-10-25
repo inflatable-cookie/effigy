@@ -1392,6 +1392,13 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- A run whose binary sits on another volume from its state root — a project
+  checkout on an external drive, or `[scratch]` on a second disk — starts its
+  supervisor and sentinel again. Pinning the replaced startup image relied on
+  an APFS clone, and a clone cannot leave its filesystem, so admission refused
+  with `Cross-device link`. The pin now falls back to a copy that is flushed,
+  compared byte for byte with the running image and made read-only, so the
+  helper still re-execs exactly the startup image (contract 052 §10.1).
 - An explicit `--json`, or the global `--json`, always emits the
   `effigy.command.v1` envelope, wherever the invocation runs. A nested Effigy
   invocation marked with `EFFIGY_INTERNAL_SUPPRESS_HEADER` used to print its
