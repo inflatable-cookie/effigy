@@ -559,7 +559,7 @@ host_ports = ["41001:41001"]
 }
 
 #[test]
-fn policy_resolution_does_not_register_an_unactivated_runtime_scope() {
+fn policy_resolution_writes_no_runtime_ownership_state() {
     with_temp_effigy_home("unactivated-policy-read", |home| {
         let _lock = crate::test_env_lock();
         let checkout = temp_repo("unactivated-policy-read");
@@ -588,12 +588,14 @@ primary_service = "app"
         )
         .expect("write compose file");
 
+        assert!(!checkout.join(".effigy/state/runtime-scopes").exists());
         assert!(!home.join("runtime-scopes").exists());
         let policy = load_container_policy(&checkout, None).expect("resolve policy");
         let policies = load_all_container_policies(&checkout).expect("resolve all policies");
 
         assert_eq!(policy.profile, "private-stopped-profile");
         assert_eq!(policies.len(), 1);
+        assert!(!checkout.join(".effigy/state/runtime-scopes").exists());
         assert!(!home.join("runtime-scopes").exists());
     });
 }

@@ -1301,6 +1301,30 @@ paths = []
 config_keys = []
 
 [[retired]]
+id = "runtime-scope-journal"
+retired = "2026-10-25; Q-011 simplification (effigy#345)"
+replacement = "Ownership is the backend's own labels: a checkout owns a container, volume or network exactly when it carries `com.docker.compose.project=<project>` plus `com.effigy.checkout` (or `com.effigy.repo-root`) and `com.effigy.scope`, or a named volume is one of its projects' by the `<project>-<volume>` name Compose gave it. `effigy container retire` asks the backend what carries them, deletes all of it, reports what it kept on purpose and what it could not delete, and releases the checkout's gateway routes and loopback addresses by checkout path. `retire --dead` groups those labels by checkout path and retires the groups whose path is missing. Nothing is recorded beside the labels, so there is no journal to keep unverified, no generation to compare and no fence to lease."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = [
+  "runtime scope journal",
+  "effigy.runtime-scope.v1",
+  "com.effigy.checkout-generation",
+  "com.effigy.checkout-fence",
+  "dead-retire generation comparison",
+  "legacy bind-mount ownership proof",
+  "admits_legacy_unlabelled",
+]
+paths = [
+  "crates/effigy-containers/src/runtime/scope/journal.rs",
+  "crates/effigy-containers/src/runtime/scope/",
+]
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+  "tests/scripts/runtime-retire-dead.py",
+]
+
+[[retired]]
 id = "managed-listener-ownership-proof"
 retired = "2026-10-25; v0.15 simplification (Q-011)"
 replacement = "A managed host listener is ready when its reserved loopback port answers the declared readiness request, and its route stays published while the supervisor's run is alive and that port keeps answering. The supervisor probes the port every five seconds, withdraws the route after three consecutive misses and republishes it when the port answers again; a probe miss never restarts the child. A child receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`, `HOST` and `PORT`, so an ordinary server on those values is the whole contract: there is nothing to report, no generation token to echo and no listener identity to prove, because the gateway forwards a managed route to its published target like any other route. Delete a report writer, a report file path, a generation variable, a process-identity or ancestry proof and an exclusive-socket check; nothing replaces them."

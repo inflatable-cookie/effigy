@@ -610,25 +610,6 @@ esac
     }
 }
 
-/// Drop every v0.14.1 partial receipt below `dir`, as a release upgrade does.
-fn remove_legacy_markers(dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            remove_legacy_markers(&path);
-        } else if path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(".partial.json"))
-        {
-            std::fs::remove_file(&path).unwrap();
-        }
-    }
-}
-
 fn preserve_tree(dir: &Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
@@ -727,35 +708,6 @@ fn deleted_managed_colima_profile_is_recreated_before_the_next_artifact_build() 
 }
 
 #[test]
-fn stale_owned_builder_is_recreated_instead_of_requiring_a_manual_down() {
-    let _lock = crate::contract_test_support::lock_test();
-    let mut fixture = Fixture::new(true, false, "colima");
-    // The retained admission is the builder this run replaces; the v0.14.1
-    // partial receipt belongs to that same container and goes with it.
-    remove_legacy_markers(&fixture.root.join("host-home"));
-    fixture
-        .preserved
-        .retain(|(path, _)| !path.to_string_lossy().ends_with(".partial.json"));
-    // An out-of-band profile restart left the retained builder without a
-    // readable canonical identity while its labels still name this exact owner.
-    fixture.mutate(|row| row["Id"] = json!(""));
-    fixture
-        .task()
-        .expect("the stale owned builder is stopped and recreated, then the build succeeds");
-    assert!(fixture.root.join("state/build-effect").exists());
-    let builder = format!("{}-builder-1", fixture.policy.project_name);
-    assert!(
-        fixture
-            .calls()
-            .iter()
-            .any(|args| args == &["rm".to_owned(), "-f".to_owned(), builder.clone()]),
-        "the stale owned builder is removed for recreation: {:#?}",
-        fixture.calls()
-    );
-    fixture.assert_preserved();
-}
-
-#[test]
 fn retained_builder_accepts_its_immutable_compose_working_directory() {
     let _lock = crate::contract_test_support::lock_test();
     let fixture = Fixture::new(true, true, "docker");
@@ -798,29 +750,6 @@ fn assert_invalid_builder_refuses_before_build(case: &str) {
         "{case}: {error}"
     );
     fixture.assert_preserved();
-}
-
-/// An owned builder whose canonical identity cannot be read (a deleted or
-/// restarted runtime profile) is stopped and recreated by the next build,
-/// never refused for a manual `down`.
-#[test]
-fn an_owned_builder_with_a_bad_or_missing_identity_is_recreated() {
-    let _lock = crate::contract_test_support::lock_test();
-    for case in ["bad_id", "missing"] {
-        let fixture = Fixture::new(true, true, "docker");
-        match case {
-            "bad_id" => fixture.mutate(|row| row["Id"] = json!("abc")),
-            _ => std::fs::remove_file(fixture.root.join("state/identity.json")).unwrap(),
-        }
-        fixture
-            .task()
-            .unwrap_or_else(|error| panic!("{case}: {error}"));
-        assert!(
-            fixture.root.join("state/build-effect").exists(),
-            "{case}: the recreated builder built"
-        );
-        fixture.assert_preserved();
-    }
 }
 
 // Each adversarial identity gets its own nextest deadline and failure name.
