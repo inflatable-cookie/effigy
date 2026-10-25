@@ -600,11 +600,13 @@ fn delete_resource(cwd: &Path, resource: &OwnedResource) -> Result<(), String> {
         },
     };
     let runtime_error = |error: &str| {
-        let text = error.trim();
-        if text.is_empty() {
+        let reason = runtime_reason(error).unwrap_or_else(|| {
             format!("could not remove {} {}", resource.kind.label(), resource.name)
+        });
+        if reason.contains(&resource.name) {
+            reason
         } else {
-            text.lines().last().unwrap_or(text).to_owned()
+            format!("{}: {reason}", resource.name)
         }
     };
     match run_runtime_volume_capture(cwd, &resource.profile, &command) {
@@ -690,6 +692,28 @@ fn delete_tls_cert(domain: &str) -> Result<(), effigy_gateway::GatewayError> {
         });
     }
     Ok(())
+}
+
+/// The runtime's own sentence from a failed deletion. A wrapped CLI prints the
+/// cause first and then its own `fatal` summary and exit line, so those are
+/// dropped and the last remaining cause is the reason a person can act on.
+fn runtime_reason(stderr: &str) -> Option<String> {
+    let lines = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    let causes = lines
+        .iter()
+        .copied()
+        .filter(|line| !line.to_ascii_lowercase().contains("level=fatal"))
+        .collect::<Vec<_>>();
+    let reason = causes.last().or_else(|| lines.last()).copied()?;
+    let reason = match (reason.find("msg=\""), reason.rfind('"')) {
+        (Some(start), Some(end)) if end > start + 5 => &reason[start + 5..end],
+        _ => reason,
+    };
+    Some(reason.chars().take(400).collect())
 }
 
 pub(super) fn finish(
@@ -845,6 +869,39 @@ mod tests {
             &link.display().to_string(),
             &gone.display().to_string()
         ));
+    }
+
+    #[test]
+    fn retirement_releases_only_the_scope_port_allocation() {
+        let temp = tempfile::tempdir().expect("temporary fixture root");
+        let gateway_home = temp.path().join("gateway");
+        std::fs::create_dir_all(&gateway_home).expect("gateway home");
+        let _gateway = crate::runner::gateway_command::set_test_gateway_home(&gateway_home);
+        let home = temp.path().join("effigy");
+        std::fs::create_dir_all(&home).expect("isolated effigy home");
+        let checkout = temp.path().join("worker");
+        std::fs::create_dir(&checkout).expect("checkout");
+        let owned = "app-dev-wt-aaaaaaaaaaaa";
+        let kept = "app-dev-wt-bbbbbbbbbbbb";
+        std::fs::write(
+            home.join("ports.json"),
+            format!(
+                "{{\"allocations\": {{\"{owned}\": {{\"base\": 8100, \"range\": 100, \"project\": \"{}\"}}, \"{kept}\": {{\"base\": 8200, \"range\": 100, \"project\": \"/tmp/other\"}}}}}}",
+                checkout.display()
+            ),
+        )
+        .expect("isolated registry");
+
+        effigy_containers::with_test_effigy_home(&home, || {
+            let release = release_gateway(&checkout.display().to_string())
+                .expect("release the checkout's gateway state");
+            assert_eq!(release.ports, vec![owned.to_owned()]);
+        });
+
+        let after = effigy_gateway::ports::PortRegistry::load(&home.join("ports.json"))
+            .expect("registry after release");
+        assert!(after.get(owned).is_none(), "the checkout's range is released");
+        assert!(after.get(kept).is_some(), "another checkout keeps its range");
     }
 
     #[test]

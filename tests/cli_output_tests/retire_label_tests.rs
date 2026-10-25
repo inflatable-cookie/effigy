@@ -336,9 +336,9 @@ fn a_volume_the_runtime_refuses_to_remove_is_named_and_retire_fails() {
     );
     let remaining = report["remaining"].as_array().expect("remaining rows");
     assert!(
-        remaining[0]["error"]
-            .as_str()
-            .is_some_and(|error| error.contains("volume is in use")),
+        remaining[0]["error"].as_str().is_some_and(|error| error
+            .contains("app-web-wt-cccccccccccc-stuck")
+            && error.contains("volume is in use")),
         "{remaining:?}"
     );
     assert_eq!(

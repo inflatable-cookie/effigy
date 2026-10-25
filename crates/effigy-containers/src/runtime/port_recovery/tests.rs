@@ -921,7 +921,7 @@ fn a_status_report_names_each_step_and_ends_with_a_line() {
         lines,
         vec![
             format!("✓ reading the port registry at {}", path.display()),
-            "✓ reading the container inventory and each checkout's scope records".to_owned(),
+            "✓ reading the container inventory".to_owned(),
             "✓ deciding 1 port allocation(s)".to_owned(),
         ]
     );
