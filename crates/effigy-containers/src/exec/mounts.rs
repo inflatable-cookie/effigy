@@ -61,7 +61,10 @@ fn named_mounts(policy: &EffectiveContainerPolicy) -> Result<Vec<NamedMount>, Co
                         volume.get("type").and_then(Value::as_str) == Some("volume"),
                     )
                 };
-                mounts.insert((service.to_owned(), target.to_owned()), (source.to_owned(), named));
+                mounts.insert(
+                    (service.to_owned(), target.to_owned()),
+                    (source.to_owned(), named),
+                );
             }
         }
     }
@@ -259,5 +262,4 @@ mod tests {
             assert!(error.contains("drop it from `isolated_dirs`"), "{error}");
         }
     }
-
 }

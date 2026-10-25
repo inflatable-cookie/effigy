@@ -19,9 +19,7 @@ use effigy_gateway::endpoint_store::EndpointStore;
 use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::loopback::{project_loopback_identity, shared_loopback_identity};
 use effigy_gateway::managed_listener::observe_managed_listener_owner;
-use effigy_gateway::registration::{
-    dead_claim_reason, owned_by, project_scope,
-};
+use effigy_gateway::registration::{dead_claim_reason, owned_by, project_scope};
 #[cfg(test)]
 use effigy_gateway::registration::{deregister_route, register_route, RouteRegistration};
 use effigy_gateway::routes::{Route, RouteSource, RouteTable};
@@ -1142,14 +1140,11 @@ fn validate_gateway_tcp_alias_bindings_in_table(
     }
 
     for registered in route_table.all_routes() {
-        if registered.source != RouteSource::Container
-            || owned_by(registered, &project_path)
-        {
+        if registered.source != RouteSource::Container || owned_by(registered, &project_path) {
             continue;
         }
         if routes.iter().any(|route| route.domain == registered.domain)
-            && (owned_by(registered, &project_path)
-                || dead_claim_reason(registered).is_some())
+            && (owned_by(registered, &project_path) || dead_claim_reason(registered).is_some())
         {
             // This domain is this checkout's own route, or a dead owner's, and
             // is replaced in the same locked transaction, so its old listener

@@ -782,10 +782,7 @@ fn gateway_registration_failure(
     finish_container_up_failure(error, cleanup())
 }
 
-fn detached_activation_error(
-    policy: &EffectiveContainerPolicy,
-    error: RunnerError,
-) -> RunnerError {
+fn detached_activation_error(policy: &EffectiveContainerPolicy, error: RunnerError) -> RunnerError {
     // Keep the typed, bounded readiness evidence intact across this seam.
     if matches!(&error, RunnerError::ManagedHostReadiness { .. }) {
         return error;
@@ -1493,11 +1490,10 @@ fn emit_ssh_agent_socket_warning(policy: &EffectiveContainerPolicy, repo_root: &
 #[cfg(test)]
 mod tests {
     use super::{
-        annotate_workspace_extra_mount_decisions, detached_activation_failure,
-        detached_activation_error, detached_activation_identity,
-        ensure_up_workspace_permissions, exec_operation_plan, gateway_registration_failure,
-        lifecycle_operation_plan, refresh_workspace_mounts_for_creation,
-        run_container_down_command, sanitized_failure_cause,
+        annotate_workspace_extra_mount_decisions, detached_activation_error,
+        detached_activation_failure, detached_activation_identity, ensure_up_workspace_permissions,
+        exec_operation_plan, gateway_registration_failure, lifecycle_operation_plan,
+        refresh_workspace_mounts_for_creation, run_container_down_command, sanitized_failure_cause,
         start_runtime_after_scope_registration, DetachedOperationState, RunnerError,
     };
     use crate::runner::container_command::handover::hand_over_conflicting_environments;

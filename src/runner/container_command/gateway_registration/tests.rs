@@ -1202,9 +1202,7 @@ fn two_live_worktrees_cannot_register_one_fixed_domain() {
             .expect_err("live sibling domain must remain owned");
         assert!(error.to_string().contains("app.test"));
         assert!(
-            error
-                .to_string()
-                .contains(&paths[0].display().to_string()),
+            error.to_string().contains(&paths[0].display().to_string()),
             "the refusal names the owning checkout: {error}"
         );
         let first = RouteTable::load(&table_path).unwrap();

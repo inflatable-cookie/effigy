@@ -588,7 +588,10 @@ fn private_three_scopes_concurrent_resume_replacement_and_cli_refusals() {
     );
     let failed: Value =
         serde_json::from_slice(&outputs[0].stdout).expect("one JSON failure envelope");
-    assert_eq!(failed["error"]["details"]["state"], "unavailable", "{failed}");
+    assert_eq!(
+        failed["error"]["details"]["state"], "unavailable",
+        "{failed}"
+    );
     assert_eq!(failed["error"]["details"]["readiness"], "unverified");
     for (i, output) in outputs.iter().enumerate().skip(1) {
         // A sibling that was refused before the private transport has no

@@ -172,9 +172,7 @@ pub fn nothing_to_stop(repo_root: &Path, policy: &EffectiveContainerPolicy) -> O
         Observed::Absent(_) => true,
         // A record that never published `active` describes a stop that has
         // nothing to stop; one that did may own resources Compose must see.
-        Observed::Verified(record, _) => {
-            record.state != EnvState::Active && !record.protected()
-        }
+        Observed::Verified(record, _) => record.state != EnvState::Active && !record.protected(),
         Observed::Unknown(_) => false,
     };
     if !never_prepared {

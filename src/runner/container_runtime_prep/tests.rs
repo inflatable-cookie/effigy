@@ -479,7 +479,10 @@ fn runtime_compose_up_stage_propagates_a_compose_failure() {
     })
     .expect_err("a compose failure is an error");
     assert_eq!(*calls.lock().expect("calls lock"), 1);
-    assert!(error.to_string().contains("service `db` exited 1"), "{error}");
+    assert!(
+        error.to_string().contains("service `db` exited 1"),
+        "{error}"
+    );
 }
 
 #[test]
