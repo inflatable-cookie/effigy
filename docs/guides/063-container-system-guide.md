@@ -28,28 +28,19 @@ Reset removes only that environment's references; sibling renders are preserved.
 
 Each catalog `isolated_dirs` path is a separate named volume over the source
 bind, including root `node_modules`, nested dependencies and Rust targets in
-worktree stacks. `container status --json` reports `mount_drift.state`
-(`clean`, `drift`, `unavailable` or `stopped`) and `details`; text status and
-doctor also report mismatches. Running alone does not establish mount readiness.
-The next routed-task preparation or `container up --detach` applies the current
-render when verified live mounts differ. Live task holders still prevent
-recreation. Finish those runs before reconciling. An unavailable observation
-preserves reuse and checks permissions without ownership or mode repair; an
-actual access failure still blocks readiness. It does not authorize recreation,
-and permission preparation refuses mismatched
-named mounts before any ownership repair. Effigy never repairs a host bind by
-recursively changing its ownership.
+worktree stacks. Mounts are part of a service's rendered configuration, so
+there is no separate mount-drift detector: `container up` runs one apply
+(`compose up -d --build --remove-orphans`, no recreate flag) and Compose
+recreates exactly the services whose configuration changed, mounts included. A
+live task holder keeps the running stack and is attached to it; it is never
+recreated under.
 
 An isolated volume overlays a directory inside the checkout, so that host
-mount point must exist for the runtime to mount over it. The mount observation
-includes it: `container status` and doctor report a missing host directory as
-`mount_drift` without creating it. `container up` and routed-task preparation
-then recreate it before creating or reusing the stack, and because the missing
-directory is already drift, routed-task preparation reconciles through the
-guarded bring-up instead of an idempotent re-apply. A host cleanup that deletes
-`target` or `node_modules` under a running stack is therefore healed: the stack
-is reconciled instead of reused, and the recreated directory never replaces a
-file or follows a symlink.
+mount point must exist for the runtime to mount over it. `container up` and
+routed-task preparation create a missing host directory for the primary
+service's nested isolated volumes before the apply. The created directory never
+replaces a file and never follows a symlink. Effigy never repairs a host bind
+by recursively changing its ownership.
 
 
 ## Start Here
@@ -999,26 +990,24 @@ Gateway registration keeps the project, service, published-port and host-listene
 ownership checks, and does not claim a route while its declared runtime
 binding is missing.
 
-Partial detached bring-up: a completed backend launch followed by failed
+Interrupted detached bring-up: a completed backend launch followed by failed
 inventory, exec readiness or exposure verification leaves the scope in place.
-`effigy container up --detach` exits non-zero and reports partial or unavailable
-activation. It never treats an unavailable probe as an empty or ready stack.
+`effigy container up --detach` exits non-zero and reports the activation as
+unavailable. It never treats an unavailable probe as an empty or ready stack,
+and there is nothing to clean up: the next `up` reconciles from what is running.
 
 The supported reconciliation command is `effigy container up --detach`.
-Each environment has one record (contract 053): the generation it applied,
-the backend it runs on and why, whether an explicit `up` owns it, and the
-runs holding it. A bring-up that applied its Compose change but did not finish
-leaves a partial generation; rerunning `up --detach` with the same inputs
-reconciles it without recreating running services, and changed inputs refuse
-until `effigy container down`. A warm owned stack reconciles fresh inspected
-bindings without Compose up or primary restart. Exec readiness failures and
-interrupts retain unverified state without teardown. Success makes the
-explicit `up` the persistent owner. `effigy container down` is the explicit
-stop: it ends that ownership and keeps volumes, and it refuses while a run
-(for example `dev`) still holds the environment. Retirement removes owned
-mutable data and is not restart recovery.
+Each environment has one record (contract 053): the backend it runs on and why,
+whether an explicit `up` owns it, and the runs holding it. Every `up` runs the
+same one apply, and Compose recreates only the services whose rendered
+configuration changed; an edit to an image, environment or mount is applied by
+the next `up`, with no `down` first. A failed or interrupted `up` needs no
+cleanup. Success makes the explicit `up` the persistent owner. `effigy
+container down` is the explicit stop: it ends that ownership and keeps volumes,
+and it refuses while a run (for example `dev`) still holds the environment.
+Retirement removes owned mutable data and is not restart recovery.
 
-JSON failure details expose `state` (`partial` or `unavailable`),
+JSON failure details expose `state` (`unavailable`),
 `phase = "detached_activation"`, unverified readiness/exposure and supported
 recovery/stop commands. `activation_stage` uses the closed vocabulary
 `preparation`, `environment_handover`, `compose_activation`,
@@ -1257,9 +1246,9 @@ first creation, reuse, and handover passes through, while managed children
 and `container shell` enter through exec without their own preparation —
 so owned-disposable cache volumes (Cargo registry/git, target dirs) are
 writable by the workspace user however the stack was created. A
-preparation failure refuses closed: detached `up` records a partial
-activation without tearing the started scope down, attached `up` cleans
-up, and neither retries, recreates, or adopts anything.
+preparation failure refuses closed: detached `up` leaves the started scope in
+place for the next activation to reconcile, attached `up` cleans up, and
+neither retries, recreates, or adopts anything.
 
 For a running workspace, `effigy doctor` remains read-only and reports
 `container.workspace-ownership` when declared cargo/target mounts, their

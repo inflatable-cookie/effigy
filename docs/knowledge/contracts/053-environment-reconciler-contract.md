@@ -28,6 +28,11 @@ change to an environment's containers is a transition run that owns
 another run holds the environment (R4). Holders attach through one hold API.
 No lease file, timer, marker or per-call-site holder check remains.
 
+Compose state plus the environment's own labels are the source of truth. Effigy
+keeps no record of what it believes it applied: no applied generation, no
+partial activation, no admission snapshot and no second change detector. One
+apply converges the stack, and the next `up` reconciles from what is running.
+
 ### Q-010 storage and lifetime
 
 Every environment transition, holder Session, environment-owned sidecar and
@@ -65,15 +70,15 @@ coverage limits (052 §7.6).
 | --- | --- | --- |
 | Generation, state | `resources` row | `active` (attachable at the current generation), `stopped`, or neither while a run is in progress |
 | Backend | `resources.backend` | exact engine, context and the policy source that chose it, written by Prepare (§6) |
-| Engine fields | `resources.engine` | `{schema, retention, project, applying, imported}` |
-| Desired, last applied, superseded | `object_refs` | render digests (#229); the last 3 superseded are kept |
+| Engine fields | `resources.engine` | `{schema, retention, project, imported}` |
+| Desired | `object_refs` | the render this environment points at (#229) |
 | Holders | `attachments` | runs attached to the environment, with liveness from their owner gates |
 
-`applying` names a desired digest whose apply ran but whose activation did
-not finish: a partial generation. It replaces `.partial.json` and
-`.complete`. `retention` replaces `.persistent` and the lease. Reading the
-record is pure (R2): `EnvironmentView` and `EnvRecord::read` open nothing for
-writing, import nothing and probe no backend.
+`retention` replaces `.persistent` and the lease. There is no applied,
+partial or superseded generation. Reading the record is pure (R2):
+`EnvironmentView` and `EnvRecord::read` open nothing for writing, import
+nothing and probe no backend. The state users see for a service is the
+runtime's own: Running, Stopped or Absent.
 
 ## 3. Transitions
 
@@ -100,23 +105,27 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   disposition calls no adapter, so it needs no holder check. A launch failure
   is `Failed` with proof; any other backend failure is `Unknown`, never
   manufactured success (R5).
-- **Bring-up** is two runs. The reconcile run publishes the desired
-  generation, records backend and retention, and reaches the backend only
-  when needed:
+- **Bring-up** is two runs. The apply run publishes the render the
+  environment points at, records retention, and runs the one apply unless a
+  live run holds the environment:
 
-  | Running (exact inventory) | Desired is last applied, partial, or an adopted import, with no observed mount drift | Holders | Result |
-  | --- | --- | --- | --- |
-  | yes | yes | any | `Reused`: no backend call |
-  | yes | no | yes | `KeptForHolders`: running generation kept, a warning names the pending change |
-  | otherwise | | none | `Reconciled`: one apply |
-  | `Unknown` | | | refused; nothing recreated (R3) |
+  | Holders | Result |
+  | --- | --- |
+  | none, or only interrupted ones it settles | `Reconciled`: one apply |
+  | live or unknown | `HeldByRuns`: the running stack is kept and the requesting runs attach |
 
   The command's own steps (readiness, permissions, secrets, routes, host
   processes) run between the runs, outside the gate. The activation run
-  promotes the generation and publishes `active`, attaching requesting
-  holders in the same transaction. It refuses when a transition stopped the
-  environment or replaced its desired generation in between. A crash leaves a
-  partial generation that the next `up` reuses without recreation.
+  publishes `active`, attaching requesting holders in the same transaction. A
+  crash before activation leaves nothing to repair: the next `up` reconciles
+  from what is running.
+- **One apply.** `compose up -d --build --remove-orphans`, with no recreate
+  flag, from the render. Compose recreates exactly the services whose rendered
+  configuration changed (its own `com.docker.compose.config-hash`), so an
+  edited image, environment or mount is applied by the next `up` without a
+  `down`. Effigy adds no per-service digest label and no comparison pass. An
+  apply failure is an error naming the service and Compose's own output; no
+  failure is logged as a warning and continued.
 - **Down** stops host processes, then the backend, publishes `stopped` with a
   fresh holder check, and ends persistent ownership. `container down`,
   `--global`, cwd-scoped down, attached-session closeout and failed attached
@@ -132,8 +141,10 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
 
 The run supervisor attaches through this surface.
 
-- `hold(run, ctx, env, wait)` attaches a live run to an active environment
-  under `Gate(Env)`. `NotActive` means the environment needs an ensure.
+- `hold(run, ctx, env, wait, running)` attaches a live run to an environment
+  under `Gate(Env)`. `running` is the runtime's own answer to whether the
+  project's containers are up, so a stack deleted behind Effigy's back is
+  never held. `NotActive` means the environment needs an ensure.
 - A run that needs an ensure is attached by that bring-up's activation run
   (052 §5.9 `EnvNotActive`). A managed run passes its task-run id to its
   lifecycle's `effigy container up` in `EFFIGY_INTERNAL_ENVIRONMENT_HOLDER`.
@@ -152,10 +163,8 @@ protection for a live, admitted run; the exemption only covers a run that is
 already ending.
 
 Remote workloads (052 §5.10, effigy#236) bind the environment's generation at
-intent and then check only its identity, because every bring-up, including a
-`Reused` one, advances the generation (planner ruling, 2026-10-20). A
-non-destructive bring-up that leaves the generation unchanged would be better
-hygiene; it is a recorded follow-up, not required by remote custody.
+intent and then check only its identity; every bring-up advances the
+generation (planner ruling, 2026-10-20).
 
 ## 5. Retention and idle stop
 
@@ -208,24 +217,22 @@ The first Mutate of an environment imports its v0.14.1 markers from
 | `<name>.persistent` | persistent |
 | `<name>.json` lease, no persistent marker | held |
 | neither | persistent (v0.14.1 never idle-stopped it) |
-| `<name>.partial.json` without `.complete` | a failed-unknown partial generation (052 §11) |
+| `<name>.partial.json` without `.complete` | imported as history only: the next apply reconciles the stack |
 | ownership labels or, for a pre-label stack of an unscoped checkout, a bind mount of the checkout on every workload, with the primary running | adopted `active`, no backend call (M7) |
 | anything less | not active: holds refuse and transitions need the reconciler's own ownership proof (M4) |
 
 The import is idempotent and resumable after a crash. It never changes or
 removes a legacy file (M3) and records each marker's path and SHA-256. While
 an unexpired v0.14.1 lease remains (its reaper may still be sleeping), the
-first Mutate waits for it, up to 10 minutes, before adopting. A later `up`
-adopts an imported stack without recreation when the v0.14.1 admission
-matches the current inputs.
+first Mutate waits for it, up to 10 minutes, before adopting.
 
 ### Central-store relocation (retired 2026-10-24)
 
 The 052 §11.1 importer for the current-main central store is retired
 (effigy#307). v0.15 ships only the v0.14.1 importers above, so an environment
-closure arrives through the family import on first use: desired/applied/partial
-generations, backend, retention, object refs and holders keep their identity,
-and containers are not recreated (M7). A machine that committed the retired
+closure arrives through the family import on first use: the desired render,
+backend, retention, object refs and holders keep their identity, and containers
+are not recreated (M7). A machine that committed the retired
 cutover ignores the old store and never deletes it; one still holding it
 without a committed manifest is refused once with the Effigy main `7b82d26`
 upgrade path. PID-only evidence remains Unknown, and old input stays
@@ -260,6 +267,7 @@ order, stopped by `down`, `reset` and session settle with a
 | Strict-fake engine; transition matrix against live, interrupted and unknown holders; EPERM, ENOSPC and SIGKILL at every crossing of up, down, reset and import, with O2, O3, O5, O6, O7 oracles; process-level strict fakes for both adapters; importer against copies of real Underlay and DecodeLabs `nerdctl inspect` captures | `test:containers:environment` |
 | Runner cutover: lifecycle, task activation, managed runs, handover, deferral, builder recovery | `test:environment:runner` |
 | Busy refusal diagnostics: the live exact-gate holder, terminal and successor observations, unreadable identity, the original wait deadline, explicit unknown/absent record semantics, held-by and journal-contention controls, with no backend call | `test:environment:busy-diagnostics` |
+| One apply: `up -d --remove-orphans` from task preparation, and a compose failure reported as an error | `test:containers:mount-prepare`, `test:containers:generations:callers` |
 | Touched crates compile and lint for the busy diagnostics | `check:environment:busy-diagnostics`, `lint:environment:busy-diagnostics` |
 
 Real-engine qualification belongs to the qualification lane. On Colima and
@@ -267,7 +275,8 @@ on Docker Desktop, with cbs and Acowtancy:
 
 1. Fresh `HOME`: `effigy container up --detach`; `status` names the backend
    and why; the record is active and persistent.
-2. Run a container task twice: the second reuses the stack (no recreate).
+2. Edit a service's env or image tag and run `up`: only that service is
+   recreated; a second `up` with no edit recreates nothing.
 3. `effigy container down` while `dev` runs: refused, naming the run.
 4. Task-start a stack, let the task end: it stops; `container up --detach`
    keeps the next one running.

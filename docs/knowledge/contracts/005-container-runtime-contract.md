@@ -11,12 +11,11 @@ environment, not production deployment export.
 
 Kernel supersession (2026-10-18): the runtime kernel contract
 [052](052-runtime-kernel-contract.md) supersedes this contract's lifecycle and
-ownership sections for v0.15: activation and session ownership, partial
-activation and recovery, `data_from` handover, owned service start after a
-Colima restart, managed host listener lifecycle, owned completion and stop
-authority, fallback ownership and failure semantics. Until the environment
-lane reconciles them, those sections describe current behavior, not target
-design.
+ownership sections for v0.15: activation and session ownership, `data_from`
+handover, owned service start after a Colima restart, managed host listener
+lifecycle, owned completion and stop authority, fallback ownership and failure
+semantics. Until the environment lane reconciles them, those sections describe
+current behavior, not target design.
 
 ## Purpose
 
@@ -70,57 +69,27 @@ every checkout scope. Each entry is a distinct named volume layered over the
 source bind. Workspace rewriting preserves those entries; scope identity keeps
 worktree volume names separate from the primary checkout.
 
-Reuse compares each rendered named mount's service, destination, resolved
-volume name and read/write mode against a fresh selected-backend inspect.
-The comparison consumes the final Compose aliases after workspace compaction
-and `data_from` renaming, including destination overrides from later files.
-Inspects must prove the current full container identity, project, service,
-checkout and scope. Missing or unreadable inventories are unavailable, never
-clean and never recreation authority (kernel R2, R3 and K8).
-Pre-checkout-label stacks use the same legacy admission as reactivation: an
-unscoped checkout, matching immutable container identity and a positive bind of
-that checkout at the declared working directory. Foreign binds and scoped
-unlabelled stacks remain unavailable. External volumes without explicit names
-use their bare Compose keys.
-
-Task preparation no longer skips `up` solely because the primary runs. Observed
-mount drift means the running stack is not the desired generation, so the
-reconcile run applies the render instead of reusing it ([053](053-environment-reconciler-contract.md)
-§3). Holder exclusion and reactivation ownership checks remain mandatory (R4):
-under a live or unknown holder the running generation is kept with a warning
-naming the drift. The incoming task's own session attaches only at activation,
-after the reconcile, so it never blocks its own mount reconcile. Permission preflight
-checks the named mounts again before repair, including explicit exec paths:
-a declared volume absent from a live stack cannot grant chown authority over
-the host bind beneath it. Permission target metadata uses the most specific
-declared mount and retains its repair authority.
-An unavailable mount observation preserves the running stack's reuse path.
-Permission preparation then verifies access without creating directories,
-changing ownership or modes, or creating lock probes; paths that are already
-usable remain usable. A concrete access failure still blocks readiness. The
-unavailable observation itself cannot request reconciliation, and an up under
-live holders makes no backend call.
-An absent service has no live mount inventory; its absence does not prove mount
-drift or require recreation. Ordinary up may create it with `--no-recreate`.
+Mounts are part of a service's rendered configuration, so they need no separate
+change detector. One apply (`compose up -d --build --remove-orphans`, no
+recreate flag) converges the stack, and Compose recreates exactly the services
+whose configuration changed, mounts included ([053](053-environment-reconciler-contract.md)
+§3). A running stack is never inspected for mount drift, and `container up`
+adds no `--no-recreate`/`--force-recreate` variant.
 
 An isolated volume overlays a directory inside the checkout, so its host mount
-point must exist. The mount observation includes those host directories: a
-missing one is drift, reported read-only by `container status` and doctor, and
-seen by routed-task preparation before that preparation creates anything. Up
-and routed-task preparation then recreate a missing host mount-point directory
-for a named volume of the primary service nested under the working directory
-(the isolated `target` and `node_modules` trees). Because the missing directory
-is already drift, routed-task preparation heals it through the guarded bring-up
-rather than an idempotent `--no-recreate` apply, and a running stack is
-reconciled instead of reused: the nested mount lost the directory beneath it.
-A non-directory or symlink at that path refuses; creation never replaces a file
-and never follows a link. This is a host-side preparation step, not permission
-repair: it changes no ownership or mode.
+point must exist. Up and routed-task preparation create a missing host
+mount-point directory for a named volume of the primary service nested under
+the working directory (the isolated `target` and `node_modules` trees) before
+the apply. A non-directory or symlink at that path refuses; creation never
+replaces a file and never follows a link. This is a host-side preparation step,
+not permission repair: it changes no ownership or mode.
 
-`container status` exposes `mount_drift` with a `state` and `details` in JSON
-and text; doctor reports drift or unavailable observations read-only. Legacy
-stacks need no manual marker removal or volume deletion: their next guarded
-`up` applies the rendered mounts. No kernel API or identity migration is added.
+Permission preflight checks the declared mounts before repair, including
+explicit exec paths: a declared volume absent from a live stack cannot grant
+chown authority over the host bind beneath it. Permission target metadata uses
+the most specific declared mount and retains its repair authority. `container
+status` reports the services, their runtime state and readiness; it has no
+separate mount-drift field.
 
 ## Optional workspace mounts at creation
 
@@ -484,39 +453,40 @@ CLI's render of the same pins. It never updates a real consumer or its cache.
 Engine tests cover concurrent render/publication with admitted readers, refused
 admission preserving the desired reference, and reset preserving its sibling.
 
-A *partial* activation (the record's `applying` generation: the apply ran,
-activation did not) reconciles only against its original admission; changed
-inputs refuse until `effigy container down`. That stop renders and interpolates
-like any other teardown, never assigning a port: a generation whose ports were
-never assigned is torn down with a teardown-only interpolation value, so the
-cleanup of a first start that failed cannot fail on the unassigned-port
-refusal. `up` and `prepare` still fail closed on such a render. When the
-record holds no applied and no partial generation and the backend project owns
-no container, network or volume, `container down` is a no-op that renders
-nothing and calls no Compose. With unchanged admitted inputs, a
-missing or stopped primary does not require operator intervention: verify every
-existing project container's checkout and scope ownership, including stopped
-siblings, then recover through ordinary Compose up. Unavailable inventory or
-foreign ownership still refuses and names the owning checkout's
-`effigy container down` command. A *completed* activation is the record's
-promoted generation. When its inputs later change, or when a running stack has
-no record at all (a stack started by an earlier release whose markers did not
-prove ownership), detached `up` first proves that every project container - running or stopped, because a
-project-wide Compose up can start or recreate a stopped declared sibling -
-belongs to this checkout and scope, then retires the stale record and admits
-the current inputs with an ordinary Compose up. A container with no checkout,
-working-directory or scope label is adopted only on positive evidence: it must
-carry this project's exact full identity (listed name, project, declared
-service, running, not one-off) and bind-mount this checkout at the policy
-working directory. A stopped container is proven by its checkout and scope
-labels; an unlabelled stopped container is not proven. Absent labels are not
-proof by themselves. Anything not proven refuses with no Compose up, restart or
-publication, and names `container down` for the owner.
+Every bring-up is one apply: `compose up -d --build --remove-orphans`, with no
+recreate flag, from one render. Compose recreates exactly the services whose
+rendered configuration changed; an edit to an image, environment or mount is
+applied by the next `up`, with no `down` first. A failed or interrupted `up`
+leaves nothing to clean up: the next `up` reconciles from what is actually
+running. A live run holding the environment keeps the running stack and is
+attached to it; it is never recreated under.
+
+When the record holds no applied render and the backend project owns no
+container, network or volume, `container down` is a no-op that renders nothing
+and calls no Compose. A stop of a never-activated render still renders and
+interpolates with the teardown-only value, never assigning a port; `up` and
+`prepare` still fail closed on the unassigned-port refusal.
+
+A missing or stopped primary does not require operator intervention: verify
+every existing project container's checkout and scope ownership, including
+stopped siblings, then recover through the same apply. Unavailable inventory or
+foreign ownership still refuses and names the owning checkout's `effigy
+container down` command. A running stack with no record at all (a stack started
+by an earlier release, or after a profile restart) is proven the same way: every
+project container - running or stopped, because a project-wide Compose up can
+start or recreate a stopped declared sibling - must belong to this checkout and
+scope. A container with no checkout, working-directory or scope label is adopted
+only on positive evidence: it must carry this project's exact full identity
+(listed name, project, declared service, running, not one-off) and bind-mount
+this checkout at the policy working directory. A stopped container is proven by
+its checkout and scope labels; an unlabelled stopped container is not proven.
+Absent labels are not proof by themselves. Anything not proven refuses with no
+Compose up, restart or publication, and names `container down` for the owner.
 
 Operator ruling (Tom, 2026-10-15, v0.15.0 pre-release audit): "Restore for
 complete stacks". Detached `up` must not refuse a complete stack whose inputs
-changed or that predates the admission record; the strict no-adopt refusal stays
-only for recorded partial activations.
+changed or that predates the admission record; a changed declaration is simply
+applied.
 
 Exec readiness keeps v0.14.1's soft budget: the 2-second and 15-second windows
 decide whether another probe attempt starts, and each attempt (ownership
@@ -526,18 +496,17 @@ Colima route every call through an SSH hop. A caller-supplied deadline (bounded
 commands) stays absolute. Detached JSON
 retains closed-vocabulary managed-listener readiness observations (including HTTP
 status mismatch) without copying backend output, process names or arguments.
-Inventory, exec readiness and exposure failures retain partial/unavailable
-state and do not tear down or restart running services. Reconciliation with
-`effigy container up --detach` verifies the exact canonical source/context and
-fresh owned full-ID bindings before registering exposure. Unchanged admitted
-inputs and verified checkout/scope ownership allow Compose up when any declared
-service is missing or stopped, including the primary. A complete running stack
-reconciles exposure without Compose up. A managed owner that died with failed
+Inventory, exec readiness and exposure failures report the activation as
+unavailable and do not tear down or restart running services. Reconciliation
+with `effigy container up --detach` verifies owned full-ID bindings before
+registering exposure. Verified checkout/scope ownership allows the apply when
+any declared service is missing or stopped, including the primary. A managed
+owner that died with failed
 or incomplete settling is settled by its successor's admission (contract 052
 K5); its environment is not torn down, and the successor's bring-up reconciles
-it. Changed partial-admission inputs and unavailable ownership observations
-still refuse before Compose effects. Activation promotes the generation and
-makes an explicit `up` the persistent owner. Explicit `container down` ends
+it. Unavailable ownership observations still refuse before Compose effects.
+Activation publishes `active` and makes an explicit `up` the persistent owner.
+Explicit `container down` ends
 that ownership and keeps volumes. Attached bring-up keeps its existing cleanup
 policy, run as a stop transition after the bring-up's own runs close.
 
@@ -547,10 +516,11 @@ readiness reporting. `up` is the one stage every first creation, reuse, and
 handover passes through; managed children and `container shell` enter through
 exec without their own preparation. Owned-disposable cache and build volumes
 (Cargo registry/git, target dirs) are therefore writable by the workspace
-user however the stack was created. A preparation failure refuses closed
-with the container named: detached `up` records a partial activation
-without tearing the started scope down, attached `up` runs the ordinary
-failed bring-up cleanup, and neither retries, recreates, or adopts anything.
+user however the stack was created. A preparation failure refuses closed with
+the container named: detached `up` leaves the started scope in place and the
+next activation reconciles from what is running, while attached `up` runs the
+ordinary failed bring-up cleanup. Neither retries, recreates or adopts
+anything.
 
 Managed concurrent children share the task's readiness budget
 (`health_wait_timeout_secs`, default 60 seconds) for container exec
@@ -984,8 +954,8 @@ The handover refuses only when ending a bound managed owner or
 stopping that environment itself fails, or when another run still holds it;
 it then names the failure and leaves the environment recoverable by its own
 `up` or `down`. The stop is a journalled transition of the losing environment,
-so its next `up` reconciles it. An unchanged, ownership-verified partial or
-stopped stack restarts; unattributable state still refuses. A
+so its next `up` reconciles it. An ownership-verified stopped stack restarts;
+unattributable state still refuses. A
 managed listener claiming a domain held by a `source = container` route from
 the same checkout and scope replaces it with the listener route in the same
 locked transaction, and the container environment may keep running.
@@ -1726,8 +1696,8 @@ with a different generation or a manual/task source, keeps the foreign refusal.
 A detached `container up` that fails before or during admission reports the
 underlying refusal in both text and JSON. The JSON failure keeps the sanitized
 cause, the activation stage, the preparation step when the stage is preparation,
-and the environment/checkout identity, alongside its partial/unavailable state,
-failure kind and recovery advice. Secret-shaped `key=value` details in the cause
+and the environment/checkout identity, alongside its unavailable state, failure
+kind and recovery advice. Secret-shaped `key=value` details in the cause
 are redacted and the cause is bounded; the generic reconciliation advice never
 replaces the actionable cause.
 

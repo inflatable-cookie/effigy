@@ -120,12 +120,11 @@ pub fn normalize_compose_command_args(
 /// instead of silently reusing stale tagged images. Generated compose stacks
 /// also force recreation because some backends keep existing containers on the
 /// previous image even after a successful rebuild of the same local tag.
+/// The one apply: bring the project up without a recreate flag (`--build` is
+/// not one: it keeps a changed Dockerfile built). Compose recreates exactly
+/// the services whose rendered configuration changed.
 pub fn compose_up_args(policy: &EffectiveContainerPolicy) -> Vec<OsString> {
-    let mut args = vec!["up", "-d", "--build"];
-    if policy.compose_source == crate::EffectiveComposeSource::Generated {
-        args.push("--force-recreate");
-    }
-    compose_args(policy, args)
+    compose_args(policy, ["up", "-d", "--build", "--remove-orphans"])
 }
 
 /// Resolve the final program and arguments for a compose invocation.

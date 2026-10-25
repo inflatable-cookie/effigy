@@ -126,11 +126,6 @@ fn importer_adopts_a_running_underlay_stack_without_any_backend_call() {
         .markers
         .iter()
         .all(|marker| marker.sha256.len() == 64));
-    let markers = LegacyMarkers::read(&legacy.dir, "stack");
-    assert_eq!(
-        recorded_admission(&markers).and_then(|value| value.get("project_name")),
-        Some(&serde_json::Value::String("acowtancy-dev".into()))
-    );
     // Idempotent: a second import changes nothing, not even the generation.
     let generation = adopted.generation;
     assert_eq!(
@@ -140,7 +135,7 @@ fn importer_adopts_a_running_underlay_stack_without_any_backend_call() {
     assert_eq!(record(&ctx, &env("stack")).generation, generation);
     // The adopted stack is attachable and protected like any other.
     let mut task = holder(&ctx, "dev", 1);
-    let held = hold(&mut task, &ctx, &env("stack"), Wait::FailFast).unwrap();
+    let held = hold(&mut task, &ctx, &env("stack"), Wait::FailFast, true).unwrap();
     assert!(matches!(held.mode, AttachMode::Borrow));
     task.finish(WorkloadOutcome::Succeeded).unwrap();
     task.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();
@@ -190,7 +185,7 @@ fn importer_refuses_to_adopt_workloads_of_another_checkout_or_scope() {
         // no ensure may adopt it without the reconciler's own ownership proof.
         let mut task = holder(&ctx, "dev", 1);
         assert!(matches!(
-            hold(&mut task, &ctx, &env("stack"), Wait::FailFast),
+            hold(&mut task, &ctx, &env("stack"), Wait::FailFast, false),
             Err(HoldError::NotActive)
         ));
         task.settle(&ctx.cleanup, &mut EnvSettlement).unwrap();

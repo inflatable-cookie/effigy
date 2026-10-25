@@ -86,15 +86,6 @@ impl EnvironmentView {
                 parts.push("imported from v0.14.1 markers".to_owned());
             }
         }
-        if let Some(digest) = &record.last_applied {
-            parts.push(format!("generation {}", &digest[..digest.len().min(12)]));
-        }
-        if let Some(partial) = record.partial() {
-            parts.push(format!(
-                "partial generation {} (the next `container up` reconciles it)",
-                &partial[..partial.len().min(24)]
-            ));
-        }
         parts.push(match &record.holders {
             Observed::Verified(holders, _) if holders.is_empty() => "no holders".to_owned(),
             Observed::Verified(holders, _) => format!(
@@ -126,9 +117,7 @@ impl EnvironmentView {
                     Retention::Held => "held",
                 }),
                 "generation": record.generation.get(),
-                "last_applied": record.last_applied,
                 "desired": record.desired,
-                "partial": record.partial(),
                 "imported": record.engine().is_some_and(|engine| engine.imported.is_some()),
                 "holders": match &record.holders {
                     Observed::Verified(holders, _) => json!(holders
@@ -169,8 +158,8 @@ fn liveness(liveness: &Observed<Liveness>) -> &'static str {
 /// Why a stop of `policy` provably has nothing to stop, or `None` when the
 /// stop must run.
 ///
-/// An environment this checkout never prepared — no applied generation and no
-/// partial one on its record — whose backend project owns no container,
+/// An environment whose record never published `active` (or was stopped)
+/// and whose backend project owns no container,
 /// network or volume has nothing to tear down, and its never-assigned ports
 /// must never reach Compose: a never-prepared render carries the deliberate
 /// [`crate::policy::ports::UNASSIGNED_PORT_EXPRESSION`] refusal (effigy#286).
@@ -181,8 +170,10 @@ pub fn nothing_to_stop(repo_root: &Path, policy: &EffectiveContainerPolicy) -> O
     let never_prepared = match &view.record {
         // No checkout identity or no record row: nothing was ever recorded.
         Observed::Absent(_) => true,
+        // A record that never published `active` describes a stop that has
+        // nothing to stop; one that did may own resources Compose must see.
         Observed::Verified(record, _) => {
-            record.last_applied.is_none() && record.partial().is_none() && !record.protected()
+            record.state != EnvState::Active && !record.protected()
         }
         Observed::Unknown(_) => false,
     };
