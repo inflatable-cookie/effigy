@@ -432,3 +432,26 @@ The ruling is the location-only rule, recorded in
   a Git resolution that disagrees with the checkout's own `.git`, and a database
   this binary never bound. Custody leases and socket receipts are identified by
   inode, never by the mount-time device number.
+
+## Q-011 — v0.15 simplification before qualification
+
+Status: answered
+Asked: 2026-10-25
+Answered: 2026-10-25 by Tom
+
+A read-only audit of the rewrite (planner, HEAD fa2c39b60; full report under `~/.local/share/northstar/release-audits/effigy/complexity-audit-20261025/`) found the same pattern in kernel, gateway, containers and run engines. Effigy keeps its own parallel record of what's running, then builds guards and repair flows for when that record drifts from what the OS, Compose or the filesystem actually say. Since v0.14.1 the code grew by about 105k lines, and the week's incidents all came from that layer.
+
+Tom: "We need to get this sorted out as a matter of urgency." His rulings:
+
+1. **Simplify before qualifying.** "Yes. Obviously - why qualify a broken mess?" Feature work pauses until the simplification lanes land.
+2. **The planner's recommendations stand:**
+   - Parent-capability inheritance (`EFFIGY_PARENT_CAPABILITY` plus fd 9) is removed. This reverses that part of the Q-010 kernel design.
+   - Admission protocol v2 (effigy#325) stays as shipped but is frozen: no further growth.
+   - The containers generation journal (contract 053's generations, partial activations and admission context) is replaced with Compose's own state plus labels.
+3. **In-flight fixes finish as they are** (effigy#336, #337, #338).
+
+Rules for the simplification work:
+- A task removes a mechanism and installs its simpler replacement.
+- No new state files, records or refusal variants without a stated reason.
+- Net lines go down.
+- The planner proves each merge live on real consumer stacks (Acowtancy hybrid, inventors, a basic Effigy run, plus reboot, crash and restart, an interrupted `up`, a manifest edit and a deleted worktree) before installing it.

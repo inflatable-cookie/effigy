@@ -1437,6 +1437,15 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- A host process whose child leader exits now applies its declared `restart`
+  policy instead of failing supervision. After a leader exit, Effigy reaps the
+  leader and observes the process group as the kernel does: the exited leader is
+  never a surviving member of its own group, and an unreaped zombie is not a
+  member at all. A `restart = "on-failure"` listener is therefore replaced on
+  the port its endpoint store reserved, with its route republished and its
+  dependents refreshed, after a crash, a signal or a non-zero exit; a genuinely
+  live member other than the leader still keeps the generation unavailable.
+  `restart = "never"` settles closed with its exit recorded (effigy#336).
 - A checkout journal opens by its location, so a checkout created before a
   reboot, remount or volume renumbering keeps working afterwards: tasks, durable
   runs, `run status`, managed sessions and host processes. macOS assigns `st_dev`

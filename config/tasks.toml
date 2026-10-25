@@ -1051,6 +1051,15 @@
 "test:host-process:exit-observation" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "owned-exit-observation", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process_exit_observation_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
 ] }
+# A leader that exits is replaced per its declared policy: an `on-failure`
+# listener comes back on the port its endpoint store reserved with its route
+# republished, a `never` listener settles closed, and the exited leader is never
+# counted as a surviving member of its own group (effigy#336).
+"test:host-process:leader-exit" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { id = "leader-exit-group-observation", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process_leader_exit_observation_) | test(host_process_group_observation_) | test(host_process_signal_refuses_) | test(host_process_restart_policy_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "leader-exit-restart", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_listener_leader_exit_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
+] }
+"format:host-process:leader-exit" = { visibility = "internal", group = "Maintenance", run = "rustfmt --edition 2021 --config skip_children=true src/runner/host_process.rs crates/effigy-process/src/signal.rs crates/effigy-process/src/lib.rs tests/gateway_private.rs" }
 # Controlled transaction exclusion for the live managed-listener fixture.
 "test:gateway:route-fixture-transaction" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_dependent_replacement_route_edits_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 # Same-checkout container <-> hybrid managed-listener route handover through the
