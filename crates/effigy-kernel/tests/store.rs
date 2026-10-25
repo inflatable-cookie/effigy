@@ -1355,107 +1355,152 @@ fn store_repair_moves_the_write_ahead_log_and_index_aside() {
         .unwrap();
 }
 
+/// This thread's own CPU time: a read that busy-waits shows up here while the
+/// writer thread's work does not.
+fn thread_cpu() -> Duration {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: clock_gettime writes only into the structure this call owns.
+    assert_eq!(
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut now) },
+        0
+    );
+    Duration::new(now.tv_sec as u64, now.tv_nsec as u32)
+}
+
 #[test]
-fn store_snapshot_of_a_source_written_throughout_reports_busy_within_its_bound() {
+fn store_read_beside_a_continuous_writer_is_one_plain_read() {
     let home = home();
     let cx = effects(EffectClass::Mutate);
     let root = root(home.path());
-    let store = Store::open(&cx, &root).unwrap();
+    let mut store = Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| txn.resource(&task("live"), "task").map(|_| ()))
+        .unwrap();
     drop(store);
     let path = root.path().join(DB_NAME);
-    // Enough pages that one online backup needs many steps to cross: the
-    // writer gets a chance to restart the copy at every step boundary.
-    {
-        let connection = rusqlite::Connection::open(&path).unwrap();
+    // A sibling checkout journal under a continuous writer: it commits without
+    // pausing, exactly what a busy Queue worktree does to another run's read.
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writing = stop.clone();
+    let writer_path = path.clone();
+    let writer = std::thread::spawn(move || {
+        let connection = rusqlite::Connection::open(&writer_path).unwrap();
+        connection.busy_timeout(Duration::from_secs(5)).unwrap();
         connection
             .execute_batch(
                 "CREATE TABLE churn (id INTEGER PRIMARY KEY, blob BLOB);\
-                 INSERT INTO churn(blob) \
-                 WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 8000) \
-                 SELECT randomblob(4096) FROM c;",
+                 INSERT INTO churn(id, blob) \
+                 WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 64) \
+                 SELECT x, randomblob(4096) FROM c;",
             )
             .unwrap();
-    }
-    // A second connection writes without pause, exactly what a busy sibling
-    // checkout journal does to a run start's sweep.
-    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let writing = stop.clone();
-    let writer = std::thread::spawn(move || {
-        let connection = rusqlite::Connection::open(&path).unwrap();
-        connection.busy_timeout(Duration::from_secs(5)).unwrap();
         while !writing.load(std::sync::atomic::Ordering::Relaxed) {
             let _ = connection.execute(
-                "UPDATE churn SET blob = randomblob(4096) WHERE id = (abs(random()) % 8000) + 1",
+                "UPDATE churn SET blob = randomblob(4096) WHERE id = (abs(random()) % 64) + 1",
                 [],
             );
         }
     });
-    let mut busy = 0;
-    let mut slowest = Duration::ZERO;
-    for _ in 0..10 {
-        let cx = operation(
-            EffectClass::Observe,
-            Placement::Host,
-            Duration::from_millis(400),
-        )
-        .observe()
-        .unwrap();
-        let started = Instant::now();
-        let observed = Store::read(&cx, &root);
-        slowest = slowest.max(started.elapsed());
-        match observed {
-            // A restart bound reached: the bounded answer this test exists for.
-            Observed::Unknown(UnknownReason::Busy { .. }) => busy += 1,
-            // A restart bound not reached: the writer paused between steps and
-            // one coherent snapshot was still available.
-            Observed::Verified(_, _) => {}
-            other => panic!("unexpected live read: {other:?}"),
+    // Let the writer get going: the point of the test is a read beside it.
+    std::thread::sleep(Duration::from_millis(50));
+    let cpu = thread_cpu();
+    let started = Instant::now();
+    for _ in 0..20 {
+        match Store::read(&observe(), &root) {
+            Observed::Verified(reader, _) => {
+                assert!(reader.resource(&task("live")).verified().is_some());
+            }
+            other => panic!("a read beside a continuous writer refused: {other:?}"),
         }
     }
+    let elapsed = started.elapsed();
+    let spent = thread_cpu() - cpu;
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     writer.join().unwrap();
     assert!(
-        busy > 0,
-        "a source written throughout the copy reports busy"
+        elapsed < Duration::from_secs(1),
+        "20 reads took {elapsed:?}"
     );
     assert!(
-        slowest < Duration::from_secs(3),
-        "a snapshot took {slowest:?} against a 400 ms observation budget"
+        spent < Duration::from_millis(500),
+        "20 reads busy-waited for {spent:?} of CPU"
     );
 }
 
 #[test]
-fn store_closed_snapshot_stays_coherent_after_a_new_writer() {
+fn store_damaged_journal_reads_unknown_without_a_crash() {
     let home = home();
     let cx = effects(EffectClass::Mutate);
     let root = root(home.path());
+    Store::open(&cx, &root).unwrap();
+    std::fs::write(root.path().join(DB_NAME), b"not a store").unwrap();
+    match Store::read(&observe(), &root) {
+        Observed::Unknown(UnknownReason::StoreUnreadable(_)) => {}
+        other => panic!("a damaged journal was not reported unreadable: {other:?}"),
+    }
+    // The fixture's own hygiene proof reads the journal; a damaged one would
+    // hold its cleanup for the whole budget, so leave none behind.
+    std::fs::remove_file(root.path().join(DB_NAME)).unwrap();
+}
+
+#[test]
+fn store_read_of_a_crashed_writers_log_succeeds() {
+    let home = home();
+    let cx = effects(EffectClass::Mutate);
+    let root = root(home.path());
+    Store::open(&cx, &root).unwrap();
+    let state = root.path().to_path_buf();
+    let mut helper = support::Helper::spawn(
+        "store_helper_write_then_crash",
+        &[("EFFIGY_STORE_STRESS_HOME", home.path().to_str().unwrap())],
+    );
+    helper.expect("WAL-WRITTEN", Duration::from_secs(30));
+    assert!(helper.wait_for_exit().success());
+    let wal = state.join(format!("{DB_NAME}-wal"));
+    let shm = state.join(format!("{DB_NAME}-shm"));
+    assert!(
+        std::fs::metadata(&wal).is_ok_and(|meta| meta.len() > 0),
+        "the crashed writer left no hot log"
+    );
+    assert!(shm.exists(), "the crashed writer left no index");
+    let before = std::fs::read(&wal).unwrap();
+    // The row exists only in the log: reading the database file alone would
+    // not see it, so this proves the log was read as a log.
+    let reader = match reader(home.path()) {
+        Observed::Verified(reader, _) => reader,
+        other => panic!("a crashed writer's log was not readable: {other:?}"),
+    };
+    assert!(
+        reader.resource(&task("crashed")).verified().is_some(),
+        "the committed frames of a crashed writer were lost"
+    );
+    assert_eq!(
+        std::fs::read(&wal).unwrap(),
+        before,
+        "a read rewrote the log"
+    );
+}
+
+#[test]
+#[ignore]
+fn store_helper_write_then_crash() {
+    if !support::helper_is("store_helper_write_then_crash") {
+        return;
+    }
+    let cx = effects(EffectClass::Mutate);
+    let root = StateRoot::effects(&cx, &stress_home()).unwrap();
     let mut store = Store::open(&cx, &root).unwrap();
     store
-        .txn(&cx, |txn| txn.resource(&task("before"), "task").map(|_| ()))
+        .txn(&cx, |txn| {
+            txn.resource(&task("crashed"), "task").map(|_| ())
+        })
         .unwrap();
-    drop(store);
-    let before = snapshot(home.path());
-    let observed = reader(home.path());
-    let snapshot_reader = observed.verified().unwrap();
-    assert_eq!(snapshot(home.path()), before);
-    let mut store = Store::open(&cx, &root).unwrap();
-    store
-        .txn(&cx, |txn| txn.resource(&task("after"), "task").map(|_| ()))
-        .unwrap();
-    assert!(snapshot_reader
-        .resource(&task("before"))
-        .verified()
-        .is_some());
-    assert!(matches!(
-        snapshot_reader.resource(&task("after")),
-        Observed::Absent(_)
-    ));
-    assert!(reader(home.path())
-        .verified()
-        .unwrap()
-        .resource(&task("after"))
-        .verified()
-        .is_some());
+    println!("WAL-WRITTEN");
+    // No destructors run: this is a crashed writer, so its log stays hot.
+    std::process::exit(0);
 }
 
 #[test]

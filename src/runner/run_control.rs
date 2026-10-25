@@ -22,8 +22,8 @@ use effigy_kernel::observe::Observed;
 use super::command_context::resolve_active_command_context;
 use super::error::RunnerError;
 use super::task_engine::{
-    list_runs, lookup_run, read_run_log, request_stop, resolve_run, signal_owner, workload_process,
-    Lookup, RunRecord, StopStarted, RUN_POLL,
+    list_runs, lookup_run, read_run_log, request_stop, resolve_run, signal_owner, Lookup,
+    RunRecord, StopStarted, RUN_POLL,
 };
 
 const RUN_SCHEMA: &str = "effigy.run.v1";
@@ -387,7 +387,7 @@ pub(in crate::runner) fn follow(
         if terminal {
             fault_point("FollowSettled").map_err(FollowError::Lost)?;
         }
-        let process = match workload_process(id) {
+        let process = match record.workload_process() {
             Observed::Verified(process, _) => process,
             Observed::Absent(_) => None,
             Observed::Unknown(_) => {

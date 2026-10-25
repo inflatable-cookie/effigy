@@ -1528,10 +1528,10 @@ fn gateway_store_latest_run_tracks_generation_and_absence() {
         Observed::Absent(_)
     ));
     run.settle(&cleanup(&cx), &mut fake).unwrap();
+    drop(reader);
     let run = begin(&cx, &root, resource.clone(), 64, &mut fake);
-    // An observation is a coherent snapshot; a later observation sees the
-    // new generation without keeping a filesystem connection open.
-    assert_eq!(reader.latest_run(&resource).verified().unwrap().0, id(63));
+    // Each observation reads the store as it is: the next read sees the new
+    // generation without keeping a filesystem connection open.
     let fresh = Store::read(&observe, &root);
     assert_eq!(
         fresh

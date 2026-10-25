@@ -164,16 +164,6 @@ pub(in crate::runner) fn cleanup_context(budget: Duration) -> CleanupContext {
 static CHECKOUT_ROOTS: OnceLock<Mutex<std::collections::BTreeMap<PathBuf, &'static StateRoot>>> =
     OnceLock::new();
 
-/// In-process handles plus bounded, explicit filesystem discovery. Nothing is
-/// registered durably. Observation of one checkout never opens its peers.
-pub(super) fn known_roots(cx: &ObserveContext) -> Result<Vec<StateRoot>, RunnerError> {
-    let view = known_roots_view(cx)?;
-    for reason in view.omitted {
-        eprintln!("warning: runtime view omitted {reason}");
-    }
-    Ok(view.roots)
-}
-
 #[derive(Debug)]
 pub(super) struct RootsView {
     pub roots: Vec<StateRoot>,
