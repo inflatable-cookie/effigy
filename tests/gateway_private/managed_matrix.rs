@@ -160,8 +160,7 @@ impl<'a> Case<'a> {
         let port = proxy.address.port();
         let state = root.join("engine");
         let short_home =
-            effigy_test_support::Fixture::in_parent("e235-", std::path::Path::new("/tmp"))
-                .expect("short private home");
+            effigy_test_support::Fixture::short_home("e235-").expect("short private home");
         let home = short_home.path().canonicalize().expect("canonical home");
         fs::create_dir(&state).expect("private engine state");
         let bin = std::env::split_paths(&effects.env_path)
@@ -1162,10 +1161,12 @@ fn authority_matrix(authority: Authority) {
         Authority::ExplicitDown => {
             let down = case.run(&["container", "stack", "down"]);
             assert!(!down.status.success(), "down under a live holder");
-            // The reconciler names the live holder count and each holder's
-            // run; this fixture has exactly the one managed owner.
-            let refusal = String::from_utf8_lossy(&down.stderr);
-            assert!(refusal.contains("while 1 run holds it:"), "{refusal}");
+            // The refusal counts its holders (one live run here) and names the
+            // exact command that ends it, so the reader is never left to guess
+            // which command stops the run that blocked the transition.
+            let stderr = String::from_utf8_lossy(&down.stderr);
+            assert!(stderr.contains("while 1 run holds it"), "{stderr}");
+            assert!(stderr.contains("effigy run stop"), "{stderr}");
         }
         Authority::Reaper => {
             let dir = case

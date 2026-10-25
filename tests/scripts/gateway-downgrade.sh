@@ -1,7 +1,13 @@
 #!/bin/sh
 # Explicit proof: all VM/container/binary/state changes stay in this fresh tree.
 set -eu
-proof_dir=$(mktemp -d /tmp/g237-downgrade.XXXXXX)
+# This fixture hosts a Lima VM, and a Lima instance socket path must stay under
+# the platform's 104-byte limit, so a long platform temp directory (macOS
+# `/private/var/folders/.../T`) cannot hold it. A run's `[scratch]` TMPDIR is
+# short and is used when it fits; the platform's `/tmp` is the fallback.
+temp_root=${TMPDIR:-/tmp}
+[ ${#temp_root} -le 40 ] || temp_root=/tmp
+proof_dir=$(mktemp -d "$temp_root/g237-downgrade.XXXXXX")
 printf 'Gateway downgrade proof artifacts: %s\n' "$proof_dir"
 target/debug/examples/gateway-downgrade-proof "$proof_dir/home"
 cp tests/scripts/gateway-downgrade.py "$proof_dir/proof.py"

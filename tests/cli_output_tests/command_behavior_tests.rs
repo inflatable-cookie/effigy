@@ -4491,10 +4491,7 @@ fn cli_managed_headless_streams_workload_output_by_name() {
         .lock()
         .unwrap_or_else(|p| p.into_inner());
     // A short private HOME: the run's control socket must fit SUN_LEN.
-    let home = tempfile::Builder::new()
-        .prefix("e235o.")
-        .tempdir_in("/tmp")
-        .expect("short private home");
+    let home = effigy_test_support::short_tempdir("e235o.").expect("short private home");
     let root = home.path().join("repo");
     fs::create_dir(&root).expect("fixture repo");
     fs::write(
@@ -4550,8 +4547,7 @@ fn cli_managed_headless_lifecycle_reaches_running_on_healthy_stack() {
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     // A short private HOME: the run's control socket must fit the platform's
     // Unix socket limit.
-    let home = effigy_test_support::Fixture::in_parent("e235h.", std::path::Path::new("/tmp"))
-        .expect("short private home");
+    let home = effigy_test_support::Fixture::short_home("e235h.").expect("short private home");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::create_dir_all(root.join("app")).expect("mkdir app dir");
     fs::write(
@@ -4802,8 +4798,7 @@ fn cli_managed_headless_stop_settles_remote_exec_children_and_locks() {
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     // A short private HOME: the run's control socket must fit the platform's
     // Unix socket limit.
-    let home = effigy_test_support::Fixture::in_parent("e235s.", std::path::Path::new("/tmp"))
-        .expect("short private home");
+    let home = effigy_test_support::Fixture::short_home("e235s.").expect("short private home");
     let home_display = home.path().display();
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::write(
@@ -5203,8 +5198,7 @@ fn cli_forward_handover_waits_for_owner_whose_stop_cascade_is_slow() {
     let root = fs::canonicalize(private.path()).expect("canonical fixture root");
     // A short private HOME: the run's control socket must fit the platform's
     // Unix socket limit.
-    let home = effigy_test_support::Fixture::in_parent("e235f.", std::path::Path::new("/tmp"))
-        .expect("short private home");
+    let home = effigy_test_support::Fixture::short_home("e235f.").expect("short private home");
     fs::create_dir_all(root.join("infra/dev")).expect("mkdir compose dir");
     fs::write(
         root.join("infra/dev/docker-compose.yml"),

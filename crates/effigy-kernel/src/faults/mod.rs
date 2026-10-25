@@ -72,7 +72,15 @@ pub(super) fn next() -> Invocation {
 /// beside it holds fixture output, so Observe diffs of HOME stay exact.
 #[derive(Debug)]
 pub(super) struct Home(tempfile::TempDir);
-/// Short paths keep control sockets under the platform's `sun_path` limit.
+/// Short paths keep control sockets under the platform's `sun_path` limit, and
+/// the fault plan needs a fast, steady disk: these fixtures stay on the
+/// internal `/tmp` even when the run has a `[scratch]` volume. The sweep injects
+/// each fault at the n-th crossing of a code path, and the environment handover
+/// scenario races a concurrent attach, so the slower fsync timing of an
+/// external volume changes which crossing is reached and the planned fault is
+/// never delivered (measured: 430 s internal, 1444 s then "fault was not
+/// delivered at a deterministic point" on the Builds drive). The harness's own
+/// temp still comes from the platform, just not from `TMPDIR`.
 pub(super) fn home() -> Home {
     let dir = tempfile::Builder::new()
         .prefix("kf-")

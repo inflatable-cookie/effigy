@@ -1710,6 +1710,9 @@
 # The ratchet on Debug formatting in human-facing error construction: a rise
 # fails, and so does a fall that leaves the baseline stale.
 "qa:docs:human-error-debug" = { visibility = "internal", group = "Maintenance", run = "python3 scripts/check-human-error-debug.py" }
+# Every harness `mktemp` takes a `${TMPDIR:-/tmp}` template, so a run's scratch
+# on a configured `[scratch]` volume is where test temp actually lands.
+"qa:docs:mktemp" = { visibility = "internal", group = "Maintenance", run = "python3 scripts/check-mktemp.py" }
 
 # Human-facing feedback (effigy#312): the step-progress API, the human error
 # renderer and the kernel's readable refusals. Each covers the crate and test
@@ -1769,6 +1772,7 @@
   { task = "qa:docs:changelog" },
   { task = "qa:docs:cargo-routes" },
   { task = "qa:docs:human-error-debug" },
+  { task = "qa:docs:mktemp" },
 ] }
 
 # JSON contract QA

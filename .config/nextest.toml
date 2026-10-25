@@ -3,7 +3,11 @@
 # Focused profiles retain their stricter per-test limits.
 slow-timeout = { period = "360s", terminate-after = 1, grace-period = "2s" }
 leak-timeout = { period = "1s", result = "fail" }
-global-timeout = "2400s"
+# The suite bound admits the run-supervision matrix proofs below, which the
+# milestone path now runs with the runner reserved exactly as their owning
+# selector (`test:managed:matrix`) declares 3500s for. A tighter bound here
+# would terminate the suite for capacity the suite itself reserves.
+global-timeout = "3500s"
 # Keep failures, slow cases and leaky identities at the end of capped QA logs.
 status-level = "fail"
 final-status-level = "leak"
@@ -23,6 +27,23 @@ filter = 'binary(gateway_private) & test(managed_host_dependent_replacement_)'
 threads-required = "num-test-threads"
 slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }
 leak-timeout = { period = "1s", result = "fail" }
+
+[[profile.default.overrides]]
+# Every cell of the run-supervision matrix drives two full managed activations
+# of a fake Compose stack, so one parameterised test is nine cells and eighteen
+# activations, and each activation is observed by spawning the CLI for its
+# status projection. That is ~95s on a quiet runner, but the milestone `effigy
+# test` path schedules all 5401 tests at once, and those 5401 tests inflate each
+# status spawn severalfold: QA 897e46a9 terminated nine of the twelve matrix
+# proofs at the 360s bound after each had finished eight of its nine cells. Only
+# the matrix proofs are long enough for that inflation to reach the bound, and
+# the owning selector has always run them two at a time under its own
+# `tests/config/managed-matrix-nextest.toml`. Reserve the runner for each proof
+# here too, as the other cold-start overrides do, so the milestone path measures
+# the activations rather than the contention. The per-test bound, the leak
+# bound and every assertion stay unchanged.
+filter = 'binary(gateway_private) & test(managed_matrix_)'
+threads-required = "num-test-threads"
 
 [[profile.default.overrides]]
 # Each partial-startup case owns three service children and cold-starts their
