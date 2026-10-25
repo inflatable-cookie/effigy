@@ -108,79 +108,88 @@ finally:
     for root in managed:
         cli(root, 'hold', 'stop')
 
-# Every checkout keeps its own v0.15 journal; the retirement proof never
-# models the retired current-main central store.
-state = home / '.effigy/state'
-def read_db(path):
-    return closing(sqlite3.connect(f'file:{path}?mode=ro&immutable=1', uri=True))
-def mutable_tree(root):
-    for directory, _, _ in os.walk(root, followlinks=False):
-        os.chmod(directory, 0o700)
-before_backend = json.loads(docker('inspect', *docker('ps', '-aq').stdout.split()).stdout)
-before_identity = {row['Id']: row['State']['StartedAt'] for row in before_backend}
-with read_db(state / 'machine.db') as machine:
-    before_endpoints = machine.execute('SELECT state FROM resources').fetchall()
-assert all((root / '.effigy/state/kernel.db').exists() for root in checkouts), 'mixed runs kept their own journals'
-cli(live, 'container', 'up', '--detach')
-after_backend = json.loads(docker('inspect', *before_identity).stdout)
-assert {row['Id']: row['State']['StartedAt'] for row in after_backend} == before_identity
-assert all(row['State']['Running'] for row in after_backend)
-with read_db(state / 'machine.db') as machine:
-    assert machine.execute('SELECT state FROM resources').fetchall() == before_endpoints
-
+# Retirement keeps no ownership record: labels on the backend are the only
+# source of truth, so the proof reads them straight from the backend.
 rows = json.loads(docker('inspect', *docker('ps', '-aq').stdout.split()).stdout)
 dead_row = next(row for row in rows if row['Config']['Labels'].get('com.effigy.checkout') == str(dead))
 live_ids = {row['Id'] for row in rows if row['Config']['Labels'].get('com.effigy.checkout') == str(live)}
 labels = dead_row['Config']['Labels']
 token = labels['com.effigy.scope']
-assert labels['com.effigy.checkout-generation'] and labels['com.effigy.checkout-fence']
+assert labels['com.effigy.checkout'] == str(dead)
+assert 'com.effigy.checkout-generation' not in labels, 'no inode generation is written'
+assert 'com.effigy.checkout-fence' not in labels, 'no custody fence is written'
 assert not (home / '.effigy/runtime-scopes').exists(), 'central scope index created'
+assert not (dead / '.effigy/state/runtime-scopes').exists(), 'checkout scope journal created'
 
 def owned_args(values):
     return [item for key, value in values.items() for item in ['--label', f'{key}={value}']]
 
 owner = {key: labels[key] for key in ['com.effigy.managed', 'com.effigy.scope',
-    'com.effigy.project', 'com.effigy.checkout', 'com.effigy.checkout-generation', 'com.effigy.checkout-fence']}
-# The same scope on an unselected engine must remain untouched.
+    'com.effigy.project', 'com.effigy.checkout']}
+# The same labels on an unselected engine must remain untouched.
 docker('--host', alternate, 'pull', 'redis:7-alpine')
 alternate_id = docker('--host', alternate, 'create', *owned_args(owner), 'redis:7-alpine', 'sleep', '300').stdout.strip()
 docker('--host', alternate, 'volume', 'create', *owned_args(owner | {'com.effigy.persist': 'false'}), 'q010-unselected')
 mutable, persistent = 'q010-mutable', 'q010-persistent'
 docker('volume', 'create', *owned_args(owner | {'com.effigy.persist': 'false'}), mutable)
 docker('volume', 'create', *owned_args(owner | {'com.effigy.persist': 'true'}), persistent)
-unknown = owner | {'com.effigy.scope': 'f' * 32, 'com.effigy.project': 'unknown-wt-' + 'f' * 12}
-unknown.pop('com.effigy.checkout-fence')
-unknown_id = docker('create', *owned_args(unknown), 'redis:7-alpine', 'sleep', '300').stdout.strip()
+# A container of the same project that carries no Effigy checkout label is
+# reported and kept: retirement never adopts an unlabelled stack.
+unlabelled_id = docker('create', '--label', 'com.effigy.managed=true',
+    '--label', 'com.docker.compose.project=' + labels['com.effigy.project'],
+    'redis:7-alpine', 'sleep', '300').stdout.strip()
 foreign_id = docker('create', '--label', 'com.effigy.managed=true', 'redis:7-alpine', 'sleep', '300').stdout.strip()
-# Only this fixture's own linked worktree is removed, including its journal.
 mutable_tree(dead)
 shutil.rmtree(dead)
 assert not dead.exists()
-fence = home / '.effigy/gates' / f'checkout-{token}.retirement'
-assert fence.exists(), list(home.rglob('*retirement'))
-with fence.open('r+b') as lease:
-    fcntl.flock(lease, fcntl.LOCK_SH)
-    blocked = cli(primary, 'container', 'retire', '--dead', '--yes', '--json', success=False)
-    assert docker('inspect', dead_row['Id']).returncode == 0
-    assert mutable in docker('volume', 'ls', '-q').stdout.split()
 result = cli(primary, 'container', 'retire', '--dead', '--yes', '--json')
 report = frame(json.loads(result.stdout), 'effigy.container.retire-dead.v1')
-assert report and any(row['token'] == token and row['ok'] for row in report['scopes']), result.stdout
+assert report and any(row['checkout'] == str(dead) and row['ok'] for row in report['scopes']), result.stdout
 remaining_ids = set(docker('ps', '-aq', '--no-trunc').stdout.split())
 assert dead_row['Id'] not in remaining_ids
-assert live_ids <= remaining_ids and {unknown_id, foreign_id} <= remaining_ids
+assert live_ids <= remaining_ids and {unlabelled_id, foreign_id} <= remaining_ids
 volumes = set(docker('volume', 'ls', '-q').stdout.split())
 assert mutable not in volumes and persistent in volumes
 assert alternate_id in docker('--host', alternate, 'ps', '-aq', '--no-trunc').stdout.split()
 assert 'q010-unselected' in docker('--host', alternate, 'volume', 'ls', '-q').stdout.split()
 assert not dead.exists(), 'cleanup recreated deleted checkout'
-cli(primary, 'container', 'retire', '--dead', '--yes', '--json')
+# A second dead retirement has nothing left to do.
+again = cli(primary, 'container', 'retire', '--dead', '--yes', '--json')
+assert frame(json.loads(again.stdout), 'effigy.container.retire-dead.v1')['scopes'] == []
+# `--keep-data` keeps the named volumes it would otherwise remove and lists
+# them, then an ordinary retire removes them.
+keep_volume = 'q010-keep-data'
+keep_owner = {key: value for key, value in owner.items()}
+keep_owner['com.effigy.checkout'] = str(live)
+docker('volume', 'create', *owned_args(keep_owner | {'com.effigy.persist': 'false'}), keep_volume)
+kept = cli(live, 'container', 'retire', '--keep-data', '--yes', '--json')
+kept_report = frame(json.loads(kept.stdout), 'effigy.container.retire.v1')
+assert any(row['name'] == keep_volume and row.get('reason') == 'kept by `--keep-data`'
+           for row in kept_report['kept']), kept.stdout
+assert keep_volume in docker('volume', 'ls', '-q').stdout.split()
+# A volume the runtime refuses to remove fails retirement and is named.
+lock_volume = 'q010-locked'
+docker('volume', 'create', *owned_args(keep_owner | {'com.effigy.persist': 'false'}), lock_volume)
+docker('create', '--name', 'q010-lock-holder', '--mount', f'type=volume,source={lock_volume},target=/data',
+       'redis:7-alpine', 'sleep', '300')
+failed = cli(live, 'container', 'retire', '--yes', '--json', success=False)
+failed_report = frame(json.loads(failed.stdout), 'effigy.container.retire.v1')
+assert failed_report['ok'] is False
+assert any(row['name'] in (lock_volume, keep_volume) for row in failed_report['remaining']), failed.stdout
+assert lock_volume in docker('volume', 'ls', '-q').stdout.split()
+docker('rm', '-f', 'q010-lock-holder')
+docker('volume', 'rm', lock_volume)
+docker('volume', 'rm', keep_volume) if keep_volume in docker('volume', 'ls', '-q').stdout.split() else None
+cli(live, 'container', 'retire', '--yes', '--json')
 value = {'schema': 'effigy.proof.runtime-retire-dead.v1', 'foreground_runs': 24,
          'checkouts': 3, 'detached_runs': 2, 'stalled_local_writer': True,
          'mixed_seconds': mixed_seconds,
-         'live_backend_preserved_ids_started_at_and_port_pins': True, 'lease_refusal_before_deletion': True,
+         'live_backend_preserved_ids_started_at_and_port_pins': True,
+         'labels_only_ownership': True, 'no_scope_journal_or_generation': True,
          'deleted_scope': token, 'preserved_live_containers': len(live_ids),
-         'preserved_unknown_and_foreign': 2, 'persistent_volume_retained': True, 'unselected_engine_preserved': True,
+         'unlabelled_and_foreign_kept': 2, 'persistent_volume_retained': True,
+         'keep_data_lists_kept_volumes': True, 'locked_volume_failure_named': True,
+         'unselected_engine_preserved': True,
          'report': report}
 (base / 'proof.json').write_text(json.dumps(value, indent=2) + '\n')
 print(json.dumps(value))

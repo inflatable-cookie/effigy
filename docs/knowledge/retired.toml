@@ -1299,3 +1299,25 @@ terms = [
 ]
 paths = []
 config_keys = []
+
+[[retired]]
+id = "runtime-scope-journal"
+retired = "2026-10-25; Q-011 simplification (effigy#345)"
+replacement = "Ownership is the backend's own labels: a checkout owns a container, volume or network exactly when it carries `com.docker.compose.project=<project>` plus `com.effigy.checkout` (or `com.effigy.repo-root`) and `com.effigy.scope`. `effigy container retire` asks the backend what carries them, deletes all of it, reports what it kept on purpose and what it could not delete, and releases the checkout's gateway routes, ports and loopback addresses by checkout path. `retire --dead` groups those labels by checkout path and retires the groups whose path is missing. Nothing is recorded beside the labels, so there is no journal to keep unverified, no generation to compare and no fence to lease."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = [
+  "runtime scope journal",
+  "runtime-scope record",
+  "effigy.runtime-scope.v1",
+  "scope inventory",
+  "com.effigy.checkout-generation",
+  "com.effigy.checkout-fence",
+  "dead-retire generation comparison",
+  "legacy bind-mount ownership proof",
+  "admits_legacy_unlabelled",
+]
+paths = [
+  "crates/effigy-containers/src/runtime/scope/journal.rs",
+  "crates/effigy-containers/src/runtime/scope/",
+]
+config_keys = []

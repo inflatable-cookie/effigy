@@ -10,7 +10,6 @@
     "crates/effigy-containers/src/exec/healthcheck_timer.rs": 6,
     "crates/effigy-containers/src/exec/implementation.rs": 3,
     "crates/effigy-containers/src/exec/process.rs": 9,
-    "crates/effigy-containers/src/runtime/scope/journal.rs": 1,
     "crates/effigy-context/src/lib.rs": 1,
     "crates/effigy-gateway/src/endpoint_store/mod.rs": 1,
     "crates/effigy-gateway/src/managed_listener.rs": 1,

@@ -288,8 +288,8 @@ effigy container migrate [<NAME>] [--repo <PATH>] [--json]
 effigy container hosts [--repo <PATH>] [--json]
 effigy container <NAME> hosts [--repo <PATH>] [--json]
 effigy container scope [--repo <PATH>] [--json]
-effigy container retire [--repo <PATH>] [--scope <TOKEN>] [--yes] [--json]
-effigy container retire --dead [--yes] [--json]
+effigy container retire [--repo <PATH>] [--scope <TOKEN>] [--keep-data] [--yes] [--json]
+effigy container retire --dead [--keep-data] [--yes] [--json]
 effigy workspace [<NAME>] [--system <NAME>] [--repo <PATH>]
 ```
 
@@ -300,14 +300,16 @@ as Rust `target`, `node_modules`, `pnpm-store`, and Cargo caches. `--global`
 uses machine-level runtime inventory, including stopped project caches where the
 runtime metadata allows it. Text and JSON include reclaimable and in-use size
 totals; unknown sizes are counted instead of guessed.
-`effigy container retire` removes one scoped worker stack, including Created
-and stopped containers and disposable caches. Call it from worktree teardown,
-or retry with `--scope` after the checkout is gone. `--dead` retires every
-recorded scope whose checkout path no longer exists. It rejects
-`effigy container <NAME> retire` before record lookup or runtime inventory,
-including when `--scope` or `--yes` is also supplied. Omit the name to select
-the checkout's recorded generation, or pass `--scope <TOKEN>` to select one
-record.
+`effigy container retire` removes every container, volume and network the
+backend labels for this checkout, including Created and stopped containers, then
+releases its routes, ports and loopback addresses by checkout path. Named data
+volumes are kept and listed; `--keep-data` keeps every volume it would otherwise
+remove. Anything it could not delete is named with the runtime's error and the
+command exits non-zero. Call it from worktree teardown. `--dead` retires every
+labelled stack whose checkout path no longer exists. It rejects `effigy
+container <NAME> retire` before checkout resolution or runtime inventory,
+including when `--scope` or `--yes` is also supplied. Pass `--scope <TOKEN>` to
+restrict retirement to one scope token of this checkout.
 `effigy container volume list` inventories Effigy-managed named volumes. `--dormant`
 shows repo-scoped superseded volumes; `--global` shows machine-level volumes
 across available runtimes and `--orphans` narrows that global view to ownerless

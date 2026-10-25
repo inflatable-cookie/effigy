@@ -297,6 +297,27 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- The runtime scope journal, its `effigy.runtime-scope.v1` records, the
+  `com.effigy.checkout-generation` and `com.effigy.checkout-fence` labels, and
+  the dead-retire inode-generation comparison. `container retire` keeps no
+  record of what it owns, so there is nothing to keep "unverified", nothing to
+  delete after a successful retirement and no generation refusal after a
+  re-clone. The retire plan's Retain/Mismatch classification, which let a
+  named volume survive a "clean" retirement, is gone with it:
+  `effigy.container.retire.v1` schema version 2 reports `removed`, `kept`
+  (with a reason), `remaining` (with the runtime's error) and the released
+  gateway state; `effigy.container.retire-dead.v1` version 2 groups its
+  `scopes` by checkout path and reports unreadable paths under `unknown`.
+  `ports reclaim` and loopback collection no longer read scope records, so
+  `unreadable_checkouts` is gone from both reports.
+- The legacy bind-mount ownership proof for pre-label stacks
+  (`exec::OwnershipContext::admits_legacy_unlabelled`) and the stale-owned
+  container reconcile after a profile transition
+  (`running_stack_admits_reactivation`, `remove_stale_owned_containers`,
+  `reconcile_stale_owned_containers`, `ColimaEnsureReport::
+  reconciled_containers`). A stack from an earlier release is reported by
+  `retire` and relabelled by `down` and `up`; nothing is adopted on a mount
+  inspection that needed `working_dir`.
 - Object sealing: the 0400/0500 file and directory `chmod` in publication, the
   mode-0500 expectation on a published object root and its two fault points.
   Files and directories keep the modes they are created with.
@@ -1220,6 +1241,23 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- Container ownership is the runtime's own labels. A checkout owns a
+  container, volume or network exactly when it carries the Compose project
+  plus Effigy's checkout and scope labels, so `container retire` asks the
+  backend what carries them, deletes all of it, then releases the checkout's
+  routes, ports and loopback addresses by checkout path. Retirement reports
+  exactly what it removed, what it kept on purpose (named data volumes,
+  `--keep-data`, and resources of one of its projects that carry no Effigy
+  checkout label) and what it could not delete, naming the runtime's error and
+  exiting non-zero; it never reports a clean result while an owned resource
+  survives. `container retire --keep-data` is new. `retire --dead` groups the
+  labelled resources by checkout path and retires the groups whose path is
+  missing, so a deleted worktree's stack is retired without recording anything
+  and a re-cloned checkout at the same path needs no reconciliation.
+  `container up` decides whether a stack runs from one labelled `ps` instead of
+  inspecting each container, and a profile Effigy creates or restarts is
+  repaired by the apply that follows, with no stale-container sweep
+  (contracts 005, 052).
 - Kernel object closures are published with Effigy's ordinary private modes —
   files 0600, directories 0700 — instead of 0400 and 0500, and the post-rename
   root seal is gone. The digest already proves integrity, and a read-only tree
