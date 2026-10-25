@@ -1938,7 +1938,12 @@ fn foreground_git_replacement_keeps_directory_exclusion_until_old_custody_closes
     std::fs::create_dir(&git).unwrap();
     assert!(old.verify_custody().is_err());
     let new_id = StateRoot::filesystem_checkout(&observe, &location()).unwrap();
-    assert_ne!(old_id, new_id);
+    // effigy#337: the checkout location is the gate identity, so a Git
+    // directory replaced at the same location keeps that gate. What the
+    // replacement does change is the retained directory, which
+    // `verify_custody` refused above; the gate stays Busy until the old
+    // custody closes.
+    assert_eq!(old_id, new_id);
     let new_root = StateRoot::foreground_effects(&cx, &location()).unwrap();
     assert!(matches!(
         ForegroundRun::begin(&cx, &new_root, &invocation_at_checkout(new_id), opts(19)),
