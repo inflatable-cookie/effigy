@@ -1410,18 +1410,52 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         .join(primary_profile)
         .join("app.pid");
     fs::create_dir_all(unknown_record.parent().unwrap()).unwrap();
-    let held_record = b"unrecognized supervisor identity must be retained\n";
-    fs::write(&unknown_record, held_record).unwrap();
-    let held = run_container_cli(
+    fs::write(&unknown_record, b"leftover v0.14.1 supervisor record\n").unwrap();
+    // E1 (#341): the v0.14.1 PID-file supervisors are gone, so a leftover
+    // record is not an owner. `up` deletes it with one line and starts the
+    // listener instead of refusing the environment.
+    let recovered = run_container_cli(
         primary_checkout,
         &container_cleanup,
         &["up", "--detach", "--json"],
     );
-    assert!(
-        !held.status.success(),
-        "unknown supervisor identity must remain held"
+    let recovered_report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&recovered.stdout),
+        String::from_utf8_lossy(&recovered.stderr)
     );
-    assert_eq!(fs::read(&unknown_record).unwrap(), held_record);
+    assert_success(recovered);
+    assert!(
+        recovered_report.contains("removed a leftover v0.14.1 host-process record"),
+        "a leftover v0.14.1 host-process record is deleted with a notice: {recovered_report}"
+    );
+    assert!(
+        !unknown_record.exists(),
+        "the deleted leftover record never blocks the start: {recovered_report}"
+    );
+    let recovered_state = read_json_file(&listener_state_path(
+        primary_checkout,
+        primary_profile,
+        "app",
+    ));
+    assert_eq!(recovered_state["route_domain"], "unknown.host.test");
+    assert_eq!(
+        curl_https(https_address, &ca_path, "unknown.host.test", "/"),
+        format!("{primary_body}@{}", recovered_state["child_pid"]),
+        "the checkout that replaced its leftover record serves its listener"
+    );
+    // Leave this checkout as the rest of the proof expects it: stopped, with
+    // no published route of its own.
+    let recovered_down =
+        run_container_cli(primary_checkout, &container_cleanup, &["down", "--json"]);
+    assert_success(recovered_down);
+    assert!(
+        effigy_gateway::routes::RouteTable::load(&route_path)
+            .unwrap()
+            .lookup("unknown.host.test")
+            .is_none(),
+        "down withdraws the recovered listener route"
+    );
 
     for index in [1, 2] {
         let (checkout, profile, domain, body) = &checkouts[index];
