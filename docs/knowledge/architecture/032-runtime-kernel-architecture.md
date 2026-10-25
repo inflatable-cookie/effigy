@@ -269,12 +269,12 @@ without migrating any of them.
 `objects::Closure` computes a versioned SHA-256 digest from sorted relative
 file names and bytes without I/O. `Objects::publish_desired` runs through a
 Prepare or Mutate owner, journals `kernel:object-staging` before creating
-`staging/<run-id>/<digest>`, writes and fsyncs every file, seals descendants,
-then renames the complete directory into `objects/<digest>`. The root is sealed
-0500 after the rename (macOS needs write permission while moving `..`) and
-before publication. Files are 0400. A repeated digest verifies the existing
-closure and reuses it. All filesystem operations after the trusted root open
-are descriptor-relative.
+`staging/<run-id>/<digest>`, writes and fsyncs every file and directory, then
+renames the complete directory into `objects/<digest>`. Files stay 0600 and
+directories 0700: the digest is what proves integrity, so a tree Effigy leaves
+is removable with a plain recursive delete. A repeated digest verifies the
+existing closure and reuses it. All filesystem operations after the trusted
+root open are descriptor-relative.
 
 Publication inserts the object row and desired reference in the same Store
 transaction. `Objects::promote` compares the expected desired digest, changes
@@ -299,9 +299,9 @@ without adding the column; its next effect open performs that migration.
 `test:kernel:objects` covers deterministic closure identity, safe names,
 idempotent publication, concurrent publication and retention, promotion races,
 sibling reset, old-store read purity and guest refusal. The fault-suite object
-scenario injects at staging, file writes, sealing, rename, publication,
-reference transactions and cleanup, and checks complete old-or-new closures,
-store integrity and pure reads after recovery.
+scenario injects at staging, file writes, rename, publication, reference
+transactions and cleanup, and checks complete old-or-new closures, store
+integrity and pure reads after recovery.
 
 ## Gate and store implementation
 
