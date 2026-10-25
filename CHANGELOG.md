@@ -1745,6 +1745,14 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- A checkout carrying both `.git/effigy-runtime-scope` and
+  `.git/effigy-checkout-id` now has one identity. Every caller reads the token
+  through one reader, which prefers the runtime-scope file, so the task
+  invocation, the import seal, containers and environments agree; before, the
+  invocation read `effigy-checkout-id` first and a legal checkout rendered as
+  `run checkout identity disagrees with its imported journal`. Neither file is
+  rewritten or removed, a checkout with only `effigy-checkout-id` keeps that
+  token, and the second minting path for that file is gone (effigy#359).
 - A gateway started before any route store existed now serves the first route
   published after it, which is the normal case now that `up` and `dev` start the
   gateway themselves. Startup creates the store's own private directory before
