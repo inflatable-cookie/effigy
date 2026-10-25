@@ -10,7 +10,7 @@ use rusqlite::OptionalExtension;
 const ENGINE_RECORD_MAX: usize = 16 << 10;
 
 impl Objects {
-    /// Journal, stage and seal a closure, then atomically publish its row and
+    /// Journal, stage and publish a closure, then atomically publish its row and
     /// desired reference. A crash selects the previous or the complete new
     /// closure. Settle removes abandoned staging and unreferenced publications.
     pub fn publish_desired(run: &mut Run<'_>, closure: &Closure) -> Result<String, RunError> {
@@ -78,23 +78,6 @@ impl Objects {
             if published.closure != *closure {
                 return Err(RunError::Invalid("object collision".into()));
             }
-            // macOS requires write permission on a moved directory while it
-            // updates `..`. Seal the root after rename, before the row/ref
-            // commit makes it published; descendants are already read-only.
-            // A republisher completes this step after a pre-commit crash.
-            let dir = objects
-                .child(name.as_str(), crate::fs::Trust::Private, false)
-                .map_err(StoreError::from)?
-                .ok_or_else(|| RunError::Invalid("object vanished before sealing".into()))?;
-            crate::fault_point!(ObjectRootSealBefore)?;
-            let mode = dir.stat().map_err(StoreError::from)?.st_mode & 0o777;
-            if mode == 0o700 {
-                dir.chmod(0o500).map_err(StoreError::from)?;
-                dir.sync().map_err(StoreError::from)?;
-            } else if mode != 0o500 {
-                return Err(RunError::Invalid("object root mode is untrusted".into()));
-            }
-            crate::fault_point!(ObjectRootSealAfter)?;
             crate::fault_point!(ObjectPublishBefore)?;
             run.store.transaction(&run.cx, |txn| {
                 journal::check_fence(txn.conn(), &run.owner)?;

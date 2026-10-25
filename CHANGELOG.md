@@ -307,6 +307,9 @@ During v0.x, MINOR bumps may include breaking changes.
 - The hard foreground refusals on an unreadable journal: `check_predecessors`
   and `foreground_effects` warn and proceed instead of refusing the run, and the
   foreground memory guard's executable-identity check is gone.
+- Object sealing: the 0400/0500 file and directory `chmod` in publication, the
+  mode-0500 expectation on a published object root and its two fault points.
+  Files and directories keep the modes they are created with.
 - Withdrawn gateway domain claims and the endpoint reuse quarantine.
   `effigy gateway repair`, the domain and route parts of its dead-owner plan,
   the `effigy.gateway.loopback-reclaim.v1` JSON payload, the owner-checkout
@@ -1245,6 +1248,13 @@ During v0.x, MINOR bumps may include breaking changes.
   journal read, and a polling wait backs off by at least 250 ms. Equal keys in
   different checkouts are no longer reported as ambiguous: each belongs to its
   own journal.
+- Kernel object closures are published with Effigy's ordinary private modes —
+  files 0600, directories 0700 — instead of 0400 and 0500, and the post-rename
+  root seal is gone. The digest already proves integrity, and a read-only tree
+  broke every cleanup of the tree that held it: Effigy's own release, `rm -rf`,
+  `TempDir` drop and Oxide's slot eviction, which twice took the machine's slot
+  pool out with `unknown_accounting`. Objects an older build left read-only
+  still read, and Effigy's cleanup restores owner write before removing one.
 - `effigy container up` rewrites only what changed: one apply renders the stack
   and lets Compose recreate the services whose configuration differs, including
   when a live run holds the environment (that run keeps the stack and is

@@ -982,10 +982,10 @@ marker the owning run wrote before it settled, never from a second journal:
 
 - `keep: false` — the run succeeded — the directory is removed. The removal
   first restores owner write permission through the tree, without following a
-  symlink and without leaving it, because Effigy's own fixtures publish
-  immutable objects inside a run's temp directory (mode-0500 directories,
-  mode-0400 files) that a plain recursive removal cannot clear. A symlink, a
-  mount point inside the tree and an entry owned by another user stop the walk.
+  symlink and without leaving it, because a tree an older build published can
+  hold mode-0500 directories and mode-0400 files that a plain recursive removal
+  cannot clear. A symlink, a mount point inside the tree and an entry owned by
+  another user stop the walk.
 - Anything else is retained: for 24 hours from the conclusion the marker
   records, or from the journal's own close time when the owner died before
   concluding.
