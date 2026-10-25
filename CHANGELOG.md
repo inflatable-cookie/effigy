@@ -1657,6 +1657,11 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- A gateway started before any route store existed now serves the first route
+  published after it, which is the normal case now that `up` and `dev` start the
+  gateway themselves. Startup creates the store's own private directory before
+  installing its watcher, so a fresh machine no longer answers `503 No route
+  registered` until the gateway restarts (effigy#351).
 - A host process whose child leader exits now applies its declared `restart`
   policy instead of failing supervision. After a leader exit, Effigy reaps the
   leader and observes the process group as the kernel does: the exited leader is
