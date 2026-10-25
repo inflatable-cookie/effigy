@@ -1,449 +1,87 @@
-//! Port allocation registry for multi-project coordination.
+//! Host ports for bindings that must exist before `up`.
 //!
-//! When multiple projects use effigy containers simultaneously, port
-//! conflicts are a common problem (every project wants port 8080 and 3306).
-//! The gateway endpoint Store persists these typed allocations and imports
-//! existing `~/.effigy/ports.json` assignments without changing their ports.
-//!
-//! ## Port ranges
-//!
-//! Each project gets a base port and a range size. Services within that
-//! project are allocated ports starting from the base. For example:
-//!
-//! - Project A: base 8100, range 100 → ports 8100–8199
-//! - Project B: base 8200, range 100 → ports 8200–8299
-//!
-//! The standard service port offsets within a range:
-//!
-//! | Offset | Service     |
-//! |--------|-------------|
-//! | +0     | HTTP/nginx  |
-//! | +6     | MySQL/MariaDB (3306 → base+6) |
-//! | +32    | PostgreSQL  (5432 → base+32) |
-//! | +79    | Redis       (6379 → base+79) |
-//! | +11    | Memcached   (11211 → base+11) |
+//! Ordinary container ports are assigned by the OS or Compose
+//! (`127.0.0.1::<container-port>`) and read back after `up`. A binding whose
+//! value must be known before the stack starts — a shared data service, or a
+//! service that opted into `stable_ports` — derives its port from a hash of
+//! its owner path instead. The value is probed at `up` and never stored, so
+//! nothing has to be released.
 
-use std::collections::HashMap;
-use std::path::Path;
+use sha2::{Digest, Sha256};
 
-use serde::{Deserialize, Serialize};
+/// First port a derived binding may take. Above the ephemeral range's usual
+/// low end, below the ports a developer is likely to hard-code.
+const STABLE_BASE: u16 = 20000;
 
-use crate::error::GatewayError;
+/// How many ports above the derived candidate are probed before giving up.
+const STABLE_SPAN: u16 = 1000;
 
-mod reclaim;
-
-pub use reclaim::{
-    edit_locked, sha256_hex, PortCapacity, PortRegistryEdit, PortRegistryEditOutcome,
-};
-
-/// One missing generated-Compose binding requested by the Prepare phase.
-#[derive(Debug)]
-pub struct PortRequest {
-    pub project_name: String,
-    pub project_path: String,
-    pub service_name: String,
-    pub container_port: u16,
+/// Lowercase hex SHA-256 digest, used for render digests and evidence.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
 }
 
-/// Prepare reserves or retains host bindings through the gateway Store.
-/// Resolution remains read-only and legacy JSON becomes an import backup.
-pub fn prepare_ports(path: &Path, requests: &[PortRequest]) -> Result<(), GatewayError> {
-    crate::endpoint_store::EndpointStore::for_ports(path).reserve_ports(requests)?;
-    Ok(())
+/// A stable, unrecorded host port for `owner`'s `container_port` binding.
+///
+/// The candidate comes from the owner path and container port, so the same
+/// checkout asks for the same port every time. It is probed here: a port this
+/// process could not bind is skipped. `taken` carries the ports a caller has
+/// already handed out in this plan, so two bindings never collide.
+pub fn stable_host_port(owner: &str, container_port: u16, taken: &mut Vec<u16>) -> u16 {
+    let digest = Sha256::digest(format!("{owner}\u{0}{container_port}").as_bytes());
+    let offset = u16::from_be_bytes([digest[0], digest[1]]) % STABLE_SPAN;
+    let start = STABLE_BASE + offset;
+    for step in 0..STABLE_SPAN {
+        let candidate = STABLE_BASE + (start - STABLE_BASE + step) % STABLE_SPAN;
+        if taken.contains(&candidate) || !port_is_free(candidate) {
+            continue;
+        }
+        taken.push(candidate);
+        return candidate;
+    }
+    // Every probed port was busy: fall back to the highest free port the OS
+    // gives us inside the same span, so `up` still succeeds.
+    for candidate in (STABLE_BASE..STABLE_BASE + STABLE_SPAN).rev() {
+        if !taken.contains(&candidate) && port_is_free(candidate) {
+            taken.push(candidate);
+            return candidate;
+        }
+    }
+    STABLE_BASE
 }
 
-/// Default port range start for auto-allocation.
-const DEFAULT_BASE: u16 = 8100;
-
-/// Default range size per project.
-const DEFAULT_RANGE: u16 = 100;
-
-/// One past the highest valid TCP/UDP port.
-const MAX_PORT_EXCLUSIVE: u32 = u16::MAX as u32 + 1;
-
-/// Standard service port offsets within a project's allocated range.
-#[derive(Debug, Clone, Copy)]
-pub struct ServicePortOffsets;
-
-impl ServicePortOffsets {
-    /// HTTP (nginx) — offset 0 from base.
-    pub const HTTP: u16 = 0;
-    /// MySQL/MariaDB — offset 6 (like 3306 → X06).
-    pub const MYSQL: u16 = 6;
-    /// PostgreSQL — offset 32 (like 5432 → X32).
-    pub const POSTGRES: u16 = 32;
-    /// Redis — offset 79 (like 6379 → X79).
-    pub const REDIS: u16 = 79;
-    /// Memcached — offset 11 (like 11211 → X11).
-    pub const MEMCACHED: u16 = 11;
+/// Whether this process can bind `127.0.0.1:port`.
+pub fn port_is_free(port: u16) -> bool {
+    std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).is_ok()
 }
 
-/// A port allocation for a single project.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PortAllocation {
-    /// Base port for this project.
-    pub base: u16,
-
-    /// Number of ports allocated (e.g., 100).
-    pub range: u16,
-
-    /// Absolute path to the project directory.
-    pub project: String,
-
-    /// Stable service+container-port to host-port assignments within this range.
-    #[serde(default)]
-    pub assigned_ports: HashMap<String, u16>,
-}
-
-impl PortAllocation {
-    fn end_u32(&self) -> u32 {
-        u32::from(self.base) + u32::from(self.range)
+/// The process holding a listening `127.0.0.1:port`, for a collision message.
+/// Best effort: an unreadable or absent inventory yields `None` and the
+/// caller still reports the port.
+pub fn port_holder(port: u16) -> Option<String> {
+    let output = std::process::Command::new("lsof")
+        .args(["-nP", "-iTCP", &format!(":{port}"), "-sTCP:LISTEN", "-Fcp"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
     }
-
-    /// Get the allocated port for a service by offset.
-    pub fn port_for(&self, offset: u16) -> u16 {
-        self.base.saturating_add(offset)
-    }
-
-    /// The last port in this allocation's range (exclusive).
-    pub fn end(&self) -> u16 {
-        self.end_u32().min(u32::from(u16::MAX)) as u16
-    }
-
-    /// Check if a port falls within this allocation.
-    pub fn contains(&self, port: u16) -> bool {
-        let port = u32::from(port);
-        port >= u32::from(self.base) && port < self.end_u32()
-    }
-
-    /// Check if this allocation overlaps with another.
-    pub fn overlaps(&self, other: &PortAllocation) -> bool {
-        u32::from(self.base) < other.end_u32() && u32::from(other.base) < self.end_u32()
-    }
-}
-
-/// The port allocation registry — persisted to `~/.effigy/ports.json`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PortRegistry {
-    /// Allocations keyed by project name.
-    pub allocations: HashMap<String, PortAllocation>,
-}
-
-impl PortRegistry {
-    fn assigned_port_key(service_name: &str, container_port: u16) -> String {
-        format!("{service_name}:{container_port}")
-    }
-
-    fn legacy_port_key(container_port: u16) -> String {
-        container_port.to_string()
-    }
-
-    /// Create an empty registry.
-    pub fn new() -> Self {
-        Self {
-            allocations: HashMap::new(),
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut command = None;
+    let mut pid = None;
+    for line in text.lines() {
+        if let Some(value) = line.strip_prefix('c') {
+            command = Some(value.to_owned());
+        } else if let Some(value) = line.strip_prefix('p') {
+            pid = Some(value.to_owned());
         }
     }
-
-    /// Load the registry from a JSON file.
-    ///
-    /// Returns an empty registry if the file doesn't exist.
-    pub fn load(path: &Path) -> Result<Self, GatewayError> {
-        crate::endpoint_store::EndpointStore::for_ports(path)
-            .read_compatible()?
-            .ports()
-    }
-
-    /// Get the allocation for a project, if registered.
-    pub fn get(&self, project_name: &str) -> Option<&PortAllocation> {
-        self.allocations.get(project_name)
-    }
-
-    /// Allocate a port range for a project.
-    ///
-    /// If the project already has an allocation, returns it unchanged.
-    /// Otherwise, finds the next available base port and allocates a range.
-    pub fn allocate(
-        &mut self,
-        project_name: &str,
-        project_path: &str,
-    ) -> Result<&PortAllocation, GatewayError> {
-        if self.allocations.contains_key(project_name) {
-            return Ok(&self.allocations[project_name]);
-        }
-
-        let base =
-            self.next_available_base(DEFAULT_RANGE)
-                .ok_or(GatewayError::PortRegistryExhausted {
-                    range: DEFAULT_RANGE,
-                })?;
-        let alloc = PortAllocation {
-            base,
-            range: DEFAULT_RANGE,
-            project: project_path.to_string(),
-            assigned_ports: HashMap::new(),
-        };
-        self.allocations.insert(project_name.to_string(), alloc);
-        Ok(&self.allocations[project_name])
-    }
-
-    /// Allocate with a specific base port.
-    ///
-    /// Returns an error if the range conflicts with an existing allocation.
-    pub fn allocate_at(
-        &mut self,
-        project_name: &str,
-        project_path: &str,
-        base: u16,
-        range: u16,
-    ) -> Result<&PortAllocation, GatewayError> {
-        let proposed = PortAllocation {
-            base,
-            range,
-            project: project_path.to_string(),
-            assigned_ports: HashMap::new(),
-        };
-
-        // Check for conflicts.
-        for (name, existing) in &self.allocations {
-            if name == project_name {
-                continue;
-            }
-            if proposed.overlaps(existing) {
-                return Err(GatewayError::PortConflict {
-                    project: project_name.to_string(),
-                    conflicting_project: name.clone(),
-                    base,
-                    range,
-                });
-            }
-        }
-
-        self.allocations.insert(project_name.to_string(), proposed);
-        Ok(&self.allocations[project_name])
-    }
-
-    /// Remove a project's allocation.
-    pub fn deallocate(&mut self, project_name: &str) -> Option<PortAllocation> {
-        self.allocations.remove(project_name)
-    }
-
-    /// Find the next available base port that doesn't conflict with any
-    /// existing allocation.
-    fn next_available_base(&self, range: u16) -> Option<u16> {
-        let range = u32::from(range);
-        let fits = |base: u32| {
-            base.checked_add(range)
-                .is_some_and(|end| end <= MAX_PORT_EXCLUSIVE)
-        };
-
-        if self.allocations.is_empty() {
-            return fits(u32::from(DEFAULT_BASE)).then_some(DEFAULT_BASE);
-        }
-
-        // Collect all allocated ranges and sort by base.
-        let mut ranges: Vec<(u32, u32)> = self
-            .allocations
-            .values()
-            .map(|a| (u32::from(a.base), a.end_u32().min(MAX_PORT_EXCLUSIVE)))
-            .collect();
-        ranges.sort_by_key(|&(base, _)| base);
-
-        // Try to fit before the first range.
-        let default_base = u32::from(DEFAULT_BASE);
-        if fits(default_base) && ranges[0].0 >= default_base + range {
-            return Some(DEFAULT_BASE);
-        }
-
-        // Try to fit between ranges.
-        for window in ranges.windows(2) {
-            let gap_start = window[0].1;
-            let gap_end = window[1].0;
-            if gap_end.saturating_sub(gap_start) >= range && fits(gap_start) {
-                return u16::try_from(gap_start).ok();
-            }
-        }
-
-        // Fit after the last range.
-        let candidate = ranges.last().unwrap().1;
-        if fits(candidate) {
-            return u16::try_from(candidate).ok();
-        }
-
-        None
-    }
-
-    /// Generate a port mapping table for a project.
-    ///
-    /// Returns a map of service type → allocated host port.
-    pub fn port_map(&self, project_name: &str) -> Option<PortMap> {
-        self.get(project_name).map(|alloc| PortMap {
-            http: alloc
-                .assigned_ports
-                .get("80")
-                .copied()
-                .unwrap_or_else(|| alloc.port_for(ServicePortOffsets::HTTP)),
-            mysql: alloc
-                .assigned_ports
-                .get("3306")
-                .copied()
-                .unwrap_or_else(|| alloc.port_for(ServicePortOffsets::MYSQL)),
-            postgres: alloc
-                .assigned_ports
-                .get("5432")
-                .copied()
-                .unwrap_or_else(|| alloc.port_for(ServicePortOffsets::POSTGRES)),
-            redis: alloc
-                .assigned_ports
-                .get("6379")
-                .copied()
-                .unwrap_or_else(|| alloc.port_for(ServicePortOffsets::REDIS)),
-            memcached: alloc
-                .assigned_ports
-                .get("11211")
-                .copied()
-                .unwrap_or_else(|| alloc.port_for(ServicePortOffsets::MEMCACHED)),
-            base: alloc.base,
-        })
-    }
-
-    /// Read an existing binding without allocating, migrating legacy keys or
-    /// rewriting the registry. Absence stays unassigned until Prepare.
-    pub fn assigned_port(
-        &self,
-        project_name: &str,
-        service_name: &str,
-        container_port: u16,
-    ) -> Option<u16> {
-        let allocation = self.allocations.get(project_name)?;
-        allocation
-            .assigned_ports
-            .get(&Self::assigned_port_key(service_name, container_port))
-            .or_else(|| {
-                allocation
-                    .assigned_ports
-                    .get(&Self::legacy_port_key(container_port))
-            })
-            .copied()
-    }
-
-    /// Resolve a stable host port for one exposed container port.
-    pub fn assign_port(
-        &mut self,
-        project_name: &str,
-        project_path: &str,
-        service_name: &str,
-        container_port: u16,
-    ) -> Result<u16, GatewayError> {
-        if !self.allocations.contains_key(project_name) {
-            self.allocate(project_name, project_path)?;
-        }
-        let allocation = self
-            .allocations
-            .get_mut(project_name)
-            .expect("allocation should exist");
-
-        let binding_key = Self::assigned_port_key(service_name, container_port);
-        if let Some(host_port) = allocation.assigned_ports.get(&binding_key) {
-            return Ok(*host_port);
-        }
-
-        let legacy_key = Self::legacy_port_key(container_port);
-        if let Some(host_port) = allocation.assigned_ports.remove(&legacy_key) {
-            allocation
-                .assigned_ports
-                .insert(binding_key.clone(), host_port);
-            return Ok(host_port);
-        }
-
-        if let Some(offset) = preferred_offset_for(container_port) {
-            if let Some(host_port) = allocation
-                .base
-                .checked_add(offset)
-                .filter(|host_port| u32::from(*host_port) < allocation.end_u32())
-            {
-                if !allocation
-                    .assigned_ports
-                    .values()
-                    .any(|value| *value == host_port)
-                {
-                    allocation.assigned_ports.insert(binding_key, host_port);
-                    return Ok(host_port);
-                }
-            }
-        }
-
-        let host_port = (u32::from(allocation.base)..allocation.end_u32().min(MAX_PORT_EXCLUSIVE))
-            .filter_map(|port| u16::try_from(port).ok())
-            .find(|port| {
-                !allocation
-                    .assigned_ports
-                    .values()
-                    .any(|value| value == port)
-            })
-            .ok_or_else(|| GatewayError::RouteTableWriteError {
-                path: Path::new("~/.effigy/ports.json").to_path_buf(),
-                reason: format!(
-                    "port registry: project `{project_name}` exhausted allocated range {}..{}",
-                    allocation.base,
-                    allocation.end()
-                ),
-            })?;
-        allocation.assigned_ports.insert(binding_key, host_port);
-        Ok(host_port)
-    }
-
-    /// Number of registered allocations.
-    pub fn len(&self) -> usize {
-        self.allocations.len()
-    }
-
-    /// Whether the registry is empty.
-    pub fn is_empty(&self) -> bool {
-        self.allocations.is_empty()
-    }
-}
-
-impl Default for PortRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Standard port assignments for a project.
-#[derive(Debug, Clone, Copy)]
-pub struct PortMap {
-    /// HTTP port.
-    pub http: u16,
-    /// MySQL/MariaDB port.
-    pub mysql: u16,
-    /// PostgreSQL port.
-    pub postgres: u16,
-    /// Redis port.
-    pub redis: u16,
-    /// Memcached port.
-    pub memcached: u16,
-    /// Base port for custom services.
-    pub base: u16,
-}
-
-fn preferred_offset_for(container_port: u16) -> Option<u16> {
-    match container_port {
-        80 => Some(ServicePortOffsets::HTTP),
-        1025 => Some(26),
-        3000 => Some(30),
-        3306 => Some(ServicePortOffsets::MYSQL),
-        5432 => Some(ServicePortOffsets::POSTGRES),
-        6379 => Some(ServicePortOffsets::REDIS),
-        8025 => Some(25),
-        9000 => Some(40),
-        9001 => Some(41),
-        9200 => Some(20),
-        11211 => Some(ServicePortOffsets::MEMCACHED),
+    match (command, pid) {
+        (Some(command), Some(pid)) => Some(format!("{command} (pid {pid})")),
+        (Some(command), None) => Some(command),
         _ => None,
     }
 }
-
-#[cfg(test)]
-#[path = "ports/tests.rs"]
-mod tests;

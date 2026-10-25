@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::policy::hosts::EffectiveHostMap;
 use crate::policy::model::{EffectiveComposeSource, EffectiveContainerPolicy};
-use crate::runtime::port_recovery::PathState;
 use effigy_gateway::loopback::project_loopback_identity;
 
 pub const SCOPE_LABEL: &str = "com.effigy.scope";
@@ -270,53 +269,6 @@ impl ScopeObservations {
         self.unreadable.insert(checkout.into(), reason.into());
         self
     }
-}
-
-/// Read every owner checkout's own records within one bound.
-///
-/// `roots` are the owner checkout paths the ownership stores name, and
-/// `probe` classifies each one. A missing checkout has no records and proves
-/// absence through its own path state; a checkout that exists but cannot be
-/// read is recorded against its own path (including an unprovable path state,
-/// which never reads as an empty record set). Only a failure about the machine
-/// as a whole (a foreign home, too many roots, or the time budget) is an
-/// `Err`, which still holds every entry.
-pub fn observe_checkouts(
-    roots: impl IntoIterator<Item = String>,
-    root_label: &str,
-    probe: impl Fn(&Path) -> PathState,
-) -> Result<ScopeObservations, String> {
-    let roots = roots.into_iter().collect::<std::collections::BTreeSet<_>>();
-    if roots.len() > 1000 {
-        return Err(format!(
-            "checkout journal discovery exceeds 1000 {root_label} roots"
-        ));
-    }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    let mut observations = ScopeObservations::default();
-    for root in roots {
-        if std::time::Instant::now() >= deadline {
-            return Err("checkout journal discovery exceeded its five-second budget".into());
-        }
-        match probe(Path::new(&root)) {
-            PathState::Present => match load_for_checkout(Path::new(&root)) {
-                Ok(records) => observations.records.extend(records),
-                Err(error) => {
-                    observations.unreadable.insert(root, error.to_string());
-                }
-            },
-            PathState::Missing => {}
-            PathState::Unknown(error) => {
-                observations.unreadable.insert(root, error);
-            }
-        }
-    }
-    observations.records.sort_by(|left, right| {
-        left.checkout
-            .cmp(&right.checkout)
-            .then_with(|| left.token.cmp(&right.token))
-    });
-    Ok(observations)
 }
 
 mod journal;

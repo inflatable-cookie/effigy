@@ -7,105 +7,83 @@ use serde_json::{json, Value};
 
 use super::error;
 use crate::loopback::LoopbackRegistry;
-use crate::ports::PortRegistry;
 use crate::routes::RouteTable;
 use crate::GatewayError;
 
 pub(super) type ClaimSet = BTreeMap<String, (ResourceId, Value)>;
 
-/// Explicit cutover; ordinary edits never write the legacy registries.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum Authority {
-    #[default]
-    Store,
-    Exporting,
-    Legacy,
-}
-
-/// One committed endpoint revision. Raw documents preserve unknown root and
-/// entry fields during import and subsequent edits, including existing pins.
+/// One committed endpoint revision: the gateway's whole record of routes and
+/// loopback aliases. Host ports are never recorded here; the OS or Compose
+/// assigns them and the route names the port that is actually publishing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EndpointSnapshot {
     schema: u32,
-    #[serde(default)]
-    pub(super) authority: Authority,
     pub revision: u64,
     documents: BTreeMap<String, Value>,
-    pub imported_sha256: BTreeMap<String, String>,
-    /// Pre-0.15 store records kept withdrawn domain owners and released
-    /// endpoints. Both are read and dropped; the route table is the whole
-    /// claim on a domain.
+    /// Pre-0.15 fields kept decodable so one ordinary write can drop them.
+    /// Nothing reads any of them: the route table is the whole claim on a
+    /// domain, and port ranges and quarantine are gone.
+    #[serde(rename = "authority", default, skip_serializing)]
+    legacy_authority: Value,
+    #[serde(rename = "imported_sha256", default, skip_serializing)]
+    legacy_imported: Value,
     #[serde(rename = "domains", default, skip_serializing)]
     legacy_domains: Value,
     #[serde(rename = "quarantined", default, skip_serializing)]
     legacy_quarantined: Value,
 }
-impl EndpointSnapshot {
-    pub(super) fn imported(
-        mut documents: BTreeMap<String, Value>,
-        hashes: BTreeMap<String, String>,
-    ) -> Result<Self, GatewayError> {
-        documents
-            .entry("routes".into())
-            .or_insert_with(|| json!({"routes":{}}));
-        documents
-            .entry("loopback".into())
-            .or_insert_with(|| json!({"assignments":{}}));
-        documents
-            .entry("ports".into())
-            .or_insert_with(|| json!({"allocations":{}}));
-        let snapshot = Self {
+
+impl Default for EndpointSnapshot {
+    fn default() -> Self {
+        let mut documents = BTreeMap::new();
+        documents.insert("routes".into(), json!({"routes":{}}));
+        documents.insert("loopback".into(), json!({"assignments":{}}));
+        Self {
             schema: 1,
-            authority: Authority::Store,
             revision: 0,
             documents,
-            imported_sha256: hashes,
+            legacy_authority: Value::Null,
+            legacy_imported: Value::Null,
             legacy_domains: Value::Null,
             legacy_quarantined: Value::Null,
-        };
-        snapshot.claims()?;
-        Ok(snapshot)
+        }
     }
+}
+
+impl EndpointSnapshot {
     pub(super) fn decode(state: &str) -> Result<Self, GatewayError> {
         Self::from_value(serde_json::from_str(state).map_err(error)?)
     }
+
     pub(super) fn from_value(value: Value) -> Result<Self, GatewayError> {
-        let snapshot: Self = serde_json::from_value(value).map_err(error)?;
+        let mut snapshot: Self = serde_json::from_value(value).map_err(error)?;
         if snapshot.schema != 1 {
             return Err(error("unsupported endpoint store schema; update Effigy"));
         }
+        // The 100-port ranges are gone. A record written by an older build
+        // keeps its document until the next write drops it.
+        snapshot.documents.remove("ports");
         Ok(snapshot)
     }
-    pub(super) fn stamp_legacy_routes(&mut self) -> Result<(), GatewayError> {
-        self.documents
-            .get_mut("routes")
-            .and_then(Value::as_object_mut)
-            .ok_or_else(|| error("route export is not an object"))?
-            .insert(
-                "_managed_by".into(),
-                json!(crate::routes::ROUTE_TABLE_MANAGED_MARKER),
-            );
-        Ok(())
-    }
+
     pub fn document(&self, family: &str) -> Result<&Value, GatewayError> {
         self.documents
             .get(family)
             .ok_or_else(|| error(format!("missing endpoint document {family}")))
     }
+
     pub fn routes(&self) -> Result<RouteTable, GatewayError> {
         let mut table: RouteTable =
             serde_json::from_value(self.document("routes")?.clone()).map_err(error)?;
         table.revision = self.revision;
         Ok(table)
     }
+
     pub fn loopback(&self) -> Result<LoopbackRegistry, GatewayError> {
         serde_json::from_value(self.document("loopback")?.clone()).map_err(error)
     }
-    pub fn ports(&self) -> Result<PortRegistry, GatewayError> {
-        serde_json::from_value(self.document("ports")?.clone()).map_err(error)
-    }
+
     /// Last writer wins for the same checkout path. A different checkout path
     /// takes the domain over only when the recorded owner is dead: its checkout
     /// path is gone, or its target is not listening.
@@ -151,6 +129,7 @@ impl EndpointSnapshot {
             ],
         )
     }
+
     pub fn set_loopback(&mut self, registry: &LoopbackRegistry) -> Result<(), GatewayError> {
         self.replace(
             "loopback",
@@ -159,14 +138,7 @@ impl EndpointSnapshot {
             &["ip", "scope"],
         )
     }
-    pub fn set_ports(&mut self, registry: &PortRegistry) -> Result<(), GatewayError> {
-        self.replace(
-            "ports",
-            "allocations",
-            serde_json::to_value(registry).map_err(error)?,
-            &["base", "range", "project", "assigned_ports"],
-        )
-    }
+
     fn replace(
         &mut self,
         family: &str,
@@ -179,7 +151,6 @@ impl EndpointSnapshot {
         let normalized = match family {
             "routes" => serde_json::to_value(self.routes()?),
             "loopback" => serde_json::to_value(self.loopback()?),
-            "ports" => serde_json::to_value(self.ports()?),
             _ => return Err(error("unknown endpoint family")),
         }
         .map_err(error)?;
@@ -216,12 +187,15 @@ impl EndpointSnapshot {
         root.insert(key.into(), Value::Object(entries));
         Ok(())
     }
+
     pub(super) fn claims(&self) -> Result<ClaimSet, GatewayError> {
         let mut claims = ClaimSet::new();
         let mut assigned = BTreeMap::new();
         for (identity, assignment) in self.loopback()?.assignments {
             if assigned.insert(assignment.ip, identity.clone()).is_some() {
-                return Err(error("two loopback assignments own the same IP; release the conflicting owner explicitly"));
+                return Err(error(
+                    "two loopback assignments own the same IP; release the conflicting owner",
+                ));
             }
             add(
                 &mut claims,
@@ -230,29 +204,6 @@ impl EndpointSnapshot {
                 &assignment.scope,
                 &identity,
             )?;
-        }
-        for (name, allocation) in self.ports()?.allocations {
-            let end = u32::from(allocation.base) + u32::from(allocation.range);
-            if allocation.range == 0
-                || end > 65536
-                || allocation
-                    .assigned_ports
-                    .values()
-                    .any(|p| u32::from(*p) < u32::from(allocation.base) || u32::from(*p) >= end)
-            {
-                return Err(error(
-                    "invalid imported port range or pin; repair the source registry before import",
-                ));
-            }
-            for port in u32::from(allocation.base)..end {
-                add(
-                    &mut claims,
-                    EndpointKind::Port,
-                    &port.to_string(),
-                    &format!("ports:{name}:{}", allocation.project),
-                    &name,
-                )?;
-            }
         }
         let mut listeners = BTreeMap::new();
         for (key, route) in self.routes()?.routes {
@@ -294,19 +245,12 @@ impl EndpointSnapshot {
                     &route.project,
                     &route.domain,
                 )?;
-            } else if let Some(port) = route.tcp_port {
-                add(
-                    &mut claims,
-                    EndpointKind::Port,
-                    &port.to_string(),
-                    &route.project,
-                    &route.domain,
-                )?;
             }
         }
         Ok(claims)
     }
 }
+
 fn add(
     claims: &mut ClaimSet,
     kind: EndpointKind,
@@ -319,7 +263,7 @@ fn add(
     if let Some((_, details)) = claims.get_mut(&name) {
         if details["owner"].as_str() != Some(owner) || kind == EndpointKind::Domain {
             return Err(error(format!(
-                "conflicting endpoint owners for {key}; explicit release is required"
+                "conflicting endpoint owners for {key}; the route table holds one owner"
             )));
         }
         let members = details["members"]

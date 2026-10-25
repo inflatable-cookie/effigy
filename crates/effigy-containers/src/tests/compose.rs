@@ -1,6 +1,5 @@
 use super::*;
 #[cfg(test)]
-use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 use std::process::Command;
 
 fn run_git(repo: &Path, args: &[&str]) {
@@ -168,31 +167,6 @@ fn assert_linked_worktree_git_layout(primary: &Path, checkout: &Path, name: &str
     );
 }
 
-fn fixture_inventory(
-    policies: &[crate::EffectiveContainerPolicy],
-) -> crate::exec::RunningComposeContainerInventory {
-    // Rows stay inside this temporary repository; the linked policy proof
-    // never discovers profiles from the host runtime.
-    crate::exec::RunningComposeContainerInventory {
-        rows: policies
-            .iter()
-            .map(|policy| crate::exec::RunningComposeContainerProfiled {
-                profile: "fixture".to_owned(),
-                row: crate::exec::RunningComposeContainer {
-                    container_name: format!("{}-app-1", policy.project_name),
-                    status: "Up 10 seconds".to_owned(),
-                    ports: Vec::new(),
-                    project_name: Some(policy.project_name.clone()),
-                    working_dir: Some(policy.repo_root.display().to_string()),
-                    service: Some("app".to_owned()),
-                    oneoff: false,
-                },
-            })
-            .collect(),
-        failures: Vec::new(),
-    }
-}
-
 fn managed_volume_names(policy: &crate::EffectiveContainerPolicy) -> Vec<String> {
     policy
         .managed_volumes
@@ -255,7 +229,9 @@ host_ports = ["41001:41001"]
             policies.push(policy);
         }
         assert_ne!(policies[0].project_name, policies[1].project_name);
-        assert_ne!(policies[0].declared_ports, policies[1].declared_ports);
+        // Both checkouts ask Compose for an OS-assigned port; what keeps them
+        // apart is the project name and the alias, not a shared port number.
+        assert_eq!(policies[0].declared_ports, policies[1].declared_ports);
         assert_ne!(
             managed_volume_names(&policies[0]),
             managed_volume_names(&policies[1])
@@ -298,14 +274,7 @@ catalog = "workspace-rust-bun"
         let mut preceding_policies = vec![primary_policy.clone()];
         for (name, checkout) in ["one", "two"].into_iter().zip(&checkouts) {
             assert_linked_worktree_git_layout(&primary, checkout, name);
-            let (policy, inventory_calls) = crate::policy_support::with_test_loopback_inventory(
-                fixture_inventory(&preceding_policies),
-                || load_prepared_policy(checkout, None).unwrap(),
-            );
-            assert_eq!(
-                inventory_calls, 0,
-                "persistent loopback claims never consult runtime inventory for reclamation"
-            );
+            let policy = load_prepared_policy(checkout, None).unwrap();
             assert_eq!(policy.dns_routes[0].declared(), "app.test");
             assert_ne!(policy.dns_routes[0].domain, "app.test");
             assert!(policy.dns_routes[0].domain.contains("-w"));
@@ -323,14 +292,7 @@ catalog = "workspace-rust-bun"
         assert_ne!(effective[0], effective[1]);
         assert_ne!(effective[0], "app.test");
 
-        let (again, inventory_calls) = crate::policy_support::with_test_loopback_inventory(
-            fixture_inventory(&preceding_policies),
-            || load_container_policy(&checkouts[0], None).unwrap(),
-        );
-        assert_eq!(
-            inventory_calls, 0,
-            "stable identities must not rediscover inventory"
-        );
+        let again = load_container_policy(&checkouts[0], None).unwrap();
         assert_eq!(again.project_name, preceding_policies[1].project_name);
         assert_eq!(again.dns_routes[0].domain, effective[0]);
     });
@@ -376,10 +338,7 @@ tls = true
         let mut preceding_policies = vec![primary_policy];
         let mut effective = Vec::new();
         for checkout in &checkouts {
-            let (policy, _) = crate::policy_support::with_test_loopback_inventory(
-                fixture_inventory(&preceding_policies),
-                || load_container_policy(checkout, None).unwrap(),
-            );
+            let policy = load_container_policy(checkout, None).unwrap();
             let domain = listener_route(&policy);
             assert!(domain.starts_with("api.acme-w"), "got `{domain}`");
             assert!(domain.ends_with(".test"), "got `{domain}`");
@@ -388,10 +347,7 @@ tls = true
         }
         assert_ne!(effective[0], effective[1]);
 
-        let (again, _) = crate::policy_support::with_test_loopback_inventory(
-            fixture_inventory(&preceding_policies),
-            || load_container_policy(&checkouts[0], None).unwrap(),
-        );
+        let again = load_container_policy(&checkouts[0], None).unwrap();
         assert_eq!(
             listener_route(&again),
             effective[0],
@@ -452,10 +408,7 @@ tls = true
             &["config", "--local", "effigy.runtimeScope", "ephemeral"],
         );
         effigy_core::worktree_scope::prepare_checkout_token(&clone).unwrap();
-        let (clone_policy, _) = crate::policy_support::with_test_loopback_inventory(
-            fixture_inventory(&preceding_policies),
-            || load_container_policy(&clone, None).unwrap(),
-        );
+        let clone_policy = load_container_policy(&clone, None).unwrap();
         let clone_listener = listener_route(&clone_policy);
         assert!(
             clone_listener.starts_with("api.acme-w"),
@@ -467,10 +420,7 @@ tls = true
         );
         preceding_policies.push(clone_policy);
 
-        let (worktree, _) = crate::policy_support::with_test_loopback_inventory(
-            fixture_inventory(&preceding_policies),
-            || load_container_policy(&checkouts[0], None).unwrap(),
-        );
+        let worktree = load_container_policy(&checkouts[0], None).unwrap();
         let worktree_listener = listener_route(&worktree);
         assert!(worktree_listener.starts_with("api.acme-w"));
         assert_ne!(worktree_listener, clone_listener);
@@ -486,10 +436,7 @@ tls = true
             manifest.replace("domain = \"api.acme.test\"", "domain = \"web.acme.test\""),
         )
         .unwrap();
-        let (conflict, _) = crate::policy_support::with_test_loopback_inventory(
-            fixture_inventory(&preceding_policies),
-            || load_container_policy(&checkouts[1], None),
-        );
+        let conflict = load_container_policy(&checkouts[1], None);
         let conflict = conflict.expect_err("identical static and listener hosts must be refused");
         assert!(
             conflict.to_string().contains("conflicts with a static"),
@@ -503,10 +450,7 @@ tls = true
             "[containers.web]\nshare_runtime_identity = true\n",
         );
         fs::write(checkouts[1].join("effigy.toml"), shared_manifest).unwrap();
-        let (shared, _) = crate::policy_support::with_test_loopback_inventory(
-            fixture_inventory(&preceding_policies),
-            || load_container_policy(&checkouts[1], None).unwrap(),
-        );
+        let shared = load_container_policy(&checkouts[1], None).unwrap();
         assert_eq!(shared.dns_routes[0].domain, "web.acme.test");
         assert_eq!(listener_route(&shared), "api.acme.test");
     });
@@ -584,23 +528,18 @@ host_ports = ["41001:41001"]
         // Distinct from the operator checkout and from each other.
         assert_ne!(identities[0].0, identities[1].0);
         assert_ne!(identities[0].0, "shared-dev");
-        assert_ne!(identities[0].1, identities[1].1);
-        assert_ne!(identities[0].1, vec!["41001:41001".to_owned()]);
+        assert_eq!(
+            identities[0].1,
+            vec!["127.0.0.1::41001".to_owned()],
+            "a scoped clone takes an OS-assigned port instead of the pin"
+        );
+        assert_eq!(identities[0].1, identities[1].1);
 
         // Repeated commands reuse the identity; a recreated clone gets a new
         // generation with its own name and ports.
         let again = load_container_policy(&root.join("clone-one"), None).unwrap();
         assert_eq!(again.project_name, identities[0].0);
         assert_eq!(again.declared_ports, identities[0].1);
-        fs::remove_dir_all(root.join("clone-one").join(".git")).unwrap();
-        fs::create_dir_all(root.join("clone-one").join(".git")).unwrap();
-        fs::write(
-            root.join("clone-one").join(".git/config"),
-            "[effigy]\n\truntimeScope = ephemeral\n",
-        )
-        .unwrap();
-        let error = load_prepared_policy(&root.join("clone-one"), None).unwrap_err();
-        assert!(error.to_string().contains("generation changed"), "{error}");
         // Move the sealed old fixture aside, then replace the whole checkout.
         // Replacing only Git metadata cannot adopt its existing journal.
         fs::rename(root.join("clone-one"), root.join("retired-clone-one")).unwrap();
@@ -613,7 +552,9 @@ host_ports = ["41001:41001"]
         fs::write(root.join("clone-one/effigy.toml"), manifest).unwrap();
         let recreated = load_prepared_policy(&root.join("clone-one"), None).unwrap();
         assert_ne!(recreated.project_name, identities[0].0);
-        assert_ne!(recreated.declared_ports, identities[0].1);
+        // Host ports are OS-assigned, so the identity and volumes carry the
+        // difference, not a shared port number.
+        assert_eq!(recreated.declared_ports, identities[0].1);
     });
 }
 
@@ -824,19 +765,16 @@ primary_service = "app"
 "#,
     )
     .unwrap();
-    // A scoped checkout never binds the primary's fixed port: the translated
-    // mapping is allocated per checkout instead of refused.
+    // A scoped checkout never binds the primary's fixed port: Compose assigns
+    // its own host port instead.
     let policy = load_container_policy(&checkout, None).unwrap();
-    assert!(
-        !policy.declared_ports.contains(&"8080:80".to_owned()),
-        "{:?}",
-        policy.declared_ports
+    assert_eq!(
+        policy.declared_ports,
+        vec!["127.0.0.1::80".to_owned()],
+        "a scoped checkout takes an OS-assigned port"
     );
     let compose = policy.read_compose(&policy.compose_files[0]).unwrap();
-    assert!(
-        compose.contains(crate::policy::ports::UNASSIGNED_PORT_EXPRESSION),
-        "{compose}"
-    );
+    assert!(compose.contains("127.0.0.1::80"), "{compose}");
 }
 
 #[test]
@@ -865,19 +803,16 @@ primary_service = "app"
 "#,
     )
     .unwrap();
-    // A scoped checkout never binds the primary's fixed port: the translated
-    // mapping is allocated per checkout instead of refused.
+    // A scoped checkout never binds the primary's fixed port: Compose assigns
+    // its own host port instead.
     let policy = load_container_policy(&checkout, None).unwrap();
-    assert!(
-        !policy.declared_ports.contains(&"8080:80".to_owned()),
-        "{:?}",
-        policy.declared_ports
+    assert_eq!(
+        policy.declared_ports,
+        vec!["127.0.0.1::80".to_owned()],
+        "a scoped checkout takes an OS-assigned port"
     );
     let compose = policy.read_compose(&policy.compose_files[0]).unwrap();
-    assert!(
-        compose.contains(crate::policy::ports::UNASSIGNED_PORT_EXPRESSION),
-        "{compose}"
-    );
+    assert!(compose.contains("127.0.0.1::80"), "{compose}");
 }
 
 #[test]
@@ -990,16 +925,14 @@ variant = "default"
             effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv
         );
         assert!(!policy.ports_declared_explicitly);
-        let http_port = policy
-            .declared_ports
-            .iter()
-            .filter_map(|value| value.split_once(':'))
-            .find(|(_, container)| *container == "80")
-            .map(|(host, _)| host.to_owned())
-            .expect("generated compose should expose a host port for container port 80");
         assert!(
-            compose.contains(&format!("127.0.0.1:{http_port}:80")),
-            "generated compose should bind published ports to loopback: {compose}"
+            policy.declared_ports.contains(&"127.0.0.1::80".to_owned()),
+            "{:?}",
+            policy.declared_ports
+        );
+        assert!(
+            compose.contains("127.0.0.1::80"),
+            "generated compose lets the OS assign the published port, bound to loopback: {compose}"
         );
     });
 }
@@ -1338,21 +1271,14 @@ variant = "default"
         let second = load_container_policy(&root, None).expect("second policy");
         assert!(!first.ports_declared_explicitly);
         assert_eq!(first.declared_ports, second.declared_ports);
-        let http_port = first
-            .declared_ports
-            .iter()
-            .filter_map(|value| value.split_once(':'))
-            .find(|(_, container)| *container == "80")
-            .map(|(host, _)| host.parse::<u16>().expect("host port"))
-            .expect("expected generated compose HTTP port");
-        let mysql_port = first
-            .declared_ports
-            .iter()
-            .filter_map(|value| value.split_once(':'))
-            .find(|(host, container)| *container == "3306" && *host != "3306")
-            .map(|(host, _)| host.parse::<u16>().expect("host port"))
-            .expect("expected generated compose MySQL port");
-        assert_eq!(mysql_port, http_port + 6);
+        assert!(first.declared_ports.contains(&"127.0.0.1::80".to_owned()));
+        assert!(first.declared_ports.contains(&"127.0.0.1::3306".to_owned()));
+        let compose = first
+            .read_compose(&first.compose_files[0])
+            .expect("compose");
+        for published in ["127.0.0.1::80", "127.0.0.1::3306"] {
+            assert!(compose.contains(published), "{compose}");
+        }
     });
 }
 
@@ -1392,25 +1318,28 @@ catalog = "phpmyadmin"
             .read_compose(&policy.compose_files[0])
             .expect("read generated compose");
 
-        let http_ports = policy
+        let http_bindings = policy
             .declared_ports
             .iter()
-            .filter_map(|value| value.split_once(':'))
-            .filter(|(_, container)| *container == "80")
-            .map(|(host, _)| host.parse::<u16>().expect("host port"))
+            .filter(|value| value.ends_with(":80"))
             .collect::<Vec<_>>();
 
-        assert_eq!(http_ports.len(), 2, "expected two HTTP services: {compose}");
-        assert_ne!(
-            http_ports[0], http_ports[1],
-            "HTTP services should not share a host port:\n{compose}"
+        assert_eq!(
+            http_bindings.len(),
+            2,
+            "expected two HTTP services: {compose}"
         );
-        for port in &http_ports {
-            assert!(
-                compose.contains(&format!("- 127.0.0.1:{port}:80")),
-                "generated compose should include HTTP port {port} bound to loopback:\n{compose}"
+        for binding in &http_bindings {
+            assert_eq!(
+                *binding, "127.0.0.1::80",
+                "each HTTP service asks Compose for its own OS-assigned port"
             );
         }
+        assert_eq!(
+            compose.matches("- 127.0.0.1::80").count(),
+            2,
+            "both HTTP services publish an OS-assigned host port:\n{compose}"
+        );
     });
 }
 
@@ -1457,16 +1386,15 @@ catalog = "minio"
         assert!(compose.contains(":8025"), "{compose}");
         assert!(compose.contains(":9001"), "{compose}");
         for container_port in ["5432", "1025", "9000"] {
-            let host_port = policy
-                .declared_ports
-                .iter()
-                .filter_map(|value| value.split_once(':'))
-                .find(|(_, container)| *container == container_port)
-                .map(|(host, _)| host.to_owned())
-                .unwrap_or_else(|| panic!("expected declared port for {container_port}"));
+            let expected = format!("127.0.0.1::{container_port}");
             assert!(
-                compose.contains(&format!("127.0.0.1:{host_port}:{container_port}")),
-                "tcp-alias service port {container_port} should stay published on loopback:\n{compose}"
+                policy.declared_ports.contains(&expected),
+                "expected {expected} beside {:?}",
+                policy.declared_ports
+            );
+            assert!(
+                compose.contains(&format!("- {expected}")),
+                "tcp-alias service port {container_port} stays published on loopback with an OS-assigned host port:\n{compose}"
             );
         }
         assert!(policy
@@ -2000,7 +1928,7 @@ variant = "default"
         );
         assert!(
             !effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home)
-                .read_compatible()
+                .snapshot()
                 .unwrap()
                 .loopback()
                 .unwrap()
@@ -2416,135 +2344,12 @@ working_dir = "/var/www/html"
     );
 }
 
-fn with_private_port_prepare_fixture(run: impl FnOnce(PathBuf, PathBuf)) {
-    let fixture = tempfile::tempdir().unwrap();
-    let home = fixture.path().join("home/.effigy");
-    let root = fixture.path().join("repo");
-    fs::create_dir_all(&home).unwrap();
-    fs::create_dir(&root).unwrap();
-    let root = root.canonicalize().expect("canonical fixture owner");
-    crate::policy_support::with_test_effigy_home(&home, || run(root, home.clone()));
-}
-
+/// Reads never allocate a host port; Prepare publishes only the loopback
+/// alias the environment's routes need. Nothing is recorded that a later run
+/// would have to release.
 #[test]
-fn generated_port_reads_leave_registry_untouched_and_prepare_is_stable() {
-    with_private_port_prepare_fixture(|root, home| {
-        let _lock = crate::test_env_lock();
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
-[containers.web]
-primary_service = "app"
-[containers.web.services.app]
-catalog = "node"
-"#,
-        )
-        .unwrap();
-        let read = load_container_policy(&root, None).unwrap();
-        assert!(read
-            .declared_ports
-            .iter()
-            .any(|port| port.starts_with(crate::policy::ports::UNASSIGNED_PORT_LABEL)));
-        let compose = read.read_compose(&read.compose_files[0]).unwrap();
-        assert!(compose.contains(crate::policy::ports::UNASSIGNED_PORT_EXPRESSION));
-        let again = load_container_policy(&root, None).unwrap();
-        assert_eq!(read.declared_ports, again.declared_ports);
-        assert!(!home.join("ports.json").exists());
-        let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
-        assert!(
-            store.read_ports().unwrap().allocations.is_empty(),
-            "resolution must not allocate host ports"
-        );
-        let prepared = load_prepared_policy(&root, None).unwrap();
-        assert!(prepared
-            .declared_ports
-            .iter()
-            .all(|port| !port.contains("unassigned")));
-        let bytes = store
-            .read_compatible()
-            .unwrap()
-            .document("ports")
-            .unwrap()
-            .clone();
-        let after = load_container_policy(&root, None).unwrap();
-        assert_eq!(after.declared_ports, prepared.declared_ports);
-        assert_eq!(
-            store.read_compatible().unwrap().document("ports").unwrap(),
-            &bytes
-        );
-        assert!(
-            !home.join("ports.json").exists(),
-            "new state has no JSON writer"
-        );
-        let repeated = load_prepared_policy(&root, None).unwrap();
-        assert_eq!(repeated.declared_ports, prepared.declared_ports);
-        assert_eq!(
-            store.read_compatible().unwrap().document("ports").unwrap(),
-            &bytes
-        );
-        assert!(
-            !home.join("ports.json").exists(),
-            "new state has no JSON writer"
-        );
-    });
-}
-
-#[test]
-fn legacy_port_alias_is_read_once_then_prepared_for_each_service() {
-    with_private_port_prepare_fixture(|root, home| {
-        let _lock = crate::test_env_lock();
-        fs::write(
-            root.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
-[containers.web]
-project_name = "legacy-ports"
-primary_service = "first"
-[containers.web.services.first]
-catalog = "node"
-[containers.web.services.second]
-catalog = "node"
-"#,
-        )
-        .unwrap();
-        let mut registry = effigy_gateway::ports::PortRegistry::new();
-        registry
-            .allocate("legacy-ports", &root.display().to_string())
-            .unwrap();
-        registry
-            .allocations
-            .get_mut("legacy-ports")
-            .unwrap()
-            .assigned_ports
-            .insert("3000".into(), 8100);
-        registry.save(&home.join("ports.json")).unwrap();
-        let before = fs::read(home.join("ports.json")).unwrap();
-        let read = load_container_policy(&root, None).unwrap();
-        assert_eq!(read.declared_ports[0], "8100:3000");
-        assert!(read.declared_ports[1].contains("unassigned"));
-        assert_eq!(fs::read(home.join("ports.json")).unwrap(), before);
-        let prepared = load_prepared_policy(&root, None).unwrap();
-        // The existing allocator gives port 3000 its preferred +30 offset.
-        assert_eq!(prepared.declared_ports, ["8100:3000", "8130:3000"]);
-        assert_eq!(fs::read(home.join("ports.json")).unwrap(), before);
-        let registry = effigy_gateway::ports::PortRegistry::load(&home.join("ports.json")).unwrap();
-        assert_eq!(
-            registry.assigned_port("legacy-ports", "first", 3000),
-            Some(8100)
-        );
-        assert_eq!(
-            registry.assigned_port("legacy-ports", "second", 3000),
-            Some(8130)
-        );
-    });
-}
-
-#[test]
-fn loopback_reads_do_not_allocate_and_explicit_ports_still_prepare() {
-    with_temp_effigy_home("loopback-read-prepare", |home| {
+fn port_reads_never_allocate_and_prepare_publishes_the_loopback_alias() {
+    with_temp_effigy_home("port-read-prepare", |home| {
         let _lock = crate::test_env_lock();
         let fixture = tempfile::tempdir().expect("private checkout");
         let root = fixture.path().canonicalize().expect("canonical checkout");
@@ -2555,50 +2360,81 @@ fn loopback_reads_do_not_allocate_and_explicit_ports_still_prepare() {
 default = "web"
 [containers.web]
 primary_service = "app"
-[containers.web.host]
-ports = ["41001:3000"]
 [containers.web.services.app]
 catalog = "node"
 "#,
         )
         .expect("manifest");
-        let registry_path = home.join("gateway/loopback-ips.json");
-        let (_, probes) =
-            crate::policy_support::with_test_loopback_inventory(fixture_inventory(&[]), || {
-                let policy = load_container_policy(&root, None).expect("read policy");
-                assert_eq!(policy.declared_ports, ["41001:3000"]);
-                assert!(!registry_path.exists());
-                assert!(!home.join("gateway/loopback-ips.lock").exists());
-                crate::policy::ports::prepare_container_policy_ports(&policy).expect("prepare");
-            });
-        assert_eq!(probes, 0, "empty registry needs no runtime inventory");
+
+        let read = load_container_policy(&root, None).expect("read policy");
+        assert_eq!(read.declared_ports, vec!["127.0.0.1::3000".to_owned()]);
+        let compose = read.read_compose(&read.compose_files[0]).expect("render");
+        assert!(compose.contains("127.0.0.1::3000"), "{compose}");
         let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
-        let snapshot = store.read_compatible().unwrap();
-        assert!(
-            !snapshot.loopback().unwrap().is_empty(),
-            "Prepare retained the loopback assignment"
-        );
-        let before = snapshot.document("loopback").unwrap().clone();
-        assert!(!registry_path.exists(), "new state has no JSON writer");
-        let (_, probes) =
-            crate::policy_support::with_test_loopback_inventory(fixture_inventory(&[]), || {
-                let policy = load_container_policy(&root, None).expect("read prepared policy");
-                crate::policy::ports::prepare_container_policy_ports(&policy)
-                    .expect("repeat prepare");
-                load_container_policy(&root, None).expect("repeat read");
-            });
-        assert_eq!(probes, 0, "reads and stable Prepare must not inventory");
+        assert!(store.snapshot().unwrap().loopback().unwrap().is_empty());
+        assert!(!home.join("ports.json").exists());
+
+        let prepared = load_prepared_policy(&root, None).expect("prepare");
+        assert_eq!(prepared.declared_ports, read.declared_ports);
+        let alias = store
+            .snapshot()
+            .unwrap()
+            .loopback()
+            .unwrap()
+            .get(&effigy_gateway::loopback::project_loopback_identity(
+                &prepared.project_name,
+                &root,
+            ))
+            .cloned()
+            .expect("Prepare publishes the project alias");
+        assert_eq!(alias.scope, root.display().to_string());
+
+        let repeated = load_prepared_policy(&root, None).expect("repeat prepare");
+        assert_eq!(repeated.declared_ports, prepared.declared_ports);
         assert_eq!(
-            store
-                .read_compatible()
-                .unwrap()
-                .document("loopback")
-                .unwrap(),
-            &before
+            store.snapshot().unwrap().loopback().unwrap().get(
+                &effigy_gateway::loopback::project_loopback_identity(&repeated.project_name, &root,)
+            ),
+            Some(&alias),
+            "a repeated Prepare keeps the same alias"
         );
         assert!(
             !home.join("ports.json").exists(),
-            "explicit ports need no allocation"
+            "no port registry is written"
         );
+    });
+}
+
+/// An environment that opts into `stable_ports` gets one concrete host port
+/// per published container port, derived from its checkout path.
+#[test]
+fn stable_ports_opt_in_renders_probed_ports() {
+    with_temp_effigy_home("stable-ports-opt-in", |_| {
+        let _lock = crate::test_env_lock();
+        let root = temp_repo("stable-ports-opt-in");
+        fs::write(
+            root.join("effigy.toml"),
+            r#"
+[containers]
+default = "web"
+[containers.web]
+primary_service = "app"
+[containers.web.host]
+stable_ports = true
+[containers.web.services.app]
+catalog = "node"
+"#,
+        )
+        .expect("manifest");
+
+        let prepared = load_prepared_policy(&root, None).expect("prepare");
+        let port = prepared.declared_ports[0]
+            .split(':')
+            .next()
+            .and_then(|port| port.parse::<u16>().ok())
+            .expect("a concrete host port");
+        assert!(port >= 20000, "{}", prepared.declared_ports[0]);
+        let again = load_prepared_policy(&root, None).expect("repeat prepare");
+        assert_eq!(again.declared_ports, prepared.declared_ports);
     });
 }

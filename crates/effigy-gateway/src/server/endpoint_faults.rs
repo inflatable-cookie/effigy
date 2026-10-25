@@ -60,7 +60,7 @@ async fn faults_engine_gateway_endpoint_commit() {
         drop(dns);
         config.tls = None;
         let store = EndpointStore::for_routes(&config.route_table_path);
-        store.import().unwrap();
+        store.snapshot().unwrap();
         let cancel = effigy_kernel::ctx::CancelToken::default();
         let _cancel = Cancel(cancel.clone());
         drop(http);
@@ -122,7 +122,7 @@ async fn faults_engine_gateway_endpoint_commit() {
             },
         );
         assert!(outcome.is_err(), "fault must cross {point}");
-        let recovered = store.import().unwrap();
+        let recovered = store.snapshot().unwrap();
         let committed = point != "ClaimPublishBefore";
         assert_eq!(
             recovered.routes().unwrap().lookup("fault.test").is_some(),

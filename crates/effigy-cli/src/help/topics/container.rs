@@ -24,7 +24,6 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "`container profile repair` recovers the environment's Colima runtime in place and `profile reset-runtime` stops it without deleting it; both accept `--repo` and `--system`.",
         "`container volume list` is repo-scoped; `--global` lists every runtime, `--dormant` superseded repo volumes, and `--global --orphans` ownerless volumes.",
         "`container hosts` prints this checkout's HTTP and TCP host map (linked worktrees use `<apex>-w<scope>.test`); `container scope` prints its runtime token.",
-        "`container ports status` shows the machine-wide port registry; `ports reclaim` previews releasing entries of deleted projects and `--apply --expect-plan <DIGEST>` applies that plan. Reclaim never touches containers, volumes, data or routes.",
         "`container retire` removes this checkout's containers, caches, networks, routes and ports. It takes no container name; after the checkout is gone, retry with `--scope <TOKEN>`. Use it from `paseo.json` worktree teardown.",
     ],
     usage: text_lines![
@@ -71,9 +70,6 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy container hosts [--repo <PATH>] [--json]",
         "effigy container <NAME> hosts [--repo <PATH>] [--json]",
         "effigy container scope [--repo <PATH>] [--json]",
-        "effigy container ports status [--json]",
-        "effigy container ports reclaim [--json]",
-        "effigy container ports reclaim --apply --expect-plan <DIGEST> [--json]",
         "effigy container retire [--repo <PATH>] [--scope <TOKEN>] [--yes] [--json]",
         "effigy container retire --dead [--yes] [--json]",
         "effigy --json container up [--repo <PATH>]",
@@ -137,8 +133,6 @@ const CONTAINER_HELP: StandardTopicHelpSpec = StandardTopicHelpSpec {
         "effigy container retire --yes",
         "effigy container retire --scope abcdef0123456789abcdef0123456789 --yes",
         "effigy container retire --dead --yes",
-        "effigy container ports status --json",
-        "effigy container ports reclaim --json",
     ],
 };
 
@@ -153,8 +147,6 @@ const CONTAINER_OPTIONS: &[(&str, &str)] = option_rows![
     "--yes" => "Confirm destructive data, cache, volume, or runtime-scope cleanup operations without an interactive prompt",
     "--scope <TOKEN>" => "For `retire`, select a durable runtime-scope token so cleanup can retry after the worktree directory is gone",
     "--dead" => "For `retire`, select every recorded runtime scope whose checkout no longer exists",
-    "--apply" => "For `ports reclaim`, write the proven reclaim set. Requires `--expect-plan` from a reviewed dry run",
-    "--expect-plan <DIGEST>" => "For `ports reclaim --apply`, the plan digest you reviewed. Apply refuses if the recomputed plan differs",
     "--project <NAME>" => "Restrict global cache inventory or cleanup to one inferred project name such as `acowtancy-dev`; implies profile-wide mode even without `--global`",
     "--profile <NAME>" => "For `container profile`, select a Colima profile instead of the configured/default `effigy` profile",
     "--disk <GiB>" => "For `container profile recreate`, set the managed Colima profile disk size for this recreate; interactive runs prompt when omitted",

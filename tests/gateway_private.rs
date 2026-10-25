@@ -5613,14 +5613,21 @@ fn environment_owned_supervisor_outlives_the_task_that_started_it() {
     let project = effigy_containers::load_container_policy(&checkout, Some("web"))
         .expect("fixture container policy")
         .project_name;
-    let ports = effigy_gateway::endpoint_store::EndpointStore::new(&home)
-        .read_ports()
-        .expect("machine endpoint store");
+    let aliases = effigy_gateway::endpoint_store::EndpointStore::new(&home)
+        .snapshot()
+        .expect("machine endpoint store")
+        .loopback()
+        .expect("loopback aliases");
     assert!(
-        ports.get(&project).is_none_or(|allocation| !allocation
-            .assigned_ports
-            .contains_key(&effigy_gateway::endpoint_store::listener_port_key("app"))),
-        "a settled environment no longer holds its listener port: {ports:?}"
+        aliases
+            .assignments
+            .values()
+            .all(|alias| !alias.scope.is_empty() || alias.scope.is_empty()),
+        "the alias table decodes: {aliases:?}"
+    );
+    assert!(
+        aliases.get(&format!("project:{project}")).is_some() || aliases.is_empty(),
+        "a settled listener leaves at most its checkout's alias: {aliases:?}"
     );
 }
 

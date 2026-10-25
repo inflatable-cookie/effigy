@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::{
-    BoundedExecLimits, Command, ContainerArgs, ContainerCacheSubcommand, ContainerPortsSubcommand,
+    BoundedExecLimits, Command, ContainerArgs, ContainerCacheSubcommand,
     ContainerProfileSubcommand, ContainerSubcommand, ContainerVolumeSubcommand, HelpTopic,
 };
 
@@ -18,9 +18,9 @@ pub(super) fn parse_container_command<I>(args: I) -> Result<Command, CliParseErr
 where
     I: IntoIterator<Item = String>,
 {
-    const ACTIONS: [&str; 18] = [
+    const ACTIONS: [&str; 17] = [
         "up", "down", "status", "stats", "logs", "shell", "reset", "cache", "volume", "data",
-        "profile", "eject", "hosts", "retire", "scope", "ports", "render", "migrate",
+        "profile", "eject", "hosts", "retire", "scope", "render", "migrate",
     ];
 
     let mut args = args.into_iter();
@@ -63,7 +63,6 @@ where
         "scope" => parse_container_scope(name, args),
         "hosts" => parse_container_hosts(name, args),
         "retire" => parse_container_retire(name, args),
-        "ports" => parse_container_ports(name, args),
         other => Err(unknown_argument(other)),
     }
 }
@@ -328,78 +327,6 @@ where
     Ok(Command::Container(ContainerArgs {
         subcommand: ContainerSubcommand::Scope,
         repo_override,
-        output_json,
-    }))
-}
-
-fn parse_container_ports<I>(name: Option<String>, args: I) -> Result<Command, CliParseError>
-where
-    I: IntoIterator<Item = String>,
-{
-    if name.is_some() {
-        return Err(CliParseError::InvalidArguments(
-            "`effigy container <NAME> ports` is not supported; the port registry is machine-wide, use `effigy container ports`".to_owned(),
-        ));
-    }
-
-    let mut args = args.into_iter();
-    let Some(verb) = args.next() else {
-        return Ok(Command::Help(HelpTopic::Container));
-    };
-    if matches!(verb.as_str(), "--help" | "-h") {
-        return Ok(Command::Help(HelpTopic::Container));
-    }
-    let mut output_json = false;
-    let mut apply = false;
-    let mut expect_plan: Option<String> = None;
-    let reclaim = match verb.as_str() {
-        "status" => false,
-        "reclaim" => true,
-        other => return Err(unknown_argument(other)),
-    };
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--json" => output_json = true,
-            "--apply" if reclaim => apply = true,
-            "--expect-plan" if reclaim => {
-                expect_plan = Some(next_required_value(
-                    &mut args,
-                    CliParseError::MissingFlagValue {
-                        flag: "--expect-plan".to_owned(),
-                    },
-                )?)
-            }
-            "--help" | "-h" => return Ok(Command::Help(HelpTopic::Container)),
-            other => return Err(unknown_argument(other)),
-        }
-    }
-
-    let subcommand = if !reclaim {
-        if apply || expect_plan.is_some() {
-            return Err(CliParseError::InvalidArguments(
-                "`effigy container ports status` takes only `--json`".to_owned(),
-            ));
-        }
-        ContainerPortsSubcommand::Status
-    } else {
-        if apply && expect_plan.is_none() {
-            return Err(CliParseError::InvalidArguments(
-                "`effigy container ports reclaim --apply` requires `--expect-plan <DIGEST>` from a reviewed dry run".to_owned(),
-            ));
-        }
-        if !apply && expect_plan.is_some() {
-            return Err(CliParseError::InvalidArguments(
-                "`--expect-plan` is only valid with `effigy container ports reclaim --apply`"
-                    .to_owned(),
-            ));
-        }
-        ContainerPortsSubcommand::Reclaim { apply, expect_plan }
-    };
-
-    Ok(Command::Container(ContainerArgs {
-        subcommand: ContainerSubcommand::Ports { subcommand },
-        repo_override: None,
         output_json,
     }))
 }
@@ -1228,55 +1155,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{parse_command, Command, ContainerPortsSubcommand, ContainerSubcommand};
-
-    fn ports(args: &[&str]) -> Result<ContainerPortsSubcommand, crate::CliParseError> {
-        let mut argv = vec!["container", "ports"];
-        argv.extend_from_slice(args);
-        match parse_command(argv.into_iter().map(str::to_owned))? {
-            Command::Container(container) => match container.subcommand {
-                ContainerSubcommand::Ports { subcommand } => Ok(subcommand),
-                other => panic!("unexpected subcommand {other:?}"),
-            },
-            other => panic!("unexpected command {other:?}"),
-        }
-    }
-
-    #[test]
-    fn ports_status_and_dry_run_parse_without_apply() {
-        assert_eq!(
-            ports(&["status"]).unwrap(),
-            ContainerPortsSubcommand::Status
-        );
-        assert_eq!(
-            ports(&["reclaim"]).unwrap(),
-            ContainerPortsSubcommand::Reclaim {
-                apply: false,
-                expect_plan: None,
-            }
-        );
-    }
-
-    #[test]
-    fn ports_apply_requires_a_reviewed_plan_digest() {
-        assert!(ports(&["reclaim", "--apply"]).is_err());
-        assert!(ports(&["reclaim", "--expect-plan", "abc"]).is_err());
-        assert!(ports(&["status", "--apply", "--expect-plan", "abc"]).is_err());
-        assert_eq!(
-            ports(&["reclaim", "--apply", "--expect-plan", "abc"]).unwrap(),
-            ContainerPortsSubcommand::Reclaim {
-                apply: true,
-                expect_plan: Some("abc".to_owned()),
-            }
-        );
-    }
-
-    #[test]
-    fn ports_is_machine_wide_and_rejects_a_named_container() {
-        let argv = ["container", "web", "ports", "status"].map(str::to_owned);
-        assert!(parse_command(argv).is_err());
-        assert!(ports(&["status", "--repo", "/tmp/x"]).is_err());
-    }
+    use crate::{parse_command, Command, ContainerSubcommand};
 
     fn shell(args: &[&str]) -> Result<ContainerSubcommand, crate::CliParseError> {
         let mut argv = vec!["container", "web", "shell"];
