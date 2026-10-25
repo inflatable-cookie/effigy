@@ -443,8 +443,9 @@ of its child process group. They start after the environment's services are
 ready, in `depends_on` order (a dependency must declare a `listener`), and the
 declared `restart`, `restart_delay_ms`, `shutdown_signal` and
 `shutdown_grace_secs` apply. `effigy container up` waits for each listener's
-declared readiness and then detaches; if the bring-up is interrupted, the
-kernel stops what it started.
+declared readiness and then detaches; that wait has no deadline of its own, so
+an app that compiles for minutes before it binds does not fail the `up`. If the
+bring-up is interrupted, the kernel stops what it started.
 
 A managed session bound to this environment shows each host process as its own
 tab, in declaration order, with a status line and its live log, next to the
@@ -503,9 +504,10 @@ that report and removes the file when the generation stops, so a new host
 process needs no adapter. Any ordinary server that listens on `$HOST`/`$PORT`
 is a managed listener: Effigy sends the readiness request to the address it
 reserved and publishes the route when that address answers.
-`run = 'exec effigy profile:api'` is enough, and a server
-that compiles for a minute before it serves needs only a long enough declared
-timeout.
+`run = 'exec effigy profile:api'` is enough. A server that compiles for minutes
+before it serves needs no adapter and no oversized timeout: while its port is
+closed the wait has no deadline, and a cold build's compile time is never spent
+against `readiness.timeout_secs`.
 
 `HOST` and `PORT` are the address Effigy reserved, so they replace
 an ambient `HOST`/`PORT` inherited from the shell Effigy was started in: a
@@ -514,13 +516,22 @@ the manifest itself declares outranks them (for example an adapter that must
 see a specific `HOST`), and `EFFIGY_MANAGED_HOST_LISTENER_BIND` always carries
 the reserved address unconditionally.
 The process must bind strictly to the requested address: a wildcard bind
-(`0.0.0.0:<port>`) is a different address and fails startup. Readiness is an
+(`0.0.0.0:<port>`) is a different address, so the reserved port stays closed and
+the wait continues until that child exits. Readiness is an
 HTTP `GET` to the configured path with the effective route domain as `Host`;
-only the configured status makes the listener ready. A failed or timed-out
-startup returns an error and leaves a `failed` state instead of publishing an
-endpoint, and the diagnostic names the reserved address, the readiness request
-and the last probe outcome. A reserved port that another process already
-answers fails the start naming that port.
+only the configured status makes the listener ready.
+
+Startup has two phases, and only the second one has a deadline. While the
+reserved port is still closed and the child is alive, Effigy waits with no
+deadline at all and writes a progress line to the process log about every thirty
+seconds; the child exiting is what fails the generation. `readiness.timeout_secs`
+starts once the port first accepts a connection and bounds reaching the
+configured status from there, so a build that takes twenty minutes and a server
+that answers in a second both start. A failed startup returns an error and
+leaves a `failed` state instead of publishing an endpoint, and the diagnostic
+names the reserved address, the readiness request and the last probe outcome (or
+the child's exit code). A reserved port that another process already answers
+fails the start naming that port.
 
 Once published, the route stays published while the supervisor's run is alive
 and the port keeps answering: Effigy probes that port every five seconds, and
@@ -588,10 +599,11 @@ call its own HTTPS route:
 ### Readiness failures
 
 A readiness request is one HTTP/1.1 `GET` to the configured path. Effigy reads
-the status line and accepts only the configured status. Connection failures,
-missing or malformed status lines, and other statuses keep the listener not
-ready. A consumer server does not need to keep its read side open or answer in
-one write.
+the status line and accepts only the configured status. A refused connection
+means the app has not opened its port yet, so the wait carries on without a
+deadline; missing or malformed status lines, and other statuses, mean the port
+is open and the declared timeout runs. A consumer server does not need to keep
+its read side open or answer in one write.
 
 When startup fails, `<name>.listener.json` keeps a one-line `diagnostic` for
 the failed generation: the reserved address, the readiness path and status, and

@@ -333,6 +333,10 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- The `up`-side readiness deadline for a starting managed listener
+  (`TERMINAL_PUBLICATION_ALLOWANCE` and the per-listener timeout argument to the
+  listener-state wait). The supervisor's own terminal record ends the wait, and
+  the readiness budget belongs to the port being open (effigy#358).
 - The `<selector>:cargo` escape tasks (489 of them), the internal
   `effigy cargo` task and the `install:local:cargo` and
   `test:install:local:cargo` escapes. Every selector builds through
@@ -1337,6 +1341,20 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- A managed listener's startup wait has two phases, and only the second has a
+  deadline (effigy#358, Acow #756). While the reserved port is closed and the
+  child is alive, Effigy waits with no deadline and writes a progress line to
+  the process log about every thirty seconds; the child exiting is the failure.
+  `readiness.timeout_secs` starts when the port first accepts a connection and
+  bounds reaching the declared status from there. `container up` waits on the
+  supervisor's own record instead of a deadline of its own, so a cold Rust build
+  that waits for an Oxide slot no longer fails `up` or `dev:hybrid`; a
+  supervisor that exits without publishing readiness is the failure it names.
+- A host-process supervisor takes its stop and settle budget when that operation
+  runs, not when the supervisor started. A run that compiled or served for
+  longer than the budget used to report `timed out … while waiting for the
+  environment to settle` — after 8m08s in Acow #756 — and can now always stop
+  and settle.
 - `scripts/check-cargo-routes.py` (`qa:docs:cargo-routes`) no longer skips
   `:cargo` escape siblings, because the catalog has none. It still fails on a
   plain-`cargo` route that

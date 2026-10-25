@@ -762,8 +762,9 @@
 # port answering its own probe. A plain
 # `python3 -m http.server "$PORT" --bind "$HOST"` reaches ready, publishes its
 # route, keeps the reserved port across a restart and settles on `down`; a child
-# bound elsewhere fails naming the reserved port, and so does a reservation
-# another process already answers. A shipped bundle adapter that refuses to
+# bound elsewhere waits while it is alive and fails naming the reserved address
+# when it exits, and a reservation another process already answers fails the
+# start naming that port. A shipped bundle adapter that refuses to
 # start without `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE` and
 # `EFFIGY_MANAGED_HOST_LISTENER_GENERATION` gets both, writes its report and is
 # ready on the port alone (effigy#349). A compile that forks short-lived
