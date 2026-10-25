@@ -820,7 +820,7 @@ impl<'r> EnvRun<'r> {
         self.began.engine()
     }
 
-    /// Publishes the environment's render as its desired generation.
+    /// Publishes the environment's render as the object it points at.
     pub fn publish_desired(&mut self, closure: &Closure) -> Result<String, EnvError> {
         let result = Objects::publish_desired(&mut self.run, closure);
         self.kernel(result)
@@ -923,44 +923,20 @@ impl<'r> EnvRun<'r> {
         Ok(())
     }
 
-    /// Converges the backend on the render through the seam.
-    pub fn apply(
-        &mut self,
-        backend: &mut dyn EnvironmentBackend,
-        render: &RenderRef<'_>,
-        digest: Option<&str>,
-        exempt: Option<RunId>,
-    ) -> Result<(), EnvError> {
-        let selection = backend.selection().clone();
-        self.apply_with(&selection, render.project, digest, exempt, || {
-            backend.reconcile(render)
-        })
-    }
-
-    /// The one backend apply: marks the partial generation, journals the
-    /// intent under a permit, then runs `effect` (K3, R4).
+    /// The one backend apply: journals the intent under a permit, then runs
+    /// `effect` (K3, R4).
     pub fn apply_with(
         &mut self,
         selection: &BackendSelection,
         project: &str,
-        digest: Option<&str>,
-        exempt: Option<RunId>,
         effect: impl FnOnce() -> Result<(), BackendError>,
     ) -> Result<(), EnvError> {
-        let mut record = self
-            .engine_record()
-            .cloned()
-            .unwrap_or_else(|| EngineRecord::new(super::record::Retention::Held, project));
-        record.project = project.to_owned();
-        record.applying = digest.map(str::to_owned);
-        self.write_record(&record)?;
         let payload = json!({
             "engine": selection.engine.as_str(),
             "context": selection.context,
             "project": project,
-            "digest": digest,
         });
-        self.transition(APPLY_EFFECT, payload, Settlement::Retain, exempt, effect)
+        self.transition(APPLY_EFFECT, payload, Settlement::Retain, None, effect)
     }
 
     /// A repair of running workloads (restarting a service that stopped
@@ -1016,12 +992,10 @@ impl<'r> EnvRun<'r> {
         let result = permit(&mut self.run, exempt).and_then(|mut permit| permit.publish_stopped());
         self.kernel(result)?;
         self.published = true;
-        let mut record = self
+        let record = self
             .engine_record()
             .cloned()
             .unwrap_or_else(|| EngineRecord::new(super::record::Retention::Held, project));
-        record.applying = None;
-        record.stopped_at = Some(self.run.fence().generation.get());
         self.write_record(&record)?;
         Ok(())
     }
@@ -1100,51 +1074,12 @@ impl<'r> EnvRun<'r> {
         })
     }
 
-    /// Promotes the applied generation and publishes `active`, attaching
-    /// any runs that requested this ensure in the same transaction.
+    /// Publishes `active` and attaches requesting holders.
     pub fn activate(&mut self, holders: &[(RunId, AttachMode)]) -> Result<(), EnvError> {
-        if let Some(digest) = self
-            .engine_record()
-            .and_then(|record| record.applying.clone())
-        {
-            if self.began.desired.as_deref() == Some(digest.as_str()) || self.desired_is(&digest) {
-                let result = Objects::promote(&mut self.run, &digest);
-                self.kernel(result)?;
-            }
-            let mut record = self.engine_record().cloned().expect("applying record");
-            record.applying = None;
-            self.write_record(&record)?;
-        }
         let result = Attachments::publish_active_for(&mut self.run, holders);
         self.kernel(result)?;
         self.published = true;
         Ok(())
-    }
-
-    /// Publishes `active` and attaches requesting holders while a pending
-    /// desired generation waits for the current holders to end.
-    pub fn activate_without_promotion(
-        &mut self,
-        holders: &[(RunId, AttachMode)],
-    ) -> Result<(), EnvError> {
-        let result = Attachments::publish_active_for(&mut self.run, holders);
-        self.kernel(result)?;
-        self.published = true;
-        Ok(())
-    }
-
-    fn desired_is(&self, digest: &str) -> bool {
-        let cx = operation(
-            EffectClass::Observe,
-            CancelToken::default(),
-            Duration::from_secs(10),
-        )
-        .observe()
-        .expect("observe context");
-        matches!(
-            EnvRecord::read(&cx, self.root, &self.env.resource),
-            Observed::Verified(record, _) if record.desired.as_deref() == Some(digest)
-        )
     }
 
     /// Ends the run. A run that changed nothing republishes the state it

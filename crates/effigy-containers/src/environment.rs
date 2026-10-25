@@ -2,7 +2,7 @@
 //!
 //! Each environment has one kernel record: its resource row (generation,
 //! state, backend and the engine's own fields), its desired, last-applied
-//! and superseded render objects, and its holders. Every transition owns
+//! render objects, and its holders. Every transition owns
 //! `Gate(Env)` through one `EnvRun`; holders attach through [`hold`].
 
 mod backend;
@@ -24,10 +24,10 @@ pub use backend::{
 };
 pub use hold::{hold, mode_for, reap_if_idle, Hold, HoldError, Idle, Session};
 pub use import::{
-    import, label_evidence, recorded_admission, sanitize as sanitize_marker_component,
-    ImportRequest, Imported, LegacyMarkers, Marker, Ownership,
+    import, label_evidence, sanitize as sanitize_marker_component, ImportRequest, Imported,
+    LegacyMarkers, Marker, Ownership,
 };
-pub use ops::{activate, down, reconcile, repair, reset, up, Applied, Pending, Up};
+pub use ops::{activate, down, reconcile, repair, reset, Applied, Up};
 pub use reconcile::{
     BusyDiagnostics, BusyRecord, EnvContext, EnvError, EnvRef, EnvRun, EnvSettlement, HeldHolder,
     Operation, APPLY_EFFECT, GATE_WAIT, RUN_BUDGET, STOP_EFFECT,

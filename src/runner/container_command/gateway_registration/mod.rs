@@ -19,9 +19,7 @@ use effigy_gateway::endpoint_store::EndpointStore;
 use effigy_gateway::loopback::LoopbackRegistry;
 use effigy_gateway::loopback::{project_loopback_identity, shared_loopback_identity};
 use effigy_gateway::managed_listener::observe_managed_listener_owner;
-use effigy_gateway::registration::{
-    check_claim, check_container_claim, container_teardown_covers, owned_by, project_scope,
-};
+use effigy_gateway::registration::{dead_claim_reason, owned_by, project_scope};
 #[cfg(test)]
 use effigy_gateway::registration::{deregister_route, register_route, RouteRegistration};
 use effigy_gateway::routes::{Route, RouteSource, RouteTable};
@@ -69,15 +67,7 @@ pub(in crate::runner) fn register_gateway_routes_for_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
-    register_gateway_routes_for_container_with_context(repo_root, policy, None)
-}
-
-pub(in crate::runner) fn register_gateway_routes_for_container_with_context(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    admitted: Option<&super::admission::AdmissionContext>,
-) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
-    register_gateway_routes_for_verified_container(repo_root, policy, admitted, None)
+    register_gateway_routes_for_verified_container(repo_root, policy, None)
 }
 
 /// One gateway domain this environment will claim when it activates, with the
@@ -161,10 +151,12 @@ pub(in crate::runner) struct LiveListenerConflict {
 /// Preflight every gateway claim this activation would make, before any
 /// handover or Compose effect:
 ///
-/// - a route held by another checkout, scope or a non-container source
-///   refuses exactly as registration would, with no effects;
-/// - a route held by a live managed listener of this same checkout and scope
-///   is returned as a handover conflict instead of a refusal;
+/// - a domain another checkout still serves refuses exactly as registration
+///   would, with no effects; a dead owner's domain is taken over at
+///   publication instead;
+/// - a route held by a live managed listener of this same checkout is returned
+///   as a handover conflict, because the container environment takes the
+///   domain over and the sibling environment should stop;
 /// - the alias and shared-service loopback addresses are allocated here, so
 ///   an exhausted pool refuses before either environment changes.
 pub(in crate::runner) fn preflight_route_claims(
@@ -174,25 +166,27 @@ pub(in crate::runner) fn preflight_route_claims(
     let claims = declared_route_claims(policy);
     let route_table_path = gateway_route_table_path()?;
     let project_path = repo_root.display().to_string();
-    let scope = gateway_project_scope(&project_path)?;
     let mut conflicts = Vec::new();
     if !claims.is_empty() {
-        let store = EndpointStore::for_routes(&route_table_path);
-        let snapshot = store.read_compatible()?;
+        let snapshot = EndpointStore::for_routes(&route_table_path).read_compatible()?;
         let table = snapshot.routes()?;
         for claim in &claims {
             let Some(existing) = table.lookup(&claim.domain) else {
                 continue;
             };
-            check_claim(existing, &project_path, scope.as_deref()).map_err(|error| {
-                RunnerError::gateway_route_registration(
+            if dead_claim_reason(existing).is_some() {
+                continue;
+            }
+            if !owned_by(existing, &project_path) {
+                return Err(RunnerError::gateway_route_registration(
                     "preflight",
                     &claim.domain,
-                    error.to_string(),
-                )
-            })?;
-            if !owned_by(existing, &project_path, scope.as_deref()) {
-                continue;
+                    effigy_gateway::error::GatewayError::ForeignRoute {
+                        domain: claim.domain.clone(),
+                        project: existing.project.clone(),
+                    }
+                    .to_string(),
+                ));
             }
             if let Some(owner) = existing.managed_listener.as_ref() {
                 if match observe_managed_listener_owner(owner) {
@@ -213,19 +207,6 @@ pub(in crate::runner) fn preflight_route_claims(
             }
         }
     }
-    EndpointStore::for_routes(&route_table_path).transaction(
-        None,
-        |snapshot| -> Result<_, RunnerError> {
-            let table = snapshot.routes()?;
-            for claim in &claims {
-                if let Some(existing) = table.lookup(&claim.domain) {
-                    check_claim(existing, &project_path, scope.as_deref())?;
-                }
-                snapshot.reserve_domain(&claim.domain, &project_path, scope.as_deref(), None)?;
-            }
-            Ok(())
-        },
-    )?;
     // Allocate alias and shared-service loopback addresses now: an exhausted
     // pool must refuse before a handover stops anything.
     let alias_routes = resolve_gateway_service_alias_routes(repo_root, policy, true, None)?;
@@ -234,7 +215,7 @@ pub(in crate::runner) fn preflight_route_claims(
 }
 
 /// The environment name inside a stable managed-listener owner token
-/// (`scope|environment|profile|process`), or `None` for a legacy shape.
+/// (`checkout|environment|process`).
 pub(in crate::runner) fn managed_listener_owner_environment(owner: &str) -> Option<String> {
     owner.split('|').nth(1).map(str::to_owned)
 }
@@ -242,18 +223,9 @@ pub(in crate::runner) fn managed_listener_owner_environment(owner: &str) -> Opti
 pub(in crate::runner) fn register_gateway_routes_for_verified_container(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    admitted: Option<&super::admission::AdmissionContext>,
     binding: Option<&effigy_containers::exec::VerifiedComposeContainer>,
 ) -> Result<Vec<RegisteredGatewayRoute>, RunnerError> {
-    if let Some(context) = admitted {
-        context.verify(repo_root, policy)?;
-    }
     let rows = wait_for_gateway_service_ports_ready(repo_root, policy)?;
-    #[cfg(test)]
-    publication_test_control(PublicationStage::AfterProbe);
-    if let Some(context) = admitted {
-        context.verify(repo_root, policy)?;
-    }
     if let Some(binding) = binding {
         binding.reverify(
             repo_root,
@@ -275,12 +247,7 @@ pub(in crate::runner) fn register_gateway_routes_for_verified_container(
     validate_gateway_routes_against_rows(repo_root, policy, &routes, &rows)?;
     validate_gateway_routes_against_host_listeners(policy, &routes)?;
     let route_table_path = gateway_route_table_path()?;
-    reconcile_gateway_routes_guarded(
-        &route_table_path,
-        repo_root,
-        &routes,
-        admitted.map(|context| (context, policy)),
-    )?;
+    reconcile_gateway_routes_guarded(&route_table_path, repo_root, &routes)?;
     Ok(routes)
 }
 
@@ -526,17 +493,12 @@ pub(in crate::runner) fn deregister_gateway_routes_for_container(
     let route_table_path = gateway_route_table_path()?;
     EndpointStore::for_routes(&route_table_path).routes(|table| {
         let project_path = policy.repo_root.display().to_string();
-        let Ok(scope) = gateway_project_scope(&project_path) else {
-            return Ok(Vec::new());
-        };
         let removed = domains
             .into_iter()
             .filter_map(|domain| {
                 table
                     .lookup(&domain)
-                    .filter(|route| {
-                        container_teardown_covers(route, &project_path, scope.as_deref())
-                    })
+                    .filter(|route| owned_by(route, &project_path))
                     .cloned()
             })
             .collect::<Vec<_>>();
@@ -562,48 +524,21 @@ fn reconcile_gateway_routes(
     repo_root: &Path,
     desired: &[RegisteredGatewayRoute],
 ) -> Result<(), RunnerError> {
-    reconcile_gateway_routes_guarded(path, repo_root, desired, None)
+    reconcile_gateway_routes_guarded(path, repo_root, desired)
 }
 
 fn reconcile_gateway_routes_guarded(
     path: &Path,
     repo_root: &Path,
     desired: &[RegisteredGatewayRoute],
-    admitted: Option<(
-        &super::admission::AdmissionContext,
-        &EffectiveContainerPolicy,
-    )>,
 ) -> Result<(), RunnerError> {
     EndpointStore::for_routes(path).routes(|table| {
-        if let Some((context, policy)) = admitted {
-            context.verify(repo_root, policy)?;
-        }
         let project_path = repo_root.display().to_string();
         let scope = gateway_project_scope(&project_path)?;
-        for route in desired {
-            if let Some(existing) = table.lookup(&route.domain) {
-                check_container_claim(existing, &project_path, scope.as_deref()).map_err(
-                    |error| {
-                        RunnerError::gateway_route_registration(
-                            "register",
-                            &route.domain,
-                            error.to_string(),
-                        )
-                    },
-                )?;
-            }
-        }
         validate_gateway_tcp_alias_bindings_in_table(table, repo_root, desired)?;
-        #[cfg(test)]
-        publication_test_control(PublicationStage::BeforePreparation);
-        if let Some((context, policy)) = admitted {
-            context.verify(repo_root, policy)?;
-        }
         for route in desired.iter().filter(|route| route.tls) {
             ensure_gateway_tls_cert(&route.domain)?;
         }
-        #[cfg(test)]
-        publication_test_control(PublicationStage::DuringPreparation);
         let desired_domains = desired
             .iter()
             .map(|route| route.domain.as_str())
@@ -619,7 +554,7 @@ fn reconcile_gateway_routes_guarded(
             .all_routes()
             .into_iter()
             .filter(|route| route.source == RouteSource::Container)
-            .filter(|route| owned_by(route, &project_path, scope.as_deref()))
+            .filter(|route| owned_by(route, &project_path))
             .filter(|route| !desired_domains.contains(route.domain.as_str()))
             .cloned()
             .collect::<Vec<_>>();
@@ -641,12 +576,8 @@ fn reconcile_gateway_routes_guarded(
                 registered: chrono::Utc::now(),
             });
         }
-        if !stale.is_empty() || !desired.is_empty() {
-            #[cfg(test)]
-            publication_test_control(PublicationStage::BeforeSave);
-            if let Some((context, policy)) = admitted {
-                context.verify(repo_root, policy)?;
-            }
+        if stale.is_empty() && desired.is_empty() {
+            return Ok(());
         }
         for route in &stale {
             if route.tls {
@@ -710,7 +641,6 @@ fn prune_stale_container_routes_for_project(
     EndpointStore::for_routes(route_table_path)
         .routes(|table| {
             let project_path = repo_root.display().to_string();
-            let scope = gateway_project_scope(&project_path)?;
             let desired_domains = desired_routes
                 .iter()
                 .map(|route| route.domain.as_str())
@@ -718,7 +648,7 @@ fn prune_stale_container_routes_for_project(
             let stale = table
                 .all_routes()
                 .into_iter()
-                .filter(|route| owned_by(route, &project_path, scope.as_deref()))
+                .filter(|route| owned_by(route, &project_path))
                 .filter(|route| route.source == RouteSource::Container)
                 .filter(|route| !desired_domains.contains(route.domain.as_str()))
                 .cloned()
@@ -1177,7 +1107,6 @@ fn validate_gateway_tcp_alias_bindings_in_table(
     routes: &[RegisteredGatewayRoute],
 ) -> Result<(), RunnerError> {
     let project_path = repo_root.display().to_string();
-    let scope = gateway_project_scope(&project_path)?;
     let mut desired = std::collections::BTreeMap::<(std::net::Ipv4Addr, u16), (&str, &str)>::new();
     for route in routes {
         let Some(bind_ip) = route.dns_ip else {
@@ -1211,16 +1140,15 @@ fn validate_gateway_tcp_alias_bindings_in_table(
     }
 
     for registered in route_table.all_routes() {
-        if registered.source != RouteSource::Container
-            || owned_by(registered, &project_path, scope.as_deref())
-        {
+        if registered.source != RouteSource::Container || owned_by(registered, &project_path) {
             continue;
         }
         if routes.iter().any(|route| route.domain == registered.domain)
-            && check_claim(registered, &project_path, scope.as_deref()).is_ok()
+            && (owned_by(registered, &project_path) || dead_claim_reason(registered).is_some())
         {
-            // This exact stale domain will be replaced in the same locked
-            // transaction, so its old listener cannot remain a conflict.
+            // This domain is this checkout's own route, or a dead owner's, and
+            // is replaced in the same locked transaction, so its old listener
+            // cannot remain a conflict.
             continue;
         }
         let Some(bind_ip) = registered.dns_ip else {
@@ -1776,30 +1704,6 @@ fn parse_port_binding(
 
 pub(super) fn gateway_route_table_path() -> Result<PathBuf, RunnerError> {
     Ok(gateway_dir()?.join("routes.json"))
-}
-
-// Internal test-only timing control; never exposed to CLI or environment.
-#[cfg(test)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PublicationStage {
-    AfterProbe,
-    BeforePreparation,
-    DuringPreparation,
-    BeforeSave,
-}
-#[cfg(test)]
-type PublicationControl = Box<dyn FnMut(PublicationStage)>;
-#[cfg(test)]
-thread_local! {
-    static PUBLICATION_CONTROL: std::cell::RefCell<Option<PublicationControl>> = const { std::cell::RefCell::new(None) };
-}
-#[cfg(test)]
-fn publication_test_control(stage: PublicationStage) {
-    PUBLICATION_CONTROL.with(|control| {
-        if let Some(control) = control.borrow_mut().as_mut() {
-            control(stage);
-        }
-    });
 }
 
 #[cfg(test)]

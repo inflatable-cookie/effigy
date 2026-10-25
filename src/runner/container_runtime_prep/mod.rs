@@ -98,18 +98,8 @@ pub(in crate::runner) fn ensure_container_runtime_prepared(
         });
     }
     let system_was_running = check_runtime_running_state_stage(repo_root, policy)?;
-    // Unavailable observations preserve reuse; only observed drift may ask
-    // the guarded up path to reconcile. Permission prep separately withholds
-    // repair authority when it cannot observe the live mounts.
-    let mounts_need_reconcile = system_was_running
-        && effigy_containers::exec::probe_mount_drift(
-            repo_root,
-            policy,
-            Instant::now() + OWNED_EXEC_VERIFICATION_TIMEOUT,
-        )
-        .is_ok_and(|drift| !drift.is_empty());
     ensure_runtime_running_stage(
-        system_was_running && !mounts_need_reconcile,
+        system_was_running,
         container_name.map(str::to_owned),
         repo_override,
         |name, repo_override| {
@@ -374,8 +364,8 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
     run_runtime_prep_steps(
         || prepare_runtime_mounts_stage(repo_root, policy),
         || {
-            // The idempotent re-apply is one reconcile run: it reaches the
-            // backend only when the running stack is not this generation.
+            // Task preparation applies through the same one apply path as
+            // `container up`: Compose recreates only changed services.
             bring_up = Some(crate::runner::environment::reconcile(
                 repo_root,
                 policy,
@@ -387,7 +377,10 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
                         |repo_root, policy, args, label| {
                             Ok(run_compose_capture(repo_root, policy, args, label).map(|_| ())?)
                         },
-                    );
+                    )
+                    .map_err(|error| {
+                        effigy_containers::environment::BackendError::Uncertain(error.to_string())
+                    })?;
                     recover_exited_owned_compose_services(repo_root, policy)
                         .map(|_| ())
                         .map_err(|error| {

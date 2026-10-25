@@ -11,12 +11,11 @@ environment, not production deployment export.
 
 Kernel supersession (2026-10-18): the runtime kernel contract
 [052](052-runtime-kernel-contract.md) supersedes this contract's lifecycle and
-ownership sections for v0.15: activation and session ownership, partial
-activation and recovery, `data_from` handover, owned service start after a
-Colima restart, managed host listener lifecycle, owned completion and stop
-authority, fallback ownership and failure semantics. Until the environment
-lane reconciles them, those sections describe current behavior, not target
-design.
+ownership sections for v0.15: activation and session ownership, `data_from`
+handover, owned service start after a Colima restart, managed host listener
+lifecycle, owned completion and stop authority, fallback ownership and failure
+semantics. Until the environment lane reconciles them, those sections describe
+current behavior, not target design.
 
 ## Purpose
 
@@ -70,57 +69,27 @@ every checkout scope. Each entry is a distinct named volume layered over the
 source bind. Workspace rewriting preserves those entries; scope identity keeps
 worktree volume names separate from the primary checkout.
 
-Reuse compares each rendered named mount's service, destination, resolved
-volume name and read/write mode against a fresh selected-backend inspect.
-The comparison consumes the final Compose aliases after workspace compaction
-and `data_from` renaming, including destination overrides from later files.
-Inspects must prove the current full container identity, project, service,
-checkout and scope. Missing or unreadable inventories are unavailable, never
-clean and never recreation authority (kernel R2, R3 and K8).
-Pre-checkout-label stacks use the same legacy admission as reactivation: an
-unscoped checkout, matching immutable container identity and a positive bind of
-that checkout at the declared working directory. Foreign binds and scoped
-unlabelled stacks remain unavailable. External volumes without explicit names
-use their bare Compose keys.
-
-Task preparation no longer skips `up` solely because the primary runs. Observed
-mount drift means the running stack is not the desired generation, so the
-reconcile run applies the render instead of reusing it ([053](053-environment-reconciler-contract.md)
-§3). Holder exclusion and reactivation ownership checks remain mandatory (R4):
-under a live or unknown holder the running generation is kept with a warning
-naming the drift. The incoming task's own session attaches only at activation,
-after the reconcile, so it never blocks its own mount reconcile. Permission preflight
-checks the named mounts again before repair, including explicit exec paths:
-a declared volume absent from a live stack cannot grant chown authority over
-the host bind beneath it. Permission target metadata uses the most specific
-declared mount and retains its repair authority.
-An unavailable mount observation preserves the running stack's reuse path.
-Permission preparation then verifies access without creating directories,
-changing ownership or modes, or creating lock probes; paths that are already
-usable remain usable. A concrete access failure still blocks readiness. The
-unavailable observation itself cannot request reconciliation, and an up under
-live holders makes no backend call.
-An absent service has no live mount inventory; its absence does not prove mount
-drift or require recreation. Ordinary up may create it with `--no-recreate`.
+Mounts are part of a service's rendered configuration, so they need no separate
+change detector. One apply (`compose up -d --build --remove-orphans`, no
+recreate flag) converges the stack, and Compose recreates exactly the services
+whose configuration changed, mounts included ([053](053-environment-reconciler-contract.md)
+§3). A running stack is never inspected for mount drift, and `container up`
+adds no `--no-recreate`/`--force-recreate` variant.
 
 An isolated volume overlays a directory inside the checkout, so its host mount
-point must exist. The mount observation includes those host directories: a
-missing one is drift, reported read-only by `container status` and doctor, and
-seen by routed-task preparation before that preparation creates anything. Up
-and routed-task preparation then recreate a missing host mount-point directory
-for a named volume of the primary service nested under the working directory
-(the isolated `target` and `node_modules` trees). Because the missing directory
-is already drift, routed-task preparation heals it through the guarded bring-up
-rather than an idempotent `--no-recreate` apply, and a running stack is
-reconciled instead of reused: the nested mount lost the directory beneath it.
-A non-directory or symlink at that path refuses; creation never replaces a file
-and never follows a link. This is a host-side preparation step, not permission
-repair: it changes no ownership or mode.
+point must exist. Up and routed-task preparation create a missing host
+mount-point directory for a named volume of the primary service nested under
+the working directory (the isolated `target` and `node_modules` trees) before
+the apply. A non-directory or symlink at that path refuses; creation never
+replaces a file and never follows a link. This is a host-side preparation step,
+not permission repair: it changes no ownership or mode.
 
-`container status` exposes `mount_drift` with a `state` and `details` in JSON
-and text; doctor reports drift or unavailable observations read-only. Legacy
-stacks need no manual marker removal or volume deletion: their next guarded
-`up` applies the rendered mounts. No kernel API or identity migration is added.
+Permission preflight checks the declared mounts before repair, including
+explicit exec paths: a declared volume absent from a live stack cannot grant
+chown authority over the host bind beneath it. Permission target metadata uses
+the most specific declared mount and retains its repair authority. `container
+status` reports the services, their runtime state and readiness; it has no
+separate mount-drift field.
 
 ## Optional workspace mounts at creation
 
@@ -484,39 +453,40 @@ CLI's render of the same pins. It never updates a real consumer or its cache.
 Engine tests cover concurrent render/publication with admitted readers, refused
 admission preserving the desired reference, and reset preserving its sibling.
 
-A *partial* activation (the record's `applying` generation: the apply ran,
-activation did not) reconciles only against its original admission; changed
-inputs refuse until `effigy container down`. That stop renders and interpolates
-like any other teardown, never assigning a port: a generation whose ports were
-never assigned is torn down with a teardown-only interpolation value, so the
-cleanup of a first start that failed cannot fail on the unassigned-port
-refusal. `up` and `prepare` still fail closed on such a render. When the
-record holds no applied and no partial generation and the backend project owns
-no container, network or volume, `container down` is a no-op that renders
-nothing and calls no Compose. With unchanged admitted inputs, a
-missing or stopped primary does not require operator intervention: verify every
-existing project container's checkout and scope ownership, including stopped
-siblings, then recover through ordinary Compose up. Unavailable inventory or
-foreign ownership still refuses and names the owning checkout's
-`effigy container down` command. A *completed* activation is the record's
-promoted generation. When its inputs later change, or when a running stack has
-no record at all (a stack started by an earlier release whose markers did not
-prove ownership), detached `up` first proves that every project container - running or stopped, because a
-project-wide Compose up can start or recreate a stopped declared sibling -
-belongs to this checkout and scope, then retires the stale record and admits
-the current inputs with an ordinary Compose up. A container with no checkout,
-working-directory or scope label is adopted only on positive evidence: it must
-carry this project's exact full identity (listed name, project, declared
-service, running, not one-off) and bind-mount this checkout at the policy
-working directory. A stopped container is proven by its checkout and scope
-labels; an unlabelled stopped container is not proven. Absent labels are not
-proof by themselves. Anything not proven refuses with no Compose up, restart or
-publication, and names `container down` for the owner.
+Every bring-up is one apply: `compose up -d --build --remove-orphans`, with no
+recreate flag, from one render. Compose recreates exactly the services whose
+rendered configuration changed; an edit to an image, environment or mount is
+applied by the next `up`, with no `down` first. A failed or interrupted `up`
+leaves nothing to clean up: the next `up` reconciles from what is actually
+running. A live run holding the environment keeps the running stack and is
+attached to it; it is never recreated under.
+
+When the record holds no applied render and the backend project owns no
+container, network or volume, `container down` is a no-op that renders nothing
+and calls no Compose. A stop of a never-activated render still renders and
+interpolates with the teardown-only value, never assigning a port; `up` and
+`prepare` still fail closed on the unassigned-port refusal.
+
+A missing or stopped primary does not require operator intervention: verify
+every existing project container's checkout and scope ownership, including
+stopped siblings, then recover through the same apply. Unavailable inventory or
+foreign ownership still refuses and names the owning checkout's `effigy
+container down` command. A running stack with no record at all (a stack started
+by an earlier release, or after a profile restart) is proven the same way: every
+project container - running or stopped, because a project-wide Compose up can
+start or recreate a stopped declared sibling - must belong to this checkout and
+scope. A container with no checkout, working-directory or scope label is adopted
+only on positive evidence: it must carry this project's exact full identity
+(listed name, project, declared service, running, not one-off) and bind-mount
+this checkout at the policy working directory. A stopped container is proven by
+its checkout and scope labels; an unlabelled stopped container is not proven.
+Absent labels are not proof by themselves. Anything not proven refuses with no
+Compose up, restart or publication, and names `container down` for the owner.
 
 Operator ruling (Tom, 2026-10-15, v0.15.0 pre-release audit): "Restore for
 complete stacks". Detached `up` must not refuse a complete stack whose inputs
-changed or that predates the admission record; the strict no-adopt refusal stays
-only for recorded partial activations.
+changed or that predates the admission record; a changed declaration is simply
+applied.
 
 Exec readiness keeps v0.14.1's soft budget: the 2-second and 15-second windows
 decide whether another probe attempt starts, and each attempt (ownership
@@ -526,18 +496,17 @@ Colima route every call through an SSH hop. A caller-supplied deadline (bounded
 commands) stays absolute. Detached JSON
 retains closed-vocabulary managed-listener readiness observations (including HTTP
 status mismatch) without copying backend output, process names or arguments.
-Inventory, exec readiness and exposure failures retain partial/unavailable
-state and do not tear down or restart running services. Reconciliation with
-`effigy container up --detach` verifies the exact canonical source/context and
-fresh owned full-ID bindings before registering exposure. Unchanged admitted
-inputs and verified checkout/scope ownership allow Compose up when any declared
-service is missing or stopped, including the primary. A complete running stack
-reconciles exposure without Compose up. A managed owner that died with failed
+Inventory, exec readiness and exposure failures report the activation as
+unavailable and do not tear down or restart running services. Reconciliation
+with `effigy container up --detach` verifies owned full-ID bindings before
+registering exposure. Verified checkout/scope ownership allows the apply when
+any declared service is missing or stopped, including the primary. A managed
+owner that died with failed
 or incomplete settling is settled by its successor's admission (contract 052
 K5); its environment is not torn down, and the successor's bring-up reconciles
-it. Changed partial-admission inputs and unavailable ownership observations
-still refuse before Compose effects. Activation promotes the generation and
-makes an explicit `up` the persistent owner. Explicit `container down` ends
+it. Unavailable ownership observations still refuse before Compose effects.
+Activation publishes `active` and makes an explicit `up` the persistent owner.
+Explicit `container down` ends
 that ownership and keeps volumes. Attached bring-up keeps its existing cleanup
 policy, run as a stop transition after the bring-up's own runs close.
 
@@ -547,10 +516,11 @@ readiness reporting. `up` is the one stage every first creation, reuse, and
 handover passes through; managed children and `container shell` enter through
 exec without their own preparation. Owned-disposable cache and build volumes
 (Cargo registry/git, target dirs) are therefore writable by the workspace
-user however the stack was created. A preparation failure refuses closed
-with the container named: detached `up` records a partial activation
-without tearing the started scope down, attached `up` runs the ordinary
-failed bring-up cleanup, and neither retries, recreates, or adopts anything.
+user however the stack was created. A preparation failure refuses closed with
+the container named: detached `up` leaves the started scope in place and the
+next activation reconciles from what is running, while attached `up` runs the
+ordinary failed bring-up cleanup. Neither retries, recreates or adopts
+anything.
 
 Managed concurrent children share the task's readiness budget
 (`health_wait_timeout_secs`, default 60 seconds) for container exec
@@ -984,16 +954,15 @@ The handover refuses only when ending a bound managed owner or
 stopping that environment itself fails, or when another run still holds it;
 it then names the failure and leaves the environment recoverable by its own
 `up` or `down`. The stop is a journalled transition of the losing environment,
-so its next `up` reconciles it. An unchanged, ownership-verified partial or
-stopped stack restarts; unattributable state still refuses. A
+so its next `up` reconciles it. An ownership-verified stopped stack restarts;
+unattributable state still refuses. A
 managed listener claiming a domain held by a `source = container` route from
-the same checkout and scope replaces it with the listener route in the same
-locked transaction, and the container environment may keep running.
-Container registration takes the domain back once the recorded managed
-listener generation is no longer live, decided by the existing
-managed-listener availability and ownership checks. Container teardown
-removes only `source = container` routes owned by the caller, so stopping
-the old container environment cannot remove a handed-over listener route.
+the same checkout replaces it with the listener route in the same locked
+transaction, and the container environment may keep running. Container
+registration takes the domain back the same way: the checkout path is the whole
+owner, so the last writer wins between a container environment and its
+listener. `down` removes the checkout's routes by path, listener routes
+included.
 
 ## Shared service data volumes (`data_from`)
 
@@ -1161,8 +1130,8 @@ an IP a stale route's gateway TCP listener still binds while registration
 reallocated elsewhere, hanging the host alias against a dead or wrong
 upstream while mapped localhost ports stayed ready. A stale route for a
 missing checkout is deleted by `effigy container retire --dead` when its scope
-record still exists, and by `effigy gateway repair` (and once automatically on
-loopback exhaustion) when it does not.
+record still exists, and reclaimed automatically on the next route write or on
+loopback exhaustion when it does not.
 Status/doctor alias reporting is static route-table analysis (conflicting
 bind tuples, missing/invalid fallbacks); live OS-level listener bind failures
 remain daemon-log-only.
@@ -1632,102 +1601,62 @@ path reclaims.
 
 ## Dead-owner collection (loopback pool and domains)
 
-`effigy gateway repair` is the supported way to release endpoints whose owner is
-gone; allocation also self-heals once when the pool is full. Its plan covers
-three kinds of entry: bounded loopback assignments, container routes, and
-persisted domain claims whose route was withdrawn. A container route means both
-a DNS-only service alias (a pool address) and an HTTP container route published
-with no pool address at all — the seven `api.acme.test`-shaped claims a deleted
-checkout leaves behind are exactly the second kind. A withdrawn claim outlives
-its route: the Store keeps the domain reserved for its exact owner, so it stays
-in the plan's inventory even though nothing is routed to it.
+A route is the whole claim on a domain: `domain -> (checkout path, target)`.
+The same checkout path always replaces its own route, so a new run, a new
+generation and a container-to-listener handover need no proof. A different
+checkout path takes the domain over when the recorded checkout path no longer
+exists, or the recorded target does not accept a TCP connection within 200 ms;
+the takeover is logged in one line. Otherwise the write is refused with one
+message naming the other checkout and the command that stops it there
+(`effigy container down`). `down`, `retire` and settle remove the checkout's
+routes by path, listener routes included, whether or not a supervisor is alive,
+so the domain is free immediately and a following `up` from another checkout
+takes it at once. The daemon sweeps the same dead-owner rule on a timer so
+`gateway status` lists domains something still serves.
 
-Preview and JSON output are read-only, listing every entry with `reclaim`,
-`hold` or `retain` and a reason, plus a plan digest over those decisions.
-`--yes` applies the plan its locked recomputation still proves dead; `--yes
---expect-plan <DIGEST>` must reproduce the reviewed digest or nothing is
-written. Writes go through the endpoint Store's owner gate, release the
-assignment, its stale container routes and its withdrawn claims in one
-publication, preserve unknown fields and keep a pre-edit copy of every changed
-endpoint document (including the domain-owner inventory) with SHA-256 evidence.
+Loopback assignment collection is allocation-only and runs at allocation time.
+When a Prepare or gateway registration that needs a new address finds the
+bounded pool full, it plans, releases and retries exactly once. Its plan covers
+bounded loopback assignments only: routes and domains are owned by their
+checkout path and never released by it. It releases under the endpoint Store's
+owner gate and keeps a pre-edit copy of the changed endpoint documents with
+SHA-256 evidence. It reports one line with the released count.
 
-`--owner-checkout <PATH>` narrows both preview and apply to one exact owner
-checkout. The value is normalized lexically, because a deleted checkout cannot
-be canonicalized: repeated separators, `.` components and a trailing separator
-collapse, while a relative path, `..` and the filesystem root refuse. The
-recorded owner path must equal it exactly, and the filter is part of the plan
-digest, so an apply reviewed for one deleted checkout refuses a different one.
-The filter never grants ownership; it only narrows what the same proofs may
-release. An operator recovering a deleted checkout therefore names it rather
-than accepting every absent path on the machine.
+A released address is immediately allocatable: the gateway publishes with no
+reuse quarantine and answers DNS with a one-second TTL. Growing the pool beyond
+`127.1.0.50` is not part of this contract; the `lo0` aliases come from
+`gateway setup`.
 
-A released entry also releases the persistent domain claim that names it, so the
-same domain can be claimed again after the endpoint reuse window instead of
-staying reserved for a checkout that no longer exists.
-
-An entry is dead only when its owner checkout path is definitely missing
+An assignment is dead only when its owner checkout path is definitely missing
 (absent with its nearest existing ancestor a readable directory, the
 classification `container ports reclaim` uses; an I/O or permission error, a
 non-directory ancestor, or an absent volume root such as an unmounted
 `/Volumes/...` is unknown and holds it), no runtime-scope record names the
-identity, checkout path, route or domain, no container in any state carries its
-project label or working directory or publishes on its address, no live
-assignment or live project route keeps the address, and no non-gateway process
-listens on the route's alias tuple. The gateway binds its TCP aliases from the
-Store's route table and stops a listener when its route disappears, so its own
-alias for a dead route is not a hold; a same-user process that is not the
-recorded gateway daemon, or a listener probe that cannot answer, is. An HTTP
-route binds no gateway alias, so it has no alias tuple to probe; a route the
-gateway publishes for a managed host listener is never container dead-owner
-territory and stays out of the plan. Allocation, its one automatic collection
-and `gateway repair` prove ownership from the same inventory — every container
-state on every profile, with a profile whose VM is stopped recorded as stopped
-rather than broken — so no path can release what another holds. A shared-service
+identity, checkout path or route, no container in any state carries its project
+label or working directory or publishes on its address, no live project route
+uses the address, and no non-gateway process listens on a route's alias tuple.
+The gateway binds its TCP aliases from the route table and stops a listener when
+its route disappears, so its own alias is not a hold; a same-user process that
+is not the recorded gateway daemon, or a listener probe that cannot answer, is.
+Every path proves ownership from the same inventory — every container state on
+every profile, with a profile whose VM is stopped recorded as stopped rather
+than broken — so no path can release what another holds. A shared-service
 identity is dead only when no consumer project that uses it is live and no
-container carries the shared service's own project name.
-
-A withdrawn domain claim has no route and therefore no listener generation of
-its own. It is released only while its owner path is definitely missing, no
-runtime-scope record retains the domain, and no container in any state belongs
-to the checkout; a claim that reserved a stable managed-listener owner holds,
-because its liveness cannot be proven without the route that carried the process
-identity. The route table's own guards agree: a different owner cannot publish a
-route over an unreleased claim, and a claim that vanished or changed owner
-before its planned release refuses that release. Incomplete inventory or an
-unreadable scope store holds the whole plan and names the reason. A stopped
-Colima profile does not hold a loopback entry: it binds no host address and
-cannot start a stack whose checkout is gone, so only a failure that is not a
-stopped profile makes the inventory incomplete. Present paths, running
-containers, unknown path states and live managed listeners are never released,
-so a live project's address, route or domain never changes.
-
-The endpoint Store quarantines a released address, port or domain claim for one
-reuse window (the DNS TTL plus drain budget and the operation budget), so a
-repair an operator runs for a deleted checkout makes its domains claimable again
-after that window rather than immediately. Growing the pool beyond `127.1.0.50`
-is not part of this contract; the `lo0` aliases come from `gateway setup`.
-
-### Stale-owner classification for managed listener claims
-
-A managed listener (host process) claim consults the same classification before
-child startup and before it publishes. An existing claim is accepted when it
-belongs to the exact stable listener owner, or when it is a container route of
-this same checkout generation that the publication transaction hands over. A
-claim whose owner checkout is gone is *stale-owner territory*: it refuses as a
-stale claim naming the exact owner checkout, its recorded generation and the
-`effigy gateway repair --owner-checkout <PATH>` command that can release it —
-never as a live foreign checkout and never as permission to take it. Only the
-digest-fenced repair releases it, and only when no container, runtime scope or
-listener still owns it. A claim from a checkout that still exists, including one
-with a different generation or a manual/task source, keeps the foreign refusal.
+container carries the shared service's own project name. Incomplete inventory or
+an unreadable scope store holds the plan and names the reason. A stopped Colima
+profile does not hold a loopback entry: it binds no host address and cannot
+start a stack whose checkout is gone, so only a failure that is not a stopped
+profile makes the inventory incomplete. Present paths, running containers and
+unknown path states are never released, so a live project's address never
+changes.
 
 ### Detached activation failures
 
 A detached `container up` that fails before or during admission reports the
 underlying refusal in both text and JSON. The JSON failure keeps the sanitized
 cause, the activation stage, the preparation step when the stage is preparation,
-and the environment/checkout identity, alongside its partial/unavailable state,
-failure kind and recovery advice. Secret-shaped `key=value` details in the cause
+and the environment/checkout identity, alongside its unavailable state, failure
+kind and recovery advice. Secret-shaped `key=value` details in the cause
 are redacted and the cause is bounded; the generic reconciliation advice never
 replaces the actionable cause.
 

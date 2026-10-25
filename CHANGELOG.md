@@ -7,6 +7,21 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- A gateway route is one claim: `domain -> (checkout path, target)`. The same
+  checkout path always replaces its own route, covering a new run, a new
+  generation and a container-to-listener handover. A different checkout takes
+  the domain over automatically when the recorded checkout path no longer
+  exists or its target does not accept a TCP connection within 200 ms, logging
+  the takeover in one line; otherwise the write is refused with one message
+  naming the other checkout and the command that stops it. `down`, `retire` and
+  settle remove the checkout's routes by path, listener routes included, so a
+  domain is free immediately and `down` followed by `up` elsewhere works at
+  once. A managed listener route's owner is its checkout path, environment and
+  process name; no run id is recorded.
+- `effigy gateway repair` (with `--owner-checkout`, `--yes` and `--expect-plan`)
+  is retired: automatic reclaim replaces it, and a dead loopback assignment is
+  collected once at allocation time. `effigy container ports reclaim` is
+  unchanged.
 - `effigy deploy model` and `effigy deploy export` are environment-aware:
   `deploy model <ENV>` and `deploy export <PROVIDER> <ENV>` describe the named
   `[deploy.<env>]` environment by resolving sparse `[deploy.<env>.model]`
@@ -287,11 +302,32 @@ During v0.x, MINOR bumps may include breaking changes.
   unchanged-source stamp check, the custom read-only Unix VFS, the second
   immutable fallback that a failed ordinary open reached, the "hot log needs
   recovery" labelling of a racing writer, `StoreError::NeedsRecovery`,
-  `UnknownReason::StoreNeedsRecovery` and the migration-only sealed store read. `rusqlite`'s `backup` feature goes
-  with them.
+  `UnknownReason::StoreNeedsRecovery` and the migration-only sealed store read.
+  `rusqlite`'s `backup` feature goes with them.
 - The hard foreground refusals on an unreadable journal: `check_predecessors`
   and `foreground_effects` warn and proceed instead of refusing the run, and the
   foreground memory guard's executable-identity check is gone.
+- Withdrawn gateway domain claims and the endpoint reuse quarantine.
+  `effigy gateway repair`, the domain and route parts of its dead-owner plan,
+  the `effigy.gateway.loopback-reclaim.v1` JSON payload, the owner-checkout
+  filter, the managed-listener predecessor proof through the checkout journal,
+  the route-source-specific reclaim rules and the `StaleRouteClaim`,
+  `ManagedListenerRouteConflict`, `ManagedListenerRouteOwnerUnsettled` and
+  `LoopbackPoolExhaustedAfterReclaim` refusals are gone. The gateway's DNS TTL
+  is one second so a domain moves to its new owner at once.
+- The environment's record of what Effigy applied. `container up`, a task's
+  runtime preparation and shared services now bring a stack up through one
+  apply, `compose up -d --build --remove-orphans` with no recreate flag, and
+  Compose recreates exactly the services whose rendered configuration changed
+  (its own `config-hash`). Editing `effigy.toml` and running `up` again applies
+  the edit with no `down`; a compose failure in preparation is an error naming
+  the service instead of a warning. The applied/partial/superseded generations,
+  the `Reused`/`KeptForHolders` reuse matrix, the detached admission context and
+  its refusals, the separate mount-drift detector, and the `--no-recreate` /
+  `--force-recreate` variants are gone (contracts 005, 053). `container
+  status --json` drops the `mount_drift` field and the record's `last_applied`,
+  `partial` and `applied` fields; the per-service runtime state, retention,
+  backend and holders remain.
 - The importer for the current-main central `~/.effigy/state/kernel.db`
   (contract 052 §11.1, effigy#307). That schema existed only on unreleased main
   between 2026-10-18 and #276, so no released version ever wrote it, and v0.15
@@ -1209,6 +1245,17 @@ During v0.x, MINOR bumps may include breaking changes.
   journal read, and a polling wait backs off by at least 250 ms. Equal keys in
   different checkouts are no longer reported as ambiguous: each belongs to its
   own journal.
+- `effigy container up` rewrites only what changed: one apply renders the stack
+  and lets Compose recreate the services whose configuration differs, including
+  when a live run holds the environment (that run keeps the stack and is
+  attached). A failed or interrupted `up` leaves nothing to clean up, and a
+  deleted container or a restarted VM is recreated by the next `up` while
+  `status` reports each service's real state. `hold` takes its liveness from the
+  runtime rather than the record.
+- Gateway route writes apply the dead-owner rule in the same locked
+  transaction, and the daemon sweeps it on a timer so `gateway status` lists
+  domains something still serves. A released loopback assignment is
+  immediately allocatable.
 - A managed session bound to a container environment owns that environment, and
   one `effigy dev` shows it the same way in hybrid and container placement
   (effigy#322, Q-007). The session's tabs are the run's own output, one tab per

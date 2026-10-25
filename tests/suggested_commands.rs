@@ -338,8 +338,8 @@ fn sample_value(placeholder: &str, preceding: Option<&str>) -> &'static str {
     let mut name = placeholder
         .trim_matches(['<', '>', '{', '}', '[', ']'])
         .to_ascii_lowercase();
-    // A bare `--owner-checkout {project}` names the kind on the flag, not on
-    // the placeholder.
+    // A bare `--project {project}` names the kind on the flag, not on the
+    // placeholder.
     if let Some(flag) = preceding {
         if flag.starts_with("--") {
             name.push(' ');

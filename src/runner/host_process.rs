@@ -31,7 +31,7 @@ use effigy_containers::{
 };
 use effigy_gateway::identity::{read_live_process_identity, GatewayStartIdentity};
 use effigy_gateway::registration::{
-    deregister_managed_listener_route, project_scope, ManagedListenerRoutePublication,
+    deregister_managed_listener_route,
 };
 use effigy_gateway::routes::{ManagedListenerRouteOwner, RouteTable};
 use effigy_gateway::socket_ownership::{
@@ -209,44 +209,6 @@ pub(in crate::runner) fn validate_host_process_preflight(
         resolve_host_process_cwd(&checkout_root, process)?;
     }
     listener_gateway_root(policy)?;
-    Ok(())
-}
-
-/// Refuse a managed-listener route claim this checkout may not take. Runs in
-/// the environment-handover stage, after same-checkout conflicts were handed
-/// over, so a live sibling environment never reaches this as a refusal.
-pub(in crate::runner) fn validate_host_process_listener_route_claims(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-) -> Result<(), RunnerError> {
-    if policy.host_processes.is_empty() {
-        return Ok(());
-    }
-    let Some(listener_root) = listener_gateway_root(policy)? else {
-        return Ok(());
-    };
-    let route_table = listener_root.join("routes.json");
-    let project_path = repo_root.canonicalize().map_err(|error| {
-        RunnerError::task_invocation(format!("failed to resolve checkout: {error}"))
-    })?;
-    let state_home = crate::runner::task_engine::state_home_path().ok_or_else(|| {
-        RunnerError::task_invocation("HOME is unset; host process runs need a checkout journal")
-    })?;
-    let settle = kernel_run::settle_command(&policy.name);
-    let ordered = order_host_processes(&policy.host_processes)?;
-    for process in ordered.iter().filter(|process| process.listener.is_some()) {
-        let listener = process.listener.as_ref().expect("filtered listener");
-        effigy_gateway::registration::check_managed_listener_route_claim_observed(
-            &route_table,
-            &project_path.display().to_string(),
-            &listener.route_domain,
-            &managed_host_process_owner(&project_path.display().to_string(), policy, process)?,
-            |current| {
-                kernel_run::observe_route_predecessor(&state_home, &project_path, current, &settle)
-            },
-        )
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    }
     Ok(())
 }
 
@@ -470,12 +432,9 @@ fn managed_host_process_owner(
     policy: &EffectiveContainerPolicy,
     process: &EffectiveHostProcess,
 ) -> Result<String, RunnerError> {
-    let scope = project_scope(project_path)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
-        .unwrap_or_else(|| "main".to_owned());
     Ok(format!(
-        "{scope}|{}|{}|{}",
-        policy.name, policy.profile, process.name
+        "{project_path}|{}|{}",
+        policy.name, process.name
     ))
 }
 
@@ -1858,7 +1817,7 @@ fn supervise_managed_host_listener(
         return Ok(GenerationEnd::Exited(1));
     }
     let owner = ManagedListenerRouteOwner {
-        run: Some(run.id().to_string()),
+        run: None,
         owner: spec.owner.clone(),
         runtime_generation: spec.runtime_generation.clone(),
         generation: generation.clone(),
@@ -1961,25 +1920,7 @@ fn supervise_managed_host_listener(
         return Ok(GenerationEnd::Exited(1));
     }
     match publish_managed_listener_route(spec, listener, &owner) {
-        Ok(ManagedListenerRoutePublication::HandedOverFromContainer) => {
-            append_log_line(
-                    &log_path,
-                    &format!(
-                        "[effigy host-process] gateway route for `{}` handed over from this checkout's container environment; the container environment is still running",
-                        listener.route_domain
-                    ),
-                );
-        }
-        Ok(ManagedListenerRoutePublication::ReclaimedPredecessor) => {
-            append_log_line(
-                &log_path,
-                &format!(
-                    "[effigy host-process] gateway route for `{}` reclaimed from a settled predecessor run",
-                    listener.route_domain
-                ),
-            );
-        }
-        Ok(_) => {}
+        Ok(()) => {}
         Err(error) => {
             write_listener_state(
                 &spec.listener_state_file,
@@ -2849,7 +2790,7 @@ fn publish_managed_listener_route(
     spec: &HostProcessRuntimeSpec,
     listener: &EffectiveManagedHostListener,
     owner: &ManagedListenerRouteOwner,
-) -> Result<ManagedListenerRoutePublication, RunnerError> {
+) -> Result<(), RunnerError> {
     let root = spec.gateway_root.as_deref().ok_or_else(|| {
         RunnerError::task_invocation("managed listener route has no gateway state root")
     })?;
@@ -2858,24 +2799,16 @@ fn publish_managed_listener_route(
     let address = owner.address.parse::<SocketAddr>().map_err(|_| {
         RunnerError::task_invocation("managed host listener owner has an invalid address")
     })?;
-    let settle = kernel_run::settle_command(&spec.environment);
-    let project_path = Path::new(&spec.project_path);
-    // A route left by a previous run of this listener is reclaimable only when
-    // this checkout's journal proves that run settled; a live run's route is
-    // refused by name and an unobservable one names the command that settles it.
-    effigy_gateway::registration::register_managed_listener_route_observed(
+    // The same checkout path replaces its own route, whether the previous
+    // generation is alive or dead. Another checkout's live claim is refused
+    // inside the same locked transaction.
+    effigy_gateway::registration::register_managed_listener_route(
         &route_table_path,
         &spec.project_path,
-        effigy_gateway::registration::ManagedListenerRouteRequest {
-            domain: &listener.route_domain,
-            target: &address.to_string(),
-            tls: listener.route_tls,
-            expected_generation: None,
-        },
+        &listener.route_domain,
+        &address.to_string(),
+        listener.route_tls,
         owner.clone(),
-        |current| {
-            kernel_run::observe_route_predecessor(&spec.state_home, project_path, current, &settle)
-        },
     )
     .map_err(|error| RunnerError::task_invocation(error.to_string()))
 }
@@ -3336,7 +3269,6 @@ fn wait_or_break(shutdown: &Arc<std::sync::atomic::AtomicBool>, delay: Duration)
 mod tests {
     use super::*;
     use effigy_containers::{HostProcessRestart, HostProcessSignal};
-    use effigy_gateway::registration::ManagedListenerPredecessor;
 
     fn published_listener_state(runtime_generation: &str, status: &str) -> serde_json::Value {
         let identity = read_live_process_identity(std::process::id()).unwrap();
@@ -3764,6 +3696,27 @@ server.serve_forever()
         });
     }
 
+    /// A listener route's owner is its checkout path, environment and process
+    /// name, so a supervisor restart publishes under the same owner.
+    #[test]
+    fn managed_listener_owner_is_stable_across_supervisor_restarts() {
+        let fixture = fixture();
+        let (_gateway_home, policy) =
+            listener_policy(&fixture.checkout, "owner.host.test", "owner");
+        let process = policy
+            .host_processes
+            .iter()
+            .find(|process| process.listener.is_some())
+            .expect("listener declaration");
+        let project = fixture.checkout.display().to_string();
+        let first = super::managed_host_process_owner(&project, &policy, process)
+            .expect("owner identity");
+        let second = super::managed_host_process_owner(&project, &policy, process)
+            .expect("owner identity");
+        assert_eq!(first, second);
+        assert_eq!(first, format!("{project}|{}|{}", policy.name, process.name));
+    }
+
     /// `down` withdraws a listener route whose supervisor died without
     /// withdrawing it, and reports the withdrawal.
     #[test]
@@ -3774,10 +3727,6 @@ server.serve_forever()
         super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
             .expect("the managed listener starts and publishes its route");
         let owner = published_owner(domain);
-        assert!(
-            owner.run.is_some(),
-            "the route records the kernel run that published it"
-        );
         let leader = super::kernel_run::host_process_status(&fixture.checkout, &policy)
             .first()
             .and_then(|status| status.pid)
@@ -3823,18 +3772,10 @@ server.serve_forever()
         super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
             .expect("the managed listener starts and publishes its route");
         let owner = published_owner(domain);
-        assert!(owner.run.is_some(), "the route records its publisher run");
-        assert!(
-            matches!(
-                super::kernel_run::observe_route_predecessor(
-                    &crate::runner::task_engine::test_state_home(),
-                    &fixture.checkout,
-                    &owner,
-                    &super::kernel_run::settle_command(&policy.name),
-                ),
-                ManagedListenerPredecessor::Live { .. }
-            ),
-            "the listener's supervisor is still live before the stop"
+        assert_eq!(
+            owner.generation,
+            published_owner(domain).generation,
+            "the route records its publisher generation"
         );
 
         let report =
@@ -3849,18 +3790,17 @@ server.serve_forever()
         );
     }
 
-    /// A successor run reclaims a listener route left by a run of the same
-    /// listener that died, without a `down` and without manual cleanup. A live
-    /// run's route still refuses by name.
+    /// A dead listener run's route is replaced by the next start of the same
+    /// checkout, without a `down` and without manual cleanup.
     #[test]
-    fn host_process_listener_successor_reclaims_a_dead_runs_route() {
+    fn host_process_listener_successor_replaces_a_dead_runs_route() {
         let fixture = fixture();
         let domain = "reclaim-successor.host.test";
         let (_gateway_home, policy) = listener_policy(&fixture.checkout, domain, "successor");
         super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
             .expect("the managed listener starts and publishes its route");
         let first = published_owner(domain);
-        let first_run = first.run.clone().expect("first run recorded");
+        let first_generation = first.generation.clone();
         let leader = super::kernel_run::host_process_status(&fixture.checkout, &policy)
             .first()
             .and_then(|status| status.pid)
@@ -3874,40 +3814,16 @@ server.serve_forever()
             "the route survives the run that published it"
         );
 
-        // No `down`: the next run of the same listener reclaims the route in
-        // the publication transaction.
+        // No `down`: the same checkout path replaces its own route on the next
+        // start, whatever the previous generation did.
         super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
-            .expect("a successor run reclaims the route its predecessor left");
+            .expect("a successor run replaces the route its predecessor left");
         let successor = published_owner(domain);
         assert_ne!(
-            successor.run.as_deref(),
-            Some(first_run.as_str()),
-            "the route now records the successor run"
+            successor.generation, first_generation,
+            "the route records the successor generation"
         );
-        let settle = super::kernel_run::settle_command(&policy.name);
-        let state_home = crate::runner::task_engine::test_state_home();
-        assert_eq!(
-            super::kernel_run::observe_route_predecessor(
-                &state_home,
-                &fixture.checkout,
-                &first,
-                &settle,
-            ),
-            ManagedListenerPredecessor::Settled,
-            "the checkout journal proves the predecessor run settled"
-        );
-        assert!(
-            matches!(
-                super::kernel_run::observe_route_predecessor(
-                    &state_home,
-                    &fixture.checkout,
-                    &successor,
-                    &settle,
-                ),
-                ManagedListenerPredecessor::Live { .. }
-            ),
-            "the live successor run is observed live"
-        );
+        assert_ne!(successor.supervisor_pid, first.supervisor_pid);
 
         let report =
             super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
@@ -3918,38 +3834,66 @@ server.serve_forever()
             .is_none());
     }
 
-    /// A live run of this checkout still refuses another owner's claim, naming
-    /// the run and its state instead of calling the checkout foreign.
+    /// A live sibling environment of the same checkout takes the domain over:
+    /// the checkout path is the whole owner, so the last writer wins between a
+    /// container environment and its listener.
     #[test]
-    fn host_process_listener_live_run_refuses_another_owner_by_name() {
+    fn host_process_listener_replaces_its_own_checkouts_live_listener() {
         let fixture = fixture();
         let domain = "reclaim-live.host.test";
         let (_gateway_home, policy) = listener_policy(&fixture.checkout, domain, "live");
         super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
             .expect("the managed listener starts and publishes its route");
         let live = published_owner(domain);
-        let live_run = live.run.clone().expect("live run recorded");
-
-        let mut other = policy.clone();
-        other.name = "other".to_owned();
-        other.project_name = "reclaim-live-other".to_owned();
-        let refusal = super::validate_host_process_listener_route_claims(&fixture.checkout, &other)
-            .expect_err("a live listener's route refuses another owner");
-        let rendered = refusal.to_string();
-        assert!(rendered.contains(&live_run), "{rendered}");
-        assert!(rendered.contains("still live"), "{rendered}");
-        assert!(
-            rendered.contains("effigy container other down"),
-            "{rendered}"
+        let route = RouteTable::load(&route_table_path())
+            .expect("route table")
+            .lookup(domain)
+            .cloned()
+            .expect("published route");
+        assert_eq!(
+            route.project,
+            fixture.checkout.display().to_string(),
+            "the route's owner is the checkout path"
         );
-        assert!(
-            !rendered.contains(&fixture.checkout.display().to_string()),
-            "a same-checkout refusal never calls this checkout foreign: {rendered}"
-        );
+        effigy_gateway::registration::register_route(
+            &route_table_path(),
+            &effigy_gateway::registration::RouteRegistration {
+                domain: domain.to_owned(),
+                target: Some("127.0.0.1:9".to_owned()),
+                dns_ip: None,
+                tcp_port: None,
+                tcp_target: None,
+                tls: false,
+                project_path: fixture.checkout.display().to_string(),
+                source: effigy_gateway::routes::RouteSource::Container,
+            },
+        )
+        .expect("the same checkout path replaces its own listener route");
+        let replaced = RouteTable::load(&route_table_path())
+            .expect("route table")
+            .lookup(domain)
+            .cloned()
+            .expect("route stays");
+        assert!(replaced.managed_listener.is_none());
+        assert_ne!(replaced.target.as_deref(), Some(live.address.as_str()));
 
         let report =
             super::kernel_run::stop_host_processes_for_container(&fixture.checkout, &policy);
         assert!(report.complete(), "{report:?}");
+        assert!(
+            RouteTable::load(&route_table_path())
+                .expect("route table")
+                .lookup(domain)
+                .is_some(),
+            "the container environment's route is not the host-process stop's to remove"
+        );
+        // `down` from the container side removes it by path.
+        assert!(effigy_gateway::registration::deregister_route(
+            &route_table_path(),
+            domain,
+            &fixture.checkout.display().to_string(),
+        )
+        .unwrap());
         assert!(RouteTable::load(&route_table_path())
             .expect("route table")
             .lookup(domain)
