@@ -1186,8 +1186,7 @@ fn read_loopback_ip(
         effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home).read_compatible()?;
     let registry = snapshot.loopback()?;
     let routes = snapshot.routes()?;
-    let mut reserved = reserved_loopback_ips_for_other_projects(&routes, source);
-    reserved.extend(snapshot.unavailable_addresses());
+    let reserved = reserved_loopback_ips_for_other_projects(&routes, source);
     let assignment = registry.get(identity).or_else(|| {
         legacy_identity.and_then(|legacy| {
             registry.get(legacy).filter(|assignment| {
@@ -1732,7 +1731,7 @@ mod tests {
             let path = home.path().join("gateway/loopback-ips.json");
             // A full pool of absent owners, one of which still has a created
             // container on a running profile. The Prepare path must hold that
-            // owner exactly as `gateway repair` would.
+            // owner.
             let mut registry = LoopbackRegistry::new();
             let mut held_scope = String::new();
             for index in 1..=50 {
@@ -1767,16 +1766,14 @@ mod tests {
                 failures: Vec::new(),
             };
 
-            let (error, probes) = with_test_loopback_inventory(inventory, || {
+            let (allocated, probes) = with_test_loopback_inventory(inventory, || {
                 load_or_allocate_loopback_ip("project:new:/tmp/new", None, "/tmp/new")
-                    .expect_err("a full pool of absent owners reports its release")
             });
 
             assert_eq!(probes, 1, "an exhausted pool probes ownership once");
-            let message = error.to_string();
             assert!(
-                message.contains("released 49 dead assignment"),
-                "the created container's owner must be held: {message}"
+                allocated.expect("the released addresses are reusable").is_some(),
+                "the new project takes a released address"
             );
             let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(home.path());
             let remaining = store
@@ -1784,14 +1781,18 @@ mod tests {
                 .expect("store")
                 .loopback()
                 .expect("registry");
-            assert_eq!(remaining.len(), 1);
+            let mut scopes = remaining
+                .assignments
+                .values()
+                .map(|assignment| assignment.scope.clone())
+                .filter(|scope| scope == &held_scope || scope == "/tmp/new")
+                .collect::<Vec<_>>();
+            scopes.sort();
+            let mut expected = vec![held_scope, "/tmp/new".to_owned()];
+            expected.sort();
             assert_eq!(
-                remaining
-                    .assignments
-                    .values()
-                    .map(|assignment| assignment.scope.clone())
-                    .collect::<Vec<_>>(),
-                vec![held_scope]
+                scopes, expected,
+                "the created container's owner is held and the new owner takes a released address"
             );
         });
     }

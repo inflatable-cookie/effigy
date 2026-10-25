@@ -7,6 +7,21 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- A gateway route is one claim: `domain -> (checkout path, target)`. The same
+  checkout path always replaces its own route, covering a new run, a new
+  generation and a container-to-listener handover. A different checkout takes
+  the domain over automatically when the recorded checkout path no longer
+  exists or its target does not accept a TCP connection within 200 ms, logging
+  the takeover in one line; otherwise the write is refused with one message
+  naming the other checkout and the command that stops it. `down`, `retire` and
+  settle remove the checkout's routes by path, listener routes included, so a
+  domain is free immediately and `down` followed by `up` elsewhere works at
+  once. A managed listener route's owner is its checkout path, environment and
+  process name; no run id is recorded.
+- `effigy gateway repair` (with `--owner-checkout`, `--yes` and `--expect-plan`)
+  is retired: automatic reclaim replaces it, and a dead loopback assignment is
+  collected once at allocation time. `effigy container ports reclaim` is
+  unchanged.
 - `effigy deploy model` and `effigy deploy export` are environment-aware:
   `deploy model <ENV>` and `deploy export <PROVIDER> <ENV>` describe the named
   `[deploy.<env>]` environment by resolving sparse `[deploy.<env>.model]`
@@ -282,6 +297,14 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- Withdrawn gateway domain claims and the endpoint reuse quarantine.
+  `effigy gateway repair`, the domain and route parts of its dead-owner plan,
+  the `effigy.gateway.loopback-reclaim.v1` JSON payload, the owner-checkout
+  filter, the managed-listener predecessor proof through the checkout journal,
+  the route-source-specific reclaim rules and the `StaleRouteClaim`,
+  `ManagedListenerRouteConflict`, `ManagedListenerRouteOwnerUnsettled` and
+  `LoopbackPoolExhaustedAfterReclaim` refusals are gone. The gateway's DNS TTL
+  is one second so a domain moves to its new owner at once.
 - The importer for the current-main central `~/.effigy/state/kernel.db`
   (contract 052 §11.1, effigy#307). That schema existed only on unreleased main
   between 2026-10-18 and #276, so no released version ever wrote it, and v0.15
@@ -1181,6 +1204,10 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- Gateway route writes apply the dead-owner rule in the same locked
+  transaction, and the daemon sweeps it on a timer so `gateway status` lists
+  domains something still serves. A released loopback assignment is
+  immediately allocatable.
 - A managed session bound to a container environment owns that environment, and
   one `effigy dev` shows it the same way in hybrid and container placement
   (effigy#322, Q-007). The session's tabs are the run's own output, one tab per

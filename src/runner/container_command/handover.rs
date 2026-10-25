@@ -26,7 +26,7 @@ use effigy_containers::{
     ContainerAction, EffectiveContainerPolicy,
 };
 use effigy_gateway::managed_listener::observe_managed_listener_owner;
-use effigy_gateway::registration::{owned_by, project_scope};
+use effigy_gateway::registration::owned_by;
 use effigy_gateway::routes::RouteTable;
 
 use super::gateway_registration::{
@@ -247,22 +247,17 @@ fn declared_environment_names(
 struct SameCheckoutRoutes {
     table: RouteTable,
     project_path: String,
-    scope: Option<String>,
 }
 
 impl SameCheckoutRoutes {
     fn load(repo_root: &Path) -> Result<Option<Self>, RunnerError> {
         let project_path = repo_root.display().to_string();
-        let Ok(scope) = project_scope(&project_path) else {
-            return Ok(None);
-        };
         let path = super::gateway_registration::gateway_route_table_path()?;
         let table = RouteTable::load(&path)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
         Ok(Some(Self {
             table,
             project_path,
-            scope,
         }))
     }
 
@@ -273,7 +268,7 @@ impl SameCheckoutRoutes {
             let Some(route) = self.table.lookup(&claim.domain) else {
                 continue;
             };
-            if !owned_by(route, &self.project_path, self.scope.as_deref()) {
+            if !owned_by(route, &self.project_path) {
                 continue;
             }
             let Some(owner) = route.managed_listener.as_ref() else {
@@ -542,8 +537,7 @@ mod tests {
     use effigy_containers::EffectiveDnsRoute;
     use effigy_gateway::identity::read_live_process_identity;
     use effigy_gateway::registration::{
-        register_managed_listener_route, register_route, ManagedListenerRoutePublication,
-        RouteRegistration,
+        register_managed_listener_route, register_route, RouteRegistration,
     };
     use effigy_gateway::routes::{ManagedListenerRouteOwner, RouteSource};
     use effigy_manifest::{
@@ -684,8 +678,7 @@ domain = "switch.test"
     /// `switch.test`, owned by this test process with a real loopback socket,
     /// so the production liveness check verifies it.
     fn register_live_web_listener(fixture: &RouteFixture) -> TcpListener {
-        let scope = project_scope(&fixture.repo_root.display().to_string()).expect("fixture scope");
-        let scope = scope.unwrap_or_else(|| "main".to_owned());
+        let checkout = fixture.repo_root.display().to_string();
         let listener = TcpListener::bind("127.0.0.1:0").expect("live listener fixture");
         let address = listener.local_addr().expect("live listener address");
         let identity = read_live_process_identity(std::process::id()).expect("test identity");
@@ -694,7 +687,7 @@ domain = "switch.test"
             &availability,
             serde_json::to_vec(&serde_json::json!({
                 "schema": "effigy.managed.host-listener-state.v1",
-                "owner": format!("{scope}|web|default|front"),
+                "owner": format!("{checkout}|web|front"),
                 "runtime_generation": "runtime-1",
                 "generation": "child-live",
                 "status": "ready",
@@ -704,7 +697,7 @@ domain = "switch.test"
         .expect("write availability");
         let owner = ManagedListenerRouteOwner {
             run: None,
-            owner: format!("{scope}|web|default|front"),
+            owner: format!("{checkout}|web|front"),
             runtime_generation: "runtime-1".to_owned(),
             generation: "child-live".to_owned(),
             supervisor_pid: std::process::id(),
@@ -720,17 +713,15 @@ domain = "switch.test"
             route_tls: false,
             availability_file: availability.display().to_string(),
         };
-        let publication = register_managed_listener_route(
+        register_managed_listener_route(
             &fixture.route_table_path(),
             &fixture.repo_root.display().to_string(),
             "switch.test",
             &address.to_string(),
             false,
             owner,
-            None,
         )
         .expect("register live listener route");
-        assert_eq!(publication, ManagedListenerRoutePublication::Registered);
         listener
     }
 
@@ -855,11 +846,18 @@ domain = "switch.test"
         let foreign_scope = effigy_core::worktree_scope::load_or_create(&foreign)
             .expect("foreign scope")
             .unwrap_or_else(|| "main".to_owned());
+        // The foreign checkout still serves the domain, so its claim is live.
+        let foreign_listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("foreign listener fixture");
+        let foreign_target = foreign_listener
+            .local_addr()
+            .expect("foreign listener address")
+            .to_string();
         register_route(
             &fixture.route_table_path(),
             &RouteRegistration {
                 domain: "switch.test".to_owned(),
-                target: Some("127.0.0.1:49000".to_owned()),
+                target: Some(foreign_target),
                 dns_ip: None,
                 tcp_port: None,
                 tcp_target: None,
@@ -879,10 +877,15 @@ domain = "switch.test"
         let rendered = error.to_string();
         assert!(rendered.contains("switch.test"), "{rendered}");
         assert!(
+            rendered.contains(&foreign.display().to_string()),
+            "the refusal names the owning checkout: {rendered}"
+        );
+        assert!(
             !fixture.docker_log().contains("acme-web"),
             "no effect touches the sibling environment: {}",
             fixture.docker_log()
         );
+        drop(foreign_listener);
     }
 
     #[test]

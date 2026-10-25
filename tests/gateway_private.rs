@@ -1621,15 +1621,16 @@ fn managed_host_dependent_replacement_route_edits_exclude_lifecycle_writers() {
 }
 
 /// A checkout can switch container -> hybrid -> container in either direction
-/// without refusal while a route is handed over, and a still-live managed
-/// listener is refused as a real conflict. Every mutation goes through the
-/// production route-table transaction, which takes the route-table lock.
+/// without refusal: the checkout path is the whole route owner, so its own
+/// route is always replaced. Another checkout that still serves the domain is
+/// refused by name. Every mutation goes through the production route-table
+/// transaction, which takes the route-table lock.
 #[test]
-fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listener() {
+fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_foreign_owner() {
     use effigy_gateway::identity::{read_live_process_identity, GatewayStartIdentity};
     use effigy_gateway::registration::{
-        check_managed_listener_route_claim, deregister_managed_listener_route, deregister_route,
-        register_managed_listener_route, register_route, RouteRegistration,
+        deregister_managed_listener_route, register_managed_listener_route, register_route,
+        RouteRegistration,
     };
     use effigy_gateway::routes::ManagedListenerRouteOwner;
 
@@ -1640,7 +1641,7 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
     let dead_start = GatewayStartIdentity::Linux { start_ticks: 1 };
     let dead_owner = |generation: &str, address: &str| ManagedListenerRouteOwner {
         run: None,
-        owner: "main|web|test|app".to_owned(),
+        owner: format!("{project}|web|app"),
         runtime_generation: "runtime-1".to_owned(),
         generation: generation.to_owned(),
         supervisor_pid: 10,
@@ -1671,18 +1672,9 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
         source: RouteSource::Container,
     };
 
-    // Container -> hybrid: a same-checkout container route neither refuses the
-    // preflight claim nor the publication transaction.
+    // Container -> hybrid: the same checkout's container route is replaced by
+    // the listener publication with no claim proof.
     register_route(&route_path, &container_registration("127.0.0.1:48081")).unwrap();
-    check_managed_listener_route_claim(
-        &route_path,
-        &project,
-        "switch.example.test",
-        "main|web|test|app",
-    )
-    .expect("a same-checkout container route must not refuse the hybrid claim");
-    // A pre-existing dead generation is imported as durable state; a new
-    // publication of this dead owner must now fail at the engine boundary.
     assert!(register_managed_listener_route(
         &route_path,
         &project,
@@ -1690,7 +1682,6 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
         "127.0.0.1:48082",
         false,
         dead_owner("child-1", "127.0.0.1:48082"),
-        None
     )
     .is_err());
     effigy_gateway::endpoint_store::EndpointStore::for_routes(&route_path)
@@ -1703,22 +1694,11 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
             Ok(())
         })
         .unwrap();
-    assert!(
-        !deregister_route(&route_path, "switch.example.test", &project).unwrap(),
-        "container teardown must not remove the successor route"
-    );
 
-    // Hybrid -> container once the listener generation is gone.
-    assert!(deregister_managed_listener_route(
-        &route_path,
-        &project,
-        "switch.example.test",
-        "main|web|test|app",
-        "child-1",
-    )
-    .unwrap());
+    // Hybrid -> container: the same checkout always replaces its own route,
+    // whether the recorded listener generation is alive or dead.
     register_route(&route_path, &container_registration("127.0.0.1:48083"))
-        .expect("the container may reclaim the domain once the listener is gone");
+        .expect("the same checkout replaces its own listener route");
     let reclaimed = RouteTable::load(&route_path)
         .unwrap()
         .lookup("switch.example.test")
@@ -1726,9 +1706,20 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
         .expect("reclaimed container route");
     assert_eq!(reclaimed.source, RouteSource::Container);
     assert!(reclaimed.managed_listener.is_none());
+    assert_eq!(reclaimed.target.as_deref(), Some("127.0.0.1:48083"));
+    assert!(!deregister_managed_listener_route(
+        &route_path,
+        &project,
+        "switch.example.test",
+        &format!("{project}|web|app"),
+        "child-1",
+    )
+    .unwrap());
 
-    // A live managed listener is a real conflict. The refusal names the running
-    // managed process and how to stop it, never the claimant's own path.
+    // Another checkout that still serves the domain is a live owner: the
+    // refusal names it and the command that stops it.
+    let foreign = fixture.path().join("foreign");
+    fs::create_dir_all(&foreign).expect("foreign checkout fixture");
     let listener = TcpListener::bind("127.0.0.1:0").expect("live listener fixture");
     let live_address = listener.local_addr().expect("live listener address");
     let identity = read_live_process_identity(std::process::id()).expect("test process identity");
@@ -1737,7 +1728,7 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
         &availability,
         serde_json::to_vec(&serde_json::json!({
             "schema": "effigy.managed.host-listener-state.v1",
-            "owner": "main|web|test|app",
+            "owner": format!("{}|web|app", foreign.display()),
             "runtime_generation": "runtime-1",
             "generation": "child-live",
             "status": "ready",
@@ -1747,7 +1738,7 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
     .unwrap();
     let live_owner = ManagedListenerRouteOwner {
         run: None,
-        owner: "main|web|test|app".to_owned(),
+        owner: format!("{}|web|app", foreign.display()),
         runtime_generation: "runtime-1".to_owned(),
         generation: "child-live".to_owned(),
         supervisor_pid: std::process::id(),
@@ -1765,20 +1756,25 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
     };
     register_managed_listener_route(
         &route_path,
-        &project,
+        &foreign.display().to_string(),
         "switch.example.test",
         &live_address.to_string(),
         false,
         live_owner,
-        None,
     )
     .unwrap();
     let conflict = register_route(&route_path, &container_registration("127.0.0.1:48084"))
-        .expect_err("a live managed listener must refuse the container environment");
+        .expect_err("a live foreign checkout keeps the domain");
     let rendered = conflict.to_string();
-    assert!(rendered.contains("main|web|test|app"), "{rendered}");
+    assert!(
+        rendered.contains(&foreign.display().to_string()),
+        "{rendered}"
+    );
     assert!(rendered.contains("effigy container down"), "{rendered}");
-    assert!(!rendered.contains(&project), "{rendered}");
+    assert!(
+        !rendered.contains(&format!("checkout `{project}`")),
+        "{rendered}"
+    );
     drop(listener);
 }
 
@@ -4553,12 +4549,13 @@ fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
             Some(RouteSource::Task),
             "the live hybrid listener holds the domain"
         );
-        assert!(
-            route_owner_environment("switch.test")
-                .expect("managed listener owner")
-                .ends_with("|hybrid|switch|app"),
-            "the listener owner names the hybrid environment"
+        let owner = route_owner_environment("switch.test").expect("managed listener owner");
+        assert_eq!(
+            owner.split('|').nth(1),
+            Some("hybrid"),
+            "the listener owner names the hybrid environment: {owner}"
         );
+        assert!(owner.ends_with("|app"), "{owner}");
 
         // Stack up takes the domain back from the live listener without
         // refusing: the whole hybrid environment is handed over first.
@@ -4605,19 +4602,23 @@ fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
         .expect("foreign scope")
         .unwrap_or_else(|| "main".to_owned());
     let _keep_foreign_scope = foreign_scope;
-    // A routine down retains switch.test's persistent owner. Use a fresh
-    // foreign claim and point the requested hybrid configuration at it.
+    // A foreign checkout that still serves the domain refuses the handover.
     let manifest = fs::read_to_string(checkout.join("effigy.toml")).unwrap();
     fs::write(
         checkout.join("effigy.toml"),
         manifest.replace("switch.test", "foreign-switch.test"),
     )
     .unwrap();
+    let foreign_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("foreign listener");
+    let foreign_target = foreign_listener
+        .local_addr()
+        .expect("foreign listener address")
+        .to_string();
     effigy_gateway::registration::register_route(
         &routes_path,
         &effigy_gateway::registration::RouteRegistration {
             domain: "foreign-switch.test".to_owned(),
-            target: Some("127.0.0.1:49999".to_owned()),
+            target: Some(foreign_target.clone()),
             dns_ip: None,
             tcp_port: None,
             tcp_target: None,
@@ -4654,6 +4655,7 @@ fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
         !active(&hybrid_project),
         "the refused handover starts nothing"
     );
+    drop(foreign_listener);
 
     // Leave the checkout stopped: idempotent downs stop any live environment.
     for env in ["stack", "hybrid"] {

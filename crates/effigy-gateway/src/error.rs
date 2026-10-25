@@ -37,47 +37,9 @@ pub enum GatewayError {
     #[error("route already registered for domain '{domain}'")]
     DuplicateRoute { domain: String },
 
-    /// Another live checkout owns this domain.
-    #[error("gateway domain `{domain}` is owned by live checkout `{project}`; configure a distinct domain for this worktree or stop the owning checkout")]
+    /// Another checkout still serves this domain, so the claim is live.
+    #[error("gateway domain `{domain}` is owned by checkout `{project}`, which still serves it; stop that checkout with `effigy container down` there, or configure a distinct domain for this worktree")]
     ForeignRoute { domain: String, project: String },
-
-    /// A container route from a checkout that no longer exists still claims the
-    /// domain. Absence alone never grants the claim here; the refusal names the
-    /// exact owner and the one supported repair.
-    #[error(
-        "gateway domain `{domain}` is claimed by a container route from checkout `{project}`, which no longer exists ({generation}); this checkout is not its owner. Recover it with `effigy gateway repair --owner-checkout {project}`: review the plan, then apply the digest it prints. That repair holds the claim unless no container, runtime scope or listener still owns it"
-    )]
-    StaleRouteClaim {
-        domain: String,
-        project: String,
-        generation: String,
-    },
-
-    /// A live managed listener from this same checkout still owns the domain.
-    #[error("gateway domain `{domain}` is held by the live managed listener `{owner}` (supervisor PID {pid}); stop that environment with `effigy container down` before starting the container environment")]
-    ManagedListenerRouteConflict {
-        domain: String,
-        owner: String,
-        pid: u32,
-    },
-
-    /// A managed listener route this same checkout published is held by a run
-    /// its journal does not prove settled. The domain is not foreign: the
-    /// refusal names the owning run, its observed state and the command that
-    /// settles it, never the claimant's own checkout path.
-    #[error(
-        "gateway domain `{domain}` is held by managed listener `{owner}` from {owner_run}, which is {state}; settle it with `{next}` and retry"
-    )]
-    ManagedListenerRouteOwnerUnsettled {
-        domain: String,
-        owner: String,
-        /// Display phrase for the recorded run: ``run `abc` `` or
-        /// `an unrecorded run`.
-        owner_run: String,
-        /// The observed state: `still live` or `not provably settled (<why>)`.
-        state: String,
-        next: String,
-    },
 
     /// No route found for the given domain.
     #[error("no route registered for domain '{domain}'")]
@@ -149,19 +111,6 @@ pub enum GatewayError {
     LoopbackPoolExhausted {
         range_start: Ipv4Addr,
         range_end: Ipv4Addr,
-    },
-
-    /// The bounded loopback pool stayed exhausted after dead entries were
-    /// released: the freed addresses are held by the endpoint reuse budget.
-    #[error(
-        "loopback pool exhausted for range {range_start}–{range_end}: released {assignments} dead assignment(s) and {routes} stale container route(s); their addresses leave the endpoint reuse quarantine in about {reuse_seconds} seconds, so rerun to allocate"
-    )]
-    LoopbackPoolExhaustedAfterReclaim {
-        range_start: Ipv4Addr,
-        range_end: Ipv4Addr,
-        assignments: usize,
-        routes: usize,
-        reuse_seconds: u64,
     },
 
     /// Loopback alias provisioning failed.
