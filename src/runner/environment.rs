@@ -11,8 +11,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use effigy_containers::environment::{
     self as engine, Applied, BackendError, BackendSelection, EnvContext, EnvError, EnvRecord,
-    EnvRef, HoldError, Idle, ImportRequest, LegacyMarkers, Operation, Ownership, Pending,
-    Retention, Session, Up,
+    EnvRef, HoldError, Idle, ImportRequest, LegacyMarkers, Operation, Ownership, Retention,
+    Session, Up,
 };
 use effigy_containers::EffectiveContainerPolicy;
 use effigy_kernel::ctx::CancelToken;
@@ -218,42 +218,6 @@ pub(in crate::runner) fn import_legacy(
     .map_err(error)
 }
 
-/// Whether an imported v0.14.1 partial generation is these inputs.
-pub(in crate::runner) fn adopts_legacy(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    record: &EnvRecord,
-) -> bool {
-    adopt(repo_root, policy, Some(record))
-}
-
-/// Whether the imported, never-applied running stack matches the current
-/// inputs exactly as its v0.14.1 admission recorded them (M7).
-fn adopt(repo_root: &Path, policy: &EffectiveContainerPolicy, record: Option<&EnvRecord>) -> bool {
-    let Some(record) = record else {
-        return false;
-    };
-    if record.last_applied.is_some()
-        || !record
-            .engine()
-            .is_some_and(|engine| engine.imported.is_some())
-    {
-        return false;
-    }
-    let markers = LegacyMarkers::read(&legacy_marker_dir(repo_root, policy), &policy.name);
-    let Some(admitted) = engine::recorded_admission(&markers) else {
-        return false;
-    };
-    let current = effigy_containers::policy::admission::generation_context(policy);
-    match (
-        effigy_containers::policy::admission::normalize_context(admitted.clone(), policy),
-        current,
-    ) {
-        (Ok(admitted), Ok(current)) => admitted == current,
-        _ => false,
-    }
-}
-
 /// Whether every declared service of the environment's project runs, from
 /// an exact-identity inventory. Containers this checkout cannot prove it
 /// owns refuse, so another checkout's stack is never recreated.
@@ -340,18 +304,12 @@ fn evidence() -> effigy_kernel::observe::Evidence {
         .expect("fixed evidence")
 }
 
-/// A reconciled generation, before the command's integrations activate it.
+/// A bring-up whose backend apply finished, before the command's
+/// integrations activate it.
 #[derive(Debug)]
 pub(in crate::runner) struct BringUp {
     env: EnvRef,
-    pending: Pending,
     repo_root: PathBuf,
-}
-
-impl BringUp {
-    pub(in crate::runner) fn applied(&self) -> Applied {
-        self.pending.applied
-    }
 }
 
 /// The retention a task's ensure gives a stack it starts.
@@ -366,8 +324,9 @@ pub(in crate::runner) fn task_retention() -> Retention {
     }
 }
 
-/// The reconcile run of a bring-up. `apply` performs the backend effect
-/// only when the running stack is not already the desired generation.
+/// The apply run of a bring-up. `apply` performs the one backend effect:
+/// `compose up -d --remove-orphans`, from which Compose recreates only the
+/// services whose rendered configuration changed.
 pub(in crate::runner) fn reconcile(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -377,38 +336,19 @@ pub(in crate::runner) fn reconcile(
     import_legacy(repo_root, policy)?;
     let env = env_ref(policy)?;
     let ctx = context(&policy.repo_root)?;
-    let existing = record(policy);
-    let running = running(repo_root, policy)?;
-    let mut drift = match running {
-        Observed::Verified(true, _) => effigy_containers::exec::probe_mount_drift(
-            repo_root,
-            policy,
-            Instant::now() + INVENTORY_BUDGET,
-        )
-        .unwrap_or_default(),
-        _ => Vec::new(),
-    };
-    // Observe first, then create: a missing isolated host mount point is drift,
-    // so routed-task preparation and status/doctor see it before anything is
-    // recreated. The created list is the fallback when that observation was
-    // unavailable: a recreated mount point still reconciles the running stack.
-    let recreated_mount_points = effigy_containers::exec::ensure_isolated_mount_host_points(
-        repo_root, policy,
-    )
-    .map_err(|error| {
-        RunnerError::task_invocation(format!(
-            "container `{}` could not prepare its isolated mount points in the checkout: {error}",
-            policy.name
-        ))
-    })?;
-    if drift.is_empty() && matches!(running, Observed::Verified(true, _)) {
-        for path in &recreated_mount_points {
-            drift.push(format!(
-                "isolated mount point `{path}` was missing on the host and has been recreated; the running stack is reconciled"
-            ));
-        }
-    }
-    let pending = engine::reconcile(
+    // The exact-identity inventory still removes owned containers a profile
+    // transition left unusable, so the apply recreates rather than collides.
+    let _running = running(repo_root, policy)?;
+    // A bind-mounted directory that does not exist yet cannot be mounted.
+    effigy_containers::exec::ensure_isolated_mount_host_points(repo_root, policy).map_err(
+        |error| {
+            RunnerError::task_invocation(format!(
+                "container `{}` could not prepare its isolated mount points in the checkout: {error}",
+                policy.name
+            ))
+        },
+    )?;
+    let applied = engine::reconcile(
         &ctx,
         &env,
         Up {
@@ -416,25 +356,18 @@ pub(in crate::runner) fn reconcile(
             project: &policy.project_name,
             backend: &backend(repo_root, policy),
             retention,
-            running,
-            adopt: adopt(repo_root, policy, existing.as_ref()),
-            drifted: !drift.is_empty(),
         },
         apply,
     )
     .map_err(error)?;
-    if pending.applied == Applied::KeptForHolders {
+    if applied == Applied::HeldByRuns {
         eprintln!(
-            "[warn] environment `{}` keeps its running generation: live runs hold it, so the changed configuration is applied after they end",
+            "[warn] environment `{}` was left as it is: live runs hold it, and they are now attached to it",
             policy.name
         );
-        for detail in &drift {
-            eprintln!("[warn] {detail}");
-        }
     }
     Ok(BringUp {
         env,
-        pending,
         repo_root: policy.repo_root.clone(),
     })
 }
@@ -451,7 +384,7 @@ pub(in crate::runner) fn activate(
         .chain(requested_holder().iter())
         .map(|run| (*run, mode))
         .collect::<Vec<_>>();
-    engine::activate(&ctx, &bring_up.env, &bring_up.pending, &holders).map_err(error)
+    engine::activate(&ctx, &bring_up.env, &holders).map_err(error)
 }
 
 fn record_mode(ctx: &EnvContext<'_>, env: &EnvRef) -> AttachMode {
@@ -717,11 +650,16 @@ impl Held {
         };
         let env = env_ref(&self.policy)?;
         let ctx = context(&self.policy.repo_root)?;
+        let running = matches!(
+            running(&self.policy.repo_root, &self.policy),
+            Ok(Observed::Verified(true, _))
+        );
         match engine::hold(
             session.run_mut(),
             &ctx,
             &env,
             Wait::Until(Instant::now() + engine::GATE_WAIT),
+            running,
         ) {
             Ok(_) => Ok(true),
             Err(HoldError::NotActive) => Ok(false),

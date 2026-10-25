@@ -35,7 +35,6 @@ pub(in crate::runner) use liveness::{
 };
 pub(in crate::runner) use secret_env::container_secret_runtime_env_path;
 
-mod admission;
 mod bounded_exec;
 mod cache;
 mod closeout;

@@ -436,7 +436,7 @@ fn runtime_prep_runs_sibling_service_recovery_before_exec_and_alias_reconciliati
 }
 
 #[test]
-fn runtime_compose_up_stage_uses_stable_detached_up_args() {
+fn runtime_compose_up_stage_runs_the_one_apply() {
     let repo_root = Path::new("/tmp/demo-repo");
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
     let calls = Arc::new(Mutex::new(Vec::<(PathBuf, Vec<OsString>, String)>::new()));
@@ -451,42 +451,38 @@ fn runtime_compose_up_stage_uses_stable_detached_up_args() {
             ));
             Ok(())
         }
-    });
+    })
+    .expect("the apply succeeds");
 
-    assert_eq!(
-        *calls.lock().expect("calls lock"),
-        vec![(
-            repo_root.to_path_buf(),
-            vec![
-                OsString::from("compose"),
-                OsString::from("-f"),
-                OsString::from("docker-compose.yml"),
-                OsString::from("-p"),
-                OsString::from("demo-web"),
-                OsString::from("up"),
-                OsString::from("-d"),
-                OsString::from("--no-recreate"),
-            ],
-            "docker compose up (idempotent)".to_owned(),
-        )]
-    );
+    let calls = calls.lock().expect("calls lock");
+    let (root, args, label) = &calls[0];
+    assert_eq!(root, repo_root);
+    assert_eq!(*label, "docker compose up");
+    assert!(args.windows(2).any(|window| window == ["up", "-d"]));
+    assert!(args.contains(&OsString::from("--remove-orphans")));
+    assert!(!args.contains(&OsString::from("--force-recreate")));
+    assert!(!args.contains(&OsString::from("--no-recreate")));
 }
 
 #[test]
-fn runtime_compose_up_stage_keeps_best_effort_error_behavior() {
+fn runtime_compose_up_stage_propagates_a_compose_failure() {
     let repo_root = Path::new("/tmp/demo-repo");
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
     let calls = Arc::new(Mutex::new(0usize));
 
-    run_runtime_compose_up_stage(repo_root, &policy, {
+    let error = run_runtime_compose_up_stage(repo_root, &policy, {
         let calls = Arc::clone(&calls);
         move |_, _, _, _| {
             *calls.lock().expect("calls lock") += 1;
-            Err(RunnerError::task_invocation("compose up failed"))
+            Err(RunnerError::task_invocation("service `db` exited 1"))
         }
-    });
-
+    })
+    .expect_err("a compose failure is an error");
     assert_eq!(*calls.lock().expect("calls lock"), 1);
+    assert!(
+        error.to_string().contains("service `db` exited 1"),
+        "{error}"
+    );
 }
 
 #[test]

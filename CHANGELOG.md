@@ -305,6 +305,19 @@ During v0.x, MINOR bumps may include breaking changes.
   `ManagedListenerRouteConflict`, `ManagedListenerRouteOwnerUnsettled` and
   `LoopbackPoolExhaustedAfterReclaim` refusals are gone. The gateway's DNS TTL
   is one second so a domain moves to its new owner at once.
+- The environment's record of what Effigy applied. `container up`, a task's
+  runtime preparation and shared services now bring a stack up through one
+  apply, `compose up -d --build --remove-orphans` with no recreate flag, and
+  Compose recreates exactly the services whose rendered configuration changed
+  (its own `config-hash`). Editing `effigy.toml` and running `up` again applies
+  the edit with no `down`; a compose failure in preparation is an error naming
+  the service instead of a warning. The applied/partial/superseded generations,
+  the `Reused`/`KeptForHolders` reuse matrix, the detached admission context and
+  its refusals, the separate mount-drift detector, and the `--no-recreate` /
+  `--force-recreate` variants are gone (contracts 005, 053). `container
+  status --json` drops the `mount_drift` field and the record's `last_applied`,
+  `partial` and `applied` fields; the per-service runtime state, retention,
+  backend and holders remain.
 - The importer for the current-main central `~/.effigy/state/kernel.db`
   (contract 052 §11.1, effigy#307). That schema existed only on unreleased main
   between 2026-10-18 and #276, so no released version ever wrote it, and v0.15
@@ -1204,6 +1217,13 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- `effigy container up` rewrites only what changed: one apply renders the stack
+  and lets Compose recreate the services whose configuration differs, including
+  when a live run holds the environment (that run keeps the stack and is
+  attached). A failed or interrupted `up` leaves nothing to clean up, and a
+  deleted container or a restarted VM is recreated by the next `up` while
+  `status` reports each service's real state. `hold` takes its liveness from the
+  runtime rather than the record.
 - Gateway route writes apply the dead-owner rule in the same locked
   transaction, and the daemon sweeps it on a timer so `gateway status` lists
   domains something still serves. A released loopback assignment is

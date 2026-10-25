@@ -257,14 +257,6 @@ pub fn import(ctx: &EnvContext<'_>, request: ImportRequest<'_>) -> Result<Import
     }
     let retention = request.markers.retention();
     let mut record = EngineRecord::new(retention, request.project);
-    // Contract 052 §11: a partial without its complete mark imports as a
-    // failed-unknown generation. Only an admission matching the current
-    // inputs may later adopt it; anything else reconciles.
-    if request.markers.complete.is_none() {
-        if let Some((marker, _)) = &request.markers.partial {
-            record.applying = Some(format!("legacy-partial:{}", marker.sha256));
-        }
-    }
     record.imported = Some(LegacyImport {
         markers: request.markers.list(),
         labels: labels.clone(),
@@ -304,15 +296,6 @@ fn resumable(record: &EnvRecord) -> bool {
         .engine()
         .and_then(|engine| engine.imported.as_ref())
         .is_some_and(|imported| imported.pending)
-}
-
-/// The legacy admission context a partial marker recorded, for comparing
-/// against the current inputs before adopting a running stack.
-pub fn recorded_admission(markers: &LegacyMarkers) -> Option<&Value> {
-    markers
-        .partial
-        .as_ref()
-        .and_then(|(_, value)| value.as_ref())
 }
 
 fn now_ms() -> u128 {
