@@ -2013,8 +2013,11 @@ fn foreground_git_replacement_keeps_directory_exclusion_until_old_custody_closes
     std::fs::rename(&git, home.path().join("git-retired")).unwrap();
     std::fs::create_dir(&git).unwrap();
     assert!(old.verify_custody().is_err());
+    // Identity is the checkout's location, not a directory generation
+    // (effigy#337): replacing `.git` in place keeps the same gate, and the
+    // old custody still holds it.
     let new_id = StateRoot::filesystem_checkout(&observe, &location()).unwrap();
-    assert_ne!(old_id, new_id);
+    assert_eq!(old_id, new_id);
     let new_root = StateRoot::foreground_effects(&cx, &location()).unwrap();
     assert!(matches!(
         ForegroundRun::begin(&cx, &new_root, &invocation_at_checkout(new_id), opts(19)),
