@@ -1305,21 +1305,29 @@ fn verify_reader(conn: Connection, busy: Duration) -> Result<Option<StoreReader>
 /// no file created and nothing repaired. WAL already gives one consistent
 /// snapshot, so a writer beside this read is not an obstacle.
 ///
-/// A store with a hot write-ahead log, or the index beside it, is read through
-/// SQLite's own WAL with a read-only shared-memory index: its committed frames
-/// are visible and a crashed writer's are not. A checkpointed store is an
-/// immutable open — no lock, no index and no file — which also covers the
-/// zero-length log a closed writer can leave behind (K1, Q-011).
+/// A store with a hot write-ahead log, or the index beside it, is a plain
+/// read-only connection to SQLite's own WAL: its committed frames are visible
+/// and a crashed writer's are not. A checkpointed store is an immutable open —
+/// no lock, no index and no file — which also covers the zero-length log a
+/// closed writer can leave behind (K1, Q-011).
 fn open_reading(root: &StateRoot, busy: Duration) -> Result<Option<StoreReader>, StoreError> {
+    // A state root whose database is not created yet holds nothing, whatever
+    // its side files say.
+    if root
+        .dir()
+        .entry(&FileName::new(root.database_name())?)?
+        .is_none()
+    {
+        return Ok(None);
+    }
     let wal = FileName::new(&format!("{}-wal", root.database_name()))?;
     let index = FileName::new(&format!("{}-shm", root.database_name()))?;
     let hot = root.dir().entry(&index)?.is_some()
         || root.dir().entry(&wal)?.is_some_and(|stat| stat.st_size > 0);
-    let query = if hot {
-        "mode=ro&readonly_shm=1"
-    } else {
-        "immutable=1"
-    };
+    // The plain read-only open takes the write-ahead index writable, so a
+    // writer in this process still gets a writable one. `readonly_shm` left
+    // the index read-only and the next write failed (K1 follow-up).
+    let query = if hot { "mode=ro" } else { "immutable=1" };
     let conn = Connection::open_with_flags(
         format!(
             "file:{}?{query}",

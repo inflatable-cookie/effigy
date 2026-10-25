@@ -1435,14 +1435,19 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         &container_cleanup,
         &["up", "--detach", "--json"],
     );
-    assert!(
-        !claimed.status.success(),
-        "a foreign hostname claim must refuse startup"
-    );
+    // The claim's checkout path does not exist, so its owner is gone and the
+    // domain is taken over at publication instead of refusing the startup.
+    assert_success(claimed);
     let routes = effigy_gateway::routes::RouteTable::load(&route_path).unwrap();
-    assert_eq!(routes.lookup("claimed.host.test"), Some(&foreign_claim));
+    assert_eq!(
+        routes.lookup("claimed.host.test").unwrap().project,
+        primary_checkout.display().to_string(),
+        "the dead claim is taken over by this checkout"
+    );
+    let claimed_down = run_container_cli(primary_checkout, &container_cleanup, &["down", "--json"]);
+    assert_success(claimed_down);
     edit_live_fixture_routes(&route_path, |routes| {
-        routes.deregister("claimed.host.test").unwrap();
+        let _ = routes.deregister("claimed.host.test");
     });
 
     write_listener_fixture_manifest(ListenerFixtureManifest {
