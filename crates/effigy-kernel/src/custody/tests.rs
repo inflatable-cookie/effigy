@@ -521,6 +521,67 @@ fn kernel_nonce_is_observed_from_real_spawn_environment() {
     );
 }
 
+/// A stop never inherits the budget its caller minted earlier. A supervisor
+/// mints its cleanup budget when its run begins, so a workload that outlives
+/// that budget would otherwise be reported as "group closure unverified" with
+/// an expired budget standing in for the observation, and it was never killed
+/// (effigy#357).
+#[test]
+fn a_stop_after_a_spent_budget_still_escalates_and_verifies_closure() {
+    let home = home();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut run = begin(&cx, &root).unwrap();
+    let mut child = Custody::spawn(
+        &mut run,
+        ProcessSpec {
+            argv: vec![
+                "/bin/sh".into(),
+                "-c".into(),
+                "trap '' TERM; exec /bin/sleep 120".into(),
+            ],
+            cwd: home.path().into(),
+            env: BTreeMap::new(),
+            grace: Duration::from_millis(100),
+            lifetime: Lifetime::Open(OpenReason::DevServer),
+            terminal: Terminal::None,
+            label: "spent budget stop".into(),
+        },
+        &cx,
+    )
+    .unwrap();
+    // The caller's budget is minted before the stop begins and is gone by the
+    // time it does, which is the shape a long-lived supervisor has.
+    let spent = cx.operation().cleanup(Duration::from_millis(10)).unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        spent.operation().check("proof").is_err(),
+        "the fixture budget must be spent before the stop"
+    );
+    let report = child.stop(&spent);
+    assert!(
+        matches!(report.group, Observed::Verified(..) | Observed::Absent(_)),
+        "a spent budget is not an observation of the group: {report:?}"
+    );
+    assert!(
+        report
+            .signals
+            .iter()
+            .any(|sent| sent.signal == libc::SIGKILL),
+        "the member that ignored SIGTERM is killed after the grace: {report:?}"
+    );
+    assert!(report.residue.is_empty(), "{report:?}");
+    assert!(
+        report.leader.verified().is_some(),
+        "the closed group reaps its leader: {report:?}"
+    );
+    run.settle(
+        &cx.operation().cleanup(Duration::from_secs(5)).unwrap(),
+        &mut Strict,
+    )
+    .unwrap();
+}
+
 #[test]
 fn log_enospc_keeps_redacted_ring_and_success_outcome() {
     let home = home();

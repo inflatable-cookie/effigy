@@ -6,7 +6,7 @@ use effigy_containers::EffectiveContainerPolicy;
 use crate::runner::container_command::support::reconcile_primary_service_tcp_alias_hosts;
 use crate::runner::error::RunnerError;
 
-use super::{ensure_primary_service_exec_ready_for_runtime, prepare_host_bind_mount_dirs};
+use super::{ensure_primary_service_binding, prepare_host_bind_mount_dirs};
 
 pub(super) fn prepare_runtime_mounts_stage(
     repo_root: &Path,
@@ -45,19 +45,17 @@ pub(super) fn run_runtime_compose_up_stage(
 pub(super) fn ensure_runtime_exec_readiness_stage(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    working_dir: &Path,
 ) -> Result<effigy_containers::exec::VerifiedComposeContainer, RunnerError> {
-    ensure_primary_service_exec_ready_for_runtime(repo_root, policy, working_dir)
+    ensure_primary_service_binding(repo_root, policy)
 }
 
 #[cfg(test)]
 pub(super) fn ensure_runtime_exec_readiness_stage_using(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    working_dir: &Path,
-    ensure_exec_ready: impl FnOnce(&Path, &EffectiveContainerPolicy, &Path) -> Result<(), RunnerError>,
+    ensure_exec_ready: impl FnOnce(&Path, &EffectiveContainerPolicy) -> Result<(), RunnerError>,
 ) -> Result<(), RunnerError> {
-    ensure_exec_ready(repo_root, policy, working_dir)
+    ensure_exec_ready(repo_root, policy)
 }
 
 pub(super) fn reconcile_runtime_aliases_stage(

@@ -27,7 +27,7 @@ pub use import::{
     import, label_evidence, sanitize as sanitize_marker_component, ImportRequest, Imported,
     LegacyMarkers, Marker, Ownership,
 };
-pub use ops::{activate, down, reconcile, repair, reset, Applied, Up};
+pub use ops::{activate, down, reconcile, reset, Applied, Up};
 pub use reconcile::{
     BusyDiagnostics, BusyRecord, EnvContext, EnvError, EnvRef, EnvRun, EnvSettlement, HeldHolder,
     Operation, APPLY_EFFECT, GATE_WAIT, RUN_BUDGET, STOP_EFFECT,

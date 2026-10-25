@@ -4,30 +4,13 @@ use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::{fs, os::unix::fs::PermissionsExt};
 
-/// Bound for one exec readiness attempt: ownership re-inspection plus the probe
-/// exec itself. The readiness window only decides whether to start another
-/// attempt; it never cuts off an attempt that is already running.
-const EXEC_READY_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Retry window for callers that need a ready binding but supply no deadline.
-const EXEC_READY_RETRY_WINDOW: Duration = Duration::from_secs(2);
-
-/// The window a saturated host gets for exec readiness before Effigy considers
-/// a restart. One bounded attempt can spend the whole short window on a
-/// round trip the host never scheduled; a restart is not the repair for that,
-/// because the service was never given a chance to answer (effigy#291).
-const EXEC_READY_SATURATED_RETRY_WINDOW: Duration = Duration::from_secs(15);
-
 mod gateway;
 mod prep;
 mod running;
 mod validation;
 
 use effigy_containers::compose::compose_args;
-use effigy_containers::exec::{
-    ensure_colima_running, recover_exited_owned_compose_services, run_compose_capture,
-};
-use effigy_containers::host_load::HostLoad;
+use effigy_containers::exec::{ensure_colima_running, run_compose_capture};
 use effigy_containers::{load_container_exec_working_dir, EffectiveContainerPolicy};
 use effigy_runtime_plan::{
     RuntimeActivationPlan, RuntimeActivationRequest, RuntimeActivationRoute, RuntimeLeasePolicy,
@@ -379,19 +362,13 @@ pub(in crate::runner) fn prepare_container_exec_runtime(
                     .map_err(|error| {
                         effigy_containers::environment::BackendError::Uncertain(error.to_string())
                     })?;
-                    recover_exited_owned_compose_services(repo_root, policy)
-                        .map(|_| ())
-                        .map_err(|error| {
-                            effigy_containers::environment::BackendError::Uncertain(
-                                error.to_string(),
-                            )
-                        })
+                    Ok(())
                 },
             )?);
             Ok(())
         },
         || {
-            let binding = ensure_runtime_exec_readiness_stage(repo_root, policy, &working_dir)?;
+            let binding = ensure_runtime_exec_readiness_stage(repo_root, policy)?;
             if effigy_core::worktree_scope::load_or_create(repo_root)
                 .map_err(|error| {
                     RunnerError::task_invocation(format!("cannot identify checkout scope: {error}"))
@@ -632,130 +609,31 @@ fn verify_live_checkout_mount_using(
     })
 }
 
-pub(in crate::runner) fn ensure_primary_service_exec_ready_for_runtime(
+/// Verify the owned binding of `service`: the running container that this
+/// checkout and scope own. Readiness itself is Running plus the service's own
+/// health check, which the bring-up wait already decided (C1); an exec that
+/// cannot run in the container reports its own error.
+pub(in crate::runner) fn verify_service_binding(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    working_dir: &Path,
+    service: &str,
+    deadline: Option<Instant>,
 ) -> Result<effigy_containers::exec::VerifiedComposeContainer, RunnerError> {
-    let binding = verified_service_binding(
+    verified_service_binding(
         repo_root,
         policy,
-        &policy.primary_service,
-        Instant::now() + OWNED_EXEC_VERIFICATION_TIMEOUT,
-    )?;
-    ensure_primary_service_exec_ready_with_recovery_and_load(
-        policy,
-        working_dir,
-        |window| {
-            probe_verified_service_exec_ready(
-                repo_root,
-                policy,
-                working_dir,
-                &binding,
-                Instant::now() + window,
-                None,
-            )
-        },
-        // A restart is the environment's own repair transition: it refuses
-        // while any run holds the environment (R4).
-        || {
-            crate::runner::environment::repair(repo_root, policy, || {
-                restart_primary_service(repo_root, policy, &binding)
-            })
-        },
-        None,
-        HostLoad::observe(),
+        service,
+        deadline.unwrap_or_else(|| Instant::now() + OWNED_EXEC_VERIFICATION_TIMEOUT),
     )
 }
 
-/// Partial detached activation cannot grant restart authority to an unavailable
-/// exec probe: existing services and exec sessions must remain in place.
-pub(in crate::runner) fn verify_primary_service_exec_ready_for_reconciliation(
+/// The owned binding of the environment's primary service, for the stages that
+/// need an inspected full id (mount verification, alias reconciliation).
+pub(in crate::runner) fn ensure_primary_service_binding(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
-    working_dir: &Path,
 ) -> Result<effigy_containers::exec::VerifiedComposeContainer, RunnerError> {
-    verify_service_exec_ready(
-        repo_root,
-        policy,
-        &policy.primary_service,
-        working_dir,
-        None,
-    )
-}
-
-/// Load-free form of
-/// [`ensure_primary_service_exec_ready_with_recovery_and_load`], kept for the
-/// deterministic proofs that assert the exact probe windows.
-#[cfg(test)]
-fn ensure_primary_service_exec_ready_with_recovery_using<T>(
-    policy: &EffectiveContainerPolicy,
-    working_dir: &Path,
-    probe: impl FnMut(Duration) -> Result<Option<T>, RunnerError>,
-    restart: impl FnMut() -> Result<(), RunnerError>,
-    live_exec_note: Option<String>,
-) -> Result<T, RunnerError> {
-    ensure_primary_service_exec_ready_with_recovery_and_load(
-        policy,
-        working_dir,
-        probe,
-        restart,
-        live_exec_note,
-        None,
-    )
-}
-
-/// [`ensure_primary_service_exec_ready_with_recovery_using`] with the host
-/// load observed before the first readiness probe. A saturated host opens the
-/// first window to [`EXEC_READY_SATURATED_RETRY_WINDOW`] once, so the service
-/// gets a bounded second attempt instead of a restart; the post-restart
-/// windows, the live-run refusal and every failure path are unchanged.
-#[allow(clippy::too_many_arguments)]
-fn ensure_primary_service_exec_ready_with_recovery_and_load<T>(
-    policy: &EffectiveContainerPolicy,
-    working_dir: &Path,
-    mut probe: impl FnMut(Duration) -> Result<Option<T>, RunnerError>,
-    mut restart: impl FnMut() -> Result<(), RunnerError>,
-    live_exec_note: Option<String>,
-    load: Option<HostLoad>,
-) -> Result<T, RunnerError> {
-    if let Some(binding) = probe(readiness_retry_window(Duration::from_secs(2), load))? {
-        return Ok(binding);
-    }
-    if let Some(note) = live_exec_note {
-        // A live managed run is exec'ing into this environment; restarting
-        // the primary service would SIGKILL its remote processes. Keep
-        // probing with the post-restart window instead of ever mutating a
-        // running service under the run.
-        if let Some(binding) = probe(Duration::from_secs(15))? {
-            return Ok(binding);
-        }
-        return Err(RunnerError::task_invocation(format!(
-            "container `{}` is not exec-ready and its recovery restart was refused: {note}. The running service was not restarted; stop the managed run first (`effigy <task> stop`) or wait for the service to become exec-ready",
-            policy.name
-        )));
-    }
-    if restart().is_ok() {
-        if let Some(binding) = probe(Duration::from_secs(15))? {
-            return Ok(binding);
-        }
-    }
-    Err(RunnerError::container_runtime_exec_not_ready_with_load(
-        policy,
-        working_dir,
-        load.and_then(|load| load.overload_phrase()),
-    ))
-}
-
-/// The window the first exec-readiness probe gets. A saturated host may not
-/// answer inside the short window at all, so it keeps the bounded
-/// [`EXEC_READY_SATURATED_RETRY_WINDOW`] instead; a host below one runnable
-/// task per CPU keeps `base`. Deterministic proofs pass their own observation.
-fn readiness_retry_window(base: Duration, load: Option<HostLoad>) -> Duration {
-    match load {
-        Some(load) if load.saturated() => base.max(EXEC_READY_SATURATED_RETRY_WINDOW),
-        _ => base,
-    }
+    verify_service_binding(repo_root, policy, &policy.primary_service, None)
 }
 
 fn run_runtime_prep_steps<T>(
@@ -804,259 +682,6 @@ fn verified_service_binding(
         ));
     }
     Ok(bindings.remove(0))
-}
-
-/// Verify the owned binding for `service` and wait until it accepts exec.
-///
-/// A caller `deadline` is absolute and bounds every step. Without one, binding
-/// verification and each probe attempt get their own bounds and readiness
-/// retries for [`EXEC_READY_RETRY_WINDOW`].
-pub(in crate::runner) fn verify_service_exec_ready(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    service: &str,
-    working_dir: &Path,
-    deadline: Option<Instant>,
-) -> Result<effigy_containers::exec::VerifiedComposeContainer, RunnerError> {
-    let binding = verified_service_binding(
-        repo_root,
-        policy,
-        service,
-        deadline.unwrap_or_else(|| Instant::now() + OWNED_EXEC_VERIFICATION_TIMEOUT),
-    )?;
-    let retry_until = deadline.unwrap_or_else(|| {
-        Instant::now() + readiness_retry_window(EXEC_READY_RETRY_WINDOW, HostLoad::observe())
-    });
-    probe_verified_service_exec_ready(
-        repo_root,
-        policy,
-        working_dir,
-        &binding,
-        retry_until,
-        deadline,
-    )?
-    .ok_or_else(|| RunnerError::container_runtime_exec_not_ready(policy, working_dir))
-}
-
-/// Whether a new readiness attempt may start at `now`. The retry window, and
-/// the caller's absolute deadline when it owns one, gate every attempt; an
-/// attempt already running keeps its own [`EXEC_READY_ATTEMPT_TIMEOUT`].
-fn readiness_attempt_open(
-    now: Instant,
-    retry_until: Instant,
-    hard_deadline: Option<Instant>,
-) -> bool {
-    now < retry_until && hard_deadline.is_none_or(|deadline| now < deadline)
-}
-
-/// Probe exec readiness until `retry_until`. An attempt already running is
-/// allowed to finish within [`EXEC_READY_ATTEMPT_TIMEOUT`]; only
-/// `hard_deadline`, when the caller owns one, cuts an attempt short.
-fn probe_verified_service_exec_ready(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    working_dir: &Path,
-    binding: &effigy_containers::exec::VerifiedComposeContainer,
-    retry_until: Instant,
-    hard_deadline: Option<Instant>,
-) -> Result<Option<effigy_containers::exec::VerifiedComposeContainer>, RunnerError> {
-    let args = compose_args(
-        policy,
-        [
-            "exec",
-            "-T",
-            "-w",
-            &working_dir.to_string_lossy(),
-            binding
-                .service()
-                .ok_or_else(|| RunnerError::task_invocation("verified service missing"))?,
-            "true",
-        ],
-    );
-    let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(
-        repo_root,
-        policy,
-        args,
-        effigy_containers::ContainerAction::Exec,
-        "container exec readiness probe",
-    )
-    .map_err(RunnerError::from)?;
-    loop {
-        let now = Instant::now();
-        // The retry window gates starting a new attempt: a short attempt that
-        // finishes just before `retry_until` may not sleep past it and spawn
-        // again. An attempt already running is still bounded by its own
-        // attempt deadline and, when the caller owns one, the absolute
-        // deadline.
-        if !readiness_attempt_open(now, retry_until, hard_deadline) {
-            return Ok(None);
-        }
-        let attempt_deadline = hard_deadline.map_or(now + EXEC_READY_ATTEMPT_TIMEOUT, |deadline| {
-            deadline.min(now + EXEC_READY_ATTEMPT_TIMEOUT)
-        });
-        // Ownership failure is terminal: never restart or adopt a successor.
-        let output = match crate::runner::exec_command::run_verified_compose_exec_plan(
-            policy,
-            &plan,
-            binding,
-            true,
-            None,
-            Some(attempt_deadline),
-        ) {
-            Ok(output) => output,
-            Err(_) if Instant::now() >= attempt_deadline.min(retry_until) => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        if output.status.success() {
-            return Ok(Some(binding.clone()));
-        }
-        if Instant::now() >= retry_until {
-            return Ok(None);
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    }
-}
-
-fn restart_primary_service(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    binding: &effigy_containers::exec::VerifiedComposeContainer,
-) -> Result<(), RunnerError> {
-    binding.reverify(repo_root, policy, Instant::now() + Duration::from_secs(15))?;
-    restart_primary_service_using(repo_root, policy, |repo_root, policy, args, label| {
-        binding.reverify(repo_root, policy, Instant::now() + Duration::from_secs(15))?;
-        let service = args
-            .last()
-            .and_then(|arg| arg.to_str())
-            .ok_or_else(|| RunnerError::task_invocation("restart service missing"))?;
-        let selected = if service == policy.primary_service {
-            binding.clone()
-        } else {
-            verified_service_binding(
-                repo_root,
-                policy,
-                service,
-                Instant::now() + Duration::from_secs(15),
-            )?
-        };
-        let native = [
-            std::ffi::OsString::from("restart"),
-            std::ffi::OsString::from(selected.id()),
-        ];
-        let plan = effigy_runtime::container_manager::runtime_invocation_plan(
-            repo_root,
-            policy,
-            "docker",
-            &native,
-            effigy_containers::ContainerAction::Exec,
-            label,
-        )
-        .map_err(RunnerError::from)?;
-        selected.reverify(repo_root, policy, Instant::now() + Duration::from_secs(15))?;
-        let output = crate::runner::exec_command::run_command_capture_until(
-            repo_root,
-            &plan.program,
-            &plan.args,
-            None,
-            Some(Instant::now() + Duration::from_secs(15)),
-        )?;
-        if !output.status.success() {
-            return Err(RunnerError::task_invocation("owned service restart failed"));
-        }
-        Ok(output)
-    })
-}
-
-fn restart_primary_service_using(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    run_compose: impl Fn(
-        &Path,
-        &EffectiveContainerPolicy,
-        &[std::ffi::OsString],
-        &str,
-    ) -> Result<std::process::Output, RunnerError>,
-) -> Result<(), RunnerError> {
-    let restart_args = compose_args(policy, ["restart", policy.primary_service.as_str()]);
-    run_compose(
-        repo_root,
-        policy,
-        &restart_args,
-        "docker compose restart primary service",
-    )?;
-
-    let dependent_services = load_services_depending_on_primary(repo_root, policy)?;
-    if dependent_services.is_empty() {
-        return Ok(());
-    }
-
-    for service in dependent_services {
-        let restart_args = compose_args(policy, ["restart", service.as_str()]);
-        run_compose(
-            repo_root,
-            policy,
-            &restart_args,
-            "docker compose restart dependent service",
-        )?;
-    }
-    Ok(())
-}
-
-fn load_services_depending_on_primary(
-    _repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-) -> Result<Vec<String>, RunnerError> {
-    let mut services = Vec::new();
-    for compose_file in &policy.compose_files {
-        let raw = match policy.read_compose(compose_file) {
-            Ok(text) => text,
-            Err(_) => continue,
-        };
-        let yaml: serde_yaml::Value = match serde_yaml::from_str(&raw) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        let Some(service_map) = yaml.get("services").and_then(|value| value.as_mapping()) else {
-            continue;
-        };
-        for (service_name, service_value) in service_map {
-            let Some(service_name) = service_name.as_str() else {
-                continue;
-            };
-            if service_name == policy.primary_service {
-                continue;
-            }
-            let depends_on = service_value.get("depends_on");
-            if service_depends_on_primary(depends_on, &policy.primary_service)
-                && !services.iter().any(|existing| existing == service_name)
-            {
-                services.push(service_name.to_owned());
-            }
-        }
-    }
-    Ok(services)
-}
-
-fn service_depends_on_primary(
-    depends_on: Option<&serde_yaml::Value>,
-    primary_service: &str,
-) -> bool {
-    let Some(depends_on) = depends_on else {
-        return false;
-    };
-    if let Some(sequence) = depends_on.as_sequence() {
-        return sequence
-            .iter()
-            .filter_map(|value| value.as_str())
-            .any(|value| value == primary_service);
-    }
-    if let Some(mapping) = depends_on.as_mapping() {
-        return mapping
-            .keys()
-            .filter_map(|value| value.as_str())
-            .any(|value| value == primary_service);
-    }
-    false
 }
 
 fn prepare_host_bind_mount_dirs(

@@ -7,6 +7,23 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- **The runtime restarts a stopped service.** Every rendered Compose service
+  without a `restart:` of its own now carries `restart: unless-stopped`, so a
+  service comes back by itself after a VM restart, a Colima restart or a crash.
+  A declared policy (`no`, `always`, `on-failure`, …) is kept. Effigy no longer
+  hand-starts exited containers by name and no longer runs `systemctl stop` /
+  `reset-failed` on nerdctl's health-check timer units
+  (`exec::restart_recovery`, `exec::healthcheck_timer`).
+- **Readiness is Running plus the service's own health check.** The
+  `exec -w <working_dir> true` readiness probe and the service restart it
+  triggered are gone, so `container up` no longer fails when the image does not
+  have the declared working directory; a user's own `effigy exec` reports its
+  own error. `RunnerError::ContainerRuntimeExecNotReady` is removed with it.
+- **A running Colima profile is never stopped or restarted.** When a running
+  profile lacks Effigy's managed settings (for example SSH agent forwarding),
+  Effigy writes the managed config and warns with the deliberate command
+  `colima restart <profile>`, because other checkouts' stacks share the VM.
+  Creating a missing profile and starting a stopped one are unchanged.
 - A gateway route is one claim: `domain -> (checkout path, target)`. The same
   checkout path always replaces its own route, covering a new run, a new
   generation and a container-to-listener handover. A different checkout takes
@@ -348,6 +365,15 @@ During v0.x, MINOR bumps may include breaking changes.
   anonymous cleanup pin) is unchanged, and so is #338's session-access
   handoff at descriptor 11. Contract 052 §3.1 and 049 record the rules;
   Tom's Q-011 ruling reverses that part of the Q-010 kernel design.
+- The exec-ready probe and its recovery restart, restart recovery of exited
+  Compose services (`recover_exited_owned_compose_services`,
+  `OwnedServiceStartRecovery`), the nerdctl health-check timer/service surgery,
+  and the environment's `repair` transition that existed only for that restart.
+- `/run` inode-pressure parsing in `container up`, `effigy doctor` and
+  `effigy container profile prune-health-pid-files`. The bounded prune of stale
+  nerdctl `health-check-*.pid` files stays, on `container up` (silent, warns
+  only when it cannot run) and on the explicit command, which now reports the
+  before/after pid-file counts and no longer reports inode use.
 - The `<selector>:cargo` escape tasks (489 of them), the internal
   `effigy cargo` task and the `install:local:cargo` and
   `test:install:local:cargo` escapes. Every selector builds through
@@ -1352,6 +1378,16 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- A stop counts its own window, from the grace the custody receipt recorded,
+  instead of inheriting the caller's cleanup budget. A host-process supervisor
+  mints that budget when its run begins, so stopping a workload that had been
+  up longer than the budget reported `group closure unverified: … timed out
+  after 3m30s during group closure` (the supervisor's whole lifetime, not the
+  wait) and never escalated, although every member had closed or was about to.
+  The observation now always precedes the deadline, a still-busy group is
+  killed before the window ends, and the supervisor takes a fresh budget for
+  each stop and for its own settle, so a long-lived host process stops within
+  its grace, closes its run and reports closure verified (effigy#357).
 - `scripts/check-cargo-routes.py` (`qa:docs:cargo-routes`) no longer skips
   `:cargo` escape siblings, because the catalog has none. It still fails on a
   plain-`cargo` route that

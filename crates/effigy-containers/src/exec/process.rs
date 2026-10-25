@@ -730,20 +730,8 @@ pub(super) fn run_command_capture_allow_failure_with_deadline(
     )
 }
 
-pub(super) fn run_command_capture_allow_failure_with_timeout(
-    repo_root: &Path,
-    program: &str,
-    args: &[&str],
-    label: &str,
-    timeout: Duration,
-) -> Result<Output, ContainerExecError> {
-    let deadline = Instant::now() + timeout;
-    spawn_and_supervise_capture(repo_root, program, args, label, deadline, timeout)
-}
-
-/// Absolute-deadline variant of
-/// [`run_command_capture_allow_failure_with_timeout`] that keeps the caller's
-/// deadline as the single supervision origin.
+/// Capture a command that may fail, bounded by the caller's absolute
+/// deadline: the deadline is the single supervision origin.
 pub(super) fn run_command_capture_allow_failure_with_absolute_deadline(
     repo_root: &Path,
     program: &str,
@@ -1144,12 +1132,14 @@ mod tests {
 
     #[test]
     fn allow_failure_timeout_keeps_nonzero_exit_as_output() {
-        let output = run_command_capture_allow_failure_with_timeout(
+        let timeout = Duration::from_secs(2);
+        let output = run_command_capture_allow_failure_with_absolute_deadline(
             Path::new("."),
             "/bin/sh",
             &["-c", "printf 'warn\\n' >&2; exit 7"],
             "start test",
-            Duration::from_secs(2),
+            Instant::now() + timeout,
+            timeout,
         )
         .expect("nonzero start should be captured");
         assert_eq!(output.status.code(), Some(7));
@@ -1162,12 +1152,14 @@ mod tests {
 
     #[test]
     fn allow_failure_timeout_reports_elapsed_seconds() {
-        let error = run_command_capture_allow_failure_with_timeout(
+        let timeout = Duration::from_millis(200);
+        let error = run_command_capture_allow_failure_with_absolute_deadline(
             Path::new("."),
             "/bin/sh",
             &["-c", "/bin/sleep 2"],
             "start hang",
-            Duration::from_millis(200),
+            Instant::now() + timeout,
+            timeout,
         )
         .expect_err("sleep should time out");
 

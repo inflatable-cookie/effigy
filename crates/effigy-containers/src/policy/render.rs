@@ -14,6 +14,7 @@ mod vm;
 pub use vm::compose_invocation_args;
 
 mod healthcheck;
+mod restart;
 
 pub const ROOT_VARIABLE: &str = "EFFIGY_RENDER_ROOT";
 const ROOT_EXPRESSION: &str = "${EFFIGY_RENDER_ROOT:?Effigy render root is required}";
@@ -245,6 +246,8 @@ impl Draft {
                 if backend == crate::compose::ComposeBackend::ColimaNerdctl {
                     healthcheck::normalize_exec_form(&mut value);
                 }
+                // The runtime restarts a stopped service; Effigy never does.
+                restart::apply(&mut value);
                 serde_yaml::to_string(&value).map_err(error)?.into_bytes()
             } else {
                 bytes

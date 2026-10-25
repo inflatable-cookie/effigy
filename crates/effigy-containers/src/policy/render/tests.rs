@@ -57,13 +57,14 @@ fn resolution_is_a_pure_complete_closure_and_prepare_seals_it() {
         assert_eq!(snapshot(fixture.path()), before);
         let prepared = prepare_resolved(&observed).unwrap();
         verify(&prepared).unwrap();
+        // Published objects are ordinary owner-writable files (effigy#344).
         assert_eq!(
             std::fs::metadata(&prepared.compose_files[0])
                 .unwrap()
                 .permissions()
                 .mode()
                 & 0o777,
-            0o400
+            0o600
         );
         assert!(!checkout.join(".effigy/runtime/compose").exists());
         assert_eq!(
@@ -291,6 +292,33 @@ fn a_nerdctl_render_quotes_exec_form_health_checks_and_docker_keeps_them() {
             docker_rendered["app"],
             ["CMD", "node", "-e", "process.exit(0)"],
             "Docker honours the exec form, so its render keeps it"
+        );
+    });
+}
+
+/// The runtime restarts a stopped service: every rendered service carries
+/// `restart: unless-stopped` unless the stack declares its own policy.
+#[test]
+fn a_render_restarts_every_service_that_does_not_declare_a_policy() {
+    let (_fixture, checkout, home) = fixture();
+    std::fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: example:one\n  db:\n    image: example:two\n    restart: \"no\"\n",
+    )
+    .unwrap();
+    crate::with_test_effigy_home(&home, || {
+        let policy = prepare_container_policy(&checkout, Some("one")).unwrap();
+        let document: serde_yaml::Value =
+            serde_yaml::from_str(&policy.read_compose(&policy.compose_files[0]).unwrap()).unwrap();
+        assert_eq!(
+            document["services"]["app"]["restart"],
+            serde_yaml::Value::String("unless-stopped".into()),
+            "a service without a policy is restarted by the runtime"
+        );
+        assert_eq!(
+            document["services"]["db"]["restart"],
+            serde_yaml::Value::String("no".into()),
+            "a declared policy wins"
         );
     });
 }
