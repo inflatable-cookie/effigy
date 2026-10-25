@@ -1351,6 +1351,27 @@ During v0.x, MINOR bumps may include breaking changes.
   crosses this boundary at every journal commit, and a concurrent stop, owner
   death or recovery could otherwise turn the idempotent stop into a false
   refusal.
+- A task run from a nested catalog directory opens the enclosing checkout's
+  journal again (contract 052 §7.1). The state root was resolved to the nested
+  directory while the Git directory resolved to the enclosing checkout, so the
+  kernel's retained-checkout binding refused every such run as untrusted store
+  state (`resolved Git directory disagrees with checkout`) — including
+  `effigy skill run` from a project inside a repository, and every path that
+  prepares bundle sources or records release authority from a nested catalog.
+  The state root and the Git directory now resolve through the same nearest
+  enclosing `.git`.
+- A `--run-id` pre-check waits out a racing writer's journal instead of
+  refusing the key. Two invocations of one key that start together can find a
+  hot rollback journal while the first is inside its journal transaction; that
+  journal clears when the writer commits, so the check now waits for it to
+  settle (bounded) rather than reporting an unverifiable key. A journal that
+  never settles still reports its own reason.
+- The demo retirement refusal fits one human error line. The `effigy config
+  --target demos` message grew past the 512-byte line, so the renderer
+  truncated it before the `CHANGELOG.md` reference that names where the
+  removal is recorded. The shared conversion recipe is shorter (the full
+  before/after example stays in guide 085), and a test now pins every surface
+  of it to the human line.
 - A health check written as a Compose `CMD` exec form runs as written on
   `nerdctl compose`. nerdctl does not support the exec form: it joins the argv
   with spaces, unquoted, into one `/bin/sh -c` command, so an argument holding

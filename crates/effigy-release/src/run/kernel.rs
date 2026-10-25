@@ -167,9 +167,13 @@ pub fn release_owner(checkout: CheckoutId) -> ResourceId {
     ResourceId::store(Scope::Checkout(checkout), "release").expect("fixed release owner")
 }
 fn location(root: &Path) -> Result<effigy_kernel::migration::CheckoutLocation, ReleaseError> {
+    // Release authority belongs to the checkout that owns the invocation root,
+    // never to a nested catalog's directory (contract 052 §7.1).
+    let checkout = effigy_core::worktree_scope::checkout_root(root);
     Ok(effigy_kernel::migration::CheckoutLocation {
-        root: root.into(),
-        git_directory: effigy_core::worktree_scope::git_directory(root).map_err(storage_error)?,
+        git_directory: effigy_core::worktree_scope::git_directory(&checkout)
+            .map_err(storage_error)?,
+        root: checkout,
     })
 }
 fn storage_error(error: impl std::fmt::Display) -> ReleaseError {

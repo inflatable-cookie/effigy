@@ -6,8 +6,10 @@
 /// The Q-009 demo-to-task conversion recipe (Tom, 2026-10-22).
 ///
 /// Shared by the `[demos]` manifest refusal, `effigy config --target demos` and
-/// `effigy demo`, so every demo retirement gives the same next step.
-pub const DEMO_TO_TASK_RECIPE: &str = "each `[demos.<name>]` becomes a plain `[tasks.\"demo:<name>\"]` with the same `run`: before, `[demos.checkout]` with `title = \"Checkout\"`, `summary = \"Add an item and pay\"` and `run = \"bun run demo\"`; after, `[tasks.\"demo:checkout\"]` with that `run`, `description = \"Checkout — Add an item and pay\"` merged from `title` and `summary`, and `group = \"Demos\"` to keep the demos grouped";
+/// `effigy demo`, so every demo retirement gives the same next step. It stays
+/// inside one human error line: a longer recipe is silently truncated before
+/// the CHANGELOG reference that tells a person where the removal is recorded.
+pub const DEMO_TO_TASK_RECIPE: &str = "each `[demos.<name>]` becomes a plain `[tasks.\"demo:<name>\"]` with the same `run`: `[demos.checkout]` with `title = \"Checkout\"` and `summary` becomes `[tasks.\"demo:checkout\"]` with a `description` merged from both and `group = \"Demos\"`";
 
 #[cfg(test)]
 mod tests {
@@ -18,7 +20,7 @@ mod tests {
         assert!(DEMO_TO_TASK_RECIPE.contains("`[tasks.\"demo:<name>\"]`"));
         assert!(DEMO_TO_TASK_RECIPE.contains("`[demos.checkout]`"));
         assert!(DEMO_TO_TASK_RECIPE.contains("`[tasks.\"demo:checkout\"]`"));
-        assert!(DEMO_TO_TASK_RECIPE.contains("`description = \"Checkout — Add an item and pay\"`"));
-        assert!(DEMO_TO_TASK_RECIPE.contains("group = \"Demos\""));
+        assert!(DEMO_TO_TASK_RECIPE.contains("`description`"));
+        assert!(DEMO_TO_TASK_RECIPE.contains("`group = \"Demos\"`"));
     }
 }
