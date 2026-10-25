@@ -557,7 +557,9 @@ fn an_admission_refusal_keeps_the_hook_reason_and_the_next_step() {
     };
     let human = error.human_error();
     assert!(
-        human.what_failed().contains("denied admission: host is busy"),
+        human
+            .what_failed()
+            .contains("denied admission: host is busy"),
         "{}",
         human.what_failed()
     );
@@ -568,7 +570,10 @@ fn an_admission_refusal_keeps_the_hook_reason_and_the_next_step() {
         "{human:?}"
     );
     let rendered = human.render_text();
-    assert!(rendered.contains("denied admission: host is busy"), "{rendered}");
+    assert!(
+        rendered.contains("denied admission: host is busy"),
+        "{rendered}"
+    );
     assert!(!rendered.contains("task `heavy` failed"), "{rendered}");
     // The structured envelope still names the schema and the decision.
     let details = error.json_error_details().expect("admission details");

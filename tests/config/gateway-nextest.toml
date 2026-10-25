@@ -3,8 +3,9 @@ slow-timeout = { period = "180s", terminate-after = 1, grace-period = "2s" }
 leak-timeout = { period = "1s", result = "fail" }
 # A drive-backed temp root costs about 26 ms per durable journal commit against
 # 0.16 ms on the internal disk, and the §12.3 supervisor matrix alone owns 288
-# journals. Measured 2026-10-25: the whole matrix takes about 550 s under the
-# ruled `[scratch] root` and 61 s internally, so the run cap follows the proof.
+# journals. Measured 2026-10-25: 207 s under the ruled `[scratch] root` on a
+# quiet host, 53 s internally, about 550 s under competing load. The run cap
+# follows the proof.
 global-timeout = "1800s"
 
 [[profile.default.overrides]]
@@ -15,3 +16,12 @@ global-timeout = "1800s"
 filter = 'test(run_supervision_matrix_recovery_stop_and_attachment_release_are_idempotent)'
 threads-required = "num-test-threads"
 slow-timeout = { period = "900s", terminate-after = 1, grace-period = "2s" }
+
+[[profile.default.overrides]]
+# The run fault-boundary proofs replay every journal boundary with kill, ENOSPC
+# and EPERM, and every boundary owns a durable journal. Both take 169.7 s
+# together under the ruled `[scratch] root` (2026-10-25) and lost the focused
+# 180 s cap once other kernel proofs competed for the drive. Keep the proofs and
+# give them a bounded budget instead of trimming boundaries for the volume.
+filter = 'test(/^run::tests::faults::run_fault_/)'
+slow-timeout = { period = "600s", terminate-after = 1, grace-period = "2s" }
