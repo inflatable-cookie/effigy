@@ -57,10 +57,6 @@ pub enum Command {
     InternalGatewayIdentity(InternalGatewayIdentityArgs),
     #[doc(hidden)]
     InternalContainerLeaseReaper(InternalContainerLeaseReaperArgs),
-    #[doc(hidden)]
-    InternalHostProcessSupervise(InternalHostProcessSuperviseArgs),
-    #[doc(hidden)]
-    InternalHostProcessStop(InternalHostProcessStopArgs),
     Help(HelpTopic),
     /// Discovery-only help for one operator-job group. Grouping never adds an
     /// execution route: see contract `043`.
@@ -82,31 +78,6 @@ pub struct InternalContainerLeaseReaperArgs {
     pub repo_root: PathBuf,
     pub container_name: String,
     pub token: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[doc(hidden)]
-pub struct InternalHostProcessSuperviseArgs {
-    pub repo_root: PathBuf,
-    pub container_name: String,
-    pub process_name: String,
-    pub run: String,
-    pub pid_file: PathBuf,
-    pub log_file: PathBuf,
-    /// Versioned host-process runtime configuration written by the caller.
-    pub spec_file: PathBuf,
-    /// `on-failure`, `always`, or `never`.
-    pub restart: String,
-    pub restart_delay_ms: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[doc(hidden)]
-pub struct InternalHostProcessStopArgs {
-    pub pid_file: PathBuf,
-    /// Signal name (e.g. `SIGTERM`).
-    pub signal: String,
-    pub grace_secs: u64,
 }
 
 /// Which `effigy <topic> --help` panel to render.
