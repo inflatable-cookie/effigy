@@ -196,6 +196,7 @@ fn downgrade_names_managed_domains_without_silently_dropping_their_fence() {
                 .get_mut("import.test")
                 .unwrap()
                 .managed_listener = Some(crate::routes::ManagedListenerRouteOwner {
+                run: None,
                 owner: "fixture".into(),
                 runtime_generation: "runtime".into(),
                 generation: "generation".into(),

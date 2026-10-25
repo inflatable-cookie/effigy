@@ -1639,6 +1639,7 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
     let project = fixture.path().display().to_string();
     let dead_start = GatewayStartIdentity::Linux { start_ticks: 1 };
     let dead_owner = |generation: &str, address: &str| ManagedListenerRouteOwner {
+        run: None,
         owner: "main|web|test|app".to_owned(),
         runtime_generation: "runtime-1".to_owned(),
         generation: generation.to_owned(),
@@ -1745,6 +1746,7 @@ fn container_hybrid_container_switch_hands_over_routes_and_refuses_a_live_listen
     )
     .unwrap();
     let live_owner = ManagedListenerRouteOwner {
+        run: None,
         owner: "main|web|test|app".to_owned(),
         runtime_generation: "runtime-1".to_owned(),
         generation: "child-live".to_owned(),

@@ -16,11 +16,15 @@ fn register_managed_listener_route(
     register_managed_listener_route_verified(
         path,
         project,
-        domain,
-        target,
-        tls,
-        (owner, expected),
+        ManagedListenerRouteRequest {
+            domain,
+            target,
+            tls,
+            expected_generation: expected,
+        },
+        owner,
         |_| Ok(()),
+        unobserved_predecessor,
     )
 }
 
@@ -119,9 +123,20 @@ fn register_upserts_existing() {
 /// a live process. The production liveness probe refuses it, which is exactly
 /// the "previous generation is gone" handover case.
 fn synthetic_owner(generation: &str, address: &str) -> ManagedListenerRouteOwner {
+    let mut owner = synthetic_owner_of("main|web|test|app", generation, address);
+    owner.run = None;
+    owner
+}
+
+fn synthetic_owner_of(
+    identity: &str,
+    generation: &str,
+    address: &str,
+) -> ManagedListenerRouteOwner {
     let start = crate::identity::GatewayStartIdentity::Linux { start_ticks: 1 };
     ManagedListenerRouteOwner {
-        owner: "main|web|test|app".to_owned(),
+        run: None,
+        owner: identity.to_owned(),
         runtime_generation: "runtime-1".to_owned(),
         generation: generation.to_owned(),
         supervisor_pid: 10,
@@ -137,6 +152,32 @@ fn synthetic_owner(generation: &str, address: &str) -> ManagedListenerRouteOwner
         route_tls: false,
         availability_file: "/fixture/state.json".to_owned(),
     }
+}
+
+/// Publish with an injected process/socket proof and an injected predecessor
+/// observation, so the reclaim decision is provable without a live journal.
+fn publish_with_predecessor(
+    path: &Path,
+    project: &str,
+    domain: &str,
+    target: &str,
+    owner: ManagedListenerRouteOwner,
+    expected: Option<&str>,
+    predecessor: impl FnOnce(&ManagedListenerRouteOwner) -> ManagedListenerPredecessor,
+) -> Result<ManagedListenerRoutePublication, GatewayError> {
+    register_managed_listener_route_verified(
+        path,
+        project,
+        ManagedListenerRouteRequest {
+            domain,
+            target,
+            tls: false,
+            expected_generation: expected,
+        },
+        owner,
+        |_| Ok(()),
+        predecessor,
+    )
 }
 
 fn container_registration(project: &str, target: &str) -> RouteRegistration {
@@ -255,6 +296,258 @@ fn managed_listener_routes_require_exact_generation_and_hand_over_container_rout
 }
 
 #[test]
+fn a_successor_run_reclaims_a_settled_listener_route_and_refuses_a_live_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("routes.json");
+    let project = dir.path().display().to_string();
+    let mut first = synthetic_owner_of("main|web|test|app", "child-1", "127.0.0.1:43123");
+    first.run = Some("run-one".to_owned());
+    assert_eq!(
+        publish_with_predecessor(
+            &path,
+            &project,
+            "app.example.test",
+            "127.0.0.1:43123",
+            first,
+            None,
+            unobserved_predecessor,
+        )
+        .unwrap(),
+        ManagedListenerRoutePublication::Registered
+    );
+
+    // The recorded run is still live: the route is not reclaimed, and the
+    // refusal names the run, its state and the command that settles it --
+    // never the claimant's own checkout.
+    let mut successor = synthetic_owner_of("main|web|test|app", "child-2", "127.0.0.1:43124");
+    successor.run = Some("run-two".to_owned());
+    let live = publish_with_predecessor(
+        &path,
+        &project,
+        "app.example.test",
+        "127.0.0.1:43124",
+        successor.clone(),
+        None,
+        |current| ManagedListenerPredecessor::Live {
+            run: current.run.clone(),
+            next: "effigy container web down".to_owned(),
+        },
+    )
+    .unwrap_err();
+    assert!(matches!(
+        &live,
+        GatewayError::ManagedListenerRouteOwnerUnsettled { .. }
+    ));
+    let rendered = live.to_string();
+    assert!(rendered.contains("run `run-one`"), "{rendered}");
+    assert!(rendered.contains("still live"), "{rendered}");
+    assert!(rendered.contains("effigy container web down"), "{rendered}");
+    assert!(!rendered.contains(&project), "{rendered}");
+
+    // An unobservable owner is refused with the repair command too.
+    let unknown = publish_with_predecessor(
+        &path,
+        &project,
+        "app.example.test",
+        "127.0.0.1:43124",
+        successor.clone(),
+        None,
+        |current| ManagedListenerPredecessor::Unknown {
+            run: current.run.clone(),
+            reason: "the checkout journal is unavailable".to_owned(),
+            next: "effigy container web down".to_owned(),
+        },
+    )
+    .unwrap_err();
+    let rendered = unknown.to_string();
+    assert!(
+        rendered.contains("not provably settled (the checkout journal is unavailable)"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains(&project), "{rendered}");
+
+    // The journal proves the predecessor settled: the successor reclaims the
+    // route in the same transaction and records its own run.
+    assert_eq!(
+        publish_with_predecessor(
+            &path,
+            &project,
+            "app.example.test",
+            "127.0.0.1:43124",
+            successor,
+            None,
+            |_| ManagedListenerPredecessor::Settled,
+        )
+        .unwrap(),
+        ManagedListenerRoutePublication::ReclaimedPredecessor
+    );
+    let reclaimed = RouteTable::load(&path)
+        .unwrap()
+        .lookup("app.example.test")
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        reclaimed
+            .managed_listener
+            .as_ref()
+            .and_then(|owner| owner.run.as_deref()),
+        Some("run-two")
+    );
+    assert_eq!(reclaimed.target.as_deref(), Some("127.0.0.1:43124"));
+
+    // A writer with no journal observation never reclaims: it names the
+    // unrecorded owner and the settle command.
+    let mut third = synthetic_owner_of("main|web|test|app", "child-3", "127.0.0.1:43125");
+    third.run = Some("run-three".to_owned());
+    let refused = register_managed_listener_route(
+        &path,
+        &project,
+        "app.example.test",
+        "127.0.0.1:43125",
+        false,
+        third,
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        refused
+            .to_string()
+            .contains("no checkout journal observation"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn a_settled_listener_route_from_another_owner_is_reclaimable_by_claim_and_publication() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("routes.json");
+    let project = dir.path().display().to_string();
+    let mut first = synthetic_owner_of("main|web|test|app", "child-1", "127.0.0.1:43123");
+    first.run = Some("run-one".to_owned());
+    publish_with_predecessor(
+        &path,
+        &project,
+        "app.example.test",
+        "127.0.0.1:43123",
+        first,
+        None,
+        unobserved_predecessor,
+    )
+    .unwrap();
+
+    // A second listener of this same checkout meets the settled route as a
+    // successor, not as a foreign claim.
+    let successor = "main|web|test|api";
+    check_managed_listener_route_claim_observed(
+        &path,
+        &project,
+        "app.example.test",
+        successor,
+        |_| ManagedListenerPredecessor::Settled,
+    )
+    .expect("a settled route is a successor's claim");
+    let mut owner = synthetic_owner_of(successor, "child-2", "127.0.0.1:43124");
+    owner.run = Some("run-two".to_owned());
+    assert_eq!(
+        publish_with_predecessor(
+            &path,
+            &project,
+            "app.example.test",
+            "127.0.0.1:43124",
+            owner,
+            None,
+            |_| ManagedListenerPredecessor::Settled,
+        )
+        .unwrap(),
+        ManagedListenerRoutePublication::ReclaimedPredecessor
+    );
+    assert_eq!(
+        RouteTable::load(&path)
+            .unwrap()
+            .lookup("app.example.test")
+            .unwrap()
+            .managed_listener
+            .as_ref()
+            .map(|owner| owner.owner.as_str()),
+        Some(successor)
+    );
+    // The claim followed the route to the successor listener.
+    let claims = EndpointStore::for_routes(&path)
+        .edit(None, |snapshot| {
+            Ok::<_, GatewayError>(snapshot.domain_claims())
+        })
+        .unwrap();
+    assert!(claims
+        .iter()
+        .any(|claim| claim.domain == "app.example.test"
+            && claim.listener.as_deref() == Some(successor)));
+}
+
+#[test]
+fn down_withdraws_every_generation_of_one_listeners_routes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("routes.json");
+    let project = dir.path().display().to_string();
+    for domain in ["app.example.test", "api.example.test"] {
+        let mut owner = synthetic_owner("child-1", "127.0.0.1:43123");
+        owner.run = Some("run-one".to_owned());
+        publish_with_predecessor(
+            &path,
+            &project,
+            domain,
+            "127.0.0.1:43123",
+            owner,
+            None,
+            unobserved_predecessor,
+        )
+        .unwrap_or_else(|error| panic!("{domain}: {error}"));
+    }
+    // Another environment's listener and a container route stay.
+    let mut other = synthetic_owner_of("main|web|test|other", "child-9", "127.0.0.1:43129");
+    other.run = Some("run-other".to_owned());
+    publish_with_predecessor(
+        &path,
+        &project,
+        "other.example.test",
+        "127.0.0.1:43129",
+        other,
+        None,
+        unobserved_predecessor,
+    )
+    .unwrap();
+    let mut container = container_registration(&project, "127.0.0.1:8080");
+    container.domain = "web.example.test".to_owned();
+    register_route(&path, &container).unwrap();
+
+    let withdrawn = deregister_managed_listener_routes_for_owner(
+        &path,
+        &project,
+        None,
+        "main|web|test|app",
+        &[
+            "app.example.test".to_owned(),
+            "api.example.test".to_owned(),
+            "web.example.test".to_owned(),
+        ],
+    )
+    .unwrap();
+    let mut domains = withdrawn
+        .iter()
+        .map(|route| route.domain.clone())
+        .collect::<Vec<_>>();
+    domains.sort();
+    assert_eq!(domains, ["api.example.test", "app.example.test"]);
+    let table = RouteTable::load(&path).unwrap();
+    assert!(table.lookup("app.example.test").is_none());
+    assert!(table.lookup("api.example.test").is_none());
+    assert!(table.lookup("other.example.test").is_some());
+    assert!(
+        table.lookup("web.example.test").is_some(),
+        "a container route is not this listener's route"
+    );
+}
+
+#[test]
 fn container_handover_round_trip_keeps_teardown_ownership_correct() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("routes.json");
@@ -365,6 +658,7 @@ fn live_managed_listener_route_blocks_container_registration() {
     )
     .unwrap();
     let owner = ManagedListenerRouteOwner {
+        run: None,
         owner: "main|web|test|app".to_owned(),
         runtime_generation: "runtime-1".to_owned(),
         generation: "child-1".to_owned(),

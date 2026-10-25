@@ -222,8 +222,121 @@ pub enum ManagedListenerRoutePublication {
     Registered,
     /// Replaced the same managed owner's previous child generation.
     ReplacedGeneration,
+    /// Reclaimed the domain from a same-checkout listener whose recorded run
+    /// this checkout's journal proved settled.
+    ReclaimedPredecessor,
     /// Took over a route published by this checkout's container environment.
     HandedOverFromContainer,
+}
+
+/// What this checkout's journal proves about the run that published an existing
+/// managed listener route.
+///
+/// The observation is the only authority to reclaim a route: a route is
+/// reclaimed when its recorded run is closed or no longer holds its gate, and
+/// it stays when the run is live. A failed or absent observation is `Unknown`,
+/// never a reclaim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ManagedListenerPredecessor {
+    /// The recorded run closed, settled or died: its route is reclaimable.
+    Settled,
+    /// The recorded run is still live: its route is not.
+    Live { run: Option<String>, next: String },
+    /// The journal cannot prove either way; `reason` says what it observed.
+    Unknown {
+        run: Option<String>,
+        reason: String,
+        next: String,
+    },
+}
+
+/// The observation used when a caller has no checkout journal: a same-checkout
+/// managed listener route is never reclaimed on a guess.
+fn unobserved_predecessor(_: &ManagedListenerRouteOwner) -> ManagedListenerPredecessor {
+    ManagedListenerPredecessor::Unknown {
+        run: None,
+        reason: "no checkout journal observation was supplied".to_owned(),
+        next: "effigy container down".to_owned(),
+    }
+}
+
+/// The refusal for a same-checkout managed listener route whose recorded run
+/// is not provably settled. It names the owning run, its state and the command
+/// that settles it; it never calls this checkout foreign.
+fn predecessor_refusal(
+    existing: &Route,
+    current: &ManagedListenerRouteOwner,
+    run: Option<String>,
+    state: String,
+    next: String,
+) -> GatewayError {
+    GatewayError::ManagedListenerRouteOwnerUnsettled {
+        domain: existing.domain.clone(),
+        owner: current.owner.clone(),
+        owner_run: match run {
+            Some(run) => format!("run `{run}`"),
+            None => "an unrecorded run".to_owned(),
+        },
+        state,
+        next,
+    }
+}
+
+/// Decide what a publication may do with the route that already holds the
+/// domain. A same-checkout, same-scope listener route whose run the journal
+/// proves settled is reclaimed; a live run's route is refused by name.
+fn check_managed_listener_publication(
+    existing: &Route,
+    project_path: &str,
+    scope: Option<&str>,
+    owner: &ManagedListenerRouteOwner,
+    expected_generation: Option<&str>,
+    predecessor: impl FnOnce(&ManagedListenerRouteOwner) -> ManagedListenerPredecessor,
+) -> Result<ManagedListenerRoutePublication, GatewayError> {
+    if !owned_by(existing, project_path, scope) {
+        return Err(GatewayError::ForeignRoute {
+            domain: existing.domain.clone(),
+            project: existing.project.clone(),
+        });
+    }
+    let Some(current) = existing.managed_listener.as_ref() else {
+        if existing.source == RouteSource::Container && expected_generation.is_none() {
+            return Ok(ManagedListenerRoutePublication::HandedOverFromContainer);
+        }
+        return Err(GatewayError::ForeignRoute {
+            domain: existing.domain.clone(),
+            project: existing.project.clone(),
+        });
+    };
+    if current.owner == owner.owner {
+        if expected_generation == Some(current.generation.as_str()) {
+            return Ok(ManagedListenerRoutePublication::ReplacedGeneration);
+        }
+        // The same run publishing again after its own child generation ended is
+        // replacing itself, not competing with a predecessor.
+        if current.run.is_some() && current.run == owner.run {
+            return Ok(ManagedListenerRoutePublication::ReplacedGeneration);
+        }
+    }
+    match predecessor(current) {
+        ManagedListenerPredecessor::Settled => {
+            Ok(ManagedListenerRoutePublication::ReclaimedPredecessor)
+        }
+        ManagedListenerPredecessor::Live { run, next } => Err(predecessor_refusal(
+            existing,
+            current,
+            run,
+            "still live".to_owned(),
+            next,
+        )),
+        ManagedListenerPredecessor::Unknown { run, reason, next } => Err(predecessor_refusal(
+            existing,
+            current,
+            run,
+            format!("not provably settled ({reason})"),
+            next,
+        )),
+    }
 }
 
 /// Register a route in the route table file.
@@ -259,11 +372,23 @@ pub fn register_route(
     })
 }
 
+/// One managed listener route publication: the child generation's endpoint,
+/// its exact owner and, when it replaces its own predecessor generation, that
+/// generation.
+#[derive(Debug, Clone, Copy)]
+pub struct ManagedListenerRouteRequest<'a> {
+    pub domain: &'a str,
+    pub target: &'a str,
+    pub tls: bool,
+    pub expected_generation: Option<&'a str>,
+}
+
 /// Atomically publish a host-listener route for one managed process
 /// generation. A same-project route is not sufficient authority: replacement
-/// of another managed generation requires the exact stable listener owner and
-/// expected predecessor generation. A route from this same checkout's container
-/// environment is handed over in the same locked transaction.
+/// of another run requires this checkout's journal to prove that run settled.
+/// A route from this same checkout's container environment is handed over in
+/// the same locked transaction. No journal observation is supplied here, so a
+/// same-checkout managed listener route is refused, never reclaimed.
 pub fn register_managed_listener_route(
     route_table_path: &Path,
     project_path: &str,
@@ -273,27 +398,55 @@ pub fn register_managed_listener_route(
     owner: ManagedListenerRouteOwner,
     expected_generation: Option<&str>,
 ) -> Result<ManagedListenerRoutePublication, GatewayError> {
-    register_managed_listener_route_verified(
+    register_managed_listener_route_observed(
         route_table_path,
         project_path,
-        domain,
-        target,
-        tls,
-        (owner, expected_generation),
-        crate::managed_listener::verify_managed_listener_owner,
+        ManagedListenerRouteRequest {
+            domain,
+            target,
+            tls,
+            expected_generation,
+        },
+        owner,
+        unobserved_predecessor,
     )
 }
 
+/// [`register_managed_listener_route`] with the caller's checkout-journal
+/// observation of the run that published the existing route.
+pub fn register_managed_listener_route_observed(
+    route_table_path: &Path,
+    project_path: &str,
+    request: ManagedListenerRouteRequest<'_>,
+    owner: ManagedListenerRouteOwner,
+    predecessor: impl FnOnce(&ManagedListenerRouteOwner) -> ManagedListenerPredecessor,
+) -> Result<ManagedListenerRoutePublication, GatewayError> {
+    register_managed_listener_route_verified(
+        route_table_path,
+        project_path,
+        request,
+        owner,
+        crate::managed_listener::verify_managed_listener_owner,
+        predecessor,
+    )
+}
+
+/// The publication transaction with injected process/socket and predecessor
+/// observations, so both decisions are provable without a live journal.
 fn register_managed_listener_route_verified(
     route_table_path: &Path,
     project_path: &str,
-    domain: &str,
-    target: &str,
-    tls: bool,
-    publication: (ManagedListenerRouteOwner, Option<&str>),
+    request: ManagedListenerRouteRequest<'_>,
+    owner: ManagedListenerRouteOwner,
     verify: impl FnOnce(&ManagedListenerRouteOwner) -> Result<(), std::io::Error>,
+    predecessor: impl FnOnce(&ManagedListenerRouteOwner) -> ManagedListenerPredecessor,
 ) -> Result<ManagedListenerRoutePublication, GatewayError> {
-    let (owner, expected_generation) = publication;
+    let ManagedListenerRouteRequest {
+        domain,
+        target,
+        tls,
+        expected_generation,
+    } = request;
     let parsed_target = target.parse::<std::net::SocketAddr>().map_err(|error| {
         GatewayError::RouteTableReadError {
             path: route_table_path.to_path_buf(),
@@ -317,33 +470,14 @@ fn register_managed_listener_route_verified(
     EndpointStore::for_routes(route_table_path).routes(|table| {
         let scope = project_scope(project_path)?;
         let publication = if let Some(existing) = table.lookup(domain) {
-            if owned_by(existing, project_path, scope.as_deref()) {
-                if let Some(current) = existing.managed_listener.as_ref() {
-                    if current.owner == owner.owner
-                        && expected_generation == Some(current.generation.as_str())
-                    {
-                        ManagedListenerRoutePublication::ReplacedGeneration
-                    } else {
-                        return Err(GatewayError::ForeignRoute {
-                            domain: domain.to_owned(),
-                            project: existing.project.clone(),
-                        });
-                    }
-                } else if existing.source == RouteSource::Container && expected_generation.is_none()
-                {
-                    ManagedListenerRoutePublication::HandedOverFromContainer
-                } else {
-                    return Err(GatewayError::ForeignRoute {
-                        domain: domain.to_owned(),
-                        project: existing.project.clone(),
-                    });
-                }
-            } else {
-                return Err(GatewayError::ForeignRoute {
-                    domain: domain.to_owned(),
-                    project: existing.project.clone(),
-                });
-            }
+            check_managed_listener_publication(
+                existing,
+                project_path,
+                scope.as_deref(),
+                &owner,
+                expected_generation,
+                predecessor,
+            )?
         } else if expected_generation.is_some() {
             return Err(GatewayError::RouteTableReadError {
                 path: route_table_path.to_path_buf(),
@@ -379,12 +513,33 @@ fn register_managed_listener_route_verified(
 /// Check a requested listener domain before child startup. Existing claims are
 /// accepted when they already belong to the exact stable managed owner, or when
 /// they are container routes from this same checkout generation that the
-/// publication transaction will hand over.
+/// publication transaction will hand over. No journal observation is supplied
+/// here, so a same-checkout listener route from another owner is refused.
 pub fn check_managed_listener_route_claim(
     route_table_path: &Path,
     project_path: &str,
     domain: &str,
     owner: &str,
+) -> Result<(), GatewayError> {
+    check_managed_listener_route_claim_observed(
+        route_table_path,
+        project_path,
+        domain,
+        owner,
+        unobserved_predecessor,
+    )
+}
+
+/// [`check_managed_listener_route_claim`] with the caller's checkout-journal
+/// observation: a same-checkout listener route whose recorded run settled is
+/// accepted, a live one is refused by name, and an unobservable one names the
+/// command that settles it.
+pub fn check_managed_listener_route_claim_observed(
+    route_table_path: &Path,
+    project_path: &str,
+    domain: &str,
+    owner: &str,
+    predecessor: impl FnOnce(&ManagedListenerRouteOwner) -> ManagedListenerPredecessor,
 ) -> Result<(), GatewayError> {
     EndpointStore::for_routes(route_table_path).edit(None, |snapshot| {
         let table = snapshot.routes()?;
@@ -413,11 +568,36 @@ pub fn check_managed_listener_route_claim(
                     project: existing.project.clone(),
                 });
             }
-            if !(same_owner || container_handover) {
-                return Err(GatewayError::ForeignRoute {
-                    domain: domain.to_owned(),
-                    project: existing.project.clone(),
-                });
+            match existing.managed_listener.as_ref() {
+                Some(current) if !same_owner => match predecessor(current) {
+                    ManagedListenerPredecessor::Settled => {}
+                    ManagedListenerPredecessor::Live { run, next } => {
+                        return Err(predecessor_refusal(
+                            existing,
+                            current,
+                            run,
+                            "still live".to_owned(),
+                            next,
+                        ))
+                    }
+                    ManagedListenerPredecessor::Unknown { run, reason, next } => {
+                        return Err(predecessor_refusal(
+                            existing,
+                            current,
+                            run,
+                            format!("not provably settled ({reason})"),
+                            next,
+                        ))
+                    }
+                },
+                Some(_) => {}
+                None if container_handover => {}
+                None => {
+                    return Err(GatewayError::ForeignRoute {
+                        domain: domain.to_owned(),
+                        project: existing.project.clone(),
+                    })
+                }
             }
         } else if let Some(claim) = snapshot
             .domain_claims()
@@ -472,6 +652,46 @@ pub fn deregister_managed_listener_route(
         }
         let _ = table.deregister(domain);
         Ok(true)
+    })
+}
+
+/// Remove every managed listener route one stable listener owner published for
+/// a domain, whatever child generation or run published it.
+///
+/// The supervisor that published a route is not consulted: a route left by a
+/// run that died, was refused or was already closed is still the environment's
+/// route, and the environment's own stop must withdraw it. Only this checkout
+/// generation's routes for the given listener owner and domains are removed;
+/// a foreign route, or another environment's listener, stays.
+pub fn deregister_managed_listener_routes_for_owner(
+    route_table_path: &Path,
+    project_path: &str,
+    scope: Option<&str>,
+    owner: &str,
+    domains: &[String],
+) -> Result<Vec<Route>, GatewayError> {
+    EndpointStore::for_routes(route_table_path).routes(|table| {
+        let owned = table
+            .all_routes()
+            .into_iter()
+            .filter(|route| owned_by(route, project_path, scope))
+            .filter(|route| {
+                domains
+                    .iter()
+                    .any(|domain| domain.eq_ignore_ascii_case(&route.domain))
+            })
+            .filter(|route| {
+                route
+                    .managed_listener
+                    .as_ref()
+                    .is_some_and(|current| current.owner == owner)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        for route in &owned {
+            let _ = table.deregister(&route.domain);
+        }
+        Ok(owned)
     })
 }
 

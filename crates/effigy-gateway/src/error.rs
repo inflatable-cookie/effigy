@@ -61,6 +61,24 @@ pub enum GatewayError {
         pid: u32,
     },
 
+    /// A managed listener route this same checkout published is held by a run
+    /// its journal does not prove settled. The domain is not foreign: the
+    /// refusal names the owning run, its observed state and the command that
+    /// settles it, never the claimant's own checkout path.
+    #[error(
+        "gateway domain `{domain}` is held by managed listener `{owner}` from {owner_run}, which is {state}; settle it with `{next}` and retry"
+    )]
+    ManagedListenerRouteOwnerUnsettled {
+        domain: String,
+        owner: String,
+        /// Display phrase for the recorded run: ``run `abc` `` or
+        /// `an unrecorded run`.
+        owner_run: String,
+        /// The observed state: `still live` or `not provably settled (<why>)`.
+        state: String,
+        next: String,
+    },
+
     /// No route found for the given domain.
     #[error("no route registered for domain '{domain}'")]
     RouteNotFound { domain: String },
