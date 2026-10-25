@@ -1217,11 +1217,7 @@ fn supervise_generations(
                 wait_or_break(&shutdown, Duration::from_millis(spec.restart_delay_ms));
             }
             GenerationEnd::Exited(code) => {
-                let should_restart = match parse_restart_policy(&spec.restart) {
-                    RestartPolicy::Always => true,
-                    RestartPolicy::OnFailure => code != 0,
-                    RestartPolicy::Never => false,
-                };
+                let should_restart = parse_restart_policy(&spec.restart).restarts_after(code);
                 if !should_restart {
                     if spec.listener.is_some() {
                         write_terminal_listener_state(spec, record)?;
@@ -2136,7 +2132,10 @@ fn supervise_managed_host_listener(
         *last = Some(report);
     }
 
-    let remaining_group_members = effigy_process::process_group_member_ids(pid).map_err(
+    // The leader has been reaped by custody. Observation excludes it and any
+    // zombie outright: the exited leader is never a surviving member of its own
+    // group, so only another live process keeps this generation unavailable.
+    let remaining_group_members = effigy_process::surviving_group_member_ids(pid).map_err(
             |error| {
                 RunnerError::task_invocation(format!(
                     "managed child group is uncertain after its leader exited; retaining the unavailable generation: {error}"
@@ -2145,7 +2144,7 @@ fn supervise_managed_host_listener(
         )?;
     if !remaining_group_members.is_empty() {
         return Err(RunnerError::task_invocation(format!(
-                "managed child leader exited while process group {pid} still has members {remaining_group_members:?}; route withdrawn and generation retained"
+                "managed child leader exited while process group {pid} still has surviving members {remaining_group_members:?}; route withdrawn and generation retained"
             )));
     }
 
@@ -2937,14 +2936,14 @@ fn signal_owned_child_generation(
             )));
         }
     }
-    let members = effigy_process::process_group_member_ids(identity.pid).map_err(|error| {
+    let members = effigy_process::surviving_group_member_ids(identity.pid).map_err(|error| {
         RunnerError::task_invocation(format!(
             "managed host child process group is uncertain; refusing to signal: {error}"
         ))
     })?;
     if !members.is_empty() {
         return Err(RunnerError::task_invocation(format!(
-            "managed host child leader is absent while process group {} still has members {members:?}; refusing to signal an unverified group",
+            "managed host child leader is absent while process group {} still has surviving members {members:?}; refusing to signal an unverified group",
             identity.pid
         )));
     }
@@ -3248,6 +3247,20 @@ fn parse_restart_policy(value: &str) -> RestartPolicy {
         "always" => RestartPolicy::Always,
         "never" => RestartPolicy::Never,
         _ => RestartPolicy::OnFailure,
+    }
+}
+
+impl RestartPolicy {
+    /// Whether one completed generation is replaced under this policy. A child
+    /// that took a signal is reported as `128 + signal`, so it counts as a
+    /// failure under `on-failure`; `always` replaces a clean exit too, and
+    /// `never` settles whatever the code.
+    fn restarts_after(self, code: i32) -> bool {
+        match self {
+            RestartPolicy::Always => true,
+            RestartPolicy::OnFailure => code != 0,
+            RestartPolicy::Never => false,
+        }
     }
 }
 
@@ -3837,5 +3850,221 @@ mod tests {
         );
         child.wait().expect("legacy fixture exits");
         assert!(!dir.join("app.pid").exists(), "the legacy record is gone");
+    }
+
+    /// `on-failure` replaces a leader that exited non-zero or took a signal
+    /// (`128 + signal`), `always` also replaces a clean exit, and `never`
+    /// settles whatever the code (effigy#336).
+    #[test]
+    fn host_process_restart_policy_decides_a_signalled_leader() {
+        assert!(RestartPolicy::OnFailure.restarts_after(143));
+        assert!(RestartPolicy::OnFailure.restarts_after(1));
+        assert!(!RestartPolicy::OnFailure.restarts_after(0));
+        assert!(RestartPolicy::Always.restarts_after(0));
+        assert!(!RestartPolicy::Never.restarts_after(143));
+        assert!(!RestartPolicy::Never.restarts_after(0));
+    }
+
+    /// An unreaped zombie is not a group member: the process table still lists
+    /// its PID, but it has exited and holds nothing the group reserves.
+    #[test]
+    fn host_process_group_observation_ignores_an_unreaped_zombie() {
+        use std::os::unix::process::CommandExt;
+
+        let mut zombie = std::process::Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .process_group(0)
+            .spawn()
+            .expect("leader in its own group");
+        let pid = zombie.id();
+        kill(Pid::from_raw(pid as i32), Signal::SIGKILL).expect("stop the fixture leader");
+        wait_until("the fixture leader to become an unreaped zombie", || {
+            std::process::Command::new("ps")
+                .args(["-o", "stat=", "-p", &pid.to_string()])
+                .output()
+                .ok()
+                .is_some_and(|output| {
+                    String::from_utf8_lossy(&output.stdout)
+                        .trim()
+                        .starts_with('Z')
+                })
+        });
+        assert!(
+            group_members(pid).is_empty(),
+            "a zombie holds nothing its group reserves"
+        );
+        assert!(effigy_process::surviving_group_member_ids(pid)
+            .expect("group observation")
+            .is_empty());
+        zombie.wait().expect("reap the fixture zombie");
+    }
+
+    /// After a leader exits, the exited leader is never a surviving member of
+    /// its own group, while a live grandchild still is (effigy#336).
+    #[test]
+    fn host_process_leader_exit_observation_excludes_the_exited_leader() {
+        use std::os::unix::process::CommandExt;
+
+        let dir = tempfile::tempdir().expect("fixture dir");
+        let grandchild_file = dir.path().join("grandchild.pid");
+        let mut leader = std::process::Command::new("/bin/sh")
+            // The leader stays live (`wait`) so the observation sees both a
+            // running leader and a real grandchild before it exits.
+            .args([
+                "-c",
+                "sleep 300 & printf '%s\\n' \"$!\" > \"$1\"; wait",
+                "sh",
+            ])
+            .arg(&grandchild_file)
+            .process_group(0)
+            .spawn()
+            .expect("leader in its own group");
+        let pid = leader.id();
+        wait_until("the grandchild to record its pid", || {
+            grandchild_file.exists()
+        });
+        let grandchild = fs::read_to_string(&grandchild_file)
+            .expect("grandchild pid file")
+            .trim()
+            .parse::<u32>()
+            .expect("grandchild pid");
+        assert!(
+            group_members(pid).contains(&pid),
+            "the running leader is a member of its own group"
+        );
+        assert_eq!(
+            effigy_process::surviving_group_member_ids(pid).expect("group observation"),
+            vec![grandchild],
+            "a live grandchild is the only surviving member"
+        );
+        kill(Pid::from_raw(pid as i32), Signal::SIGKILL).expect("stop the fixture leader");
+        // The leader passes through reapable zombie to reaped; neither state may
+        // make it a surviving member, and the grandchild keeps blocking reuse.
+        for _ in 0..40 {
+            assert_eq!(
+                effigy_process::surviving_group_member_ids(pid).expect("group observation"),
+                vec![grandchild],
+                "the exited leader must never be a surviving member of its own group"
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+        leader.wait().expect("reap the fixture leader");
+        assert_eq!(
+            effigy_process::surviving_group_member_ids(pid).expect("group observation"),
+            vec![grandchild],
+            "the live grandchild keeps the generation unavailable"
+        );
+        kill(Pid::from_raw(grandchild as i32), Signal::SIGKILL).expect("stop the grandchild");
+        wait_until("the fixture group to close", || {
+            group_members(pid).is_empty()
+        });
+    }
+
+    /// A stop of an absent leader still refuses an unverified group: a live
+    /// grandchild blocks the signal, while an empty group (with only the
+    /// exited leader behind) is not an error (effigy#336).
+    #[test]
+    fn host_process_signal_refuses_a_surviving_member_of_an_absent_leader() {
+        use std::os::unix::process::CommandExt;
+
+        let dir = tempfile::tempdir().expect("fixture dir");
+        let grandchild_file = dir.path().join("grandchild.pid");
+        let mut leader = std::process::Command::new("/bin/sh")
+            // The leader stays live (`wait`) so the observation sees both a
+            // running leader and a real grandchild before it exits.
+            .args([
+                "-c",
+                "sleep 300 & printf '%s\\n' \"$!\" > \"$1\"; wait",
+                "sh",
+            ])
+            .arg(&grandchild_file)
+            .process_group(0)
+            .spawn()
+            .expect("leader in its own group");
+        let pid = leader.id();
+        let live = read_live_process_identity(pid).expect("leader identity");
+        let identity = ChildProcessIdentity {
+            pid,
+            boot_identity: live.boot_identity,
+            start_identity: live.start_identity,
+        };
+        wait_until("the grandchild to record its pid", || {
+            grandchild_file.exists()
+        });
+        let grandchild = fs::read_to_string(&grandchild_file)
+            .expect("grandchild pid file")
+            .trim()
+            .parse::<u32>()
+            .expect("grandchild pid");
+        kill(Pid::from_raw(pid as i32), Signal::SIGKILL).expect("stop the fixture leader");
+        leader.wait().expect("reap the fixture leader");
+        let error = signal_owned_child_generation(&identity, Signal::SIGTERM)
+            .expect_err("a live grandchild keeps the group unverified");
+        let message = error.to_string();
+        assert!(message.contains("surviving members"), "{message}");
+        assert!(message.contains(&grandchild.to_string()), "{message}");
+        assert!(
+            effigy_process::process_is_running(grandchild),
+            "nothing is signalled on guesswork"
+        );
+        kill(Pid::from_raw(grandchild as i32), Signal::SIGKILL).expect("stop the grandchild");
+        wait_until("the fixture group to close", || {
+            group_members(pid).is_empty()
+        });
+
+        // The same absent leader with nothing but its own exited shell behind it
+        // is a closed group, so a recorded stop of it settles.
+        let mut empty = std::process::Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .process_group(0)
+            .spawn()
+            .expect("leader in its own group");
+        let empty_pid = empty.id();
+        let empty_live = read_live_process_identity(empty_pid).expect("leader identity");
+        let empty_identity = ChildProcessIdentity {
+            pid: empty_pid,
+            boot_identity: empty_live.boot_identity,
+            start_identity: empty_live.start_identity,
+        };
+        empty.wait().expect("reap the empty leader");
+        signal_owned_child_generation(&empty_identity, Signal::SIGTERM)
+            .expect("an absent leader with an empty group needs no signal");
+    }
+
+    /// A leader terminated by a signal closes a `never` host process with its
+    /// exit recorded (`128 + SIGTERM`) and starts no successor (effigy#336).
+    #[test]
+    fn host_process_exit_observation_never_policy_records_a_terminated_leader() {
+        let fixture = fixture();
+        let policy = policy(
+            &fixture.checkout,
+            vec![host_process(
+                "app",
+                "exec /bin/sleep 120",
+                HostProcessRestart::Never,
+            )],
+        );
+        super::kernel_run::start_host_processes_for_container(&fixture.checkout, &policy)
+            .expect("host process starts");
+        wait_until("the host process leader to be recorded", || {
+            super::kernel_run::host_process_status(&fixture.checkout, &policy)
+                .first()
+                .is_some_and(|status| status.state == "running" && status.pid.is_some())
+        });
+        let pid = super::kernel_run::host_process_status(&fixture.checkout, &policy)[0]
+            .pid
+            .expect("recorded leader pid");
+        kill(Pid::from_raw(pid as i32), Signal::SIGTERM).expect("terminate the leader");
+        wait_until("the host process run to close", || {
+            super::kernel_run::host_process_status(&fixture.checkout, &policy)
+                .first()
+                .is_some_and(|status| status.state == "closed")
+        });
+        let status = super::kernel_run::host_process_status(&fixture.checkout, &policy);
+        assert_eq!(status[0].last_exit, Some(143), "{status:?}");
+        assert!(
+            !effigy_process::process_is_running(pid),
+            "`never` starts no successor generation"
+        );
     }
 }

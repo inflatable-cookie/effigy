@@ -1428,6 +1428,15 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- A host process whose child leader exits now applies its declared `restart`
+  policy instead of failing supervision. After a leader exit, Effigy reaps the
+  leader and observes the process group as the kernel does: the exited leader is
+  never a surviving member of its own group, and an unreaped zombie is not a
+  member at all. A `restart = "on-failure"` listener is therefore replaced on
+  the port its endpoint store reserved, with its route republished and its
+  dependents refreshed, after a crash, a signal or a non-zero exit; a genuinely
+  live member other than the leader still keeps the generation unavailable.
+  `restart = "never"` settles closed with its exit recorded (effigy#336).
 - An environment-owned host-process supervisor no longer inherits the
   revocable admission lease of the `container up` that started it. When `up`
   ran as a step of a durable task (Acowtancy's `dev:hybrid`), the supervisor's

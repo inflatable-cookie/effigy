@@ -121,7 +121,12 @@ pub fn process_descendant_ids(ancestor_pid: u32) -> Result<Vec<u32>, std::io::Er
 
 /// Snapshot live members of one Unix process group. This is used only for a
 /// child group created by Effigy and recorded with its leader's start identity;
-/// a group ID remains reserved while any member is still present.
+/// a group ID remains reserved while any live member is still present.
+///
+/// An exited process the kernel still lists as a zombie is not a member: it
+/// holds no socket, route or work, and it disappears from the group the moment
+/// its parent reaps it. Counting it would keep a generation unavailable after
+/// the only process in its group had already gone.
 pub fn process_group_member_ids(process_group_id: u32) -> Result<Vec<u32>, std::io::Error> {
     #[cfg(unix)]
     {
@@ -132,7 +137,7 @@ pub fn process_group_member_ids(process_group_id: u32) -> Result<Vec<u32>, std::
             ));
         }
         let output = ProcessCommand::new("ps")
-            .args(["-Ao", "pid=,pgid="])
+            .args(["-Ao", "pid=,pgid=,stat="])
             .output()?;
         if !output.status.success() {
             return Err(std::io::Error::other(
@@ -154,7 +159,15 @@ pub fn process_group_member_ids(process_group_id: u32) -> Result<Vec<u32>, std::
                     "process group listing contains a malformed group ID",
                 ));
             };
-            if pid > 0 && pgid == process_group_id {
+            let Some(state) = parts.next() else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "process group listing contains a malformed process state",
+                ));
+            };
+            // `ps` state starts with `Z` only for a zombie, which is already
+            // exited and cannot hold anything the group reserves.
+            if pid > 0 && pgid == process_group_id && !state.starts_with('Z') {
                 members.push(pid as u32);
             }
         }
@@ -169,6 +182,18 @@ pub fn process_group_member_ids(process_group_id: u32) -> Result<Vec<u32>, std::
             "process group inspection is unsupported on this platform",
         ))
     }
+}
+
+/// Snapshot the live members of one Unix process group other than its leader.
+///
+/// The leader of an Effigy-owned group is its group ID, and once that leader has
+/// exited it is never a surviving member of its own group: nothing it owned is
+/// still reserved. Only a live process other than the leader keeps the group
+/// (and the port, route and generation it stands for) unavailable.
+pub fn surviving_group_member_ids(process_group_id: u32) -> Result<Vec<u32>, std::io::Error> {
+    let mut members = process_group_member_ids(process_group_id)?;
+    members.retain(|pid| *pid != process_group_id);
+    Ok(members)
 }
 
 pub fn terminate_process_tree(pid: u32, force: bool) {
