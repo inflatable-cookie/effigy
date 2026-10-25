@@ -1,10 +1,11 @@
 //! `CheckoutId` for a resolved Effigy root (contract 052 §5.1).
 //!
 //! Linked worktrees and ephemeral clones reuse their runtime-scope token, so
-//! Compose names never change. A primary Git checkout keeps its own token
-//! beside it in its `.git` directory. A root with no `.git` of its own has
-//! no per-checkout Git state, so it persists its identity in `.effigy`. Only Mutate mints a token; Observe reads and reports "no runtime
-//! state yet".
+//! Compose names never change. Every other checkout resolves its primary token
+//! through [`worktree_scope::checkout_token`], the one reader, so the kernel
+//! invocation, containers and environments never disagree about which token a
+//! checkout carries. Only Mutate mints a token; Observe reads and reports "no
+//! runtime state yet".
 
 use std::io;
 use std::path::Path;
@@ -25,12 +26,6 @@ pub(in crate::runner) fn mint(root: &Path) -> Result<CheckoutId, RunnerError> {
     if let Some((kind, token)) = worktree_scope::load_or_create_scoped(root).map_err(io_error)? {
         return parse(scoped_kind(kind), &token).map_err(io_error);
     }
-    if let Some(token) = worktree_scope::load_checkout_token(root)
-        .map_err(io_error)?
-        .or(worktree_scope::checkout_token(root).map_err(io_error)?)
-    {
-        return parse(CheckoutKind::Primary, &token).map_err(io_error);
-    }
     let token = worktree_scope::prepare_checkout_token(root).map_err(io_error)?;
     parse(CheckoutKind::Primary, &token).map_err(io_error)
 }
@@ -41,12 +36,6 @@ pub(in crate::runner) fn read(root: &Path) -> io::Result<Option<CheckoutId>> {
     if worktree_scope::resolve(root)?.is_some() {
         return worktree_scope::load_scoped(root)?
             .map(|(kind, token)| parse(scoped_kind(kind), &token))
-            .transpose();
-    }
-    if root.join(".git").is_dir() {
-        return worktree_scope::load_checkout_token(root)?
-            .or(worktree_scope::checkout_token(root)?)
-            .map(|token| parse(CheckoutKind::Primary, &token))
             .transpose();
     }
     worktree_scope::checkout_token(root)?
@@ -89,6 +78,36 @@ mod tests {
         assert!(token.is_file());
         assert_eq!(read(root.path()).expect("read"), Some(minted));
         assert_eq!(mint(root.path()).expect("mint again"), minted);
+        assert_eq!(minted.kind(), CheckoutKind::Primary);
+    }
+
+    #[test]
+    fn both_token_files_resolve_to_one_identity() {
+        let root = tempfile::tempdir().expect("root");
+        let git = root.path().join(".git");
+        std::fs::create_dir(&git).expect("git dir");
+        let scope = "eb6958ae000000000000000000000000";
+        let legacy = "3f68e593000000000000000000000000";
+        std::fs::write(git.join(worktree_scope::SCOPE_FILE), scope).expect("scope token");
+        std::fs::write(git.join(worktree_scope::CHECKOUT_TOKEN_FILE), legacy)
+            .expect("legacy token");
+
+        let expected = worktree_scope::checkout_token(root.path())
+            .expect("checkout token")
+            .expect("a token");
+        assert_eq!(expected, scope, "the scope file wins");
+        let read_id = read(root.path()).expect("read").expect("recorded identity");
+        let minted = mint(root.path()).expect("mint");
+        assert_eq!(read_id, minted);
+        assert_eq!(read(root.path()).expect("read again"), Some(minted));
+        assert_eq!(
+            minted
+                .token()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+            expected
+        );
         assert_eq!(minted.kind(), CheckoutKind::Primary);
     }
 
