@@ -152,16 +152,6 @@ pub struct ContainerStatusService {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct AllocatedPortsSummary {
-    pub base: u16,
-    pub http: u16,
-    pub mysql: u16,
-    pub postgres: u16,
-    pub redis: u16,
-    pub memcached: u16,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ContainerStatusAllEntry {
     pub repo_root: String,
     pub container: String,
@@ -171,7 +161,6 @@ pub struct ContainerStatusAllEntry {
     pub dns_domain: Option<String>,
     pub dns_tls: bool,
     pub declared_ports: Vec<String>,
-    pub allocated_ports: Option<AllocatedPortsSummary>,
     pub services: Vec<ContainerStatusService>,
 }
 
@@ -585,14 +574,6 @@ pub fn status_global_report(entries: &[ContainerStatusAllEntry]) -> ContainerCom
                 "dns_domain": entry.dns_domain,
                 "dns_tls": entry.dns_tls,
                 "declared_ports": entry.declared_ports,
-                "allocated_ports": entry.allocated_ports.as_ref().map(|ports| json!({
-                    "base": ports.base,
-                    "http": ports.http,
-                    "mysql": ports.mysql,
-                    "postgres": ports.postgres,
-                    "redis": ports.redis,
-                    "memcached": ports.memcached,
-                })),
                 "services": entry.services.iter().map(|service| {
                     json!({
                         "name": service.name,
@@ -636,12 +617,6 @@ pub fn status_global_report(entries: &[ContainerStatusAllEntry]) -> ContainerCom
             lines.push(format!(
                 "declared_ports: {}",
                 entry.declared_ports.join(", ")
-            ));
-        }
-        if let Some(ports) = entry.allocated_ports.as_ref() {
-            lines.push(format!(
-                "allocated_ports: base={}, http={}, mysql={}, postgres={}, redis={}, memcached={}",
-                ports.base, ports.http, ports.mysql, ports.postgres, ports.redis, ports.memcached
             ));
         }
         lines.push(format!("services: {}", entry.services.len()));
@@ -1417,19 +1392,14 @@ fn shared_services_json(policy: &EffectiveContainerPolicy) -> Vec<JsonValue> {
         .shared_services
         .iter()
         .map(|service| {
-            let mut value = json!({
+            json!({
                 "service_name": service.service_name,
                 "catalog": service.catalog,
                 "project_name": service.project_name,
                 "target_host": service.host,
                 "target_port": service.host_port,
                 "container_port": service.container_port,
-            });
-            if service.host_port == 0 {
-                value["target_port"] = JsonValue::Null;
-                value["allocation"] = json!(crate::policy::ports::UNASSIGNED_PORT_LABEL);
-            }
-            value
+            })
         })
         .collect()
 }
@@ -1445,11 +1415,7 @@ fn append_shared_service_lines(lines: &mut Vec<String>, policy: &EffectiveContai
             service.service_name,
             service.catalog,
             service.host,
-            if service.host_port == 0 {
-                crate::policy::ports::UNASSIGNED_PORT_LABEL.to_owned()
-            } else {
-                service.host_port.to_string()
-            },
+            service.host_port,
             service.project_name
         ));
     }
@@ -1589,7 +1555,6 @@ pub fn retire_report(
             .collect::<Vec<_>>(),
         "gateway": {
             "routes": outcome.gateway.routes,
-            "ports": outcome.gateway.ports,
             "loopbacks": outcome.gateway.loopbacks,
         },
     });
@@ -1623,18 +1588,10 @@ pub fn retire_report(
             outcome.gateway.routes.join(", ")
         ));
     }
-    if !outcome.gateway.ports.is_empty() {
+    if outcome.gateway.loopbacks > 0 {
         lines.push(format!(
-            "released {} port range(s): {}",
-            outcome.gateway.ports.len(),
-            outcome.gateway.ports.join(", ")
-        ));
-    }
-    if !outcome.gateway.loopbacks.is_empty() {
-        lines.push(format!(
-            "released {} loopback address(es): {}",
-            outcome.gateway.loopbacks.len(),
-            outcome.gateway.loopbacks.join(", ")
+            "released {} loopback address(es)",
+            outcome.gateway.loopbacks
         ));
     }
     for failed in outcome.remaining() {
@@ -1777,17 +1734,15 @@ mod retire_tests {
     fn gateway_release_is_reported() {
         let mut outcome = RetireOutcome::default();
         outcome.gateway.routes = vec!["app.test".to_owned()];
-        outcome.gateway.ports = vec!["app-dev".to_owned()];
-        outcome.gateway.loopbacks = vec!["project:app-dev:/w/one".to_owned()];
+        outcome.gateway.loopbacks = 2;
         let report = retire_report(Some("/w/one"), &outcome);
         assert_eq!(report.json["ok"], true);
         assert_eq!(report.json["gateway"]["routes"][0], "app.test");
-        assert_eq!(report.json["gateway"]["ports"][0], "app-dev");
+        assert_eq!(report.json["gateway"]["loopbacks"], 2);
         assert!(report.success_text.contains("released 1 route(s)"));
-        assert!(report.success_text.contains("released 1 port range(s)"));
         assert!(report
             .success_text
-            .contains("released 1 loopback address(es)"));
+            .contains("released 2 loopback address(es)"));
     }
 }
 

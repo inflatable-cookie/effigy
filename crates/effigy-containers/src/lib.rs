@@ -59,19 +59,11 @@ pub use report::{
     down_noop_report, down_report, hosts_report, logs_report, reset_report, retire_report,
     stats_global_report, status_global_report, status_report, up_detached_report,
     volume_list_report, volume_prune_report, workspace_extra_mount_decision_lines,
-    AllocatedPortsSummary, ContainerCacheGlobalEntry, ContainerCachePruneEntry,
-    ContainerCacheVolumeEntry, ContainerCommandReport, ContainerDataHookResult,
-    ContainerDataTransferAction, ContainerDataVolumeEntry, ContainerServiceHealth,
-    ContainerStatsAllEntry, ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
+    ContainerCacheGlobalEntry, ContainerCachePruneEntry, ContainerCacheVolumeEntry,
+    ContainerCommandReport, ContainerDataHookResult, ContainerDataTransferAction,
+    ContainerDataVolumeEntry, ContainerServiceHealth, ContainerStatsAllEntry,
+    ContainerStatsService, ContainerStatusAllEntry, ContainerStatusService,
     ContainerVolumeGlobalEntry, ContainerVolumePruneEntry,
-};
-pub use runtime::loopback::{
-    prune_loopback_assignments, prune_loopback_assignments_with_rows, warn_skipped_reclamation,
-    LoopbackPruneOutcome,
-};
-pub use runtime::loopback_recovery::{
-    loopback_ownership_inventory, reserve_loopback_collecting_dead, stale_alias_listener_hold,
-    LoopbackCollection, LoopbackRecoveryFacts, LoopbackRecoveryRow,
 };
 /// The Effigy state home for this process: `~/.effigy`, or the private
 /// fixture home while unit tests run. Callers that touch `ports.json` or other
@@ -80,11 +72,6 @@ pub fn effigy_home() -> Option<std::path::PathBuf> {
     policy_support::effigy_home_dir()
 }
 
-pub use runtime::port_recovery::{
-    port_capacity_note, port_reclaim_apply, port_reclaim_dry_run, port_reclaim_under_pressure,
-    port_report_json, port_status, Decision, PathState, PortPressureReclaim, PortRecoveryReport,
-    PortRecoveryRow, AUTO_RECLAIM_FREE_RANGES, PORTS_SCHEMA,
-};
 pub use runtime::retire::{
     unique_resources, FailedResource, GatewayRelease, KeptResource, OwnedResource, ResourceKind,
     RetireOutcome,
@@ -189,7 +176,3 @@ pub fn driver_label(driver: ManifestContainerDriver) -> &'static str {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-#[path = "../../../tests/support/gateway_legacy.rs"]
-mod gateway_legacy_fixture;

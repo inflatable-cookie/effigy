@@ -437,7 +437,6 @@ fn prepare_container_up(
     operation.preparation_step = Some("policy");
     let ports_step = steps::phase("preparing ports and loopback");
     let prepared = match (|| -> Result<_, RunnerError> {
-        effigy_containers::policy::ports::prepare_endpoint_store()?;
         // Allocation is a Prepare effect, before admission captures the render.
         Ok(effigy_containers::policy::render::prepare_inputs(
             &load_container_policy(repo_root, name)?,
@@ -670,6 +669,22 @@ fn complete_container_up_runtime_integrations(
     if let Err(error) =
         materialize_container_secret_runtime(repo_root, policy, &plan.secret_runtime, &binding)
     {
+        if plan.attach_mode == EffectiveAttachMode::Detached {
+            return Err(detached_activation_error(policy, error));
+        }
+        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
+        return Err(finish_container_up_failure(error, cleanup_result));
+    }
+    if let Err(error) = super::support::ensure_pinned_host_ports_available(repo_root, policy) {
+        if plan.attach_mode == EffectiveAttachMode::Detached {
+            return Err(detached_activation_error(policy, error));
+        }
+        let cleanup_result = lifecycle_cleanup_failed_container_up(repo_root, policy);
+        return Err(finish_container_up_failure(error, cleanup_result));
+    }
+    // A gateway stopped by a reboot comes back here: `up` starts or reconciles
+    // it and prints one line naming it.
+    if let Err(error) = super::gateway_registration::ensure_gateway_running_for_container(policy) {
         if plan.attach_mode == EffectiveAttachMode::Detached {
             return Err(detached_activation_error(policy, error));
         }
@@ -2488,14 +2503,11 @@ catalog = "postgres"
     }
 
     /// A checkout whose container environment has never been prepared, plus a
-    /// fake `docker` that records every invocation and refuses Compose
-    /// interpolation exactly as Compose does when a rendered port still holds
-    /// the deliberate `${EFFIGY_UNASSIGNED_PORT:?…}` refusal (effigy#286).
+    /// fake `docker` that records every invocation.
     struct UnpreparedDownFixture {
         _temp: tempfile::TempDir,
         repo_root: PathBuf,
         parent: PathBuf,
-        home: PathBuf,
         project: String,
         _env: crate::contract_test_support::EnvGuard,
     }
@@ -2524,7 +2536,7 @@ catalog = "postgres"
             let docker = bin.join("docker");
             fs::write(
                 &docker,
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$EFFIGY_TEST_DOCKER_LOG\"\ncase \"$*\" in\n  compose*)\n    printf 'teardown-port=%s\\n' \"${EFFIGY_UNASSIGNED_PORT-<unset>}\" >> \"$EFFIGY_TEST_DOCKER_LOG\"\n    if [ -z \"${EFFIGY_UNASSIGNED_PORT-}\" ]; then\n      echo 'level=fatal msg=\"error while interpolating services.app.ports.[]: required variable EFFIGY_UNASSIGNED_PORT is missing a value: unassigned (assigned on first prepare)\"' >&2\n      exit 1\n    fi\n    ;;\nesac\nexit 0\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$EFFIGY_TEST_DOCKER_LOG\"\nexit 0\n",
             )
             .expect("write fake docker");
             let mut perms = fs::metadata(&docker)
@@ -2565,7 +2577,6 @@ catalog = "postgres"
                 _temp: temp,
                 repo_root,
                 parent,
-                home,
                 project,
                 _env: env,
             }
@@ -2587,10 +2598,6 @@ catalog = "postgres"
                 .filter(|line| line.starts_with("compose"))
                 .map(str::to_owned)
                 .collect()
-        }
-
-        fn ports_registry(&self) -> Option<String> {
-            fs::read_to_string(self.home.join(".effigy/ports.json")).ok()
         }
 
         /// The first start ran and failed: its record never published `active`
@@ -2669,11 +2676,10 @@ catalog = "postgres"
         );
     }
 
-    /// effigy#286: a failed first start also cleans up. Its own closeout stops
-    /// the partial stack, and that stop interpolates the unassigned port
-    /// instead of failing on it.
+    /// A failed first start cleans up: its own closeout stops the partial
+    /// stack.
     #[test]
-    fn a_failed_first_start_cleans_up_without_assigned_ports() {
+    fn a_failed_first_start_cleans_up_its_partial_stack() {
         let fixture = UnpreparedDownFixture::new();
         let policy = fixture.policy();
         fixture.record_never_activated_environment(&policy);
@@ -2683,93 +2689,11 @@ catalog = "postgres"
 
         let log = fixture.docker_log();
         assert!(
-            log.contains("teardown-port=0"),
-            "the cleanup interpolated the unassigned port: {log}"
-        );
-        assert!(
             fixture
                 .compose_invocations()
                 .iter()
                 .any(|line| line.contains(" down")),
             "the cleanup stopped the stack: {log}"
-        );
-        assert!(
-            fixture
-                .ports_registry()
-                .is_none_or(|registry| !registry.contains(&fixture.project)),
-            "the cleanup assigned no port"
-        );
-    }
-
-    /// effigy#286: a failed first start leaves a never-activated record whose
-    /// render still carries the unassigned-port refusal. `down` of that record
-    /// renders nothing and calls no Compose, and `up` of the same unprepared
-    /// render still refuses to interpolate.
-    #[test]
-    fn container_down_of_a_never_activated_environment_is_a_noop_and_up_still_refuses() {
-        let fixture = UnpreparedDownFixture::new();
-        let policy = fixture.policy();
-        assert!(
-            policy
-                .declared_ports
-                .iter()
-                .any(|port| port
-                    .starts_with(effigy_containers::policy::ports::UNASSIGNED_PORT_LABEL)),
-            "the fixture's ports are unassigned before Prepare: {:?}",
-            policy.declared_ports
-        );
-        fixture.record_never_activated_environment(&policy);
-
-        let text = crate::contract_test_support::with_cwd(&fixture.repo_root, || {
-            run_container_down_command(None, None, false, false)
-        })
-        .expect("down of a never-activated environment succeeds");
-        assert!(
-            text.contains("nothing to stop for `web`"),
-            "the no-op says nothing was running: {text}"
-        );
-        assert_eq!(
-            fixture.compose_invocations(),
-            Vec::<String>::new(),
-            "no Compose ran: {}",
-            fixture.docker_log()
-        );
-        // The no-op assigned, reserved or reclaimed no port.
-        if let Some(registry) = fixture.ports_registry() {
-            assert!(
-                !registry.contains(&fixture.project),
-                "down assigned no port: {registry}"
-            );
-        }
-        assert!(
-            fixture
-                .policy()
-                .declared_ports
-                .iter()
-                .any(|port| port
-                    .starts_with(effigy_containers::policy::ports::UNASSIGNED_PORT_LABEL)),
-            "the environment's ports stay unassigned"
-        );
-
-        // `up` keeps failing closed: its invocation carries no teardown value,
-        // so Compose refuses the same render the stop interpolated.
-        let replayed = fixture.policy();
-        let (program, args) = effigy_containers::compose::compose_invocation_for_repo(
-            &fixture.repo_root,
-            &replayed,
-            &effigy_containers::compose::compose_up_args(&replayed),
-        );
-        let error = effigy_containers::exec::run_compose_invocation_capture(
-            &fixture.repo_root,
-            &replayed,
-            std::ffi::OsStr::new(&program),
-            &args,
-            "compose up",
-        )
-        .expect_err("an unprepared render still refuses to start");
-        assert!(
-            error.to_string().contains("EFFIGY_UNASSIGNED_PORT"),
-            "up still fails closed on the unassigned port: {error}"
         );
     }
 }

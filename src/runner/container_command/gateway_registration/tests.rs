@@ -1,10 +1,6 @@
 use super::*;
 #[cfg(test)]
-use crate::gateway_legacy_fixture::LegacyRegistryFixture;
-use effigy_containers::exec::{
-    ContainerExecError, RunningComposeContainerInventory, RunningComposeContainerProfiled,
-    RuntimeInventoryFailure,
-};
+use effigy_containers::exec::{ContainerExecError, RunningComposeContainer};
 use effigy_containers::{EffectiveComposeSource, EffectiveServiceAlias, SharedServiceBinding};
 use effigy_gateway::routes::RouteTable;
 use effigy_manifest::{
@@ -120,103 +116,149 @@ fn shared_service(
     }
 }
 
+/// One runtime row per (host, container) binding the OS assigned to
+/// `policy`'s services. Compose publishes the port; this is how a route
+/// learns it.
+#[cfg(test)]
+fn published_rows(
+    policy: &EffectiveContainerPolicy,
+    bindings: &[(u16, u16)],
+    service: Option<&str>,
+) -> Vec<RunningComposeContainer> {
+    vec![RunningComposeContainer {
+        container_name: format!("{}-app-1", policy.project_name),
+        status: "Up 10 seconds".to_owned(),
+        ports: bindings
+            .iter()
+            .map(|(host, container)| format!("0.0.0.0:{host}->{container}/tcp"))
+            .collect(),
+        project_name: Some(policy.project_name.clone()),
+        working_dir: None,
+        service: Some(service.unwrap_or(&policy.primary_service).to_owned()),
+        oneoff: false,
+    }]
+}
+
 #[test]
-fn resolves_gateway_route_from_first_declared_host_port() {
-    let routes = resolve_gateway_routes(&test_policy()).expect("routes");
+fn resolves_gateway_route_from_the_published_host_port() {
+    let policy = test_policy();
+    let rows = published_rows(&policy, &[(41001, 80)], None);
+
+    let routes = resolve_gateway_routes_against_rows(Path::new("/tmp/repo"), &policy, &rows)
+        .expect("routes")
+        .expect("a published port resolves the route");
     let route = routes.first().expect("some route");
     assert_eq!(route.domain, "clientname.test");
-    assert_eq!(route.target.as_deref(), Some("127.0.0.1:8080"));
+    assert_eq!(route.target.as_deref(), Some("127.0.0.1:41001"));
     assert_eq!(route.dns_ip, None);
     assert!(route.tls);
     assert_eq!(route.service, None);
 }
 
 #[test]
-fn skips_gateway_route_when_dns_is_not_configured() {
+fn a_container_without_dns_routes_resolves_no_gateway_route() {
     let mut policy = test_policy();
     policy.dns_domain = None;
     policy.dns_routes.clear();
-    assert!(resolve_gateway_routes(&policy).expect("routes").is_empty());
+    let rows = published_rows(&policy, &[(41001, 80)], None);
+
+    assert!(
+        resolve_gateway_routes_against_rows(Path::new("/tmp/repo"), &policy, &rows)
+            .expect("routes")
+            .expect("nothing to wait for")
+            .is_empty()
+    );
 }
 
 #[test]
-fn errors_when_dns_is_configured_without_host_ports() {
+fn an_unpublished_declared_route_waits_instead_of_guessing_a_port() {
     let mut policy = test_policy();
     policy.declared_ports.clear();
-    let error = resolve_gateway_routes(&policy).expect_err("should fail");
-    assert!(error.to_string().contains("no `host.ports`"));
+    let rows = published_rows(&policy, &[], None);
+
+    assert_eq!(
+        resolve_gateway_routes_against_rows(Path::new("/tmp/repo"), &policy, &rows)
+            .expect("resolution is not an error"),
+        None,
+        "no published port means the readiness wait keeps polling"
+    );
 }
 
 #[test]
-fn uses_explicit_dns_port_when_present() {
+fn an_explicit_dns_port_selects_the_matching_published_binding() {
     let mut policy = test_policy();
     policy.dns_port = Some(9001);
     policy.dns_routes[0].port = Some(9001);
-    policy.declared_ports = vec!["5432:5432".to_owned(), "9001:9001".to_owned()];
+    policy.declared_ports = vec!["127.0.0.1::5432".to_owned(), "127.0.0.1::9001".to_owned()];
+    let rows = published_rows(&policy, &[(41001, 5432), (41002, 9001)], None);
 
-    let routes = resolve_gateway_routes(&policy).expect("routes");
-    let route = routes.first().expect("some route");
-    assert_eq!(route.target.as_deref(), Some("127.0.0.1:9001"));
+    let routes = resolve_gateway_routes_against_rows(Path::new("/tmp/repo"), &policy, &rows)
+        .expect("routes")
+        .expect("published");
+    assert_eq!(routes[0].target.as_deref(), Some("127.0.0.1:41002"));
 }
 
 #[test]
-fn errors_when_explicit_dns_port_is_not_declared() {
+fn a_selected_port_the_row_does_not_publish_uses_its_published_http_port() {
     let mut policy = test_policy();
     policy.dns_port = Some(9001);
     policy.dns_routes[0].port = Some(9001);
+    let rows = published_rows(&policy, &[(41001, 80)], None);
 
-    let error = resolve_gateway_routes(&policy).expect_err("should fail");
-    assert!(error.to_string().contains("host port 9001"));
+    let routes = resolve_gateway_routes_against_rows(Path::new("/tmp/repo"), &policy, &rows)
+        .expect("resolution is not an error")
+        .expect("the row publishes an HTTP port");
+    assert_eq!(routes[0].target.as_deref(), Some("127.0.0.1:41001"));
 }
 
 #[test]
-fn uses_effective_container_port_when_ports_are_auto_allocated() {
+fn an_os_assigned_container_port_is_read_back_for_the_route() {
     let mut policy = test_policy();
     policy.ports_declared_explicitly = false;
     policy.dns_port = Some(8025);
     policy.dns_routes[0].port = Some(8025);
-    policy.declared_ports = vec!["8126:1025".to_owned(), "8125:8025".to_owned()];
+    policy.declared_ports = vec!["127.0.0.1::1025".to_owned(), "127.0.0.1::8025".to_owned()];
+    let rows = published_rows(&policy, &[(41001, 1025), (41002, 8025)], None);
 
-    let routes = resolve_gateway_routes(&policy).expect("routes");
-    let route = routes.first().expect("some route");
-    assert_eq!(route.target.as_deref(), Some("127.0.0.1:8125"));
+    let routes = resolve_gateway_routes_against_rows(Path::new("/tmp/repo"), &policy, &rows)
+        .expect("routes")
+        .expect("published");
+    assert_eq!(routes[0].target.as_deref(), Some("127.0.0.1:41002"));
 }
 
 #[test]
-fn uses_service_specific_effective_port_when_multiple_services_publish_same_container_port() {
-    let dir = std::env::temp_dir().join(format!(
-        "effigy-gateway-service-route-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&dir).expect("mkdir tempdir");
-    let compose_file = dir.join("docker-compose.yml");
-    std::fs::write(
-        &compose_file,
-        r#"
-services:
-  pma:
-    ports:
-      - "18900:80"
-  web:
-    ports:
-      - "18901:80"
-"#,
-    )
-    .expect("write compose");
-
+fn a_service_route_reads_that_services_own_published_port() {
     let mut policy = test_policy();
     policy.compose_source = EffectiveComposeSource::Generated;
-    policy.compose_files = vec![compose_file];
     policy.ports_declared_explicitly = false;
-    policy.declared_ports = vec!["18900:80".to_owned(), "18901:80".to_owned()];
+    policy.declared_ports = vec!["127.0.0.1::80".to_owned(), "127.0.0.1::80".to_owned()];
     policy.dns_routes[0].service = Some("web".to_owned());
+    let repo_root = Path::new("/tmp/repo");
+    let rows = vec![
+        RunningComposeContainer {
+            container_name: "demo-web-dev-pma-1".to_owned(),
+            status: "Up 10 seconds".to_owned(),
+            ports: vec!["0.0.0.0:18900->80/tcp".to_owned()],
+            project_name: Some("demo-web-dev".to_owned()),
+            working_dir: None,
+            service: Some("pma".to_owned()),
+            oneoff: false,
+        },
+        RunningComposeContainer {
+            container_name: "demo-web-dev-web-1".to_owned(),
+            status: "Up 10 seconds".to_owned(),
+            ports: vec!["0.0.0.0:18901->80/tcp".to_owned()],
+            project_name: Some("demo-web-dev".to_owned()),
+            working_dir: None,
+            service: Some("web".to_owned()),
+            oneoff: false,
+        },
+    ];
 
-    let routes = resolve_gateway_routes(&policy).expect("routes");
-    let route = routes.first().expect("some route");
-    assert_eq!(route.target.as_deref(), Some("127.0.0.1:18901"));
+    let routes = resolve_gateway_routes_against_rows(repo_root, &policy, &rows)
+        .expect("routes")
+        .expect("published");
+    assert_eq!(routes[0].target.as_deref(), Some("127.0.0.1:18901"));
 }
 
 #[test]
@@ -232,7 +274,11 @@ fn register_and_deregister_gateway_route_roundtrip() {
     let route_table_path = dir.join("routes.json");
     let repo_root = dir.join("repo");
     std::fs::create_dir_all(&repo_root).expect("mkdir repo");
-    let routes = resolve_gateway_routes(&test_policy()).expect("routes");
+    let policy = test_policy();
+    let rows = published_rows(&policy, &[(8080, 80)], None);
+    let routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows)
+        .expect("routes")
+        .expect("published");
     let route = routes.first().expect("some route");
 
     register_gateway_route_at(&route_table_path, &repo_root, route).expect("register");
@@ -261,7 +307,11 @@ fn registered_gateway_routes_match_project_requires_exact_project_owned_routes()
     let other_repo_root = dir.join("other-repo");
     std::fs::create_dir_all(&repo_root).expect("mkdir repo");
     std::fs::create_dir_all(&other_repo_root).expect("mkdir other repo");
-    let desired_routes = resolve_gateway_routes(&test_policy()).expect("routes");
+    let policy = test_policy();
+    let rows = published_rows(&policy, &[(8080, 80)], None);
+    let desired_routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows)
+        .expect("routes")
+        .expect("published");
     let desired = desired_routes.first().expect("some route").clone();
 
     let mut table = RouteTable::new();
@@ -349,33 +399,7 @@ fn prune_stale_container_routes_removes_old_domains_for_same_project() {
 }
 
 #[test]
-fn prune_stale_container_routes_uses_typed_route_table_error_when_table_is_invalid() {
-    let dir = std::env::temp_dir().join(format!(
-        "effigy-gateway-prune-invalid-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&dir).expect("mkdir tempdir");
-    let route_table_path = dir.join("routes.json");
-    std::fs::write(&route_table_path, "{not-json").expect("write invalid route table");
-    let repo_root = dir.join("repo");
-    std::fs::create_dir_all(&repo_root).expect("mkdir repo");
-
-    let error = prune_stale_container_routes_for_project(&route_table_path, &repo_root, &[])
-        .expect_err("invalid route table should fail");
-    match error {
-        RunnerError::GatewayRouteTable { phase, path, .. } => {
-            assert_eq!(phase, "load");
-            assert_eq!(path, route_table_path);
-        }
-        other => panic!("unexpected error variant: {other}"),
-    }
-}
-
-#[test]
-fn resolves_multiple_gateway_routes_for_one_container() {
+fn resolves_multiple_gateway_routes_from_their_own_published_ports() {
     let mut policy = test_policy();
     policy
         .dns_routes
@@ -388,8 +412,13 @@ fn resolves_multiple_gateway_routes_for_one_container() {
             target_host: None,
         });
     policy.declared_ports = vec!["8080:80".to_owned(), "9001:9001".to_owned()];
+    let repo_root = Path::new("/tmp/repo");
+    let mut rows = published_rows(&policy, &[(8080, 80)], None);
+    rows.extend(published_rows(&policy, &[(9001, 9001)], Some("admin")));
 
-    let routes = resolve_gateway_routes(&policy).expect("routes");
+    let routes = resolve_gateway_routes_against_rows(repo_root, &policy, &rows)
+        .expect("routes")
+        .expect("published");
     assert_eq!(routes.len(), 2);
     assert_eq!(routes[0].domain, "clientname.test");
     assert_eq!(routes[0].target.as_deref(), Some("127.0.0.1:8080"));
@@ -402,7 +431,6 @@ fn resolves_multiple_gateway_routes_for_one_container() {
 fn validates_gateway_route_against_matching_runtime_port() {
     let policy = test_policy();
     let repo_root = PathBuf::from("/tmp/repo");
-    let routes = resolve_gateway_routes(&policy).expect("routes");
     let rows = vec![RunningComposeContainer {
         container_name: "demo-web-dev-app-1".to_owned(),
         status: "Up 10 seconds".to_owned(),
@@ -411,10 +439,13 @@ fn validates_gateway_route_against_matching_runtime_port() {
             ":::8080->80/tcp".to_owned(),
         ],
         project_name: Some("demo-web-dev".to_owned()),
-        working_dir: Some("/tmp/repo".to_owned()),
+        working_dir: None,
         service: Some("app".to_owned()),
         oneoff: false,
     }];
+    let routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows)
+        .expect("routes")
+        .expect("published");
 
     validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
         .expect("matching published port should validate");
@@ -520,7 +551,10 @@ fn gateway_readiness_permanent_port_failure_is_bounded_and_diagnostic() {
     assert!(elapsed < std::time::Duration::from_millis(250));
     let detail = error.to_string();
     assert!(detail.contains("timed out after 0s"), "got: {detail}");
-    assert!(detail.contains("no running container"), "got: {detail}");
+    assert!(
+        detail.contains("has not published a host port"),
+        "got: {detail}"
+    );
 }
 
 #[test]
@@ -528,16 +562,10 @@ fn validates_gateway_route_against_matching_runtime_service_when_declared() {
     let mut policy = test_policy();
     policy.dns_routes[0].service = Some("app".to_owned());
     let repo_root = PathBuf::from("/tmp/repo");
-    let routes = resolve_gateway_routes(&policy).expect("routes");
-    let rows = vec![RunningComposeContainer {
-        container_name: "demo-web-dev-app-1".to_owned(),
-        status: "Up 10 seconds".to_owned(),
-        ports: vec!["0.0.0.0:8080->80/tcp".to_owned()],
-        project_name: Some("demo-web-dev".to_owned()),
-        working_dir: Some("/tmp/repo".to_owned()),
-        service: Some("app".to_owned()),
-        oneoff: false,
-    }];
+    let rows = published_rows(&policy, &[(8080, 80)], None);
+    let routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows)
+        .expect("routes")
+        .expect("published");
 
     validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
         .expect("matching service should validate");
@@ -548,24 +576,13 @@ fn rejects_gateway_route_when_declared_service_does_not_match_runtime_service() 
     let mut policy = test_policy();
     policy.dns_routes[0].service = Some("admin".to_owned());
     let repo_root = PathBuf::from("/tmp/repo");
-    let routes = resolve_gateway_routes(&policy).expect("routes");
-    let rows = vec![RunningComposeContainer {
-        container_name: "demo-web-dev-app-1".to_owned(),
-        status: "Up 10 seconds".to_owned(),
-        ports: vec!["0.0.0.0:8080->80/tcp".to_owned()],
-        project_name: Some("demo-web-dev".to_owned()),
-        working_dir: Some("/tmp/repo".to_owned()),
-        service: Some("app".to_owned()),
-        oneoff: false,
-    }];
+    let rows = published_rows(&policy, &[(8080, 80)], None);
 
-    let error = validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
-        .expect_err("mismatched service should fail");
-    assert!(
-        error
-            .to_string()
-            .contains("project `demo-web-dev` service `admin` publishes host port 8080"),
-        "got: {error}"
+    assert_eq!(
+        resolve_gateway_routes_against_rows(&repo_root, &policy, &rows)
+            .expect("resolution is not an error"),
+        None,
+        "a route whose declared service published nothing keeps waiting"
     );
 }
 
@@ -573,27 +590,26 @@ fn rejects_gateway_route_when_declared_service_does_not_match_runtime_service() 
 fn rejects_gateway_route_when_runtime_does_not_publish_selected_port() {
     let policy = test_policy();
     let repo_root = PathBuf::from("/tmp/repo");
-    let routes = resolve_gateway_routes(&policy).expect("routes");
     let rows = vec![RunningComposeContainer {
         container_name: "demo-web-dev-app-1".to_owned(),
         status: "Up 10 seconds".to_owned(),
         ports: vec!["0.0.0.0:9090->80/tcp".to_owned()],
         project_name: Some("demo-web-dev".to_owned()),
-        working_dir: Some("/tmp/repo".to_owned()),
+        working_dir: None,
         service: Some("app".to_owned()),
         oneoff: false,
     }];
+    let routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows)
+        .expect("routes")
+        .expect("published");
 
-    let error = validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
-        .expect_err("mismatched published port should fail");
-    match error {
-        RunnerError::GatewayRuntimeTarget { phase, detail } => {
-            assert_eq!(phase, "validation");
-            assert!(detail
-                .contains("gateway registration refuses to target an unrelated runtime binding"));
-        }
-        other => panic!("unexpected error variant: {other}"),
-    }
+    assert_eq!(
+        routes[0].target.as_deref(),
+        Some("127.0.0.1:9090"),
+        "the route follows the port the container actually publishes"
+    );
+    validate_gateway_routes_against_rows(&repo_root, &policy, &routes, &rows)
+        .expect("the published port validates");
 }
 
 #[test]
@@ -626,17 +642,11 @@ fn resolves_gateway_routes_from_runtime_ephemeral_host_port() {
     policy.ports_declared_explicitly = false;
     policy.declared_ports = vec!["0:80".to_owned()];
     let repo_root = PathBuf::from("/tmp/repo");
-    let rows = vec![RunningComposeContainer {
-        container_name: "demo-web-dev-app-1".to_owned(),
-        status: "Up 10 seconds".to_owned(),
-        ports: vec!["0.0.0.0:41001->80/tcp".to_owned()],
-        project_name: Some("demo-web-dev".to_owned()),
-        working_dir: Some("/tmp/repo".to_owned()),
-        service: Some("app".to_owned()),
-        oneoff: false,
-    }];
+    let rows = published_rows(&policy, &[(41001, 80)], None);
 
-    let routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows).expect("routes");
+    let routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows)
+        .expect("routes")
+        .expect("published");
     assert_eq!(routes[0].target.as_deref(), Some("127.0.0.1:41001"));
 }
 
@@ -647,28 +657,12 @@ fn resolves_gateway_routes_from_runtime_service_specific_ephemeral_host_port() {
     policy.declared_ports = vec!["0:80".to_owned(), "0:9001".to_owned()];
     policy.dns_routes[0].service = Some("web".to_owned());
     let repo_root = PathBuf::from("/tmp/repo");
-    let rows = vec![
-        RunningComposeContainer {
-            container_name: "demo-web-dev-admin-1".to_owned(),
-            status: "Up 10 seconds".to_owned(),
-            ports: vec!["0.0.0.0:41001->80/tcp".to_owned()],
-            project_name: Some("demo-web-dev".to_owned()),
-            working_dir: Some("/tmp/repo".to_owned()),
-            service: Some("admin".to_owned()),
-            oneoff: false,
-        },
-        RunningComposeContainer {
-            container_name: "demo-web-dev-web-1".to_owned(),
-            status: "Up 10 seconds".to_owned(),
-            ports: vec!["0.0.0.0:41002->80/tcp".to_owned()],
-            project_name: Some("demo-web-dev".to_owned()),
-            working_dir: Some("/tmp/repo".to_owned()),
-            service: Some("web".to_owned()),
-            oneoff: false,
-        },
-    ];
+    let mut rows = published_rows(&policy, &[(41001, 80)], Some("admin"));
+    rows.extend(published_rows(&policy, &[(41002, 80)], Some("web")));
 
-    let routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows).expect("routes");
+    let routes = resolve_gateway_routes_against_rows(&repo_root, &policy, &rows)
+        .expect("routes")
+        .expect("published");
     assert_eq!(routes[0].target.as_deref(), Some("127.0.0.1:41002"));
 }
 
@@ -711,40 +705,29 @@ fn parse_target_host_port_uses_typed_route_shape_error() {
 }
 
 #[test]
-fn selected_effective_container_port_uses_typed_runtime_target_error() {
-    let mut policy = test_policy();
-    policy.declared_ports = vec!["8125:8025".to_owned()];
+fn a_project_alias_is_allocated_at_up_and_released_at_down() {
+    with_test_home("loopback-lifecycle", || {
+        let repo_root = PathBuf::from("/tmp/loopback-lifecycle");
+        std::fs::create_dir_all(&repo_root).expect("checkout");
+        let identity = effigy_gateway::loopback::project_loopback_identity("demo", &repo_root);
+        let scope = repo_root.display().to_string();
 
-    let error = selected_effective_container_port(&policy, 9001)
-        .expect_err("missing effective container port should fail");
-    match error {
-        RunnerError::GatewayRuntimeTarget { phase, detail } => {
-            assert_eq!(phase, "validation");
-            assert!(detail.contains("does not expose that container port"));
-        }
-        other => panic!("unexpected error variant: {other}"),
-    }
-}
-
-#[test]
-fn load_or_allocate_loopback_ip_uses_typed_loopback_error_when_registry_is_invalid() {
-    with_test_home("loopback-invalid-registry", || {
-        let loopback_path = gateway_dir()
-            .expect("gateway dir")
-            .join("loopback-ips.json");
-        std::fs::create_dir_all(loopback_path.parent().expect("loopback parent"))
-            .expect("mkdir loopback parent");
-        std::fs::write(&loopback_path, "{not-json").expect("write invalid loopback registry");
-
-        let error = load_or_allocate_loopback_ip("demo-web-dev", None, "/tmp/demo", true)
-            .expect_err("invalid loopback registry should fail");
-        match error {
-            RunnerError::GatewayLoopback { phase, detail } => {
-                assert_eq!(phase, "registry load");
-                assert!(!detail.is_empty());
-            }
-            other => panic!("unexpected error variant: {other}"),
-        }
+        let first = load_or_allocate_loopback_ip(&identity, &scope, true)
+            .expect("allocate at up")
+            .expect("an allocated address");
+        assert_eq!(
+            load_or_allocate_loopback_ip(&identity, &scope, false)
+                .expect("read")
+                .expect("the retained address"),
+            first
+        );
+        let store = EndpointStore::for_routes(&gateway_route_table_path().expect("route path"));
+        assert!(store.release_loopback(&identity).expect("release at down"));
+        assert_eq!(
+            load_or_allocate_loopback_ip(&identity, &scope, false).expect("read"),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&repo_root);
     });
 }
 
@@ -760,21 +743,6 @@ fn runtime_host_port_for_service_alias_uses_typed_runtime_target_error_for_missi
         RunnerError::GatewayRuntimeTarget { phase, detail } => {
             assert_eq!(phase, "validation");
             assert!(detail.contains("has no declared service alias for service `cache`"));
-        }
-        other => panic!("unexpected error variant: {other}"),
-    }
-}
-
-#[test]
-fn parse_port_binding_uses_typed_route_shape_error() {
-    let policy = test_policy();
-
-    let error =
-        parse_port_binding(&policy, "bad-binding").expect_err("invalid port binding should fail");
-    match error {
-        RunnerError::GatewayRouteShape { phase, detail } => {
-            assert_eq!(phase, "validation");
-            assert!(detail.contains("invalid host port mapping"));
         }
         other => panic!("unexpected error variant: {other}"),
     }
@@ -1362,402 +1330,43 @@ fn allows_tcp_alias_bind_tuple_reuse_when_upstream_matches() {
 }
 
 #[test]
-fn prunes_stale_loopback_assignments_when_route_table_and_registry_drift() {
-    let mut registry = LoopbackRegistry::new();
-    registry
-        .allocate("active-project", "/tmp/active")
-        .expect("allocate active");
-    registry
-        .allocate("stale-project", "/tmp/stale")
-        .expect("allocate stale");
-
-    let mut route_table = RouteTable::new();
-    route_table.upsert(effigy_gateway::routes::Route {
-        scope: None,
-        domain: "postgres.active.test".to_owned(),
-        target: None,
-        dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
-        tcp_port: Some(5432),
-        tcp_target: Some("127.0.0.1:15432".to_owned()),
-        source: RouteSource::Container,
-        project: "/tmp/active".to_owned(),
-        tls: false,
-        managed_listener: None,
-        registered: chrono::Utc::now(),
-    });
-    route_table.upsert(effigy_gateway::routes::Route {
-        scope: None,
-        domain: "postgres.stale.test".to_owned(),
-        target: None,
-        dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 2)),
-        tcp_port: Some(5432),
-        tcp_target: Some("127.0.0.1:25432".to_owned()),
-        source: RouteSource::Container,
-        project: "/tmp/stale".to_owned(),
-        tls: false,
-        managed_listener: None,
-        registered: chrono::Utc::now(),
-    });
-
-    let rows = vec![RunningComposeContainer {
-        container_name: "active-1".to_owned(),
-        status: "Up 10 seconds".to_owned(),
-        ports: vec!["0.0.0.0:15432->5432/tcp".to_owned()],
-        project_name: Some("active-project".to_owned()),
-        working_dir: Some("/tmp/active".to_owned()),
-        service: Some("db".to_owned()),
-        oneoff: false,
-    }];
-
-    let changed = prune_stale_loopback_assignments_with_runtime(&mut registry, &route_table, &rows);
-    assert!(changed);
-    assert!(registry.get("active-project").is_some());
-    assert!(registry.get("stale-project").is_none());
-}
-
-fn inventory_row(
-    project_name: &str,
-    working_dir: &str,
-    profile: &str,
-) -> RunningComposeContainerProfiled {
-    RunningComposeContainerProfiled {
-        profile: profile.to_owned(),
-        row: RunningComposeContainer {
-            container_name: format!("{project_name}-1"),
-            status: "Up 10 seconds".to_owned(),
-            ports: Vec::new(),
-            project_name: Some(project_name.to_owned()),
-            working_dir: Some(working_dir.to_owned()),
-            service: Some("app".to_owned()),
-            oneoff: false,
-        },
-    }
-}
-
-fn full_project_loopback_registry() -> LoopbackRegistry {
-    let mut registry = LoopbackRegistry::new();
-    for index in 1..=50 {
-        let name = format!("project-{index}");
-        registry
-            .allocate(
-                &format!("project:{name}:/tmp/{name}"),
-                &format!("/tmp/{name}"),
-            )
-            .expect("fill private loopback pool");
-    }
-    registry
-}
-
-#[test]
-fn complete_inventory_reclaims_only_proven_stale_loopback_assignments() {
-    let mut registry = full_project_loopback_registry();
-    let inventory = RunningComposeContainerInventory {
-        rows: vec![inventory_row("project-1", "/tmp/project-1", "effigy")],
-        failures: Vec::new(),
-    };
-
-    let outcome = prune_stale_loopback_assignments_with_inventory(
-        &mut registry,
-        &RouteTable::new(),
-        &inventory,
-    );
-
-    assert!(outcome.changed);
-    assert!(outcome.skipped_reason.is_none());
-    assert_eq!(registry.len(), 1);
-    assert!(registry.get("project:project-1:/tmp/project-1").is_some());
-    assert!(registry
-        .allocate("project:new:/tmp/new", "/tmp/new")
-        .is_ok());
-}
-
-#[test]
-fn complete_empty_inventory_reclaims_stale_assignments_and_allows_reallocation() {
-    let mut registry = full_project_loopback_registry();
-    let inventory = RunningComposeContainerInventory::default();
-
-    let outcome = prune_stale_loopback_assignments_with_inventory(
-        &mut registry,
-        &RouteTable::new(),
-        &inventory,
-    );
-
-    assert!(outcome.changed);
-    assert_eq!(registry.len(), 0);
-    assert!(registry
-        .allocate("project:new:/tmp/new", "/tmp/new")
-        .is_ok());
-}
-
-#[test]
-fn complete_inventory_keeps_a_full_pool_of_protected_live_owners() {
-    let mut registry = full_project_loopback_registry();
-    let rows = (1..=50)
-        .map(|index| {
-            let name = format!("project-{index}");
-            inventory_row(&name, &format!("/tmp/{name}"), "effigy")
-        })
-        .collect();
-    let inventory = RunningComposeContainerInventory {
-        rows,
-        failures: Vec::new(),
-    };
-
-    let outcome = prune_stale_loopback_assignments_with_inventory(
-        &mut registry,
-        &RouteTable::new(),
-        &inventory,
-    );
-
-    assert!(!outcome.changed);
-    assert_eq!(registry.len(), 50);
-    assert!(registry
-        .allocate("project:new:/tmp/new", "/tmp/new")
-        .expect_err("protected pool stays exhausted")
-        .to_string()
-        .contains("loopback pool exhausted"));
-}
-
-#[test]
 fn generated_registration_and_regeneration_reuse_one_loopback_assignment() {
-    let _env = crate::contract_test_support::lock_test();
-    let owner = tempfile::tempdir().expect("private loopback fixture");
-    let home = owner.path().join("home");
-    let repo_root = owner.path().join("repo");
-    std::fs::create_dir_all(&home).unwrap();
-    std::fs::create_dir_all(&repo_root).unwrap();
-    let repo_root = repo_root.canonicalize().unwrap();
-    let _gateway_home = crate::runner::gateway_command::set_test_gateway_home(&home);
-    effigy_containers::with_test_effigy_home(&home.join(".effigy"), || {
-        std::fs::write(
-            repo_root.join("effigy.toml"),
-            r#"
-[containers]
-default = "web"
+    with_test_home("loopback-reuse", || {
+        let repo_root = PathBuf::from("/tmp/loopback-reuse");
+        std::fs::create_dir_all(&repo_root).expect("checkout");
+        let policy = test_policy();
+        let first = load_or_allocate_project_loopback_ip(&repo_root, &policy, true)
+            .expect("allocate")
+            .expect("an address");
+        let again = load_or_allocate_project_loopback_ip(&repo_root, &policy, true)
+            .expect("reallocate")
+            .expect("the same address");
 
-[containers.web]
-project_name = "demo-web-dev"
-primary_service = "app"
-
-[containers.web.services.app]
-catalog = "workspace-rust-bun"
-host_ports = ["41001:41001"]
-
-[containers.web.services.postgres]
-catalog = "postgres"
-database = "acme"
-password = "postgres"
-"#,
-        )
-        .expect("write manifest");
-
-        let observed = effigy_containers::load_container_policy(&repo_root, None).unwrap();
-        let policy = effigy_containers::policy::render::prepare_inputs(&observed)
-            .expect("Prepare allocates the loopback assignment");
-        let loopback_path = gateway_dir()
-            .expect("gateway dir")
-            .join("loopback-ips.json");
-        let identity = project_loopback_identity(&policy.project_name, &repo_root);
-        let generated_registry =
-            LoopbackRegistry::load(&loopback_path).expect("generated registry");
-        let generated_ip = generated_registry
-            .get(&identity)
-            .expect("qualified generated assignment")
-            .ip;
-        assert_eq!(generated_registry.len(), 1);
-        assert!(generated_registry.get(&policy.project_name).is_none());
-
-        let registered_ip = load_or_allocate_loopback_ip_with_inventory(
-            &identity,
-            Some(&policy.project_name),
-            &repo_root.display().to_string(),
-            true,
-            || RunningComposeContainerInventory {
-                rows: vec![inventory_row(
-                    &policy.project_name,
-                    &repo_root.display().to_string(),
-                    "effigy",
-                )],
-                failures: Vec::new(),
-            },
-        )
-        .expect("register project loopback")
-        .expect("registered loopback IP");
-        assert_eq!(registered_ip, generated_ip);
-
-        let _regenerated = effigy_containers::load_container_policy(&repo_root, None)
-            .expect("regenerate compose policy");
-        let final_registry = LoopbackRegistry::load(&loopback_path).expect("final registry");
-        assert_eq!(final_registry.len(), 1);
-        assert_eq!(
-            final_registry
-                .get(&identity)
-                .map(|assignment| assignment.ip),
-            Some(generated_ip)
-        );
-    });
-
-    let _ = std::fs::remove_dir_all(repo_root);
-    drop(_gateway_home);
-    let _ = std::fs::remove_dir_all(home);
-}
-
-#[test]
-fn exhausted_registration_holds_an_owner_with_a_created_container() {
-    let _env = crate::contract_test_support::lock_test();
-    let owner = tempfile::tempdir().expect("private loopback fixture");
-    let home = owner.path().join("home");
-    std::fs::create_dir_all(&home).unwrap();
-    let _gateway_home = crate::runner::gateway_command::set_test_gateway_home(&home);
-    effigy_containers::with_test_effigy_home(&home.join(".effigy"), || {
-        // A full pool of absent owners, one of which still has a created
-        // container on a running profile. Registration must hold that owner
-        // and release the rest.
-        let mut registry = LoopbackRegistry::new();
-        let mut held_scope = String::new();
-        for index in 1..=50 {
-            let source = owner
-                .path()
-                .join(format!("gone-{index}"))
-                .display()
-                .to_string();
-            registry
-                .allocate(
-                    &project_loopback_identity(&format!("gone-{index}"), Path::new(&source)),
-                    &source,
-                )
-                .expect("fill private loopback pool");
-            if index == 7 {
-                held_scope = source;
-            }
-        }
-        let loopback_path = gateway_dir()
-            .expect("gateway dir")
-            .join("loopback-ips.json");
-        registry.save(&loopback_path).expect("full registry");
-        let mut created = inventory_row("gone-7", &held_scope, "effigy");
-        created.row.status = "Created".to_owned();
-
-        let allocated = load_or_allocate_loopback_ip_with_inventory(
-            "project:new:/tmp/new",
-            None,
-            "/tmp/new",
-            true,
-            || RunningComposeContainerInventory {
-                rows: vec![created],
-                failures: Vec::new(),
-            },
-        )
-        .expect("the released addresses are immediately reusable");
-        assert!(allocated.is_some());
-
-        let store = EndpointStore::for_routes(&gateway_route_table_path().expect("route path"));
-        let remaining = store
-            .read_compatible()
-            .expect("store")
-            .loopback()
-            .expect("registry");
-        let mut scopes = remaining
-            .assignments
-            .values()
-            .map(|assignment| assignment.scope.clone())
-            .filter(|scope| scope == &held_scope || scope == "/tmp/new")
-            .collect::<Vec<_>>();
-        scopes.sort();
-        assert_eq!(
-            scopes,
-            {
-                let mut expected = vec![held_scope, "/tmp/new".to_owned()];
-                expected.sort();
-                expected
-            },
-            "the created container's owner is held and the new owner takes a released address"
-        );
+        assert_eq!(first, again);
+        let _ = std::fs::remove_dir_all(&repo_root);
     });
 }
 
 #[test]
-fn incomplete_inventory_preserves_all_assignments_and_reports_failed_profile() {
-    let mut registry = full_project_loopback_registry();
-    let before = registry.assignments.clone();
-    let inventory = RunningComposeContainerInventory {
-        rows: vec![inventory_row(
-            "project-1",
-            "/tmp/project-1",
-            "healthy-profile",
-        )],
-        failures: vec![RuntimeInventoryFailure {
-            backend: "colima".to_owned(),
-            profile: "broken-profile".to_owned(),
-            error: "runtime ps failed to parse output".to_owned(),
-            stopped_profile: false,
-        }],
-    };
+fn shared_and_project_aliases_get_distinct_addresses() {
+    with_test_home("loopback-shared", || {
+        let repo_root = PathBuf::from("/tmp/loopback-shared");
+        std::fs::create_dir_all(&repo_root).expect("checkout");
+        let policy = test_policy();
+        let project = load_or_allocate_project_loopback_ip(&repo_root, &policy, true)
+            .expect("project alias")
+            .expect("an address");
+        let shared = load_or_allocate_shared_loopback_ip(
+            &repo_root,
+            &shared_service("db", "mariadb", "effigy-shared-mariadb", 3306, 3306),
+            true,
+        )
+        .expect("shared alias")
+        .expect("an address");
 
-    let outcome = prune_stale_loopback_assignments_with_inventory(
-        &mut registry,
-        &RouteTable::new(),
-        &inventory,
-    );
-
-    assert!(!outcome.changed);
-    assert_eq!(registry.assignments, before);
-    let reason = outcome.skipped_reason.expect("skipped-prune reason");
-    assert!(reason.contains("skipped stale loopback reclamation"));
-    assert!(reason.contains("colima profile `broken-profile`"));
-    assert!(reason.contains("runtime ps failed to parse output"));
-}
-
-#[test]
-fn complete_empty_inventory_preserves_shared_loopback_identity() {
-    let mut registry = LoopbackRegistry::new();
-    registry
-        .allocate("project:stale:/tmp/stale", "/tmp/stale")
-        .expect("stale project");
-    registry
-        .allocate("shared:service:/tmp/repo", "/tmp/repo")
-        .expect("shared service");
-
-    let outcome = prune_stale_loopback_assignments_with_inventory(
-        &mut registry,
-        &RouteTable::new(),
-        &RunningComposeContainerInventory::default(),
-    );
-
-    assert!(outcome.changed);
-    assert!(registry.get("project:stale:/tmp/stale").is_none());
-    assert!(registry.get("shared:service:/tmp/repo").is_some());
-}
-
-#[test]
-fn keeps_active_project_identity_when_runtime_rows_do_not_report_working_dir() {
-    let mut registry = LoopbackRegistry::new();
-    registry
-        .allocate("active-project", "/tmp/active")
-        .expect("allocate active");
-    registry
-        .allocate("project:active-project:/tmp/active", "/tmp/active")
-        .expect("allocate qualified active");
-    registry
-        .allocate("stale-project", "/tmp/stale")
-        .expect("allocate stale");
-
-    let rows = vec![RunningComposeContainer {
-        container_name: "active-1".to_owned(),
-        status: "Up 10 seconds".to_owned(),
-        ports: vec!["0.0.0.0:15432->5432/tcp".to_owned()],
-        project_name: Some("active-project".to_owned()),
-        working_dir: None,
-        service: Some("db".to_owned()),
-        oneoff: false,
-    }];
-
-    let changed =
-        prune_stale_loopback_assignments_with_runtime(&mut registry, &RouteTable::new(), &rows);
-    assert!(changed);
-    assert!(registry.get("active-project").is_some());
-    assert!(registry.get("project:active-project:/tmp/active").is_some());
-    assert!(registry.get("stale-project").is_none());
+        assert_ne!(project, shared);
+        let _ = std::fs::remove_dir_all(&repo_root);
+    });
 }
 
 #[test]
@@ -1782,154 +1391,25 @@ fn runtime_not_running_errors_degrade_gateway_probe_to_not_ready() {
 }
 
 #[test]
-fn load_or_allocate_project_loopback_ip_avoids_live_route_table_ips_missing_from_registry() {
-    with_test_home("loopback-avoid-live-routes", || {
-        let policy = test_policy();
-        let repo_root = PathBuf::from("/tmp/repo");
-        let route_table_path = gateway_route_table_path().expect("route table path");
-        std::fs::create_dir_all(route_table_path.parent().expect("route table parent"))
-            .expect("mkdir route table parent");
-        register_route(
-            &route_table_path,
-            &RouteRegistration {
-                domain: "postgres.other.test".to_owned(),
-                target: None,
-                dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
-                tcp_port: Some(5432),
-                tcp_target: Some("127.0.0.1:15432".to_owned()),
-                tls: false,
-                project_path: "/tmp/other".to_owned(),
-                source: RouteSource::Container,
-            },
-        )
-        .expect("seed active route");
-
-        let ip = load_or_allocate_project_loopback_ip(&repo_root, &policy, true)
-            .expect("allocate")
-            .expect("loopback ip");
-
-        assert_eq!(ip, std::net::Ipv4Addr::new(127, 1, 0, 2));
-    });
-}
-
-#[test]
-fn load_or_allocate_project_loopback_ip_refuses_conflicting_saved_ip() {
-    with_test_home("loopback-reassign-conflicting-saved-ip", || {
-        let route_table_path = gateway_route_table_path().expect("route table path");
-        std::fs::create_dir_all(route_table_path.parent().expect("route table parent"))
-            .expect("mkdir route table parent");
-        register_route(
-            &route_table_path,
-            &RouteRegistration {
-                domain: "postgres.other.test".to_owned(),
-                target: None,
-                dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
-                tcp_port: Some(5432),
-                tcp_target: Some("127.0.0.1:15432".to_owned()),
-                tls: false,
-                project_path: "/tmp/other".to_owned(),
-                source: RouteSource::Container,
-            },
-        )
-        .expect("seed active route");
-
-        let loopback_path = gateway_dir()
-            .expect("gateway dir")
-            .join("loopback-ips.json");
-        let mut registry = LoopbackRegistry::new();
-        registry
-            .allocate("project:demo-web-dev:/tmp/repo", "/tmp/repo")
-            .expect("seed conflicting assignment");
-        let error = registry
-            .save(&loopback_path)
-            .expect_err("the Store refuses a second recorded owner for the same address");
-        assert!(error.to_string().contains("conflicting endpoint owners"));
-    });
-}
-
-#[test]
-fn load_or_allocate_project_loopback_ip_distinguishes_same_project_name_across_repos() {
+fn the_same_project_name_in_two_checkouts_gets_two_aliases() {
     with_test_home("loopback-distinct-repos-same-project-name", || {
         let policy = test_policy();
-        let first_repo = PathBuf::from("/tmp/acowtancy-new");
-        let second_repo = PathBuf::from("/tmp/acowtancy-legacy");
-        let route_table_path = gateway_route_table_path().expect("route table path");
-        std::fs::create_dir_all(route_table_path.parent().expect("route table parent"))
-            .expect("mkdir route table parent");
-        register_route(
-            &route_table_path,
-            &RouteRegistration {
-                domain: "mysql.acowtancy.test".to_owned(),
-                target: None,
-                dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
-                tcp_port: Some(3306),
-                tcp_target: Some("127.0.0.1:22406".to_owned()),
-                tls: false,
-                project_path: first_repo.display().to_string(),
-                source: RouteSource::Container,
-            },
-        )
-        .expect("seed active first-repo route");
+        let fixture = tempfile::tempdir().expect("fixture");
+        let first_repo = fixture.path().join("acowtancy-new");
+        let second_repo = fixture.path().join("acowtancy-legacy");
+        std::fs::create_dir_all(&first_repo).expect("first checkout");
+        std::fs::create_dir_all(&second_repo).expect("second checkout");
 
-        let second_ip = load_or_allocate_project_loopback_ip(&second_repo, &policy, true)
+        let first = load_or_allocate_project_loopback_ip(&first_repo, &policy, true)
+            .expect("allocate first")
+            .expect("first alias");
+        let second = load_or_allocate_project_loopback_ip(&second_repo, &policy, true)
             .expect("allocate second")
-            .expect("second loopback ip");
+            .expect("second alias");
 
-        assert_eq!(second_ip, std::net::Ipv4Addr::new(127, 1, 0, 2));
+        assert_ne!(first, second, "one address per checkout path");
     });
 }
-
-#[test]
-fn load_or_allocate_project_loopback_ip_migrates_legacy_identity_for_same_repo() {
-    with_test_home("loopback-migrate-legacy-identity", || {
-        let policy = test_policy();
-        let repo_root = PathBuf::from("/tmp/repo");
-        let loopback_path = gateway_dir()
-            .expect("gateway dir")
-            .join("loopback-ips.json");
-        let mut registry = LoopbackRegistry::new();
-        registry
-            .allocate("demo-web-dev", "/tmp/repo")
-            .expect("seed legacy assignment");
-        let legacy_ip = registry
-            .get("demo-web-dev")
-            .expect("seeded legacy assignment")
-            .ip;
-        registry.save(&loopback_path).expect("save registry");
-
-        let identity = project_loopback_identity(&policy.project_name, &repo_root);
-        let ip = load_or_allocate_loopback_ip_with_inventory(
-            &identity,
-            Some(&policy.project_name),
-            &repo_root.display().to_string(),
-            true,
-            || RunningComposeContainerInventory {
-                rows: vec![inventory_row(
-                    &policy.project_name,
-                    &repo_root.display().to_string(),
-                    "effigy",
-                )],
-                failures: vec![RuntimeInventoryFailure {
-                    backend: "colima".to_owned(),
-                    profile: "temporary-failure".to_owned(),
-                    error: "test inventory failure".to_owned(),
-                    stopped_profile: false,
-                }],
-            },
-        )
-        .expect("allocate")
-        .expect("loopback ip");
-        let reloaded = LoopbackRegistry::load(&loopback_path).expect("reload registry");
-
-        assert_eq!(ip, legacy_ip);
-        assert!(reloaded.get("demo-web-dev").is_none());
-        assert_eq!(
-            reloaded.get(&identity).map(|entry| entry.ip),
-            Some(legacy_ip)
-        );
-    });
-}
-
 #[test]
 fn service_alias_claims_use_the_inferred_apex_not_the_front_route() {
     let mut policy = test_policy();

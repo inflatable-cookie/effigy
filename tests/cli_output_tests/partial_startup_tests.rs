@@ -225,7 +225,7 @@ version = "16"
     }
     fn routes(&self) -> Value {
         effigy_gateway::endpoint_store::EndpointStore::new(self.root.path().join("home"))
-            .read_compatible()
+            .snapshot()
             .expect("private endpoint snapshot")
             .document("routes")
             .expect("private routes")
@@ -234,7 +234,7 @@ version = "16"
     fn save_routes(&self, document: Value) {
         let table = serde_json::from_value(document).expect("private route table");
         effigy_gateway::endpoint_store::EndpointStore::new(self.root.path().join("home"))
-            .edit(None, |snapshot| snapshot.set_routes(&table))
+            .transaction(|snapshot| snapshot.set_routes(&table))
             .expect("publish private route claims");
     }
     fn probe(&mut self, i: usize) {

@@ -1,20 +1,13 @@
-#[cfg(test)]
-use crate::gateway_legacy_fixture::LegacyRegistryFixture;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use effigy_catalog::{assembly::ServiceDeclaration, volumes::ManagedVolume, ComposeAssembler};
-#[cfg(test)]
-use effigy_gateway::loopback::LoopbackRegistry;
-use effigy_gateway::loopback::{
-    project_loopback_identity, reserved_loopback_ips_for_other_projects,
-};
-use effigy_gateway::ports::PortRegistry;
+use effigy_gateway::loopback::project_loopback_identity;
+use effigy_gateway::ports::stable_host_port;
 use effigy_manifest::{ManifestContainerConfig, ManifestContainerServiceConfig};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value as YamlValue;
 
-use crate::exec::RunningComposeContainerInventory;
 use crate::runtime::scope::{CHECKOUT_LABEL, MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL};
 use crate::{
     catalog_resolver, mount_spec::resolve_host_mounts, resolve_catalog_network_contract,
@@ -534,9 +527,9 @@ pub(crate) fn resolve_compose_source(
         repo_root,
         project_name,
         &configured_bindings,
-        &project_loopback_port_rules(repo_root, project_name, config)?,
         publish_address,
         runtime_scoped,
+        config.host.as_ref().is_some_and(|host| host.stable_ports),
         &mut compose_document,
     )?;
     compose_document.write_back(
@@ -751,18 +744,17 @@ fn resolve_shared_service_bindings(
             "shared-service typed port policy application",
             &assembly.compose_yaml,
         )?;
+        // A shared data service is reached through the environment variables
+        // an app render injects, so its host port has to be known before the
+        // app starts. It takes a port derived from its own state directory:
+        // stable across runs and never recorded.
         let effective_ports = apply_generated_compose_port_policy(
             &output_dir,
             &shared_project_name,
             &[],
-            &shared_service_loopback_port_rules(
-                &output_dir,
-                &shared_project_name,
-                service_name,
-                service,
-            )?,
             publish_address,
             false,
+            true,
             &mut compose_document,
         )?;
         compose_document.write_back(
@@ -777,10 +769,7 @@ fn resolve_shared_service_bindings(
         }
         let parsed_bindings = effective_ports
             .iter()
-            .map(|raw| {
-                let raw = raw.replace(crate::policy::ports::UNASSIGNED_PORT_LABEL, "0");
-                parse_port_binding(&raw)
-            })
+            .map(|raw| parse_port_binding(raw))
             .collect::<Result<Vec<_>, _>>()?;
         let binding = parsed_bindings
             .iter()
@@ -922,19 +911,27 @@ fn inject_service_env_vars(
     Ok(())
 }
 
+/// Render each published port.
+///
+/// A manifest pin (`[containers.<name>.host].ports`) is used as written. A
+/// runtime-scoped checkout cannot pin the same host port as the primary, so it
+/// takes an OS-assigned one. With `stable_ports` an environment opts into a
+/// port derived from its checkout path; the value is probed here and never
+/// stored. Everything else asks Compose for `127.0.0.1::<container-port>` and
+/// the OS picks the host port; `up` reads it back for the route.
 fn apply_generated_compose_port_policy(
-    _repo_root: &Path,
+    owner: &Path,
     project_name: &str,
     explicit_bindings: &[PortBinding],
-    loopback_rules: &[LoopbackPortRule],
     publish_address: std::net::Ipv4Addr,
     scope_explicit_ports: bool,
+    stable_ports: bool,
     compose_document: &mut GeneratedComposeDocument,
 ) -> Result<Vec<String>, ContainerPolicyError> {
     let mut used_explicit_ports = std::collections::BTreeSet::<u16>::new();
     let mut effective_ports = Vec::new();
-
-    let mut registry = None;
+    let mut stable_taken = Vec::new();
+    let owner = owner.display().to_string();
 
     for service_name in compose_document.sorted_service_names() {
         let Some(service) = compose_document.services.get_mut(&service_name) else {
@@ -951,59 +948,31 @@ fn apply_generated_compose_port_policy(
                 continue;
             };
             let binding = parse_port_binding(raw)?;
-            let loopback_rule = loopback_rules.iter().find(|rule| {
-                rule.service_name == service_name && rule.container_port == binding.container
-            });
             let explicit = explicit_bindings
                 .iter()
                 .find(|candidate| candidate.container == binding.container);
-            let keep_runtime_binding = loopback_rule
-                .is_none_or(|rule| rule.keep_runtime_host_binding)
-                || explicit.is_some();
-            if !keep_runtime_binding {
-                continue;
-            }
             if explicit.is_some() {
                 used_explicit_ports.insert(binding.container);
             }
-            let host_port = if let Some(explicit) = explicit.filter(|_| !scope_explicit_ports) {
-                Some(explicit.host)
-            } else {
-                if registry.is_none() {
-                    registry = Some(load_port_registry()?.unwrap_or_default());
-                }
-                registry.as_mut().and_then(|registry| {
-                    let port =
-                        registry.assigned_port(project_name, &service_name, binding.container);
-                    // An old container-port-only binding belongs to the first
-                    // service, just as Prepare's allocator will migrate it.
-                    // Consume it only in this read snapshot; never save here.
-                    if let Some(allocation) = registry.allocations.get_mut(project_name) {
-                        if !allocation
-                            .assigned_ports
-                            .contains_key(&format!("{service_name}:{}", binding.container))
-                        {
-                            allocation
-                                .assigned_ports
-                                .remove(&binding.container.to_string());
-                        }
-                    }
-                    port
-                })
+            let host_port = match explicit {
+                Some(explicit) if !scope_explicit_ports => Some(explicit.host),
+                _ if stable_ports => Some(stable_host_port(
+                    &owner,
+                    binding.container,
+                    &mut stable_taken,
+                )),
+                _ => None,
             };
-            let rendered_host = host_port.map_or_else(
-                || crate::policy::ports::UNASSIGNED_PORT_EXPRESSION.to_owned(),
-                |port| port.to_string(),
-            );
-            rewritten_ports.push(GeneratedComposePort::String(format!(
-                "{publish_address}:{rendered_host}:{}",
-                binding.container
-            )));
-            let reported_host = host_port.map_or_else(
-                || crate::policy::ports::UNASSIGNED_PORT_LABEL.to_owned(),
-                |port| port.to_string(),
-            );
-            effective_ports.push(format!("{reported_host}:{}", binding.container));
+            rewritten_ports.push(GeneratedComposePort::String(match host_port {
+                Some(host_port) => {
+                    format!("{publish_address}:{host_port}:{}", binding.container)
+                }
+                None => format!("{publish_address}::{}", binding.container),
+            }));
+            effective_ports.push(match host_port {
+                Some(host_port) => format!("{host_port}:{}", binding.container),
+                None => format!("{publish_address}::{}", binding.container),
+            });
         }
         *ports = rewritten_ports;
     }
@@ -1031,108 +1000,9 @@ struct PortBinding {
     container: u16,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct LoopbackPortRule {
-    loopback_ip: std::net::Ipv4Addr,
-    service_name: String,
-    container_port: u16,
-    keep_runtime_host_binding: bool,
-}
-
-fn project_loopback_port_rules(
-    repo_root: &Path,
-    project_name: &str,
-    config: &ManifestContainerConfig,
-) -> Result<Vec<LoopbackPortRule>, ContainerPolicyError> {
-    let source = repo_root.display().to_string();
-    let Some(loopback_ip) = read_loopback_ip(
-        &project_loopback_identity(project_name, repo_root),
-        Some(project_name),
-        &source,
-    )?
-    else {
-        return Ok(Vec::new());
-    };
-    let mut rules = Vec::new();
-    for (service_name, service) in config
-        .services
-        .iter()
-        .filter(|(_service_name, service)| !service.shared.unwrap_or(false))
-    {
-        let Some(contract) = resolve_catalog_network_contract(Some(repo_root), &service.catalog)?
-        else {
-            continue;
-        };
-        rules.push(LoopbackPortRule {
-            loopback_ip,
-            service_name: service_name.clone(),
-            container_port: contract.container_port,
-            keep_runtime_host_binding: true,
-        });
-    }
-    Ok(rules)
-}
-
-fn shared_service_loopback_port_rules(
-    output_dir: &Path,
-    project_name: &str,
-    service_name: &str,
-    service: &ManifestContainerServiceConfig,
-) -> Result<Vec<LoopbackPortRule>, ContainerPolicyError> {
-    let fragment = catalog_resolver(None)?.resolve(&service.catalog)?;
-    let capabilities = fragment.schema.capabilities;
-    let Some(container_port) = capabilities.loopback_alias_port else {
-        return Ok(Vec::new());
-    };
-    let Some(loopback_ip) = read_loopback_ip(
-        &format!("shared:{project_name}"),
-        None,
-        &output_dir.display().to_string(),
-    )?
-    else {
-        return Ok(Vec::new());
-    };
-    Ok(vec![LoopbackPortRule {
-        loopback_ip,
-        service_name: service_name.to_owned(),
-        container_port,
-        keep_runtime_host_binding: true,
-    }])
-}
-
-/// Policy reads neither allocate nor migrate loopback identities. The legacy
-/// project-only key remains readable until Prepare imports it for this checkout.
-fn read_loopback_ip(
-    identity: &str,
-    legacy_identity: Option<&str>,
-    source: &str,
-) -> Result<Option<std::net::Ipv4Addr>, ContainerPolicyError> {
-    let Some(home) = effigy_home_dir() else {
-        return Ok(None);
-    };
-    let snapshot =
-        effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home).read_compatible()?;
-    let registry = snapshot.loopback()?;
-    let routes = snapshot.routes()?;
-    let reserved = reserved_loopback_ips_for_other_projects(&routes, source);
-    let assignment = registry.get(identity).or_else(|| {
-        legacy_identity.and_then(|legacy| {
-            registry.get(legacy).filter(|assignment| {
-                assignment.scope == source
-                    && !registry.assignments.iter().any(|(other_identity, other)| {
-                        other_identity != legacy && other.ip == assignment.ip
-                    })
-            })
-        })
-    });
-    Ok(assignment
-        .filter(|assignment| assignment.scope == source && !reserved.contains(&assignment.ip))
-        .map(|assignment| assignment.ip))
-}
-
-/// Allocate only at the host Prepare seam, including environments whose ports
-/// are already assigned or entirely explicit. Persistent reservations belong
-/// to the gateway Store; runtime inventory cannot release them.
+/// Allocate each alias IP at the host Prepare seam. An environment that
+/// declares aliases gets one when it comes up and keeps it until `down`;
+/// an allocation reclaims assignments whose checkout path is gone.
 pub(crate) fn prepare_container_policy_loopbacks(
     policy: &crate::EffectiveContainerPolicy,
 ) -> Result<bool, ContainerPolicyError> {
@@ -1146,107 +1016,46 @@ pub(crate) fn prepare_container_policy_loopbacks(
             continue;
         }
         let root = shared_service_output_dir(&shared.project_name)?;
-        let identity = format!("shared:{}", shared.project_name);
-        let source = root.display().to_string();
-        let before = read_loopback_ip(&identity, None, &source)?;
-        let after = load_or_allocate_loopback_ip(&identity, None, &source)?;
-        changed |= before != after;
+        changed |= allocate_loopback(
+            &format!("shared:{}", shared.project_name),
+            &root.display().to_string(),
+        )?;
     }
     let identity = project_loopback_identity(&policy.project_name, &policy.repo_root);
     let source = policy.repo_root.display().to_string();
-    let before = read_loopback_ip(&identity, Some(&policy.project_name), &source)?;
-    let after = load_or_allocate_loopback_ip(&identity, Some(&policy.project_name), &source)?;
-    Ok(changed || before != after)
+    changed |= allocate_loopback(&identity, &source)?;
+    Ok(changed)
 }
 
-fn load_or_allocate_loopback_ip(
+fn allocate_loopback(identity: &str, source: &str) -> Result<bool, ContainerPolicyError> {
+    let Some(home) = effigy_home_dir() else {
+        return Ok(false);
+    };
+    let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
+    let before = read_loopback_ip(identity, source)?;
+    let ip = store
+        .allocate_loopback(identity, source)
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
+    Ok(before != Some(ip))
+}
+
+/// Policy reads never allocate. The assignment is written by the Prepare seam.
+fn read_loopback_ip(
     identity: &str,
-    legacy_identity: Option<&str>,
     source: &str,
-) -> Result<Option<std::net::Ipv4Addr>, ContainerPolicyError> {
-    load_or_allocate_loopback_ip_with_inventory(
-        identity,
-        legacy_identity,
-        source,
-        discover_loopback_inventory,
-    )
-}
-
-fn discover_loopback_inventory() -> RunningComposeContainerInventory {
-    #[cfg(test)]
-    if let Some(inventory) = TEST_LOOPBACK_INVENTORY.with(|slot| {
-        slot.borrow_mut().as_mut().map(|(inventory, calls)| {
-            *calls += 1;
-            inventory.clone()
-        })
-    }) {
-        return inventory;
-    }
-
-    crate::runtime::loopback_recovery::loopback_ownership_inventory()
-}
-
-#[cfg(test)]
-thread_local! {
-    static TEST_LOOPBACK_INVENTORY:
-        std::cell::RefCell<Option<(RunningComposeContainerInventory, usize)>> = const {
-            std::cell::RefCell::new(None)
-        };
-}
-
-#[cfg(test)]
-pub(crate) fn with_test_loopback_inventory<T>(
-    inventory: RunningComposeContainerInventory,
-    run: impl FnOnce() -> T,
-) -> (T, usize) {
-    struct ResetGuard(Option<(RunningComposeContainerInventory, usize)>);
-
-    impl Drop for ResetGuard {
-        fn drop(&mut self) {
-            let previous = self.0.take();
-            TEST_LOOPBACK_INVENTORY.with(|slot| {
-                *slot.borrow_mut() = previous;
-            });
-        }
-    }
-
-    let previous = TEST_LOOPBACK_INVENTORY.with(|slot| slot.borrow_mut().replace((inventory, 0)));
-    let _guard = ResetGuard(previous);
-    let result = run();
-    let calls = TEST_LOOPBACK_INVENTORY.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .map(|(_, calls)| *calls)
-            .unwrap_or_default()
-    });
-    (result, calls)
-}
-
-fn load_or_allocate_loopback_ip_with_inventory(
-    identity: &str,
-    legacy_identity: Option<&str>,
-    source: &str,
-    discover_inventory: impl FnOnce() -> RunningComposeContainerInventory,
 ) -> Result<Option<std::net::Ipv4Addr>, ContainerPolicyError> {
     let Some(home) = effigy_home_dir() else {
         return Ok(None);
     };
-    let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home);
-    // A full pool releases provably dead owners once, then retries. Live
-    // owners are never touched.
-    crate::runtime::loopback_recovery::reserve_loopback_collecting_dead(
-        &store,
-        identity,
-        legacy_identity,
-        source,
-        || {
-            crate::runtime::loopback_recovery::LoopbackRecoveryFacts::with_inventory(
-                discover_inventory(),
-            )
-        },
-    )
-    .map(|(ip, _)| Some(ip))
-    .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
+    let registry = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(&home)
+        .snapshot()
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?
+        .loopback()
+        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))?;
+    Ok(registry
+        .get(identity)
+        .filter(|assignment| assignment.scope == source)
+        .map(|assignment| assignment.ip))
 }
 
 fn parse_port_binding(raw: &str) -> Result<PortBinding, ContainerPolicyError> {
@@ -1270,16 +1079,6 @@ fn parse_port_binding(raw: &str) -> Result<PortBinding, ContainerPolicyError> {
             ))
         })?,
     })
-}
-
-fn load_port_registry() -> Result<Option<PortRegistry>, ContainerPolicyError> {
-    let Some(home) = effigy_home_dir() else {
-        return Ok(None);
-    };
-    let path = home.join("ports.json");
-    PortRegistry::load(&path)
-        .map(Some)
-        .map_err(|error| ContainerPolicyError::TaskInvocation(error.to_string()))
 }
 
 pub(crate) fn effigy_home_dir() -> Option<PathBuf> {
@@ -1549,319 +1348,6 @@ mod tests {
         assert_eq!(name, std_name);
     }
 
-    fn full_project_registry() -> LoopbackRegistry {
-        let mut registry = LoopbackRegistry::new();
-        for index in 1..=50 {
-            let project = format!("stale-{index}");
-            registry
-                .allocate(
-                    &project_loopback_identity(&project, Path::new(&format!("/tmp/{project}"))),
-                    &format!("/tmp/{project}"),
-                )
-                .expect("fill private loopback pool");
-        }
-        registry
-    }
-
-    #[test]
-    fn loopback_read_preserves_legacy_assignment_until_prepare() {
-        let home = tempfile::tempdir().expect("private state");
-        with_test_effigy_home(home.path(), || {
-            let source = home.path().join("checkout").display().to_string();
-            let path = home.path().join("gateway/loopback-ips.json");
-            let mut registry = LoopbackRegistry::new();
-            let ip = registry
-                .allocate("old-project", &source)
-                .expect("legacy assignment")
-                .ip;
-            registry.save(&path).expect("legacy registry");
-            let before = std::fs::read(&path).expect("registry bytes");
-            let identity = project_loopback_identity("old-project", Path::new(&source));
-            let (_, probes) =
-                with_test_loopback_inventory(RunningComposeContainerInventory::default(), || {
-                    assert_eq!(
-                        read_loopback_ip(&identity, Some("old-project"), &source).unwrap(),
-                        Some(ip)
-                    );
-                    assert_eq!(
-                        read_loopback_ip(&identity, Some("old-project"), "foreign").unwrap(),
-                        None
-                    );
-                    assert_eq!(std::fs::read(&path).unwrap(), before);
-                    assert!(!path.with_extension("lock").exists());
-                });
-            assert_eq!(probes, 0);
-            let (prepared, _) =
-                with_test_loopback_inventory(RunningComposeContainerInventory::default(), || {
-                    load_or_allocate_loopback_ip(&identity, Some("old-project"), &source)
-                        .expect("prepare legacy assignment")
-                });
-            assert_eq!(prepared, Some(ip));
-            let migrated = LoopbackRegistry::load(&path).expect("migrated registry");
-            assert!(migrated.get("old-project").is_none());
-            assert_eq!(migrated.get(&identity).map(|value| value.ip), Some(ip));
-            let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(home.path());
-            let committed = std::fs::read(store.database_path()).unwrap();
-            assert_eq!(
-                read_loopback_ip(&identity, None, &source).unwrap(),
-                Some(ip)
-            );
-            assert_eq!(read_loopback_ip(&identity, None, "foreign").unwrap(), None);
-            assert_eq!(std::fs::read(store.database_path()).unwrap(), committed);
-        });
-    }
-
-    #[test]
-    fn full_pool_probes_ownership_once_and_preserves_every_live_owner() {
-        let _lock = crate::test_env_lock();
-        let home = tempfile::tempdir().expect("private state");
-        with_test_effigy_home(home.path(), || {
-            let path = home.path().join("gateway/loopback-ips.json");
-            // A full pool whose owners all still exist: exhaustion may probe
-            // ownership once, but no live assignment is released.
-            let mut registry = LoopbackRegistry::new();
-            for index in 1..=50 {
-                let checkout = home.path().join(format!("live-{index}"));
-                std::fs::create_dir_all(&checkout).expect("live checkout");
-                let source = checkout.display().to_string();
-                registry
-                    .allocate(
-                        &project_loopback_identity(&format!("live-{index}"), &checkout),
-                        &source,
-                    )
-                    .expect("fill private loopback pool");
-            }
-            registry.save(&path).expect("full registry");
-            let before = registry.assignments.clone();
-            let (result, probes) =
-                with_test_loopback_inventory(RunningComposeContainerInventory::default(), || {
-                    load_or_allocate_loopback_ip_with_inventory(
-                        "project:new:/tmp/new",
-                        None,
-                        "/tmp/new",
-                        discover_loopback_inventory,
-                    )
-                });
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("loopback pool exhausted"));
-            assert_eq!(probes, 1, "an exhausted pool probes ownership once");
-            assert_eq!(LoopbackRegistry::load(&path).unwrap().assignments, before);
-        });
-    }
-
-    #[test]
-    fn prepare_time_collection_holds_an_owner_with_a_created_container() {
-        let _lock = crate::test_env_lock();
-        let home = tempfile::tempdir().expect("private state");
-        with_test_effigy_home(home.path(), || {
-            let path = home.path().join("gateway/loopback-ips.json");
-            // A full pool of absent owners, one of which still has a created
-            // container on a running profile. The Prepare path must hold that
-            // owner.
-            let mut registry = LoopbackRegistry::new();
-            let mut held_scope = String::new();
-            for index in 1..=50 {
-                let source = home
-                    .path()
-                    .join(format!("gone-{index}"))
-                    .display()
-                    .to_string();
-                let identity =
-                    project_loopback_identity(&format!("gone-{index}"), Path::new(&source));
-                registry
-                    .allocate(&identity, &source)
-                    .expect("fill private loopback pool");
-                if index == 7 {
-                    held_scope = source;
-                }
-            }
-            registry.save(&path).expect("full registry");
-            let inventory = RunningComposeContainerInventory {
-                rows: vec![crate::exec::RunningComposeContainerProfiled {
-                    profile: "effigy".to_owned(),
-                    row: crate::exec::RunningComposeContainer {
-                        container_name: "gone-app-1".to_owned(),
-                        status: "Created".to_owned(),
-                        ports: Vec::new(),
-                        project_name: None,
-                        working_dir: Some(held_scope.clone()),
-                        service: None,
-                        oneoff: false,
-                    },
-                }],
-                failures: Vec::new(),
-            };
-
-            let (allocated, probes) = with_test_loopback_inventory(inventory, || {
-                load_or_allocate_loopback_ip("project:new:/tmp/new", None, "/tmp/new")
-            });
-
-            assert_eq!(probes, 1, "an exhausted pool probes ownership once");
-            assert!(
-                allocated
-                    .expect("the released addresses are reusable")
-                    .is_some(),
-                "the new project takes a released address"
-            );
-            let store = effigy_gateway::endpoint_store::EndpointStore::for_effigy_home(home.path());
-            let remaining = store
-                .read_compatible()
-                .expect("store")
-                .loopback()
-                .expect("registry");
-            let mut scopes = remaining
-                .assignments
-                .values()
-                .map(|assignment| assignment.scope.clone())
-                .filter(|scope| scope == &held_scope || scope == "/tmp/new")
-                .collect::<Vec<_>>();
-            scopes.sort();
-            let mut expected = vec![held_scope, "/tmp/new".to_owned()];
-            expected.sort();
-            assert_eq!(
-                scopes, expected,
-                "the created container's owner is held and the new owner takes a released address"
-            );
-        });
-    }
-
-    #[test]
-    fn full_pool_with_incomplete_inventory_fails_with_preservation_reason() {
-        let _lock = crate::test_env_lock();
-        let tempdir = tempfile::tempdir().expect("test home");
-        with_test_effigy_home(tempdir.path(), || {
-            let path = tempdir.path().join("gateway/loopback-ips.json");
-            let registry = full_project_registry();
-            let before = registry.assignments.clone();
-            registry.save(&path).expect("save full registry");
-
-            let identity = project_loopback_identity("new-project", Path::new("/tmp/new-project"));
-            let error = load_or_allocate_loopback_ip_with_inventory(
-                &identity,
-                Some("new-project"),
-                "/tmp/new-project",
-                || RunningComposeContainerInventory {
-                    rows: Vec::new(),
-                    failures: vec![crate::exec::RuntimeInventoryFailure {
-                        backend: "colima".to_owned(),
-                        profile: "broken".to_owned(),
-                        error: "runtime ps failed".to_owned(),
-                        stopped_profile: false,
-                    }],
-                },
-            )
-            .expect_err("incomplete discovery cannot reclaim protected owners");
-
-            assert!(error.to_string().contains("loopback pool exhausted"));
-            assert_eq!(
-                LoopbackRegistry::load(&path).expect("reload").assignments,
-                before
-            );
-        });
-    }
-
-    fn write_stale_other_project_route_table(home: &Path, stale_ip: std::net::Ipv4Addr) {
-        let table = serde_json::json!({
-            "routes": {
-                "mysql.acowtancy-dead.test": {
-                    "domain": "mysql.acowtancy-dead.test",
-                    "dns_ip": stale_ip.to_string(),
-                    "tcp_port": 3306,
-                    "tcp_target": "127.0.0.1:23306",
-                    "source": "container",
-                    "project": "/tmp/acowtancy-dead-worktree",
-                    "tls": false,
-                    "registered": "2026-09-29T00:00:00Z"
-                }
-            }
-        });
-        let dir = home.join("gateway");
-        std::fs::create_dir_all(&dir).expect("mkdir gateway state");
-        std::fs::write(
-            dir.join("routes.json"),
-            serde_json::to_string(&table).expect("routes json"),
-        )
-        .expect("write routes.json");
-    }
-
-    #[test]
-    fn compose_generation_never_hands_out_a_stale_other_project_route_ip() {
-        use std::net::Ipv4Addr;
-
-        let _lock = crate::test_env_lock();
-        let tempdir = tempfile::tempdir().expect("test home");
-        with_test_effigy_home(tempdir.path(), || {
-            // Occupy the pool head with an unprunable shared assignment, so a
-            // reservation-blind allocator would take 127.1.0.2 next — exactly
-            // the dead worktree route's IP.
-            let mut registry = LoopbackRegistry::new();
-            registry
-                .allocate("shared:effigy-shared-keep", "/tmp/keep")
-                .expect("occupy pool head");
-            registry
-                .save(&tempdir.path().join("gateway/loopback-ips.json"))
-                .expect("save registry");
-            // The dead worktree's route still claims 127.1.0.2 with a gateway
-            // TCP listener bound. Pruning keeps the route, so generation must
-            // avoid the IP even though no registry slot holds it.
-            write_stale_other_project_route_table(tempdir.path(), Ipv4Addr::new(127, 1, 0, 2));
-
-            let identity =
-                project_loopback_identity("jal-accounts", Path::new("/tmp/jal-accounts"));
-            let ip = load_or_allocate_loopback_ip_with_inventory(
-                &identity,
-                Some("jal-accounts"),
-                "/tmp/jal-accounts",
-                RunningComposeContainerInventory::default,
-            )
-            .expect("allocate loopback IP")
-            .expect("allocated IP");
-
-            assert_eq!(ip, Ipv4Addr::new(127, 1, 0, 3));
-        });
-    }
-
-    #[test]
-    fn compose_generation_reallocates_when_a_stale_route_claims_the_stored_ip() {
-        use std::net::Ipv4Addr;
-
-        let _lock = crate::test_env_lock();
-        let tempdir = tempfile::tempdir().expect("test home");
-        with_test_effigy_home(tempdir.path(), || {
-            // Replay the incident: this stack previously stored 127.1.0.2,
-            // and a dead worktree's route now holds the same tuple with its
-            // gateway TCP listener still bound.
-            let mut registry = LoopbackRegistry::new();
-            registry
-                .allocate("project:filler:/tmp/filler", "/tmp/filler")
-                .expect("occupy pool head");
-            let identity =
-                project_loopback_identity("jal-accounts", Path::new("/tmp/jal-accounts"));
-            let stored = registry
-                .allocate(&identity, "/tmp/jal-accounts")
-                .expect("store stack IP")
-                .ip;
-            assert_eq!(stored, Ipv4Addr::new(127, 1, 0, 2));
-            registry
-                .save(&tempdir.path().join("gateway/loopback-ips.json"))
-                .expect("save registry");
-            write_stale_other_project_route_table(tempdir.path(), Ipv4Addr::new(127, 1, 0, 2));
-
-            // Incomplete runtime inventory forces prune to stand down, so only
-            // the shared reservation can move the stored assignment.
-            let error = load_or_allocate_loopback_ip_with_inventory(
-                &identity,
-                Some("jal-accounts"),
-                "/tmp/jal-accounts",
-                || panic!("conflicting import must not consult runtime inventory"),
-            )
-            .expect_err("two recorded owners cannot silently move an imported mapping");
-            assert!(error.to_string().contains("conflicting endpoint owners"));
-        });
-    }
-
     #[test]
     fn typed_generated_compose_env_policy_converts_sequence_entries() {
         let mut compose_document = GeneratedComposeDocument::parse(
@@ -1957,13 +1443,11 @@ services:
     }
 
     #[test]
-    fn typed_generated_compose_port_policy_rewrites_string_ports() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        with_test_effigy_home(tempdir.path(), || {
-            let mut compose_document = GeneratedComposeDocument::parse(
-                "acme",
-                "test parse",
-                r#"
+    fn a_manifest_pin_is_rendered_as_written() {
+        let mut compose_document = GeneratedComposeDocument::parse(
+            "acme",
+            "test parse",
+            r#"
 services:
   app:
     image: php:8.4-fpm
@@ -1972,89 +1456,82 @@ services:
       - target: 9000
         published: "9000"
 "#,
-            )
-            .expect("parse generated compose");
+        )
+        .expect("parse generated compose");
 
-            let effective_ports = apply_generated_compose_port_policy(
-                Path::new("/tmp/acme"),
-                "acme",
-                &[PortBinding {
-                    host: 18080,
-                    container: 80,
-                }],
-                &[],
-                std::net::Ipv4Addr::LOCALHOST,
-                false,
-                &mut compose_document,
-            )
-            .expect("apply port policy");
+        let effective_ports = apply_generated_compose_port_policy(
+            Path::new("/tmp/acme"),
+            "acme",
+            &[PortBinding {
+                host: 18080,
+                container: 80,
+            }],
+            std::net::Ipv4Addr::LOCALHOST,
+            false,
+            false,
+            &mut compose_document,
+        )
+        .expect("apply port policy");
 
-            assert_eq!(effective_ports, vec!["18080:80".to_owned()]);
+        assert_eq!(effective_ports, vec!["18080:80".to_owned()]);
 
-            let ports = compose_document
-                .services
-                .get("app")
-                .and_then(|service| service.ports.clone())
-                .expect("service ports");
-            assert_eq!(ports.len(), 2);
-            assert!(matches!(
-                &ports[0],
-                GeneratedComposePort::String(raw) if raw == "127.0.0.1:18080:80"
-            ));
-            assert!(matches!(&ports[1], GeneratedComposePort::Other(_)));
-        });
+        let ports = compose_document
+            .services
+            .get("app")
+            .and_then(|service| service.ports.clone())
+            .expect("service ports");
+        assert_eq!(ports.len(), 2);
+        assert!(matches!(
+            &ports[0],
+            GeneratedComposePort::String(raw) if raw == "127.0.0.1:18080:80"
+        ));
+        assert!(matches!(&ports[1], GeneratedComposePort::Other(_)));
     }
 
     #[test]
-    fn typed_generated_compose_port_policy_honours_custom_publish_address() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        with_test_effigy_home(tempdir.path(), || {
-            // Explicit bindings do not depend on an unrelated allocation store.
-            std::fs::write(tempdir.path().join("ports.json"), "invalid registry").unwrap();
-
-            let mut compose_document = GeneratedComposeDocument::parse(
-                "acme",
-                "test parse",
-                r#"
+    fn a_custom_publish_address_is_honoured() {
+        let mut compose_document = GeneratedComposeDocument::parse(
+            "acme",
+            "test parse",
+            r#"
 services:
   app:
     image: php:8.4-fpm
     ports:
       - "8080:80"
 "#,
-            )
-            .expect("parse generated compose");
+        )
+        .expect("parse generated compose");
 
-            let effective_ports = apply_generated_compose_port_policy(
-                Path::new("/tmp/acme"),
-                "acme",
-                &[PortBinding {
-                    host: 18080,
-                    container: 80,
-                }],
-                &[],
-                std::net::Ipv4Addr::UNSPECIFIED,
-                false,
-                &mut compose_document,
-            )
-            .expect("apply port policy");
+        let effective_ports = apply_generated_compose_port_policy(
+            Path::new("/tmp/acme"),
+            "acme",
+            &[PortBinding {
+                host: 18080,
+                container: 80,
+            }],
+            std::net::Ipv4Addr::UNSPECIFIED,
+            false,
+            false,
+            &mut compose_document,
+        )
+        .expect("apply port policy");
 
-            assert_eq!(effective_ports, vec!["18080:80".to_owned()]);
+        assert_eq!(effective_ports, vec!["18080:80".to_owned()]);
 
-            let ports = compose_document
-                .services
-                .get("app")
-                .and_then(|service| service.ports.clone())
-                .expect("service ports");
-            assert!(matches!(
-                &ports[0],
-                GeneratedComposePort::String(raw) if raw == "0.0.0.0:18080:80"
-            ));
-        });
+        let ports = compose_document
+            .services
+            .get("app")
+            .and_then(|service| service.ports.clone())
+            .expect("service ports");
+        assert!(matches!(
+            &ports[0],
+            GeneratedComposePort::String(raw) if raw == "0.0.0.0:18080:80"
+        ));
     }
 
     #[test]
-    fn typed_generated_compose_port_policy_leaves_unpinned_ports_unassigned() {
+    fn an_unpinned_port_is_assigned_by_the_os_and_nothing_is_recorded() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         with_test_effigy_home(tempdir.path(), || {
             let mut compose_document = GeneratedComposeDocument::parse(
@@ -2078,22 +1555,15 @@ services:
                     host: 18080,
                     container: 80,
                 }],
-                &[],
                 std::net::Ipv4Addr::LOCALHOST,
+                false,
                 false,
                 &mut compose_document,
             )
             .expect("apply port policy");
 
-            assert_eq!(effective_ports.len(), 2);
-            assert_eq!(effective_ports[0], "18080:80");
-            assert!(effective_ports[1].ends_with(":9000"));
-            assert_eq!(
-                effective_ports[1],
-                "unassigned (assigned on first prepare):9000"
-            );
+            assert_eq!(effective_ports, vec!["18080:80", "127.0.0.1::9000"]);
             assert!(!tempdir.path().join("ports.json").exists());
-            assert!(!tempdir.path().join("ports.lock").exists());
 
             let ports = compose_document
                 .services
@@ -2106,9 +1576,92 @@ services:
             ));
             assert!(matches!(
                 &ports[1],
-                GeneratedComposePort::String(raw)
-                    if raw == &format!("127.0.0.1:{}:9000", crate::policy::ports::UNASSIGNED_PORT_EXPRESSION)
+                GeneratedComposePort::String(raw) if raw == "127.0.0.1::9000"
             ));
+        });
+    }
+
+    /// Two worktrees of one project must not ask for the same host port. The
+    /// primary keeps its manifest pin; a runtime-scoped checkout takes an
+    /// OS-assigned port instead of competing for the pin.
+    #[test]
+    fn a_scoped_worktree_does_not_take_the_manifest_pin() {
+        let mut primary = GeneratedComposeDocument::parse(
+            "app",
+            "test",
+            "services:\n  app:\n    ports: [\"8080:80\"]\n",
+        )
+        .unwrap();
+        let primary_ports = apply_generated_compose_port_policy(
+            Path::new("/tmp/primary"),
+            "app",
+            &[PortBinding {
+                host: 8080,
+                container: 80,
+            }],
+            std::net::Ipv4Addr::LOCALHOST,
+            false,
+            false,
+            &mut primary,
+        )
+        .unwrap();
+        let mut worktree = GeneratedComposeDocument::parse(
+            "app-wt",
+            "test",
+            "services:\n  app:\n    ports: [\"8080:80\"]\n",
+        )
+        .unwrap();
+        let worktree_ports = apply_generated_compose_port_policy(
+            Path::new("/tmp/worktree"),
+            "app-wt",
+            &[PortBinding {
+                host: 8080,
+                container: 80,
+            }],
+            std::net::Ipv4Addr::LOCALHOST,
+            true,
+            false,
+            &mut worktree,
+        )
+        .unwrap();
+
+        assert_eq!(primary_ports, vec!["8080:80".to_owned()]);
+        assert_eq!(worktree_ports, vec!["127.0.0.1::80".to_owned()]);
+        assert_ne!(primary_ports[0], worktree_ports[0]);
+    }
+
+    /// An environment that opts into `stable_ports` gets a port derived from
+    /// its checkout path. It is the same on every run and nothing is recorded.
+    #[test]
+    fn an_opted_in_environment_gets_a_stable_probed_port() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        with_test_effigy_home(tempdir.path(), || {
+            let mut compose_document = GeneratedComposeDocument::parse(
+                "acme",
+                "test parse",
+                "services:\n  app:\n    image: php:8.4-fpm\n    ports:\n      - \"8080:80\"\n",
+            )
+            .expect("parse generated compose");
+            let observed = apply_generated_compose_port_policy(
+                Path::new("/tmp/acme"),
+                "acme",
+                &[],
+                std::net::Ipv4Addr::LOCALHOST,
+                false,
+                true,
+                &mut compose_document,
+            )
+            .expect("apply port policy");
+            let host: u16 = observed[0]
+                .split(':')
+                .next()
+                .and_then(|port| port.parse().ok())
+                .expect("concrete host port");
+            assert!(host >= 20000);
+            assert!(!tempdir.path().join("ports.json").exists());
+
+            let again = effigy_gateway::ports::stable_host_port("/tmp/acme", 80, &mut Vec::new());
+            assert_eq!(host, again, "the derived port is stable per checkout");
         });
     }
 
@@ -2150,52 +1703,5 @@ services:
             &volumes[2],
             GeneratedComposeVolume::String(raw) if raw == "/tmp/shared:/var/www/shared"
         ));
-    }
-
-    #[test]
-    fn scoped_generated_projects_allocate_distinct_ports_even_with_fixed_manifest_port() {
-        let home = tempfile::tempdir().unwrap();
-        with_test_effigy_home(home.path(), || {
-            let mut assigned = Vec::new();
-            for (project, repo) in [("app-wt-one", "/tmp/one"), ("app-wt-two", "/tmp/two")] {
-                effigy_gateway::ports::prepare_ports(
-                    &home.path().join("ports.json"),
-                    &[effigy_gateway::ports::PortRequest {
-                        project_name: project.to_owned(),
-                        project_path: repo.to_owned(),
-                        service_name: "app".to_owned(),
-                        container_port: 80,
-                    }],
-                )
-                .unwrap();
-                let mut document = GeneratedComposeDocument::parse(
-                    project,
-                    "test",
-                    r#"
-services:
-  app:
-    ports: ["8080:80"]
-"#,
-                )
-                .unwrap();
-                let ports = apply_generated_compose_port_policy(
-                    Path::new(repo),
-                    project,
-                    &[PortBinding {
-                        host: 8080,
-                        container: 80,
-                    }],
-                    &[],
-                    std::net::Ipv4Addr::LOCALHOST,
-                    true,
-                    &mut document,
-                )
-                .unwrap();
-                assigned.push(ports[0].clone());
-                assert_eq!(document.services["app"].ports.as_ref().unwrap().len(), 1);
-            }
-            assert_ne!(assigned[0], assigned[1]);
-            assert_ne!(assigned[0], "8080:80");
-        });
     }
 }

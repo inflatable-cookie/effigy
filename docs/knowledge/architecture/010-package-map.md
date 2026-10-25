@@ -88,7 +88,7 @@ these callers. `deny.toml` remains the dependency policy authority.
 | `effigy-context` | boot-time runtime context, cwd/repo target authority, optional external task-source identity, host facts, and container handoff capture |
 | `effigy-containers` | effective container policy, scoped host maps, runtime ownership labels, labelled retirement planning, backend facade, typed container operation planning, compose assembly, typed system/workspace mount rendering, workspace mount rewrite, and lower-level container/runtime compatibility helpers |
 | `effigy-catalog` | compiled baseline catalog, ordered catalog-source resolution, qualified names, fragment requirements, compose assembly inputs, and catalog schema |
-| `effigy-gateway` | local gateway loopback and host-port registry primitives |
+| `effigy-gateway` | local gateway loopback aliases and host-port derivation |
 | `effigy-runtime-plan` | typed runtime activation request, activation plan, readiness/alias/lease plan, and activation report substrate |
 | `effigy-runtime` | runtime metadata, data/read/write/shell adapter helpers, and manager-backed runtime IO wrappers |
 | `effigy-process` | host process/runtime process primitives used by runner surfaces |

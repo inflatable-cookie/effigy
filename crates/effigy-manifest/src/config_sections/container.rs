@@ -660,6 +660,11 @@ pub struct ManifestContainerHostConfig {
     /// interfaces (previous behavior).
     #[serde(default)]
     pub publish_address: Option<String>,
+    /// Derive a stable host port for every published container port from this
+    /// checkout's path and probe it at `up`, instead of letting Compose assign
+    /// one per start. The derived port is never recorded. Off by default.
+    #[serde(default)]
+    pub stable_ports: bool,
 }
 
 /// A host -> container bind mount declaration on `[containers.<name>.host]`.

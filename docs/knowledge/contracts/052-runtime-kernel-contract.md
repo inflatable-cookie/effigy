@@ -2252,7 +2252,7 @@ maintenance are measured separately, never hidden in the steady-state counts.
 | --- | --- |
 | Short foreground begin/spawn/settle; ordinary durable checkout begin/spawn/settle | **0** |
 | Status, runs, doctor, unchanged gateway ensure or existing port pin lookup | **0** |
-| Pure endpoint/route/port registry edit, all conflicts as one set | **1**: payload, claim revisions, quarantine and final disposition commit together |
+| Pure endpoint/route edit, all conflicts as one set | **1**: payload and claim revisions commit together |
 | Gateway lifecycle or endpoint change with an external bind/reload effect | **3**: intent/reservation; applied receipt plus publication; positive close/settle |
 | Admission grant/enqueue, transfer/admit or release, if stored by the provider | **1 per state transition**, no polling/heartbeat writes; Effigy itself creates no admission row for a foreground run |
 | Fault recovery | one transaction per unresolved effect disposition, plus one close; no scan or rewrite of completed runs |
@@ -2844,7 +2844,6 @@ names `after = ["environment"]` / `depends_on`
 | `reset` deletes every environment's renders | `crates/effigy-runtime/src/write/planning.rs:31-44` | objects per environment generation |
 | Backend metadata read-modify-write | `crates/effigy-containers/src/lib.rs:219-235` | `resources` field; backend in `ResourceId` (I-ID4) |
 | Allocators holding a global lock across runtime inventory | `crates/effigy-containers/src/policy_support/generated_compose.rs:1134`, `:1362`, `:1417` | claim transaction; no inventory under a gate (K14) |
-| Runtime-scope records | `crates/effigy-containers/src/runtime/scope.rs:221-264` | `checkouts` table, token preserved |
 | Colima repair by `pkill -f` patterns | `crates/effigy-containers/src/exec/colima_runtime.rs:924-944` | retained identities only (I-P4, R3) |
 | Failed-run recovery downs inside `up` | `src/runner/container_command/lifecycle.rs:766` | predecessor settle (K5); permit (R4) |
 
@@ -2905,12 +2904,10 @@ A v0.14.1 user updates and everything keeps working with no manual steps
 | M7 | Running stacks survive. Containers keep running, labels prove ownership, nothing is recreated because of an import. |
 | M8 | Downgrade after a scope's cut-over is unsupported. The store records the writing build, and a binary that predates the schema refuses Mutate. |
 
-Gateway-only operator exception (Tom, 2026-10-19, effigy#237; reaffirmed in the
-2026-10-20 continuation): M3/M8 permit explicit export-on-remove to v0.14.1.
-The new writer freezes before journaled export and refuses ordinary mutation
-until setup quiesces the old writer and re-imports. No kernel primitive or
-other scope gains downgrade support. The owning protocol and proofs are in
-[architecture 035](../architecture/035-gateway-endpoint-store.md#explicit-downgrade-and-re-upgrade).
+The gateway's former export-on-remove exception to M3/M8 is retired with the
+v0.14.1 handback: the endpoint Store is the only source of routes and loopback
+aliases, and no scope exports or re-imports them
+([architecture 035](../architecture/035-gateway-endpoint-store.md#no-downgrade-handback)).
 
 
 | Legacy family | Location | Import | Quiesce condition | `Unknown` handling |
@@ -2923,7 +2920,7 @@ other scope gains downgrade support. The owning protocol and proofs are in
 | Backend override metadata | `crates/effigy-containers/src/lib.rs:219-235` | the environment's backend field | — | unparsable: `Unknown` backend; destructive actions refuse until the backend is named |
 | Host sidecars: PID, spec, listener records | `<root>/.effigy/runtime/host-processes/` | stopped through the legacy stop protocol after identity verification, then started as an environment-owned kernel run (effigy#320) | legacy supervisor alive and verified: stopped first | unverifiable identity: `Unknown`, residue |
 | Runtime-scope records | `~/.effigy/runtime-scopes/` | retired: ownership is the backend's labels; a legacy directory is neither read nor written | — | — |
-| Gateway PID, identity, version; routes, loopback, ports | `~/.effigy/gateway/`, `~/.effigy/ports.json` | gateway-lane importer: claims byte for byte, manual routes kept | legacy daemon quiesced by the gateway lane's setup | — |
+| Gateway PID, identity, version; routes, loopback | `~/.effigy/gateway/` | no import: the endpoint Store is the only source | — | — |
 | Vault | `<checkout>/.effigy/secrets/local.vault` | not moved; the next write uses the pointer commit | — | unreadable vault: never overwritten |
 | Host-run pending facts; retired admission store | `~/.local/state/host-run/`; `~/.cache/effigy/admission/` | untouched (contract 049) | — | — |
 
