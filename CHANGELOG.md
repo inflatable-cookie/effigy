@@ -300,9 +300,11 @@ During v0.x, MINOR bumps may include breaking changes.
 - The managed listener ownership proof, about 1,100 lines of production code.
   `effigy_gateway::managed_listener` is gone, with the process-identity
   triples, the descendant walk, socket exclusivity, the availability-file
-  recheck, the adapter report (`EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`,
+  recheck, the adapter report as evidence (`EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`,
   `effigy.managed.host-listener-report.v1`) and the gateway's per-connection
-  ownership recheck. A `ManagedListenerRouteOwner` is now the checkout,
+  ownership recheck. A shipped adapter is still handed the report path and its
+  generation token, and Effigy never reads the file. A
+  `ManagedListenerRouteOwner` is now the checkout,
   environment and process name it always represented, its generations and its
   reserved address; a record written by an earlier build is read once and
   rewritten without the identity fields. `listener.json` keeps its start,
@@ -1254,10 +1256,14 @@ During v0.x, MINOR bumps may include breaking changes.
   port; a child that never answers names the reserved address, the readiness
   path and the status it asked for in one line.
 - A managed listener child receives `HOST`, `PORT` and
-  `EFFIGY_MANAGED_HOST_LISTENER_BIND` and nothing else Effigy-specific about its
-  listener: there is no adapter report file, report schema or generation
-  variable to write. The proxy forwards a managed listener route to its
-  published target exactly as it forwards any other route.
+  `EFFIGY_MANAGED_HOST_LISTENER_BIND`, and, for the adapter scripts shipped
+  bundles still run, `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE` (a private path
+  in its runtime directory beside its log) and
+  `EFFIGY_MANAGED_HOST_LISTENER_GENERATION` (its child generation token). Effigy
+  never reads that report and removes the file when the generation stops; a
+  plain server on `$HOST`/`$PORT` needs no adapter, and new host processes need
+  none. The proxy forwards a managed listener route to its published target
+  exactly as it forwards any other route.
 - Reading a checkout journal or the machine store is one plain read-only SQLite
   connection in WAL mode with a short busy timeout: no copy and no custom VFS. A
   journal written throughout by another process no longer makes a read wait or
