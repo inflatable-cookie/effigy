@@ -686,13 +686,32 @@ impl Blocked {
 }
 impl Drop for Blocked {
     fn drop(&mut self) {
-        if !self.released {
-            self.barrier.take();
-            // SAFETY: this is our unreaped direct child, still behind the barrier.
-            // It cannot have execed, changed credentials, or reused its pid.
-            unsafe { libc::kill(self.pid as i32, libc::SIGKILL) };
-            // SAFETY: SIGKILL of a pre-exec direct child guarantees termination.
-            unsafe { libc::waitpid(self.pid as i32, std::ptr::null_mut(), 0) };
+        if self.released {
+            return;
+        }
+        self.barrier.take();
+        // The child is still behind the barrier: it cannot have execed,
+        // changed credentials, or reused its pid, and its group holds only
+        // this child and the anchor it forked before acknowledging readiness.
+        // Take the whole group, so a refused spawn leaves no live member and
+        // its recorded receipt can settle as released rather than residue.
+        // SAFETY: positive unreaped direct child; its group is its own pid.
+        unsafe { libc::kill(-(self.pid as i32), libc::SIGKILL) };
+        // SAFETY: this is our unreaped direct child, still behind the barrier.
+        unsafe { libc::kill(self.pid as i32, libc::SIGKILL) };
+        // SAFETY: SIGKILL of a pre-exec direct child guarantees termination.
+        unsafe { libc::waitpid(self.pid as i32, std::ptr::null_mut(), 0) };
+        // A refused spawn is settled by the run's receipt, which needs an
+        // empty group. The anchor exits on its own when its control pipe
+        // closes; bound the wait and leave any survivor to the settle's
+        // residue path rather than claiming closure here.
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !matches!(
+            super::platform::group_closed(self.pid, None),
+            Observed::Verified(..) | Observed::Absent(_)
+        ) && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(2));
         }
     }
 }

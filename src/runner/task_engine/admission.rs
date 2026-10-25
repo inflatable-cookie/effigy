@@ -340,13 +340,19 @@ struct AdmissionCore {
 struct Delivery {
     protocol: Protocol,
     run_id: String,
-    /// The last acknowledged event sequence.
+    /// The last acknowledged event sequence. It advances only on an `ack`, so
+    /// the acknowledged sequences are always a gap-free prefix.
     seq: u64,
     /// Acknowledged `workload` reports, the terminal report's cross-check.
     groups: u64,
     /// Hook stdout not yet consumed: the decision line's remainder, then acks.
     stdout: Vec<u8>,
     ack_timeout: Duration,
+    /// A report was not delivered. The hook's input framing is then no longer
+    /// trustworthy (a failed write may have left part of a line), so no
+    /// further report is written: the sequence stops at `seq` and the
+    /// acknowledged prefix never gains a gap.
+    stopped: Option<String>,
 }
 
 impl Delivery {
@@ -490,8 +496,29 @@ impl SpawnGate for WorkloadGate {
 fn deliver(core: &AdmissionCore, event: serde_json::Value) -> Result<(), String> {
     let mut hook = lock(&core.hook);
     let mut delivery = lock(&core.delivery);
-    delivery.seq += 1;
-    let seq = delivery.seq;
+    if let Some(reason) = &delivery.stopped {
+        // One undelivered report ends the sequence. Writing another with a
+        // later `seq` would leave the hook with an unacknowledged hole.
+        return Err(format!(
+            "the report sequence stopped at seq {}: {reason}",
+            delivery.seq
+        ));
+    }
+    let result = exchange(&mut hook, &mut delivery, event);
+    if let Err(reason) = &result {
+        delivery.stopped = Some(reason.clone());
+    }
+    result
+}
+
+/// One report exchange: write it with the next sequence number and wait for
+/// its acknowledgement. `Delivery::seq` advances only when that ack arrives.
+fn exchange(
+    hook: &mut OwnedProcess,
+    delivery: &mut Delivery,
+    event: serde_json::Value,
+) -> Result<(), String> {
+    let seq = delivery.seq + 1;
     let name = event
         .get("event")
         .and_then(|value| value.as_str())
@@ -512,7 +539,7 @@ fn deliver(core: &AdmissionCore, event: serde_json::Value) -> Result<(), String>
         })?;
     loop {
         if let Some(line) = delivery.next_ack_line() {
-            return acknowledgement(&line, seq, &name);
+            return acknowledge(delivery, &line, seq, &name);
         }
         let exited = hook.poll();
         let (out, err) = hook.take_stream_output();
@@ -523,7 +550,7 @@ fn deliver(core: &AdmissionCore, event: serde_json::Value) -> Result<(), String>
         // A hook may acknowledge and then exit: the acknowledgement is the
         // answer, so it is read before the exit is treated as a failure.
         if let Some(line) = delivery.next_ack_line() {
-            return acknowledgement(&line, seq, &name);
+            return acknowledge(delivery, &line, seq, &name);
         }
         if matches!(exited, Observed::Verified(..)) {
             return Err(format!(
@@ -545,6 +572,15 @@ fn deliver(core: &AdmissionCore, event: serde_json::Value) -> Result<(), String>
     }
 }
 
+/// The exchange's answer: only the matching ack advances the sequence.
+fn acknowledge(delivery: &mut Delivery, line: &str, seq: u64, name: &str) -> Result<(), String> {
+    let result = acknowledgement(line, seq, name);
+    if result.is_ok() {
+        delivery.seq = seq;
+    }
+    result
+}
+
 fn acknowledgement(line: &str, seq: u64, name: &str) -> Result<(), String> {
     match parse_ack(line) {
         Some(acked) if acked == seq => Ok(()),
@@ -552,7 +588,7 @@ fn acknowledgement(line: &str, seq: u64, name: &str) -> Result<(), String> {
             "the hook acknowledged seq {acked} while seq {seq} (`{name}`) was waiting; reports are strictly sequential"
         )),
         None => Err(format!(
-            "the hook answered `{line}`; an acknowledgement is `ack <seq>`"
+            "the hook answered `{line}` to seq {seq} (`{name}`); an acknowledgement is `ack <seq>`"
         )),
     }
 }
@@ -835,6 +871,7 @@ fn finish_admission(
             groups: 0,
             stdout: pending_stdout.to_vec(),
             ack_timeout: ACK_TIMEOUT,
+            stopped: None,
         }),
     });
     let admission = Admission {

@@ -486,7 +486,9 @@ During v0.x, MINOR bumps may include breaking changes.
   report is acknowledged, so the acknowledged seqs are a gap-free prefix and a
   group whose report was not acknowledged never runs; a write failure, EOF, a
   malformed or out-of-order ack and the ack timeout all stop the workload and
-  fail the run closed with `effigy.admission.v1`. Such a run also writes one
+  fail the run closed with `effigy.admission.v1`; a report that is not
+  delivered also ends the sequence, so the hook is never handed a later `seq`
+  and the acknowledged prefix keeps no gap. Such a run also writes one
   narrow terminal row to its checkout journal at settle, returned by
   `run status <run> --json` with `evidence_source:
   "foreground-terminal-record.v1"`, `checkout_id` and `boot`. The row carries

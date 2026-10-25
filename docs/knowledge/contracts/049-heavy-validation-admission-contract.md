@@ -157,11 +157,18 @@ the group the leader owns.
 Delivery is acknowledged, never assumed. Effigy waits `ack <seq>` within a
 bounded timeout (10 s per report). A write failure, EOF, a malformed or
 out-of-order ack, or a timeout **stops the workload before `go`**: the child is
-still behind the spawn barrier, so it exits without exec, and the run settles
-with the existing admission failure (`effigy.admission.v1`, decision
-`failed`). A workload therefore never runs unreported under v2. Writes are
-bounded too: a hook that stops reading causes ack timeouts, so a broken hook
-fails the run closed instead of stalling it.
+still behind the spawn barrier, so it exits without exec and its group is left
+empty, and the run settles with the existing admission failure
+(`effigy.admission.v1`, decision `failed`). A workload therefore never runs
+unreported under v2. Writes are bounded too: a hook that stops reading causes
+ack timeouts, so a broken hook fails the run closed instead of stalling it.
+
+A report that is not delivered also **ends the sequence for that run**: Effigy
+writes no further report, so the hook is never handed a later `seq` and the
+acknowledged prefix keeps no gap. A failed write may have left part of a line,
+which no framing can repair, so a later report would corrupt the channel; the
+hook must not acknowledge an incomplete last line. The narrow terminal record
+below is still written, because it is the run's own settled record.
 
 A missing acknowledgement for the `terminal` report does not change the run's
 result: the durable terminal record is the source of truth.
@@ -176,7 +183,8 @@ any terminal report:
   runs inside the owner process and dies with it, so the owner's identity
   covers it.
 - **Strictly sequential.** Event n+1 is never written until n is
-  acknowledged, so the acknowledged seqs are always a gap-free prefix `1..n`.
+  acknowledged, and a report that is not delivered ends the sequence instead of
+  skipping ahead, so the acknowledged seqs are always a gap-free prefix `1..n`.
 - **No unacknowledged `go`.** A workload group receives `go` only after its
   own `workload` report is acknowledged. A spawned child held at the barrier
   whose report was never acknowledged never execs its workload: on barrier

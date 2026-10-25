@@ -702,7 +702,15 @@ impl Custody {
             )
             .map_err(SpawnError::Unrecorded)?;
             crate::fault_point!(AnchorRecord)?;
-            run.ack_process(&ticket)?; // memory backup retains the receipt before go
+            // The memory backup retains the receipt before go.
+            run.ack_process(&ticket)?;
+            // The caller's gate runs while the child is still behind the
+            // barrier and before this process retains its core, so a refusal is
+            // settled from the recorded receipt: the child never execed and
+            // `Blocked::drop` leaves no live member of its group.
+            if let Some(gate) = gate {
+                gate.before_go(&receipt)?;
+            }
             let (stdout, stderr, terminal) = pending.take_streams();
             let stdin = pending.take_input();
             let logs = [Stream::Stdout, Stream::Stderr]
@@ -741,11 +749,6 @@ impl Custody {
             run.verify_custody()?;
             if let Some(lease) = lease {
                 lease.verify(cx.operation())?;
-            }
-            // The caller's gate runs while the child is still behind the
-            // barrier: a refusal kills it before exec, never after.
-            if let Some(gate) = gate {
-                gate.before_go(&receipt)?;
             }
             pending.transfer();
             crate::fault_point!(SpawnBeforeGo)?;

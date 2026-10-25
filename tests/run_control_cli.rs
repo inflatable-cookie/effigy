@@ -1276,3 +1276,82 @@ while :; do sleep 0.1; done
     let request = json_of(&fixture.read("hook.log"));
     assert_eq!(request["schema"], "effigy.admission-request.v1");
 }
+
+/// A report that cannot be delivered ends the sequence: the hook is never
+/// handed a later `seq`, so the acknowledged prefix stays gap-free even though
+/// the hook is still reading and the run settles afterwards. The durable
+/// terminal record is still written — it is the source of truth.
+#[test]
+fn admission_protocol_v2_stops_the_sequence_when_a_report_is_not_delivered() {
+    // The hook acknowledges `custodians`, then answers the workload report
+    // wrongly while staying alive (`malformed`), or not at all (`timeout`).
+    fn hook(fixture: &Fixture, name: &str, answer: &str) -> String {
+        let body = format!(
+            r#"#!/bin/sh
+printf '%s' "$EFFIGY_ADMISSION_REQUEST" > "$HOOK_LOG.request"
+echo admit
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$HOOK_LOG"
+  seq=$(printf '%s\n' "$line" | sed 's/.*"seq":\([0-9]*\).*/\1/')
+  if [ "$seq" = "2" ]; then
+{answer}
+    continue
+  fi
+  echo "ack $seq"
+  printf '%s\n' "$seq" >> "$HOOK_LOG.acks"
+done
+"#
+        );
+        fixture.hook(name, &body)
+    }
+    for (answer, label) in [
+        ("    echo \"not-an-ack\"", "malformed"),
+        ("    :", "timeout"),
+    ] {
+        let fixture = Fixture::new();
+        let hook = hook(&fixture, &format!("stop-{label}.sh"), answer);
+        let output = fixture.with_v2_hook(&hook, &["--json", "report"]);
+        assert!(!output.status.success(), "{label}: {}", text(&output));
+        let envelope = json_of(&String::from_utf8_lossy(&output.stdout));
+        let details = &envelope["error"]["details"];
+        assert_eq!(details["schema"], "effigy.admission.v1", "{label}");
+        assert_eq!(details["decision"], "failed", "{label}");
+        assert!(
+            details["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.contains("seq 2")),
+            "{label}: {details}"
+        );
+        assert!(!fixture.exists("ran.txt"), "{label}: the group never ran");
+
+        // The hook received `custodians` and the refused `workload` report and
+        // nothing after it: no terminal report with a later seq, so no gap.
+        let received: Vec<u64> = fixture
+            .events()
+            .iter()
+            .filter_map(|event| event["seq"].as_u64())
+            .collect();
+        assert_eq!(received, vec![1, 2], "{label}: the sequence stopped");
+        assert_eq!(
+            fixture.acks(),
+            vec![1],
+            "{label}: the acknowledged prefix has no gap"
+        );
+
+        // The durable row still records the settled result. The engine records
+        // a post-admission launch failure as `failed`, exactly as it does for
+        // every other refused spawn, even though no group ever ran.
+        let run_id = fixture.events()[0]["run_id"]
+            .as_str()
+            .expect("run id")
+            .to_owned();
+        let status = fixture.status_json(&run_id);
+        assert_eq!(
+            status["evidence_source"], "foreground-terminal-record.v1",
+            "{label}"
+        );
+        assert_eq!(status["state"], "failed", "{label}");
+        assert_eq!(status["cleanup"], "complete", "{label}");
+        assert!(status["pid"].is_null(), "{label}");
+    }
+}
