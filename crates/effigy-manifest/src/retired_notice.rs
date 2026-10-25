@@ -16,7 +16,9 @@
 //! - a nested Effigy invocation stays quiet, because its parent already said
 //!   it. Parents mark nested invocations by setting the same
 //!   `EFFIGY_INTERNAL_SUPPRESS_HEADER` marker they use to keep the CLI header
-//!   from repeating.
+//!   from repeating. The marker routes this notice and the header only: a
+//!   nested invocation that asked for `--json` still gets its
+//!   `effigy.command.v1` envelope (effigy#330).
 //!
 //! The notice content is unchanged; only its delivery is throttled and routed.
 

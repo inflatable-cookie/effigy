@@ -1369,6 +1369,15 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- An explicit `--json`, or the global `--json`, always emits the
+  `effigy.command.v1` envelope, wherever the invocation runs. A nested Effigy
+  invocation marked with `EFFIGY_INTERNAL_SUPPRESS_HEADER` used to print its
+  bare payload instead, and a host-process workload inherits that marker from
+  its supervisor: an Acowtancy host process ran
+  `effigy container hybrid hosts --json`, received
+  `effigy.container.hosts.v1`, and refused to start. The marker now suppresses
+  only the CLI header and the retired-config notice; the machine schema is the
+  same in a plain shell, a task, a managed run and a host process (effigy#330).
 - Test, selector and proof-script temp follows a configured `[scratch]` volume
   (effigy#244) instead of landing on the internal disk. Every host-side
   harness `mktemp` takes an explicit `${TMPDIR:-/tmp}/<name>.XXXXXX` template,
