@@ -12,6 +12,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -868,6 +869,56 @@ fn equal_keys_are_owned_by_their_checkout_and_only_runs_all_spans_checkouts() {
     let listing: serde_json::Value = serde_json::from_slice(&all.stdout).unwrap();
     let listed = listing["result"]["runs"].as_array().expect("runs");
     assert_eq!(listed.len(), 2, "{listing}");
+}
+
+/// `effigy runs` answers at once beside a journal another process writes
+/// throughout: a read takes no lock a writer holds (effigy#339, Q-011).
+#[test]
+fn runs_answers_within_a_second_beside_a_continuous_writer() {
+    let fixture = Fixture::new();
+    assert!(fixture
+        .run(&["--run-id", "written-1", "light"])
+        .status
+        .success());
+    let journal = fixture.repo.join(".effigy/state/kernel.db");
+    let stop = Arc::new(AtomicBool::new(false));
+    let writing = stop.clone();
+    let writer = std::thread::spawn(move || {
+        let connection = rusqlite::Connection::open(&journal).unwrap();
+        connection.busy_timeout(Duration::from_secs(5)).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE churn (id INTEGER PRIMARY KEY, blob BLOB);\
+                 INSERT INTO churn(id, blob) \
+                 WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 32) \
+                 SELECT x, randomblob(4096) FROM c;",
+            )
+            .unwrap();
+        while !writing.load(Ordering::Relaxed) {
+            let _ = connection.execute(
+                "UPDATE churn SET blob = randomblob(4096) WHERE id = (abs(random()) % 32) + 1",
+                [],
+            );
+        }
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    let started = Instant::now();
+    let output = fixture.run(&["--json", "runs"]);
+    let elapsed = started.elapsed();
+    stop.store(true, Ordering::Relaxed);
+    writer.join().unwrap();
+    assert!(output.status.success(), "{}", text(&output));
+    let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).expect("runs");
+    assert!(
+        envelope["result"]["runs"]
+            .as_array()
+            .is_some_and(|runs| !runs.is_empty()),
+        "{envelope}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "`effigy runs` took {elapsed:?} beside a continuous writer"
+    );
 }
 
 /// A run lookup reads this checkout's own journal and nothing else. Fifty
