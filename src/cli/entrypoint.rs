@@ -121,11 +121,16 @@ pub fn run_cli(raw_args: Vec<String>) {
     let internal_suppress_header = std::env::var("EFFIGY_INTERNAL_SUPPRESS_HEADER")
         .ok()
         .is_some_and(|value| matches!(value.trim(), "1" | "true" | "yes"));
+    // An explicit JSON request is the machine contract: it always gets the
+    // `effigy.command.v1` envelope. The nested-invocation marker a parent sets
+    // only hides the human furniture (the CLI header and the retired-config
+    // notice), so a nested `--json` child reports the same schema as any other
+    // caller, including a workload that inherited the marker from a host
+    // process supervisor.
+    let json_requested = command_requests_json(&cmd, global_json_mode);
     let local_qa_json = !global_json_mode && command_requests_local_qa_json(&cmd);
-    let suppress_header =
-        internal_suppress_header || command_requests_json(&cmd, global_json_mode) || local_qa_json;
-    let emit_json_envelope =
-        !internal_suppress_header && command_requests_json(&cmd, global_json_mode);
+    let suppress_header = internal_suppress_header || json_requested || local_qa_json;
+    let emit_json_envelope = json_requested;
     effigy_manifest::set_retired_notice_delivery(if emit_json_envelope {
         effigy_manifest::RetiredNoticeDelivery::JsonEnvelope
     } else if matches!(cmd, Command::Doctor(_)) {

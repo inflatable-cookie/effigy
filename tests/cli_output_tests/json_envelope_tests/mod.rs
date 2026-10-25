@@ -82,5 +82,6 @@ fn assert_scan_failure(parsed: &Value, schema: &str) {
 }
 
 mod core;
+mod header_suppression;
 mod runtime;
 mod scan;

@@ -22,6 +22,14 @@ terminal, so redirected release notes contain only the extracted changelog.
 `effigy --json <selector>` still runs the task. Use `effigy --json <selector> --plan`
 to inspect the resolved command without executing it.
 
+An explicit `--json` — global or command-local — is the machine contract, so it
+always emits one `effigy.command.v1` document. That holds wherever the
+invocation runs: a plain shell, a task, a managed run, a container handoff or a
+host-process workload. The internal nested-invocation marker a parent sets
+(`EFFIGY_INTERNAL_SUPPRESS_HEADER`) hides the header and the retired-config
+notice only; it never changes the output schema, and a workload that inherited
+the marker from its supervisor still reads the envelope.
+
 For QA groups, prefer the global form for automation: `effigy --json tasks
 qa-groups list` and `effigy --json tasks qa-group ...` use the canonical
 `effigy.command.v1` envelope. The local `--json` flags on group list, run
