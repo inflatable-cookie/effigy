@@ -297,6 +297,12 @@ pub(in crate::runner) fn start_host_processes_for_container(
     for (name, client) in started {
         let run = client.run;
         if let Err(error) = client.detach(&cx, run) {
+            // A process that exits before the bring-up detaches has already
+            // settled its run; there is no owner left to detach, and that is
+            // not a bring-up failure.
+            if run_is_closed(repo_root, run) {
+                continue;
+            }
             let report = stop_host_processes_for_container(repo_root, policy);
             return Err(RunnerError::task_invocation(format!(
                 "host process `{name}` could not detach after readiness: {error}{}",
@@ -786,6 +792,11 @@ fn latest_open_run(
         _ => return Ok(None),
     };
     Ok(rows.into_iter().find(|row| row.phase != Phase::Closed))
+}
+
+/// Whether `id` has already closed in the checkout journal.
+fn run_is_closed(repo_root: &Path, id: RunId) -> bool {
+    matches!(run_summary_of(repo_root, id), Some((_, Phase::Closed)))
 }
 
 fn run_summary_of(repo_root: &Path, id: RunId) -> Option<(RunSummary, Phase)> {
