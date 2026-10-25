@@ -1428,6 +1428,15 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- A host process whose child leader exits now applies its declared `restart`
+  policy instead of failing supervision. After a leader exit, Effigy reaps the
+  leader and observes the process group as the kernel does: the exited leader is
+  never a surviving member of its own group, and an unreaped zombie is not a
+  member at all. A `restart = "on-failure"` listener is therefore replaced on
+  the port its endpoint store reserved, with its route republished and its
+  dependents refreshed, after a crash, a signal or a non-zero exit; a genuinely
+  live member other than the leader still keeps the generation unavailable.
+  `restart = "never"` settles closed with its exit recorded (effigy#336).
 - A managed listener route left by a previous run of the same checkout is
   reclaimed by the next run, and `down`, `reset` and settle withdraw listener
   routes even when the supervisor that published them is gone. Since
