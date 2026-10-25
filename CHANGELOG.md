@@ -325,12 +325,35 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- The runtime scope journal, its `effigy.runtime-scope.v1` records, the
+  `com.effigy.checkout-generation` and `com.effigy.checkout-fence` labels, and
+  the dead-retire inode-generation comparison. `container retire` keeps no
+  record of what it owns, so there is nothing to keep "unverified", nothing to
+  delete after a successful retirement and no generation refusal after a
+  re-clone. The retire plan's Retain/Mismatch classification, which let a
+  named volume survive a "clean" retirement, is gone with it:
+  `effigy.container.retire.v1` schema version 2 reports `removed`, `kept`
+  (with a reason), `remaining` (with the runtime's error) and the released
+  gateway state; `effigy.container.retire-dead.v1` version 2 groups its
+  `scopes` by checkout path and reports unreadable paths under `unknown`.
+  `ports reclaim` and loopback collection no longer read scope records, so
+  `unreadable_checkouts` is gone from both reports.
+- The legacy bind-mount ownership proof for pre-label stacks
+  (`exec::OwnershipContext::admits_legacy_unlabelled`) and the stale-owned
+  container reconcile after a profile transition
+  (`running_stack_admits_reactivation`, `remove_stale_owned_containers`,
+  `reconcile_stale_owned_containers`, `ColimaEnsureReport::
+  reconciled_containers`). A stack from an earlier release is reported by
+  `retire` and relabelled by `down` and `up`; nothing is adopted on a mount
+  inspection that needed `working_dir`.
 - The managed listener ownership proof, about 1,100 lines of production code.
   `effigy_gateway::managed_listener` is gone, with the process-identity
   triples, the descendant walk, socket exclusivity, the availability-file
-  recheck, the adapter report (`EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`,
+  recheck, the adapter report as evidence (`EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`,
   `effigy.managed.host-listener-report.v1`) and the gateway's per-connection
-  ownership recheck. A `ManagedListenerRouteOwner` is now the checkout,
+  ownership recheck. A shipped adapter is still handed the report path and its
+  generation token, and Effigy never reads the file. A
+  `ManagedListenerRouteOwner` is now the checkout,
   environment and process name it always represented, its generations and its
   reserved address; a record written by an earlier build is read once and
   rewritten without the identity fields. `listener.json` keeps its start,
@@ -1269,6 +1292,27 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- Container ownership is the runtime's own labels. A checkout owns a
+  container, volume or network exactly when it carries the Compose project
+  plus Effigy's checkout and scope labels, so `container retire` asks the
+  backend what carries them, deletes all of it, then releases the checkout's
+  routes, ports and loopback addresses by checkout path. Retirement reports
+  exactly what it removed, what it kept on purpose (`--keep-data`, and
+  resources of one of its projects that carry no Effigy checkout label) and what
+  it could not delete, naming the runtime's error and exiting non-zero; it never
+  reports a clean result while an owned resource survives. `container retire
+  --keep-data` is new and is now the only way retirement keeps a volume: by
+  default it removes the stack's volumes with everything else. `retire --dead` groups the
+  labelled resources by checkout path and retires the groups whose path is
+  missing, so a deleted worktree's stack is retired without recording anything
+  and a re-cloned checkout at the same path needs no reconciliation.
+  `container up` decides whether a stack runs from one labelled `ps` instead of
+  inspecting each container, and a profile Effigy creates or restarts is
+  repaired by the apply that follows, with no stale-container sweep
+  (contracts 005, 052). `nerdctl compose` gives a named volume only its Compose
+  project label and the `<project>-<volume>` name it created, so a volume of one
+  of this checkout's projects is owned by that name as well as by Effigy's
+  labels; `retire --yes` removes it rather than reporting it as unlabelled.
 - A detected Rust suite in `effigy test` runs through Oxide when the host has
   a usable `oxide`: `oxide pool describe --json` answering
   `oxide.pool.describe/1` turns `cargo nextest run …` into `oxide nextest
@@ -1293,10 +1337,14 @@ During v0.x, MINOR bumps may include breaking changes.
   port; a child that never answers names the reserved address, the readiness
   path and the status it asked for in one line.
 - A managed listener child receives `HOST`, `PORT` and
-  `EFFIGY_MANAGED_HOST_LISTENER_BIND` and nothing else Effigy-specific about its
-  listener: there is no adapter report file, report schema or generation
-  variable to write. The proxy forwards a managed listener route to its
-  published target exactly as it forwards any other route.
+  `EFFIGY_MANAGED_HOST_LISTENER_BIND`, and, for the adapter scripts shipped
+  bundles still run, `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE` (a private path
+  in its runtime directory beside its log) and
+  `EFFIGY_MANAGED_HOST_LISTENER_GENERATION` (its child generation token). Effigy
+  never reads that report and removes the file when the generation stops; a
+  plain server on `$HOST`/`$PORT` needs no adapter, and new host processes need
+  none. The proxy forwards a managed listener route to its published target
+  exactly as it forwards any other route.
 - Reading a checkout journal or the machine store is one plain read-only SQLite
   connection in WAL mode with a short busy timeout: no copy and no custom VFS. A
   journal written throughout by another process no longer makes a read wait or

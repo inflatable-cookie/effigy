@@ -396,8 +396,10 @@
 # Match CI's concurrent libtest process; Effigy bounds the runner's lifetime.
 "test:kernel:gate:shared" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "RUSTFLAGS='--cfg effigy_shared_process' sh scripts/oxide-selector.sh test -p effigy-kernel --test gate -- --test-threads=8", timeout_ms = 600000 }] }
 "test:kernel:gate:shared:linux" = { durable = true, visibility = "internal", group = "Maintenance",  admission = "heavy", run = [{ id = "linux-shared-gate", run = "sh crates/effigy-kernel/tests/scripts/linux-custody.sh gate-shared", timeout_ms = 1800000 }] }
-"test:containers:scope-journal" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(runtime::scope::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
-"test:containers:retire-dead" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(container_command::retire::) | test(scope_registration)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
+"test:containers:retire-dead" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(container_command::retire::dead::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(retire_label_tests::dead_retire_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+] }
 "test:kernel:store" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-kernel --features fault-injection --lib --test store -E 'test(store_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
 "test:kernel:inheritance" = { durable = true, visibility = "internal", group = "Maintenance", description = "Prove memory parent capabilities and explicit custody descriptor inheritance.", run = [
   { run = "sh scripts/oxide-selector.sh build -p effigy-kernel --features fault-injection --bin kernel-custody-fixture", timeout_ms = 600000 },
@@ -668,15 +670,14 @@
 
 # Scoped runtime inventory, participation, backend selection and loopback
 "test:containers:scope-lifecycle" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy-containers --lib policy_resolution_does_not_register_an_unactivated_runtime_scope -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib retire_of_unactivated_checkout_does_not_create_scope_or_probe_profile -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib container_retire_checkout_lookup_preserves_existing_unknown_profile_record -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib runtime_start_failure_keeps_scope_record_created_before_start -- --nocapture",
+  "sh scripts/oxide-selector.sh test -p effigy-containers --lib policy_resolution_writes_no_runtime_ownership_state -- --nocapture",
+  "sh scripts/oxide-selector.sh test -p effigy --lib scope_query_reports_linked_worktree_identity -- --nocapture",
+  "sh scripts/oxide-selector.sh test -p effigy --lib scope_query_reports_primary_checkout_and_unmarked_clone_as_unscoped -- --nocapture",
+  "sh scripts/oxide-selector.sh test --test cli_output_tests retire_of_a_checkout_with_no_labelled_resources_is_a_no_op -- --nocapture",
 ] }
 "test:containers:retire-selection" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "sh scripts/oxide-selector.sh test -p effigy --lib container_retire -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib dead_selection_tests -- --nocapture",
-  "sh scripts/oxide-selector.sh test -p effigy --lib retirement_clears_qualified_and_owned_legacy_loopbacks_only -- --nocapture",
+  "sh scripts/oxide-selector.sh test -p effigy --lib container_command::retire:: -- --nocapture",
+  "sh scripts/oxide-selector.sh test --test cli_output_tests retire_label_tests -- --nocapture",
   "sh scripts/oxide-selector.sh test --test cli_output_tests cli_container_retire_named_environment_refuses_before_effects -- --nocapture",
 ] }
 "test:worktree:lifecycle-hooks" = { durable = true, visibility = "internal", group = "Maintenance", run = "sh tests/scripts/worktree-lifecycle-hooks.sh" }
@@ -846,16 +847,20 @@
   { id = "managed-scoped-host-routes-runtime", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(scoped_host_routes)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "managed-scoped-host-routes-policy", run = "sh scripts/oxide-selector.sh test -p effigy-containers --lib listener_routes -- --nocapture", timeout_ms = 600000 },
 ] }
-# An ordinary server needs no adapter report (effigy#334): Effigy verifies the
-# reserved address is served by the child generation itself. A plain
+# An ordinary server needs no adapter (effigy#334): readiness is the reserved
+# port answering its own probe. A plain
 # `python3 -m http.server "$PORT" --bind "$HOST"` reaches ready, publishes its
 # route, keeps the reserved port across a restart and settles on `down`; a child
 # bound elsewhere fails naming the reserved port, and so does a reservation
-# another process already answers. A compile that forks short-lived children, a
-# watch-mode respawn, a double fork and a momentary probe miss are all ordinary.
-# Disposable loopback fixtures, a private gateway and a fake Docker backend only.
+# another process already answers. A shipped bundle adapter that refuses to
+# start without `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE` and
+# `EFFIGY_MANAGED_HOST_LISTENER_GENERATION` gets both, writes its report and is
+# ready on the port alone (effigy#349). A compile that forks short-lived
+# children, a watch-mode respawn, a double fork and a momentary probe miss are
+# all ordinary. Disposable loopback fixtures, a private gateway and a fake
+# Docker backend only.
 "test:managed:adapterless-listeners" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  { id = "managed-adapterless-listener", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_adapterless_) | test(managed_host_listener_pre_bound_port_) | test(managed_host_listener_is_ready_) | test(managed_host_listener_watch_mode_) | test(managed_host_listener_double_forked_) | test(managed_host_listener_probe_miss_) | test(managed_host_listener_republishes_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
+  { id = "managed-adapterless-listener", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_adapterless_) | test(managed_host_listener_pre_bound_port_) | test(managed_host_listener_adapter_env_) | test(managed_host_listener_is_ready_) | test(managed_host_listener_watch_mode_) | test(managed_host_listener_double_forked_) | test(managed_host_listener_probe_miss_) | test(managed_host_listener_republishes_)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 900000 },
 ] }
 "proof:managed:host-listeners" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { id = "managed-host-listener-cli-proof", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(managed_host_listeners_bind_routes_propagate_restart_and_scope_teardown)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
@@ -2600,8 +2605,8 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 "test:containers:port-prepare:legacy:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(legacy_port_alias_is_read_once_then_prepared_for_each_service) | test(generated_port_reads_leave_registry_untouched_and_prepare_is_stable)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }] }
 "test:containers:port-prepare:report:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(status_report_renders_shared_service_targets)' --no-capture --no-fail-fast --retries 0 --no-tests fail -j 1", timeout_ms = 600000 }] }
 "test:containers:retire-selection:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "env -u EFFIGY_PARENT_CAPABILITY cargo test -p effigy --lib container_retire -- --nocapture",
-  "env -u EFFIGY_PARENT_CAPABILITY cargo test -p effigy --lib retirement_clears_qualified_and_owned_legacy_loopbacks_only -- --nocapture",
+  "env -u EFFIGY_PARENT_CAPABILITY cargo test -p effigy --lib container_command::retire:: -- --nocapture",
+  "env -u EFFIGY_PARENT_CAPABILITY cargo test --test cli_output_tests retire_label_tests -- --nocapture",
   "env -u EFFIGY_PARENT_CAPABILITY cargo test --test cli_output_tests cli_container_retire_named_environment_refuses_before_effects -- --nocapture",
 ] }
 "test:containers:runtime-inventory:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [
@@ -2609,10 +2614,10 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
   "env -u EFFIGY_PARENT_CAPABILITY cargo test -p effigy-containers participation::tests:: -- --nocapture",
 ] }
 "test:containers:scope-lifecycle:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [
-  "env -u EFFIGY_PARENT_CAPABILITY cargo test -p effigy-containers --lib policy_resolution_does_not_register_an_unactivated_runtime_scope -- --nocapture",
-  "env -u EFFIGY_PARENT_CAPABILITY cargo test -p effigy --lib retire_of_unactivated_checkout_does_not_create_scope_or_probe_profile -- --nocapture",
-  "env -u EFFIGY_PARENT_CAPABILITY cargo test -p effigy --lib container_retire_checkout_lookup_preserves_existing_unknown_profile_record -- --nocapture",
-  "env -u EFFIGY_PARENT_CAPABILITY cargo test -p effigy --lib runtime_start_failure_keeps_scope_record_created_before_start -- --nocapture",
+  "env -u EFFIGY_PARENT_CAPABILITY cargo test -p effigy-containers --lib policy_resolution_writes_no_runtime_ownership_state -- --nocapture",
+  "env -u EFFIGY_PARENT_CAPABILITY cargo test -p effigy --lib scope_query_reports_linked_worktree_identity -- --nocapture",
+  "env -u EFFIGY_PARENT_CAPABILITY cargo test -p effigy --lib scope_query_reports_primary_checkout_and_unmarked_clone_as_unscoped -- --nocapture",
+  "env -u EFFIGY_PARENT_CAPABILITY cargo test --test cli_output_tests retire_of_a_checkout_with_no_labelled_resources_is_a_no_op -- --nocapture",
 ] }
 "test:deploy:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [
   { run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(deploy_tests::) | test(deploy_contract_tests::) | test(run_rhai_feature_refuses_deploy_execution)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 },
@@ -3232,8 +3237,10 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
 ] }
 "validate:cargo" = { visibility = "internal", group = "Validation", run = [{ task = "health:cargo" }, "cargo clippy --workspace --all-targets -- -D warnings"] }
 
-"test:containers:scope-journal:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy-containers --lib -E 'test(runtime::scope::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 600000 }] }
-"test:containers:retire-dead:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [{ run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(container_command::retire::) | test(scope_registration)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 }] }
+"test:containers:retire-dead:cargo" = { durable = true, visibility = "internal", group = "Maintenance", run = [
+  { run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none -p effigy --lib -E 'test(container_command::retire::dead::)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+  { run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/gateway-nextest.toml --user-config-file none --test cli_output_tests -E 'test(retire_label_tests::dead_retire_)' --no-fail-fast --retries 0 --no-tests fail", timeout_ms = 900000 },
+] }
 
 "proof:runtime-retire-dead:cli" = { durable = true, visibility = "internal", group = "Maintenance", admission = "heavy", description = "Prove private backend retirement after linked checkout deletion alongside mixed runtime classes.", run = [{ run = "sh tests/scripts/runtime-retire-dead.sh", timeout_ms = 1200000 }] }
 

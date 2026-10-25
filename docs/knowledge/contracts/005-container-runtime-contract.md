@@ -270,7 +270,10 @@ tls = true
 
 The child receives `EFFIGY_MANAGED_HOST_LISTENER_BIND`, `HOST` and `PORT`, and
 the process's own `EFFIGY_HOST_PROCESS_PUBLIC_URL` and
-`EFFIGY_HOST_PROCESS_INTERNAL_URL`. `HOST`/`PORT` are the reserved address:
+`EFFIGY_HOST_PROCESS_INTERNAL_URL`, plus the `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`
+and `EFFIGY_MANAGED_HOST_LISTENER_GENERATION` that shipped adapter scripts
+read. Those two are only for existing adapter scripts; a new host process needs
+no adapter. `HOST`/`PORT` are the reserved address:
 they replace an ambient value inherited from the caller's environment, because
 a process reading them must bind the port the published route targets. Only a
 value the manifest declares outranks them. Port
@@ -300,8 +303,9 @@ Each process also receives the active gateway's CA in `EFFIGY_GATEWAY_CA_FILE`.
 `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` are filled in only when the operator
 has not exported them and the process does not declare them, so an operator
 trust store is never replaced. The gateway contract records which runtimes read
-which variable and why. There is no adapter report, report schema or generation
-variable: only the reserved address answering publishes the route. A child that
+which variable and why. Effigy reads no adapter report: only the reserved
+address answering publishes the route, and the report path is a write-only
+courtesy for shipped adapters, removed when the generation stops. A child that
 binds a different address fails startup, naming the reserved address and the
 readiness request it never answered.
 
@@ -447,21 +451,14 @@ and calls no Compose. A stop of a never-activated render still renders and
 interpolates with the teardown-only value, never assigning a port; `up` and
 `prepare` still fail closed on the unassigned-port refusal.
 
-A missing or stopped primary does not require operator intervention: verify
-every existing project container's checkout and scope ownership, including
-stopped siblings, then recover through the same apply. Unavailable inventory or
-foreign ownership still refuses and names the owning checkout's `effigy
-container down` command. A running stack with no record at all (a stack started
-by an earlier release, or after a profile restart) is proven the same way: every
-project container - running or stopped, because a project-wide Compose up can
-start or recreate a stopped declared sibling - must belong to this checkout and
-scope. A container with no checkout, working-directory or scope label is adopted
-only on positive evidence: it must carry this project's exact full identity
-(listed name, project, declared service, running, not one-off) and bind-mount
-this checkout at the policy working directory. A stopped container is proven by
-its checkout and scope labels; an unlabelled stopped container is not proven.
-Absent labels are not proof by themselves. Anything not proven refuses with no
-Compose up, restart or publication, and names `container down` for the owner.
+A missing or stopped primary does not require operator intervention: one
+labelled `ps` reports every existing project container, including stopped
+siblings, and the same apply recovers the stack. A container whose Compose
+project or Effigy checkout and scope labels name another owner is not this
+checkout's. A container from an earlier release that carries no Effigy checkout
+label is reported, never adopted: `effigy container down` and `up` relabel it.
+A profile Effigy created or restarted leaves nothing to repair: the apply
+recreates each service whose rendered configuration differs.
 
 Operator ruling (Tom, 2026-10-15, v0.15.0 pre-release audit): "Restore for
 complete stacks". Detached `up` must not refuse a complete stack whose inputs
@@ -941,11 +938,10 @@ refuses the activation, and it names the environment, project and failure.
 Data safety is absolute in the borrowing direction. `container reset` and
 `reset --wipe-data` classify only owned volumes, so borrowed volumes are never
 removed; `retire` and `retire --dead` never delete or claim
-the owner's volumes, and the borrowing environment's runtime-scope record lists
-borrowed volumes as retained, never owned. Retiring the owner's checkout still
-removes its own resources as today. Environments without `data_from` keep
-their own fresh volumes, and manifests without `data_from` generate
-byte-identical Compose.
+the owner's volumes, because a borrowed volume carries the owner's Compose
+project label, not the borrower's. Retiring the owner's checkout still removes
+its own resources. Environments without `data_from` keep their own fresh
+volumes, and manifests without `data_from` generate byte-identical Compose.
 
 A linked worktree that does not share runtime identity gets one effective host
 map for its declared HTTP routes and TCP aliases. The apex becomes
@@ -974,62 +970,58 @@ not a suffix of every HTTP route, `container hosts` warns and its JSON
 undeclared base is inferred; a manifest that needs a different apex declares
 `base_domain` explicitly. A declared value is never inferred or rewritten.
 
-Owned mutable resources for that generation carry `com.effigy.scope`,
-`com.effigy.project`, or the exact Compose project label. `effigy container
-retire` deletes only resources those proofs still attribute to the recorded
-token, and only on the runtime profile that produced the labelled
-observation. Listing uses `ps -a`, so Created and exited containers retire
-with running ones. Disposable scoped build-cache volumes, including legacy
-`efv-*` caches that still carry an ownership label, are removed; persistent
-application data is not. Same-named resources in another profile stay.
-Shared services, persistent and external volumes, and foreign-owned
-resources stay. Shared-identity routes and loopbacks stay even when the
-same worktree also has isolated stacks. Compose networks are part of the
-owned inventory. A journalled record under `<checkout>/.effigy/state/runtime-scopes/` aggregates
-the checkout’s environments and runtime profiles. Edits are atomic, and corrupt
-records refuse work. External deletion removes that inventory. Dead-checkout
-retirement uses backend labels and the native custody lease instead, with retry
-progress retained in the invoking live checkout (052 §7.1).
-Backend discovery failures,
-including malformed inspect or listing JSON, keep the record and do not
-report success. A recorded profile whose runtime is stopped is probed first,
-never skipped silently and never started: retire still clears host-side
-resources (routes, ports, loopbacks, certificates) and live profiles, then
-exits non-zero, lists the profile under `unverified_profiles`, and keeps the
-record. A stopped VM is not proof that its persisted containers or volumes are
-gone; start the profile and rerun retire. Success requires that no owned container, mutable volume,
-network, isolated route, port, loopback, or TLS certificate remains. A
-second retire with nothing left is success, including a shared-only scope
-whose durable record is then removed.
+Ownership is the runtime's own labels: `com.docker.compose.project=<project>`
+plus Effigy's checkout label (`com.effigy.checkout`, or `com.effigy.repo-root`
+for a volume the `data_from` path created) and, when a scope is selected, the
+`com.effigy.scope` token. Effigy keeps no record beside them: `effigy container
+retire` asks the backend what carries those labels and deletes all of it, on
+every profile the runtime reports and on the configured endpoint. There is no
+runtime-scope journal, no checkout generation and no custody-lease fence.
+
+Listing uses `ps -a`, and each kind is read with one labelled `ps` or `ls`, so
+Created and exited containers retire with running ones. Compose networks carry
+no Effigy label of their own, so they are found by their
+`com.docker.compose.project` label and attributed to the one checkout the
+project's labelled resources name; a project two checkouts share is never
+attributed and its networks stay.
+
+`nerdctl compose` copies neither Compose's per-volume `labels:` nor Effigy's
+labels onto a named volume: it leaves `com.docker.compose.project` and the name
+Compose gave the volume, `<project>-<volume>` (`<project>_<volume>` on Docker
+Compose). That name, found through the checkout's own project names, is the
+volume's ownership proof, so `retire --yes` removes those volumes instead of
+reporting them as unlabelled. A volume of a project whose containers are
+already gone is still found, because the checkout's manifest names its
+projects. `retire --keep-data` keeps every labelled
+volume, names which ones are named data (`com.effigy.persist=true`) and lists
+them; without it retirement removes them with the rest of the stack. Anything
+that could not be deleted is named with the runtime's own error and retirement
+exits non-zero; it never reports a clean result while an owned resource
+survives.
+Retirement also releases the checkout's gateway routes and their certificates,
+port ranges and loopback addresses by checkout path alone. A second retire with
+nothing left is success and reports `idempotent: true`.
+
+A container, volume or network of one of this checkout's Compose projects that
+carries no Effigy checkout label is reported under `kept` and left alone, never
+adopted: run `effigy container down` and `up` to relabel a stack from an earlier
+release.
 
 Retirement does not accept a container environment name. `container <NAME>
-retire` fails before checkout or token record lookup, runtime inventory,
-confirmation, or mutation, including when `--scope` or `--yes` is supplied.
-`container retire` selects the recorded generation for the current checkout;
-`container retire --scope <TOKEN>` selects only that exact local record while
-the checkout exists. After deletion, use `container retire --dead` from a live
-checkout; the selected backend supplies surviving ownership evidence. A record aggregates all environments and runtime profiles
-for its generation, so named partial retirement is not supported.
+retire` fails before checkout resolution, inventory, confirmation, or mutation,
+including when `--scope` or `--yes` is supplied. `container retire` retires the
+current checkout; `container retire --scope <TOKEN>` restricts it to one scope
+token of that checkout. For a checkout whose path is gone, `container retire
+--dead` groups the labelled resources by checkout path and retires the groups
+whose path no longer exists, from any live checkout. Dead means the path is
+missing: an unreadable or relative path label is reported under `unknown` and
+never guessed about. Retirement never recreates a checkout path.
 
 Resolving, discovering, planning, or reporting container policy does not
-register runtime ownership. Runtime activation records the scope before
-starting the backend or creating containers, networks, shared services,
-routes, or ports. The registration uses the checkout generation token and
-preserves the isolated or shared-identity policy; a failed start leaves its
-record available for retry. Checkout-based retirement consults existing
-records only. A configured container with no activation record is not proof
-that its profile was activated, so retirement reports no owned scope without
-starting or probing that profile. Existing records, including records naming
-stopped or unavailable profiles, remain authoritative and fail closed when
-their resources cannot be observed.
-
-Tom’s 2026-10-01 recovery ruling, "do what you need to for 061", allowed one
-exact-scope exception: start the stopped profile to observe its resources,
-retire only resources proven owned by the approved scope, and retry only the
-recorded milestone teardown while preserving its QA result. Restore the
-initial profile state only if no other active owner appeared. This does not
-permit automatic profile starts, treating stopped resources as absent, broader
-host cleanup, or scheduler activation.
+register runtime ownership, and no activation writes ownership state either.
+Ownership exists only on the runtime objects themselves, so a re-cloned
+checkout at the same path retires its stack with no generation or record to
+reconcile, and a deleted worktree's stack is still findable by label.
 
 Loopback allocation follows the same ownership boundary. An isolated project's
 alias key is `project:<project-name>:<absolute-checkout>` in both generated

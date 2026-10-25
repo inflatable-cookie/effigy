@@ -69,21 +69,6 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     let runtime =
         effigy_containers::exec::ensure_runtime_backend_running_report(&policy, repo_root)
             .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    // A builder whose canonical identity cannot be read - what a deleted or
-    // restarted profile leaves behind - is stopped and recreated here by the
-    // exact-owner rules, never refused for a manual `down`. A foreign or
-    // unknown owner is refused by the admission below, unchanged.
-    let reconciled = match effigy_containers::exec::reconcile_stale_owned_containers(
-        repo_root,
-        &policy,
-        Instant::now() + Duration::from_secs(30),
-    ) {
-        Ok(reconciled) => reconciled,
-        Err(error) => {
-            eprintln!("[warn] workspace artifact builder: stale owned container reconcile skipped: {error}");
-            Vec::new()
-        }
-    };
     // Preserve the existing runtime drift guard; this operation grants no
     // authority to change backend, profile or the owned builder's generation.
     let mut deadline = Instant::now() + Duration::from_secs(15);
@@ -103,10 +88,10 @@ pub(in crate::runner) fn build(repo_root: &Path, command: &[String]) -> Result<(
     environment::import_legacy(repo_root, &policy)?;
     deadline = Instant::now() + Duration::from_secs(15);
     let mut retained = builder_retained(&policy).then_some(());
-    // A profile Effigy just created or restarted, or a stale owned builder it
-    // removed, discards the container the record described. Recreating the
-    // builder is the repair that transition owns.
-    if runtime.profile_created_or_restarted || !reconciled.is_empty() {
+    // A profile Effigy just created or restarted discards the container the
+    // record described. Recreating the builder is the repair that transition
+    // owns.
+    if runtime.profile_created_or_restarted {
         retained = None;
     }
     let mut rows = list_compose_containers_for_policy_including_stopped_with_deadline(

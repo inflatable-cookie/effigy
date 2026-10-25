@@ -666,8 +666,10 @@ pub enum ContainerSubcommand {
     Retire {
         name: Option<String>,
         scope: Option<String>,
-        /// Retire every recorded scope whose checkout no longer exists.
+        /// Retire every labelled stack whose checkout no longer exists.
         dead: bool,
+        /// Keep named data volumes and list them.
+        keep_data: bool,
         yes: bool,
     },
 }
