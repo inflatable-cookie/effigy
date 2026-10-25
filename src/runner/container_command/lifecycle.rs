@@ -31,7 +31,6 @@ use super::support::{
 use super::{render_container_report, RunnerError};
 use crate::runner::command_context::resolve_active_command_context;
 use crate::runner::container_runtime::CONTAINER_HANDOFF_ENV_ASSIGNMENT;
-use crate::runner::container_runtime_prep::ensure_primary_service_exec_ready_for_runtime;
 use crate::runner::environment;
 use crate::runner::exec_command::{
     append_color_exec_env, probe_container_capabilities, run_compose_exec_plan_with_options,
@@ -44,12 +43,11 @@ use effigy_containers::{
     effective_attach_mode,
     exec::{
         colima_profile_warnings, ensure_runtime_backend_running, inspect_colima_ssh_agent_socket,
-        parse_compose_step_event, recover_exited_owned_compose_services,
-        run_compose_invocation_streaming_with_env,
+        parse_compose_step_event, run_compose_invocation_streaming_with_env,
         shutdown_container as shutdown_container_via_exec, SshAgentSocketHealth,
     },
-    load_container_exec_working_dir, load_container_policy, load_container_policy_for_creation,
-    up_detached_report, validate_compose_backend_runtime, validate_container_policy,
+    load_container_policy, load_container_policy_for_creation, up_detached_report,
+    validate_compose_backend_runtime, validate_container_policy,
     workspace_extra_mount_decision_lines, EffectiveAttachMode, EffectiveContainerPolicy,
     WorkspaceExtraMountDecision,
 };
@@ -327,11 +325,7 @@ fn run_container_up_inner(
                 return Err(BackendError::Uncertain(message));
             }
         }
-        // Owned services that exited start again inside the same journalled
-        // activation; nothing restarts a running service.
-        recover_exited_owned_compose_services(repo_root, &plan.policy)
-            .map(|recovery| emit_warning_lines(&recovery.warnings))
-            .map_err(|error| BackendError::Uncertain(error.to_string()))
+        Ok(())
     });
     let bring_up = match reconciled {
         Ok(bring_up) => bring_up,
@@ -625,18 +619,11 @@ fn complete_container_up_runtime_integrations(
     plan: &ContainerUpPlan,
 ) -> Result<ContainerUpRuntimeIntegrations, RunnerError> {
     let policy = &plan.policy;
-    let working_dir = load_container_exec_working_dir(repo_root, Some(policy.name.as_str()))
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    let exec_ready = if plan.attach_mode == EffectiveAttachMode::Detached {
-        crate::runner::container_runtime_prep::verify_primary_service_exec_ready_for_reconciliation(
-            repo_root,
-            policy,
-            &working_dir,
-        )
-    } else {
-        ensure_primary_service_exec_ready_for_runtime(repo_root, policy, &working_dir)
-    };
-    let binding = match exec_ready {
+    // Readiness is Running plus the service's own health check, decided by the
+    // bring-up wait. This only proves the binding the later stages target.
+    let binding = match crate::runner::container_runtime_prep::ensure_primary_service_binding(
+        repo_root, policy,
+    ) {
         Ok(binding) => binding,
         Err(error) => {
             if plan.attach_mode == EffectiveAttachMode::Detached {
@@ -2694,6 +2681,146 @@ catalog = "postgres"
                 .iter()
                 .any(|line| line.contains(" down")),
             "the cleanup stopped the stack: {log}"
+        );
+    }
+
+    const BINDING_ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    /// A fake runtime that lists one running owned service. `ps` reports the
+    /// row, `inspect` returns that container's identity, and `exec` fails the
+    /// way docker does for a `working_dir` the image does not have.
+    struct UpBindingFixture {
+        _temp: tempfile::TempDir,
+        repo_root: PathBuf,
+        parent: PathBuf,
+        project: String,
+        _env: crate::contract_test_support::EnvGuard,
+    }
+
+    impl UpBindingFixture {
+        fn new() -> Self {
+            use std::os::unix::fs::PermissionsExt;
+
+            let temp = tempfile::tempdir().expect("temporary fixture root");
+            let parent = temp.path().to_path_buf();
+            let repo_root = parent.join("repo");
+            fs::create_dir_all(&repo_root).expect("mkdir repo");
+            fs::write(
+                repo_root.join("effigy.toml"),
+                r#"
+[containers]
+default = "dev"
+
+[containers.dev]
+compose_file = "docker-compose.yml"
+primary_service = "app"
+project_name = "up-binding-fixture"
+"#,
+            )
+            .expect("write manifest");
+            fs::write(
+                repo_root.join("docker-compose.yml"),
+                "services:\n  app:\n    image: example:one\n    working_dir: /workspace-root/app\n",
+            )
+            .expect("write compose");
+
+            let bin = parent.join("bin");
+            fs::create_dir_all(&bin).expect("mkdir bin");
+            let docker = bin.join("docker");
+            fs::write(
+                &docker,
+                r#"#!/bin/sh
+printf '%s\n' "$*" >> "$EFFIGY_TEST_DOCKER_LOG"
+for arg in "$@"; do
+  if [ "$arg" = "--format" ]; then
+    printf '%s\tUp 1 minute\t\t%s\t%s\tapp\tFalse\n' "$EFFIGY_TEST_CONTAINER" "$EFFIGY_TEST_PROJECT" "$EFFIGY_TEST_WORKDIR"
+    exit 0
+  fi
+done
+case "$1" in
+  inspect)
+    printf '[{"Id":"%s","Name":"/%s","State":{"Status":"running","Running":true,"ExitCode":0},"Config":{"Labels":{"com.docker.compose.project":"%s","com.docker.compose.service":"app","com.docker.compose.oneoff":"False","com.docker.compose.project.working_dir":"%s"}},"Mounts":[],"NetworkSettings":{"Ports":{"80/tcp":[{"HostIp":"127.0.0.1","HostPort":"18080"}]}}}]\n' "$EFFIGY_TEST_ID" "$EFFIGY_TEST_CONTAINER" "$EFFIGY_TEST_PROJECT" "$EFFIGY_TEST_WORKDIR"
+    exit 0
+    ;;
+  exec)
+    echo 'OCI runtime exec failed: exec: "/workspace-root/app": stat /workspace-root/app: no such file or directory: unknown' >&2
+    exit 126
+    ;;
+esac
+exit 0
+"#,
+            )
+            .expect("write fake docker");
+            let mut perms = fs::metadata(&docker)
+                .expect("stat fake docker")
+                .permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&docker, perms).expect("chmod fake docker");
+            let colima = bin.join("colima");
+            fs::write(&colima, "#!/bin/sh\nexit 0\n").expect("write fake colima");
+            let mut perms = fs::metadata(&colima)
+                .expect("stat fake colima")
+                .permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&colima, perms).expect("chmod fake colima");
+
+            let home = parent.join("home");
+            fs::create_dir_all(&home).expect("mkdir fake home");
+            let env = crate::contract_test_support::EnvGuard::set_many(&[
+                ("PATH", Some(bin.display().to_string())),
+                ("HOME", Some(home.display().to_string())),
+                ("DOCKER_HOST", Some("tcp://127.0.0.1:1".to_owned())),
+                ("EFFIGY_COMPOSE_BACKEND", Some("docker".to_owned())),
+                (
+                    "EFFIGY_TEST_DOCKER_LOG",
+                    Some(parent.join("docker.log").display().to_string()),
+                ),
+                ("EFFIGY_TEST_ID", Some(BINDING_ID.to_owned())),
+                (
+                    "EFFIGY_TEST_CONTAINER",
+                    Some("up-binding-fixture-app-1".to_owned()),
+                ),
+                ("EFFIGY_TEST_PROJECT", Some("up-binding-fixture".to_owned())),
+                ("EFFIGY_TEST_WORKDIR", Some(repo_root.display().to_string())),
+            ]);
+            UpBindingFixture {
+                _temp: temp,
+                repo_root,
+                parent,
+                project: "up-binding-fixture".to_owned(),
+                _env: env,
+            }
+        }
+
+        fn policy(&self) -> EffectiveContainerPolicy {
+            load_container_policy(&self.repo_root, None).expect("fixture policy")
+        }
+
+        fn docker_log(&self) -> String {
+            fs::read_to_string(self.parent.join("docker.log")).unwrap_or_default()
+        }
+    }
+
+    /// `up` no longer probes exec readiness, so a `working_dir` the image does
+    /// not have is not a bring-up failure: the owned binding is proved from the
+    /// running inventory, and a user's own `effigy exec` reports its own error.
+    #[test]
+    fn container_up_binding_check_does_not_depend_on_the_image_working_dir() {
+        let fixture = UpBindingFixture::new();
+        let policy = fixture.policy();
+        assert_eq!(policy.project_name, fixture.project);
+
+        let binding = crate::runner::container_runtime_prep::ensure_primary_service_binding(
+            &fixture.repo_root,
+            &policy,
+        )
+        .expect("a missing image working_dir does not fail up");
+
+        assert_eq!(binding.id(), BINDING_ID);
+        let log = fixture.docker_log();
+        assert!(
+            !log.lines().any(|line| line.starts_with("exec ")),
+            "up runs no exec readiness probe: {log}"
         );
     }
 }

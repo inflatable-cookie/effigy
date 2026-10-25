@@ -2860,8 +2860,7 @@ names `after = ["environment"]` / `depends_on`
 Adopted by effigy#232 ([053](053-environment-reconciler-contract.md)): the
 admission record, the lifecycle markers and lease, the reaper, admission
 hashing (kept only for the importer's adoption check), recreation under a
-permit, the exec-probe restart (a repair transition, refused while held), the
-per-environment reset and failed-run recovery. The backend record is #230's
+permit, the per-environment reset and failed-run recovery. The backend record is #230's
 (below); the reconciler reads it and targets every transition at it. The
 allocator, runtime-scope and Colima-repair rows remain current behavior.
 

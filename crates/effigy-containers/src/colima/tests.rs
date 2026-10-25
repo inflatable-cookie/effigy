@@ -455,12 +455,11 @@ fn managed_profile_notices_name_the_profile_and_what_a_deletion_lost() {
         "{started}"
     );
 
-    let drift = ManagedColimaProfileDrift::SshAgentForwardingDisabled.restart_notice("effigy");
-    assert!(
-        drift.contains("restarting Colima profile `effigy`"),
-        "{drift}"
-    );
+    let drift = ManagedColimaProfileDrift::SshAgentForwardingDisabled.warning("effigy");
+    assert!(drift.contains("Colima profile `effigy`"), "{drift}");
     assert!(drift.contains("SSH agent forwarding"), "{drift}");
+    assert!(drift.contains("`colima restart effigy`"), "{drift}");
+    assert!(drift.contains("did not restart"), "{drift}");
 }
 
 #[test]

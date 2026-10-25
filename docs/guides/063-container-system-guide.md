@@ -294,7 +294,6 @@ This task pins the drift path end to end:
 
 - status reporting exposes `primary_service_exec_ready`
 - runtime status warning text stays stable
-- runner recovery for a non-exec-ready primary service still works
 
 ```sh
 effigy qa:architecture:container-exec-readiness
@@ -926,11 +925,9 @@ Use this with `effigy.local.toml` for per-machine mounts.
    reports it; only if that fails does it repair the profile once by
    restarting it
 2. bring the compose environment up
-3. inspect owned Compose projects including stopped containers and `start`
-   currently declared services that are still `Exited` or `Created`; this
-   skips one-off `compose run` containers and undeclared orphans, keeps
-   volumes, including Postgres crash-recovery data, and does not delete
-   systemd units
+3. prove the owned binding of the primary service; readiness is every
+   service Running with its own health check healthy, and the runtime restarts
+   a stopped service because the render asks it to (`restart: unless-stopped`)
 4. wait for declared environment readiness when present
 5. wait for each declared gateway service port to appear on the matching
    Compose project before registering its route
@@ -947,36 +944,13 @@ way — every check reporting `command not found`, for example — is diagnosed
 after a few observations rather than waited out. `container status` shows an
 unhealthy service's last check output next to its status. An environment that
 declares `[containers.<name>.health]` keeps that check as its final gate.
-A stopped Compose service is reported with its exit status. Effigy
-never starts a container that is already running or that the backend is
-still acting on: immediately before each recovery start it inspects that one
-container and starts it only when the observation proves a stopped
-`created`, `exited` or `dead` container. After a Colima VM restart, a
-successful owned-container start that reports a nerdctl health-check timer
-collision records a warning. If start reports that collision but the
-container ends up running, Effigy records the collision line and continues
-to the normal readiness and health wait, which proves or fails health
-itself; it is not reported as stale backend state. If the container stays
-Exited with that collision, Effigy inspects the full container ID and, when
-the unit pair is an exact-owned transient health-check timer/service in the selected
-profile, stops `{id}.timer`, `reset-failed` `{id}.service`/`{id}.timer`,
-retries start once, and proves readiness by inspect. Persistent, foreign,
-one-off, running, or unverified units are left alone; the error then names
-the inspected identity, the refusal reason, and
-`colima nerdctl --profile <profile> -- start <container>`.
+A stopped Compose service is reported with its exit status.
 `container status` lists stopped owned services instead of omitting them.
-If the same-ID start still fails with a timer collision, Effigy refuses
-service-only recreation. The current recovery interface reads inspect mount
-references, but has no immutable declaration-to-mount association, exclusive
-volume/data ownership proof, or supported backend preservation plan. Those
-references cannot establish that recreation will retain data, including
-anonymous, shared, unknown or changed mount associations. No container is
-recreated and no volume is removed. `effigy container retire --yes
-effigy container retire --dead --yes` removes
-owned mutable volumes; it is not restart recovery. The refusal is exercised
-through private fake command transports with file preservation markers; this
-does not qualify a real Linux/containerd health timer or a live exec session.
-Gateway registration keeps the project, service, published-port and host-listener
+Effigy never hand-starts a stopped service and never stops or mutates
+nerdctl's health-check units: the render's `restart: unless-stopped` is the
+restart path, and `effigy container retire --yes` / `effigy container retire
+--dead --yes` removes owned mutable volumes only when asked; it is not restart
+recovery. Gateway registration keeps the project, service, published-port and host-listener
 ownership checks, and does not claim a route while its declared runtime
 binding is missing.
 
@@ -1001,7 +975,7 @@ JSON failure details expose `state` (`unavailable`),
 `phase = "detached_activation"`, unverified readiness/exposure and supported
 recovery/stop commands. `activation_stage` uses the closed vocabulary
 `preparation`, `environment_handover`, `compose_activation`,
-`stopped_service_recovery`, `readiness`, `runtime_integrations`, or
+`readiness`, `runtime_integrations`, or
 `persistent_owner`, `identity` names the environment and checkout, and `cause`
 carries the sanitized underlying refusal (secret-shaped values redacted,
 bounded). Manifest-declared detached mode
@@ -1229,7 +1203,7 @@ current ownership and access because nested paths can change externally and
 there is no exact invalidation proof for a cached result.
 
 `container up` runs the same workspace permission preparation as an
-integration stage once exec readiness is verified, before secrets,
+integration stage once the owned binding is verified, before secrets,
 gateway exposure, and readiness reporting. `up` is the one stage every
 first creation, reuse, and handover passes through, while managed children
 and `container shell` enter through exec without their own preparation —
@@ -1714,63 +1688,39 @@ profile — both naming the `colima restart <profile>` remediation.
 ## Troubleshooting: services stay Exited after Colima restart
 
 Symptom: after the Colima VM restarts, Postgres or MySQL may stay `Exited`
-while `nerdctl compose up` returns success. Manual `nerdctl start` works and
-may log `Unit <id>.timer was already loaded or has a fragment file`.
+while `nerdctl compose up` returns success.
 
-Cause: `nerdctl compose up` can succeed without starting persisted
-containers. nerdctl health-check systemd timers are named after the full
-container id (`{id}.timer` / `{id}.service`); leftover transient units
-produce that warning. The warning is a nerdctl defect, not proof that
-Effigy owns those units.
+Cause: a Compose service with no restart policy is never restarted by the
+runtime. Effigy renders `restart: unless-stopped` on every service that does
+not declare its own policy, so a service whose stack was rendered by a current
+Effigy comes back by itself after a VM restart, a Colima restart or a crash.
+A service that declares `restart: "no"`, or a stack rendered by an older
+Effigy, keeps the policy it has.
 
-Fix: re-run `effigy container up`. Effigy starts only currently declared
-Exited/Created services (Compose project label match), skips one-off
-`compose run` containers and undeclared orphans, keeps volumes, and does
-not delete systemd units. Before each start it inspects that one container
-and starts it only when the observation proves it is stopped; a running or
-in-flight container is left to the readiness wait, so a container Compose
-already started is never started again. When a stopped owned Colima
-container hits that collision, Effigy inspects the full hexadecimal ID and
-recovers only an exact-owned transient unit pair in the selected profile
-(`systemctl stop` of `{id}.timer`, then `reset-failed` of
-`{id}.service`/`{id}.timer`). After that stop/reset it verifies with short
-bounded re-probes that both units actually unloaded; a
-stopped-but-still-loaded pair fails with its load/fragment state rather
-than claiming recovery. A start that reports the collision while the
-container ends up running is recorded as a warning and the service goes on
-to the normal readiness and health wait, which proves or fails its health
-check; the warning names the exact inspect command. A service that stays
-stopped gets one retry after that exact-owned unit recovery. Effigy does
-not recover running, foreign, one-off, undeclared, persistent, or
-unverified units, and it does not change Docker start. Inspect and start
-are bounded; a hung nerdctl command still names
-the last observed status. Start exit 0 is not readiness: if the service
-stays stopped, the error keeps the start backend text (including a
-stale-timer warning or the refusal diagnostic) and names:
+Fix: run `effigy container up`. The render now carries the policy, and the
+runtime restarts the service. Effigy starts no container by hand, and it issues
+no `systemctl` command on nerdctl's health-check units. If a service stays
+stopped, the error is the readiness failure that names the service and its own
+health check; diagnose it with:
 
 ```bash
-colima nerdctl --profile <profile> -- start <container>
+effigy container status                 # live row, including stopped services
+effigy container logs --service <name>
 ```
-
-When automatic recovery is refused, that error also names the inspected
-id/status/project/service and the exact `colima ssh --profile <profile>`
-`systemctl show` commands for `{id}.timer` and `{id}.service`.
 
 `effigy container status` shows the live `Exited` row rather than an empty
 or assumed-running service list.
 
 Under host saturation Effigy distinguishes the machine from the service: an
-owned inspect that times out is retried with the same bound (at most twice)
-and a saturated host opens the first exec-readiness window from two to fifteen
-seconds once before any restart, so a healthy service the host never let
-answer is not restarted. When a bounded call still cannot answer, the error
-names the observed host load (`load average 40.00 over 18 CPU(s)`) and says the
-service's state is unproven instead of blaming it. `Exited (141)` is reported
-as SIGPIPE — a closed stdout/stderr pipe — not as a health verdict; read the
-service log for the writer that closed. Detached `container up` writes backend
-output to one retained file, so Effigy holds no pipe a service could lose, and
-the original nerdctl reader was never identified. Let the host quiesce and retry
-once rather than widening timeouts or recreating the stack.
+owned inspect that times out while the host is saturated is retried with the
+same bound. When a bounded call still cannot answer, the error names the
+observed host load (`load average 40.00 over 18 CPU(s)`) and says the service's
+state is unproven instead of blaming it. `Exited (141)` is reported as SIGPIPE —
+a closed stdout/stderr pipe — not as a health verdict; read the service log for
+the writer that closed. Detached `container up` writes backend output to one
+retained file, so Effigy holds no pipe a service could lose, and the original
+nerdctl reader was never identified. Let the host quiesce and retry once rather
+than widening timeouts or recreating the stack.
 
 ## Troubleshooting: host `docker` cannot see a Colima container
 
@@ -1832,30 +1782,21 @@ ships: Colima 0.10.3 ships nerdctl 2.3.1, so check it with
 `colima ssh --profile <profile> -- nerdctl --version` and upgrade Colima (or
 the VM's nerdctl) for the fix.
 
-Effigy reports and repairs it:
+Effigy prunes it:
 
 ```bash
-effigy doctor                            # /run inode use and pid-file counts per running profile
 effigy container profile prune-health-pid-files --profile effigy
 ```
 
-`effigy doctor` prints an evidence line for every running profile
-(`colima-profile `effigy` /run: 270087/819200 inodes used (32%), 269082
-health-check pid file(s) (268182 older than 10m)`) and warns once inode use
-reaches 80% or 10,000 stale files accumulate. `container up` and a task that
-starts an environment run the same bounded prune automatically and say nothing
-about it in a normal run: it is Effigy's
-own housekeeping in a VM tmpfs, and Colima 0.10.3 ships nerdctl 2.3.1, so a
-routine nerdctl upgrade note is advice the reader cannot act on. An activation
-prints the doctor warning only when `/run` inode use is at the doctor
-threshold, and names the prune failure if the prune itself could not run. The
-counts and the upgrade note stay in `effigy doctor` and in the explicit prune
-command. No command that does not touch containers runs the prune. The prune removes only files whose name matches
-exactly `health-check-*.pid`, that sit directly inside a containerd runtime-v2
-task directory, and that are older than ten minutes; a younger file may belong
-to a check still in flight, so it is kept. Nothing else under `/run` is read or
-removed. The command reports the counts and `/run` inode use before and after,
-and `--json` emits `effigy.container.profile-prune-health-pid-files.v1`.
+`container up` and a task that starts an environment run the same bounded prune
+automatically and say nothing about it in a normal run; a prune that could not
+run warns once. No other command runs the prune. The prune removes only files
+whose name matches exactly `health-check-*.pid`, that sit directly inside a
+containerd runtime-v2 task directory, and that are older than ten minutes; a
+younger file may belong to a check still in flight, so it is kept. Nothing else
+under `/run` is read or removed. The command reports the counts before and
+after, and `--json` emits `effigy.container.profile-prune-health-pid-files.v1`
+with those counts.
 
 Do not delete other files under `/run/containerd/io.containerd.runtime.v2.task`
 or remove a container's task directory: those belong to the runtime, not to
@@ -1921,14 +1862,15 @@ and any other profile a container declaration names. The helper:
 - creates the profile when `colima list` does not have it, and says so in one
   line (`creating Colima profile ... (first use, or it was deleted)`);
 - starts it with the managed arguments when it is stopped;
-- restarts it when a required managed setting drifted, for example a profile
-  started outside Effigy with `forwardAgent: false`, and says which setting it
-  repaired;
+- never stops or restarts a *running* profile: other checkouts' stacks share
+  it. When a required managed setting drifted, for example a profile started
+  outside Effigy with `forwardAgent: false`, it writes Effigy's managed settings
+  and warns with the deliberate command `colima restart <profile>`;
 - names what the deletion lost after it recreates the profile: that profile's
   containers, images and volumes are gone, and Effigy rebuilds the containers
   the run needs.
 
-Creation and restart never delete the profile itself. `effigy container profile
+Creation never deletes the profile itself. `effigy container profile
 purge --yes` remains the explicit way to remove one and keep it removed until
 something needs it again.
 

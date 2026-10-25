@@ -1,26 +1,21 @@
 use super::{
     activate_container_runtime_plan_for_task_using, candidate_host_mount_paths,
-    ensure_exec_container_running_with, ensure_primary_service_exec_ready_with_recovery_and_load,
-    ensure_primary_service_exec_ready_with_recovery_using,
-    ensure_runtime_exec_readiness_stage_using, ensure_runtime_gateway_readiness_stage_using,
-    ensure_runtime_running_stage, parse_bind_mount_host_path, prepare_host_bind_mount_dirs,
-    prepare_runtime_mounts_stage, readiness_attempt_open, readiness_retry_window,
+    ensure_exec_container_running_with, ensure_runtime_exec_readiness_stage_using,
+    ensure_runtime_gateway_readiness_stage_using, ensure_runtime_running_stage,
+    parse_bind_mount_host_path, prepare_host_bind_mount_dirs, prepare_runtime_mounts_stage,
     reconcile_runtime_aliases_stage_using, refresh_changed_cargo_inputs_using,
-    restart_primary_service_using, run_runtime_compose_up_stage, run_runtime_prep_steps,
-    runtime_activation_plan_from_request, runtime_activation_report_for_result,
-    service_depends_on_primary, validate_policy_runtime, validate_runtime_activation_stage,
-    verify_live_checkout_mount_using, ActivationRequest,
+    run_runtime_compose_up_stage, run_runtime_prep_steps, runtime_activation_plan_from_request,
+    runtime_activation_report_for_result, validate_policy_runtime,
+    validate_runtime_activation_stage, verify_live_checkout_mount_using, ActivationRequest,
 };
 use crate::runner::error::RunnerError;
 use crate::runner::runtime_session_context::{LeaseRefreshPolicy, RuntimeSessionContext};
-use effigy_containers::host_load::HostLoad;
 use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy, EffectiveDnsRoute};
 use effigy_runtime_plan::{
     RuntimeActivationRoute, RuntimeActivationStage, RuntimeCleanupResult, RuntimeLeasePolicy,
 };
 use std::ffi::OsString;
 use std::fs;
-use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -486,33 +481,27 @@ fn runtime_compose_up_stage_propagates_a_compose_failure() {
 }
 
 #[test]
-fn runtime_exec_readiness_stage_preserves_exec_not_ready_error() {
+fn runtime_readiness_stage_only_proves_the_owned_binding() {
     let repo_root = Path::new("/tmp/demo-repo");
     let policy = test_policy(PathBuf::from("docker-compose.yml"));
-    let working_dir = Path::new("/workspace-root/demo");
-    let calls = Arc::new(Mutex::new(Vec::<(PathBuf, String, PathBuf)>::new()));
+    let calls = Arc::new(Mutex::new(Vec::<(PathBuf, String)>::new()));
 
-    let error = ensure_runtime_exec_readiness_stage_using(repo_root, &policy, working_dir, {
+    let error = ensure_runtime_exec_readiness_stage_using(repo_root, &policy, {
         let calls = Arc::clone(&calls);
-        move |repo_root, policy, working_dir| {
-            calls.lock().expect("calls lock").push((
-                repo_root.to_path_buf(),
-                policy.name.clone(),
-                working_dir.to_path_buf(),
-            ));
-            Err(RunnerError::task_invocation("exec readiness failed"))
+        move |repo_root, policy| {
+            calls
+                .lock()
+                .expect("calls lock")
+                .push((repo_root.to_path_buf(), policy.name.clone()));
+            Err(RunnerError::task_invocation("binding unavailable"))
         }
     })
-    .expect_err("readiness should fail");
+    .expect_err("an unowned binding should fail");
 
-    assert_eq!(error.to_string(), "exec readiness failed");
+    assert_eq!(error.to_string(), "binding unavailable");
     assert_eq!(
         *calls.lock().expect("calls lock"),
-        vec![(
-            repo_root.to_path_buf(),
-            "web".to_owned(),
-            working_dir.to_path_buf(),
-        )]
+        vec![(repo_root.to_path_buf(), "web".to_owned())]
     );
 }
 
@@ -751,392 +740,6 @@ fn runtime_prep_surfaces_alias_reconciliation_failure_after_exec_recovery() {
             "compose-up",
             "exec-ready",
             "reconcile-aliases"
-        ]
-    );
-}
-
-#[test]
-fn exec_readiness_recovery_retry_window_gates_every_new_attempt() {
-    use std::time::Instant;
-    let now = Instant::now();
-    let retry_until = now + Duration::from_secs(2);
-    assert!(readiness_attempt_open(now, retry_until, None));
-    // A short first attempt that ends before the window but whose 250ms sleep
-    // lands past it must not spawn another attempt.
-    assert!(!readiness_attempt_open(
-        now + Duration::from_millis(2212),
-        retry_until,
-        None
-    ));
-    assert!(!readiness_attempt_open(retry_until, retry_until, None));
-    // A caller absolute deadline still refuses at or past it.
-    let hard_deadline = now + Duration::from_secs(1);
-    assert!(readiness_attempt_open(
-        now,
-        retry_until,
-        Some(hard_deadline)
-    ));
-    assert!(!readiness_attempt_open(
-        hard_deadline,
-        retry_until,
-        Some(hard_deadline)
-    ));
-}
-
-#[test]
-fn exec_readiness_recovery_restarts_once_then_accepts_longer_probe_window() {
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
-    let working_dir = Path::new("/workspace-root/demo");
-    let probes = Arc::new(Mutex::new(Vec::<Duration>::new()));
-    let restarted = Arc::new(Mutex::new(0usize));
-
-    ensure_primary_service_exec_ready_with_recovery_using(
-        &policy,
-        working_dir,
-        {
-            let probes = Arc::clone(&probes);
-            move |timeout| {
-                probes.lock().expect("probes lock").push(timeout);
-                Ok((timeout == Duration::from_secs(15)).then_some(()))
-            }
-        },
-        {
-            let restarted = Arc::clone(&restarted);
-            move || {
-                *restarted.lock().expect("restart lock") += 1;
-                Ok(())
-            }
-        },
-        None,
-    )
-    .expect("recovery should succeed after restart");
-
-    assert_eq!(
-        *probes.lock().expect("probes lock"),
-        vec![Duration::from_secs(2), Duration::from_secs(15)]
-    );
-    assert_eq!(*restarted.lock().expect("restart lock"), 1);
-}
-
-#[test]
-fn a_saturated_host_opens_the_first_readiness_window_once() {
-    let idle = HostLoad::measured(2.0, 18).expect("idle observation");
-    let saturated = HostLoad::measured(40.0, 18).expect("saturated observation");
-
-    assert_eq!(
-        readiness_retry_window(Duration::from_secs(2), Some(idle)),
-        Duration::from_secs(2)
-    );
-    assert_eq!(
-        readiness_retry_window(Duration::from_secs(2), Some(saturated)),
-        Duration::from_secs(15)
-    );
-    assert_eq!(
-        readiness_retry_window(Duration::from_secs(2), None),
-        Duration::from_secs(2),
-        "an unobserved host keeps the base window"
-    );
-    assert_eq!(
-        readiness_retry_window(Duration::from_secs(30), Some(saturated)),
-        Duration::from_secs(30),
-        "an already-longer window is never shortened"
-    );
-}
-
-#[test]
-fn a_saturated_host_retries_readiness_once_before_any_restart() {
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
-    let working_dir = Path::new("/workspace-root/demo");
-    let probes = Arc::new(Mutex::new(Vec::<Duration>::new()));
-    let restarted = Arc::new(Mutex::new(0usize));
-    let saturated = HostLoad::measured(40.0, 18).expect("saturated observation");
-
-    ensure_primary_service_exec_ready_with_recovery_and_load(
-        &policy,
-        working_dir,
-        {
-            let probes = Arc::clone(&probes);
-            move |window| {
-                probes.lock().expect("probes lock").push(window);
-                Ok((window == Duration::from_secs(15)).then_some(()))
-            }
-        },
-        {
-            let restarted = Arc::clone(&restarted);
-            move || {
-                *restarted.lock().expect("restart lock") += 1;
-                Ok(())
-            }
-        },
-        None,
-        Some(saturated),
-    )
-    .expect("the bounded second attempt proves readiness");
-
-    assert_eq!(
-        *probes.lock().expect("probes lock"),
-        vec![Duration::from_secs(15)],
-        "a saturated host gets the longer first window, not a restart"
-    );
-    assert_eq!(
-        *restarted.lock().expect("restart lock"),
-        0,
-        "a service the host never let answer is not restarted"
-    );
-}
-
-#[test]
-fn a_saturated_host_that_never_answers_names_the_host_not_only_the_service() {
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
-    let working_dir = Path::new("/workspace-root/demo");
-    let saturated = HostLoad::measured(40.0, 18).expect("saturated observation");
-
-    let error = ensure_primary_service_exec_ready_with_recovery_and_load(
-        &policy,
-        working_dir,
-        |_window| Ok(None::<()>),
-        || Ok(()),
-        None,
-        Some(saturated),
-    )
-    .expect_err("no probe answers");
-
-    let rendered = error.to_string();
-    assert!(rendered.contains("is not exec-ready"), "got: {rendered}");
-    assert!(
-        rendered.contains("the host was overloaded (load average 40.00 over 18 CPU(s))"),
-        "got: {rendered}"
-    );
-    assert!(rendered.contains("health is unproven"), "got: {rendered}");
-}
-
-#[test]
-fn exec_readiness_recovery_fails_when_probe_never_recovers() {
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
-    let working_dir = Path::new("/workspace-root/demo");
-    let restarted = Arc::new(Mutex::new(0usize));
-
-    let error = ensure_primary_service_exec_ready_with_recovery_using(
-        &policy,
-        working_dir,
-        |_timeout| Ok(None::<()>),
-        {
-            let restarted = Arc::clone(&restarted);
-            move || {
-                *restarted.lock().expect("restart lock") += 1;
-                Ok(())
-            }
-        },
-        None,
-    )
-    .expect_err("recovery should fail when probe never succeeds");
-
-    assert!(
-        matches!(error, RunnerError::ContainerRuntimeExecNotReady { .. }),
-        "expected typed exec-ready error, got {error}"
-    );
-    assert_eq!(*restarted.lock().expect("restart lock"), 1);
-}
-
-/// A live managed run bound to this environment is exec'ing into the primary
-/// service. The exec-readiness recovery must never restart that service: a
-/// restart would SIGKILL the run's remote processes (the mass exit-137
-/// signature). The recovery keeps probing with the post-restart window and
-/// then refuses, naming the live run, without mutating anything.
-#[test]
-fn exec_readiness_recovery_refuses_restart_while_live_managed_run_execs() {
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
-    let working_dir = Path::new("/workspace-root/demo");
-    let probes = Arc::new(Mutex::new(Vec::<Duration>::new()));
-    let restarted = Arc::new(Mutex::new(0usize));
-
-    let error = ensure_primary_service_exec_ready_with_recovery_using(
-        &policy,
-        working_dir,
-        {
-            let probes = Arc::clone(&probes);
-            move |timeout| {
-                probes.lock().expect("probes lock").push(timeout);
-                Ok(None::<()>)
-            }
-        },
-        {
-            let restarted = Arc::clone(&restarted);
-            move || {
-                *restarted.lock().expect("restart lock") += 1;
-                Ok(())
-            }
-        },
-        Some(
-            "live managed run(s) of this checkout are exec'ing into environment `demo`: `serve` (profile `default`, owner pid 4242)"
-                .to_owned(),
-        ),
-    )
-    .expect_err("recovery must refuse the restart for a live managed run");
-
-    let rendered = error.to_string();
-    assert_eq!(
-        *restarted.lock().expect("restart lock"),
-        0,
-        "no restart may run under a live managed run's execs"
-    );
-    assert!(
-        rendered.contains("recovery restart was refused"),
-        "got: {rendered}"
-    );
-    assert!(rendered.contains("owner pid 4242"), "got: {rendered}");
-    assert_eq!(
-        *probes.lock().expect("probes lock"),
-        vec![Duration::from_secs(2), Duration::from_secs(15)],
-        "the longer observation window replaces the restart"
-    );
-}
-
-/// A live-run note does not turn a healthy service into a refusal: the
-/// longer probe succeeds without any restart.
-#[test]
-fn exec_readiness_recovery_with_live_run_still_accepts_late_readiness() {
-    let policy = test_policy(PathBuf::from("docker-compose.yml"));
-    let working_dir = Path::new("/workspace-root/demo");
-    let probes = Arc::new(Mutex::new(Vec::<Duration>::new()));
-    let restarted = Arc::new(Mutex::new(0usize));
-
-    ensure_primary_service_exec_ready_with_recovery_using(
-        &policy,
-        working_dir,
-        {
-            let probes = Arc::clone(&probes);
-            move |timeout| {
-                probes.lock().expect("probes lock").push(timeout);
-                Ok((timeout == Duration::from_secs(15)).then_some(()))
-            }
-        },
-        {
-            let restarted = Arc::clone(&restarted);
-            move || {
-                *restarted.lock().expect("restart lock") += 1;
-                Ok(())
-            }
-        },
-        Some("live managed run(s) of this checkout are exec'ing into environment `demo`: `serve` (profile `default`, owner pid 4242)".to_owned()),
-    )
-    .expect("late readiness must still succeed without a restart");
-
-    assert_eq!(*restarted.lock().expect("restart lock"), 0);
-    assert_eq!(
-        *probes.lock().expect("probes lock"),
-        vec![Duration::from_secs(2), Duration::from_secs(15)]
-    );
-}
-
-#[test]
-fn service_dependency_check_supports_mapping_and_sequence_forms() {
-    let mapping: serde_yaml::Value = serde_yaml::from_str(
-        r#"
-depends_on:
-  app:
-    condition: service_started
-"#,
-    )
-    .expect("mapping yaml");
-    let sequence: serde_yaml::Value = serde_yaml::from_str(
-        r#"
-depends_on:
-  - app
-  - redis
-"#,
-    )
-    .expect("sequence yaml");
-
-    assert!(service_depends_on_primary(mapping.get("depends_on"), "app"));
-    assert!(service_depends_on_primary(
-        sequence.get("depends_on"),
-        "app"
-    ));
-    assert!(!service_depends_on_primary(
-        sequence.get("depends_on"),
-        "db"
-    ));
-}
-
-#[test]
-fn primary_restart_refreshes_dependent_services_after_primary() {
-    let repo_root = temp_test_dir("restart-primary-dependents");
-    let compose_file = repo_root.join("docker-compose.yml");
-    fs::write(
-        &compose_file,
-        r#"
-services:
-  app:
-    image: php
-  web:
-    image: nginx
-    depends_on:
-      app:
-        condition: service_started
-  worker:
-    image: busybox
-    depends_on:
-      - app
-  pma:
-    image: phpmyadmin
-    depends_on:
-      db:
-        condition: service_started
-"#,
-    )
-    .expect("write compose");
-    let policy = test_policy(compose_file);
-    let restarts = Arc::new(Mutex::new(Vec::<Vec<String>>::new()));
-
-    restart_primary_service_using(&repo_root, &policy, {
-        let restarts = Arc::clone(&restarts);
-        move |_repo_root, _policy, args, _label| {
-            restarts.lock().expect("restart log").push(
-                args.iter()
-                    .map(|value| value.to_string_lossy().into_owned())
-                    .collect(),
-            );
-            Ok(std::process::Output {
-                status: std::process::ExitStatus::from_raw(0),
-                stdout: Vec::new(),
-                stderr: Vec::new(),
-            })
-        }
-    })
-    .expect("restart should succeed");
-
-    let restarts = restarts.lock().expect("restart log");
-    assert_eq!(
-        *restarts,
-        vec![
-            vec![
-                "compose".to_owned(),
-                "-f".to_owned(),
-                repo_root.join("docker-compose.yml").display().to_string(),
-                "-p".to_owned(),
-                "demo-web".to_owned(),
-                "restart".to_owned(),
-                "app".to_owned(),
-            ],
-            vec![
-                "compose".to_owned(),
-                "-f".to_owned(),
-                repo_root.join("docker-compose.yml").display().to_string(),
-                "-p".to_owned(),
-                "demo-web".to_owned(),
-                "restart".to_owned(),
-                "web".to_owned(),
-            ],
-            vec![
-                "compose".to_owned(),
-                "-f".to_owned(),
-                repo_root.join("docker-compose.yml").display().to_string(),
-                "-p".to_owned(),
-                "demo-web".to_owned(),
-                "restart".to_owned(),
-                "worker".to_owned(),
-            ],
         ]
     );
 }

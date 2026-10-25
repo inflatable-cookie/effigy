@@ -7,6 +7,23 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- **The runtime restarts a stopped service.** Every rendered Compose service
+  without a `restart:` of its own now carries `restart: unless-stopped`, so a
+  service comes back by itself after a VM restart, a Colima restart or a crash.
+  A declared policy (`no`, `always`, `on-failure`, …) is kept. Effigy no longer
+  hand-starts exited containers by name and no longer runs `systemctl stop` /
+  `reset-failed` on nerdctl's health-check timer units
+  (`exec::restart_recovery`, `exec::healthcheck_timer`).
+- **Readiness is Running plus the service's own health check.** The
+  `exec -w <working_dir> true` readiness probe and the service restart it
+  triggered are gone, so `container up` no longer fails when the image does not
+  have the declared working directory; a user's own `effigy exec` reports its
+  own error. `RunnerError::ContainerRuntimeExecNotReady` is removed with it.
+- **A running Colima profile is never stopped or restarted.** When a running
+  profile lacks Effigy's managed settings (for example SSH agent forwarding),
+  Effigy writes the managed config and warns with the deliberate command
+  `colima restart <profile>`, because other checkouts' stacks share the VM.
+  Creating a missing profile and starting a stopped one are unchanged.
 - A gateway route is one claim: `domain -> (checkout path, target)`. The same
   checkout path always replaces its own route, covering a new run, a new
   generation and a container-to-listener handover. A different checkout takes
@@ -333,6 +350,15 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- The exec-ready probe and its recovery restart, restart recovery of exited
+  Compose services (`recover_exited_owned_compose_services`,
+  `OwnedServiceStartRecovery`), the nerdctl health-check timer/service surgery,
+  and the environment's `repair` transition that existed only for that restart.
+- `/run` inode-pressure parsing in `container up`, `effigy doctor` and
+  `effigy container profile prune-health-pid-files`. The bounded prune of stale
+  nerdctl `health-check-*.pid` files stays, on `container up` (silent, warns
+  only when it cannot run) and on the explicit command, which now reports the
+  before/after pid-file counts and no longer reports inode use.
 - The `<selector>:cargo` escape tasks (489 of them), the internal
   `effigy cargo` task and the `install:local:cargo` and
   `test:install:local:cargo` escapes. Every selector builds through

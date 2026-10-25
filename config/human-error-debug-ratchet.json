@@ -7,7 +7,6 @@
     "crates/effigy-builtin/src/init/wizard_test_support.rs": 1,
     "crates/effigy-containers/src/environment/hold.rs": 1,
     "crates/effigy-containers/src/environment/view.rs": 1,
-    "crates/effigy-containers/src/exec/healthcheck_timer.rs": 6,
     "crates/effigy-containers/src/exec/implementation.rs": 3,
     "crates/effigy-containers/src/exec/process.rs": 9,
     "crates/effigy-context/src/lib.rs": 1,

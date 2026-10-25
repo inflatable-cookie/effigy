@@ -2,7 +2,6 @@ mod colima_runtime;
 mod compose_progress;
 mod compose_steps;
 mod healthcheck_pidfiles;
-mod healthcheck_timer;
 mod implementation;
 mod managed_stop;
 mod mounts;
@@ -13,7 +12,6 @@ pub(crate) use participation::docker_config_current_context;
 #[path = "exec/exit141_tests.rs"]
 mod exit141_tests;
 mod process;
-mod restart_recovery;
 mod ssh_agent_preflight;
 
 pub use colima_runtime::{
@@ -28,10 +26,8 @@ pub use compose_progress::{
 };
 pub use compose_steps::{phase, ComposeSteps, TimedStep};
 pub use healthcheck_pidfiles::{
-    inspect_run_inode_pressure, parse_health_check_pidfile_prune, parse_run_inode_pressure,
-    prune_stale_health_check_pidfiles, HealthCheckPidFilePrune, RunInodePressure,
+    parse_health_check_pidfile_prune, prune_stale_health_check_pidfiles, HealthCheckPidFilePrune,
     HEALTHCHECK_PIDFILE_PATTERN, HEALTHCHECK_PIDFILE_STALE_MINUTES, HEALTHCHECK_TASK_ROOT,
-    RUN_INODE_PRESSURE_PERCENT, STALE_PIDFILE_WARNING_COUNT,
 };
 pub use implementation::{
     capture_compose_ps, capture_running_container_stats,
@@ -64,10 +60,6 @@ pub use parse::{
 pub use process::{
     no_containers_diagnostic, retained_backend_log_path, run_command_capture,
     run_command_capture_allow_failure, run_input_capture_until,
-};
-pub use restart_recovery::{
-    recover_exited_owned_compose_services, recover_exited_owned_compose_services_for_project,
-    OwnedServiceStartRecovery,
 };
 pub use ssh_agent_preflight::{
     inspect_colima_ssh_agent_socket, inspect_colima_ssh_agent_socket_for_profile,
