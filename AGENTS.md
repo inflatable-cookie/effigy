@@ -17,6 +17,7 @@ The plan (lanes, their documents and their order), leads, papercuts, brief draft
 - `rg` and the docs index (`docs/README.md`) for code and documentation understanding.
 - `effigy tasks` for selector inventory; `effigy doctor` for routing or health ambiguity.
 - `effigy test --plan` when test selection matters; narrow Effigy selectors for task validation.
+- Run individual tests with `effigy test:focused -- <nextest filter args>`. It goes through Oxide. Don't use `effigy test -- -E …` or raw `cargo` for that: they build with plain Cargo into `target`, which lands unmanaged in Oxide's outputs (Oxide Supervisor, at Tom's request, 2026-10-25).
 - Install this checkout's `effigy` with `effigy install:local`; it builds through `oxide build --bin effigy` (escape: `effigy install:local:cargo`). With no Effigy installed at all, `cargo run --bin effigy -- install:local` runs the same task without a prior install, and `cargo run --bin effigy -- <command>` runs a one-off.
 - The old `cargo qa`, `qa-docs`, `qa-json`, `qa-json-ci`, `qa-release` and `prepush-ci` aliases are gone: a Cargo alias either needs unsupported `!sh` syntax or makes plain Cargo compile Effigy's dependency graph first. Use the tasks they selected - `effigy qa:gates`, `effigy qa:docs`, `effigy qa:json`, `effigy qa:json:ci`, `effigy release gates`, `effigy prepush:ci`.
 
