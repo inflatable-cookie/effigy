@@ -169,8 +169,8 @@ impl SessionFixture {
         let workspace =
             effigy_test_support::Fixture::workspace(prefix).expect("private session fixture");
         let root = fs::canonicalize(workspace.path()).expect("canonical fixture root");
-        let home = effigy_test_support::Fixture::in_parent(home_prefix, Path::new("/tmp"))
-            .expect("short private home");
+        let home =
+            effigy_test_support::Fixture::short_home(home_prefix).expect("short private home");
         write_locked_fixture(&root);
         Self {
             _workspace: workspace,

@@ -99,10 +99,9 @@ struct World {
 }
 impl World {
     fn new() -> Self {
-        let dir = tempfile::Builder::new()
-            .prefix("kh-")
-            .tempdir_in(std::fs::canonicalize("/tmp").unwrap())
-            .unwrap();
+        // A short path: the run's control socket path is bounded (`sun_path`),
+        // and `[scratch]` puts the temp directory on a short volume path.
+        let dir = effigy_test_support::short_tempdir("kh-").unwrap();
         std::fs::create_dir(dir.path().join("h")).unwrap();
         std::fs::create_dir(dir.path().join("bin")).unwrap();
         Self { dir }

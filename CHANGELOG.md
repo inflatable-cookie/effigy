@@ -497,6 +497,29 @@ During v0.x, MINOR bumps may include breaking changes.
   `--run-id` run refuses the opt-in before the hook starts instead of
   reporting an incomplete custodian set. Contracts 049 and 052 §3.1 define
   the protocol, the coverage witness, and Tom's 2026-10-24 release ruling.
+- Host processes get resolved environment facts instead of a wrapper script
+  (effigy#321). A `[[containers.<env>.host_processes]]` `env` value may embed
+  `${...}` references to facts Effigy already resolved: a service's published
+  host and port (`${service.<name>.host}`, `${service.<name>.port}`), a
+  route's public origin (`${route.<domain>.public_url}`), another managed
+  listener's URLs (`${host_process.<name>.public_url}`,
+  `${host_process.<name>.internal_url}`), the declared domain set and its
+  shared apex (`${domains}`, `${apex}`), and the gateway's HTTPS port
+  (`${gateway.https_port}`). Names are validated when the container policy
+  loads, so a typo fails naming the `env` key and the valid names; values
+  resolve at start, after Prepare assigned published ports and after every
+  declared service reported ready. A listener process now receives its own
+  `EFFIGY_HOST_PROCESS_PUBLIC_URL`/`EFFIGY_HOST_PROCESS_INTERNAL_URL`, the
+  reserved address as `HOST`/`PORT` (replacing an ambient value; only a value
+  the manifest declares wins), and the active gateway's CA in
+  `EFFIGY_GATEWAY_CA_FILE`, with
+  `NODE_EXTRA_CA_CERTS` and `SSL_CERT_FILE` filled in only when the operator
+  has not set them. A `bind = "127.0.0.1:0"` listener gets a concrete port
+  reserved through the gateway endpoint store before launch: the port survives
+  supervisor restarts within the run and is released when the environment
+  settles, so a bundle needs no Python glue for ports, URLs or CA trust. A
+  bundle can therefore run its api, jobs, front and admin as declared host
+  processes.
 - Host processes are environment-owned kernel runs (effigy#320).
   `[[containers.<env>.host_processes]]` no longer start a `setsid` supervisor
   with PID and spec files and a blocking lifecycle lock. Each process is one
@@ -1367,6 +1390,27 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- An explicit `--json`, or the global `--json`, always emits the
+  `effigy.command.v1` envelope, wherever the invocation runs. A nested Effigy
+  invocation marked with `EFFIGY_INTERNAL_SUPPRESS_HEADER` used to print its
+  bare payload instead, and a host-process workload inherits that marker from
+  its supervisor: an Acowtancy host process ran
+  `effigy container hybrid hosts --json`, received
+  `effigy.container.hosts.v1`, and refused to start. The marker now suppresses
+  only the CLI header and the retired-config notice; the machine schema is the
+  same in a plain shell, a task, a managed run and a host process (effigy#330).
+- Test, selector and proof-script temp follows a configured `[scratch]` volume
+  (effigy#244) instead of landing on the internal disk. Every host-side
+  harness `mktemp` takes an explicit `${TMPDIR:-/tmp}/<name>.XXXXXX` template,
+  because macOS `mktemp -d` without one ignores `TMPDIR` and writes to
+  `/var/folders/.../T`; harnesses that need a short path for a Unix control
+  socket now take the run's temp directory when it fits and fall back to
+  `/tmp` only when it does not. `effigy qa:docs:mktemp`
+  (`scripts/check-mktemp.py`) fails a bare or `/tmp`-templated `mktemp` in
+  `config/`, `scripts/`, `tests/scripts/` and crate harness script
+  directories, with an annotated exemption for guest-side scripts, and
+  `docs/guides/069-workspace-host-integration.md` records what does and does
+  not follow the scratch directory.
 - A refused heavy run prints the admission hook's own reason and the next
   command. Human output lifted `cause`/`message` keys that the
   `effigy.admission.v1` details do not carry, so a deny, a hook crash and a

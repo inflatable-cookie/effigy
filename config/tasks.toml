@@ -852,6 +852,7 @@
   { id = "managed-host-listener-runner-registration", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(gateway_registration)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "managed-host-listener-proxy", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(proxy)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "managed-host-listener-supervisor", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "managed-host-listener-slow-service-health", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(container_up_waits_for_slow_service_health_before_host_processes)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { id = "managed-host-listener-gateway-transition", run = "sh scripts/oxide-selector.sh nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(socket_ownership::) | test(transition_lock::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { task = "test:gateway:route-handover" },
 ] }
@@ -1690,6 +1691,9 @@
 # The ratchet on Debug formatting in human-facing error construction: a rise
 # fails, and so does a fall that leaves the baseline stale.
 "qa:docs:human-error-debug" = { visibility = "internal", group = "Maintenance", run = "python3 scripts/check-human-error-debug.py" }
+# Every harness `mktemp` takes a `${TMPDIR:-/tmp}` template, so a run's scratch
+# on a configured `[scratch]` volume is where test temp actually lands.
+"qa:docs:mktemp" = { visibility = "internal", group = "Maintenance", run = "python3 scripts/check-mktemp.py" }
 
 # Human-facing feedback (effigy#312): the step-progress API, the human error
 # renderer and the kernel's readable refusals. Each covers the crate and test
@@ -1749,6 +1753,7 @@
   { task = "qa:docs:changelog" },
   { task = "qa:docs:cargo-routes" },
   { task = "qa:docs:human-error-debug" },
+  { task = "qa:docs:mktemp" },
 ] }
 
 # JSON contract QA
@@ -3017,6 +3022,7 @@ qa = { visibility = "public", group = "Validation", description = "Built-in test
   { id = "managed-host-listener-runner-registration", run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(gateway_registration)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "managed-host-listener-proxy", run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(proxy)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { id = "managed-host-listener-supervisor", run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --lib --filterset 'test(host_process)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
+  { id = "managed-host-listener-slow-service-health", run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy --test gateway_private --filterset 'test(container_up_waits_for_slow_service_health_before_host_processes)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail -j 1", timeout_ms = 600000 },
   { id = "managed-host-listener-gateway-transition", run = "env -u EFFIGY_PARENT_CAPABILITY cargo nextest run --config-file tests/config/managed-host-listeners-nextest.toml --user-config-file none -p effigy-gateway --lib --filterset 'test(socket_ownership::) | test(transition_lock::)' --no-capture --max-fail 1:immediate --retries 0 --no-tests fail", timeout_ms = 600000 },
   { task = "test:gateway:route-handover:cargo" },
 ] }

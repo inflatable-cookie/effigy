@@ -5,10 +5,27 @@ allocates a private directory under the system temporary directory, or under
 `EFFIGY_TEST_FIXTURE_ROOT` when the suite wrapper supplies it. It refuses a root
 inside this checkout. Permission proofs can select an external shared parent
 with `Fixture::in_parent`; macOS container-path proofs require `/Users/Shared`.
-All writes remain within the newly allocated directory. The operator-daemon
-fixture selects a short `/tmp` parent for its Unix control-socket pathname;
-its daemon retains the existing kernel run and `operator::down` guard. It no
+All writes remain within the newly allocated directory. A harness whose path
+must fit a bounded Unix control socket asks for a short path instead of
+hardcoding one: `Fixture::short_home` (and `process_lifetime_short`) use the
+system temporary directory when the resulting path still leaves room for the
+socket, and the platform's `/tmp` otherwise; `short_tempdir` does the same for
+a bare `TempDir`. With `[scratch]` configured the temp directory is the run's
+directory on that volume, so those fixtures land there; macOS's default
+`/private/var/folders/.../T/` is too long once the socket's directory and run
+id are appended, so `/tmp` remains the fallback. The kernel fault-injection
+sweep is the one deliberate exception: its home stays on the internal `/tmp`
+because it injects faults at the n-th crossing of a code path and its
+environment handover scenario races a concurrent attach, so the slower fsync
+timing of an external volume changes which crossing is reached (effigy#326).
+The operator-daemon fixture
+keeps its daemon and the existing kernel run and `operator::down` guard. It no
 longer discards the directory guard on a failed startup.
+
+Shell harnesses follow the same rule through `mktemp` templates built from
+`${TMPDIR:-/tmp}`; `effigy qa:docs:mktemp` fails a bare `mktemp` (which ignores
+`TMPDIR` on macOS) or a `/tmp`-shaped template, and accepts an annotated
+exemption for a script that runs inside a Linux guest or container.
 
 Dropping the guard restores owner read/write permissions (and directory search
 permission), then removes the entire tree. It never follows a fixture symlink.

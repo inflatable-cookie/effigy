@@ -553,3 +553,76 @@ fn an_unchanged_route_reserved_by_a_successor_never_refuses_another_projects_wri
         "the stale route is untouched"
     );
 }
+
+/// effigy#321: a managed host listener's concrete port comes from the
+/// project's generated range, survives repeated reservations across
+/// supervisor restarts, avoids a generated service binding, and is released
+/// when the environment settles.
+#[test]
+fn listener_ports_come_from_the_generated_range_and_settle_releases_them() {
+    let (_dir, store) = fixture();
+    let request = |listener: &str| ListenerPortRequest {
+        project_name: "web".into(),
+        project_path: "/checkout".into(),
+        listener: listener.into(),
+    };
+    store
+        .reserve_ports(&[PortRequest {
+            project_name: "web".into(),
+            project_path: "/checkout".into(),
+            service_name: "postgres".into(),
+            container_port: 5432,
+        }])
+        .unwrap();
+    let postgres = store
+        .read_ports()
+        .unwrap()
+        .assigned_port("web", "postgres", 5432)
+        .expect("the service port is assigned");
+    let api = store.reserve_listener_port(&request("api")).unwrap();
+    assert_ne!(api, postgres, "a listener never takes a service binding");
+    assert_eq!(
+        api,
+        store.reserve_listener_port(&request("api")).unwrap(),
+        "a restart within the run retains the port"
+    );
+    let jobs = store.reserve_listener_port(&request("jobs")).unwrap();
+    assert_ne!(api, jobs, "two listeners never share one port");
+
+    // A settled environment releases its listeners; the service binding and
+    // its range stay owned by Compose.
+    assert!(store
+        .release_listener_port("web", "/checkout", "api")
+        .unwrap());
+    assert!(!store
+        .release_listener_port("web", "/checkout", "api")
+        .unwrap());
+    let retained = store.read_ports().unwrap();
+    let allocation = retained.get("web").expect("the range is still owned");
+    assert!(allocation
+        .assigned_ports
+        .values()
+        .any(|port| *port == postgres));
+
+    // A range that only ever held listener ports is released with the last
+    // one, so a settled environment leaves no empty generated range behind.
+    assert!(store
+        .release_listener_port("web", "/checkout", "jobs")
+        .unwrap());
+    let only_listener = store.reserve_listener_port(&ListenerPortRequest {
+        project_name: "only-listeners".into(),
+        project_path: "/other".into(),
+        listener: "front".into(),
+    });
+    assert!(only_listener.is_ok());
+    assert!(store
+        .release_listener_port("only-listeners", "/other", "front")
+        .unwrap());
+    assert!(
+        store.read_ports().unwrap().get("only-listeners").is_none(),
+        "an empty listener-only range is released"
+    );
+    assert!(store
+        .release_listener_port("web", "/foreign", "api")
+        .is_err());
+}

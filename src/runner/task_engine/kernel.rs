@@ -68,15 +68,13 @@ pub(super) fn state_home() -> Option<PathBuf> {
     {
         static TEST_HOME: OnceLock<PathBuf> = OnceLock::new();
         // Short: a detached run's control socket lives under this home, and
-        // a Unix socket path is bounded (SUN_LEN).
+        // a Unix socket path is bounded (SUN_LEN). `[scratch]` puts the temp
+        // directory on a short volume path; otherwise `/tmp` is used.
         Some(
             TEST_HOME
                 .get_or_init(|| {
-                    effigy_test_support::Fixture::process_lifetime_in(
-                        "effigy-te-",
-                        std::path::Path::new("/tmp"),
-                    )
-                    .expect("private test home")
+                    effigy_test_support::Fixture::process_lifetime_short("ef-te-")
+                        .expect("private test home")
                 })
                 .clone(),
         )

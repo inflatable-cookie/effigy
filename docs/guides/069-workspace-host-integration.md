@@ -321,6 +321,44 @@ keep scratch on the internal disk by accident.
   outright, the sentinel settles the run and its suites, so the directory is
   retained with a close time and the sweep can expire it later.
 
+### What follows the scratch directory
+
+`TMPDIR` is the contract, so anything that asks the platform for its temp
+directory lands on the volume:
+
+- Rust harnesses that use `std::env::temp_dir()` or `tempfile`, which is how
+  the test suites allocate their fixtures.
+- Shell harnesses that build their `mktemp` template from the run's temp
+  directory: `fixture=$(mktemp -d "${TMPDIR:-/tmp}/effigy-fixture.XXXXXX")`.
+  A template is required on macOS, where `mktemp -d` without one silently
+  writes to the internal disk's `/var/folders/.../T` instead.
+- Selectors, which inherit the run's `TMPDIR` through
+  `scripts/oxide-selector.sh`, and proof scripts those selectors start.
+- Nested children of any of the above, including `sh -c` children and nested
+  `effigy` runs that reuse their parent's directory.
+
+`effigy qa:docs:mktemp` keeps the shell half honest: a harness `mktemp`
+without a template, or with a `/tmp`-shaped one, fails the check. A script that
+runs *inside* a Linux guest or container is exempt, annotated inline
+(`# mktemp-exempt: <reason>`), because the guest's `/tmp` is its own.
+
+What does not follow the scratch directory:
+
+- Queue worktrees and the hooks Queue runs directly; they are not Effigy runs.
+- Logs Effigy keeps for a command, which live with the run's own state.
+- The checkout's `.effigy/runtime` and `.effigy/state`, which belong to the
+  checkout rather than to one run.
+- Container workloads, which keep the container's own temp directory (above).
+- The kernel fault-injection sweep (`crates/effigy-kernel/src/faults`): each
+  fault is injected at the n-th crossing of a code path, and its environment
+  handover scenario races a concurrent attach, so a slower external volume
+  changes which crossing is reached and the planned fault is never delivered.
+  Those fixtures deliberately stay on the internal temp directory; the harness
+  documents that choice where its home is created.
+- A host path that must fit a bounded Unix socket and is deliberately pinned
+  to a short fixed directory, such as the gateway bind broker's
+  `/private/var/run` socket.
+
 ### Retention
 
 - A run that succeeded releases its directory at settle.

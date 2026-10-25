@@ -1079,11 +1079,6 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     let old_state = &app_states[0];
     let old_address = addresses[0];
     let state_dir = fixture.path().join("listener-control-0");
-    fs::write(
-        state_dir.join("previous-port"),
-        old_address.port().to_string(),
-    )
-    .expect("record old dynamic port for the neutral adapter");
     fs::write(state_dir.join("restart"), "restart\n").expect("request real child restart");
     wait_for_path_exists(
         &state_dir.join("listener-paused"),
@@ -1094,12 +1089,15 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     let unavailable = curl_https_response(https_address, &ca_path, primary_domain, "/");
     assert!(
         unavailable.contains("503 Service Unavailable"),
-        "a foreign listener on a reused port must not receive the managed route: {unavailable}"
+        "a foreign listener on the reserved port must not receive the managed route: {unavailable}"
     );
     assert!(
         !foreign.received_request(),
         "foreign listener received forwarded bytes"
     );
+    // The reserved port stays Effigy's. Release the foreign squatter so the
+    // successor generation can bind the same port again.
+    drop(foreign);
     fs::write(state_dir.join("continue-exit"), "continue\n").expect("allow old generation to exit");
     let new_state = wait_for_listener_generation(
         &listener_state_path(primary_checkout, primary_profile, "app"),
@@ -1113,9 +1111,9 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
         .unwrap()
         .parse::<SocketAddr>()
         .unwrap();
-    assert_ne!(
+    assert_eq!(
         new_address, old_address,
-        "restart must publish the successor's dynamic port"
+        "a restart keeps the port the endpoint store reserved for this listener"
     );
     assert_ne!(new_state["generation"], old_state["generation"]);
     // The superseded generation is settled before the successor is accepted:
@@ -1233,7 +1231,6 @@ fn managed_host_dependent_replacement_proof(startup_json: bool) {
     );
     edit_live_fixture_routes(&route_path, |routes| routes.upsert(sibling_route));
     drop(forged_listener);
-    drop(foreign);
 
     let down = run_container_cli(primary_checkout, &container_cleanup, &["down", "--json"]);
     assert_success(down);
@@ -2091,21 +2088,12 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         "refused foreign claim must not replace the primary's route"
     );
 
-    // Restart one worktree: its scoped endpoint and dependent URL move while
-    // the primary and sibling worktree keep their generations.
+    // Restart one worktree: its scoped generation moves while the reserved
+    // endpoint stays and the primary and sibling worktree keep their
+    // generations.
     let (restart_checkout, restart_profile, restart_body) = &checkouts[1];
     let restart_control = fixture.path().join("scoped-control-1");
     let old_state = read_json_file(&state_path(restart_checkout, restart_profile));
-    fs::write(
-        restart_control.join("previous-port"),
-        old_state["address"]
-            .as_str()
-            .unwrap()
-            .rsplit(':')
-            .next()
-            .unwrap(),
-    )
-    .expect("record old dynamic port for the neutral adapter");
     fs::write(restart_control.join("restart"), "restart\n").expect("request real child restart");
     wait_for_path_exists(
         &restart_control.join("listener-paused"),
@@ -2121,7 +2109,10 @@ fn managed_host_listeners_scoped_host_routes_follow_checkout_identity() {
         old_state["generation"].as_str().unwrap(),
         Duration::from_secs(20),
     );
-    assert_ne!(new_state["address"], old_state["address"]);
+    assert_eq!(
+        new_state["address"], old_state["address"],
+        "a restart keeps the reserved listener endpoint"
+    );
     let new_generation = new_state["generation"].as_str().unwrap();
     // The scoped successor keeps the worktree's domain published while the
     // superseded generation's route and endpoint are withdrawn (a841af96).
@@ -2224,7 +2215,10 @@ fn managed_listener_fixture_child() {
         let address = candidate
             .local_addr()
             .expect("read assigned socket address");
-        if previous_port == Some(address.port()) {
+        // Effigy now reserves a concrete port from the endpoint store, so a
+        // restart deliberately reuses it. Only an unstipulated `:0`
+        // preference still asks the OS for a fresh port.
+        if bind_preference.port() == 0 && previous_port == Some(address.port()) {
             drop(candidate);
             continue;
         }
@@ -2912,10 +2906,19 @@ fn assert_generation_withdrawn(
                 .is_none_or(|owner| owner.generation != old_generation),
             "{label}: a published route still records the superseded generation {old_generation}: {route:?}"
         );
-        assert!(
-            route.target.as_deref() != Some(old_address),
-            "{label}: a published route still targets the superseded listener {old_address}: {route:?}"
-        );
+        // The endpoint store retains a listener's reserved port across a
+        // restart, so a route may still target it only when it names the
+        // successor generation.
+        if route.target.as_deref() == Some(old_address) {
+            assert_eq!(
+                route
+                    .managed_listener
+                    .as_ref()
+                    .map(|owner| owner.generation.as_str()),
+                successor["generation"].as_str(),
+                "{label}: a route on the retained listener endpoint must name the successor generation: {route:?}"
+            );
+        }
     }
     let current = table
         .lookup(domain)
@@ -3757,6 +3760,141 @@ impl Drop for GatewayCleanup<'_> {
 /// preflighted handover: the live environment comes down whole (containers,
 /// listener routes, data kept) before the requested environment starts, in
 /// both directions, three round trips, with no refusal and no orphan routes.
+/// effigy#321 brief item 5: a service whose health still reads `starting`
+/// holds the bring-up, so a host process starts only after the service reports
+/// healthy. The wait is the environment's own readiness gate (no glue loop):
+/// `container up` waits for every declared service before it starts host
+/// processes.
+#[test]
+fn container_up_waits_for_slow_service_health_before_host_processes() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_slow_health_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    fs::create_dir(&home).expect("fixture home");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, _https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+
+    let checkout = fixture.path().join("slow-health");
+    fs::create_dir(&checkout).expect("slow-health checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n    ports:\n      - \"127.0.0.1:48091:80\"\n    healthcheck:\n      test: [\"CMD\", \"true\"]\n      interval: 1s\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Slow Health Fixture"]);
+    git(
+        &checkout,
+        &[
+            "config",
+            "user.email",
+            "slow-health-fixture@example.invalid",
+        ],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+    let checkout = checkout
+        .canonicalize()
+        .expect("canonical slow-health checkout");
+
+    let started_marker = fixture.path().join("host-process-started");
+    let healthy_marker = fixture.path().join("service-healthy");
+    let manifest = format!(
+        "[containers]\ndefault = \"web\"\n\n\
+[containers.web]\ndriver = \"colima\"\nprofile = \"slow-health\"\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n\
+[[containers.web.host_processes]]\nname = \"worker\"\nrun = {}\nrestart = \"never\"\n\n\
+[containers.web.host_processes.env]\nHOST_PROCESS_START_FILE = {}\n",
+        toml_quote("printf started > \"$HOST_PROCESS_START_FILE\"; exec /bin/sleep 20"),
+        toml_quote(&started_marker.display().to_string()),
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write slow-health manifest");
+
+    let mut cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+
+    let up_stdout_path = fixture.path().join("up-stdout.json");
+    let up_stderr_path = fixture.path().join("up-stderr.txt");
+    let up_stdout = Stdio::from(fs::File::create(&up_stdout_path).expect("up stdout file"));
+    let up_stderr = Stdio::from(fs::File::create(&up_stderr_path).expect("up stderr file"));
+    let mut up = container_command(&checkout, &cleanup)
+        .args(["up", "--detach", "--json"])
+        .env("FAKE_HEALTHY", &healthy_marker)
+        .stdout(up_stdout)
+        .stderr(up_stderr)
+        .spawn_owned()
+        .expect("spawn container up");
+    let up_report = || {
+        format!(
+            "stdout={} stderr={} docker={}",
+            fs::read_to_string(&up_stdout_path).unwrap_or_default(),
+            fs::read_to_string(&up_stderr_path).unwrap_or_default(),
+            fs::read_to_string(&docker_log).unwrap_or_default()
+        )
+    };
+
+    // The bring-up has reached the service health wait, and it is still there:
+    // the service reports `starting` until the test writes the marker.
+    let probe_deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let log = fs::read_to_string(&docker_log).unwrap_or_default();
+        if log.contains("inspect") {
+            break;
+        }
+        assert!(
+            up.try_wait().expect("poll container up").is_none(),
+            "`container up` finished before it read the service's health: {}",
+            up_report()
+        );
+        assert!(
+            Instant::now() < probe_deadline,
+            "the bring-up never read the service's health: {}",
+            up_report()
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(
+        !started_marker.exists(),
+        "a host process started while its service still reported `starting`: {}",
+        up_report()
+    );
+
+    fs::write(&healthy_marker, "healthy\n").expect("report the service healthy");
+    let status = up.wait_with_output().expect("wait for container up").status;
+    assert!(status.success(), "container up failed: {}", up_report());
+    wait_for_path_exists(
+        &started_marker,
+        Duration::from_secs(20),
+        "the host process to start after the service reported healthy",
+    );
+
+    let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
+    assert_success(down);
+    cleanup.checkouts.clear();
+}
+
 /// A foreign route owner still refuses before any effect.
 #[test]
 fn container_hybrid_environment_switch_hands_the_whole_environment_over() {
@@ -4467,8 +4605,8 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
 
     // A short private HOME: the run's control socket path must fit the
     // platform's Unix socket limit.
-    let short_home = effigy_test_support::Fixture::in_parent("e235g.", Path::new("/tmp"))
-        .expect("short private home");
+    let short_home =
+        effigy_test_support::Fixture::short_home("e235g.").expect("short private home");
     let home = short_home.path().to_path_buf();
     // Managed process commands run through `sh -lc`, whose login profile
     // reorders PATH behind the developer's real docker; the fixture home's
@@ -4852,6 +4990,112 @@ struct ManagedSupervisor(OwnedChild);
 /// only while its `active-<project>` marker exists, `compose up`/`down`
 /// maintain the markers, and `ps` reports the project's owned container with a
 /// published loopback port for gateway route readiness.
+/// A Docker adapter whose one service reports `starting` until the test writes
+/// the `FAKE_HEALTHY` marker, then `healthy`. Everything else mirrors
+/// `write_fake_docker`, so a real `container up` reaches the service readiness
+/// wait and stays there until the service itself says it is ready.
+fn write_slow_health_fake_docker(path: &Path) {
+    fs::write(
+        path,
+        r#"#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+if [ "${1-}" = ps ]; then
+  [ -f "${FAKE_OWNED_ACTIVE-}" ] || exit 0
+  python3 - "$FAKE_OWNED_CONTAINER" <<'PYOWNED'
+import json,sys
+r=json.loads(sys.argv[1]); p=r['Config']['Labels']
+print(r['Name'].lstrip('/')+'\tUp 1 minute\t\t'+p['com.docker.compose.project']+'\t'+p['com.effigy.checkout']+'\t'+p['com.docker.compose.service']+'\tFalse')
+PYOWNED
+elif [ "${1-}" = inspect ]; then
+  [ -f "${FAKE_OWNED_ACTIVE-}" ] || exit 1
+  python3 - "$FAKE_OWNED_CONTAINER" "${2-}" "${FAKE_HEALTHY-}" <<'PYOWNED'
+import json,os,sys
+r=json.loads(sys.argv[1])
+if sys.argv[2] not in [r['Id'],r['Name'].lstrip('/')]: sys.exit(1)
+state=dict(r.get('State') or {})
+healthy=bool(sys.argv[3]) and os.path.exists(sys.argv[3])
+state['Health']={'Status':'healthy' if healthy else 'starting','FailingStreak':0,'Log':[]}
+r['State']=state
+print(json.dumps([r]))
+PYOWNED
+elif [ "${1-}" = exec ]; then
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -i|-t|--tty=false) shift ;;
+      -w|-e|-u|--user|--env|--workdir) shift 2 ;;
+      *) break ;;
+    esac
+  done
+  [ "${1-}" = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ] || exit 96
+elif [ "${1-}" = compose ]; then
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -f|-p) shift 2 ;;
+      --*) shift ;;
+      *) break ;;
+    esac
+  done
+  case "${1-}" in
+    up) : > "$FAKE_OWNED_ACTIVE" ;;
+    down) rm -f "$FAKE_OWNED_ACTIVE" ;;
+    ps) printf '[]\n' ;;
+    exec)
+      shift
+      # Compose exec tail: `exec -T [-u USER] [-w DIR] [-e VAR] <service>
+      # sh -c <script> <marker> [...]`. The workspace permission preparation
+      # that `container up` runs answers marker-driven batches; everything else
+      # stays silent success.
+      args="$*"
+      case "$args" in
+        *effigy-perm-inspect-batch*)
+          record=0
+          for arg in "$@"; do
+            if [ "$arg" = effigy-perm-inspect-batch ]; then record=1; continue; fi
+            if [ "$record" -eq 1 ]; then
+              case "$arg" in
+                */.cargo-build-lock) printf "file 501 20 644\n" ;;
+                *) printf "dir 501 20 755\n" ;;
+              esac
+            fi
+          done
+          ;;
+        *effigy-perm-find-batch*)
+          record=0; skip=2
+          for arg in "$@"; do
+            if [ "$arg" = effigy-perm-find-batch ]; then record=1; continue; fi
+            if [ "$record" -eq 1 ]; then
+              if [ "$skip" -gt 0 ]; then skip=$((skip - 1)); else printf "clean\n"; fi
+            fi
+          done
+          ;;
+        *effigy-perm-access-batch*)
+          record=0; directory=0
+          for arg in "$@"; do
+            if [ "$arg" = effigy-perm-access-batch ]; then record=1; continue; fi
+            if [ "$record" -eq 1 ]; then
+              if [ "$directory" -eq 0 ]; then directory=1; else printf "ready\n"; directory=0; fi
+            fi
+          done
+          ;;
+      esac
+      ;;
+  esac
+fi
+exit 0
+"#,
+    )
+    .expect("write slow-health Docker command adapter");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+            .expect("make slow-health fake Docker executable");
+    }
+}
+
 fn write_switch_fake_docker(path: &Path) {
     fs::write(
         path,

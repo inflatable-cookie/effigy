@@ -9,12 +9,17 @@
 //! PID/spec-file supervisors are stopped by their recorded identities on the
 //! first lifecycle command that meets them.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use effigy_containers::EffectiveContainerPolicy;
+use effigy_containers::{
+    EffectiveContainerPolicy, EffectiveManagedHostListener, HostProcessEnvFacts,
+};
+use effigy_gateway::endpoint_store::{EndpointStore, ListenerPortRequest};
 use effigy_kernel::ctx::{CleanupContext, EffectClass, EffectContext, OpenReason, Placement};
 use effigy_kernel::gate::GateState;
 use effigy_kernel::id::{CheckoutId, ResolvedInvocation, ResourceId, RunId};
@@ -392,6 +397,13 @@ fn start_host_processes_inner(
     let checkout = effigy_containers::environment::EnvRef::for_policy(policy)
         .map_err(super::super::environment::error)?
         .checkout;
+    // Resolved environment facts every host-process `env` may reference, and
+    // one concrete loopback port per dynamic listener, reserved through the
+    // gateway endpoint store before any child launches (effigy#321).
+    let mut facts = HostProcessEnvFacts::for_policy(policy)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
+    facts.set_gateway_https_port(super::super::gateway_command::gateway_https_port());
+    let listener_binds = reserve_listener_binds(policy, &mut facts)?;
     let ordered = order_host_processes(&policy.host_processes)?;
     let by_name = policy
         .host_processes
@@ -406,11 +418,8 @@ fn start_host_processes_inner(
             // A previous generation of this exact process (from an earlier
             // `up`) is settled before this bring-up replaces it.
             stop_resource_run(repo_root, policy, &resource, &hp.name, "replace")?;
-            let env = hp
-                .env
-                .iter()
-                .cloned()
-                .collect::<std::collections::BTreeMap<_, _>>();
+            let env = resolved_host_process_environment(hp, &facts)?;
+            let listener = resolved_host_process_listener(hp, &listener_binds);
             let mut dependencies = Vec::new();
             for dependency in &hp.depends_on {
                 let dependency_process = by_name.get(dependency.as_str()).ok_or_else(|| {
@@ -458,7 +467,7 @@ fn start_host_processes_inner(
                 runtime_generation: super::random_token()?,
                 cwd: super::resolve_host_process_cwd(&checkout_root, hp)?,
                 env,
-                listener: hp.listener.clone(),
+                listener,
                 owner: managed_host_process_owner(&project_path, policy, hp)?,
                 dependencies,
                 listener_state_file: host_process_state_path(&dir, &hp.name),
@@ -567,6 +576,192 @@ fn start_host_processes_inner(
     })
 }
 
+/// The neutral CA variable every host process receives (effigy#321).
+const GATEWAY_CA_FILE_ENV: &str = "EFFIGY_GATEWAY_CA_FILE";
+/// The runtime trust variables Effigy fills in only when the operator has not.
+const GATEWAY_CA_TRUST_ENVS: [&str; 2] = ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"];
+
+/// One process's complete declared environment: resolved references, the
+/// active gateway's CA trust, and its own managed-listener URLs.
+fn resolved_host_process_environment(
+    process: &effigy_containers::EffectiveHostProcess,
+    facts: &HostProcessEnvFacts,
+) -> Result<BTreeMap<String, String>, RunnerError> {
+    let mut env = facts
+        .resolve(process)
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+    env.extend(gateway_ca_environment(&env));
+    if let Some(urls) = facts.host_processes.get(&process.name) {
+        if let Some(public_url) = urls.public_url.as_ref() {
+            env.insert(
+                "EFFIGY_HOST_PROCESS_PUBLIC_URL".to_owned(),
+                public_url.clone(),
+            );
+        }
+        if let Some(internal_url) = urls.internal_url.as_ref() {
+            env.insert(
+                "EFFIGY_HOST_PROCESS_INTERNAL_URL".to_owned(),
+                internal_url.clone(),
+            );
+        }
+    }
+    Ok(env)
+}
+
+/// The active gateway's CA, for the common host runtimes (effigy#321).
+///
+/// `EFFIGY_GATEWAY_CA_FILE` is the neutral name a process reads itself. The
+/// runtime-specific variables are filled in only when the operator has not
+/// already set them in the environment Effigy was started from, and never
+/// over a value the process declares: host Node and Bun read
+/// `NODE_EXTRA_CA_CERTS`, while curl, Python and Ruby read `SSL_CERT_FILE`.
+fn gateway_ca_environment(declared: &BTreeMap<String, String>) -> Vec<(String, String)> {
+    gateway_ca_environment_from(
+        super::super::gateway_command::gateway_ca_file(),
+        declared,
+        |key| std::env::var_os(key).is_some(),
+    )
+}
+
+/// The same decision with its two inputs supplied, so the operator-set rule is
+/// provable without mutating this process's environment.
+fn gateway_ca_environment_from(
+    ca: Option<PathBuf>,
+    declared: &BTreeMap<String, String>,
+    operator_set: impl Fn(&str) -> bool,
+) -> Vec<(String, String)> {
+    let Some(ca) = ca else {
+        return Vec::new();
+    };
+    let ca = ca.display().to_string();
+    let mut env = Vec::new();
+    if !declared.contains_key(GATEWAY_CA_FILE_ENV) {
+        env.push((GATEWAY_CA_FILE_ENV.to_owned(), ca.clone()));
+    }
+    for key in GATEWAY_CA_TRUST_ENVS {
+        if declared.contains_key(key) || operator_set(key) {
+            continue;
+        }
+        env.push((key.to_owned(), ca.clone()));
+    }
+    env
+}
+
+/// A listener declaration with the port this run reserved, if it asked for a
+/// dynamic one.
+fn resolved_host_process_listener(
+    process: &effigy_containers::EffectiveHostProcess,
+    binds: &BTreeMap<String, String>,
+) -> Option<EffectiveManagedHostListener> {
+    let mut listener = process.listener.clone()?;
+    if let Some(bind) = binds.get(&process.name) {
+        listener.bind = bind.clone();
+    }
+    Some(listener)
+}
+
+/// `127.0.0.1:0` asks Effigy for a concrete port; any other port is the
+/// manifest's own and stays untouched.
+fn declared_bind_is_dynamic(bind: &str) -> bool {
+    bind.parse::<SocketAddr>()
+        .is_ok_and(|address| address.port() == 0)
+}
+
+/// Reserve one concrete loopback port per dynamic listener through the
+/// gateway endpoint store, before any child launches, and record each
+/// listener's internal URL as a fact later processes may reference.
+fn reserve_listener_binds(
+    policy: &EffectiveContainerPolicy,
+    facts: &mut HostProcessEnvFacts,
+) -> Result<BTreeMap<String, String>, RunnerError> {
+    let dynamic = policy
+        .host_processes
+        .iter()
+        .filter(|process| {
+            process
+                .listener
+                .as_ref()
+                .is_some_and(|listener| declared_bind_is_dynamic(&listener.bind))
+        })
+        .collect::<Vec<_>>();
+    let mut binds = BTreeMap::new();
+    if dynamic.is_empty() {
+        return Ok(binds);
+    }
+    let store = listener_port_store()?;
+    for process in dynamic {
+        let listener = process
+            .listener
+            .as_ref()
+            .expect("filtered dynamic listener");
+        let address = listener.bind.parse::<SocketAddr>().map_err(|error| {
+            RunnerError::task_invocation(format!(
+                "managed listener bind address is invalid: {error}"
+            ))
+        })?;
+        let port = store
+            .reserve_listener_port(&ListenerPortRequest {
+                project_name: policy.project_name.clone(),
+                project_path: policy.repo_root.display().to_string(),
+                listener: process.name.clone(),
+            })
+            .map_err(|error| {
+                RunnerError::task_invocation(format!(
+                    "host process `{}` could not reserve a listener port: {error}",
+                    process.name
+                ))
+            })?;
+        let bind = SocketAddr::new(address.ip(), port);
+        facts.set_listener_internal_url(&process.name, format!("http://{bind}"));
+        binds.insert(process.name.clone(), bind.to_string());
+    }
+    Ok(binds)
+}
+
+fn listener_port_store() -> Result<EndpointStore, RunnerError> {
+    let home = crate::runner::task_engine::state_home_path().ok_or_else(|| {
+        RunnerError::task_invocation(
+            "HOME is unset; a managed listener port needs the machine endpoint store",
+        )
+    })?;
+    Ok(EndpointStore::for_effigy_home(&home.join(".effigy")))
+}
+
+/// Release this environment's listener ports on settle. A failure is residue
+/// the stop report names; a settled environment never silently keeps one.
+fn release_listener_reservations(policy: &EffectiveContainerPolicy) -> Vec<String> {
+    let reserved = policy
+        .host_processes
+        .iter()
+        .filter(|process| {
+            process
+                .listener
+                .as_ref()
+                .is_some_and(|listener| declared_bind_is_dynamic(&listener.bind))
+        })
+        .map(|process| process.name.clone())
+        .collect::<BTreeSet<_>>();
+    if reserved.is_empty() {
+        return Vec::new();
+    }
+    let store = match listener_port_store() {
+        Ok(store) => store,
+        Err(error) => return vec![error.to_string()],
+    };
+    let project_path = policy.repo_root.display().to_string();
+    reserved
+        .into_iter()
+        .filter_map(|name| {
+            store
+                .release_listener_port(&policy.project_name, &project_path, &name)
+                .err()
+                .map(|error| format!("host process `{name}` listener port release failed: {error}"))
+        })
+        .collect()
+}
+
 /// Stops every host process of the environment through the kernel.
 ///
 /// Each stop is a fenced request to the live supervisor, then settlement as
@@ -620,6 +815,7 @@ pub(in crate::runner) fn stop_host_processes_for_container(
             }
         }
     }
+    report.residue.extend(release_listener_reservations(policy));
     report
 }
 
@@ -1032,5 +1228,266 @@ fn signal_name(signal: i32) -> &'static str {
         libc::SIGHUP => "SIGHUP",
         libc::SIGCONT => "SIGCONT",
         _ => "SIG",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use effigy_containers::{
+        EffectiveDnsRoute, EffectiveHostProcess, EffectiveManagedHostListener, HostProcessRestart,
+        HostProcessSignal,
+    };
+
+    fn listener(bind: &str, declared_route_domain: &str) -> EffectiveManagedHostListener {
+        EffectiveManagedHostListener {
+            bind: bind.to_owned(),
+            readiness_path: "/health".to_owned(),
+            readiness_status: 200,
+            readiness_timeout_secs: 5,
+            declared_route_domain: declared_route_domain.to_owned(),
+            route_domain: declared_route_domain.to_owned(),
+            route_tls: true,
+        }
+    }
+
+    fn host_process(
+        name: &str,
+        env: &[(&str, &str)],
+        listener: Option<EffectiveManagedHostListener>,
+    ) -> EffectiveHostProcess {
+        EffectiveHostProcess {
+            name: name.to_owned(),
+            run: "exec /bin/sleep 60".to_owned(),
+            cwd: PathBuf::new(),
+            env: env
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                .collect(),
+            depends_on: Vec::new(),
+            listener,
+            restart: HostProcessRestart::Never,
+            restart_delay_ms: 10,
+            shutdown_signal: HostProcessSignal::Sigterm,
+            shutdown_grace_secs: 1,
+        }
+    }
+
+    fn policy(
+        checkout: &Path,
+        project_name: &str,
+        processes: Vec<EffectiveHostProcess>,
+    ) -> EffectiveContainerPolicy {
+        let mut policy = crate::runner::test_support::effective_container_policy(
+            "web",
+            project_name,
+            "app",
+            checkout.join("compose.yml"),
+        );
+        policy.repo_root = checkout.to_path_buf();
+        policy.host_processes = processes;
+        policy
+    }
+
+    fn fixture_checkout() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("fixture dir");
+        let root = dir.path().canonicalize().expect("canonical fixture");
+        std::fs::write(
+            root.join("compose.yml"),
+            "services:\n  postgres:\n    image: postgres\n    ports:\n      - \"127.0.0.1:8140:5432\"\n",
+        )
+        .expect("compose");
+        dir
+    }
+
+    /// effigy#321: a `:0` listener receives a concrete port from the endpoint
+    /// store, keeps it across supervisor restarts, and releases it on settle.
+    #[test]
+    fn a_dynamic_listener_port_is_reserved_retained_and_released() {
+        let dir = fixture_checkout();
+        let checkout = dir.path().canonicalize().expect("checkout");
+        let project = format!("host-process-listener-port-{}", std::process::id());
+        let policy = policy(
+            &checkout,
+            &project,
+            vec![host_process(
+                "api",
+                &[],
+                Some(listener("127.0.0.1:0", "api.acme.test")),
+            )],
+        );
+
+        let mut facts = HostProcessEnvFacts::for_policy(&policy).expect("facts");
+        let binds = reserve_listener_binds(&policy, &mut facts).expect("reservation");
+        let bind = binds["api"].parse::<SocketAddr>().expect("concrete bind");
+        assert_ne!(bind.port(), 0, "a dynamic bind receives a concrete port");
+        assert_eq!(
+            facts.host_processes["api"].internal_url.as_deref(),
+            Some(format!("http://{bind}").as_str()),
+            "the reserved port is the listener's internal URL"
+        );
+
+        // A restart within the run asks again and keeps the assignment.
+        let mut restarted = HostProcessEnvFacts::for_policy(&policy).expect("facts");
+        let again = reserve_listener_binds(&policy, &mut restarted).expect("retained");
+        assert_eq!(again["api"], binds["api"], "a restart keeps its port");
+
+        let store = listener_port_store().expect("endpoint store");
+        let key = effigy_gateway::endpoint_store::listener_port_key("api");
+        assert!(store
+            .read_ports()
+            .expect("ports")
+            .get(&project)
+            .expect("the project owns the reservation")
+            .assigned_ports
+            .contains_key(&key));
+
+        assert!(
+            release_listener_reservations(&policy).is_empty(),
+            "settle releases the port without residue"
+        );
+        assert!(
+            store
+                .read_ports()
+                .expect("ports")
+                .get(&project)
+                .is_none_or(|allocation| !allocation.assigned_ports.contains_key(&key)),
+            "the settled environment no longer holds the listener port"
+        );
+    }
+
+    /// A declared fixed port is the manifest's own and is never re-reserved.
+    #[test]
+    fn a_fixed_listener_port_is_not_reserved_or_released() {
+        let dir = fixture_checkout();
+        let checkout = dir.path().canonicalize().expect("checkout");
+        let policy = policy(
+            &checkout,
+            "host-process-listener-fixed",
+            vec![host_process(
+                "api",
+                &[],
+                Some(listener("127.0.0.1:47123", "api.acme.test")),
+            )],
+        );
+        let mut facts = HostProcessEnvFacts::for_policy(&policy).expect("facts");
+        let binds = reserve_listener_binds(&policy, &mut facts).expect("no reservation");
+        assert!(binds.is_empty());
+        assert!(release_listener_reservations(&policy).is_empty());
+        assert_eq!(
+            resolved_host_process_listener(&policy.host_processes[0], &binds)
+                .expect("listener")
+                .bind,
+            "127.0.0.1:47123"
+        );
+    }
+
+    /// Declared `env` references arrive resolved: the service's published
+    /// port, the process's own public URL, and the shared cookie apex.
+    #[test]
+    fn declared_env_references_resolve_to_published_facts() {
+        let dir = fixture_checkout();
+        let checkout = dir.path().canonicalize().expect("checkout");
+        let mut policy = policy(
+            &checkout,
+            "host-process-env-facts",
+            vec![
+                host_process("api", &[], Some(listener("127.0.0.1:0", "api.acme.test"))),
+                host_process(
+                    "jobs",
+                    &[
+                        (
+                            "DATABASE_URL",
+                            "postgres://app@${service.postgres.host}:${service.postgres.port}/app",
+                        ),
+                        ("API_URL", "${route.api.acme.test.public_url}"),
+                        ("COOKIE_DOMAIN", ".${apex}"),
+                        ("INTERNAL", "${host_process.api.internal_url}"),
+                    ],
+                    None,
+                ),
+            ],
+        );
+        policy.dns_routes = vec![EffectiveDnsRoute {
+            domain: "api.acme.test".to_owned(),
+            declared_domain: "api.acme.test".to_owned(),
+            tls: true,
+            port: Some(3000),
+            service: Some("app".to_owned()),
+            target_host: None,
+        }];
+        policy.dns_base_domain = Some("acme.test".to_owned());
+
+        let mut facts = HostProcessEnvFacts::for_policy(&policy).expect("facts");
+        let binds = reserve_listener_binds(&policy, &mut facts).expect("reservation");
+        let bind = binds["api"].parse::<SocketAddr>().expect("concrete bind");
+        let env = resolved_host_process_environment(&policy.host_processes[1], &facts)
+            .expect("references resolve");
+        assert_eq!(env["DATABASE_URL"], "postgres://app@127.0.0.1:8140/app");
+        assert_eq!(env["API_URL"], "https://api.acme.test");
+        assert_eq!(env["COOKIE_DOMAIN"], ".acme.test");
+        assert_eq!(env["INTERNAL"], format!("http://{bind}"));
+        assert!(
+            !env.contains_key("EFFIGY_HOST_PROCESS_PUBLIC_URL"),
+            "a process without a listener gets no listener URLs"
+        );
+
+        let api_env = resolved_host_process_environment(&policy.host_processes[0], &facts)
+            .expect("own listener facts");
+        assert_eq!(
+            api_env["EFFIGY_HOST_PROCESS_PUBLIC_URL"],
+            "https://api.acme.test"
+        );
+        assert_eq!(
+            api_env["EFFIGY_HOST_PROCESS_INTERNAL_URL"],
+            format!("http://{bind}")
+        );
+        let _ = release_listener_reservations(&policy);
+    }
+
+    /// The CA trust variables point at the active gateway CA, and neither an
+    /// operator-set value nor a declared one is overwritten.
+    #[test]
+    fn gateway_ca_trust_fills_absent_variables_only() {
+        let ca = PathBuf::from("/gateway/ca/rootCA.pem");
+        let empty = BTreeMap::new();
+        let filled = gateway_ca_environment_from(Some(ca.clone()), &empty, |_| false);
+        let ca_text = ca.display().to_string();
+        assert_eq!(
+            filled,
+            vec![
+                (GATEWAY_CA_FILE_ENV.to_owned(), ca_text.clone()),
+                ("NODE_EXTRA_CA_CERTS".to_owned(), ca_text.clone()),
+                ("SSL_CERT_FILE".to_owned(), ca_text),
+            ]
+        );
+        assert!(
+            gateway_ca_environment_from(None, &empty, |_| false).is_empty(),
+            "no known CA adds no trust variable"
+        );
+
+        // An operator-set value is the operator's own trust store.
+        let operator = gateway_ca_environment_from(Some(ca.clone()), &empty, |key| {
+            key == "NODE_EXTRA_CA_CERTS"
+        });
+        assert!(!operator.iter().any(|(key, _)| key == "NODE_EXTRA_CA_CERTS"));
+        assert!(operator.iter().any(|(key, _)| key == "SSL_CERT_FILE"));
+
+        // A declared value is the process's own decision and wins.
+        let declared = BTreeMap::from([
+            (
+                "NODE_EXTRA_CA_CERTS".to_owned(),
+                "/operator/ca.pem".to_owned(),
+            ),
+            (
+                GATEWAY_CA_FILE_ENV.to_owned(),
+                "/declared/ca.pem".to_owned(),
+            ),
+        ]);
+        let resolved = gateway_ca_environment_from(Some(ca), &declared, |_| false);
+        assert!(!resolved
+            .iter()
+            .any(|(key, _)| key == "NODE_EXTRA_CA_CERTS" || key == GATEWAY_CA_FILE_ENV));
+        assert!(resolved.iter().any(|(key, _)| key == "SSL_CERT_FILE"));
     }
 }
