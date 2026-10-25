@@ -238,12 +238,19 @@ transition refuses `HostAuthorityRequired` before touching state (R1), and
 the record reads as kept on the host. Reading it through the host authority
 channel waits for that channel (052 §8.3).
 
+### 8.1 Host sidecars (adopted)
+
+Host sidecars are adopted (052 §10.2, effigy#320): each declared host process
+is an environment-owned detached kernel run with custody of its process group,
+started after the environment's services report ready and in `depends_on`
+order, stopped by `down`, `reset` and session settle with a
+`HostProcessStopReport`.
+
 ## 9. Not yet
 
 - `data_from` as a data claim (052 I-A3): current handover behaviour stays.
 - `container retire` removes resources by scope record, not as a transition.
 - The workspace session run and host authority channel (052 §8.3, §8.7).
-- Host sidecar supervisors as environment-owned runs (052 §10.2).
 
 ## 10. Proofs
 

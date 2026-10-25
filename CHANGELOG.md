@@ -476,6 +476,19 @@ During v0.x, MINOR bumps may include breaking changes.
   `simulate --version`. The refusal names the replacement.
 
 ### Added
+- Host processes are environment-owned kernel runs (effigy#320).
+  `[[containers.<env>.host_processes]]` no longer start a `setsid` supervisor
+  with PID and spec files and a blocking lifecycle lock. Each process is one
+  detached run owned by its own `HostProcess` kernel resource in the
+  environment's checkout journal: `up` starts it after services are ready and
+  in `depends_on` order, waits for its listener readiness and detaches, and
+  `down`, `reset` and session settle stop it through a fenced kernel stop and
+  report every stop (`HostProcessStopReport`) including a process that needed
+  SIGKILL after its grace. A process that exits is recorded with its exit and
+  the last log lines, `container status` (and `--json`) shows each host
+  process's run, state, PID and last exit, and a v0.14.1 PID-file supervisor is
+  stopped by its recorded identity on the next lifecycle command. The log
+  location under `.effigy/runtime/host-processes/` is unchanged.
 - Human-facing feedback has one foundation (effigy#312). `effigy-ui` exports
   `steps`, a step-progress API with short present-tense labels: a terminal
   draws an asynchronous spinner on stderr, each step ends with one `✓`/`✗`
@@ -1333,6 +1346,11 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- `run stop` treats a run that settled between its status snapshot and the
+  request as already closed instead of refusing. The supervisor fault matrix
+  crosses this boundary at every journal commit, and a concurrent stop, owner
+  death or recovery could otherwise turn the idempotent stop into a false
+  refusal.
 - A task run from a nested catalog directory opens the enclosing checkout's
   journal again (contract 052 §7.1). The state root was resolved to the nested
   directory while the Git directory resolved to the enclosing checkout, so the

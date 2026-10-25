@@ -650,14 +650,23 @@ pub(in crate::runner) fn request_stop(record: &RunRecord) -> Result<StopStarted,
         },
         action: RequestAction::Stop,
     };
-    effigy_kernel::run::request(&cx, &root, &request)
-        .map(|()| StopStarted::Requested)
-        .map_err(|error| {
-            RunnerError::task_invocation(format!(
-                "run {} did not accept a stop request: {error}",
-                record.id
-            ))
-        })
+    match effigy_kernel::run::request(&cx, &root, &request) {
+        Ok(()) => Ok(StopStarted::Requested),
+        // The run settled between this record's snapshot and the request: a
+        // concurrent stop, owner death or recovery already closed the exact
+        // run this command addressed. That is the idempotent outcome, not a
+        // refusal (the supervisor fault matrix crosses this boundary at every
+        // journal commit).
+        Err(effigy_kernel::run::RunError::Invalid(reason))
+            if reason == "request run is not current" =>
+        {
+            Ok(StopStarted::AlreadyClosed)
+        }
+        Err(error) => Err(RunnerError::task_invocation(format!(
+            "run {} did not accept a stop request: {error}",
+            record.id
+        ))),
+    }
 }
 
 /// For an owner that does not read stop requests (a sequence, managed or
