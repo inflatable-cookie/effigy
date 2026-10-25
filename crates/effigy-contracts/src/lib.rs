@@ -693,9 +693,7 @@ fn run_contract_row(
         None
     };
     let mut command = Command::new(executable);
-    command
-        .args(args)
-        .current_dir(repo_root);
+    command.args(args).current_dir(repo_root);
     if let Some(home) = isolated_home {
         command.env("HOME", home);
     }
@@ -1247,9 +1245,7 @@ fn run_fixture_command(
 ) -> Result<(), String> {
     let program = program.as_ref();
     let mut command = Command::new(program);
-    command
-        .args(args)
-        .current_dir(cwd);
+    command.args(args).current_dir(cwd);
     if let Some(home) = home {
         command.env("HOME", home);
     }

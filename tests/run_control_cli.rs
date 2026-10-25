@@ -426,7 +426,10 @@ fn a_hook_timeout_or_crash_fails_closed_and_the_hook_never_outlives_the_run() {
 fn a_nested_durable_run_from_a_foreground_task_step_journals() {
     let fixture = Fixture::new();
     git(&fixture.repo, &["init", "-q"]);
-    assert!(!fixture.has_journal(), "a foreground tree writes no journal");
+    assert!(
+        !fixture.has_journal(),
+        "a foreground tree writes no journal"
+    );
     let output = fixture.run(&["foreground-durable"]);
     assert!(output.status.success(), "{}", text(&output));
     assert!(fixture.exists("nested.txt"), "the nested run executed");
@@ -454,7 +457,10 @@ fn a_nested_run_ignores_descriptor_nine_and_a_leaked_selector() {
         let fixture = Fixture::new();
         let output = fixture.run(&[task]);
         assert!(output.status.success(), "{task}: {}", text(&output));
-        assert!(fixture.exists("nested.txt"), "{task}: the nested run executed");
+        assert!(
+            fixture.exists("nested.txt"),
+            "{task}: the nested run executed"
+        );
     }
 }
 

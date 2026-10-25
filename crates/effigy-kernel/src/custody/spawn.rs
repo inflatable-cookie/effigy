@@ -253,7 +253,9 @@ impl Blocked {
                 })?,
             );
         }
-        let closure_fd = closure.map(|capability| capability.custody_fd()).transpose()?;
+        let closure_fd = closure
+            .map(|capability| capability.custody_fd())
+            .transpose()?;
         let closure_fd_raw = closure_fd.as_ref().map_or(-1, AsRawFd::as_raw_fd);
         // The parent's one-shot descriptor, handed over at its reserved slot.
         let handoff_fd = handoff.map_or(-1, AsRawFd::as_raw_fd);
@@ -368,8 +370,7 @@ impl Blocked {
                 if anchor_fd >= 0 && libc::dup2(anchor_fd, 5) < 0 {
                     libc::_exit(125);
                 }
-                if closure_fd_raw >= 0
-                    && libc::dup2(closure_fd_raw, crate::closure::CLOSURE_FD) < 0
+                if closure_fd_raw >= 0 && libc::dup2(closure_fd_raw, crate::closure::CLOSURE_FD) < 0
                 {
                     libc::_exit(125);
                 }

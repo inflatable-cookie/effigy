@@ -8,6 +8,7 @@
 #[cfg(feature = "fault-injection")]
 pub mod fault_injection;
 
+mod closure;
 pub mod ctx;
 pub mod custody;
 pub mod fs;
@@ -15,7 +16,6 @@ pub mod gate;
 pub mod human;
 pub mod id;
 pub mod ident;
-mod closure;
 pub mod migration;
 pub mod objects;
 pub mod observe;

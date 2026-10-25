@@ -541,7 +541,7 @@ fn engine_launch(home: &Path) -> EngineLaunch {
         payload: home.as_os_str().as_encoded_bytes().to_vec(),
         cwd: home.into(),
         env: vec![("FIXTURE_ENGINE_ENV".into(), "present".into())],
-        
+
         handoff: None,
     }
 }

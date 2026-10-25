@@ -459,7 +459,6 @@ fn a_path_replaced_before_spawn_is_typed_not_started() {
     world.assert_no_residue();
 }
 
-
 #[test]
 fn helper_restores_machine_resource_gate_domain_instead_of_a_checkout_shadow() {
     let world = World::new();

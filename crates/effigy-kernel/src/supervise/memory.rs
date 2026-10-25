@@ -1,8 +1,8 @@
 //! Pipe-only foreground sentinel. Receipts and inherited gates live in memory.
 use super::*;
+use crate::closure::ClosurePin;
 use crate::gate::GateGuard;
 use crate::ident::{self, ProcessIdentity};
-use crate::closure::ClosurePin;
 use crate::run::{Effect, EffectState};
 use std::os::fd::{FromRawFd, OwnedFd};
 

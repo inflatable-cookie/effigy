@@ -1,8 +1,8 @@
 //! Shared checkout lifetime remains protected through native process cleanup,
 //! even after the checkout and its journal are externally deleted.
 use super::*;
-use crate::gate::{CheckoutFenceGuard, CheckoutFenceIdentity};
 use crate::closure::ClosurePin;
+use crate::gate::{CheckoutFenceGuard, CheckoutFenceIdentity};
 use crate::supervise::memory::{MemoryGuard, MemoryPurpose};
 
 #[derive(Debug)]

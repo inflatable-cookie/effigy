@@ -170,13 +170,9 @@ impl TaskRun {
                     ),
                 }
             }
-            None => Custody::spawn_with_handoff(
-                &mut *self.run_mut()?,
-                spec,
-                &cx,
-                !auxiliary,
-                handoff,
-            ),
+            None => {
+                Custody::spawn_with_handoff(&mut *self.run_mut()?, spec, &cx, !auxiliary, handoff)
+            }
         };
         if let Some(error) = gate.as_mut().and_then(|gate| gate.take_failure()) {
             return Err(error);
