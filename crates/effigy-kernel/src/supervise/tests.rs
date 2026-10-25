@@ -460,6 +460,69 @@ fn a_path_replaced_before_spawn_is_typed_not_started() {
     world.assert_no_residue();
 }
 
+/// An environment-owned supervisor is an independent durable owner: the parent
+/// capability its launch environment still names is dropped, never forwarded,
+/// so a later store or journal open never depends on a revocable lease
+/// (effigy#332). A managed run's `ClientLease` resolves that same selector
+/// instead, which is the whole difference between the two launches.
+#[test]
+fn an_environment_owned_supervisor_never_inherits_a_parent_capability() {
+    let world = World::new();
+    let cx = cx();
+    let root = StateRoot::effects(&cx, &world.home()).unwrap();
+    let out = world.dir.path().join("helper-capability");
+    let plan = world.helper(&format!(
+        "printf '%s' \"${{EFFIGY_PARENT_CAPABILITY-unset}}\" > '{}'",
+        out.display()
+    ));
+    let launch = |inheritance| EngineLaunch {
+        payload: Vec::new(),
+        cwd: world.home(),
+        env: vec![
+            (
+                crate::inheritance::ENV.into(),
+                format!("memory-v1:9:{}", "0".repeat(64)).into(),
+            ),
+            ("FIXTURE_CAPABILITY".into(), out.as_os_str().into()),
+        ],
+        inheritance,
+    };
+    let log = helper_log(&root).unwrap();
+    let mut child = spawn_helper(
+        cx.operation(),
+        &plan.executable,
+        SUPERVISOR,
+        &log,
+        Some(&launch(SupervisorInheritance::Independent)),
+    )
+    .expect("an independent supervisor spawns");
+    assert!(child.wait().unwrap().success());
+    assert_eq!(
+        std::fs::read_to_string(&out).unwrap(),
+        "unset",
+        "an environment-owned supervisor starts with no parent capability"
+    );
+    let refused = spawn_helper(
+        cx.operation(),
+        &plan.executable,
+        SUPERVISOR,
+        &log,
+        Some(&launch(SupervisorInheritance::ClientLease)),
+    )
+    .expect_err("a client lease selector is resolved, never ignored");
+    assert!(
+        matches!(
+            refused,
+            RunError::HelperExited {
+                exit: HelperExit::NotStarted,
+                ..
+            }
+        ),
+        "{refused:?}"
+    );
+    world.assert_no_residue();
+}
+
 #[test]
 fn helper_restores_machine_resource_gate_domain_instead_of_a_checkout_shadow() {
     let world = World::new();

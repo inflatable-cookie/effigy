@@ -1413,6 +1413,16 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- An environment-owned host-process supervisor no longer inherits the
+  revocable admission lease of the `container up` that started it. When `up`
+  ran as a step of a durable task (Acowtancy's `dev:hybrid`), the supervisor's
+  later endpoint-store work failed with `parent capability was revoked`, it
+  stopped the listener, and `up` timed out waiting for the environment to
+  settle. Its store and journal opens now belong to the environment, so the
+  listener keeps restarting, republishing its route and settling after the
+  task's custody ends. A supervisor's store or capability failure also renders
+  as that step and its cause, with a next step, instead of ``the run was
+  refused: `…` is not a valid run request`` (effigy#332).
 - A run whose binary sits on another volume from its state root — a project
   checkout on an external drive, or `[scratch]` on a second disk — starts its
   supervisor and sentinel again. Pinning the replaced startup image relied on

@@ -932,6 +932,16 @@ pub(in crate::runner) fn run_internal_host_process_supervise(
 /// The settlement budget for one host-process run.
 const HOST_PROCESS_SETTLE_BUDGET: Duration = Duration::from_secs(120);
 
+/// A supervisor step failed for a store, file, identity or capability reason.
+/// The request is well formed, so the outcome names the failing step and the
+/// cause instead of reading as an invalid request (effigy#332).
+fn step_failed(step: &str, error: impl std::fmt::Display) -> RunError {
+    RunError::StepFailed {
+        step: step.to_owned(),
+        cause: error.to_string(),
+    }
+}
+
 /// The supervisor's kernel entry (contract 052 §10.2). It admits one run
 /// owned by the host process's own resource, spawns each child generation
 /// through `Custody` (so the kernel receipt is the group's identity), waits for
@@ -994,11 +1004,12 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         }
     };
     let next = kernel_run::recovery_invocation(&spec.environment)
-        .map_err(|error| RunError::Invalid(error.to_string()))?;
+        .map_err(|error| step_failed("host-process recovery invocation", error))?;
     let executable = crate::runner::task_engine::startup_executable()
-        .map_err(|error| RunError::Invalid(error.to_string()))?;
+        .map_err(|error| step_failed("host-process startup binary", error))?;
     let options = effigy_kernel::run::BeginOpts {
-        id: kernel_run::fresh_run_id().map_err(|error| RunError::Invalid(error.to_string()))?,
+        id: kernel_run::fresh_run_id()
+            .map_err(|error| step_failed("host-process run identity", error))?,
         wait: effigy_kernel::gate::Wait::FailFast,
         acknowledge: Vec::new(),
         next,
@@ -1024,9 +1035,9 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
         }
     };
     session.admitted(&mut run)?;
-    let record = supervisor_record().map_err(|error| RunError::Invalid(error.to_string()))?;
+    let record = supervisor_record().map_err(|error| step_failed("supervisor identity", error))?;
     redirect_supervisor_output(&spec.log_file)
-        .map_err(|error| RunError::Invalid(error.to_string()))?;
+        .map_err(|error| step_failed("supervisor output redirection", error))?;
     let watch = session.owner_watch().ok();
     let started = supervise_generations(
         &mut run,
@@ -1045,7 +1056,13 @@ pub(in crate::runner) fn supervise(mut session: EngineSession) -> Result<(), Run
                 effigy_kernel::outcome::WorkloadOutcome::Failed { code: 1 },
             );
             let _ = write_stop_report(&spec, &run, None);
-            return Err(RunError::Invalid(error.to_string()));
+            // A store or capability failure inside the supervisor names the
+            // step and its cause. It is never reported as an invalid request
+            // (effigy#332).
+            return Err(step_failed(
+                &format!("managed host process `{}` supervision", spec.process_name),
+                error,
+            ));
         }
     };
     if write_stop_report(&spec, &run, custody.clone()).is_err() {

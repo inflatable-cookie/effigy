@@ -9,6 +9,13 @@ global-timeout = "600s"
 filter = "test(managed_host_transitions_)"
 slow-timeout = { period = "120s", terminate-after = 1 }
 
+# The environment-owned supervisor proof starts an environment through a
+# task step, restarts one listener generation after that task's lease ends and
+# then settles the environment, so it needs more than the default slow period.
+[[profile.default.overrides]]
+filter = "test(environment_owned_supervisor_outlives_)"
+slow-timeout = { period = "180s", terminate-after = 1, grace-period = "2s" }
+
 # These proofs drive several public CLI transitions and real listener processes.
 [[profile.default.overrides]]
 filter = "test(managed_host_dependent_replacement_) | test(container_hybrid_environment_switch_) | test(container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clone)"

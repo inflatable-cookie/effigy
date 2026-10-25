@@ -152,6 +152,14 @@ pub enum RunError {
     Interrupted(Interrupt),
     HostAuthorityRequired,
     Invalid(String),
+    /// A store, capability or supervision step failed while the run was being
+    /// admitted or was already running. The request itself was well formed, so
+    /// the error names the failing step and its cause and never reads as an
+    /// invalid request (§5.8, effigy#332).
+    StepFailed {
+        step: String,
+        cause: String,
+    },
     StaleGeneration {
         expected: Fence,
         current: Option<Generation>,
@@ -205,6 +213,10 @@ impl std::fmt::Display for RunError {
             Self::Invalid(what) => write!(
                 f,
                 "the run was refused: `{what}` is not a valid run request; run `effigy tasks` to see the task names this checkout routes"
+            ),
+            Self::StepFailed { step, cause } => write!(
+                f,
+                "the run could not proceed: {step} failed ({cause}); resolve that cause and retry the command"
             ),
             Self::StaleGeneration { expected, current } => match current {
                 Some(current) => write!(

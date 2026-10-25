@@ -5389,6 +5389,249 @@ fn container_headless_managed_lifecycle_publishes_routes_in_scoped_data_from_clo
     }
 }
 
+/// Regression (effigy#332, Acow #756). `container <env> up --detach` runs as a
+/// step of a task, so the environment-owned supervisor that `up` starts comes
+/// from a process whose revocable admission lease ends with the task's
+/// custody. The supervisor belongs to the environment, not to that `up`: after
+/// the task exits it keeps restarting and publishing its listener generation,
+/// reusing the port Effigy reserved, and `down` settles it and releases the
+/// port. Before the fix, its own endpoint-store open failed with the revoked
+/// parent capability and the run was reported as an invalid request.
+#[test]
+fn environment_owned_supervisor_outlives_the_task_that_started_it() {
+    let fixture = managed_host_fixture();
+    let effects = HostEffectSentinels::new(fixture.path());
+    let docker_dir = std::env::split_paths(&effects.env_path)
+        .next()
+        .expect("sentinel PATH directory");
+    let docker_log = fixture.path().join("docker-fixture.log");
+    write_fake_docker(&docker_dir.join("docker"));
+
+    let home = fixture.path().join("home");
+    fs::create_dir(&home).expect("fixture home");
+    let foreign_ca = fixture.path().join("foreign-ca");
+    fs::create_dir(&foreign_ca).expect("foreign CA sentinel");
+    let mut gateway_cleanup = GatewayCleanup::new(&effects, &foreign_ca);
+    let (private_gateway, https_address) =
+        start_managed_listener_gateway(fixture.path(), &effects, &foreign_ca, &mut gateway_cleanup);
+    let ca_path = private_gateway.join("ca/rootCA.pem");
+    let routes_path = private_gateway.join("routes.json");
+
+    let checkout = fixture.path().join("checkout");
+    fs::create_dir(&checkout).expect("task-owned listener checkout");
+    fs::write(
+        checkout.join("compose.yml"),
+        "services:\n  app:\n    image: fixture\n",
+    )
+    .expect("write fixture compose file");
+    fs::write(
+        checkout.join("effigy.toml"),
+        "[containers]\ndefault = \"web\"\n",
+    )
+    .expect("seed manifest before git commit");
+    git(&checkout, &["init", "--initial-branch=main"]);
+    git(&checkout, &["config", "user.name", "Task Lease Fixture"]);
+    git(
+        &checkout,
+        &["config", "user.email", "task-lease-fixture@example.invalid"],
+    );
+    git(&checkout, &["add", "compose.yml", "effigy.toml"]);
+    git(&checkout, &["commit", "-m", "fixture base"]);
+
+    let control = fixture.path().join("listener-control");
+    fs::create_dir(&control).expect("listener control directory");
+    let child_binary = std::env::current_exe().expect("integration test binary");
+    let body = "task-lease-body";
+    let domain = "task-lease.host.test";
+    let profile = "fixture";
+    let task = "fixture:up";
+    let listener_run =
+        "exec \"$FIXTURE_BINARY\" --ignored --exact managed_listener_fixture_child --nocapture";
+    let task_run = format!("\"{EFFIGY}\" container web up --detach");
+    let fixture_env = format!(
+        "FIXTURE_BINARY = {}\nFIXTURE_BODY = {}\nFIXTURE_PREVIOUS_PORT_FILE = {}\nFIXTURE_RESTART_FILE = {}\nFIXTURE_PAUSED_FILE = {}\nFIXTURE_CONTINUE_FILE = {}\nFIXTURE_READINESS_REFUSED_FILE = {}\n",
+        toml_quote(&child_binary.display().to_string()),
+        toml_quote(body),
+        toml_quote(&control.join("previous-port").display().to_string()),
+        toml_quote(&control.join("restart").display().to_string()),
+        toml_quote(&control.join("listener-paused").display().to_string()),
+        toml_quote(&control.join("continue-exit").display().to_string()),
+        toml_quote(&control.join("readiness-refused").display().to_string()),
+    );
+    let manifest = format!(
+        "[containers]\ndefault = \"web\"\n\n\
+         [containers.web]\ndriver = \"colima\"\nprofile = {profile}\ncompose_file = \"compose.yml\"\nprimary_service = \"app\"\nworking_dir = \"/workspace\"\n\n\
+         [[containers.web.host_processes]]\nname = \"app\"\nrun = {listener_run}\nrestart = \"on-failure\"\nrestart_delay_ms = 100\n\n\
+         [containers.web.host_processes.env]\n{fixture_env}\n\
+         [containers.web.host_processes.listener]\nbind = \"127.0.0.1:0\"\n\n\
+         [containers.web.host_processes.listener.readiness]\npath = \"/health\"\nstatus = 200\ntimeout_secs = 20\n\n\
+         [containers.web.host_processes.listener.route]\ndomain = {domain}\ntls = true\n\n\
+         [tasks.\"{task}\"]\ndurable = true\nrun = {task_run}\n",
+        profile = toml_quote(profile),
+        listener_run = toml_quote(listener_run),
+        fixture_env = fixture_env,
+        domain = toml_quote(domain),
+        task = task,
+        task_run = toml_quote(&task_run),
+    );
+    fs::write(checkout.join("effigy.toml"), manifest).expect("write task-owned listener config");
+
+    let cleanup = ManagedContainerCleanup {
+        checkouts: vec![checkout.clone()],
+        home: home.clone(),
+        private_gateway: private_gateway.clone(),
+        foreign_ca: foreign_ca.clone(),
+        effects_path: effects.env_path.clone(),
+        mkcert: effects.private_mkcert.clone(),
+        effect_log: effects.log.clone(),
+        mkcert_calls: effects.mkcert_calls.clone(),
+        docker_log: docker_log.clone(),
+    };
+    let state_path = checkout
+        .join(".effigy/runtime/host-processes/web")
+        .join(profile)
+        .join("app.listener.json");
+    let log_path = state_path.with_file_name("app.log");
+
+    // The task's step is the only thing that starts the environment, so the
+    // supervisor's parent capability is the task's own revocable lease. The
+    // task runs with the same private fixture identity a container command
+    // would, because its step runs one.
+    let started = fixture_task_command(&checkout, &cleanup, &[task])
+        .output_owned()
+        .expect("run the starting task");
+    let started_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&started.stdout),
+        String::from_utf8_lossy(&started.stderr)
+    );
+    assert!(
+        started.status.success(),
+        "the task that starts the environment failed: {started_text}\nlog={}",
+        fs::read_to_string(&log_path).unwrap_or_default()
+    );
+    // The task's custody is over: its lease is revoked, and the supervisor
+    // still owns the listener because the environment owns it.
+    let first = wait_for_listener_generation(
+        &state_path,
+        &routes_path,
+        domain,
+        "",
+        Duration::from_secs(30),
+    );
+    let first_address = first["address"]
+        .as_str()
+        .expect("first listener address")
+        .parse::<SocketAddr>()
+        .expect("first listener socket address");
+    assert_ne!(first_address.port(), 0);
+    let first_response = curl_https_response(https_address, &ca_path, domain, "/");
+    assert!(
+        first_response.contains(&format!("{body}@{}", first["generation"].as_str().unwrap())),
+        "the first generation serves its published route: {first_response}"
+    );
+
+    // A generation that ends after the task's lease is gone still settles its
+    // own route and restarts: both are endpoint-store work.
+    fs::write(control.join("restart"), "restart\n").expect("ask the listener to restart");
+    wait_for_path_exists(
+        &control.join("listener-paused"),
+        Duration::from_secs(30),
+        "the first listener generation to release its port",
+    );
+    fs::write(control.join("continue-exit"), "exit\n").expect("let the generation exit");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let successor = loop {
+        let state = fs::read(&state_path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+        if let Some(state) = &state {
+            let ready = state["status"] == "ready"
+                && state["generation"] != first["generation"]
+                && state["address"] == first["address"];
+            if ready {
+                if let Ok(routes) = RouteTable::load(&routes_path) {
+                    if routes.lookup(domain).is_some_and(|route| {
+                        route.target.as_deref() == state["address"].as_str()
+                            && route.managed_listener.as_ref().is_some_and(|owner| {
+                                Some(owner.generation.as_str()) == state["generation"].as_str()
+                            })
+                    }) {
+                        break state.clone();
+                    }
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            panic!(
+                "the environment-owned supervisor did not restart its listener after the \
+                 starting task's lease ended: state={:?} routes={:?} log={}",
+                fs::read_to_string(&state_path).unwrap_or_default(),
+                fs::read_to_string(&routes_path).unwrap_or_default(),
+                fs::read_to_string(&log_path).unwrap_or_default()
+            );
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(
+        successor["address"], first["address"],
+        "a restart reuses the port Effigy reserved"
+    );
+    let successor_response = curl_https_response(https_address, &ca_path, domain, "/");
+    assert!(
+        successor_response.contains(&format!(
+            "{body}@{}",
+            successor["generation"].as_str().unwrap()
+        )),
+        "the restarted generation serves its published route: {successor_response}"
+    );
+    let log = fs::read_to_string(&log_path).unwrap_or_default();
+    assert!(
+        !log.contains("is not a valid run request"),
+        "a supervisor store or capability failure never reads as an invalid request: {log}"
+    );
+    assert!(
+        !log.contains("parent capability was revoked"),
+        "the environment-owned supervisor never depends on the starting task's lease: {log}"
+    );
+
+    // `down` settles the run through the kernel and releases the reserved port.
+    let down = run_container_cli(&checkout, &cleanup, &["down", "--json"]);
+    let down_text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&down.stdout),
+        String::from_utf8_lossy(&down.stderr)
+    );
+    assert!(
+        down.status.success(),
+        "`container web down` failed: {down_text}"
+    );
+    assert!(
+        RouteTable::load(&routes_path)
+            .expect("route table")
+            .lookup(domain)
+            .is_none(),
+        "down withdraws the listener route: {down_text}"
+    );
+    assert_eq!(
+        read_json_file(&state_path)["status"],
+        "stopped",
+        "down records the terminal listener state"
+    );
+    let project = effigy_containers::load_container_policy(&checkout, Some("web"))
+        .expect("fixture container policy")
+        .project_name;
+    let ports = effigy_gateway::endpoint_store::EndpointStore::new(&home)
+        .read_ports()
+        .expect("machine endpoint store");
+    assert!(
+        ports.get(&project).is_none_or(|allocation| !allocation
+            .assigned_ports
+            .contains_key(&effigy_gateway::endpoint_store::listener_port_key("app"))),
+        "a settled environment no longer holds its listener port: {ports:?}"
+    );
+}
+
 /// The headless managed supervisor stays alive while its session runs and its
 /// lifecycle child outlives the test on panic, so the guard stops the whole
 /// owned process tree on drop.
