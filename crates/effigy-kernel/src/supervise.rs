@@ -265,6 +265,9 @@ fn spawn_helper(
 ) -> Result<Child, RunError> {
     let mut busy = 0;
     loop {
+        executable
+            .verify()
+            .map_err(|error| helper_not_started(entry, error))?;
         let mut command = helper(executable, entry).map_err(|e| helper_not_started(entry, e))?;
         if let Some(launch) = launch {
             command
@@ -414,8 +417,10 @@ fn nonce() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_nanos())
 }
+/// Builds the command that runs `entry` from `executable`. Image identity is
+/// the caller's business: a durable supervisor verifies the image it records,
+/// while a foreground guard re-execs whatever binary is beside the run (K1).
 pub(crate) fn helper(executable: &Executable, entry: &str) -> io::Result<Command> {
-    executable.verify()?;
     let mut command = Command::new(&executable.path);
     command
         .arg(entry)

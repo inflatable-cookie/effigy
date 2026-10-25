@@ -819,6 +819,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rpassword",
+ "rusqlite",
  "semver",
  "serde",
  "serde_json",

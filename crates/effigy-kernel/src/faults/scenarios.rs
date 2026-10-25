@@ -1406,8 +1406,6 @@ impl Scenario for ObjectPublication {
             Point::ObjectSealAfter,
             Point::ObjectRenameBefore,
             Point::ObjectRenameAfter,
-            Point::ObjectRootSealBefore,
-            Point::ObjectRootSealAfter,
             Point::ObjectPublishBefore,
             Point::ObjectPublishAfter,
             Point::ObjectRefBefore,

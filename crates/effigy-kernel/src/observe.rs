@@ -86,9 +86,8 @@ pub enum UnknownReason {
     TimedOut {
         phase: String,
     },
-    /// The observation could not be taken because the thing observed was being
-    /// written for its whole window (a store backup restarted by its writer).
-    /// It means "try again when the writer is quiet", never a failure.
+    /// The observation could not be taken because the thing observed held its
+    /// lock for the whole window. It means "try again", never a failure.
     Busy {
         phase: String,
     },
@@ -100,7 +99,6 @@ pub enum UnknownReason {
     Injected,
     Untrusted(String),
     HostAuthorityRequired,
-    StoreNeedsRecovery,
     StoreUnreadable(String),
 }
 
@@ -141,9 +139,6 @@ impl std::fmt::Display for UnknownReason {
             ),
             Self::HostAuthorityRequired => f.write_str(
                 "could not tell: this is host state, and a guest placement cannot read it",
-            ),
-            Self::StoreNeedsRecovery => f.write_str(
-                "could not tell: the store needs recovery from its rollback journal; the next write recovers it",
             ),
             Self::StoreUnreadable(detail) => write!(
                 f,

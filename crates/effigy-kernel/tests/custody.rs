@@ -1310,6 +1310,90 @@ fn foreground_custody_completes_without_database_or_logs() {
     }
 }
 
+/// A sibling checkout journal written throughout is not an obstacle: the
+/// foreground read is one plain WAL read, and the run starts in bounded time
+/// without busy-waiting (K1).
+#[test]
+fn foreground_begins_beside_a_journal_written_throughout() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    let mut store = effigy_kernel::store::Store::open(&cx, &root).unwrap();
+    store
+        .txn(&cx, |txn| {
+            txn.resource(&invocation().spec().owner, "fixture")
+                .map(|_| ())
+        })
+        .unwrap();
+    drop(store);
+    let path = root.path().join(effigy_kernel::store::DB_NAME);
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writing = stop.clone();
+    let writer = std::thread::spawn(move || {
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection.busy_timeout(Duration::from_secs(5)).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE churn (id INTEGER PRIMARY KEY, blob BLOB);\
+                 INSERT INTO churn(id, blob) \
+                 WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 64) \
+                 SELECT x, randomblob(4096) FROM c;",
+            )
+            .unwrap();
+        while !writing.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = connection.execute(
+                "UPDATE churn SET blob = randomblob(4096) WHERE id = (abs(random()) % 64) + 1",
+                [],
+            );
+        }
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    let started = Instant::now();
+    let mut run = foreground_begin(&cx, &root);
+    let mut child =
+        Custody::spawn_foreground(&mut run, spec(home.path(), "printf hello"), &cx).unwrap();
+    let exit = child.wait(cx.operation()).verified().copied().unwrap();
+    assert_eq!(exit.code, 0);
+    child.complete_foreground(&mut run, exit).unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    let outcome = run
+        .settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+        .unwrap();
+    let elapsed = started.elapsed();
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    writer.join().unwrap();
+    assert_eq!(outcome.cleanup(), CleanupOutcome::Complete);
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "a foreground run beside a writer took {elapsed:?}"
+    );
+}
+
+/// A journal that is not a store warns and the run proceeds; nothing is
+/// repaired behind the operator's back (K1, Q-011).
+#[test]
+fn foreground_warns_and_runs_with_a_damaged_journal() {
+    let home = home();
+    let cx = context();
+    let root = StateRoot::effects(&cx, home.path()).unwrap();
+    effigy_kernel::store::Store::open(&cx, &root).unwrap();
+    let journal = root.path().join(effigy_kernel::store::DB_NAME);
+    std::fs::write(&journal, b"not a store").unwrap();
+    let mut run = foreground_begin(&cx, &root);
+    let mut child =
+        Custody::spawn_foreground(&mut run, spec(home.path(), "printf hello"), &cx).unwrap();
+    let exit = child.wait(cx.operation()).verified().copied().unwrap();
+    assert_eq!(exit.code, 0);
+    child.complete_foreground(&mut run, exit).unwrap();
+    run.finish(WorkloadOutcome::Succeeded).unwrap();
+    let outcome = run
+        .settle(&cx.operation().cleanup(Duration::from_secs(10)).unwrap())
+        .unwrap();
+    assert_eq!(outcome.cleanup(), CleanupOutcome::Complete);
+    assert_eq!(std::fs::read(&journal).unwrap(), b"not a store".to_vec());
+    std::fs::remove_file(&journal).unwrap();
+}
+
 #[test]
 fn foreground_leader_exit_keeps_descendant_custody_and_cleans_on_drop() {
     let home = home();
@@ -1937,12 +2021,10 @@ fn foreground_git_replacement_keeps_directory_exclusion_until_old_custody_closes
     std::fs::rename(&git, home.path().join("git-retired")).unwrap();
     std::fs::create_dir(&git).unwrap();
     assert!(old.verify_custody().is_err());
+    // Identity is the checkout's location, not a directory generation
+    // (effigy#337): replacing `.git` in place keeps the same gate, and the
+    // old custody still holds it.
     let new_id = StateRoot::filesystem_checkout(&observe, &location()).unwrap();
-    // effigy#337: the checkout location is the gate identity, so a Git
-    // directory replaced at the same location keeps that gate. What the
-    // replacement does change is the retained directory, which
-    // `verify_custody` refused above; the gate stays Busy until the old
-    // custody closes.
     assert_eq!(old_id, new_id);
     let new_root = StateRoot::foreground_effects(&cx, &location()).unwrap();
     assert!(matches!(

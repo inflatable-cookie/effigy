@@ -161,26 +161,14 @@ impl StateRoot {
             .observe()
             .map_err(|_| StoreError::Unbounded)?;
         Self::filesystem_checkout(&observe, location)?;
-        let mut local = Self::checkout_observe(&observe, location);
-        if let Observed::Unknown(reason) = &local {
-            // A leftover group/other-readable root is only a mode repair: the
-            // effect path adopts it, and the root is then observed again on its
-            // real mode before any authority is trusted (papercut 9e5134a4).
-            // Every other unknown still refuses here.
-            if !super::is_open_mode_only(reason) {
-                return Err(StoreError::Corrupt(format!(
-                    "{}: the foreground checkout is unreadable ({reason}); fix the state root, then retry",
-                    location.root.display()
-                )));
-            }
-            Self::effects(cx, &location.root)?;
-            local = Self::checkout_observe(&observe, location);
-        }
-        if let Observed::Unknown(reason) = local {
-            return Err(StoreError::Corrupt(format!(
-                "{}: the foreground checkout is unreadable ({reason}); fix the state root, then retry",
+        if let Observed::Unknown(reason) = Self::checkout_observe(&observe, location) {
+            // A foreground run needs its own directory and gates, not a
+            // readable journal: an unreadable one warns once and the run
+            // proceeds (K1, Q-011).
+            eprintln!(
+                "[warn] {}: the checkout state is unreadable ({reason}); continuing without its recorded state",
                 location.root.display()
-            )));
+            );
         }
         Self::effects(cx, &location.root)?
             .retain_checkout(location)

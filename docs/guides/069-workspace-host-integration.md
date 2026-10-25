@@ -362,11 +362,10 @@ What does not follow the scratch directory:
 ### Retention
 
 - A run that succeeded releases its directory at settle. Removal restores owner
-  write permission through the tree first, so a tree holding Effigy's own
-  immutable objects — mode-`0500` directories, mode-`0400` files, which test
-  fixtures publish under `TMPDIR` — is still cleared. The repair never follows a
-  symlink and never leaves the tree; a symlink, a mount point inside it or an
-  entry owned by another user stops it.
+  write permission through the tree first, so a tree holding state objects an
+  older build published read-only — mode-`0500` directories, mode-`0400` files —
+  is still cleared. The repair never follows a symlink and never leaves the tree;
+  a symlink, a mount point inside it or an entry owned by another user stops it.
 - A run that failed, was cancelled or timed out keeps it for 24 hours, and the
   failure output names the path. The 24 hours start when the run ended, not
   when it started, so a long run that fails late keeps its full window.
