@@ -103,10 +103,8 @@ impl EndpointStore {
             }
             let _locks = self.sources.lock(op.remaining().unwrap_or_default())?;
             let mut snapshot = self.sources.read()?;
-            snapshot.quarantined = before.quarantined.clone();
             let old = before.claims()?;
             let desired = snapshot.claims()?;
-            snapshot.update_quarantine(&old, &desired)?;
             let wanted = desired
                 .iter()
                 .filter(|(name, _)| !old.contains_key(*name))
@@ -123,7 +121,7 @@ impl EndpointStore {
                 token.as_ref(),
                 &desired.into_values().collect::<Vec<_>>(),
                 &serde_json::to_value(snapshot).map_err(error)?,
-                REUSE_QUARANTINE,
+                Duration::ZERO,
             )
             .map_err(error)
         })
@@ -135,7 +133,7 @@ fn publish_existing(run: &mut Run<'_>, snapshot: &EndpointSnapshot) -> Result<()
         None,
         &snapshot.claims()?.into_values().collect::<Vec<_>>(),
         &serde_json::to_value(snapshot).map_err(error)?,
-        REUSE_QUARANTINE,
+        Duration::ZERO,
     )
     .map_err(error)
 }

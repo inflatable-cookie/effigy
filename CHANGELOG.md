@@ -7,6 +7,21 @@ During v0.x, MINOR bumps may include breaking changes.
 ## [Unreleased]
 
 ### Breaking
+- A gateway route is one claim: `domain -> (checkout path, target)`. The same
+  checkout path always replaces its own route, covering a new run, a new
+  generation and a container-to-listener handover. A different checkout takes
+  the domain over automatically when the recorded checkout path no longer
+  exists or its target does not accept a TCP connection within 200 ms, logging
+  the takeover in one line; otherwise the write is refused with one message
+  naming the other checkout and the command that stops it. `down`, `retire` and
+  settle remove the checkout's routes by path, listener routes included, so a
+  domain is free immediately and `down` followed by `up` elsewhere works at
+  once. A managed listener route's owner is its checkout path, environment and
+  process name; no run id is recorded.
+- `effigy gateway repair` (with `--owner-checkout`, `--yes` and `--expect-plan`)
+  is retired: automatic reclaim replaces it, and a dead loopback assignment is
+  collected once at allocation time. `effigy container ports reclaim` is
+  unchanged.
 - `effigy deploy model` and `effigy deploy export` are environment-aware:
   `deploy model <ENV>` and `deploy export <PROVIDER> <ENV>` describe the named
   `[deploy.<env>]` environment by resolving sparse `[deploy.<env>.model]`
@@ -282,6 +297,14 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- Withdrawn gateway domain claims and the endpoint reuse quarantine.
+  `effigy gateway repair`, the domain and route parts of its dead-owner plan,
+  the `effigy.gateway.loopback-reclaim.v1` JSON payload, the owner-checkout
+  filter, the managed-listener predecessor proof through the checkout journal,
+  the route-source-specific reclaim rules and the `StaleRouteClaim`,
+  `ManagedListenerRouteConflict`, `ManagedListenerRouteOwnerUnsettled` and
+  `LoopbackPoolExhaustedAfterReclaim` refusals are gone. The gateway's DNS TTL
+  is one second so a domain moves to its new owner at once.
 - The environment's record of what Effigy applied. `container up`, a task's
   runtime preparation and shared services now bring a stack up through one
   apply, `compose up -d --build --remove-orphans` with no recreate flag, and
@@ -1201,6 +1224,10 @@ During v0.x, MINOR bumps may include breaking changes.
   deleted container or a restarted VM is recreated by the next `up` while
   `status` reports each service's real state. `hold` takes its liveness from the
   runtime rather than the record.
+- Gateway route writes apply the dead-owner rule in the same locked
+  transaction, and the daemon sweeps it on a timer so `gateway status` lists
+  domains something still serves. A released loopback assignment is
+  immediately allocatable.
 - A managed session bound to a container environment owns that environment, and
   one `effigy dev` shows it the same way in hybrid and container placement
   (effigy#322, Q-007). The session's tabs are the run's own output, one tab per
@@ -1447,6 +1474,15 @@ During v0.x, MINOR bumps may include breaking changes.
   release root, and a lockfile whose owning workspace is anchored elsewhere is
   refused instead of writing an undeclared lockfile.
 
+- A checkout's local gate identity is a digest of its canonical location and its
+  resolved Git directory instead of its device and inode, so a reboot, remount or
+  volume renumbering no longer renames the gates and locks a checkout holds. The
+  `Filesystem`-kind digest is versioned `v2` for the new content; it is derived
+  and never persisted, so no state needs migrating (effigy#337).
+- `state/checkout.json` and an import seal's recorded destination are provenance
+  rather than a gate. Their device, inode and Git-directory path are recorded for
+  diagnostics and rewritten when they no longer describe the checkout.
+
 ### Fixed
 - A host process whose child leader exits now applies its declared `restart`
   policy instead of failing supervision. After a leader exit, Effigy reaps the
@@ -1457,6 +1493,26 @@ During v0.x, MINOR bumps may include breaking changes.
   dependents refreshed, after a crash, a signal or a non-zero exit; a genuinely
   live member other than the leader still keeps the generation unavailable.
   `restart = "never"` settles closed with its exit recorded (effigy#336).
+- A checkout journal opens by its location, so a checkout created before a
+  reboot, remount or volume renumbering keeps working afterwards: tasks, durable
+  runs, `run status`, managed sessions and host processes. macOS assigns `st_dev`
+  at mount, and `state/checkout.json` recorded it, so after the 2026-10-25 reboot
+  every pre-reboot checkout refused every run with "checkout directory generation
+  changed". The binding is now provenance: a record from an earlier boot, a
+  legacy record, or one whose Git directory moved is rewritten to the current
+  generations by the next effect, under the local binding gate, and the journal
+  keeps its runs, gates and history. An import seal's recorded destination
+  generations and its absolute Git directory path are provenance too, so a plain
+  `mv` of a checkout keeps working. A checkout's local gate and lock names derive
+  from its location instead of its device and inode, so a reboot no longer
+  renames them. No durable decision depends on the mount-time device number: a
+  custody lease and a supervisor socket receipt are identified by their inode,
+  and `container retire --dead` no longer calls a live checkout ambiguous when
+  its labels were written in an earlier boot. The refusals that remain protect
+  live invariants only — a custodian whose retained checkout, state directory or
+  Git locator was replaced during its own lifetime, a Git resolution that
+  disagrees with the checkout's own `.git`, and a journal database this binary
+  never bound (effigy#337).
 - A managed listener route left by a previous run of the same checkout is
   reclaimed by the next run, and `down`, `reset` and settle withdraw listener
   routes even when the supervisor that published them is gone. Since

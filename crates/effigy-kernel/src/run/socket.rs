@@ -7,9 +7,11 @@ use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 
 pub(super) const KIND: &str = "kernel:control-socket";
+/// The socket file this run bound. Only its inode is recorded: the device
+/// number macOS reports is assigned at mount and changes at every reboot, while
+/// the inode still names the file this run bound (effigy#337).
 #[derive(Debug, Serialize, Deserialize)]
 struct Receipt {
-    device: u64,
     inode: u64,
 }
 pub(super) fn intent(target: Fence) -> EffectSpec {
@@ -52,10 +54,7 @@ impl Run<'_> {
             listener.set_nonblocking(true)?;
             self.applied(
                 &ticket,
-                serde_json::to_value(Receipt {
-                    device: device(&stat),
-                    inode: stat.st_ino,
-                })?,
+                serde_json::to_value(Receipt { inode: stat.st_ino })?,
             )?;
             Ok(listener)
         })();
@@ -81,7 +80,7 @@ impl Run<'_> {
             // private directory, so the name is the generation (§7.3).
             if let Some(receipt) = effect.receipt.clone() {
                 let receipt: Receipt = serde_json::from_value(receipt)?;
-                if device(&stat) != receipt.device || stat.st_ino != receipt.inode {
+                if stat.st_ino != receipt.inode {
                     return Err(RunError::Invalid("socket generation unverified".into()));
                 }
             }
@@ -109,18 +108,6 @@ impl Run<'_> {
                 reason.as_deref(),
             )
         })
-    }
-}
-
-fn device(stat: &libc::stat) -> u64 {
-    #[cfg(target_os = "linux")]
-    {
-        stat.st_dev
-    }
-    // macOS dev_t is signed; the durable wire field preserves its numeric bits.
-    #[cfg(target_os = "macos")]
-    {
-        stat.st_dev as u64
     }
 }
 

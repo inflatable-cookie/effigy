@@ -14,7 +14,10 @@ environments, remote clients and retained scratch select checkout durability
 before their first effect. Status combines live foreground evidence with
 explicitly historical durable results; a missing record means `not-recorded`.
 
-Checkout journals and their Git locators bind native directory generations.
+A checkout journal opens by its location, `<checkout>/.effigy/state/`. The
+directory generations its `checkout.json` records are provenance, not a gate: a
+record from an earlier boot, or one that no longer matches, is rewritten by the
+next effect and the journal keeps its history (effigy#337, §7.1).
 Linked worktrees have separate journals and imported key aliases stay local.
 Legacy owner aliases join custody only until a verified cutover; unreadable or
 unresolved predecessors refuse new work. Foreground runs do not create a token
@@ -31,7 +34,7 @@ imported, opened for writing or deleted.
 
 Scope inventory lives in its checkout. After deletion, `container retire --dead`
 uses the selected backend's ownership labels and surviving shared facts. It
-requires the native checkout generation and exact custody lease, protects live
+requires the checkout directory's inode and exact custody lease, protects live
 or unknown owners, and keeps retry progress in the invoking live checkout.
 The private backend proof combines 24 foreground commands across three
 checkouts with two detached runs, an environment transition and a stalled local
@@ -174,7 +177,7 @@ code settle it:
 | D5 | Effect classes | static, read, refresh, mutate | Static, Observe, RefreshDerived, PrepareSource, Mutate | Static, Observe, RefreshDerived, Prepare, Mutate | Brief |
 | D6 | Managed supervisor | detached | foreground stays foreground | One detached supervisor per managed run. Owning-client death means stop and settle. Attaching to a running stack leaves it running. | Tom ruling 5 |
 | D7 | Guest Effigy | isolate, opt-in, runs under the host run's token | cut auto-provisioning, host owner protocol | Workspace client in container mode only: local reads against a materialised context; every authority request over one authenticated host channel, re-resolved, gated and journalled on the host; a durable workspace session run; a version-locked Linux binary installed at Prepare. Hybrid mode has no guest (§8). | Lane rule 1; Tom 2026-10-18 (container mode needs full coverage); `synthesis/GUEST-EFFIGY.md` option (c) |
-| D8 | Endpoint store | `state.json` + lock | SQLite + effect outbox + reuse quarantine | Endpoint claims are kernel store rows; the gateway engine is their only writer; released addresses are quarantined | D1; X-sol gap 6 |
+| D8 | Endpoint store | `state.json` + lock | SQLite + effect outbox | Endpoint claims are kernel store rows; the gateway engine is their only writer; a released endpoint is immediately reusable | D1; X-sol gap 6 |
 | D9 | Remote registration | ack `{container_id, nonce, pgid}` | ack with namespace and start identity | In-band ack on the exec stream, plus the nonce in the remote environment for recovery; no bind-mount marker files | R1: guests never write host state |
 | D10 | Owner SIGKILL of a one-shot run | "no custody process outlives its run" incl. KILL | a small supervisor may outlive the front end | Foreground custody has an in-memory death guard; durable custody keeps the journal-backed sentinel (§3.1). Loss of foreground evidence leaves residue, never numeric recovery authority. | Q-010; X-opus K5 for durable runs |
 
@@ -225,9 +228,10 @@ Foreground admission checks any existing checkout journal for unresolved
 predecessors read-only. Missing journal means none; unreadable evidence is
 `Unknown`, refusing that owner, not all other checkouts. Recovery of a durable
 predecessor is a separate durable operation before foreground admission.
-Without a stored checkout token, local gate identity uses the verified root
-and per-checkout Git-directory filesystem identities (device/inode), with a
-domain separate from persisted `CheckoutId`s. The same admission checks both
+Without a stored checkout token, local gate identity is a digest of the verified
+root's canonical path and its resolved per-checkout Git directory path, with a
+domain separate from persisted `CheckoutId`s. A reboot therefore cannot rename a
+checkout's gates and locks (effigy#337). The same admission checks both
 names when a persisted token exists; first durable initialization serializes
 on this local identity gate. A short run never mints a Git token, registers a
 checkout, appends an ignore block, creates a database, writes a run directory,
@@ -263,7 +267,8 @@ fenced cleanup authority when a parent lease ends. Engines continue to own
 classification and live hook checks while workloads run.
 
 A foreground grant also binds the device/inode identity of its guard's
-anonymous cleanup pipe. Custody exports only a write-only pin in reserved
+anonymous cleanup pipe, a live descriptor that never outlives the run, so no
+reboot can change it. Custody exports only a write-only pin in reserved
 descriptor 10. A descendant guard verifies that pipe against the native parent
 grant and retains a pin through its own settlement. Ancestor guards keep their
 gates until all pins close and EOF is observed. Pin bytes carry no protocol or
@@ -502,8 +507,9 @@ ephemeral clones reuse the existing runtime-scope token
 names do not change. Primary checkouts get a token beside it. Only Prepare
 and Mutate classes mint a token; Observe reports "no runtime state yet". The
 `Filesystem` kind is never persisted as a checkout token or durable run owner.
-Its domain-separated digest uses retained checkout/Git device and inode facts;
-its scope names are separate even if a persisted token has the same raw bytes.
+Its domain-separated digest uses the canonical checkout path and its resolved
+per-checkout Git directory path, never a mount-time device number or inode; its
+scope names are separate even if a persisted token has the same raw bytes.
 The existing kind tags 0–3 remain unchanged; tag 4 denotes this local-only kind,
 tags 0–7 keep their meanings, and tag 8 is the `HostProcess` resource an
 environment's host process run owns (effigy#320).
@@ -2029,7 +2035,7 @@ block; foreground admission and all reads never append it.
 ```text
 <checkout>/.effigy/state/
   kernel.db                         checkout journal (+ kernel.db-wal and -shm while open)
-  checkout.json                     fresh checkout/Git filesystem-generation binding
+  checkout.json                     checkout/Git generation record (journal provenance)
   gates/<scope>.scope               scope lock
   gates/<scope>/<rid>.gate          per-resource locks, including foreground owners
   sock/<run-id>.sock                durable supervisor socket
@@ -2071,19 +2077,33 @@ A checkout whose own records cannot be read is recorded against that checkout:
 dead-owner and port recovery hold its entries only, never every owner on the
 machine.
 
-A fresh durable checkout publishes `state/checkout.json` before opening its
-journal. This bounded private record binds the checkout's device/inode and
-its resolved per-checkout Git-directory path and device/inode; every subsequent
-store read/write checks those generations. Warm routing only reads that record.
-The first record is serialized by a local filesystem-generation gate. Imported
-checkouts use their migration seal's equivalent binding. A legacy central
+A durable checkout journal opens by its location: `<checkout>/.effigy/state/`.
+A fresh durable checkout publishes the bounded private record
+`state/checkout.json` before opening its journal as provenance: the checkout's
+and its resolved per-checkout Git directory's path and device/inode, for an
+operator reading the state root. It is not a gate. A record left by an earlier
+boot — a volume renumbered at mount, a recreated Git directory — or one that no
+longer matches is rewritten to the current values by the next effect, under the
+local binding gate, and the journal carries on with its history: its runs,
+operations, gates and objects are untouched. Prior-boot runs are already history
+through the boot identity each record carries. `st_dev` is assigned at mount, so
+no durable decision may depend on it. Tom, 2026-10-25: "I thought we had
+simplified the kernel.db dependency? This is exactly the sort of overcomplication
+and brittleness I wanted to avoid." Imported checkouts keep their migration
+seal's recorded generations as provenance; the seal proves publication, never a
+recorded device or inode. A resolution whose Git directory disagrees with the
+checkout's own `.git` is still refused, and a live custodian that sees its
+retained checkout or state directory replaced still refuses new work: those are
+facts about this process's descriptors, not about a reboot. A legacy central
 journal requires explicit migration before any fresh durable destination is
 created. A sealed or freshly bound checkout remains usable independently of
 machine-store health; local authority does not consult machine state again.
-A one-time machine `state/machine-format.json` binds the new layout to its home
-directory generation without creating a database. It distinguishes new cache
-locks from old pre-run writers during bootstrap; it contains no checkout or run
-index. Initialization is measured separately from steady-state operations.
+A one-time machine `state/machine-format.json` records the new layout's home
+directory generation without creating a database. A layout whose home generation
+moved is rebound by the next machine effect rather than refused. It distinguishes
+new cache locks from old pre-run writers during bootstrap; it contains no
+checkout or run index. Initialization is measured separately from steady-state
+operations.
 Fresh task and environment identities share one token; both distinct legacy
 primary tokens remain valid when imported. Non-Git durable roots persist a
 random token in `.effigy`; path hashes cannot establish ownership of old state.
@@ -2093,9 +2113,11 @@ not a stop or successful settle. Supported `container retire` first settles
 runs, withdraws routes/releases claims and verifies closure under scope locks;
 only then can an operator remove the directory. Effigy does not prevent an
 external `rm -rf`. Living custodians retain open gate/root descriptors and
-refuse new effects if the directory binding changes; they finish cleanup from
-their verified receipts where possible. Recreating the pathname cannot adopt
-the old generation: token and root inode must match. Missing state plus
+refuse new effects if the retained checkout, state directory or Git locator is
+replaced under them; they finish cleanup from their verified receipts where
+possible. Restoring a copied `.effigy/state` into a recreated directory opens
+that journal by its location and rebinds its record: that is a deliberate copy,
+and no recorded device or inode is what distinguishes it. Missing state plus
 surviving containers or processes is residue, never permission to kill by
 number. Machine endpoint/port claims survive deletion and protect their values
 until explicit verified retirement; unknown owners are not garbage-collected.
@@ -2111,9 +2133,11 @@ inventory supplies lost-checkout provenance; names or PID/PGID values do not.
 A checkout custody lease is a shared lock file in `$HOME/.effigy/gates/`,
 separate from machine journal initialization and its `.effigy/state/` layout,
 not a journal or checkout index. Environment owners and holders retain it through
-positive process cleanup. Generated backend labels carry its device/inode and the
-checkout directory generation. Dead retirement requires the exact existing lease
-exclusively; missing or replaced lease state refuses cleanup. A missing checkout
+positive process cleanup. Generated backend labels carry its inode and the
+checkout directory generation; the recorded device number is diagnostics, since
+`st_dev` changes at every mount and a reboot would otherwise look like a replaced
+lease. Dead retirement requires the exact existing lease inode exclusively;
+missing or replaced lease state refuses cleanup. A missing checkout
 on an unavailable volume remains Unknown. Retry progress lives in the invoking
 checkout, and cannot override live or ambiguous backend ownership.
 
@@ -2191,9 +2215,10 @@ effects are positively resolved, independently of checkout retention.
 
 Machine-scoped resource gates use the single machine `state/gates/machine/`
 namespace even when their owning run journals in a checkout. Ordinary checkout
-gates never consult that domain. First machine-gate use binds its home and
-state-directory generations; observation and recovery helpers retain the same
-domain and refuse a replaced directory. Machine-format or migration refusal
+gates never consult that domain. First machine-gate use retains its home and
+state-directory inodes; observation and recovery helpers stay in the same domain
+and refuse a directory that is no longer that inode (a renumbered device is not
+a replacement). Machine-format or migration refusal
 blocks that machine resource, while local checkout gates remain usable. These
 lock files contain no checkout registry or shared data-claim database. Internal
 database and object mutexes use their owning checkout's filesystem scope.

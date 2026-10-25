@@ -20,8 +20,6 @@ use effigy_containers::{
     EffectiveContainerPolicy, EffectiveManagedHostListener, HostProcessEnvFacts,
 };
 use effigy_gateway::endpoint_store::{EndpointStore, ListenerPortRequest};
-use effigy_gateway::registration::ManagedListenerPredecessor;
-use effigy_gateway::routes::ManagedListenerRouteOwner;
 use effigy_kernel::ctx::{CleanupContext, EffectClass, EffectContext, OpenReason, Placement};
 use effigy_kernel::gate::GateState;
 use effigy_kernel::id::{CheckoutId, ResolvedInvocation, ResourceId, RunId};
@@ -386,31 +384,6 @@ fn start_host_processes_inner(
     // A v0.14.1 PID/spec supervisor is stopped by its recorded identity first;
     // no new generation shares a checkout with an unmanaged one.
     stop_legacy_host_processes(repo_root, policy)?;
-    if let Some(route_table) = route_table.as_deref() {
-        let state_home = crate::runner::task_engine::state_home_path().ok_or_else(|| {
-            RunnerError::task_invocation("HOME is unset; host process runs need a checkout journal")
-        })?;
-        let settle = settle_command(&policy.name);
-        for process in policy
-            .host_processes
-            .iter()
-            .filter(|process| process.listener.is_some())
-        {
-            let owner = managed_host_process_owner(&project_path, policy, process)?;
-            effigy_gateway::registration::check_managed_listener_route_claim_observed(
-                route_table,
-                &project_path,
-                &process
-                    .listener
-                    .as_ref()
-                    .expect("filtered listener")
-                    .route_domain,
-                &owner,
-                |current| observe_route_predecessor(&state_home, &checkout_root, current, &settle),
-            )
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        }
-    }
     let cx = effects()?;
     let state_root = journal_root(&checkout_root)?;
     let state_home = crate::runner::task_engine::state_home_path().ok_or_else(|| {
@@ -1248,125 +1221,6 @@ fn run_exit(run: &RunSummary) -> Option<i32> {
     }
 }
 
-/// The command that settles one environment, for a refusal that names a next
-/// step.
-pub(in crate::runner) fn settle_command(environment: &str) -> String {
-    if environment.is_empty() {
-        "effigy container down".to_owned()
-    } else {
-        format!("effigy container {environment} down")
-    }
-}
-
-/// What this checkout's journal proves about the run that published an existing
-/// managed listener route.
-///
-/// The route's recorded kernel run is the only authority. Its journal row says
-/// whether it closed, and its resource gate says whether any supervisor still
-/// holds it; a process identity is never guessed. An unreadable, absent or
-/// unrecorded run is `Unknown`, so a successor refuses instead of reclaiming a
-/// route it cannot prove dead.
-pub(in crate::runner) fn observe_route_predecessor(
-    state_home: &Path,
-    repo_root: &Path,
-    owner: &ManagedListenerRouteOwner,
-    next: &str,
-) -> ManagedListenerPredecessor {
-    let unknown = |run: Option<String>, reason: String| ManagedListenerPredecessor::Unknown {
-        run,
-        reason,
-        next: next.to_owned(),
-    };
-    let Some(recorded) = owner.run.clone() else {
-        return unknown(
-            None,
-            "the route records no kernel run, so its owner is not observable".to_owned(),
-        );
-    };
-    let Ok(run) = recorded.parse::<RunId>() else {
-        return unknown(
-            Some(recorded),
-            "the recorded run identity is not a kernel run id".to_owned(),
-        );
-    };
-    let Some(observed) = observe_root_in(state_home, repo_root) else {
-        return unknown(
-            Some(recorded),
-            "the checkout journal is unavailable".to_owned(),
-        );
-    };
-    let root = match observed {
-        Observed::Verified(root, _) => root,
-        Observed::Absent(_) => {
-            return unknown(Some(recorded), "the checkout journal is absent".to_owned())
-        }
-        Observed::Unknown(reason) => {
-            return unknown(
-                Some(recorded),
-                format!("the checkout journal is unreadable ({reason})"),
-            )
-        }
-    };
-    let reader = match Store::read(&observe(), &root) {
-        Observed::Verified(reader, _) => reader,
-        Observed::Absent(_) => {
-            return unknown(
-                Some(recorded),
-                "the checkout journal has no store".to_owned(),
-            )
-        }
-        Observed::Unknown(reason) => {
-            return unknown(
-                Some(recorded),
-                format!("the checkout journal is unreadable ({reason})"),
-            )
-        }
-    };
-    let summary = match effigy_kernel::run::summary(&reader, run) {
-        Observed::Verified(row, _) => row,
-        Observed::Absent(_) => {
-            return unknown(
-                Some(recorded),
-                "the checkout journal has no record of this run".to_owned(),
-            )
-        }
-        Observed::Unknown(reason) => {
-            return unknown(
-                Some(recorded),
-                format!("the run record is unreadable ({reason})"),
-            )
-        }
-    };
-    if summary.phase == Phase::Closed {
-        return ManagedListenerPredecessor::Settled;
-    }
-    let Some(resource) = summary
-        .invocation
-        .as_ref()
-        .map(|invocation| invocation.spec().owner.clone())
-    else {
-        return unknown(
-            Some(recorded),
-            "the run record does not name its resource".to_owned(),
-        );
-    };
-    match effigy_kernel::gate::Gate::probe(&observe(), &root, &resource) {
-        // A run that has not closed but holds no gate has no live supervisor:
-        // the gate is held for exactly the supervisor's lifetime.
-        Observed::Verified(GateState::Free, _) | Observed::Absent(_) => {
-            ManagedListenerPredecessor::Settled
-        }
-        Observed::Verified(GateState::Held(_), _) => ManagedListenerPredecessor::Live {
-            run: Some(recorded),
-            next: next.to_owned(),
-        },
-        Observed::Unknown(reason) => unknown(
-            Some(recorded),
-            format!("the run's gate is unobservable ({reason})"),
-        ),
-    }
-}
-
 /// Withdraw every listener route this environment's declared host processes
 /// published, whether or not the supervisor that published it is still alive.
 ///
@@ -1404,13 +1258,6 @@ pub(in crate::runner) fn withdraw_host_listener_routes(
         }
     };
     let project_path = checkout_root.display().to_string();
-    let scope = match effigy_gateway::registration::project_scope(&project_path) {
-        Ok(scope) => scope,
-        Err(error) => {
-            residue.push(format!("listener routes could not be withdrawn: {error}"));
-            return (withdrawn, residue);
-        }
-    };
     let names = failed;
     for process in policy
         .host_processes
@@ -1432,7 +1279,6 @@ pub(in crate::runner) fn withdraw_host_listener_routes(
         match effigy_gateway::registration::deregister_managed_listener_routes_for_owner(
             &route_table,
             &project_path,
-            scope.as_deref(),
             &owner,
             &domains,
         ) {

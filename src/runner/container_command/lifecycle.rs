@@ -297,12 +297,6 @@ fn run_container_up_inner(
         }
     }
     plan.handover_notes.extend(handed_over);
-    // With same-checkout conflicts handed over, a listener claim can only
-    // refuse for a route this checkout may never take.
-    crate::runner::host_process::validate_host_process_listener_route_claims(
-        repo_root,
-        &plan.policy,
-    )?;
 
     if plan.attach_mode == EffectiveAttachMode::Detached {
         environment::import_legacy(repo_root, &plan.policy)?;

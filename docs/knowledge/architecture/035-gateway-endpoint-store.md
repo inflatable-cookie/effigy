@@ -9,8 +9,8 @@ Mechanisms: [runtime kernel contract](../contracts/052-runtime-kernel-contract.m
 `EndpointStore` addresses the operator's `~/.effigy/state/machine.db`. Its
 machine-scoped `Store(gateway-endpoints)` resource owns the publication gate
 and one versioned payload containing routes, loopback assignments, generated
-port ranges, original import hashes and released-resource quarantine. Private
-fixtures use the same API with a disposable home.
+port ranges and original import hashes. Private fixtures use the same API with a
+disposable home.
 
 `edit` begins a kernel run, reads the payload while holding its owner gate,
 checks an optional expected revision, reserves newly requested conflicts, and
@@ -19,13 +19,14 @@ publishes the complete payload and claim revisions together through
 after admission enters kernel settle. There are no external probes or runtime
 inventory queries in the SQLite transaction.
 
-Active domain claims include the complete route, including managed-listener identity.
-A withdrawn route retains its checkout and stable listener domain owner without
-an active routing target. Routine down/up can reactivate that domain immediately;
-explicit checkout retirement releases the persistent domain claim. Withdrawal
-also retains its address and TCP-port conflict set, including imported aliases
-without a separate loopback assignment, so an immediate restart can reactivate
-the same endpoints.
+A route is the whole claim on a domain: `domain -> (checkout path, target)`.
+The same checkout path always replaces its own route, which covers a new run, a
+new generation and a container-to-listener handover. A different checkout path
+takes the domain over only when the recorded owner is dead: its checkout path no
+longer exists, or its target address does not accept a TCP connection within
+200 ms. The takeover is logged in one line. Otherwise the write is refused with
+one message naming the other checkout and the command that stops it. Removing the
+route frees the domain immediately, so `down` followed by `up` needs no window.
 Address claims cover project loopback identities; numeric port claims cover
 generated host ranges. Multiple DNS aliases can share one address owned by the
 same scope. Conflicting scopes, overlapping ranges and incompatible targets
@@ -40,13 +41,10 @@ run to the gateway store resource at settle. A Prepare run ending does not
 release its environment's bindings. Releasing a different lifetime owner's
 reservation refuses; missing runtime inventory never releases a reservation.
 
-Release and removal from the endpoint payload commit together. Kernel claims
-remain quarantined for the 60-second DNS TTL plus the ten-second proxy drain
-budget. The payload keeps a conservative allocation hint through the maximum
-remaining operation budget, so the allocator cannot select an address or
-range whose kernel quarantine has not expired. A reboot ends both boot-clock
-deadlines. Unknown clock evidence preserves protection. An address or port
-cannot move directly between owners without release and quarantine.
+Release and removal from the endpoint payload commit together, and a released
+address or port is immediately allocatable: the gateway publishes with no
+reuse quarantine, and its DNS answers carry a one-second TTL. A domain that
+moves between checkouts therefore resolves to its new owner at once.
 
 ## Import and observation
 
@@ -56,13 +54,13 @@ legacy writer locks in fixed order, with one bounded deadline. Reads use the
 kernel's no-follow, owner-checked, size-bounded record reader. Original files
 remain untouched as backups; the payload records their exact SHA-256 hashes.
 Once a payload exists, legacy input never imports again. Imported claims settle
-before the caller edits them, so even a first-command release quarantines every
+before the caller edits them, so even a first-command release sees every
 endpoint that the old gateway could see. A failed edit does not undo import.
 
 The payload preserves raw JSON documents. Typed edits replace known fields
-while retaining unknown root and entry fields, including pins. Explicitly releasing an
-entry removes that entry and quarantines its claims; it does not reconstruct
-ownership from a runtime scan.
+while retaining unknown root and entry fields, including pins. Releasing an
+entry removes that entry and its claims; it does not reconstruct ownership from
+a runtime scan.
 
 `read` is Observe-only and creates no files or gates. `read_compatible` reads
 legacy input only when the store or endpoint payload is absent. An unreadable,
@@ -100,12 +98,12 @@ process) is an unknown refusal, never an absence proof: it can never license
 another owner to replace the listener, and it never waives the live-foreign
 refusal. The supervisor's activation record, not a caller clock, is the barrier
 between supervision admission and the listener's declared readiness budget.
-Managed preflight reserves the persistent domain before child startup. Exact
-child-generation teardown withdraws active routing without releasing that
-stable owner; stale callbacks cannot withdraw a successor. Retirement releases
-only the recorded checkout's assignments. Explicit port reclaim snapshots its
-pre-edit document through a journaled kernel file publication, then commits
-removals and quarantine together; the original imported JSON stays untouched.
+A managed listener route's owner is its checkout path, environment and process
+name. Exact child-generation teardown withdraws the route, and a stale stop
+callback cannot withdraw a successor generation. Retirement and `down` remove
+the checkout's routes by path, listener routes included. Explicit port reclaim
+snapshots its pre-edit document through a journaled kernel file publication,
+then commits the removals; the original imported JSON stays untouched.
 
 The daemon imports before starting, reads Store snapshots and watches the
 kernel database directory for reload. Legacy route-file provenance checks apply
@@ -157,9 +155,9 @@ the failure; it does not claim the cause of a past unexplained refusal.
 ## Proof surfaces
 
 - `test:gateway:endpoints`: import preservation and idempotence, persistent
-  owners, quarantine, concurrent conflict races, stale revisions, collision
-  refusal, untrusted inputs, Unknown reads and publication/retention faults;
-  the existing port and route model tests also run.
+  owners, immediate reuse after release, concurrent conflict races, stale
+  revisions, collision refusal, untrusted inputs, Unknown reads and
+  publication/retention faults; the port and route model tests also run.
 - `proof:gateway:endpoints:import`: reads operator registry copies, redacts
   project paths and domains inside a fresh disposable home, then verifies
   every imported document and unchanged backup byte.
@@ -207,7 +205,7 @@ Setup's privileged child reads only the explicit legacy files and setup
 receipt through its authenticated operator descriptor; it never opens the
 operator's kernel database. Re-upgrade authenticates/quiesces the v0.14.1 root
 daemon, then re-imports current files under the endpoint gate and legacy locks.
-Existing retained claims fence reconciliation; removed claims enter quarantine.
+Existing retained claims fence reconciliation; removed claims release at once.
 A partial export must complete before re-import. Active managed-listener routes
 are refused with their exact domains because v0.14.1 lacks that ownership fence.
 Withdrawn reservations stay inactive during export; re-import reconciles the

@@ -151,8 +151,8 @@ hand is on their own. The retained surface:
   adoption boundary on ephemeral loopback endpoints with owned descriptors and
   real accept round trips.
 - Operator shape: the standard operator gateway (`gateway setup`,
-  `gateway up|down|status`, `gateway repair`) installs and controls its own
-  listeners; no launchd install, verification or rollback plan is shipped.
+  `gateway up|down|status`) installs and controls its own listeners; no launchd
+  install, verification or rollback plan is shipped.
   Resolver files, `lo0` aliases and CA trust remain separate administrator
   steps.
 
