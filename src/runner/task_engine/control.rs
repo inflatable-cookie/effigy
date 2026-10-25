@@ -3,7 +3,7 @@
 //! while custody holds a gate. Reads are pure (R2). Foreground stop never
 //! opens a journal or reconstructs signalling authority from old gate bytes.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use effigy_kernel::custody::Stream;
@@ -88,6 +88,11 @@ impl RunRecord {
     pub(in crate::runner) fn refresh(&self) -> Lookup {
         lookup_at(&kernel::observe(), &self.root, self.id)
     }
+    /// The run's workload process, read from this record's own journal: a poll
+    /// pays one read here, not another lookup (effigy#339).
+    pub(in crate::runner) fn workload_process(&self) -> Observed<Option<i64>> {
+        workload_process_in(&kernel::observe(), &self.root, self.id)
+    }
     pub(in crate::runner) fn effects(&self) -> Observed<Vec<effigy_kernel::run::Effect>> {
         match Store::read(&kernel::observe(), &self.root) {
             Observed::Verified(reader, _) => effigy_kernel::run::effects(&reader, self.id),
@@ -136,17 +141,20 @@ pub(in crate::runner) enum Lookup {
     Unknown(String),
 }
 
-/// A run id, else a `--run-id` key. A string that is a valid run id is read
-/// as one; a key is read through the id it derives.
-pub(in crate::runner) fn resolve(selector: &str) -> Result<Lookup, RunnerError> {
+/// A run id, else a `--run-id` key, in `checkout`. A string that is a valid
+/// run id is read as one; a key is read through the id it derives.
+pub(in crate::runner) fn resolve_in(
+    checkout: &Path,
+    selector: &str,
+) -> Result<Lookup, RunnerError> {
     if let Ok(id) = selector.parse::<RunId>() {
-        match lookup(id) {
+        match lookup_checkout(checkout, id) {
             Lookup::NotFound => {}
             result => return Ok(result),
         }
     }
     match RunKey::parse(selector) {
-        Ok(key) => Ok(lookup_key(&key)),
+        Ok(key) => Ok(lookup_key_in(checkout, &key)),
         Err(_) => selector
             .parse::<RunId>()
             .map(|_| Lookup::NotFound)
@@ -167,10 +175,16 @@ fn lookup_key_at(
         Ok(namespace) => namespace,
         Err(error) => return Lookup::Unknown(error.to_string()),
     };
+    // One read answers every id the key derives: a poll is one cheap read.
+    let reader = match Store::read(cx, root) {
+        Observed::Verified(reader, _) => reader,
+        Observed::Absent(_) => return Lookup::NotFound,
+        Observed::Unknown(reason) => return Lookup::Unknown(journal_unknown(root, &reason)),
+    };
     let mut found = None;
     for id in namespace.ids {
-        match lookup_journal(cx, root, id) {
-            Lookup::Found(row) => {
+        match effigy_kernel::run::summary(&reader, id) {
+            Observed::Verified(summary, _) => {
                 if found.is_some() {
                     return Lookup::Unknown(format!(
                         "key `{}` names multiple retained runs in {}",
@@ -178,64 +192,43 @@ fn lookup_key_at(
                         root.owning_directory().path().display()
                     ));
                 }
-                found = Some(row);
+                found = Some(record(cx, root, summary));
             }
-            Lookup::NotFound => {}
-            other => return other,
+            Observed::Absent(_) => {}
+            Observed::Unknown(reason) => return Lookup::Unknown(journal_unknown(root, &reason)),
         }
     }
-    found.map_or(Lookup::NotFound, Lookup::Found)
+    found.map_or(Lookup::NotFound, |row| Lookup::Found(Box::new(row)))
 }
 
-fn lookup_key(key: &RunKey) -> Lookup {
+/// A journal read that could not answer, named by its checkout.
+fn journal_unknown(
+    root: &effigy_kernel::root::StateRoot,
+    reason: &effigy_kernel::observe::UnknownReason,
+) -> String {
+    format!("{}: {reason:?}", root.path().display())
+}
+
+/// A key's run in one checkout. Peer worktrees are never scanned: a lookup
+/// that read every sibling journal held a poll at 90% CPU for 75 minutes
+/// (effigy#339, Q-011). `runs --all` is the cross-checkout view.
+fn lookup_key_in(checkout: &Path, key: &RunKey) -> Lookup {
     let cx = kernel::observe();
-    let cwd = match std::env::current_dir() {
-        Ok(cwd) => cwd,
-        Err(error) => return Lookup::Unknown(error.to_string()),
-    };
-    let current = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
-        .map(|resolved| resolved.resolved_root)
-        .unwrap_or(cwd);
-    match kernel::observe_root(&cx, &current) {
-        Observed::Verified(root, _) => match lookup_key_at(&cx, &root, key) {
-            Lookup::NotFound => {}
-            result => return result,
-        },
-        Observed::Absent(_) => {}
-        Observed::Unknown(reason) => {
-            return Lookup::Unknown(format!("{}: {reason:?}", current.display()))
-        }
+    match kernel::observe_root(&cx, checkout) {
+        Observed::Verified(root, _) => lookup_key_at(&cx, &root, key),
+        Observed::Absent(_) => Lookup::NotFound,
+        Observed::Unknown(reason) => Lookup::Unknown(format!("{}: {reason:?}", checkout.display())),
     }
-    let view = match kernel::known_roots_view(&cx) {
-        Ok(view) => view,
-        Err(error) => return Lookup::Unknown(error.to_string()),
-    };
-    let mut found: Option<Box<RunRecord>> = None;
-    let mut omitted = view.omitted;
-    for root in view.roots {
-        match lookup_key_at(&cx, &root, key) {
-            Lookup::Found(row) => {
-                if let Some(previous) = found {
-                    return Lookup::Unknown(format!(
-                        "key `{}` is ambiguous between {} and {}; query it in its owning checkout",
-                        key.key(),
-                        previous.root.owning_directory().path().display(),
-                        root.owning_directory().path().display()
-                    ));
-                }
-                found = Some(row);
-            }
-            Lookup::NotFound => {}
-            Lookup::Unknown(reason) => omitted.push(reason),
-        }
-    }
-    if !omitted.is_empty() {
-        return Lookup::Unknown(format!(
-            "key discovery is incomplete: {}",
-            omitted.join("; ")
-        ));
-    }
-    found.map_or(Lookup::NotFound, Lookup::Found)
+}
+
+/// The checkout a query with no explicit root runs in.
+fn query_checkout() -> Result<PathBuf, String> {
+    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+    Ok(
+        effigy_core::resolver::resolve_target_root(cwd.clone(), None)
+            .map(|resolved| resolved.resolved_root)
+            .unwrap_or(cwd),
+    )
 }
 
 /// A caller already resolved the owning checkout. Absence or uncertainty
@@ -253,58 +246,27 @@ pub(in crate::runner) fn lookup(id: RunId) -> Lookup {
     lookup_within(&kernel::observe(), id)
 }
 
-/// A lookup bounded by the caller's own observation context. The scratch sweep
-/// asks about a directory whose marker cannot decide, so a busy sibling
-/// checkout journal answers `Unknown` rather than holding a run's start.
+/// A lookup bounded by the caller's own observation context, in the checkout
+/// the query runs in: one read of that journal, never a scan of its peers. An
+/// unreadable cwd journal is `Unknown`, not permission to look elsewhere
+/// (effigy#339, Q-011).
 pub(in crate::runner) fn lookup_within(
     cx: &effigy_kernel::ctx::ObserveContext,
     id: RunId,
 ) -> Lookup {
-    // Current-checkout authority wins before cross-checkout discovery. An
-    // unreadable cwd journal is Unknown, never permission to select a peer.
-    if let Ok(cwd) = std::env::current_dir() {
-        let current = effigy_core::resolver::resolve_target_root(cwd.clone(), None)
-            .map(|resolved| resolved.resolved_root)
-            .unwrap_or(cwd);
-        match kernel::observe_root(cx, &current) {
-            Observed::Verified(root, _) => match lookup_at(cx, &root, id) {
-                Lookup::NotFound => {}
-                result => return result,
-            },
-            Observed::Absent(_) => {}
-            Observed::Unknown(reason) => {
-                return Lookup::Unknown(format!("{}: {reason:?}", current.display()))
-            }
-        }
-    }
-    let roots = match kernel::known_roots(cx) {
-        Ok(roots) => roots,
-        Err(error) => return Lookup::Unknown(error.to_string()),
+    let current = match query_checkout() {
+        Ok(checkout) => checkout,
+        Err(reason) => return Lookup::Unknown(reason),
     };
-    let mut found: Option<Box<RunRecord>> = None;
-    let mut unknown = Vec::new();
-    for root in roots {
-        match lookup_at(cx, &root, id) {
-            Lookup::Found(record) => {
-                if let Some(previous) = found {
-                    return Lookup::Unknown(format!("run {id} is ambiguous between {} and {}; run the query in its owning checkout",
-                        previous.root.owning_directory().path().display(), root.owning_directory().path().display()));
-                }
-                found = Some(record);
-            }
-            Lookup::NotFound => {}
-            Lookup::Unknown(reason) => unknown.push(reason),
-        }
-    }
-    if let Some(record) = found {
-        Lookup::Found(record)
-    } else if !unknown.is_empty() {
-        Lookup::Unknown(unknown.join("; "))
-    } else {
-        Lookup::NotFound
+    match kernel::observe_root(cx, &current) {
+        Observed::Verified(root, _) => lookup_at(cx, &root, id),
+        Observed::Absent(_) => Lookup::NotFound,
+        Observed::Unknown(reason) => Lookup::Unknown(format!("{}: {reason:?}", current.display())),
     }
 }
 
+/// One run in one journal: one `Store::read`, then the run's row and, when
+/// there is none, its terminal record from that same reader.
 fn lookup_at(
     cx: &effigy_kernel::ctx::ObserveContext,
     root: &effigy_kernel::root::StateRoot,
@@ -314,43 +276,45 @@ fn lookup_at(
         Ok(rows) => rows.into_iter().find(|row| row.id == id),
         Err(reason) => return Lookup::Unknown(reason),
     };
-    let durable = lookup_journal(cx, root, id);
-    match (foreground, durable) {
-        (Some(_), Lookup::Found(_)) => Lookup::Unknown(format!(
-            "run {id} has conflicting foreground and journal evidence"
-        )),
-        (Some(row), _) => Lookup::Found(Box::new(row)),
-        // A v2 hook-admitted foreground run's narrow terminal row lives in
-        // the same journal; it is the only post-exit evidence Q-010 keeps.
-        (None, Lookup::NotFound) => lookup_terminal(cx, root, id),
-        (None, result) => result,
-    }
-}
-
-fn lookup_terminal(
-    cx: &effigy_kernel::ctx::ObserveContext,
-    root: &effigy_kernel::root::StateRoot,
-    id: RunId,
-) -> Lookup {
     let reader = match Store::read(cx, root) {
         Observed::Verified(reader, _) => reader,
-        Observed::Absent(_) => return Lookup::NotFound,
+        Observed::Absent(_) => {
+            return match foreground {
+                Some(row) => Lookup::Found(Box::new(row)),
+                None => Lookup::NotFound,
+            }
+        }
         Observed::Unknown(reason) => {
-            return Lookup::Unknown(format!("{}: {reason}", root.path().display()))
+            return match foreground {
+                Some(row) => Lookup::Found(Box::new(row)),
+                None => Lookup::Unknown(journal_unknown(root, &reason)),
+            }
         }
     };
-    match effigy_kernel::run::terminal_record(&reader, id) {
-        Observed::Verified(Some(record), _) => Lookup::Found(Box::new(RunRecord {
-            id,
-            root: root.clone(),
-            view: project_terminal(&record),
-            task: record.task.clone(),
-            source: RunSource::Terminal(record),
-        })),
-        Observed::Verified(None, _) | Observed::Absent(_) => Lookup::NotFound,
-        Observed::Unknown(reason) => {
-            Lookup::Unknown(format!("{}: {reason}", root.path().display()))
-        }
+    let durable = match effigy_kernel::run::summary(&reader, id) {
+        Observed::Verified(summary, _) => Some(record(cx, root, summary)),
+        Observed::Absent(_) => None,
+        Observed::Unknown(reason) => return Lookup::Unknown(journal_unknown(root, &reason)),
+    };
+    match (foreground, durable) {
+        (Some(_), Some(_)) => Lookup::Unknown(format!(
+            "run {id} has conflicting foreground and journal evidence"
+        )),
+        (Some(row), None) => Lookup::Found(Box::new(row)),
+        (None, Some(record)) => Lookup::Found(Box::new(record)),
+        // A v2 hook-admitted foreground run's narrow terminal row lives in
+        // the same journal; it is the only post-exit evidence Q-010 keeps.
+        (None, None) => match effigy_kernel::run::terminal_record(&reader, id) {
+            Observed::Verified(Some(record), _) => Lookup::Found(Box::new(RunRecord {
+                id,
+                root: root.clone(),
+                view: project_terminal(&record),
+                task: record.task.clone(),
+                source: RunSource::Terminal(record),
+            })),
+            Observed::Verified(None, _) | Observed::Absent(_) => Lookup::NotFound,
+            Observed::Unknown(reason) => Lookup::Unknown(journal_unknown(root, &reason)),
+        },
     }
 }
 
@@ -403,27 +367,6 @@ fn foreground_records(
         );
     }
     Ok(unique.into_values().collect())
-}
-
-fn lookup_journal(
-    cx: &effigy_kernel::ctx::ObserveContext,
-    root: &effigy_kernel::root::StateRoot,
-    id: RunId,
-) -> Lookup {
-    let reader = match Store::read(cx, root) {
-        Observed::Verified(reader, _) => reader,
-        Observed::Absent(_) => return Lookup::NotFound,
-        Observed::Unknown(reason) => {
-            return Lookup::Unknown(format!("{}: {reason:?}", root.path().display()))
-        }
-    };
-    match effigy_kernel::run::summary(&reader, id) {
-        Observed::Verified(summary, _) => Lookup::Found(Box::new(record(cx, root, summary))),
-        Observed::Absent(_) => Lookup::NotFound,
-        Observed::Unknown(reason) => {
-            Lookup::Unknown(format!("{}: {reason:?}", root.path().display()))
-        }
-    }
 }
 
 fn record(
@@ -562,33 +505,18 @@ pub(in crate::runner) fn list(
     })
 }
 
-fn root_for_run(id: RunId) -> Observed<effigy_kernel::root::StateRoot> {
-    match lookup(id) {
-        Lookup::Found(record) => Observed::Verified(
-            record.root,
-            effigy_kernel::observe::Evidence::new("bound checkout journal".into(), None)
-                .expect("fixed source"),
-        ),
-        Lookup::NotFound => Observed::Absent(effigy_kernel::observe::AbsenceProof::NoStateRoot),
-        Lookup::Unknown(reason) => Observed::Unknown(
-            effigy_kernel::observe::UnknownReason::StoreUnreadable(reason),
-        ),
-    }
-}
-
 fn unreadable(reason: &str) -> RunnerError {
     RunnerError::task_invocation(format!("the run journal is unreadable: {reason}"))
 }
 
-/// A run's effects as its journal records them: a pure read (R2).
-pub(in crate::runner) fn effects(id: RunId) -> Observed<Vec<effigy_kernel::run::Effect>> {
-    let cx = kernel::observe();
-    let root = match root_for_run(id) {
-        Observed::Verified(root, _) => root,
-        Observed::Absent(proof) => return Observed::Absent(proof),
-        Observed::Unknown(reason) => return Observed::Unknown(reason),
-    };
-    match Store::read(&cx, &root) {
+/// A run's effects from one checkout's journal: a pure read (R2). A follower
+/// binds the root once and keeps reading it, so a poll never re-resolves the
+/// run (effigy#339).
+pub(in crate::runner) fn effects_in(
+    root: &effigy_kernel::root::StateRoot,
+    id: RunId,
+) -> Observed<Vec<effigy_kernel::run::Effect>> {
+    match Store::read(&kernel::observe(), root) {
         Observed::Verified(reader, _) => effigy_kernel::run::effects(&reader, id),
         Observed::Absent(proof) => Observed::Absent(proof),
         Observed::Unknown(reason) => Observed::Unknown(reason),
@@ -597,14 +525,12 @@ pub(in crate::runner) fn effects(id: RunId) -> Observed<Vec<effigy_kernel::run::
 
 /// The run's workload process: its last custody process that is not the
 /// admission hook or an env-schema command. `None` until it has started.
-pub(in crate::runner) fn workload_process(id: RunId) -> Observed<Option<i64>> {
-    let cx = kernel::observe();
-    let root = match root_for_run(id) {
-        Observed::Verified(root, _) => root,
-        Observed::Absent(proof) => return Observed::Absent(proof),
-        Observed::Unknown(reason) => return Observed::Unknown(reason),
-    };
-    let reader = match Store::read(&cx, &root) {
+fn workload_process_in(
+    cx: &effigy_kernel::ctx::ObserveContext,
+    root: &effigy_kernel::root::StateRoot,
+    id: RunId,
+) -> Observed<Option<i64>> {
+    let reader = match Store::read(cx, root) {
         Observed::Verified(reader, _) => reader,
         Observed::Absent(proof) => return Observed::Absent(proof),
         Observed::Unknown(reason) => return Observed::Unknown(reason),
@@ -629,20 +555,14 @@ pub(in crate::runner) fn workload_process(id: RunId) -> Observed<Option<i64>> {
 
 /// Reads one stream of the run's workload process from an exact offset.
 pub(in crate::runner) fn read_log(
+    root: &effigy_kernel::root::StateRoot,
     id: RunId,
     sequence: i64,
     stream: Stream,
     offset: u64,
     max: usize,
 ) -> Observed<LogRead> {
-    let cx = kernel::observe();
-    match root_for_run(id) {
-        Observed::Verified(root, _) => {
-            effigy_kernel::run::read_log(&cx, &root, id, sequence, stream, offset, max)
-        }
-        Observed::Absent(proof) => Observed::Absent(proof),
-        Observed::Unknown(reason) => Observed::Unknown(reason),
-    }
+    effigy_kernel::run::read_log(&kernel::observe(), root, id, sequence, stream, offset, max)
 }
 
 /// What `stop` did to reach the run's owner.
@@ -788,5 +708,6 @@ pub(in crate::runner) fn signal_owner(record: &RunRecord) -> bool {
     )
 }
 
-/// Bound for one journal poll while following or stopping.
-pub(in crate::runner) const POLL: Duration = Duration::from_millis(100);
+/// Bound for one journal poll while following or stopping: one cheap read of
+/// the run's own journal per interval, never a tight spin.
+pub(in crate::runner) const POLL: Duration = Duration::from_millis(250);

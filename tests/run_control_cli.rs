@@ -12,6 +12,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -741,6 +742,44 @@ fn an_unreadable_journal_is_unknown_and_names_the_run() {
     }
 }
 
+/// A journal that is not a store is reported, never repaired and never a
+/// reason to refuse work: the foreground run warns once and proceeds (K1).
+#[test]
+fn a_damaged_journal_warns_and_the_task_still_runs() {
+    let fixture = Fixture::new();
+    assert!(fixture
+        .run(&["--run-id", "durable-1", "light"])
+        .status
+        .success());
+    let journal = fixture.repo.join(".effigy/state/kernel.db");
+    assert!(journal.exists(), "the durable run kept no journal");
+    fs::remove_file(fixture.repo.join("light.txt")).expect("clear the marker");
+    fs::write(&journal, b"not a store").expect("damage the journal");
+    let output = fixture.run(&["light"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(fixture.exists("light.txt"), "the task never ran");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("[warn]"), "{stderr}");
+    assert!(stderr.contains("kernel.db"), "{stderr}");
+    // `runs` answers with the journal reported as unreadable.
+    let listing = fixture.run(&["runs"]);
+    assert!(listing.status.success(), "{}", text(&listing));
+    let printed = format!(
+        "{}{}",
+        String::from_utf8_lossy(&listing.stdout),
+        String::from_utf8_lossy(&listing.stderr)
+    );
+    assert!(printed.contains("journal unavailable"), "{printed}");
+    // Neither command rewrote the journal behind the operator's back.
+    assert_eq!(
+        fs::read(&journal).expect("journal"),
+        b"not a store".to_vec()
+    );
+    // The fixture's own hygiene proof reads the journal before removing HOME;
+    // a damaged one would hold it for the whole budget, so leave none behind.
+    fs::remove_file(&journal).expect("clear the damaged journal");
+}
+
 #[test]
 fn runs_lists_this_checkouts_runs_and_retired_surfaces_refuse() {
     let fixture = Fixture::new();
@@ -765,7 +804,7 @@ fn runs_lists_this_checkouts_runs_and_retired_surfaces_refuse() {
 }
 
 #[test]
-fn equal_keys_are_checkout_scoped_and_peer_discovery_refuses_ambiguity() {
+fn equal_keys_are_owned_by_their_checkout_and_only_runs_all_spans_checkouts() {
     let first = Fixture::new();
     // Both checkouts and discovery configuration live under this fixture's
     // fresh HOME. They share neither a token nor a journal.
@@ -804,21 +843,149 @@ fn equal_keys_are_checkout_scoped_and_peer_discovery_refuses_ambiguity() {
         ),
     )
     .unwrap();
+    // A lookup in a checkout with no journal of its own resolves nothing: it
+    // never scans the configured peers (effigy#339, Q-011). `runs --all` is
+    // the one cross-checkout view, and it does report both runs.
     let result = first
-        .effigy(&["--json", "run", "status", "equal-key"])
+        .effigy(&["run", "status", "equal-key"])
         .current_dir(&observer)
         .output_owned()
         .unwrap();
     assert!(
         !result.status.success(),
-        "a peer key must not select the first match"
+        "a peer key must not select another checkout's run"
     );
     let message = text(&result);
     assert!(
-        message.contains("ambiguous")
-            && message.contains(first.repo.to_str().unwrap())
-            && message.contains(second.to_str().unwrap()),
+        !message.contains("ambiguous") && !message.contains("incomplete"),
         "{message}"
+    );
+    let all = first
+        .effigy(&["--json", "runs", "--all"])
+        .current_dir(&observer)
+        .output_owned()
+        .unwrap();
+    assert!(all.status.success(), "{}", text(&all));
+    let listing: serde_json::Value = serde_json::from_slice(&all.stdout).unwrap();
+    let listed = listing["result"]["runs"].as_array().expect("runs");
+    assert_eq!(listed.len(), 2, "{listing}");
+}
+
+/// `effigy runs` answers at once beside a journal another process writes
+/// throughout: a read takes no lock a writer holds (effigy#339, Q-011).
+#[test]
+fn runs_answers_within_a_second_beside_a_continuous_writer() {
+    let fixture = Fixture::new();
+    assert!(fixture
+        .run(&["--run-id", "written-1", "light"])
+        .status
+        .success());
+    let journal = fixture.repo.join(".effigy/state/kernel.db");
+    let stop = Arc::new(AtomicBool::new(false));
+    let writing = stop.clone();
+    let writer = std::thread::spawn(move || {
+        let connection = rusqlite::Connection::open(&journal).unwrap();
+        connection.busy_timeout(Duration::from_secs(5)).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE churn (id INTEGER PRIMARY KEY, blob BLOB);\
+                 INSERT INTO churn(id, blob) \
+                 WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 32) \
+                 SELECT x, randomblob(4096) FROM c;",
+            )
+            .unwrap();
+        while !writing.load(Ordering::Relaxed) {
+            let _ = connection.execute(
+                "UPDATE churn SET blob = randomblob(4096) WHERE id = (abs(random()) % 32) + 1",
+                [],
+            );
+        }
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    let started = Instant::now();
+    let output = fixture.run(&["--json", "runs"]);
+    let elapsed = started.elapsed();
+    stop.store(true, Ordering::Relaxed);
+    writer.join().unwrap();
+    assert!(output.status.success(), "{}", text(&output));
+    let envelope: serde_json::Value = serde_json::from_slice(&output.stdout).expect("runs");
+    assert!(
+        envelope["result"]["runs"]
+            .as_array()
+            .is_some_and(|runs| !runs.is_empty()),
+        "{envelope}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "`effigy runs` took {elapsed:?} beside a continuous writer"
+    );
+}
+
+/// A run lookup reads this checkout's own journal and nothing else. Fifty
+/// sibling worktrees carry their own journals, one of them a real run with a
+/// key of its own; a local poll resolves the local run and never finds the
+/// peer's, and each poll is one cheap read (effigy#339, Q-011).
+#[test]
+fn a_run_lookup_reads_only_this_checkouts_journal_with_fifty_worktree_peers() {
+    let fixture = Fixture::new();
+    assert!(fixture
+        .run(&["--run-id", "local-key", "light"])
+        .status
+        .success());
+    let peers = fixture.home.join("peers");
+    fs::create_dir(&peers).unwrap();
+    let mut peer_paths = Vec::new();
+    for index in 0..50 {
+        let peer = peers.join(format!("peer-{index:02}"));
+        fs::create_dir_all(peer.join(".effigy/state")).unwrap();
+        fs::write(peer.join("effigy.toml"), MANIFEST).unwrap();
+        // A damaged journal is the cheapest proof that nothing reads it: a
+        // read would surface as an unreadable journal, not as silence. The
+        // first peer keeps a usable one for the run below.
+        if index > 0 {
+            fs::write(peer.join(".effigy/state/kernel.db"), b"not a store").unwrap();
+        }
+        peer_paths.push(peer);
+    }
+    // One peer holds a real run of its own under its own key.
+    assert!(fixture
+        .effigy(&["--run-id", "peer-key", "light"])
+        .current_dir(&peer_paths[0])
+        .output_owned()
+        .unwrap()
+        .status
+        .success());
+    fs::create_dir_all(fixture.home.join(".effigy")).unwrap();
+    fs::write(
+        fixture.home.join(".effigy/config.toml"),
+        format!("[runtime]\ncheckout_roots = [{:?}]\n", peers),
+    )
+    .unwrap();
+    // Five status polls, each one journal read of this checkout: the local key
+    // resolves, the peer's key does not, and no poll reports an unreadable or
+    // incomplete runtime view.
+    let started = Instant::now();
+    for _ in 0..5 {
+        let local = fixture.run(&["--json", "run", "status", "local-key"]);
+        assert!(local.status.success(), "{}", text(&local));
+        let peer = fixture.run(&["run", "status", "peer-key"]);
+        assert!(
+            !peer.status.success(),
+            "a peer worktree's key selected a run: {}",
+            text(&peer)
+        );
+        for poll in [&local, &peer] {
+            let stderr = String::from_utf8_lossy(&poll.stderr);
+            assert!(
+                !stderr.contains("unreadable") && !stderr.contains("omitted"),
+                "a poll read a peer journal: {stderr}"
+            );
+        }
+    }
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "ten status polls took {:?}; the lookup is scanning peers",
+        started.elapsed()
     );
 }
 

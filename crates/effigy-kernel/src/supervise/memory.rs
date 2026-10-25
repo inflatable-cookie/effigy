@@ -25,7 +25,6 @@ pub(crate) struct MemoryGuard {
 #[serde(deny_unknown_fields)]
 struct Config {
     memory: bool,
-    executable: Executable,
     owner: ProcessIdentity,
     gates: usize,
     run: RunId,
@@ -67,15 +66,15 @@ impl MemoryGuard {
         fence: Fence,
         purpose: MemoryPurpose,
     ) -> Result<Self, RunError> {
-        // Memory custody never pins or copies an image into runtime state.
-        // A replaced image is a pre-go refusal, not permission to write one.
+        // Memory custody never pins or copies an image into runtime state, and
+        // never refuses over one: a rebuilt or missing binary beside a
+        // foreground run is not a reason to stop it (K1).
         cx.operation()
             .check(if purpose == MemoryPurpose::Foreground {
                 "foreground guard startup"
             } else {
                 "checkout lease backup startup"
             })?;
-        executable.verify()?;
         #[cfg(target_os = "linux")]
         if purpose == MemoryPurpose::Foreground && executable.exec_fd.is_some() {
             return Err(RunError::Invalid(
@@ -102,7 +101,6 @@ impl MemoryGuard {
             .collect();
         let config = Config {
             memory: true,
-            executable: executable.clone(),
             owner,
             gates: copies.len(),
             run,
@@ -303,7 +301,6 @@ fn memory_frame(
 
 pub(super) fn serve(config: serde_json::Value, input: &mut impl Read) -> Result<(), RunError> {
     let config: Config = serde_json::from_value(config)?;
-    config.executable.verify()?;
     if !config.memory
         || config.gates == 0
         || config.gates > GATE_MAX

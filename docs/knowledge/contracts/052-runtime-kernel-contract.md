@@ -224,10 +224,12 @@ database. A container-free foreground
 build never opens either database for writing. Machine-store failure is not a
 foreground dependency; existing local predecessor evidence stays read-only.
 
-Foreground admission checks any existing checkout journal for unresolved
-predecessors read-only. Missing journal means none; unreadable evidence is
-`Unknown`, refusing that owner, not all other checkouts. Recovery of a durable
-predecessor is a separate durable operation before foreground admission.
+Foreground admission reads any existing checkout journal read-only for
+unresolved predecessors. Missing journal means none, and a journal that cannot
+be read warns once, naming it and the reason, and the run proceeds: the owner
+flock is the only exclusion that matters (K1, Q-011). Recovery of a durable
+predecessor is a separate durable operation, and only a proved, live predecessor
+holding that owner gate refuses.
 Without a stored checkout token, local gate identity is a digest of the verified
 root's canonical path and its resolved per-checkout Git directory path, with a
 domain separate from persisted `CheckoutId`s. A reboot therefore cannot rename a
@@ -812,22 +814,15 @@ stays small, `auto_vacuum=INCREMENTAL` chosen while the store is empty, and a
 reader and a writer share the store; it replaced the rollback journal in
 effigy#275 after concurrent runs refused each other with `Busy`.
 
-Reads create no files: `Store::read` uses SQLite's read-only WAL shared-memory
-index (`readonly_shm=1`) through a Unix VFS that refuses file creation,
-writable opens and deletion. Its live WAL view is copied through SQLite backup
-into memory before closing the filesystem connection. SQLite restarts an online
-backup from the source's first page whenever another connection writes it, so
-the copy counts restarts and gives up after `SNAPSHOT_RESTARTS` of them with
-`Unknown(Busy)`, which every reader already treats as `Unknown`: a checkout
-journal under a continuous writer (a busy sibling worktree) answers in bounded
-time instead of spinning for the whole observation budget (effigy#333).
-A checkpointed store without that index
-is copied into memory through a verified descriptor. Its identity, size and
-nanosecond modification/change times must remain unchanged across the bounded
-copy, with no hot WAL or rollback journal before or after it. A race is
-`Unknown(store needs recovery)`. The returned reader owns only the detached in-memory snapshot;
-later writers cannot change its snapshot. Migration's sealed source read retains
-its stricter quiescence requirement. Neither route silently ignores live WAL.
+Reads create no files and copy nothing: `Store::read` is one read-only SQLite
+connection with `PRAGMA query_only` and a short busy timeout (K1, Q-011). A
+store with write-ahead side files is read through SQLite's own WAL with a
+read-only shared-memory index (`readonly_shm=1`), so a writer beside the read is
+no obstacle: WAL already gives one consistent committed state, and a crashed
+writer's uncommitted frames are invisible to the reader and left untouched. A
+checkpointed store without side files is an immutable open, which needs no lock
+and no index. A read that fails is `Unknown`: the foreground path warns once and
+proceeds, and `runs` reports the journal as unavailable rather than refusing.
 
 Every write takes the store's own writer gate (`Store(kernel)`), then one short
 `BEGIN IMMEDIATE` transaction, and commits it. The gate serializes Effigy's
@@ -888,8 +883,8 @@ a transaction.
 | Killed writer mid-transaction | SQLite rolls back the uncommitted write-ahead frames. A reader keeps the last committed snapshot without repairing anything; the next writer recovers. |
 | Perm | Mutate refuses before any effect. Observe returns `Unknown(PermissionDenied)`. |
 | Clock | Records carry wall time for display and journal sequence for order. Nothing compares wall times for authority. |
-| Corrupt `kernel.db` | Observe reports `Unknown(store unreadable)`. Mutate refuses and names the explicit repair, which moves the store aside with its `-journal`, `-wal` and `-shm` files, so a leftover log never attaches to the next `kernel.db`. Resources it described become `Unknown`, so R3 protects them. |
-| Hot rollback journal seen by a read-only reader | `Unknown(store needs recovery)`; the next Mutate recovers it. |
+| Corrupt `kernel.db` | Observe reports `Unknown(store unreadable)`. Mutate refuses and names the explicit repair, which moves the store aside with its `-journal`, `-wal` and `-shm` files, so a leftover log never attaches to the next `kernel.db`. Resources it described become `Unknown`, so R3 protects them. A foreground run warns once and still runs. |
+| Hot rollback journal seen by a read-only reader | `Unknown(store unreadable)`; the next Mutate recovers it. A foreground run warns once and still runs. |
 
 #### Proof
 
@@ -1779,7 +1774,7 @@ pub enum UnknownReason {
     TimedOut { phase: String }, Busy { phase: String }, PermissionDenied,
     ToolUnavailable(String), Unparsable(String), Inconsistent(String),
     GuardUnavailable, Injected, Untrusted(String), HostAuthorityRequired,
-    StoreNeedsRecovery, StoreUnreadable(String),
+    StoreUnreadable(String),
 }
 
 pub trait Probe {
@@ -2285,7 +2280,8 @@ never waits on a checkout gate or probes under a transaction (K14).
 ### 7.6 Discovery without a central index
 
 `runs` defaults to the current checkout. `runs --all` and cross-checkout doctor
-build a read-only candidate set from cwd, Git's linked-worktree list, configured
+are the only commands that look beyond it. They build a read-only candidate set
+from cwd, Git's linked-worktree list, configured
 search roots (`[runtime] checkout_roots = ["/path/to/workspaces"]` in user
 config), and checkout paths already present in gateway/port claims. This is
 bounded filesystem discovery, not registration at run start. Search roots are
@@ -2303,9 +2299,15 @@ checkout and evidence source (durable, live foreground, residue); output also
 states roots searched and incomplete coverage. `--all` means all discoverable
 checkouts, not an assertion of host completeness. A checkout outside every
 search root and shared claim cannot be found after its owner exits. Supply its
-root through configuration or run the query there. Direct `run status|logs|stop`
-resolves cwd first, then this discovery set; ambiguous keys across checkouts
-refuse and name the candidate roots. Each action re-verifies its exact target.
+root through configuration or run the query there.
+
+`run status`, `run logs`, `run stop`, attach and `--run-id` key resolution
+read the journal of the checkout the query runs in, resolved from cwd, and
+nothing else: one cheap read per lookup, never a scan of its peers
+(effigy#339, Q-011). An unreadable own journal is `Unknown`; it is never
+permission to select another checkout. `runs --all` is the only cross-checkout
+view. Every action re-verifies its exact target, and a polling wait does at most
+one cheap read per interval with a backoff of at least 250 ms.
 
 Doctor additionally reports imported-but-missing roots, legacy-store cutover
 state and verified external resource residue; it performs no import, repair or

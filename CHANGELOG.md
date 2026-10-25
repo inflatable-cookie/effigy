@@ -297,6 +297,16 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- The online-backup snapshot behind a store read (effigy#339, Q-011): the
+  in-memory copy, its restart counter and its fixed restart bound, the
+  unchanged-source stamp check, the custom read-only Unix VFS, the second
+  immutable fallback that a failed ordinary open reached, the "hot log needs
+  recovery" labelling of a racing writer, `StoreError::NeedsRecovery`,
+  `UnknownReason::StoreNeedsRecovery` and the migration-only sealed store read.
+  `rusqlite`'s `backup` feature goes with them.
+- The hard foreground refusals on an unreadable journal: `check_predecessors`
+  and `foreground_effects` warn and proceed instead of refusing the run, and the
+  foreground memory guard's executable-identity check is gone.
 - Object sealing: the 0400/0500 file and directory `chmod` in publication, the
   mode-0500 expectation on a published object root and its two fault points.
   Files and directories keep the modes they are created with.
@@ -1220,6 +1230,24 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- Reading a checkout journal or the machine store is one plain read-only SQLite
+  connection in WAL mode with a short busy timeout: no copy and no custom VFS. A
+  journal written throughout by another process no longer makes a read wait or
+  report the store busy, and a crashed writer's log is read as its own committed
+  state (effigy#339, Q-011). A foreground task never
+  refuses because a journal is busy, locked, unreadable or "needs recovery": it
+  warns once, naming the journal and the reason, and runs. Only a proved, live
+  predecessor holding the same owner gate refuses. The foreground memory guard
+  no longer refuses a rebuilt or missing binary.
+- `effigy run status`, `run logs`, `run stop`, attach and `--run-id` key
+  resolution read the journal of the checkout the query runs in, resolved from
+  cwd, and nothing else (effigy#339, Q-011). They no longer walk every Git
+  worktree and configured search root: an orphaned `effigy dev --headless`
+  spent 75 minutes at 90% CPU doing exactly that. `runs --all` and cross-checkout
+  doctor are the only views that look beyond the checkout, a lookup is one cheap
+  journal read, and a polling wait backs off by at least 250 ms. Equal keys in
+  different checkouts are no longer reported as ambiguous: each belongs to its
+  own journal.
 - Kernel object closures are published with Effigy's ordinary private modes —
   files 0600, directories 0700 — instead of 0400 and 0500, and the post-rename
   root seal is gone. The digest already proves integrity, and a read-only tree
