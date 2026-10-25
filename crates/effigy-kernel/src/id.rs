@@ -206,6 +206,8 @@ pub enum ResourceKind {
     Endpoint = 5,
     Store = 6,
     Gateway = 7,
+    /// One host process owned by an environment (052 §10.2).
+    HostProcess = 8,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Scope {
@@ -247,6 +249,25 @@ impl ResourceId {
             ResourceKind::Env,
             Scope::Checkout(checkout),
             vec![Some(text(name)?)],
+        ))
+    }
+    /// A host process of `environment` in `profile`: its own gate, in the
+    /// environment's checkout scope, so the environment can settle it
+    /// without holding `Gate(Env)`.
+    pub fn host_process(
+        checkout: CheckoutId,
+        environment: &str,
+        profile: &str,
+        process: &str,
+    ) -> Result<Self, IdentityError> {
+        Ok(Self::new(
+            ResourceKind::HostProcess,
+            Scope::Checkout(checkout),
+            vec![
+                Some(text(environment)?),
+                Some(text(profile)?),
+                Some(text(process)?),
+            ],
         ))
     }
     pub fn data(engine: &str, context: &str, volume: &str) -> Result<Self, IdentityError> {
@@ -389,6 +410,7 @@ impl ResourceId {
             5 => ResourceKind::Endpoint,
             6 => ResourceKind::Store,
             7 => ResourceKind::Gateway,
+            8 => ResourceKind::HostProcess,
             _ => return Err(IdentityError::InvalidInvocation),
         };
         let scope = match byte(&mut input)? {
@@ -412,6 +434,7 @@ impl ResourceId {
         let count = match kind {
             ResourceKind::Task => 4,
             ResourceKind::Data => 3,
+            ResourceKind::HostProcess => 3,
             ResourceKind::Endpoint => 2,
             _ => 1,
         };
@@ -686,6 +709,7 @@ impl ResourceId {
         let count = match self.kind {
             ResourceKind::Task => 4,
             ResourceKind::Data => 3,
+            ResourceKind::HostProcess => 3,
             ResourceKind::Endpoint => 2,
             _ => 1,
         };
@@ -694,6 +718,9 @@ impl ResourceId {
         }
         match (self.kind, self.scope) {
             (ResourceKind::Env, Scope::Checkout(c)) => Self::environment(c, field(0)?),
+            (ResourceKind::HostProcess, Scope::Checkout(c)) => {
+                Self::host_process(c, field(0)?, field(1)?, field(2)?)
+            }
             (ResourceKind::Store, scope) => Self::store(scope, field(0)?),
             (ResourceKind::Gateway, Scope::Machine) => Self::gateway(field(0)?),
             (ResourceKind::Data, Scope::Machine) => Self::data(field(0)?, field(1)?, field(2)?),
