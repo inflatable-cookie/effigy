@@ -393,8 +393,8 @@ fn start_host_processes_inner(
         .map_err(super::super::environment::error)?
         .checkout;
     // Resolved environment facts every host-process `env` may reference, and
-    // one concrete loopback port per dynamic listener, reserved through the
-    // gateway endpoint store before any child launches (effigy#321).
+    // one concrete loopback port per dynamic listener, taken from the OS before
+    // any child launches (effigy#321, effigy#346).
     let mut facts = HostProcessEnvFacts::for_policy(policy)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     facts.set_gateway_https_port(super::super::gateway_command::gateway_https_port());
@@ -644,7 +644,7 @@ fn gateway_ca_environment_from(
     env
 }
 
-/// A listener declaration with the port this run reserved, if it asked for a
+/// A listener declaration with the port this run assigned, if it asked for a
 /// dynamic one.
 fn resolved_host_process_listener(
     process: &effigy_containers::EffectiveHostProcess,
