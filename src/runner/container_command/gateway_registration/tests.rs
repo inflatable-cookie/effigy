@@ -1091,16 +1091,14 @@ fn foreign_teardown_preserves_tls_material_and_tcp_alias() {
 }
 
 #[test]
-fn container_down_after_listener_handover_preserves_the_successor_route() {
+fn container_down_removes_the_checkouts_listener_route_and_the_next_up_takes_the_domain() {
     with_test_home("container-down-after-handover", || {
         use effigy_gateway::identity::GatewayStartIdentity;
-        use effigy_gateway::registration::deregister_managed_listener_route;
         use effigy_gateway::routes::ManagedListenerRouteOwner;
 
         let root = tempfile::tempdir().unwrap();
         let checkout = root.path().join("primary");
         std::fs::create_dir_all(&checkout).unwrap();
-        let project = checkout.display().to_string();
         let table_path = gateway_route_table_path().unwrap();
         let route = |domain: &str| RegisteredGatewayRoute {
             domain: domain.to_owned(),
@@ -1150,26 +1148,15 @@ fn container_down_after_listener_handover_preserves_the_successor_route() {
             })
             .expect("previously committed successor fixture");
 
-        // `container down` must not remove the live successor route.
-        assert!(deregister_gateway_routes_for_container(&policy)
-            .unwrap()
-            .is_empty());
-        let survivors = RouteTable::load(&table_path).unwrap();
-        assert!(survivors
-            .lookup("clientname.test")
-            .unwrap()
-            .managed_listener
-            .is_some());
+        // `container down` removes the checkout's routes by path, listener
+        // routes included, so the domain is free immediately.
+        assert_eq!(
+            deregister_gateway_routes_for_container(&policy).unwrap(),
+            ["clientname.test"]
+        );
+        assert!(RouteTable::load(&table_path).unwrap().is_empty());
 
-        // Stopping the hybrid generation, then starting the container again.
-        assert!(deregister_managed_listener_route(
-            &table_path,
-            &project,
-            "clientname.test",
-            "main|web|test|app",
-            "child-1",
-        )
-        .unwrap());
+        // Starting the container again takes the domain at once.
         reconcile_gateway_routes(&table_path, &checkout, &[route("clientname.test")]).unwrap();
         let back = RouteTable::load(&table_path).unwrap();
         let restored = back.lookup("clientname.test").unwrap();
@@ -1197,9 +1184,12 @@ fn two_live_worktrees_cannot_register_one_fixed_domain() {
             paths.push(checkout);
         }
         let table_path = gateway_route_table_path().unwrap();
+        // The first checkout still serves the domain, so its claim is live.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let live = listener.local_addr().unwrap().to_string();
         let route = |domain: &str| RegisteredGatewayRoute {
             domain: domain.to_owned(),
-            target: Some("127.0.0.1:8100".to_owned()),
+            target: Some(live.clone()),
             dns_ip: None,
             tcp_port: None,
             tcp_target: None,
@@ -1211,6 +1201,12 @@ fn two_live_worktrees_cannot_register_one_fixed_domain() {
         let error = reconcile_gateway_routes(&table_path, &paths[1], &[route("app.test")])
             .expect_err("live sibling domain must remain owned");
         assert!(error.to_string().contains("app.test"));
+        assert!(
+            error
+                .to_string()
+                .contains(&paths[0].display().to_string()),
+            "the refusal names the owning checkout: {error}"
+        );
         let first = RouteTable::load(&table_path).unwrap();
         assert_eq!(
             first.lookup("app.test").unwrap().project,
@@ -1632,7 +1628,7 @@ fn exhausted_registration_holds_an_owner_with_a_created_container() {
     effigy_containers::with_test_effigy_home(&home.join(".effigy"), || {
         // A full pool of absent owners, one of which still has a created
         // container on a running profile. Registration must hold that owner
-        // exactly as `gateway repair` would, and release the rest.
+        // and release the rest.
         let mut registry = LoopbackRegistry::new();
         let mut held_scope = String::new();
         for index in 1..=50 {
@@ -1658,7 +1654,7 @@ fn exhausted_registration_holds_an_owner_with_a_created_container() {
         let mut created = inventory_row("gone-7", &held_scope, "effigy");
         created.row.status = "Created".to_owned();
 
-        let error = load_or_allocate_loopback_ip_with_inventory(
+        let allocated = load_or_allocate_loopback_ip_with_inventory(
             "project:new:/tmp/new",
             None,
             "/tmp/new",
@@ -1668,26 +1664,30 @@ fn exhausted_registration_holds_an_owner_with_a_created_container() {
                 failures: Vec::new(),
             },
         )
-        .expect_err("a full pool of absent owners reports its release");
+        .expect("the released addresses are immediately reusable");
+        assert!(allocated.is_some());
 
-        assert!(
-            error.to_string().contains("released 49 dead assignment"),
-            "the created container's owner must be held: {error}"
-        );
         let store = EndpointStore::for_routes(&gateway_route_table_path().expect("route path"));
         let remaining = store
             .read_compatible()
             .expect("store")
             .loopback()
             .expect("registry");
-        assert_eq!(remaining.len(), 1);
+        let mut scopes = remaining
+            .assignments
+            .values()
+            .map(|assignment| assignment.scope.clone())
+            .filter(|scope| scope == &held_scope || scope == "/tmp/new")
+            .collect::<Vec<_>>();
+        scopes.sort();
         assert_eq!(
-            remaining
-                .assignments
-                .values()
-                .map(|assignment| assignment.scope.clone())
-                .collect::<Vec<_>>(),
-            vec![held_scope]
+            scopes,
+            {
+                let mut expected = vec![held_scope, "/tmp/new".to_owned()];
+                expected.sort();
+                expected
+            },
+            "the created container's owner is held and the new owner takes a released address"
         );
     });
 }

@@ -1559,44 +1559,22 @@ URLs, loopback IPs, generated 100-port ranges and pins remain unchanged.
 The endpoint Store owns their imported state; the legacy JSON files remain
 unchanged until an explicit downgrade export.
 
-### Recover a deleted checkout's gateway claims
+### A deleted checkout's domain and address
 
-A checkout that published container routes and was then deleted keeps those
-routes and their reserved domains: the hostnames answer from nothing, and a new
-checkout of the same project cannot claim them. `effigy gateway repair` is the
-supported repair. Preview first, narrowed to the exact deleted checkout:
+A route is owned by its checkout path. A checkout that published container
+routes and was then deleted does not block a new checkout: the next `up`
+elsewhere takes the domain automatically, because the recorded checkout path no
+longer exists. A checkout whose target stopped listening is treated the same
+way. The takeover is logged in one line. Only a checkout that still exists and
+still serves the domain refuses the write, and that message names it and the
+command that stops it (`effigy container down` there).
 
-```sh
-effigy gateway repair --owner-checkout /Users/me/.t3/worktrees/old-checkout
-```
-
-The preview lists every loopback assignment, container route (DNS alias or HTTP)
-and withdrawn domain claim with `reclaim`, `hold` or `retain` and a reason, and
-prints a plan digest. Reclaim means the repair proved the owner gone: the path is
-definitely missing, and no runtime-scope record, container in any state, live
-listener or foreign owner still holds the entry. `hold` means the proof is
-incomplete or something may still own it, and the reason says which; `retain`
-means a live owner keeps it. Nothing is written by a preview.
-
-Apply exactly what you reviewed:
-
-```sh
-effigy gateway repair --owner-checkout /Users/me/.t3/worktrees/old-checkout   --yes --expect-plan <DIGEST>
-```
-
-Apply refuses when the recomputed plan differs, when a successor published the
-domain between review and apply, or when the release would take a live
-owner. A successful apply releases the assignment, its container routes and its
-withdrawn claims in one endpoint Store publication, writes a pre-edit backup with
-SHA-256 evidence under `~/.effigy/gateway/`, and never touches containers,
-volumes, data, certificates or another project's routes. The recovered domains
-leave the endpoint reuse quarantine after about three minutes; retry the
-consumer until it claims them.
-
-When a managed listener (host process) wants a domain that a deleted checkout
-still claims, its startup refuses and names that checkout plus this same command
-instead of calling the claim a live foreign owner. The refusal is expected: run
-the repair, then start the environment again.
+The same checkout path always replaces its own route, so a new run, a new
+generation or a container-to-listener handover needs no repair command.
+`down`, `retire` and settle remove the checkout's routes by path, listener
+routes included, so `down` frees a domain immediately and `up` from another
+checkout takes it at once. There is no quarantine and no withdrawn claim: the
+previous `effigy gateway repair` and its `--owner-checkout` filter are retired.
 
 For a reversible downgrade, stop dependent consumers first, then use the new
 binary to remove its setup and export its latest endpoint state:
@@ -1734,12 +1712,11 @@ default and keeps its existing setup behavior.
 
 Scoped checkouts — linked worktrees and marked ephemeral clones — register
 the effective host map from `effigy container hosts`, not the raw declared
-domains. If another live checkout already owns a name, registration fails
-and names the owning checkout. This also protects TLS certificates and TCP
-service aliases: stopping one scope never removes a sibling's current
-route. A route from a retired checkout generation can be reclaimed on the
-next registration. `effigy gateway repair --yes` can clean stale TCP alias
-conflicts, but leaves live checkout routes alone.
+domains. If another checkout that still serves a name owns it, registration
+fails and names that checkout. This also protects TLS certificates and TCP
+service aliases: stopping one scope never removes a sibling's current route.
+A route from a deleted checkout or a checkout whose target stopped listening is
+reclaimed on the next registration.
 
 ### Route-table trust
 
@@ -2120,8 +2097,8 @@ at least 70 seconds before they can be allocated to another owner. It never
 touches containers, volumes, data, routes, certificates, profiles or loopback
 assignments. Normal `container down` keeps stable allocations. `container
 retire` releases the retired scope's own project allocations through its
-existing record path. Loopback IPs and dormant domain ownership also survive
-ordinary down/up; retirement explicitly releases the recorded owner's claims.
+existing record path. Loopback IPs survive ordinary down/up; retirement
+explicitly releases the recorded owner's assignments.
 
 Limits: the bound-port probe is a point-in-time check. A backup left by a
 crash between backup and rename is not removed automatically. Recovery does
@@ -2130,25 +2107,15 @@ not expire entries by age.
 ## Dead loopback owners
 
 Each isolated project and shared service holds one address in the bounded
-`127.1.0.1`-`127.1.0.50` loopback pool, and its container routes keep that
-address reserved. A project whose checkout, containers, runtime scope and
-listeners are all gone would otherwise hold its address forever, and a new
-stack then fails with `loopback pool exhausted`. Preview what Effigy would
-release, then apply it:
+`127.1.0.1`-`127.1.0.50` loopback pool. A project whose checkout, containers,
+runtime scope and listeners are all gone would otherwise hold its address
+forever, and a new stack then fails with `loopback pool exhausted`. Allocation
+self-heals: when `container up`, `dev` or gateway registration needs an address
+and the pool is full, Effigy releases the dead assignments once under the
+endpoint Store's owner gate, prints one line with the released count, and
+retries once. The released address is immediately allocatable.
 
-```sh
-effigy gateway repair --json                       # preview, writes nothing
-effigy gateway repair --yes --expect-plan <DIGEST> --json
-```
-
-The preview is read-only. It lists every assignment and container route with
-its decision (`reclaim`, `hold` or `retain`) and a reason, plus a plan digest
-over those decisions. `--yes` releases the entries its locked recomputation
-still proves dead; `--yes --expect-plan <DIGEST>` refuses to write when that
-recomputed plan differs from the digest you reviewed. `--yes` alone applies
-the plan it recomputes and prints the digest it applied.
-
-A loopback assignment or container route is dead only when all of these hold:
+An assignment is dead only when all of these hold:
 
 - its owner checkout path is definitely missing: the leaf is absent and its
   parent directory is readable, the same classification `container ports
@@ -2158,39 +2125,28 @@ A loopback assignment or container route is dead only when all of these hold:
 - no runtime-scope record names the identity, its checkout path or its route;
 - no container in any state carries its project label or working directory,
   and none publishes on its address;
-- no live assignment or live project route keeps the address;
+- no live project route keeps the address;
 - no non-gateway process listens on the route's alias tuple. The gateway
   binds its aliases from the Store's route table and stops a listener when its
   route disappears, so its own alias for a dead route is not a hold; a
   same-user process that is not the recorded gateway, or a probe that cannot
   answer, is.
 
-Allocation, its automatic collection and this preview prove ownership from the
-same inventory — every container state on every profile, with a stopped profile
-recorded as stopped — so the automatic path can never release what the preview
-would hold.
-
 A shared-service identity is dead only when no consumer project that uses it
-is live and no container carries the shared service's own project name. Incomplete ownership proof holds the whole plan and names the reason;
-a stopped Colima profile does not hold anything, because it binds no host
-address and cannot start a stack whose checkout is gone. Present paths, running
-containers and unknown path states are never touched, so a live project's
-address never changes.
+is live and no container carries the shared service's own project name.
+Incomplete ownership proof holds the plan and names the reason; a stopped
+Colima profile does not hold anything, because it binds no host address and
+cannot start a stack whose checkout is gone. Present paths, running containers
+and unknown path states are never touched, so a live project's address never
+changes. The same inventory backs every allocation path, so no path can release
+what another holds.
 
-Allocation also self-heals: when `container up`, `dev` or gateway registration
-would fail because the pool is full, Effigy releases the dead entries once
-under the same gate, prints one line naming how many assignments and routes it
-released, and retries once. The endpoint Store keeps a released address out of
-reach for one reuse window (about three minutes: DNS TTL plus drain and the
-store's operation budget) so a cached answer never lands on a new owner, so an
-allocation that needed the release succeeds once that window has passed.
-
-Apply writes under the endpoint Store's owner gate and keeps a pre-edit copy of
-both endpoint documents as
+The release writes under the endpoint Store's owner gate and keeps a pre-edit
+copy of the changed endpoint documents as
 `~/.effigy/gateway/loopback-dead-reclaim-backup-<nanos>.json`, reporting both
 SHA-256 values. It never touches containers, volumes, data, profiles,
-certificates or live routes. Growing the pool past `127.1.0.50` is not part of
-this surface; the `lo0` aliases come from `gateway setup`.
+certificates or routes. Growing the pool past `127.1.0.50` is not part of this
+surface; the `lo0` aliases come from `gateway setup`.
 
 ## Current Limits
 

@@ -223,8 +223,8 @@ itself establish exploitability in Effigy's configuration.
 The endpoint store also owns concrete loopback ports for managed host
 listeners. A `bind = "127.0.0.1:0"` declaration reserves one port from the
 environment's generated range before launch, keyed `listener:<name>` in that
-project's allocation; the assignment excludes generated Compose bindings,
-quarantined ports and ports already listening on loopback. The reservation
+project's allocation; the assignment excludes generated Compose bindings and
+ports already listening on loopback. The reservation
 survives supervisor restarts within the run and is released when the
 environment settles, so a settled environment holds no listener port. This is
 the same machine authority and the same write path as Compose port ranges: no
@@ -250,29 +250,126 @@ person's own trust store is a silent security regression.
 
 ## Managed listener route ownership and withdrawal (effigy#335)
 
-A managed listener route is this checkout generation's route, and its owner
-token (`scope|environment|profile|process`) is stable across runs while the
-recorded run is not. The route therefore records the kernel run that published
-it, and ownership decisions are made against this checkout's journal:
+A route is one claim: `domain -> (checkout path, target)`. A managed listener
+route's owner token is its checkout path, environment and process name, which
+is stable across runs and restarts. The checkout path is the whole ownership
+comparison:
 
-- **Successor reclaim.** A same-checkout, same-scope managed listener route is
-  reclaimed in the publication transaction only when the journal proves the
-  recorded run settled: its run row is `closed`, or its resource gate is free.
-  The gate is held for exactly the supervisor's lifetime, so a free gate with
-  an open row is a dead run, never a live one. The predecessor's domain claim
-  follows the route to the successor listener.
-- **Live owner.** A route whose recorded run is live is refused. The refusal is
-  never `ForeignRoute` for this checkout: it names the stable listener owner,
-  the run, the observed state and the command that settles it
-  (`effigy container <environment> down`). A different checkout remains
-  `ForeignRoute`/`StaleRouteClaim` under the rules above.
-- **Unknown owner.** A route that records no run, or whose journal row or gate
-  cannot be observed, is refused with the same settle command. Absence of a
-  process identity is never treated as a settled run.
+- **Same checkout path.** The listed writer replaces the route, which covers a
+  new run, a new child generation and a container-to-listener handover. No
+  journal proof is required and no run identity is recorded.
+- **Dead owner.** A different checkout path takes the domain over when the
+  recorded checkout path no longer exists, or the recorded target does not
+  accept a TCP connection within 200 ms. The takeover is logged in one line.
+- **Live owner.** Otherwise the write is refused with one message naming the
+  other checkout and the command that stops it there
+  (`effigy container down`).
 - **Withdrawal on stop.** `down`, `reset` and session settle withdraw every
-  listener route the environment's declared host processes published, matched
-  by this checkout generation and the declaration's stable owner token. The
-  publishing supervisor is not consulted, so a route left by a run that died
-  or was refused is still withdrawn and reported. A process whose own stop
-  failed keeps its route, because its run may still be live. Retire continues
-  to remove every route owned by the retired checkout generation.
+  route owned by the checkout path, listener routes included, matched by this
+  checkout path and the declaration's stable owner token. The publishing
+  supervisor is not consulted, so a route left by a run that died or was
+  refused is still withdrawn and reported. A process whose own stop failed
+  keeps its route, because its run may still be live.
+- **Daemon hygiene.** The daemon sweeps the same dead-owner rule on a timer so
+  `gateway status` lists domains something still serves.
+
+## Out of Scope
+
+- Defending against a same-UID or root adversary.
+- Network-level authentication, multi-tenant isolation, or per-route ACLs.
+- Encrypting the route table (it carries routing intent, not secrets; secret
+  material stays in the vault under `032`).
+
+## Change Policy
+
+- This contract governs `g08.014`. Changes to the trust boundary, integrity
+  mechanism, or failure mode require a contract update in the same change.
+- The implementation must match this contract; if implementation reveals the
+  endorsed default failure mode is wrong, update this contract first, then the
+  code.
+
+## Drift Triggers
+
+- Any change to how `routes.json` is written, permissioned, or marked.
+- Any new privileged action the daemon performs based on route-table content.
+- Planning review against `g08.014` plus focused trust-verification fixtures
+  (well-formed, tampered, wrong-permission, foreign-marked tables) once
+  implementation starts.
+
+## Container reconciliation binding proof
+
+A route reservation is not a published binding. The production registration
+adapter re-admits selected inventory rows through fresh inspect under one
+cumulative deadline. Canonical full ID, exact project/service, explicit
+non-oneoff running state, checkout and scoped label identity must agree before
+current published-port associations enter route resolution. Missing, foreign,
+shared, stale or unavailable associations refuse without guessing a target.
+An owned backing replacement updates its TCP target through the existing locked
+route transaction, releasing the old own association without changing foreign
+or shared route claims. Private fake-transport/process evidence qualifies this
+adapter path, not a real engine or elevated gateway daemon.
+For an unscoped checkout the inspected scope label must also be absent; an
+unexpected, null, empty or unreadable label is not absence-to-absence proof.
+
+### Detached admission at publication
+
+Detached `container up` carries an immutable admitted context through runtime
+observation into the existing locked route reconciliation. It compares the
+original snapshot with current checkout/scope/backend/profile/project/primary,
+manifest and Compose identities and bytes, and requires the persisted marker
+to match. Missing, unreadable or changed context refuses after the owned probe,
+before locked preparation, and immediately before saving the route table.
+The refusal preserves the existing own/foreign table and the original marker;
+it never records a baseline from the changed source. Restore the admitted
+files and marker, then run `effigy container up --detach` to reconcile the
+still-running owned stack. Attached and unrelated registrations carry no
+detached admission guard and retain their existing behavior.
+
+These checks cover the interval from admission through the final pre-save
+read. The route-table lock serializes route-table writers only. It does not
+exclude filesystem writers, make the multi-file reads atomic, detect a change
+and restoration between reads, or guarantee that files stay unchanged after
+the final read. Cooperating source writers must keep admitted inputs stable
+through publication; no latest-source or filesystem quiescence guarantee is
+claimed. Private production registration controls mutate source and marker
+files after actual owned probes and during delayed preparation, verify byte-
+exact retained tables on refusal, and restore the admitted inputs to reconcile.
+
+### TLS dependency maintenance
+
+The resolved rustls dependency is 0.23.46, which satisfies the patched range
+for RUSTSEC-2026-0346 through RUSTSEC-2026-0349. This lock-only maintenance
+changes no gateway TLS features, cipher selection, certificate validation or
+client authentication policy. The advisory finding on 0.23.45 does not by
+itself establish exploitability in Effigy's configuration.
+
+## Listener port reservations and host CA trust (effigy#321)
+
+The endpoint store also owns concrete loopback ports for managed host
+listeners. A `bind = "127.0.0.1:0"` declaration reserves one port from the
+environment's generated range before launch, keyed `listener:<name>` in that
+project's allocation; the assignment excludes generated Compose bindings and
+ports already listening on loopback. The reservation
+survives supervisor restarts within the run and is released when the
+environment settles, so a settled environment holds no listener port. This is
+the same machine authority and the same write path as Compose port ranges: no
+second port allocator exists, and a foreign lifetime owner is refused rather
+than replaced.
+
+Host processes receive the active gateway's CA so a host-side client can call
+its own HTTPS route:
+
+| Variable | Runtime that reads it | Delivery |
+| --- | --- | --- |
+| `EFFIGY_GATEWAY_CA_FILE` | any process that wants the path itself | always, when the CA is known |
+| `NODE_EXTRA_CA_CERTS` | Node, Bun | only when the operator has not exported it and the process does not declare it |
+| `SSL_CERT_FILE` | curl, Python, Ruby (OpenSSL/rustls defaults) | same |
+
+A private gateway (`EFFIGY_GATEWAY_PRIVATE_STATE_ROOT`) contributes
+`<root>/ca/rootCA.pem`, the same file its certificates are signed with; the
+shared operator gateway contributes mkcert's root CA. Values are never
+invented: when the CA file is absent, no trust variable is set. The
+runtime-specific names exist because those runtimes do not read a neutral
+variable, and the operator-set rule exists because a host process replacing a
+person's own trust store is a silent security regression.
+

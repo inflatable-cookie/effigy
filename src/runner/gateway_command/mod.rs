@@ -9,7 +9,6 @@ use effigy_cli::{
     GatewayArgs, GatewayPrivateArgs, GatewaySubcommand, InternalGatewayArgs,
     InternalGatewayIdentityArgs,
 };
-use effigy_containers::exec::list_running_compose_containers;
 use effigy_gateway::identity::{self, GatewayIdentityProbe, GatewayRecordSnapshot};
 use effigy_gateway::routes::RouteTable;
 use effigy_gateway::server::{
@@ -113,17 +112,6 @@ pub(super) fn run_gateway(args: GatewayArgs) -> Result<String, RunnerError> {
         GatewaySubcommand::Up => run_gateway_up_with_config(&config, args.output_json),
         GatewaySubcommand::Down => run_gateway_down_with_config(&config, args.output_json),
         GatewaySubcommand::Status => run_gateway_status_with_config(&config, args.output_json),
-        GatewaySubcommand::Repair {
-            yes,
-            expect_plan,
-            owner_checkout,
-        } => run_gateway_repair_with_config(
-            &config,
-            yes,
-            expect_plan.as_deref(),
-            owner_checkout.as_deref(),
-            args.output_json,
-        ),
         GatewaySubcommand::SetupTls => run_gateway_setup_tls_with_config(&config, args.output_json),
     }
 }
@@ -856,7 +844,7 @@ fn run_gateway_status_with_config(
         tls.https_addr = Some(https_addr);
     }
     let routes = gateway_route_dashboard(config, &route_table, &tls);
-    let repair = gateway_repair_plan(&route_table, detect_active_gateway_projects());
+    let conflicts = gateway_tcp_bind_conflicts(&route_table);
     let unbound_aliases = gateway_tcp_alias_unbound_routes(&route_table);
     let (trust_state, trust_reason) = route_table_trust_fields(
         &effigy_gateway::trust::inspect_route_table_trust(&config.route_table_path),
@@ -889,8 +877,8 @@ fn run_gateway_status_with_config(
             "route_table_trust": trust_state,
             "route_table_trust_reason": trust_reason,
             "route_count": routes.len(),
-            "tcp_bind_conflict_count": repair.conflicts.len(),
-            "tcp_bind_conflicts": render_gateway_tcp_conflicts_json(&repair.conflicts),
+            "tcp_bind_conflict_count": conflicts.len(),
+            "tcp_bind_conflicts": render_gateway_tcp_conflicts_json(&conflicts),
             "tcp_alias_unbound_count": unbound_aliases.len(),
             "tcp_alias_unbound": render_gateway_tcp_alias_unbound_json(&unbound_aliases),
             "routes": render_routes_json(&routes),
@@ -947,14 +935,13 @@ fn run_gateway_status_with_config(
         }
         lines.push(format!("live_routes: {}", running.route_count));
     }
-    if !repair.conflicts.is_empty() {
+    if !conflicts.is_empty() {
         lines.push(format!(
-            "[warn] found {} duplicate TCP bind tuple(s); run `effigy gateway repair` to inspect",
-            repair.conflicts.len()
+            "[warn] found {} duplicate TCP bind tuple(s)",
+            conflicts.len()
         ));
         lines.extend(
-            repair
-                .conflicts
+            conflicts
                 .iter()
                 .flat_map(render_gateway_tcp_conflict_lines),
         );
@@ -971,330 +958,6 @@ fn run_gateway_status_with_config(
     Ok(lines.join("\n"))
 }
 
-fn run_gateway_repair_with_config(
-    config: &GatewayConfig,
-    yes: bool,
-    expect_plan: Option<&str>,
-    owner_checkout: Option<&str>,
-    output_json: bool,
-) -> Result<String, RunnerError> {
-    let store = effigy_gateway::endpoint_store::EndpointStore::for_routes(&config.route_table_path);
-    let owner_filter = owner_checkout
-        .map(effigy_containers::OwnerCheckoutFilter::new)
-        .transpose()
-        .map_err(RunnerError::task_invocation)?;
-    let snapshot = live("reading gateway endpoints", |step| {
-        step.set_label(if yes {
-            "importing the gateway endpoint store for the repair"
-        } else {
-            "reading the gateway endpoint store"
-        });
-        let snapshot = if yes {
-            store.import()
-        } else {
-            store.read_compatible()
-        }
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-        Ok(snapshot)
-    })?;
-    let mut route_table = snapshot.routes()?;
-    let (plan, mut removed) = live("planning the repair", |step| {
-        step.set_label("checking stale domain routes against the running gateway");
-        let plan = gateway_repair_plan(&route_table, detect_active_gateway_projects());
-        step.set_label(&format!(
-            "{} repairable stale route(s), {} unresolved duplicate bind(s)",
-            plan.repairable_domains.len(),
-            plan.conflicts.len()
-        ));
-        Ok((plan, Vec::new()))
-    })?;
-
-    if yes && !plan.repairable_domains.is_empty() {
-        live("removing stale domain routes", |step| {
-            step.set_label(&format!(
-                "removing {} stale route(s) and their certificates",
-                plan.repairable_domains.len()
-            ));
-            let removed_routes = plan
-                .repairable_domains
-                .iter()
-                .filter_map(|domain| route_table.lookup(domain).cloned())
-                .collect::<Vec<_>>();
-            for domain in &plan.repairable_domains {
-                let _ = route_table.deregister(domain);
-            }
-            store.edit(Some(snapshot.revision), |current| {
-                for route in &removed_routes {
-                    current.release_route(route)?;
-                }
-                Ok(())
-            })?;
-            for route in &removed_routes {
-                if route.tls {
-                    remove_gateway_tls_cert(&route.domain)?;
-                }
-            }
-            removed = plan.repairable_domains.clone();
-            Ok(())
-        })?;
-    }
-
-    // Dead loopback owners: assignments and container routes whose checkout,
-    // containers, runtime scope and listeners are all gone. Preview is
-    // read-only; `--yes` releases the set its locked recomputation still
-    // proves dead, and refuses when a reviewed digest no longer matches.
-    let loopback = live("checking dead loopback owners", |step| {
-        step.set_label("collecting loopback assignments, container routes and live listeners");
-        let loopback = if yes {
-            effigy_containers::loopback_reclaim_apply(&store, expect_plan, owner_filter.as_ref())
-        } else {
-            effigy_containers::loopback_reclaim_preview(&store, owner_filter.as_ref())
-        }
-        .map_err(RunnerError::task_invocation)?;
-        let reclaimable = loopback.plan.release_assignments().len()
-            + loopback.plan.release_routes().len()
-            + loopback.plan.release_domain_claims().len();
-        step.set_label(&format!(
-            "{reclaimable} loopback entr{} provably dead",
-            if reclaimable == 1 { "y is" } else { "ies are" }
-        ));
-        Ok(loopback)
-    })?;
-
-    let after = if yes {
-        gateway_repair_plan(&route_table, detect_active_gateway_projects())
-    } else {
-        plan.clone()
-    };
-
-    if output_json {
-        return Ok(json!({
-            "schema": "effigy.gateway.repair.v1",
-            "schema_version": 1,
-            "ok": true,
-            "applied": yes,
-            "gateway_dir": config_dir_display(config),
-            "repairable_count": plan.repairable_domains.len(),
-            "repairable_domains": plan.repairable_domains,
-            "removed_count": removed.len(),
-            "removed_domains": removed,
-            "unresolved_count": after.conflicts.len(),
-            "tcp_bind_conflicts": render_gateway_tcp_conflicts_json(&after.conflicts),
-            "dead_loopback_owners": effigy_containers::loopback_reclaim_json(&loopback),
-        })
-        .to_string());
-    }
-
-    let mut lines = vec![format!(
-        "[gateway] duplicate TCP bind tuples: {}",
-        plan.conflicts.len()
-    )];
-    if !yes {
-        if plan.repairable_domains.is_empty() {
-            lines.push("[info] no repairable stale conflicting routes were identified".to_owned());
-        } else {
-            lines.push(format!(
-                "[check] repair would remove {} stale conflicting route(s)",
-                plan.repairable_domains.len()
-            ));
-            lines.extend(
-                plan.repairable_domains
-                    .iter()
-                    .map(|domain| format!("- {domain}")),
-            );
-            lines.push(
-                "[next] rerun `effigy gateway repair --yes` to apply this cleanup".to_owned(),
-            );
-        }
-        if !plan.conflicts.is_empty() {
-            lines.extend(
-                plan.conflicts
-                    .iter()
-                    .flat_map(render_gateway_tcp_conflict_lines),
-            );
-        }
-        lines.extend(render_dead_loopback_preview(&loopback));
-        return Ok(lines.join("\n"));
-    }
-
-    lines.push(format!(
-        "[ok] removed {} stale conflicting route(s)",
-        removed.len()
-    ));
-    lines.extend(removed.iter().map(|domain| format!("- {domain}")));
-    if !after.conflicts.is_empty() {
-        lines.push(format!(
-            "[warn] {} duplicate TCP bind tuple(s) remain; they still belong to live or unresolved routes",
-            after.conflicts.len()
-        ));
-        lines.extend(
-            after
-                .conflicts
-                .iter()
-                .flat_map(render_gateway_tcp_conflict_lines),
-        );
-    }
-    lines.extend(render_dead_loopback_apply(&loopback));
-    Ok(lines.join("\n"))
-}
-
-fn loopback_decision_counts(
-    plan: &effigy_containers::LoopbackRecoveryPlan,
-) -> (usize, usize, usize) {
-    let count = |decision: effigy_containers::Decision| {
-        plan.assignments
-            .iter()
-            .map(|row| row.decision)
-            .chain(plan.routes.iter().map(|row| row.decision))
-            .chain(plan.domain_claims.iter().map(|row| row.decision))
-            .filter(|candidate| *candidate == decision)
-            .count()
-    };
-    (
-        count(effigy_containers::Decision::Reclaim),
-        count(effigy_containers::Decision::Hold),
-        count(effigy_containers::Decision::Retain),
-    )
-}
-
-/// The reviewed apply command for a plan, including the owner filter that is
-/// part of its digest.
-fn dead_owner_apply_command(plan: &effigy_containers::LoopbackRecoveryPlan) -> String {
-    let mut command = "effigy gateway repair".to_owned();
-    if let Some(owner) = plan.owner_checkout.as_deref() {
-        command.push_str(&format!(" --owner-checkout {owner}"));
-    }
-    command.push_str(&format!(" --yes --expect-plan {}", plan.digest));
-    command
-}
-
-fn render_dead_loopback_preview(report: &effigy_containers::LoopbackReclaimReport) -> Vec<String> {
-    let (reclaim, hold, retain) = loopback_decision_counts(&report.plan);
-    let mut lines = vec![format!(
-        "[gateway] dead owners: {reclaim} reclaimable, {hold} held, {retain} retained"
-    )];
-    if let Some(owner) = report.plan.owner_checkout.as_deref() {
-        lines.push(format!(
-            "[gateway] dead-owner plan limited to checkout {owner}"
-        ));
-    }
-    if let Some(hold) = &report.plan.global_hold {
-        lines.push(format!("[warn] all absent-path entries are held: {hold}"));
-    }
-    // A foreign checkout whose own journal is unreadable holds nothing
-    // machine-wide (papercut 9e5134a4): name it so the operator can repair it.
-    for checkout in &report.plan.unreadable_checkouts {
-        lines.push(format!(
-            "[warn] runtime-scope records are unreadable for {}; only its own entries are affected: {}",
-            checkout.checkout, checkout.reason
-        ));
-    }
-    if reclaim == 0 {
-        lines.push("[info] no dead owners were identified".to_owned());
-        return lines;
-    }
-    lines.push(format!(
-        "[check] repair would release {} loopback assignment(s), {} stale container route(s) and {} withdrawn domain claim(s)",
-        report.plan.release_assignments().len(),
-        report.plan.release_routes().len(),
-        report.plan.release_domain_claims().len()
-    ));
-    lines.extend(
-        report
-            .plan
-            .assignments
-            .iter()
-            .filter(|row| row.decision != effigy_containers::Decision::Retain)
-            .map(|row| {
-                format!(
-                    "- assignment {} {} ({}, {})",
-                    row.ip,
-                    row.identity,
-                    row.decision.label(),
-                    row.reason
-                )
-            }),
-    );
-    lines.extend(
-        report
-            .plan
-            .routes
-            .iter()
-            .filter(|row| row.decision != effigy_containers::Decision::Retain)
-            .map(|row| {
-                format!(
-                    "- route {} ({}, {})",
-                    row.domain,
-                    row.decision.label(),
-                    row.reason
-                )
-            }),
-    );
-    lines.extend(
-        report
-            .plan
-            .domain_claims
-            .iter()
-            .filter(|row| row.decision != effigy_containers::Decision::Retain)
-            .map(|row| {
-                format!(
-                    "- domain claim {} ({}, {})",
-                    row.domain,
-                    row.decision.label(),
-                    row.reason
-                )
-            }),
-    );
-    lines.push(format!(
-        "[info] dead-owner plan digest {}",
-        report.plan.digest
-    ));
-    lines.push(format!(
-        "[next] rerun `{}` to release them",
-        dead_owner_apply_command(&report.plan)
-    ));
-    lines
-}
-
-fn render_dead_loopback_apply(report: &effigy_containers::LoopbackReclaimReport) -> Vec<String> {
-    let mut lines = vec![format!(
-        "[ok] released {} dead loopback assignment(s), {} stale container route(s) and {} withdrawn domain claim(s)",
-        report.edit.released_assignments.len(),
-        report.edit.released_routes.len(),
-        report.edit.released_domains.len()
-    )];
-    lines.extend(
-        report
-            .edit
-            .released_assignments
-            .iter()
-            .map(|identity| format!("- assignment {identity}")),
-    );
-    lines.extend(
-        report
-            .edit
-            .released_routes
-            .iter()
-            .map(|domain| format!("- route {domain}")),
-    );
-    lines.extend(
-        report
-            .edit
-            .released_domains
-            .iter()
-            .map(|domain| format!("- domain claim {domain}")),
-    );
-    if let Some(backup) = report.backup() {
-        lines.push(format!(
-            "[info] backup {} (sha256 {} before, {} after); released addresses stay in the endpoint reuse quarantine for about a minute",
-            backup.display(),
-            report.edit.sha256_before.as_deref().unwrap_or("-"),
-            report.edit.sha256_after.as_deref().unwrap_or("-")
-        ));
-    }
-    lines
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::runner) struct GatewayTcpBindConflict {
     pub bind_ip: std::net::Ipv4Addr,
@@ -1307,14 +970,6 @@ pub(in crate::runner) struct GatewayTcpConflictRoute {
     pub domain: String,
     pub project: String,
     pub target: Option<String>,
-    pub repairable: bool,
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::runner) struct GatewayRepairPlan {
-    pub conflicts: Vec<GatewayTcpBindConflict>,
-    pub repairable_domains: Vec<String>,
 }
 
 /// A TCP alias route the gateway manager can never serve.
@@ -1408,27 +1063,21 @@ pub(in crate::runner) fn render_gateway_tcp_alias_unbound_json(
         .collect()
 }
 
-pub(in crate::runner) fn gateway_repair_plan(
+pub(in crate::runner) fn gateway_tcp_bind_conflicts(
     route_table: &RouteTable,
-    active_projects: Option<std::collections::BTreeSet<String>>,
-) -> GatewayRepairPlan {
+) -> Vec<GatewayTcpBindConflict> {
     use std::collections::{BTreeMap, BTreeSet};
 
     let mut grouped =
         BTreeMap::<(std::net::Ipv4Addr, u16), Vec<&effigy_gateway::routes::Route>>::new();
     for route in route_table.all_routes() {
-        let Some(bind_ip) = route.dns_ip else {
-            continue;
-        };
-        let Some(bind_port) = route.tcp_port else {
+        let (Some(bind_ip), Some(bind_port)) = (route.dns_ip, route.tcp_port) else {
             continue;
         };
         grouped.entry((bind_ip, bind_port)).or_default().push(route);
     }
 
     let mut conflicts = Vec::new();
-    let mut repairable_domains = BTreeSet::new();
-
     for ((bind_ip, bind_port), routes) in grouped {
         let distinct_targets = routes
             .iter()
@@ -1437,80 +1086,20 @@ pub(in crate::runner) fn gateway_repair_plan(
         if distinct_targets.len() <= 1 {
             continue;
         }
-
-        let mut conflict_routes = Vec::new();
-        for route in routes {
-            let (repairable, reason) =
-                classify_gateway_conflict_route(route, active_projects.as_ref());
-            if repairable {
-                repairable_domains.insert(route.domain.clone());
-            }
-            conflict_routes.push(GatewayTcpConflictRoute {
-                domain: route.domain.clone(),
-                project: route.project.clone(),
-                target: route.tcp_target.clone(),
-                repairable,
-                reason,
-            });
-        }
         conflicts.push(GatewayTcpBindConflict {
             bind_ip,
             bind_port,
-            routes: conflict_routes,
+            routes: routes
+                .into_iter()
+                .map(|route| GatewayTcpConflictRoute {
+                    domain: route.domain.clone(),
+                    project: route.project.clone(),
+                    target: route.tcp_target.clone(),
+                })
+                .collect(),
         });
     }
-
-    GatewayRepairPlan {
-        conflicts,
-        repairable_domains: repairable_domains.into_iter().collect(),
-    }
-}
-
-fn classify_gateway_conflict_route(
-    route: &effigy_gateway::routes::Route,
-    active_projects: Option<&std::collections::BTreeSet<String>>,
-) -> (bool, Option<String>) {
-    if route.source != effigy_gateway::routes::RouteSource::Container {
-        return (false, Some("non-container route".to_owned()));
-    }
-    if let Some(scope) = route.scope.as_deref() {
-        if effigy_core::worktree_scope::is_live(std::path::Path::new(&route.project), scope) {
-            return (false, Some("live worktree owner".to_owned()));
-        }
-        return (true, Some("retired worktree generation".to_owned()));
-    }
-    if route
-        .tcp_target
-        .as_deref()
-        .is_none_or(|value| value.trim().is_empty())
-    {
-        return (true, Some("missing tcp_target".to_owned()));
-    }
-    if route
-        .tcp_target
-        .as_deref()
-        .is_some_and(|value| value.parse::<SocketAddr>().is_err())
-    {
-        return (true, Some("invalid tcp_target".to_owned()));
-    }
-    if !std::path::Path::new(&route.project).exists() {
-        return (true, Some("project path missing".to_owned()));
-    }
-    if let Some(active_projects) = active_projects {
-        if !active_projects.contains(route.project.as_str()) {
-            return (true, Some("project not active".to_owned()));
-        }
-    }
-    (false, None)
-}
-
-fn detect_active_gateway_projects() -> Option<std::collections::BTreeSet<String>> {
-    let rows = list_running_compose_containers().ok()?;
-    Some(
-        rows.into_iter()
-            .filter_map(|row| row.working_dir)
-            .collect::<std::collections::BTreeSet<_>>(),
-    )
+    conflicts
 }
 
 pub(in crate::runner) fn render_gateway_tcp_conflicts_json(
@@ -1526,8 +1115,6 @@ pub(in crate::runner) fn render_gateway_tcp_conflicts_json(
                     "domain": route.domain,
                     "project": route.project,
                     "tcp_target": route.target,
-                    "repairable": route.repairable,
-                    "reason": route.reason,
                 })).collect::<Vec<_>>(),
             })
         })
@@ -1542,21 +1129,10 @@ pub(in crate::runner) fn render_gateway_tcp_conflict_lines(
         conflict.bind_ip, conflict.bind_port
     )];
     lines.extend(conflict.routes.iter().map(|route| {
-        let suffix = route
-            .reason
-            .as_deref()
-            .map(|reason| format!(" ({reason})"))
-            .unwrap_or_default();
         format!(
-            "  - {} -> {} [{}]{}",
+            "  - {} -> {}",
             route.domain,
             route.target.as_deref().unwrap_or("<missing>"),
-            if route.repairable {
-                "repairable"
-            } else {
-                "kept"
-            },
-            suffix
         )
     }));
     lines

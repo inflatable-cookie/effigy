@@ -987,13 +987,12 @@ it then names the failure and leaves the environment recoverable by its own
 so its next `up` reconciles it. An unchanged, ownership-verified partial or
 stopped stack restarts; unattributable state still refuses. A
 managed listener claiming a domain held by a `source = container` route from
-the same checkout and scope replaces it with the listener route in the same
-locked transaction, and the container environment may keep running.
-Container registration takes the domain back once the recorded managed
-listener generation is no longer live, decided by the existing
-managed-listener availability and ownership checks. Container teardown
-removes only `source = container` routes owned by the caller, so stopping
-the old container environment cannot remove a handed-over listener route.
+the same checkout replaces it with the listener route in the same locked
+transaction, and the container environment may keep running. Container
+registration takes the domain back the same way: the checkout path is the whole
+owner, so the last writer wins between a container environment and its
+listener. `down` removes the checkout's routes by path, listener routes
+included.
 
 ## Shared service data volumes (`data_from`)
 
@@ -1161,8 +1160,8 @@ an IP a stale route's gateway TCP listener still binds while registration
 reallocated elsewhere, hanging the host alias against a dead or wrong
 upstream while mapped localhost ports stayed ready. A stale route for a
 missing checkout is deleted by `effigy container retire --dead` when its scope
-record still exists, and by `effigy gateway repair` (and once automatically on
-loopback exhaustion) when it does not.
+record still exists, and reclaimed automatically on the next route write or on
+loopback exhaustion when it does not.
 Status/doctor alias reporting is static route-table analysis (conflicting
 bind tuples, missing/invalid fallbacks); live OS-level listener bind failures
 remain daemon-log-only.
@@ -1632,94 +1631,54 @@ path reclaims.
 
 ## Dead-owner collection (loopback pool and domains)
 
-`effigy gateway repair` is the supported way to release endpoints whose owner is
-gone; allocation also self-heals once when the pool is full. Its plan covers
-three kinds of entry: bounded loopback assignments, container routes, and
-persisted domain claims whose route was withdrawn. A container route means both
-a DNS-only service alias (a pool address) and an HTTP container route published
-with no pool address at all — the seven `api.acme.test`-shaped claims a deleted
-checkout leaves behind are exactly the second kind. A withdrawn claim outlives
-its route: the Store keeps the domain reserved for its exact owner, so it stays
-in the plan's inventory even though nothing is routed to it.
+A route is the whole claim on a domain: `domain -> (checkout path, target)`.
+The same checkout path always replaces its own route, so a new run, a new
+generation and a container-to-listener handover need no proof. A different
+checkout path takes the domain over when the recorded checkout path no longer
+exists, or the recorded target does not accept a TCP connection within 200 ms;
+the takeover is logged in one line. Otherwise the write is refused with one
+message naming the other checkout and the command that stops it there
+(`effigy container down`). `down`, `retire` and settle remove the checkout's
+routes by path, listener routes included, whether or not a supervisor is alive,
+so the domain is free immediately and a following `up` from another checkout
+takes it at once. The daemon sweeps the same dead-owner rule on a timer so
+`gateway status` lists domains something still serves.
 
-Preview and JSON output are read-only, listing every entry with `reclaim`,
-`hold` or `retain` and a reason, plus a plan digest over those decisions.
-`--yes` applies the plan its locked recomputation still proves dead; `--yes
---expect-plan <DIGEST>` must reproduce the reviewed digest or nothing is
-written. Writes go through the endpoint Store's owner gate, release the
-assignment, its stale container routes and its withdrawn claims in one
-publication, preserve unknown fields and keep a pre-edit copy of every changed
-endpoint document (including the domain-owner inventory) with SHA-256 evidence.
+Loopback assignment collection is allocation-only and runs at allocation time.
+When a Prepare or gateway registration that needs a new address finds the
+bounded pool full, it plans, releases and retries exactly once. Its plan covers
+bounded loopback assignments only: routes and domains are owned by their
+checkout path and never released by it. It releases under the endpoint Store's
+owner gate and keeps a pre-edit copy of the changed endpoint documents with
+SHA-256 evidence. It reports one line with the released count.
 
-`--owner-checkout <PATH>` narrows both preview and apply to one exact owner
-checkout. The value is normalized lexically, because a deleted checkout cannot
-be canonicalized: repeated separators, `.` components and a trailing separator
-collapse, while a relative path, `..` and the filesystem root refuse. The
-recorded owner path must equal it exactly, and the filter is part of the plan
-digest, so an apply reviewed for one deleted checkout refuses a different one.
-The filter never grants ownership; it only narrows what the same proofs may
-release. An operator recovering a deleted checkout therefore names it rather
-than accepting every absent path on the machine.
+A released address is immediately allocatable: the gateway publishes with no
+reuse quarantine and answers DNS with a one-second TTL. Growing the pool beyond
+`127.1.0.50` is not part of this contract; the `lo0` aliases come from
+`gateway setup`.
 
-A released entry also releases the persistent domain claim that names it, so the
-same domain can be claimed again after the endpoint reuse window instead of
-staying reserved for a checkout that no longer exists.
-
-An entry is dead only when its owner checkout path is definitely missing
+An assignment is dead only when its owner checkout path is definitely missing
 (absent with its nearest existing ancestor a readable directory, the
 classification `container ports reclaim` uses; an I/O or permission error, a
 non-directory ancestor, or an absent volume root such as an unmounted
 `/Volumes/...` is unknown and holds it), no runtime-scope record names the
-identity, checkout path, route or domain, no container in any state carries its
-project label or working directory or publishes on its address, no live
-assignment or live project route keeps the address, and no non-gateway process
-listens on the route's alias tuple. The gateway binds its TCP aliases from the
-Store's route table and stops a listener when its route disappears, so its own
-alias for a dead route is not a hold; a same-user process that is not the
-recorded gateway daemon, or a listener probe that cannot answer, is. An HTTP
-route binds no gateway alias, so it has no alias tuple to probe; a route the
-gateway publishes for a managed host listener is never container dead-owner
-territory and stays out of the plan. Allocation, its one automatic collection
-and `gateway repair` prove ownership from the same inventory — every container
-state on every profile, with a profile whose VM is stopped recorded as stopped
-rather than broken — so no path can release what another holds. A shared-service
+identity, checkout path or route, no container in any state carries its project
+label or working directory or publishes on its address, no live project route
+uses the address, and no non-gateway process listens on a route's alias tuple.
+The gateway binds its TCP aliases from the route table and stops a listener when
+its route disappears, so its own alias is not a hold; a same-user process that
+is not the recorded gateway daemon, or a listener probe that cannot answer, is.
+Every path proves ownership from the same inventory — every container state on
+every profile, with a profile whose VM is stopped recorded as stopped rather
+than broken — so no path can release what another holds. A shared-service
 identity is dead only when no consumer project that uses it is live and no
-container carries the shared service's own project name.
-
-A withdrawn domain claim has no route and therefore no listener generation of
-its own. It is released only while its owner path is definitely missing, no
-runtime-scope record retains the domain, and no container in any state belongs
-to the checkout; a claim that reserved a stable managed-listener owner holds,
-because its liveness cannot be proven without the route that carried the process
-identity. The route table's own guards agree: a different owner cannot publish a
-route over an unreleased claim, and a claim that vanished or changed owner
-before its planned release refuses that release. Incomplete inventory or an
-unreadable scope store holds the whole plan and names the reason. A stopped
-Colima profile does not hold a loopback entry: it binds no host address and
-cannot start a stack whose checkout is gone, so only a failure that is not a
-stopped profile makes the inventory incomplete. Present paths, running
-containers, unknown path states and live managed listeners are never released,
-so a live project's address, route or domain never changes.
-
-The endpoint Store quarantines a released address, port or domain claim for one
-reuse window (the DNS TTL plus drain budget and the operation budget), so a
-repair an operator runs for a deleted checkout makes its domains claimable again
-after that window rather than immediately. Growing the pool beyond `127.1.0.50`
-is not part of this contract; the `lo0` aliases come from `gateway setup`.
-
-### Stale-owner classification for managed listener claims
-
-A managed listener (host process) claim consults the same classification before
-child startup and before it publishes. An existing claim is accepted when it
-belongs to the exact stable listener owner, or when it is a container route of
-this same checkout generation that the publication transaction hands over. A
-claim whose owner checkout is gone is *stale-owner territory*: it refuses as a
-stale claim naming the exact owner checkout, its recorded generation and the
-`effigy gateway repair --owner-checkout <PATH>` command that can release it —
-never as a live foreign checkout and never as permission to take it. Only the
-digest-fenced repair releases it, and only when no container, runtime scope or
-listener still owns it. A claim from a checkout that still exists, including one
-with a different generation or a manual/task source, keeps the foreign refusal.
+container carries the shared service's own project name. Incomplete inventory or
+an unreadable scope store holds the plan and names the reason. A stopped Colima
+profile does not hold a loopback entry: it binds no host address and cannot
+start a stack whose checkout is gone, so only a failure that is not a stopped
+profile makes the inventory incomplete. Present paths, running containers and
+unknown path states are never released, so a live project's address never
+changes.
 
 ### Detached activation failures
 

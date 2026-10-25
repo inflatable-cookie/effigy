@@ -12,7 +12,6 @@ impl EndpointStore {
     pub fn reserve_ports(&self, requests: &[PortRequest]) -> Result<PortRegistry, GatewayError> {
         self.edit(None, |snapshot| {
             let mut ports = snapshot.ports()?;
-            let unavailable = snapshot.unavailable_ports();
             for request in requests {
                 if ports
                     .get(&request.project_name)
@@ -22,11 +21,7 @@ impl EndpointStore {
                         "port lifetime owner differs; release the old owner explicitly",
                     ));
                 }
-                ports.allocate_avoiding(
-                    &request.project_name,
-                    &request.project_path,
-                    &unavailable,
-                )?;
+                ports.allocate(&request.project_name, &request.project_path)?;
                 ports.assign_port(
                     &request.project_name,
                     &request.project_path,
@@ -96,9 +91,8 @@ impl EndpointStore {
                         "loopback lifetime owner differs; release the old owner explicitly",
                     ));
                 }
-                if snapshot.unavailable_addresses().contains(&assignment.ip)
-                    || reserved_loopback_ips_for_other_projects(&snapshot.routes()?, scope)
-                        .contains(&assignment.ip)
+                if reserved_loopback_ips_for_other_projects(&snapshot.routes()?, scope)
+                    .contains(&assignment.ip)
                 {
                     return Err(error("retained loopback address conflicts with another owner; explicit repair is required"));
                 }
@@ -117,8 +111,10 @@ impl EndpointStore {
             if registry.get(identity).is_some_and(|a| a.scope != scope) {
                 return Err(error("loopback lifetime owner differs; release the old owner explicitly"));
             }
-            let mut unavailable: HashSet<_> = snapshot.unavailable_addresses().into_iter().collect();
-            unavailable.extend(reserved_loopback_ips_for_other_projects(&snapshot.routes()?, scope));
+            let unavailable: HashSet<_> =
+                reserved_loopback_ips_for_other_projects(&snapshot.routes()?, scope)
+                    .into_iter()
+                    .collect();
             if registry.get(identity).is_some_and(|a| unavailable.contains(&a.ip)) {
                 return Err(error("retained loopback address conflicts with another owner; explicit repair is required"));
             }
@@ -177,7 +173,6 @@ impl EndpointStore {
     ) -> Result<u16, GatewayError> {
         self.edit(None, |snapshot| {
             let mut ports = snapshot.ports()?;
-            let unavailable = snapshot.unavailable_ports();
             if ports
                 .get(&request.project_name)
                 .is_some_and(|a| a.project != request.project_path)
@@ -186,7 +181,7 @@ impl EndpointStore {
                     "port lifetime owner differs; release the old owner explicitly",
                 ));
             }
-            ports.allocate_avoiding(&request.project_name, &request.project_path, &unavailable)?;
+            ports.allocate(&request.project_name, &request.project_path)?;
             let key = listener_port_key(&request.listener);
             let existing = ports
                 .get(&request.project_name)
@@ -197,7 +192,7 @@ impl EndpointStore {
                     let allocation = ports
                         .get(&request.project_name)
                         .expect("the project range was allocated above");
-                    let port = choose_listener_port(allocation, &unavailable, &request.listener)?;
+                    let port = choose_listener_port(allocation, &request.listener)?;
                     ports
                         .allocations
                         .get_mut(&request.project_name)
@@ -248,15 +243,11 @@ impl EndpointStore {
 }
 
 /// The lowest free port of a project's generated range: not an assigned
-/// service binding, not quarantined, and not already listening on loopback.
-fn choose_listener_port(
-    allocation: &PortAllocation,
-    unavailable: &HashSet<u16>,
-    listener: &str,
-) -> Result<u16, GatewayError> {
+/// service binding and not already listening on loopback.
+fn choose_listener_port(allocation: &PortAllocation, listener: &str) -> Result<u16, GatewayError> {
     let assigned: HashSet<u16> = allocation.assigned_ports.values().copied().collect();
     for port in allocation.base..allocation.end() {
-        if assigned.contains(&port) || unavailable.contains(&port) || !loopback_port_is_free(port) {
+        if assigned.contains(&port) || !loopback_port_is_free(port) {
             continue;
         }
         return Ok(port);
