@@ -1427,6 +1427,15 @@ During v0.x, MINOR bumps may include breaking changes.
   release root, and a lockfile whose owning workspace is anchored elsewhere is
   refused instead of writing an undeclared lockfile.
 
+- A checkout's local gate identity is a digest of its canonical location and its
+  resolved Git directory instead of its device and inode, so a reboot, remount or
+  volume renumbering no longer renames the gates and locks a checkout holds. The
+  `Filesystem`-kind digest is versioned `v2` for the new content; it is derived
+  and never persisted, so no state needs migrating (effigy#337).
+- `state/checkout.json` and an import seal's recorded destination are provenance
+  rather than a gate. Their device, inode and Git-directory path are recorded for
+  diagnostics and rewritten when they no longer describe the checkout.
+
 ### Fixed
 - A checkout journal opens by its location, so a checkout created before a
   reboot, remount or volume renumbering keeps working afterwards: tasks, durable

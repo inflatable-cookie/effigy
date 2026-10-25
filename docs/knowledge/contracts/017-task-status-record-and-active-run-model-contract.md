@@ -38,9 +38,10 @@ Durable `CheckoutId` tokens keep the rules in 052 §5.1: linked worktrees and
 ephemeral clones preserve their runtime-scope token, and primary checkouts
 keep their token beside per-checkout Git metadata. First durable Prepare/Mutate
 may mint a missing token. Foreground runs never mint one. Until a token exists,
-they resolve a separate local gate identity from verified root/per-checkout
-Git-directory device/inode identities (root identity alone for non-Git roots),
-not a persisted token derived from path spelling. Token initialization and both
+they resolve a separate local gate identity from the verified root's canonical
+path and its resolved per-checkout Git directory path (the root path alone for
+non-Git roots), not a persisted token and not the path spelling the operator
+typed (052 §7.1, effigy#337). Token initialization and both
 gate names serialize as specified in 052 §3.1 and §7.1, so first durable use
 cannot admit a second holder beside a foreground run.
 
