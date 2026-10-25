@@ -296,25 +296,6 @@ During v0.x, MINOR bumps may include breaking changes.
   passphrase; nested commands that need the vault use the local unlock
   credential or prompt.
 
-### Changed
-- A managed host listener is ready when its reserved loopback port answers its
-  readiness request, and it stays published while the supervisor's run is alive
-  and that port keeps answering. The supervisor probes the port every five
-  seconds; three consecutive misses withdraw the route and a later answer
-  republishes it, while the child process itself is never killed or restarted
-  on a probe miss. A restart, a watch-mode respawn that replaces the serving
-  process, a double fork and a long compile therefore all leave the route
-  served. A dependent host process is replaced only when its dependency's
-  supervisor generation changes, so a momentary probe miss restarts nothing.
-  A reserved port another process already answers fails the start naming the
-  port; a child that never answers names the reserved address, the readiness
-  path and the status it asked for in one line.
-- A managed listener child receives `HOST`, `PORT` and
-  `EFFIGY_MANAGED_HOST_LISTENER_BIND` and nothing else Effigy-specific about its
-  listener: there is no adapter report file, report schema or generation
-  variable to write. The proxy forwards a managed listener route to its
-  published target exactly as it forwards any other route.
-
 ### Removed
 - The managed listener ownership proof, about 1,100 lines of production code.
   `effigy_gateway::managed_listener` is gone, with the process-identity
@@ -1234,6 +1215,23 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- A managed host listener is ready when its reserved loopback port answers its
+  readiness request, and it stays published while the supervisor's run is alive
+  and that port keeps answering. The supervisor probes the port every five
+  seconds; three consecutive misses withdraw the route and a later answer
+  republishes it, while the child process itself is never killed or restarted
+  on a probe miss. A restart, a watch-mode respawn that replaces the serving
+  process, a double fork and a long compile therefore all leave the route
+  served. A dependent host process is replaced only when its dependency's
+  supervisor generation changes, so a momentary probe miss restarts nothing.
+  A reserved port another process already answers fails the start naming the
+  port; a child that never answers names the reserved address, the readiness
+  path and the status it asked for in one line.
+- A managed listener child receives `HOST`, `PORT` and
+  `EFFIGY_MANAGED_HOST_LISTENER_BIND` and nothing else Effigy-specific about its
+  listener: there is no adapter report file, report schema or generation
+  variable to write. The proxy forwards a managed listener route to its
+  published target exactly as it forwards any other route.
 - Gateway route writes apply the dead-owner rule in the same locked
   transaction, and the daemon sweeps it on a timer so `gateway status` lists
   domains something still serves. A released loopback assignment is
