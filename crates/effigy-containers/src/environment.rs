@@ -10,7 +10,7 @@ mod hold;
 mod import;
 mod ops;
 mod reconcile;
-pub(crate) use reconcile::{new_run_id, operation};
+pub(crate) use reconcile::operation;
 mod record;
 mod remote;
 #[cfg(test)]

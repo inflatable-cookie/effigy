@@ -495,9 +495,7 @@ fn prepare_container_up(
     emit_warning_lines(&warnings);
     let attach_mode = effective_attach_mode(&policy, attach, detach);
     operation.preparation_step = Some("runtime");
-    let colima_started = start_runtime_after_scope_registration(&policy, || {
-        ensure_runtime_backend_running(&policy, repo_root).map_err(Into::into)
-    })?;
+    let colima_started = ensure_runtime_backend_running(&policy, repo_root)?;
     emit_ssh_agent_socket_warning(&policy, repo_root);
     operation.preparation_step = Some("mounts");
     effigy_containers::policy::mounts::prepare_container_mount_sources(&policy)?;
@@ -549,15 +547,6 @@ fn refresh_workspace_mounts_for_creation(
         load_container_policy_for_creation(repo_root, Some(policy.name.as_str()))?;
     *policy = creation_policy;
     Ok(decisions)
-}
-
-fn start_runtime_after_scope_registration<T>(
-    policy: &EffectiveContainerPolicy,
-    start: impl FnOnce() -> Result<T, RunnerError>,
-) -> Result<T, RunnerError> {
-    effigy_containers::register_container_runtime_scope(policy)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    start()
 }
 
 /// Runs the Compose activation. Attached interrupts and failures return
@@ -1494,7 +1483,7 @@ mod tests {
         detached_activation_failure, detached_activation_identity, ensure_up_workspace_permissions,
         exec_operation_plan, gateway_registration_failure, lifecycle_operation_plan,
         refresh_workspace_mounts_for_creation, run_container_down_command, sanitized_failure_cause,
-        start_runtime_after_scope_registration, DetachedOperationState, RunnerError,
+        DetachedOperationState, RunnerError,
     };
     use crate::runner::container_command::handover::hand_over_conflicting_environments;
     use crate::runner::container_command::support::{
@@ -1711,50 +1700,6 @@ mod tests {
             }
         );
         assert!(!wipe_data.consumes_declared_container_secrets());
-    }
-
-    #[test]
-    fn runtime_start_failure_keeps_scope_record_created_before_start() {
-        let temp = tempfile::tempdir().expect("temporary fixture root");
-        let checkout = temp.path().join("worker");
-        let home = temp.path().join("home");
-        fs::create_dir_all(checkout.join(".git")).expect("checkout git metadata");
-        fs::create_dir_all(&home).expect("temporary home");
-        fs::write(
-            checkout.join(".git/config"),
-            "[core]\n\trepositoryformatversion = 0\n[effigy]\n\truntimeScope = ephemeral\n",
-        )
-        .expect("mark private checkout as ephemeral");
-        fs::write(
-            checkout.join("effigy.toml"),
-            "[containers]\ndefault = \"web\"\n\n[containers.web]\ncompose_file = \"compose.yaml\"\nprimary_service = \"app\"\n",
-        )
-        .expect("write manifest");
-        fs::write(
-            checkout.join("compose.yaml"),
-            "services:\n  app:\n    image: alpine:latest\n",
-        )
-        .expect("write compose file");
-        effigy_containers::with_test_effigy_home(&home.join(".effigy"), || {
-            let policy = effigy_containers::load_container_policy(&checkout, None)
-                .expect("resolve policy without activating runtime");
-            let token = effigy_core::worktree_scope::load_or_create(&checkout)
-                .expect("resolve fixture token")
-                .expect("ephemeral fixture scope");
-
-            let error = start_runtime_after_scope_registration::<()>(&policy, || {
-                assert!(effigy_containers::load_scope_record(&checkout, &token)
-                    .expect("read registered scope")
-                    .is_some());
-                Err(RunnerError::task_invocation("injected start failure"))
-            })
-            .expect_err("injected start should fail");
-
-            assert!(error.to_string().contains("injected start failure"));
-            assert!(effigy_containers::load_scope_record(&checkout, &token)
-                .expect("scope remains readable")
-                .is_some());
-        });
     }
 
     #[test]

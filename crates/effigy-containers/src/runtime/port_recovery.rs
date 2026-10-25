@@ -1,18 +1,13 @@
 //! Supported, allocation-only recovery of generated-container port ranges.
 //!
 //! A registry entry is released only when its project path is definitely
-//! missing and nothing can still use it: no runtime-scope record that retains
-//! project resources, no gateway route, no container in any state, no
-//! published or bound host port. Any incomplete proof holds the entry with a
-//! reason. Releasing a registry entry never touches runtime resources, data,
-//! volumes, routes or profiles.
+//! missing and nothing live can still use it: no gateway route, no container in
+//! any state, no published or bound host port. Any incomplete proof holds the
+//! entry with a reason. Releasing a registry entry never touches runtime
+//! resources, data, volumes, routes or profiles.
 //!
-//! A stopped Colima profile is scoped to the entries it can own (effigy#294).
-//! Its created or stopped containers cannot be listed without starting it, but
-//! it publishes no host port while it is stopped, so it only makes an entry
-//! uncertain when the ownership stores record that entry on that profile. An
-//! entry with no recorded profile is attributed to the configured Effigy
-//! profile (see [`stopped_profile_hold`]).
+//! A stopped Colima profile publishes no host port, so it holds its entries
+//! rather than failing the whole inventory (see [`stopped_profile_hold`]).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -26,7 +21,6 @@ use serde_json::{json, Value};
 use crate::exec::{discover_compose_containers_all_states, RunningComposeContainerInventory};
 use crate::policy::model::ContainerPolicyError;
 use crate::policy_support::effigy_home_dir;
-use crate::runtime::scope::{self, ScopeObservations, ScopeRecord, UnreadableCheckout};
 
 pub const PORTS_SCHEMA: &str = "effigy.container.ports.v1";
 
@@ -144,32 +138,17 @@ pub fn host_port_hold(port: u16) -> Option<String> {
 /// Ownership facts gathered for one decision. Each source is an explicit
 /// `Result`, so an unreadable store cannot read as an empty one.
 pub struct PortRecoveryFacts {
-    /// Checkout-local runtime-scope records. A foreign checkout whose own
-    /// records are unreadable is recorded against that checkout inside `Ok`,
-    /// so it never holds another owner's entry (papercut 9e5134a4).
-    pub scopes: Result<ScopeObservations, String>,
     pub routes: Result<RouteTable, String>,
     pub inventory: RunningComposeContainerInventory,
     /// The Colima profile Effigy itself allocates on: the user's configured
-    /// profile, or the built-in default. An entry with no recorded profile is
-    /// attributed to it (effigy#294).
+    /// profile, or the built-in default. A stopped profile holds its entries
+    /// (effigy#294).
     pub running_profile: String,
 }
 
 impl PortRecoveryFacts {
     /// Read the live ownership facts for the Effigy home.
     pub fn gather() -> Self {
-        let scopes = (|| -> Result<ScopeObservations, String> {
-            let home = effigy_home_dir().ok_or("cannot resolve Effigy home")?;
-            let registry =
-                PortRegistry::load(&home.join("ports.json")).map_err(|e| e.to_string())?;
-            let roots = registry
-                .allocations
-                .values()
-                .map(|allocation| allocation.project.clone())
-                .collect::<std::collections::BTreeSet<_>>();
-            scope::observe_checkouts(roots, "pinned", probe_project_path)
-        })();
         let routes = effigy_home_dir()
             .ok_or_else(|| "cannot resolve Effigy home for the gateway route table".to_owned())
             .and_then(|home| {
@@ -177,7 +156,6 @@ impl PortRecoveryFacts {
                     .map_err(|error| error.to_string())
             });
         Self {
-            scopes,
             routes,
             inventory: discover_compose_containers_all_states(),
             running_profile: crate::exec::default_runtime_profile(),
@@ -216,12 +194,9 @@ pub struct PortRecoveryRow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortRecoveryPlan {
     pub rows: Vec<PortRecoveryRow>,
-    /// Set when inventory, scope or route proof is incomplete for the whole
+    /// Set when inventory or route proof is incomplete for the whole
     /// registry. Every absent-path entry is then held.
     pub global_hold: Option<String>,
-    /// Checkouts whose own runtime-scope records could not be read. They hold
-    /// no other owner's entry; the list keeps the anomaly visible per checkout.
-    pub unreadable_checkouts: Vec<UnreadableCheckout>,
     pub capacity_before: PortCapacity,
     /// Capacity after the planned removals, computed on a copy.
     pub capacity_after: PortCapacity,
@@ -267,20 +242,11 @@ pub fn plan_recovery(
                 PathState::Missing => match global_hold.as_ref() {
                     Some(reason) => (Decision::Hold, format!("global hold: {reason}")),
                     None => {
-                        let recorded = match &facts.scopes {
-                            Ok(observed) => RecordedOwnership::of(
-                                &observed.records,
-                                name,
-                                alloc.project.as_str(),
-                            ),
-                            Err(_) => RecordedOwnership::default(),
-                        };
                         let entry = MissingEntry {
                             name,
                             base: alloc.base,
                             range: alloc.range,
                             project: &alloc.project,
-                            recorded: &recorded,
                             sharing_path: path_counts
                                 .get(alloc.project.as_str())
                                 .copied()
@@ -312,7 +278,6 @@ pub fn plan_recovery(
         capacity_before: registry.capacity(),
         capacity_after: after.capacity(),
         global_hold,
-        unreadable_checkouts: unreadable_checkouts(facts),
         rows,
         digest,
     }
@@ -320,36 +285,17 @@ pub fn plan_recovery(
 
 fn global_hold_reason(facts: &PortRecoveryFacts) -> Option<String> {
     let mut reasons = Vec::new();
-    // A stopped Colima profile is scoped per entry instead of failing the whole
-    // inventory: it can only own entries recorded on it (see
-    // `stopped_profile_hold`).
+    // A stopped Colima profile holds its entries instead of failing the whole
+    // inventory (see `stopped_profile_hold`).
     if let Some(summary) = facts.inventory.incomplete_failure_summary() {
         reasons.push(format!(
             "container runtime inventory is incomplete: {summary}"
         ));
     }
-    if let Err(error) = &facts.scopes {
-        reasons.push(format!("runtime-scope records are unreadable: {error}"));
-    }
     if let Err(error) = &facts.routes {
         reasons.push(format!("gateway route table is unreadable: {error}"));
     }
     (!reasons.is_empty()).then(|| reasons.join("; "))
-}
-
-/// Checkouts whose own runtime-scope records could not be read.
-fn unreadable_checkouts(facts: &PortRecoveryFacts) -> Vec<UnreadableCheckout> {
-    let Ok(observed) = &facts.scopes else {
-        return Vec::new();
-    };
-    observed
-        .unreadable
-        .iter()
-        .map(|(checkout, reason)| UnreadableCheckout {
-            checkout: checkout.clone(),
-            reason: reason.clone(),
-        })
-        .collect()
 }
 
 fn path_counts(registry: &PortRegistry) -> BTreeMap<&str, usize> {
@@ -360,88 +306,18 @@ fn path_counts(registry: &PortRegistry) -> BTreeMap<&str, usize> {
     counts
 }
 
-/// What the ownership stores record about where one entry was created.
-#[derive(Debug, Default, PartialEq, Eq)]
-struct RecordedOwnership {
-    /// Colima profiles of the runtime-scope records that name this entry's
-    /// project name or checkout path.
-    profiles: Vec<String>,
-    /// Runtime-scope records that still retain volumes or routes of their own
-    /// for this entry.
-    retaining: Vec<String>,
-}
-
-impl RecordedOwnership {
-    fn of(records: &[ScopeRecord], name: &str, project: &str) -> Self {
-        let mut recorded = Self::default();
-        for record in records {
-            let names_project = record
-                .project_names
-                .iter()
-                .chain(&record.retain_project_names)
-                .chain(&record.repo_owned_projects)
-                .any(|owned| owned == name);
-            if !(names_project || record.checkout == project) {
-                continue;
-            }
-            for profile in record.observation_profiles() {
-                if !recorded.profiles.contains(&profile) {
-                    recorded.profiles.push(profile);
-                }
-            }
-            // Containers in any state are proved separately from the inventory.
-            let retains_volumes = !record.owned_volumes.is_empty();
-            let retains_routes = !record.routes.is_empty();
-            if retains_volumes || retains_routes {
-                recorded.retaining.push(record.token.clone());
-            }
-        }
-        recorded
-    }
-}
-
 /// Why a stopped Colima profile still holds this entry, if it does.
 ///
 /// A stopped profile publishes no host port, so it never blocks the bound-port
 /// question and never has to be started to answer it. It only makes an entry
-/// uncertain when the entry may live in that profile: when a runtime-scope
-/// record names the entry on that profile, or when no record names any
-/// profile and the configured Effigy profile itself is stopped. An entry with
-/// no recorded profile is attributed to the configured Effigy profile, the
-/// profile Prepare would allocate it on now. That inference stays
-/// conservative in the direction that matters: a stopped configured profile is
-/// itself in the stopped set, so it holds every entry attributed to it.
-fn stopped_profile_hold(
-    recorded: &RecordedOwnership,
-    stopped: &[&str],
-    running: &str,
-) -> Option<String> {
-    let recorded_stopped = recorded
-        .profiles
-        .iter()
-        .filter(|profile| stopped.contains(&profile.as_str()))
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    if !recorded_stopped.is_empty() {
-        return Some(format!(
-            "runtime-scope record names stopped Colima profile(s) {}; their created or stopped containers cannot be inspected without starting them",
-            quoted_list(&recorded_stopped)
-        ));
-    }
-    if recorded.profiles.is_empty() && stopped.contains(&running) {
-        return Some(format!(
-            "no runtime-scope record names another profile and the configured Effigy profile `{running}` is stopped, so its created or stopped containers cannot be inspected without starting it"
-        ));
-    }
-    None
-}
-
-fn quoted_list(items: &[&str]) -> String {
-    items
-        .iter()
-        .map(|item| format!("`{item}`"))
-        .collect::<Vec<_>>()
-        .join(", ")
+/// uncertain when the configured Effigy profile itself is stopped: that is the
+/// profile Prepare would allocate the entry on now.
+fn stopped_profile_hold(stopped: &[&str], running: &str) -> Option<String> {
+    stopped.contains(&running).then(|| {
+        format!(
+            "the configured Effigy profile `{running}` is stopped, so its created or stopped containers cannot be inspected without starting it"
+        )
+    })
 }
 
 /// One absent-path entry under decision.
@@ -450,7 +326,6 @@ struct MissingEntry<'a> {
     base: u16,
     range: u16,
     project: &'a str,
-    recorded: &'a RecordedOwnership,
     sharing_path: usize,
 }
 
@@ -460,7 +335,7 @@ fn decide_missing(
     host_port_hold: &impl Fn(u16) -> Option<String>,
 ) -> (Decision, String) {
     let stopped = facts.inventory.stopped_profiles();
-    if let Some(reason) = stopped_profile_hold(entry.recorded, &stopped, &facts.running_profile) {
+    if let Some(reason) = stopped_profile_hold(&stopped, &facts.running_profile) {
         return (Decision::Hold, reason);
     }
     if entry.sharing_path > 1 {
@@ -470,15 +345,6 @@ fn decide_missing(
                 "{} allocations record this project path",
                 entry.sharing_path
             ),
-        );
-    }
-    // A record that still retains project volumes or routes keeps the hold:
-    // retirement clears them, and the stable range stays while the project's
-    // own runtime resources are still registered.
-    if let Some(token) = entry.recorded.retaining.first() {
-        return (
-            Decision::Hold,
-            format!("runtime-scope record {token} still retains volumes or routes for it"),
         );
     }
     if let Ok(table) = &facts.routes {
@@ -533,28 +399,11 @@ fn decide_missing(
     {
         return (Decision::Hold,"scoped checkout is missing; use `effigy container retire --dead` for verified backend-label retirement".into());
     }
-    let attribution = if entry.recorded.profiles.is_empty() {
-        format!(
-            "no runtime-scope record names another profile and the running profile `{}` has none",
-            facts.running_profile
-        )
-    } else {
-        format!(
-            "its runtime-scope record on profile(s) {} still owns no volume, route or container",
-            quoted_list(
-                &entry
-                    .recorded
-                    .profiles
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>()
-            )
-        )
-    };
     (
         Decision::Reclaim,
         format!(
-            "project path is missing; {attribution}, and no scope, route, container, published or bound port references it"
+            "project path is missing; the running profile `{}` has no container for it and no route, published or bound port references it",
+            facts.running_profile
         ),
     )
 }
@@ -650,8 +499,8 @@ fn report_at(
             Ok((snapshot, registry_bytes, registry))
         },
     )?;
-    let facts = step_through("collecting container, scope and listener facts", |step| {
-        step.set_label("reading the container inventory and each checkout's scope records");
+    let facts = step_through("collecting container and listener facts", |step| {
+        step.set_label("reading the container inventory");
         Ok(gather())
     })?;
     let plan = step_through(
@@ -863,8 +712,8 @@ pub fn port_reclaim_dry_run() -> Result<PortRecoveryReport, ContainerPolicyError
 /// is written and the caller is told to re-plan.
 pub fn port_reclaim_apply(expect_digest: &str) -> Result<PortRecoveryReport, ContainerPolicyError> {
     let path = live_path()?;
-    let facts = step_through("collecting container, scope and listener facts", |step| {
-        step.set_label("reading the container inventory and each checkout's scope records");
+    let facts = step_through("collecting container and listener facts", |step| {
+        step.set_label("reading the container inventory");
         Ok(PortRecoveryFacts::gather())
     })?;
     step_through("applying the port reclaim", |step| {
@@ -935,17 +784,6 @@ pub fn port_report_json(report: &PortRecoveryReport) -> Value {
             "sha256_after": report.registry_sha256_after,
         },
         "global_hold": report.plan.global_hold,
-        "unreadable_checkouts": report
-            .plan
-            .unreadable_checkouts
-            .iter()
-            .map(|checkout| {
-                json!({
-                    "checkout": checkout.checkout,
-                    "reason": checkout.reason,
-                })
-            })
-            .collect::<Vec<_>>(),
         "plan_digest": report.plan.digest,
         "capacity": {
             "range": report.plan.capacity_before.range,

@@ -15,7 +15,6 @@ use super::{
 use crate::exec::{
     RunningComposeContainer, RunningComposeContainerInventory, RunningComposeContainerProfiled,
 };
-use crate::runtime::scope::{ScopeObservations, ScopeRecord};
 
 const MISSING: &str = "/effigy-test/definitely/missing/checkout";
 
@@ -37,7 +36,6 @@ fn registry_with(entries: &[(&str, u16, &str)]) -> PortRegistry {
 
 fn clean_facts() -> PortRecoveryFacts {
     PortRecoveryFacts {
-        scopes: readable_scopes(Vec::new()),
         routes: Ok(RouteTable::new()),
         inventory: RunningComposeContainerInventory::default(),
         running_profile: "effigy".to_owned(),
@@ -91,80 +89,6 @@ fn container(
     }
 }
 
-fn scope_record(token: &str, checkout: &str, projects: &[&str]) -> ScopeRecord {
-    ScopeRecord {
-        schema: "effigy.runtime-scope.v1".to_owned(),
-        schema_version: 1,
-        token: token.to_owned(),
-        host_key: "abcdef01".to_owned(),
-        checkout: checkout.to_owned(),
-        updated_unix: 0,
-        compose_kind: crate::runtime::scope::ScopeComposeKind::Generated,
-        profile: "effigy".to_owned(),
-        profiles: Vec::new(),
-        project_names: projects.iter().map(|name| (*name).to_owned()).collect(),
-        retain_project_names: Vec::new(),
-        repo_owned_projects: Vec::new(),
-        owned_volumes: Vec::new(),
-        retain_volumes: Vec::new(),
-        routes: Vec::new(),
-        retain_routes: Vec::new(),
-        loopback_identities: Vec::new(),
-        retain_loopback_identities: Vec::new(),
-        pending_tls_certs: Vec::new(),
-        checkout_fence: None,
-        checkout_generation: None,
-    }
-}
-
-trait ScopeRecordProfile {
-    fn with_profile(self, profile: &str) -> Self;
-}
-
-impl ScopeRecordProfile for ScopeRecord {
-    fn with_profile(mut self, profile: &str) -> Self {
-        self.profile = profile.to_owned();
-        self.profiles = vec![profile.to_owned()];
-        self
-    }
-}
-
-fn readable_scopes(records: Vec<ScopeRecord>) -> Result<ScopeObservations, String> {
-    Ok(ScopeObservations::readable(records))
-}
-
-#[test]
-fn borrowing_environment_record_holds_the_owner_port_allocation() {
-    // A `data_from` borrower shares its checkout (and therefore its scope
-    // record and project path) with the owner. While that record exists the
-    // owner's port allocation is held, so a borrower-side reclaim can never
-    // release the owner's project while its volumes are still borrowed.
-    let record = scope_record(
-        "abcdef0123456789abcdef0123456789",
-        MISSING,
-        &["acowtancy-dev-hybrid"],
-    );
-    let mut facts = clean_facts();
-    facts.scopes = readable_scopes(vec![record]);
-    let registry = registry_with(&[
-        ("acowtancy-dev", 8100, MISSING),
-        ("acowtancy-dev-hybrid", 8300, MISSING),
-    ]);
-    let plan = plan_recovery(&registry, &facts, missing_everywhere, no_bound_ports);
-
-    assert_eq!(plan.global_hold, None);
-    let (owner, owner_reason) = decision_for(&plan, "acowtancy-dev");
-    assert_eq!(owner, Decision::Hold);
-    assert!(
-        owner_reason.contains("runtime-scope record")
-            || owner_reason.contains("allocations record"),
-        "the shared checkout record holds the owner allocation: {owner_reason}"
-    );
-    let (borrower, _) = decision_for(&plan, "acowtancy-dev-hybrid");
-    assert_eq!(borrower, Decision::Hold);
-    assert_eq!(plan.reclaim_names(), Vec::<String>::new());
-}
-
 #[test]
 fn definitely_missing_unowned_allocation_is_reclaimed() {
     let registry = registry_with(&[("gone", 8100, MISSING)]);
@@ -204,93 +128,6 @@ fn present_path_is_retained_and_unknown_path_is_held() {
         "{reason}"
     );
     assert!(plan.reclaim_names().is_empty());
-}
-
-/// A scope record that still retains project volumes.
-fn scope_record_with_volumes(token: &str, checkout: &str, projects: &[&str]) -> ScopeRecord {
-    let mut record = scope_record(token, checkout, projects);
-    record.owned_volumes = vec![format!("{token}-data")];
-    record
-}
-
-#[test]
-fn runtime_scope_record_retaining_volumes_holds_missing_allocation() {
-    let registry = registry_with(&[("owned", 8100, MISSING)]);
-    let facts = PortRecoveryFacts {
-        scopes: readable_scopes(vec![scope_record_with_volumes(
-            "tok1",
-            "/elsewhere",
-            &["owned"],
-        )]),
-        ..clean_facts()
-    };
-    let plan = plan_recovery(&registry, &facts, missing_everywhere, no_bound_ports);
-
-    let (decision, reason) = decision_for(&plan, "owned");
-    assert_eq!(decision, Decision::Hold);
-    assert!(reason.contains("tok1"));
-    assert!(reason.contains("volumes or routes"));
-}
-
-#[test]
-fn scope_checkout_match_retaining_volumes_holds_without_project_name() {
-    let registry = registry_with(&[("renamed", 8100, MISSING)]);
-    let facts = PortRecoveryFacts {
-        scopes: readable_scopes(vec![scope_record_with_volumes("tok2", MISSING, &[])]),
-        ..clean_facts()
-    };
-    let plan = plan_recovery(&registry, &facts, missing_everywhere, no_bound_ports);
-
-    assert_eq!(decision_for(&plan, "renamed").0, Decision::Hold);
-}
-
-#[test]
-fn scope_record_on_an_observed_profile_with_nothing_left_is_reclaimed() {
-    // effigy#294: a record does not hold on its own any more. When its profile
-    // is observable and it retains no volume or route, the profile's own
-    // inventory decides, and a missing project with no container there is
-    // reclaimable.
-    let registry = registry_with(&[("bare", 8100, MISSING)]);
-    let facts = PortRecoveryFacts {
-        scopes: readable_scopes(vec![scope_record("tok3", MISSING, &["bare"])]),
-        ..clean_facts()
-    };
-    let plan = plan_recovery(&registry, &facts, missing_everywhere, no_bound_ports);
-
-    let (decision, reason) = decision_for(&plan, "bare");
-    assert_eq!(decision, Decision::Reclaim);
-    assert!(
-        reason.contains("effigy"),
-        "names the observed profile: {reason}"
-    );
-}
-
-#[test]
-fn scope_record_naming_a_stopped_profile_holds_its_own_entry() {
-    let registry = registry_with(&[
-        ("release-proof", 8100, MISSING),
-        ("gone", 8200, "/effigy-test/elsewhere/gone"),
-    ]);
-    let facts = PortRecoveryFacts {
-        scopes: readable_scopes(vec![
-            scope_record("tok4", MISSING, &["release-proof"]).with_profile("effigy-release")
-        ]),
-        inventory: RunningComposeContainerInventory {
-            rows: Vec::new(),
-            failures: vec![stopped_profile("effigy-release")],
-        },
-        ..clean_facts()
-    };
-    let plan = plan_recovery(&registry, &facts, missing_everywhere, no_bound_ports);
-
-    assert_eq!(plan.global_hold, None, "a stopped profile is not global");
-    let (decision, reason) = decision_for(&plan, "release-proof");
-    assert_eq!(decision, Decision::Hold);
-    assert!(reason.contains("effigy-release"), "{reason}");
-    assert!(reason.contains("stopped"), "{reason}");
-    // An unrelated entry attributed to the running profile is unaffected.
-    assert_eq!(decision_for(&plan, "gone").0, Decision::Reclaim);
-    assert_eq!(plan.reclaim_names(), vec!["gone".to_owned()]);
 }
 
 #[test]
@@ -388,49 +225,6 @@ fn incomplete_inventory_holds_every_missing_entry_but_retains_present_ones() {
 }
 
 #[test]
-fn unreadable_scope_store_is_a_global_hold_not_an_empty_store() {
-    let registry = registry_with(&[("gone", 8100, MISSING)]);
-    let facts = PortRecoveryFacts {
-        scopes: Err("invalid runtime-scope record".to_owned()),
-        ..clean_facts()
-    };
-    let plan = plan_recovery(&registry, &facts, missing_everywhere, no_bound_ports);
-
-    assert_eq!(decision_for(&plan, "gone").0, Decision::Hold);
-    assert!(plan.global_hold.as_deref().unwrap().contains("unreadable"));
-}
-
-#[test]
-fn unreadable_checkout_holds_only_its_own_entry() {
-    // Papercut 9e5134a4: one checkout's unreadable journal used to hold the
-    // whole registry. It is reported per checkout, and another missing
-    // project's allocation is still reclaimed.
-    let registry = registry_with(&[("gone", 8100, MISSING), ("here", 8200, "/effigy-test/live")]);
-    let facts = PortRecoveryFacts {
-        scopes: Ok(ScopeObservations::default()
-            .with_unreadable("/effigy-test/live", "group- or other-accessible mode")),
-        ..clean_facts()
-    };
-    let probe = |path: &Path| {
-        if path == Path::new("/effigy-test/live") {
-            PathState::Present
-        } else {
-            PathState::Missing
-        }
-    };
-    let plan = plan_recovery(&registry, &facts, probe, no_bound_ports);
-
-    assert_eq!(plan.global_hold, None);
-    assert_eq!(decision_for(&plan, "gone").0, Decision::Reclaim);
-    assert_eq!(decision_for(&plan, "here").0, Decision::Retain);
-    assert_eq!(plan.unreadable_checkouts.len(), 1);
-    assert_eq!(
-        plan.unreadable_checkouts[0].checkout,
-        "/effigy-test/live".to_owned()
-    );
-}
-
-#[test]
 fn shared_project_path_holds_every_allocation_on_it() {
     let registry = registry_with(&[("a", 8100, MISSING), ("b", 8200, MISSING)]);
     let plan = plan_recovery(
@@ -489,7 +283,6 @@ fn capacity_reports_free_ranges_before_and_after_reclaim() {
     let plan = plan_recovery(
         &registry,
         &PortRecoveryFacts {
-            scopes: readable_scopes(Vec::new()),
             routes: Ok(RouteTable::new()),
             inventory: RunningComposeContainerInventory::default(),
             running_profile: "effigy".to_owned(),
@@ -520,7 +313,10 @@ fn plan_digest_changes_when_a_decision_changes() {
     let held = plan_recovery(
         &registry,
         &PortRecoveryFacts {
-            scopes: readable_scopes(vec![scope_record_with_volumes("tok", "/x", &["gone"])]),
+            inventory: RunningComposeContainerInventory {
+                rows: vec![container("app-1", "Created", Some("gone"), &[])],
+                failures: Vec::new(),
+            },
             ..clean_facts()
         },
         missing_everywhere,

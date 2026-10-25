@@ -2,9 +2,9 @@
 //!
 //! The bounded `127.1.0.x` pool is exhausted when every address is assigned or
 //! still reserved by another project's container route. Projects whose
-//! checkout, containers, runtime scope and listeners are all gone keep their
-//! address forever, so a new stack cannot get one. This module proves such an
-//! owner dead before its assignment is released, once, at allocation time.
+//! checkout, containers and listeners are all gone keep their address forever,
+//! so a new stack cannot get one. This module proves such an owner dead before
+//! its assignment is released, once, at allocation time.
 //!
 //! Releasing is allocation-only: it never touches containers, volumes, data,
 //! profiles, certificates or a live owner's route.
@@ -23,17 +23,10 @@ use effigy_gateway::socket_ownership::{listening_process_ids, GatewayEndpoint, G
 use crate::exec::{discover_compose_containers_all_states, RunningComposeContainerInventory};
 use crate::policy_support::effigy_home_dir;
 use crate::runtime::port_recovery::{probe_project_path, Decision, PathState};
-use crate::runtime::scope::{self, ScopeObservations, ScopeRecord, UnreadableCheckout};
 
 /// Ownership facts gathered once per plan. Each source is an explicit
 /// `Result`, so an unreadable store can never read as an empty one.
 pub struct LoopbackRecoveryFacts {
-    /// Checkout-local runtime-scope records discovered through endpoint owners.
-    /// A foreign checkout's unreadable journal is recorded against that
-    /// checkout inside `Ok`, so it holds only its own entries (papercut
-    /// 9e5134a4).
-    pub scopes: Result<ScopeObservations, String>,
-
     /// Compose containers in every state on every profile that is running.
     pub inventory: RunningComposeContainerInventory,
 
@@ -56,21 +49,6 @@ impl LoopbackRecoveryFacts {
 
     /// Assemble facts around an already-observed container inventory.
     pub fn with_inventory(inventory: RunningComposeContainerInventory) -> Self {
-        let scopes = (|| -> Result<ScopeObservations, String> {
-            let home = effigy_home_dir().ok_or("cannot resolve Effigy home")?;
-            let snapshot = EndpointStore::for_effigy_home(&home)
-                .read_compatible()
-                .map_err(|error| error.to_string())?;
-            let registry = snapshot.loopback().map_err(|error| error.to_string())?;
-            let routes = snapshot.routes().map_err(|error| error.to_string())?;
-            let roots = registry
-                .assignments
-                .iter()
-                .filter_map(|(identity, assignment)| owner_path(identity, assignment))
-                .chain(routes.routes.values().map(|route| route.project.clone()))
-                .collect::<BTreeSet<_>>();
-            scope::observe_checkouts(roots, "endpoint", probe_project_path)
-        })();
         let gateway_pid = effigy_home_dir()
             .map(|home| home.join("gateway").join("gateway.pid"))
             .and_then(|path| {
@@ -80,7 +58,6 @@ impl LoopbackRecoveryFacts {
             })
             .map(|snapshot| snapshot.pid());
         Self {
-            scopes,
             inventory,
             gateway_pid,
         }
@@ -116,39 +93,7 @@ fn global_hold_reason(facts: &LoopbackRecoveryFacts) -> Option<String> {
             "container runtime inventory is incomplete: {summary}"
         ));
     }
-    if let Err(error) = &facts.scopes {
-        reasons.push(format!("runtime-scope records are unreadable: {error}"));
-    }
     (!reasons.is_empty()).then(|| reasons.join("; "))
-}
-
-/// Records from the checkouts whose own journal could be read.
-fn readable_records(facts: &LoopbackRecoveryFacts) -> &[ScopeRecord] {
-    match &facts.scopes {
-        Ok(observed) => &observed.records,
-        Err(_) => &[],
-    }
-}
-
-/// Checkouts whose own runtime-scope records could not be read.
-///
-/// One such checkout used to be a machine-wide hold: the whole record set
-/// failed, so every absent-path entry on the machine looked unprovable, and
-/// allocation could release nothing (papercut 9e5134a4). The read is per
-/// checkout now, so a failure is recorded against the checkout that failed and
-/// only that checkout's own entries are held.
-pub fn unreadable_checkouts(facts: &LoopbackRecoveryFacts) -> Vec<UnreadableCheckout> {
-    let Ok(observed) = &facts.scopes else {
-        return Vec::new();
-    };
-    observed
-        .unreadable
-        .iter()
-        .map(|(checkout, reason)| UnreadableCheckout {
-            checkout: checkout.clone(),
-            reason: reason.clone(),
-        })
-        .collect()
 }
 
 /// Owner path recorded by an identity and its scope. Identities are
@@ -270,23 +215,6 @@ fn decide_missing_assignment(
         );
     }
 
-    if let Some(record) = readable_records(facts).iter().find(|record| {
-        record.checkout == assignment.scope
-            || record
-                .loopback_identities
-                .iter()
-                .any(|held| held == identity)
-            || record
-                .retain_loopback_identities
-                .iter()
-                .any(|held| held == identity)
-    }) {
-        return (
-            Decision::Hold,
-            format!("runtime-scope record {} still owns it", record.token),
-        );
-    }
-
     let name = project_name(identity);
     if let Some(row) = facts.inventory.rows.iter().find(|row| {
         row.row.working_dir.as_deref() == path
@@ -318,7 +246,7 @@ fn decide_missing_assignment(
 
     (
         Decision::Reclaim,
-        "owner path is missing; no scope record, container, route or listener uses it".to_owned(),
+        "owner path is missing; no container, route or listener uses it".to_owned(),
     )
 }
 

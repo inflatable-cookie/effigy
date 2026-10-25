@@ -44,7 +44,7 @@ pub(in crate::runner) use status::{
 pub(in crate::runner) use kernel::test_state_home;
 pub(in crate::runner) use kernel::{
     adopt_state_home, cleanup_context, effect_context, effects_root as checkout_effects_root,
-    install_client_router, interrupted_by, observe_context, probe_runtime, reading_context,
+    install_client_router, interrupted_by, observe_context, reading_context,
     root_cancel_cause, routed_signals, startup_executable, state_home_path, CustodyWait,
 };
 pub(in crate::runner) use process::spawn_environment;

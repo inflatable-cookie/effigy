@@ -413,6 +413,7 @@ where
     let mut output_json = false;
     let mut yes = false;
     let mut dead = false;
+    let mut keep_data = false;
     let mut scope: Option<String> = None;
 
     while let Some(arg) = args.next() {
@@ -421,6 +422,7 @@ where
             "--json" => output_json = true,
             "--yes" => yes = true,
             "--dead" => dead = true,
+            "--keep-data" => keep_data = true,
             "--scope" => {
                 scope = Some(next_required_value(
                     &mut args,
@@ -451,6 +453,7 @@ where
             name,
             scope,
             dead,
+            keep_data,
             yes,
         },
         repo_override,

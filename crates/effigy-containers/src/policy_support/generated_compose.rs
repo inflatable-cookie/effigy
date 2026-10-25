@@ -16,8 +16,7 @@ use serde_yaml::Value as YamlValue;
 
 use crate::exec::RunningComposeContainerInventory;
 use crate::runtime::scope::{
-    CHECKOUT_FENCE_LABEL, CHECKOUT_GENERATION_LABEL, CHECKOUT_LABEL, MANAGED_LABEL, PROJECT_LABEL,
-    SCOPE_LABEL,
+    CHECKOUT_LABEL, MANAGED_LABEL, PROJECT_LABEL, SCOPE_LABEL,
 };
 use crate::{
     catalog_resolver, mount_spec::resolve_host_mounts, resolve_catalog_network_contract,
@@ -44,19 +43,9 @@ fn apply_runtime_scope_labels(
     project_name: &str,
     checkout: &Path,
 ) -> Result<(), ContainerPolicyError> {
-    let fence = checkout_fence_label(checkout)?;
-    let generation = serde_json::to_string(
-        &effigy_kernel::fs::DirFd::open(checkout)
-            .map_err(|e| ContainerPolicyError::TaskInvocation(e.to_string()))?
-            .identity()
-            .map_err(|e| ContainerPolicyError::TaskInvocation(e.to_string()))?,
-    )
-    .map_err(|e| ContainerPolicyError::TaskInvocation(e.to_string()))?;
+    let checkout_label = checkout.display().to_string();
     for service in document.services.values_mut() {
-        if let Some(fence) = &fence {
-            upsert_yaml_label(&mut service.extra, CHECKOUT_FENCE_LABEL, fence);
-        }
-        upsert_yaml_label(&mut service.extra, CHECKOUT_GENERATION_LABEL, &generation);
+        upsert_yaml_label(&mut service.extra, CHECKOUT_LABEL, &checkout_label);
         upsert_yaml_label(&mut service.extra, SCOPE_LABEL, token);
         upsert_yaml_label(&mut service.extra, MANAGED_LABEL, "true");
         upsert_yaml_label(&mut service.extra, PROJECT_LABEL, project_name);
@@ -66,11 +55,7 @@ fn apply_runtime_scope_labels(
             let YamlValue::Mapping(volume_map) = volume else {
                 continue;
             };
-            upsert_mapping_label(volume_map, CHECKOUT_LABEL, &checkout.display().to_string());
-            if let Some(fence) = &fence {
-                upsert_mapping_label(volume_map, CHECKOUT_FENCE_LABEL, fence);
-            }
-            upsert_mapping_label(volume_map, CHECKOUT_GENERATION_LABEL, &generation);
+            upsert_mapping_label(volume_map, CHECKOUT_LABEL, &checkout_label);
             upsert_mapping_label(volume_map, SCOPE_LABEL, token);
             upsert_mapping_label(volume_map, MANAGED_LABEL, "true");
             upsert_mapping_label(volume_map, PROJECT_LABEL, project_name);
@@ -85,68 +70,13 @@ fn apply_runtime_scope_labels(
             .entry(YamlValue::String("default".to_owned()))
             .or_insert_with(|| YamlValue::Mapping(serde_yaml::Mapping::new()));
         if let YamlValue::Mapping(network_map) = default_network {
-            upsert_mapping_label(network_map, CHECKOUT_LABEL, &checkout.display().to_string());
-            if let Some(fence) = &fence {
-                upsert_mapping_label(network_map, CHECKOUT_FENCE_LABEL, fence);
-            }
-            upsert_mapping_label(network_map, CHECKOUT_GENERATION_LABEL, &generation);
+            upsert_mapping_label(network_map, CHECKOUT_LABEL, &checkout_label);
             upsert_mapping_label(network_map, SCOPE_LABEL, token);
             upsert_mapping_label(network_map, MANAGED_LABEL, "true");
             upsert_mapping_label(network_map, PROJECT_LABEL, project_name);
         }
     }
     Ok(())
-}
-
-/// Observation adds no fence on an unprepared checkout. Prepare creates and
-/// syncs it, then resolves the render again with this exact inode label.
-fn checkout_fence_label(checkout: &Path) -> Result<Option<String>, ContainerPolicyError> {
-    use effigy_kernel::ctx::*;
-    use effigy_kernel::observe::Observed;
-    let Some(token) = effigy_core::worktree_scope::checkout_token(checkout)
-        .map_err(|e| ContainerPolicyError::TaskInvocation(e.to_string()))?
-    else {
-        return Ok(None);
-    };
-    let op = OperationContext::new(
-        Deadline::At(std::time::Instant::now() + std::time::Duration::from_secs(3)),
-        CancelToken::default(),
-        Limits {
-            capture_tail: 1024,
-            log_rotate: 4096,
-            log_keep: 1,
-            line_max: 512,
-            queue_bytes: 2048,
-            probe_concurrency: 1,
-        },
-        EffectClass::Observe,
-        if effigy_core::container_detection::process_is_inside_effigy_workspace_container() {
-            Placement::Guest
-        } else {
-            Placement::Host
-        },
-    );
-    let cx = op
-        .observe()
-        .map_err(|_| ContainerPolicyError::TaskInvocation("fence observation context".into()))?;
-    let root = match crate::environment::observe_root(&cx, checkout) {
-        Observed::Verified(root, _) => root,
-        Observed::Absent(_) => return Ok(None),
-        other => {
-            return Err(ContainerPolicyError::TaskInvocation(format!(
-                "checkout fence root: {other:?}"
-            )))
-        }
-    };
-    match effigy_kernel::gate::Gate::checkout_fence_identity(&cx, &root, &token) {
-        Observed::Verified(identity, _) => serde_json::to_string(&identity)
-            .map(Some)
-            .map_err(|e| ContainerPolicyError::TaskInvocation(e.to_string())),
-        Observed::Absent(_) => Ok(None),
-        other => Err(ContainerPolicyError::TaskInvocation(format!(
-            "checkout fence identity: {other:?}"
-        ))),
-    }
 }
 
 /// Rewrite a borrowing environment's generated Compose so every named

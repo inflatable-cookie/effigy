@@ -15,14 +15,12 @@ use crate::exec::{
     RuntimeInventoryFailure,
 };
 use crate::runtime::port_recovery::{Decision, PathState};
-use crate::runtime::scope::{ScopeObservations, ScopeRecord};
 
 const MISSING: &str = "/effigy-test/definitely/missing/checkout";
 const LIVE: &str = "/effigy-test/live/checkout";
 
 fn clean_facts() -> LoopbackRecoveryFacts {
     LoopbackRecoveryFacts {
-        scopes: Ok(ScopeObservations::default()),
         inventory: RunningComposeContainerInventory::default(),
         gateway_pid: None,
     }
@@ -87,32 +85,6 @@ fn assignment_row<'a>(plan: &'a [LoopbackRecoveryRow], ip: &str) -> &'a Loopback
         .unwrap_or_else(|| panic!("assignment row for {ip}"))
 }
 
-fn scope_record(token: &str, checkout: &str, identities: &[&str]) -> ScopeRecord {
-    ScopeRecord {
-        schema: "effigy.runtime-scope.v1".to_owned(),
-        schema_version: 1,
-        token: token.to_owned(),
-        host_key: "abcdef01".to_owned(),
-        checkout: checkout.to_owned(),
-        checkout_fence: None,
-        checkout_generation: None,
-        updated_unix: 0,
-        compose_kind: crate::runtime::scope::ScopeComposeKind::Generated,
-        profile: "effigy".to_owned(),
-        profiles: Vec::new(),
-        project_names: Vec::new(),
-        retain_project_names: Vec::new(),
-        repo_owned_projects: Vec::new(),
-        owned_volumes: Vec::new(),
-        retain_volumes: Vec::new(),
-        routes: Vec::new(),
-        retain_routes: Vec::new(),
-        loopback_identities: identities.iter().map(|id| (*id).to_owned()).collect(),
-        retain_loopback_identities: Vec::new(),
-        pending_tls_certs: Vec::new(),
-    }
-}
-
 fn container(
     name: &str,
     project: Option<&str>,
@@ -139,10 +111,6 @@ fn container_with_status(
             oneoff: false,
         },
     }
-}
-
-fn readable_scopes(records: Vec<ScopeRecord>) -> Result<ScopeObservations, String> {
-    Ok(ScopeObservations::readable(records))
 }
 
 #[test]
@@ -257,24 +225,6 @@ fn a_container_publishing_on_the_address_holds_it() {
 }
 
 #[test]
-fn a_runtime_scope_record_holds_its_owner() {
-    let registry = registry_with(&[("project:gone:/gone", "127.1.0.4", MISSING)]);
-    let mut facts = clean_facts();
-    facts.scopes = readable_scopes(vec![scope_record(
-        "0123456789abcdef0123456789abcdef",
-        MISSING,
-        &["project:gone:/gone"],
-    )]);
-
-    let plan = plan_recovery(&registry, &RouteTable::new(), &facts, missing, no_listener);
-
-    assert_eq!(assignment_row(&plan, "127.1.0.4").decision, Decision::Hold);
-    assert!(assignment_row(&plan, "127.1.0.4")
-        .reason
-        .contains("still owns it"));
-}
-
-#[test]
 fn a_foreign_listener_holds_the_address_but_a_gateway_alias_does_not() {
     let registry = registry_with(&[("project:gone:/gone", "127.1.0.4", MISSING)]);
     let routes = route_table_with(vec![alias_route("gone.test", MISSING, "127.1.0.4", 8104)]);
@@ -310,34 +260,6 @@ fn incomplete_inventory_holds_every_absent_path_entry() {
     assert!(assignment_row(&plan, "127.1.0.4")
         .reason
         .contains("global hold"));
-}
-
-#[test]
-fn one_unreadable_checkout_holds_nothing_machine_wide() {
-    // Papercut 9e5134a4: a foreign checkout whose `.effigy/state/` was left at
-    // 0755 made every dead-owner entry on the machine unprovable. Its own
-    // journal is unreadable, so it is reported, but the other owners are still
-    // decided from the evidence that could be read.
-    let registry = registry_with(&[("project:gone:/gone", "127.1.0.4", MISSING)]);
-    let mut facts = clean_facts();
-    facts.scopes = Ok(ScopeObservations::default().with_unreadable(
-        LIVE,
-        "untrusted /live/.effigy/state: group- or other-accessible mode",
-    ));
-
-    let plan = plan_recovery(&registry, &RouteTable::new(), &facts, missing, no_listener);
-
-    assert_eq!(
-        assignment_row(&plan, "127.1.0.4").decision,
-        Decision::Reclaim
-    );
-    assert_eq!(
-        super::unreadable_checkouts(&facts),
-        [super::UnreadableCheckout {
-            checkout: LIVE.to_owned(),
-            reason: "untrusted /live/.effigy/state: group- or other-accessible mode".to_owned(),
-        }]
-    );
 }
 
 #[test]

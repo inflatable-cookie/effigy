@@ -301,20 +301,27 @@ fn run_container_with(
             name,
             scope,
             dead,
+            keep_data,
             yes,
         } => {
             if dead {
                 if name.is_some() {
                     return Err(RunnerError::task_invocation(
-                        "`effigy container <NAME> retire --dead` is unsupported; `--dead` covers every recorded scope",
+                        "`effigy container <NAME> retire --dead` is unsupported; `--dead` covers every labelled stack whose checkout is gone",
                     ));
                 }
-                retire::run_container_retire_dead(args.repo_override.clone(), yes, args.output_json)
+                retire::run_container_retire_dead(
+                    args.repo_override.clone(),
+                    keep_data,
+                    yes,
+                    args.output_json,
+                )
             } else {
                 retire::run_container_retire(
                     args.repo_override.clone(),
                     name.as_deref(),
                     scope.as_deref(),
+                    keep_data,
                     yes,
                     args.output_json,
                 )
