@@ -710,7 +710,7 @@ different catalogs.
 
 The owner's data is protected: borrowed volumes are declared `external` in
 the generated Compose, so `reset`, `reset --wipe-data`, `retire`,
-`retire --dead` and `ports reclaim` on the borrowing environment never delete
+`retire --dead` on the borrowing environment never deletes
 or claim them. `reset --wipe-data` on the owner still removes them. An
 environment without `data_from` keeps its own fresh volumes.
 
@@ -873,7 +873,7 @@ The translated environment is a normal catalog environment:
 - named volumes become `<project>-<volume>`; the old `<project>_<volume>`
   volumes are left alone and never adopted
 - published ports follow catalog port policy: Prepare assigns the host port
-  (see `effigy container ports status`) on the publish address (`127.0.0.1` by
+  (assigned by Compose or the OS) on the publish address (`127.0.0.1` by
   default) unless `[host].ports` fixes it
 - `data`, `cache` and `reset` commands apply
 
@@ -1544,7 +1544,7 @@ and directs you to `effigy gateway setup`. Setup verifies and stops only the
 recorded live v0.14.1 process generation, transfers the explicit legacy JSON
 registries and leaf certificates to your account without changing their bytes,
 and starts the operator daemon. Unknown process identity prevents migration.
-URLs, loopback IPs, generated 100-port ranges and pins remain unchanged.
+URLs, loopback IPs and pins remain unchanged.
 The endpoint Store owns their imported state; the legacy JSON files remain
 unchanged until an explicit downgrade export.
 
@@ -1568,18 +1568,10 @@ previous `effigy gateway repair` and its `--owner-checkout` filter are retired.
 For a reversible downgrade, stop dependent consumers first, then use the new
 binary to remove its setup and export its latest endpoint state:
 
-```sh
-/path/to/v0.15/effigy gateway setup --remove
-/path/to/v0.14.1/effigy gateway up
-```
-
-The first command stops the user daemon, freezes endpoint edits, and exports
-`~/.effigy/gateway/routes.json`, `~/.effigy/gateway/loopback-ips.json` and
-`~/.effigy/ports.json`. Original mappings and unknown fields are preserved,
-including routes, addresses and pins added under v0.15. Unchanged documents
-retain their exact bytes. There are no routine dual writes: the JSON files
-become authoritative again only at this explicit handoff. Do not run both
-versions' consumers during the transition.
+`effigy gateway setup --remove` stops the daemon and removes the platform
+setup it created. The v0.14.1 handback that exported endpoint state as JSON is
+retired: v0.15's endpoint Store is the only source of routes and loopback
+aliases, so a downgrade no longer restores them.
 
 Removal is an administrator action. It removes only verified setup-owned
 resolver entries, the bind broker and boot jobs. Leaf certificates, mkcert CA
@@ -1710,13 +1702,10 @@ reclaimed on the next registration.
 ### Route-table trust
 
 The operator daemon reads routes from the gateway endpoint Store in
-`~/.effigy/state/machine.db`. The first gateway mutation automatically imports
-`routes.json`, `loopback-ips.json` and `ports.json`, preserving their mappings
-and leaving the original files untouched as backups. Registration and daemon
-reload use committed Store revisions after import; editing a backup does not
-change routing. An Unknown Store read preserves the last applied table and
-reports the observation failure. Legacy JSON provenance checks apply before
-import. The storage and lifetime model is in
+`~/.effigy/state/machine.db`. Registration and daemon reload use committed
+Store revisions; there is no legacy JSON import and no file provenance check,
+because the Store is the whole authority. An Unknown Store read preserves the
+last applied table and reports the observation failure. The storage and lifetime model is in
 [architecture 035](../knowledge/architecture/035-gateway-endpoint-store.md);
 the legacy trust model is in
 [`033-gateway-route-table-trust-contract.md`](../knowledge/contracts/033-gateway-route-table-trust-contract.md).
@@ -2015,127 +2004,25 @@ When `container profile recreate` runs interactively without `--disk`, Effigy
 prompts for the disk size before continuing. Non-interactive runs use the
 configured/default target unless `--disk` is supplied.
 
-## Port registry capacity and recovery
+## Host ports
 
-Generated container ports come from the gateway endpoint Store, which imports
-`~/.effigy/ports.json` automatically and retains one 100-port range per project. Exhaustion blocks new allocations until a range is
-released. Check capacity first:
+Generated container ports are assigned by Compose or the OS. A generated
+service publishes `127.0.0.1::<container-port>`, and `up` reads the assigned
+host port back from the running container into its route. Nothing is reserved
+between runs, so two worktrees of one project come up together and `down`
+followed by `up` is immediate. A manifest pin in `[containers.<NAME>.host].ports`
+is used as written; a collision fails naming the process that holds it.
+`[containers.<NAME>.host].stable_ports = true` derives one probed port per
+published container port from the checkout path and never records it.
 
-```bash
-effigy container ports status --json
-effigy container ports reclaim --json                 # dry run, writes nothing
-effigy container ports reclaim --apply --expect-plan <DIGEST> --json
-```
-
-`status` and the dry run are read-only. They take no registry lock and create
-no files. Each row is `retain`, `hold` or `reclaim` with a reason, and the
-report includes free range capacity before and after the planned reclaim. The
-plan digest is over the decisions. `--apply` recomputes the plan under the
-gateway Store gate and refuses to write if the digest differs from the reviewed one.
-
-When registry capacity is at or near exhaustion (zero or one free 100-port
-range), ordinary `effigy container status` output ends with a one-line text
-note pointing to `effigy container ports status`. The note is discoverability
-only: it reads the registry without the lock and computes capacity, performs
-no allocation, recovery planning or probes, and leaves the status JSON schema
-unchanged.
-
-An entry is reclaimed only when all of these hold:
-
-- its project path is definitely missing: the leaf is absent and the nearest
-  existing ancestor is a readable directory, so a missing parent under a
-  readable root proves absence just as well as a missing leaf. A real I/O or
-  permission error, a non-directory ancestor, and an absent volume root such
-  as an unmounted `/Volumes/...` are unknown and hold the entry;
-- no runtime-scope record that still retains that project's volumes or routes
-  names the project or its checkout. A record whose profile is observable and
-  that retains nothing is decided by that profile's own inventory instead:
-  no container there means reclaimable;
-- no gateway route names the project or path;
-- no container in any state (running, Created, exited) carries the project
-  label or working directory, and none publishes a host port in the range;
-- no host port in the range is in use on this machine (a wildcard bind probe
-  fails, or cannot be attempted);
-- no other allocation records the same project path;
-- no stopped Colima profile can own it. A stopped profile publishes no host
-  port, so it never has to be started to answer the bound-port question, and
-  it holds only the entries it is recorded on: those whose runtime-scope
-  record names that profile. An entry with no recorded profile is attributed
-  to the configured Effigy profile. When that profile itself is stopped, every
-  entry attributed to it is held rather than reclaimed.
-
-Present paths are always retained.
-
-Incomplete proof holds the whole registry. An unreadable scope store or route
-table, or a container inventory that failed for a running runtime, holds every
-absent-path entry. A stopped Colima profile is not one of those: it is reported
-per profile and scoped to the entries that profile can own, with a reason on
-each held entry.
-
-Under capacity pressure — fewer than ten free 100-port ranges — a `container
-up` that needs a new range first reclaims provably dead entries by exactly the
-rules above, then allocates, and prints one line saying how many ranges it
-reclaimed and how many remain. It reads the same evidence, backs the registry
-up first and recomputes the plan under the registry lock. Reading capacity and
-planning a reclaim never apply it, so `status` and a dry-run stay read-only.
-
-Apply removes only the reclaim rows. It saves the pre-edit endpoint document as
-`ports.json.reclaim-backup-<nanos>` and reports both document SHA-256 values.
-The imported original stays unchanged. Released ranges remain quarantined for
-at least 70 seconds before they can be allocated to another owner. It never
-touches containers, volumes, data, routes, certificates, profiles or loopback
-assignments. Normal `container down` keeps stable allocations. `container
-retire` releases the retired scope's own project allocations through its
-existing record path. Loopback IPs survive ordinary down/up; retirement
-explicitly releases the recorded owner's assignments.
-
-Limits: the bound-port probe is a point-in-time check. A backup left by a
-crash between backup and rename is not removed automatically. Recovery does
-not expire entries by age.
-
-## Dead loopback owners
+## Loopback aliases
 
 Each isolated project and shared service holds one address in the bounded
-`127.1.0.1`-`127.1.0.50` loopback pool. A project whose checkout, containers,
-runtime scope and listeners are all gone would otherwise hold its address
-forever, and a new stack then fails with `loopback pool exhausted`. Allocation
-self-heals: when `container up`, `dev` or gateway registration needs an address
-and the pool is full, Effigy releases the dead assignments once under the
-endpoint Store's owner gate, prints one line with the released count, and
-retries once. The released address is immediately allocatable.
-
-An assignment is dead only when all of these hold:
-
-- its owner checkout path is definitely missing: the leaf is absent and its
-  parent directory is readable, the same classification `container ports
-  reclaim` uses. Permission and I/O errors, and an absent parent such as an
-  unmounted volume or a vanished intermediate directory, are unknown and hold
-  the entry;
-- no runtime-scope record names the identity, its checkout path or its route;
-- no container in any state carries its project label or working directory,
-  and none publishes on its address;
-- no live project route keeps the address;
-- no non-gateway process listens on the route's alias tuple. The gateway
-  binds its aliases from the Store's route table and stops a listener when its
-  route disappears, so its own alias for a dead route is not a hold; a
-  same-user process that is not the recorded gateway, or a probe that cannot
-  answer, is.
-
-A shared-service identity is dead only when no consumer project that uses it
-is live and no container carries the shared service's own project name.
-Incomplete ownership proof holds the plan and names the reason; a stopped
-Colima profile does not hold anything, because it binds no host address and
-cannot start a stack whose checkout is gone. Present paths, running containers
-and unknown path states are never touched, so a live project's address never
-changes. The same inventory backs every allocation path, so no path can release
-what another holds.
-
-The release writes under the endpoint Store's owner gate and keeps a pre-edit
-copy of the changed endpoint documents as
-`~/.effigy/gateway/loopback-dead-reclaim-backup-<nanos>.json`, reporting both
-SHA-256 values. It never touches containers, volumes, data, profiles,
-certificates or routes. Growing the pool past `127.1.0.50` is not part of this
-surface; the `lo0` aliases come from `gateway setup`.
+`127.1.0.1`-`127.1.0.50` loopback pool. The alias is allocated at `up`,
+released at `down` and by retirement, and reclaimed on the next allocation when
+the checkout path it recorded is gone, so a deleted worktree's address is
+reused without a repair command. A path that still exists keeps its alias even
+while the environment is stopped.
 
 ## Current Limits
 

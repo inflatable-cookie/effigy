@@ -1000,7 +1000,7 @@ refuses the activation, and it names the environment, project and failure.
 
 Data safety is absolute in the borrowing direction. `container reset` and
 `reset --wipe-data` classify only owned volumes, so borrowed volumes are never
-removed; `retire`, `retire --dead` and `ports reclaim` never delete or claim
+removed; `retire` and `retire --dead` never delete or claim
 the owner's volumes, and the borrowing environment's runtime-scope record lists
 borrowed volumes as retained, never owned. Retiring the owner's checkout still
 removes its own resources as today. Environments without `data_from` keep
@@ -1628,14 +1628,11 @@ reuse quarantine and answers DNS with a one-second TTL. Growing the pool beyond
 `127.1.0.50` is not part of this contract; the `lo0` aliases come from
 `gateway setup`.
 
-An assignment is dead only when its owner checkout path is definitely missing
-(absent with its nearest existing ancestor a readable directory, the
-classification `container ports reclaim` uses; an I/O or permission error, a
+An alias is released by `down` and by retirement. An allocation reclaims an
+assignment whose checkout path is definitely missing (absent with its nearest
+existing ancestor a readable directory); an I/O or permission error, a
 non-directory ancestor, or an absent volume root such as an unmounted
-`/Volumes/...` is unknown and holds it), no runtime-scope record names the
-identity, checkout path or route, no container in any state carries its project
-label or working directory or publishes on its address, no live project route
-uses the address, and no non-gateway process listens on a route's alias tuple.
+`/Volumes/...` is unknown and holds it.
 The gateway binds its TCP aliases from the route table and stops a listener when
 its route disappears, so its own alias is not a hold; a same-user process that
 is not the recorded gateway daemon, or a listener probe that cannot answer, is.
@@ -1697,24 +1694,25 @@ budgets and JSON schema as host-routed commands.
 
 ### Generated host-port preparation
 
-Host-port resolution reads existing `ports.json` assignments without allocating,
-locking or migrating them. Missing bindings report `unassigned (assigned on
-first prepare)` and render a Compose placeholder that refuses execution until
-prepared. Shared-service JSON reports `target_port: null` with that label in
-`allocation` until assigned. Explicit fixed host ports remain usable without
-an allocation. Teardown is the one exception, and it publishes nothing:
-`container down`, reset and the failed-activation cleanup give that variable a
-teardown-only value so they can stop a generation whose ports were never
-assigned, while `up` and `prepare` keep refusing on the same render.
+Host ports are assigned by Compose or the OS. A generated service publishes
+`<publish-address>::<container-port>`, so Compose picks the host port when the
+service starts and Effigy reads it back from the running container when it
+registers the route. Nothing is reserved, recorded or released, and no port is
+"owned" across runs.
 
-Prepare calls the existing gateway-domain `ports::prepare_ports` allocator,
-then resolves again before admission and publication. The allocator loads,
-assigns and atomically saves all requested bindings under its existing short
-registry lock; it performs no runtime inventory under that lock. Existing
-assignments, including legacy container-port keys, retain their port numbers.
-This remains the legacy single writer until the gateway endpoint-store
-migration (#224) imports `ports.json` and owns persistent reservations. Kernel
-run-scoped Claims do not implement this temporary persistent allocation seam.
+A manifest may pin a fixed host port in `[containers.<NAME>.host].ports`. The
+pin is rendered as written; `up` refuses one another process already holds,
+naming the holder. A runtime-scoped checkout takes an OS-assigned port for that
+binding instead of competing for the primary's pin.
+
+`[containers.<NAME>.host].stable_ports = true` opts into a stable port: one
+derived from the checkout path and the published container port, probed at
+`up`, and never stored. A shared backing service uses the same derivation
+because the environment variables an app render injects need its port before
+the app starts.
+
+Prepare's only port effect is the loopback alias: it allocates one for an
+environment whose routes need it, and that alias lives until `down`.
 
 ### Bind-source preparation
 

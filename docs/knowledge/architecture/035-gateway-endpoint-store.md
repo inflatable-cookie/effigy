@@ -8,16 +8,16 @@ Mechanisms: [runtime kernel contract](../contracts/052-runtime-kernel-contract.m
 
 `EndpointStore` addresses the operator's `~/.effigy/state/machine.db`. Its
 machine-scoped `Store(gateway-endpoints)` resource owns the publication gate
-and one versioned payload containing routes, loopback assignments, generated
-port ranges and original import hashes. Private fixtures use the same API with a
-disposable home.
+and one versioned payload containing routes and loopback aliases. Host ports
+are not part of it: the OS or Compose assigns them. Private fixtures use the
+same API with a disposable home.
 
-`edit` begins a kernel run, reads the payload while holding its owner gate,
-checks an optional expected revision, reserves newly requested conflicts, and
-publishes the complete payload and claim revisions together through
-`Claims::publish_retained`. The revision is that run's generation. Every exit
-after admission enters kernel settle. There are no external probes or runtime
-inventory queries in the SQLite transaction.
+`transaction` is the one write path. It reads the payload under the machine
+owner gate, applies one edit, and publishes the complete payload and its claim
+revisions together through `Claims::publish_retained`; the revision is that
+write's generation. An edit that changes nothing writes nothing. Pure reads take
+no mutate gate. There are no external probes or runtime inventory queries in the
+SQLite transaction.
 
 A route is the whole claim on a domain: `domain -> (checkout path, target)`.
 The same checkout path always replaces its own route, which covers a new run, a
@@ -46,37 +46,21 @@ address or port is immediately allocatable: the gateway publishes with no
 reuse quarantine, and its DNS answers carry a one-second TTL. A domain that
 moves between checkouts therefore resolves to its new owner at once.
 
-## Import and observation
-
-The first mutation imports `~/.effigy/gateway/routes.json`,
-`~/.effigy/gateway/loopback-ips.json` and `~/.effigy/ports.json` under all three
-legacy writer locks in fixed order, with one bounded deadline. Reads use the
-kernel's no-follow, owner-checked, size-bounded record reader. Original files
-remain untouched as backups; the payload records their exact SHA-256 hashes.
-Once a payload exists, legacy input never imports again. Imported claims settle
-before the caller edits them, so even a first-command release sees every
-endpoint that the old gateway could see. A failed edit does not undo import.
+## Observation
 
 The payload preserves raw JSON documents. Typed edits replace known fields
-while retaining unknown root and entry fields, including pins. Releasing an
-entry removes that entry and its claims; it does not reconstruct ownership from
-a runtime scan.
+while retaining unknown fields. Releasing an entry removes that entry and its
+claims; it never reconstructs ownership from a runtime scan. A record written
+by the port-range build keeps decoding, and its `ports` document is dropped on
+the next write.
 
-`read` is Observe-only and creates no files or gates. `read_compatible` reads
-legacy input only when the store or endpoint payload is absent. An unreadable,
-corrupt or unsupported store is Unknown and refuses fallback. Reading old
-files does not import or allocate anything.
+`read` is Observe-only and creates no files or gates. An unreadable or corrupt
+store is Unknown; nothing falls back to a legacy file.
 
 ## Callers and reload
 
-Container Prepare reserves or retains generated host-port ranges through this
-API, including an already assigned legacy range. Before an effectful Prepare
-reads policy, it admits endpoint import/initialization if the payload is not yet
-verified. This serializes first use with shared machine-store schema bootstrap;
-a SQLite file alone is not proof that its schema is ready. Existing verified
-payloads need no import run, and pure policy observation remains effect-free.
-Unknown state enters the admitted writer's verification/recovery path and never
-falls back to an empty registry.
+Container Prepare allocates its loopback alias through this API; `down` and
+retirement release it. Pure policy observation remains effect-free.
 Private gateway startup uses the existing 15-second gateway operation budget
 while waiting for verified listener publication, allowing durable import before
 bind/publish. Unverified refusals still fail immediately; the status budget is
