@@ -34,6 +34,19 @@ leak-timeout = { period = "1s", result = "fail" }
 filter = 'binary(cli_output_tests) & test(partial_startup_tests::)'
 threads-required = "num-test-threads"
 
+[[profile.default.overrides]]
+# The §12.3 supervisor matrix keeps its full cross product (3 front ends × 4
+# prior states × 8 stops × 3 attachments) and every cell owns a fresh durable
+# checkout journal. A journal commit fsyncs, and the ruled `[scratch] root` on
+# /Volumes/Builds costs about 26 ms per commit against 0.16 ms on the internal
+# disk. Measured 2026-10-25: 61 s with fixtures on the internal disk, about 550 s
+# with them under scratch. Keep the proof rather than trimming cells for the
+# volume, and run it alone so its own cells do not queue behind other fixture
+# journals in the same binary.
+filter = 'test(run_supervision_matrix_recovery_stop_and_attachment_release_are_idempotent)'
+threads-required = "num-test-threads"
+slow-timeout = { period = "900s", terminate-after = 1, grace-period = "2s" }
+
 [profile.doctor-process]
 inherits = "default"
 

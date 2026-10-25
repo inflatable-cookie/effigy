@@ -1333,6 +1333,25 @@ During v0.x, MINOR bumps may include breaking changes.
   refused instead of writing an undeclared lockfile.
 
 ### Fixed
+- A task run started in a directory with no Git metadata of its own inside a Git
+  checkout keeps using that checkout's runtime journal. Identity and
+  `.effigy/state` now resolve through the nearest enclosing checkout (contract
+  052 §7.1), instead of capturing the invocation root's own `.git` marker and
+  refusing because it disagreed with the Git directory resolved for it. Every
+  such run failed with `is not trusted store state (resolved Git directory
+  disagrees with checkout)`: a nested catalog task, and the JSON contract
+  checker's QA-group and skill fixtures, which is why `qa:json` failed its
+  `effigy.qa-group*.v1` and `effigy.skill.run.v1` rows.
+- A refused heavy run prints the admission hook's own reason and the next
+  command. Human output lifted `cause`/`message` keys that the
+  `effigy.admission.v1` details do not carry, so a deny, a hook crash and a
+  timeout all printed only ``task `<name>` failed``; the refusal's own sentence
+  now names the reason, the run id and the hook variable. The `--json` details
+  are unchanged.
+- A corrupt runtime journal's refusal names its explicit repair: move
+  `kernel.db` and its `-journal`, `-wal` and `-shm` files aside, then retry.
+  Naming only `effigy doctor` left no recovery, because doctor inspects and
+  never repairs.
 - A health check written as a Compose `CMD` exec form runs as written on
   `nerdctl compose`. nerdctl does not support the exec form: it joins the argv
   with spaces, unquoted, into one `/bin/sh -c` command, so an argument holding

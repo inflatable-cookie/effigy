@@ -72,11 +72,13 @@ fn a_cancelled_run_names_the_signal() {
 fn a_corrupt_journal_says_what_is_wrong_and_the_next_command() {
     // Before: `kernel.db is unreadable (bad page); the explicit store repair
     // moves it aside` — no next command, and a publication refusal was still
-    // called a database fault.
+    // called a database fault. Naming only `effigy doctor` left the operator
+    // with no way to repair a journal the run itself refused (effigy#328).
     assert_eq!(
         StoreError::Corrupt("bad page".into()).to_string(),
         "the runtime journal is unusable (bad page); nothing was changed. \
-         Run `effigy doctor` to inspect the state root, then retry"
+         The explicit repair moves `kernel.db` and its `-journal`, `-wal` and `-shm` files \
+         aside: do that, then retry; `effigy doctor` reports the state root"
     );
 }
 

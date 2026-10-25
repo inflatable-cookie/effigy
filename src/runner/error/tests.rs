@@ -528,3 +528,50 @@ fn task_run_details_name_the_task_and_the_failing_output() {
         "[error] task `fail` failed\n  cause: exit_code: 3\n         stderr: error: widget is undefined"
     );
 }
+
+/// A heavy run's refusal keeps the hook's own reason and the next command. Its
+/// `effigy.admission.v1` details carry `decision` and `reason` but no
+/// `cause`/`message`, so lifting them by key printed only ``task `heavy`
+/// failed`` and the operator could not tell a deny from a timeout
+/// (effigy#328).
+#[test]
+fn an_admission_refusal_keeps_the_hook_reason_and_the_next_step() {
+    let error = RunnerError::AdmissionRefused {
+        detail: "heavy task `heavy` was not admitted (run agqxaxitpsgh4hc2mkxm4pwk4q): \
+                 the hook denied admission: host is busy. The task did not run; admission \
+                 fails closed\nnext: check the admission hook `EFFIGY_ADMISSION_HOOK`, or \
+                 unset it to run without host-wide admission"
+            .to_owned(),
+        details_json: serde_json::json!({
+            "schema": "effigy.admission.v1",
+            "schema_version": 1,
+            "task": "heavy",
+            "run_id": "agqxaxitpsgh4hc2mkxm4pwk4q",
+            "class": "heavy",
+            "decision": "deny",
+            "reason": "the hook denied admission: host is busy",
+            "next_action": "check the admission hook `EFFIGY_ADMISSION_HOOK`, or unset it \
+                            to run without host-wide admission",
+        })
+        .to_string(),
+    };
+    let human = error.human_error();
+    assert!(
+        human.what_failed().contains("denied admission: host is busy"),
+        "{}",
+        human.what_failed()
+    );
+    assert!(
+        human
+            .next_action_text()
+            .is_some_and(|action| action.contains("EFFIGY_ADMISSION_HOOK")),
+        "{human:?}"
+    );
+    let rendered = human.render_text();
+    assert!(rendered.contains("denied admission: host is busy"), "{rendered}");
+    assert!(!rendered.contains("task `heavy` failed"), "{rendered}");
+    // The structured envelope still names the schema and the decision.
+    let details = error.json_error_details().expect("admission details");
+    assert!(details.contains("effigy.admission.v1"), "{details}");
+    assert!(details.contains("\"decision\":\"deny\""), "{details}");
+}

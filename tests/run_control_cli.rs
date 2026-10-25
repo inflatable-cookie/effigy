@@ -12,6 +12,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use effigy_kernel::observe::Observed;
@@ -57,7 +58,7 @@ run = "sleep 300 & echo $! > child.pid; wait"
 run = "for i in 1 2 3 4 5; do echo tick-$i; sleep 0.3; done; exit 2"
 
 [tasks.chatty]
-run = "i=1; while [ $i -le 60 ]; do echo line-$i; echo eline-$i >&2; i=$((i+1)); sleep 0.05; done"
+run = "i=1; while [ $i -le 60 ]; do echo line-$i; echo eline-$i >&2; i=$((i+1)); sleep 0.02; done; while [ ! -f release.txt ]; do sleep 0.05; done"
 "#;
 
 /// Admits, then holds its slot until Effigy stops it at the run's end.
@@ -217,6 +218,53 @@ fn a_legacy_open_state_root_mode_is_adopted_by_foreground_and_retained_runs() {
     assert!(fixture.exists("runs.log"));
     assert_eq!(mode(), 0o700, "the retained run adopts the mode");
     assert!(legacy.is_file(), "adoption keeps the legacy content");
+}
+
+/// Contract 052 §7.1: durable checkout state belongs to the checkout that owns
+/// the invocation root, so a nested catalog directory with no Git metadata of
+/// its own declares no second checkout. The kernel refuses a root whose own Git
+/// marker disagrees with the resolved Git directory, so both must resolve
+/// through the enclosing checkout instead of refusing the run (effigy#328).
+#[test]
+fn a_nested_catalog_run_uses_the_enclosing_checkouts_journal() {
+    let fixture = Fixture::new();
+    git(&fixture.repo, &["init", "-q"]);
+    let nested = fixture.repo.join("catalogs/nested");
+    fs::create_dir_all(&nested).expect("nested catalog");
+    fs::write(
+        nested.join("effigy.toml"),
+        "[catalog]\nalias = \"nested-catalog\"\n\n[tasks.nested]\nrun = \"touch nested.txt\"\n",
+    )
+    .expect("nested manifest");
+
+    let output = fixture
+        .effigy(&["--run-id", "nested-catalog-1", "nested"])
+        .current_dir(&nested)
+        .output_owned()
+        .expect("effigy runs");
+    assert!(output.status.success(), "{}", text(&output));
+    assert!(nested.join("nested.txt").is_file());
+    assert!(
+        fixture.repo.join(".effigy/state/kernel.db").is_file(),
+        "the retained journal belongs to the enclosing checkout"
+    );
+    assert!(
+        !nested.join(".effigy/state/kernel.db").exists(),
+        "a nested catalog never declares a second checkout"
+    );
+}
+
+fn git(cwd: &std::path::Path, args: &[&str]) {
+    let output = Command::new("git")
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -551,25 +599,41 @@ fn a_killed_follower_process_reattaches_by_offset_without_gap_or_duplicate() {
         .effigy(&["run", "logs", "chatty-1", "--follow"])
         .spawn_owned()
         .expect("first follower");
-    std::thread::sleep(Duration::from_millis(1200));
+    // The follower is killed only after it has delivered bytes, and the task
+    // holds the run open until `release.txt` exists, so the kill lands
+    // mid-stream on a loaded host too instead of within a fixed sleep
+    // (effigy#328).
+    let stdout = first.stdout.take().expect("stdout");
+    let stderr = first.stderr.take().expect("stderr");
+    let (out, err) = (
+        Arc::new(Mutex::new(Vec::new())),
+        Arc::new(Mutex::new(Vec::new())),
+    );
+    let (out_reader, err_reader) = (Arc::clone(&out), Arc::clone(&err));
+    let (out_thread, err_thread) = (
+        std::thread::spawn(move || drain(stdout, &out_reader)),
+        std::thread::spawn(move || drain(stderr, &err_reader)),
+    );
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while out.lock().expect("stdout sink").is_empty() {
+        assert!(
+            Instant::now() < deadline,
+            "the first follower never read part of the run"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
     first.kill().expect("SIGKILL the follower");
     let status = wait_child(&mut first);
     assert_eq!(status.signal(), Some(9));
-    let (mut out, mut err) = (Vec::new(), Vec::new());
-    first
-        .stdout
-        .take()
-        .expect("stdout")
-        .read_to_end(&mut out)
-        .expect("drain stdout");
-    first
-        .stderr
-        .take()
-        .expect("stderr")
-        .read_to_end(&mut err)
-        .expect("drain stderr");
+    out_thread.join().expect("stdout reader");
+    err_thread.join().expect("stderr reader");
+    let mut out = std::mem::take(&mut *out.lock().expect("stdout sink"));
+    let mut err = std::mem::take(&mut *err.lock().expect("stderr sink"));
     assert!(!out.is_empty(), "the first follower saw part of the run");
 
+    // The task ends the run on the test's barrier, so the second follower
+    // resumes a live record and drains the rest to its settle.
+    fs::write(fixture.repo.join("release.txt"), b"release\n").expect("release the task");
     let second = fixture.run(&[
         "run",
         "logs",
@@ -594,6 +658,23 @@ fn a_killed_follower_process_reattaches_by_offset_without_gap_or_duplicate() {
         wait_child(&mut owner).success(),
         "the run was never touched"
     );
+}
+
+/// Reads one follower stream to its end into a shared sink, so the test can
+/// observe what was delivered before it killed the follower.
+fn drain(mut stream: impl Read, sink: &Arc<Mutex<Vec<u8>>>) {
+    let mut buf = [0u8; 4096];
+    loop {
+        match stream.read(&mut buf) {
+            Ok(0) => return,
+            Ok(read) => sink
+                .lock()
+                .expect("stream sink")
+                .extend_from_slice(&buf[..read]),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => return,
+        }
+    }
 }
 
 #[test]

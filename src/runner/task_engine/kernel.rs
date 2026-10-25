@@ -223,6 +223,22 @@ pub(super) fn known_roots_view(cx: &ObserveContext) -> Result<RootsView, RunnerE
     Ok(RootsView { roots, omitted })
 }
 
+/// Durable checkout state belongs to the checkout that owns `root`, not to a
+/// nested catalog's directory (contract 052 §7.1). Identity and the state root
+/// come from one resolution: the kernel captures the root's own Git locator and
+/// refuses a root whose marker disagrees with the Git directory it was handed,
+/// so a nested catalog with no Git metadata of its own resolves both through the
+/// nearest enclosing `.git` instead of being refused (effigy#328).
+pub(in crate::runner) fn checkout_location(
+    root: &Path,
+) -> std::io::Result<effigy_kernel::migration::CheckoutLocation> {
+    let checkout = effigy_core::worktree_scope::checkout_root(root);
+    Ok(effigy_kernel::migration::CheckoutLocation {
+        git_directory: effigy_core::worktree_scope::git_directory(&checkout)?,
+        root: checkout,
+    })
+}
+
 /// Checkout journals are opened independently; the actual user HOME is only
 /// the migration source and shared machine-store location.
 pub(in crate::runner) fn effects_root(checkout: &Path) -> Result<&'static StateRoot, RunnerError> {
@@ -230,11 +246,8 @@ pub(in crate::runner) fn effects_root(checkout: &Path) -> Result<&'static StateR
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     let home =
         state_home().ok_or_else(|| RunnerError::task_invocation("HOME is unset or relative"))?;
-    let location = effigy_kernel::migration::CheckoutLocation {
-        root: checkout.path().into(),
-        git_directory: effigy_core::worktree_scope::git_directory(checkout.path())
-            .map_err(|error| RunnerError::task_invocation(error.to_string()))?,
-    };
+    let location = checkout_location(checkout.path())
+        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     // Revalidate before reusing a retained handle: same-path replacement is
     // never permission to write through the previous checkout's descriptor.
     let current = StateRoot::checkout_effects(&effects(), &home, &location)
@@ -265,13 +278,9 @@ pub(in crate::runner) fn effects_root(checkout: &Path) -> Result<&'static StateR
 /// A read-only checkout view never creates state, falls back to another
 /// checkout or opens the legacy machine journal.
 pub(super) fn observe_root(cx: &ObserveContext, checkout: &Path) -> Observed<StateRoot> {
-    let git_directory = match effigy_core::worktree_scope::git_directory(checkout) {
-        Ok(git) => git,
+    let location = match checkout_location(checkout) {
+        Ok(location) => location,
         Err(error) => return Observed::Unknown(UnknownReason::Untrusted(error.to_string())),
-    };
-    let location = effigy_kernel::migration::CheckoutLocation {
-        root: checkout.into(),
-        git_directory,
     };
     match state_home() {
         Some(home) => StateRoot::checkout_observe_in(cx, &home, &location),
