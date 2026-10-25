@@ -325,6 +325,14 @@ During v0.x, MINOR bumps may include breaking changes.
   credential or prompt.
 
 ### Removed
+- `doctor`'s advice to delete `.effigy/cache` as a whole. That directory is
+  live: `cache/sources` holds the pinned bundle sources and `cache/bundles`
+  holds unimported bundles, so following the old advice broke the next run with
+  "pinned source … is unavailable; run effigy bundle sync". Doctor now names
+  only the retired v0.14 files (`cache/task-cache-v1.json`,
+  `cache/catalog-discovery-v1.json`, `cache/implicit-deferral-v1.json`), and
+  says that `.effigy/reports/tasks` can be deleted because nothing reads it
+  (effigy#355).
 - Effigy's own control markers in a workload's environment (effigy#341). One
   spawn helper now starts every task child, host process, managed workload and
   supervisor from the user's environment minus every `EFFIGY_INTERNAL_*`
@@ -1315,6 +1323,11 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- `bundle sync` and the Prepare paths keep exactly the source generations that
+  `.effigy/sources.lock.json` pins: after a successful prepare, generations
+  under `.effigy/cache/sources/` that nothing references are removed and one
+  line says `pruned N source generations nothing pins`. Repeated syncs no
+  longer leave a copy of every source behind (effigy#355).
 - A host process is replaced with a growing wait instead of a fixed one: the
   first replacement waits `restart_delay_ms`, each further one doubles it, and
   the wait is capped at 30 s. A generation that ran for 30 s or longer resets

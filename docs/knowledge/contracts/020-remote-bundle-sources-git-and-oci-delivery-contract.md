@@ -224,9 +224,14 @@ users; host kernel state stays private and outside workspace mounts.
 
 All requested source snapshots and the effective bundle manifest are validated
 before one kernel `atomic_replace` publishes the checkout lock. Acquisition or
-validation failure preserves the prior selected bytes. No cache is removed to
-make room for its replacement. Git exclude registration occurs only in Prepare
-and Mutate paths, never during manifest composition.
+validation failure preserves the prior selected bytes, and the failed
+replacement's bytes are never pinned. Git exclude registration occurs only in
+Prepare and Mutate paths, never during manifest composition.
+
+After the lock is published, a successful Prepare removes every generation
+under `.effigy/cache/sources/` that the lock does not reference and reports
+`pruned N source generations nothing pins` once. Every generation the lock
+selects is kept, so repeated syncs no longer accumulate copies of each source.
 
 A bounded host-side `~/.effigy/cache/sources-known.json` hint records the source bytes each
 checkout selected, written by any Prepare. A short shared cache gate serializes publishers;

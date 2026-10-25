@@ -468,7 +468,7 @@ allow = ["CHANGELOG.md", "crates/effigy-builtin/src/tasks.rs", "src/tests/runner
 [[retired]]
 id = "effigy-task-cache"
 retired = "2026-10-19"
-replacement = "Removed with no replacement in Effigy: the tool's own cache (cargo, turbo, vite) decides. A task declaring cache is refused with the fix, and .effigy/cache can be deleted."
+replacement = "Removed with no replacement in Effigy: the tool's own cache (cargo, turbo, vite) decides. A task declaring cache is refused with the fix, and the retired .effigy/cache/task-cache-v1.json can be deleted."
 owner = "docs/knowledge/contracts/017-task-status-record-and-active-run-model-contract.md"
 terms = ["effigy tasks cache", "effigy.cache.v1", "effigy.task.cache.store.v1", "task-cache-v1.json"]
 paths = ["src/runner/cache/", "src/runner/cache.rs", "crates/effigy-builtin/src/cache/", "crates/effigy-builtin/src/cache.rs"]
