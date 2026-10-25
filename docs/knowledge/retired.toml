@@ -1345,3 +1345,25 @@ config_keys = []
 allow = [
   "CHANGELOG.md",
 ]
+
+[[retired]]
+id = "v014-host-process-pid-supervisor"
+retired = "2026-10-25; v0.15 simplification (Q-011)"
+replacement = "A host process is one environment-owned kernel run (effigy#320). There is no PID-file supervisor: `up` starts a detached kernel run per declared process, and `down`, `reset` and settle stop it through a fenced kernel stop. A leftover `<name>.pid` or `<name>.spec.json` from v0.14.1 is deleted with one line the next time the environment starts or stops; it is never signalled and never read as authority, so a record from a supervisor that died with a reboot cannot block `up`. The `EFFIGY_INTERNAL_ENVIRONMENT_EXEMPT` input is gone with it: a run settling in this process exempts its own hold by task-run id, and no environment value names an exemption."
+owner = "docs/knowledge/contracts/005-container-runtime-contract.md"
+terms = [
+  "__host-process-supervise",
+  "__host-process-stop",
+  "EFFIGY_INTERNAL_ENVIRONMENT_EXEMPT",
+  "stop_recorded_supervisor",
+  "cleanup_stopped_listener_routes",
+  "remove_host_process_record_if_matches",
+  "InternalHostProcessSuperviseArgs",
+  "InternalHostProcessStopArgs",
+  "stop_legacy_host_processes",
+]
+paths = []
+config_keys = []
+allow = [
+  "CHANGELOG.md",
+]

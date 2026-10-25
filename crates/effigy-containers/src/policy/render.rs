@@ -76,11 +76,6 @@ pub fn prepare_inputs(
         }
     };
     let prepared = resolve()?;
-    let prepared = if super::ports::prepare_container_policy_ports(&prepared)? {
-        resolve()?
-    } else {
-        prepared
-    };
     // Owned mount directories can change canonical bind paths (for example
     // macOS /var). Establish them before the admission snapshot is captured.
     super::mounts::prepare_container_mount_sources(&prepared)?;

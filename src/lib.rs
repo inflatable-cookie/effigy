@@ -107,5 +107,5 @@ pub fn run_main(raw_args: Vec<String>) -> std::io::Result<()> {
 }
 
 #[cfg(test)]
-#[path = "../tests/support/gateway_legacy.rs"]
-mod gateway_legacy_fixture;
+#[path = "../tests/support/route_table_fixture.rs"]
+mod route_table_fixture;

@@ -1,6 +1,6 @@
 use super::*;
 #[cfg(test)]
-use crate::gateway_legacy_fixture::LegacyRegistryFixture;
+use crate::route_table_fixture::RouteTableFixture;
 use std::net::Ipv4Addr;
 
 fn test_route(domain: &str, target: &str) -> Route {
@@ -17,6 +17,12 @@ fn test_route(domain: &str, target: &str) -> Route {
         managed_listener: None,
         registered: Utc::now(),
     }
+}
+
+/// A route recorded by a checkout that exists on disk, so a write keeps it.
+fn on_disk(checkout: &std::path::Path, mut route: Route) -> Route {
+    route.project = checkout.display().to_string();
+    route
 }
 
 #[test]
@@ -119,8 +125,14 @@ fn save_and_load_roundtrip() {
     let path = dir.path().join("routes.json");
 
     let mut table = RouteTable::new();
-    table.upsert(test_route("app.test", "127.0.0.1:8080"));
-    table.upsert(test_route("api.test", "127.0.0.1:3000"));
+    table.upsert(on_disk(
+        dir.path(),
+        test_route("app.test", "127.0.0.1:8080"),
+    ));
+    table.upsert(on_disk(
+        dir.path(),
+        test_route("api.test", "127.0.0.1:3000"),
+    ));
     table.save(&path).unwrap();
 
     let loaded = RouteTable::load(&path).unwrap();
@@ -148,11 +160,17 @@ fn save_is_atomic() {
 
     // Write initial.
     let mut table = RouteTable::new();
-    table.upsert(test_route("app.test", "127.0.0.1:8080"));
+    table.upsert(on_disk(
+        dir.path(),
+        test_route("app.test", "127.0.0.1:8080"),
+    ));
     table.save(&path).unwrap();
 
     // Overwrite.
-    table.upsert(test_route("app.test", "127.0.0.1:9090"));
+    table.upsert(on_disk(
+        dir.path(),
+        test_route("app.test", "127.0.0.1:9090"),
+    ));
     table.save(&path).unwrap();
 
     // Temp file should not remain.
@@ -217,7 +235,10 @@ fn live_route_table_read() {
     let path = dir.path().join("routes.json");
 
     let mut table = RouteTable::new();
-    table.upsert(test_route("app.test", "127.0.0.1:8080"));
+    table.upsert(on_disk(
+        dir.path(),
+        test_route("app.test", "127.0.0.1:8080"),
+    ));
     table.save(&path).unwrap();
 
     let live = LiveRouteTable::new(path).unwrap();
@@ -236,7 +257,10 @@ fn live_route_table_reload() {
 
     // Write initial.
     let mut table = RouteTable::new();
-    table.upsert(test_route("app.test", "127.0.0.1:8080"));
+    table.upsert(on_disk(
+        dir.path(),
+        test_route("app.test", "127.0.0.1:8080"),
+    ));
     table.save(&path).unwrap();
 
     let live = LiveRouteTable::new(path.clone()).unwrap();
@@ -244,8 +268,14 @@ fn live_route_table_reload() {
 
     // Write updated table externally (simulating another process).
     let mut updated = RouteTable::new();
-    updated.upsert(test_route("app.test", "127.0.0.1:9090"));
-    updated.upsert(test_route("api.test", "127.0.0.1:3000"));
+    updated.upsert(on_disk(
+        dir.path(),
+        test_route("app.test", "127.0.0.1:9090"),
+    ));
+    updated.upsert(on_disk(
+        dir.path(),
+        test_route("api.test", "127.0.0.1:3000"),
+    ));
     updated.save(&path).unwrap();
 
     // Reload.
@@ -287,8 +317,13 @@ fn route_table_lock_debug_is_available_and_redacts_the_lock_descriptor() {
 fn live_route_table_debug_does_not_lock_or_print_route_contents() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("routes.json");
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
     let mut table = RouteTable::new();
-    table.upsert(test_route("canary-domain.invalid", "127.0.0.1:8080"));
+    table.upsert(on_disk(
+        &checkout,
+        test_route("canary-domain.invalid", "127.0.0.1:8080"),
+    ));
     table.save(&path).unwrap();
 
     let live = LiveRouteTable::new(path).unwrap();
@@ -298,5 +333,5 @@ fn live_route_table_debug_does_not_lock_or_print_route_contents() {
     // The formatter must not lock or traverse the table, so neither the live
     // route domain nor its project path may appear.
     assert!(!rendered.contains("canary-domain.invalid"));
-    assert!(!rendered.contains("/tmp/test"));
+    assert!(!rendered.contains(&checkout.display().to_string()));
 }

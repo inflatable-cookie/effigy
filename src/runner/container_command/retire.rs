@@ -2,9 +2,9 @@
 //!
 //! Ownership is the runtime's own labels: the Compose project plus Effigy's
 //! checkout and scope labels. Retirement asks the backend what carries them,
-//! deletes all of it, releases the checkout's gateway routes, ports and
-//! loopback addresses by checkout path, and reports exactly what went, what was
-//! kept on purpose and what could not be deleted.
+//! deletes all of it, releases the checkout's gateway routes by checkout path,
+//! and reports exactly what went, what was kept on purpose and what could not
+//! be deleted.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -18,7 +18,6 @@ use effigy_containers::{
     RetireOutcome, CHECKOUT_LABEL, COMPOSE_PROJECT_LABEL, PROJECT_LABEL, REPO_ROOT_LABEL,
     SCOPE_LABEL,
 };
-use effigy_gateway::endpoint_store::EndpointStore;
 use effigy_gateway::registration::cleanup_owned_routes_and_certs;
 
 use super::data::maybe_confirm_destructive_container_action;
@@ -65,7 +64,7 @@ pub(super) fn run_container_retire(
     if !owned.resources.is_empty() {
         maybe_confirm_destructive_container_action(
             "effigy container retire",
-            "Remove every container, volume and network labelled for this checkout, then release its gateway routes, ports and loopback addresses.",
+            "Remove every container, volume and network labelled for this checkout, then release its gateway routes.",
             output_json,
             yes,
         )?;
@@ -705,18 +704,17 @@ fn delete_resource(cwd: &Path, resource: &OwnedResource) -> Result<(), String> {
 }
 
 /// Release the checkout's gateway state by checkout path alone: its routes and
-/// their certificates, and its loopback addresses. Ports are the OS's or
-/// Compose's now, so retirement releases no port registry entry.
+/// their certificates. The route table is the only record of loopback
+/// ownership, so removing the routes frees the checkout's alias address too.
+/// Ports are the OS's or Compose's now, so retirement releases no port
+/// registry entry.
 pub(super) fn release_gateway(checkout: &str) -> Result<GatewayRelease, RunnerError> {
-    let mut release = GatewayRelease::default();
     let path = super::gateway_registration::gateway_route_table_path()?;
     let removed = cleanup_owned_routes_and_certs(&path, checkout, None, &[], delete_tls_cert)
         .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    release.routes = removed.into_iter().map(|route| route.domain).collect();
-    release.loopbacks = EndpointStore::for_routes(&path)
-        .release_loopback_for_path(checkout)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
-    Ok(release)
+    Ok(GatewayRelease {
+        routes: removed.into_iter().map(|route| route.domain).collect(),
+    })
 }
 
 /// Remove one of the checkout's TLS certificates, and confirm it is gone.
@@ -792,6 +790,7 @@ fn observation_cwd(checkout: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use effigy_gateway::endpoint_store::EndpointStore;
 
     fn labelled(checkout: &str, scope: &str, project: &str, name: &str) -> Labelled {
         Labelled {
@@ -1020,7 +1019,7 @@ mod tests {
     }
 
     #[test]
-    fn retirement_releases_the_checkouts_routes_and_loopback_only() {
+    fn retirement_releases_the_checkouts_routes_only() {
         let temp = tempfile::tempdir().expect("temporary fixture root");
         let gateway_home = temp.path().join("gateway");
         std::fs::create_dir_all(&gateway_home).expect("gateway home");
@@ -1030,13 +1029,15 @@ mod tests {
         let checkout = temp.path().join("worker");
         std::fs::create_dir(&checkout).expect("checkout");
         let checkout_label = checkout.display().to_string();
+        let other_checkout = temp.path().join("other");
+        std::fs::create_dir(&other_checkout).expect("other checkout");
 
         effigy_containers::with_test_effigy_home(&effigy_home, || {
             let path = super::super::gateway_registration::gateway_route_table_path()
                 .expect("route table path");
             for (domain, project) in [
                 ("dormant.test", checkout_label.clone()),
-                ("other.test", "/tmp/other".to_owned()),
+                ("other.test", other_checkout.display().to_string()),
             ] {
                 effigy_gateway::registration::register_route(
                     &path,
@@ -1053,20 +1054,14 @@ mod tests {
                 )
                 .expect("register route");
             }
-            let store = EndpointStore::for_routes(&path);
-            store
-                .allocate_loopback("project:app-dev:/w/one", &checkout_label)
-                .expect("own loopback alias");
-            store
-                .allocate_loopback("project:app-dev:/tmp/other", "/tmp/other")
-                .expect("foreign loopback alias");
 
             let release =
                 release_gateway(&checkout_label).expect("release the checkout's gateway state");
             assert_eq!(release.routes, vec!["dormant.test".to_owned()]);
-            assert_eq!(release.loopbacks, 1);
 
-            let snapshot = store.snapshot().expect("endpoint store");
+            let snapshot = EndpointStore::for_routes(&path)
+                .snapshot()
+                .expect("endpoint store");
             let domains = snapshot
                 .routes()
                 .expect("routes")
@@ -1075,9 +1070,6 @@ mod tests {
                 .map(|route| route.domain.clone())
                 .collect::<Vec<_>>();
             assert_eq!(domains, vec!["other.test".to_owned()]);
-            let loopback = snapshot.loopback().expect("loopback registry");
-            assert!(loopback.get("project:app-dev:/w/one").is_none());
-            assert!(loopback.get("project:app-dev:/tmp/other").is_some());
         });
     }
 

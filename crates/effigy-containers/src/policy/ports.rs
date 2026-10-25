@@ -1,22 +1,10 @@
-//! Port and loopback preparation.
+//! Pinned host ports.
 //!
 //! Host ports come from Compose or the OS unless the manifest pins one, so
-//! Prepare has only one job here: give each alias-bearing environment its
-//! loopback address for this run. Nothing is allocated from a global range and
-//! nothing is stored across runs.
+//! there is nothing to allocate or release here.
 use std::collections::BTreeSet;
 
 use effigy_gateway::ports::{port_holder, port_is_free};
-
-use crate::{ContainerPolicyError, EffectiveContainerPolicy};
-
-/// Effectful Prepare seam. Returns whether the caller must resolve again to
-/// include a newly allocated loopback address before rendering.
-pub fn prepare_container_policy_ports(
-    policy: &EffectiveContainerPolicy,
-) -> Result<bool, ContainerPolicyError> {
-    crate::policy_support::prepare_container_policy_loopbacks(policy)
-}
 
 /// The concrete host port a declared binding pins, if it pins one.
 ///

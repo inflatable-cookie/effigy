@@ -240,12 +240,55 @@ pub(in crate::runner) fn is_session_access_key(key: &OsStr) -> bool {
         .any(|reserved| key == OsStr::new(reserved))
 }
 
-/// The ambient environment every workload and host-process spawn starts from,
-/// with session access removed: whatever this process was started with, a
-/// workload it starts never inherits the vault passphrase.
+/// Effigy's own control markers outside the `EFFIGY_INTERNAL_` namespace: they
+/// name a run or a delivery between Effigy processes, which is Effigy's own
+/// command path and never a user workload's environment.
+const INTERNAL_CONTROL_KEYS: [&str; 2] = ["EFFIGY_MANAGED_RUN_TOKEN", "EFFIGY_SECRETS_REQUIRED"];
+
+/// The `EFFIGY_INTERNAL_*` markers that are not Effigy's own private facts, each
+/// for a reason a workload can depend on:
+///
+/// - the container handoff, which a consumer's Rhai task reads to detect the
+///   workspace container (`EFFIGY_INTERNAL_CONTAINER_HANDOFF`);
+/// - the vault generate guard, which stops a `[secrets.vault].generate` hook's
+///   own child Effigy from running the hook again;
+/// - the external task source boundary, which makes a nested Effigy resolve no
+///   consumer secrets.
+///
+/// Every other `EFFIGY_INTERNAL_*` key names Effigy's private control of a
+/// run, so it never rides in ambient here (effigy#341).
+const WORKLOAD_VISIBLE_INTERNAL_KEYS: [&str; 3] = [
+    effigy_context::CONTAINER_HANDOFF_ENV_NAME,
+    "EFFIGY_INTERNAL_TASK_SECRET_GENERATION_ACTIVE",
+    effigy_context::EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME,
+];
+
+/// Whether `key` is Effigy's own internal fact, which no user workload's
+/// environment keeps. `EFFIGY_ADMITTED` and `EFFIGY_DEFER_DEPTH` are not
+/// internal facts: they are the designed nesting markers a nested Effigy reads.
+fn is_internal_key(key: &OsStr) -> bool {
+    if is_session_access_key(key)
+        || INTERNAL_CONTROL_KEYS
+            .iter()
+            .any(|reserved| key == OsStr::new(reserved))
+    {
+        return true;
+    }
+    key.to_string_lossy().starts_with("EFFIGY_INTERNAL_")
+        && !WORKLOAD_VISIBLE_INTERNAL_KEYS
+            .iter()
+            .any(|visible| key == OsStr::new(visible))
+}
+
+/// The ambient environment every workload and host-process spawn starts from:
+/// whatever this process was started with, minus every session-access key,
+/// every `EFFIGY_MANAGED_RUN_TOKEN` and `EFFIGY_SECRETS_REQUIRED`, and every
+/// `EFFIGY_INTERNAL_*` marker Effigy keeps to itself. Effigy-to-Effigy facts
+/// travel on Effigy's own command path, so a workload sees the user's
+/// environment plus the documented Effigy variables (effigy#338, effigy#341).
 pub(in crate::runner) fn workload_ambient_environment() -> impl Iterator<Item = (OsString, OsString)>
 {
-    std::env::vars_os().filter(|(key, _)| !is_session_access_key(key))
+    std::env::vars_os().filter(|(key, _)| !is_internal_key(key))
 }
 
 /// What one session hands its own child: the factor this process resolves
@@ -435,7 +478,7 @@ mod tests {
         is_session_access_key, local_dev_secret_access_active, read_secret_passphrase,
         session_passphrase, take_child_grant, workload_ambient_environment, ChildGrant,
     };
-    use std::ffi::OsStr;
+    use std::ffi::{OsStr, OsString};
     use std::io::Read;
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 
@@ -667,6 +710,71 @@ mod tests {
             .all(|(key, _)| !is_session_access_key(key.as_os_str())));
 
         forget_session_passphrase_for_tests();
+    }
+
+    /// A workload's ambient environment drops every internal marker this
+    /// process was started with, and keeps the two designed nesting markers and
+    /// the container handoff a consumer reads (effigy#341).
+    #[test]
+    fn internal_markers_never_reach_a_workload_environment() {
+        let _suppress = ScopedEnv::set("EFFIGY_INTERNAL_SUPPRESS_HEADER", Some("1"));
+        let _holder = ScopedEnv::set("EFFIGY_INTERNAL_ENVIRONMENT_HOLDER", Some("run"));
+        let _token = ScopedEnv::set("EFFIGY_MANAGED_RUN_TOKEN", Some("token"));
+        let _secrets = ScopedEnv::set("EFFIGY_SECRETS_REQUIRED", Some("1"));
+        let _handoff = ScopedEnv::set(effigy_context::CONTAINER_HANDOFF_ENV_NAME, Some("1"));
+        let _admitted = ScopedEnv::set("EFFIGY_ADMITTED", Some("1"));
+        let _defer = ScopedEnv::set("EFFIGY_DEFER_DEPTH", Some("2"));
+
+        let ambient: std::collections::BTreeMap<_, _> = workload_ambient_environment().collect();
+        for key in [
+            "EFFIGY_INTERNAL_SUPPRESS_HEADER",
+            "EFFIGY_INTERNAL_ENVIRONMENT_HOLDER",
+            "EFFIGY_MANAGED_RUN_TOKEN",
+            "EFFIGY_SECRETS_REQUIRED",
+        ] {
+            assert!(!ambient.contains_key(OsStr::new(key)), "{key} leaked");
+        }
+        for key in [
+            effigy_context::CONTAINER_HANDOFF_ENV_NAME,
+            "EFFIGY_ADMITTED",
+            "EFFIGY_DEFER_DEPTH",
+        ] {
+            assert_eq!(
+                ambient.get(OsStr::new(key)).map(OsString::as_os_str),
+                Some(OsStr::new(if key == "EFFIGY_DEFER_DEPTH" {
+                    "2"
+                } else {
+                    "1"
+                })),
+                "{key} must still reach a workload"
+            );
+        }
+    }
+
+    /// The external task source boundary reaches the nested Effigy processes it
+    /// starts, and is absent when this process holds no such boundary.
+    #[test]
+    fn an_isolated_external_task_source_keeps_its_boundary() {
+        let _isolation = ScopedEnv::set(
+            effigy_context::EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME,
+            None,
+        );
+        let inactive: std::collections::BTreeMap<_, _> = workload_ambient_environment().collect();
+        assert!(!inactive.contains_key(OsStr::new(
+            effigy_context::EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME
+        )));
+
+        let guard = effigy_context::activate_external_task_source_isolation();
+        let active: std::collections::BTreeMap<_, _> = workload_ambient_environment().collect();
+        drop(guard);
+        assert_eq!(
+            active
+                .get(OsStr::new(
+                    effigy_context::EXTERNAL_TASK_SOURCE_ISOLATION_ENV_NAME
+                ))
+                .map(OsString::as_os_str),
+            Some(OsStr::new("1"))
+        );
     }
 
     /// The internal passphrase variable is no longer a source: a value left in

@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     host_process_dir_for_policy, host_process_state_path, listener_gateway_root,
     managed_host_process_owner, order_host_processes, read_private_json,
-    stop_legacy_host_processes, HostListenerState, HostProcessRuntimeSpec,
+    remove_legacy_supervisor_records, HostListenerState, HostProcessRuntimeSpec,
     ManagedHostListenerResult, HOST_LISTENER_STATE_SCHEMA,
 };
 use crate::runner::error::RunnerError;
@@ -49,7 +49,7 @@ pub(in crate::runner) struct HostProcessStop {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
-    /// `stopped`, `settled`, `legacy`, `already-stopped` or `failed`.
+    /// `stopped`, `settled`, `already-stopped` or `failed`.
     pub state: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
@@ -148,7 +148,7 @@ pub(in crate::runner) struct HostProcessStatus {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
-    /// `running`, `interrupted`, `closed`, `legacy` or `absent`.
+    /// `running`, `interrupted`, `closed` or `absent`.
     pub state: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase: Option<String>,
@@ -380,9 +380,12 @@ fn start_host_processes_inner(
         .map(|root| root.join("routes.json"));
     let dir = host_process_dir_for_policy(&checkout_root, policy);
     super::create_host_process_dir(&checkout_root, &dir)?;
-    // A v0.14.1 PID/spec supervisor is stopped by its recorded identity first;
-    // no new generation shares a checkout with an unmanaged one.
-    stop_legacy_host_processes(repo_root, policy)?;
+    // A leftover v0.14.1 PID-file supervisor record is deleted, with one line:
+    // those supervisors are gone, and a record from a dead one must never
+    // block a start after a reboot (effigy#341).
+    for notice in remove_legacy_supervisor_records(&dir) {
+        eprintln!("[host process] {notice}");
+    }
     let cx = effects()?;
     let state_root = journal_root(&checkout_root)?;
     let state_home = crate::runner::task_engine::state_home_path().ok_or_else(|| {
@@ -468,9 +471,9 @@ fn start_host_processes_inner(
                 container_name: policy.name.clone(),
                 run: hp.run.clone(),
                 log_file: log_file.clone(),
-                restart: hp.restart.as_str().to_owned(),
+                restart: hp.restart,
                 restart_delay_ms: hp.restart_delay_ms,
-                shutdown_signal: hp.shutdown_signal.as_str().to_owned(),
+                shutdown_signal: hp.shutdown_signal,
                 shutdown_grace_secs: hp.shutdown_grace_secs,
                 checkout: Some(checkout),
                 state_home: state_home.clone(),
@@ -731,13 +734,11 @@ pub(in crate::runner) fn stop_host_processes_for_container(
     if policy.host_processes.is_empty() {
         return report;
     }
-    // Legacy supervisors first: their recorded identities are the only
-    // authority to stop them.
-    match stop_legacy_host_processes(repo_root, policy) {
-        Ok(stopped) => report.processes.extend(stopped),
-        Err(error) => report.residue.push(format!(
-            "legacy host-process supervisors could not be stopped: {error}"
-        )),
+    // A leftover v0.14.1 PID-file supervisor record is deleted, with one line:
+    // it names a supervisor that no longer exists (effigy#341).
+    let dir = host_process_dir_for_policy(repo_root, policy);
+    for notice in remove_legacy_supervisor_records(&dir) {
+        eprintln!("[host process] {notice}");
     }
     let mut ordered = order_host_processes(&policy.host_processes)
         .unwrap_or_else(|_| policy.host_processes.iter().collect::<Vec<_>>());
@@ -1067,7 +1068,7 @@ fn custody_effect(repo_root: &Path, run: RunId) -> Option<ReceiptFacts> {
 }
 
 /// `container status` rows: each declared host process's run, state and last
-/// exit, plus a legacy PID-file supervisor that has not been migrated yet.
+/// exit.
 pub(in crate::runner) fn host_process_status(
     repo_root: &Path,
     policy: &EffectiveContainerPolicy,
@@ -1098,23 +1099,6 @@ pub(in crate::runner) fn host_process_status(
                     }
                 }
             };
-            let legacy = dir.join(format!("{}.pid", super::sanitize(&hp.name)));
-            if legacy.exists() {
-                let record = read_private_json::<super::HostProcessRecord>(&legacy).ok();
-                return HostProcessStatus {
-                    name: hp.name.clone(),
-                    run: None,
-                    state: "legacy".to_owned(),
-                    phase: None,
-                    pid: record.map(|record| record.pid),
-                    last_exit: None,
-                    listener,
-                    log: Some(format!(
-                        "v0.14.1 PID-file supervisor at {}; the next `up` or `down` stops it by its recorded identity",
-                        legacy.display()
-                    )),
-                };
-            }
             let Some(run) = latest_run(repo_root, &resource) else {
                 return HostProcessStatus {
                     name: hp.name.clone(),
@@ -1150,7 +1134,11 @@ pub(in crate::runner) fn host_process_status(
                 pid: custody_pid(repo_root, run.id),
                 last_exit: custody_exit(repo_root, run.id).or_else(|| run_exit(&run)),
                 listener,
-                log: Some(hp_log_path(repo_root, policy, &hp.name).display().to_string()),
+                log: Some(
+                    hp_log_path(repo_root, policy, &hp.name)
+                        .display()
+                        .to_string(),
+                ),
             }
         })
         .collect()

@@ -704,30 +704,161 @@ fn parse_target_host_port_uses_typed_route_shape_error() {
     }
 }
 
-#[test]
-fn a_project_alias_is_allocated_at_up_and_released_at_down() {
-    with_test_home("loopback-lifecycle", || {
-        let repo_root = PathBuf::from("/tmp/loopback-lifecycle");
-        std::fs::create_dir_all(&repo_root).expect("checkout");
-        let identity = effigy_gateway::loopback::project_loopback_identity("demo", &repo_root);
-        let scope = repo_root.display().to_string();
+/// A real checkout with the worktree metadata the route scope token reads.
+fn checkout_dir(root: &Path, name: &str) -> PathBuf {
+    let checkout = root.join(name);
+    let private = root.join("primary/.git/worktrees").join(name);
+    std::fs::create_dir_all(&checkout).expect("checkout");
+    std::fs::create_dir_all(&private).expect("private worktree state");
+    std::fs::write(
+        checkout.join(".git"),
+        format!("gitdir: {}\n", private.display()),
+    )
+    .expect("git link");
+    std::fs::write(private.join("commondir"), "../..\n").expect("commondir");
+    checkout
+}
 
-        let first = load_or_allocate_loopback_ip(&identity, &scope, true)
-            .expect("allocate at up")
-            .expect("an allocated address");
+fn alias_route(
+    domain: &str,
+    address: std::net::Ipv4Addr,
+    port: u16,
+    target: &str,
+) -> RegisteredGatewayRoute {
+    RegisteredGatewayRoute {
+        domain: domain.to_owned(),
+        target: None,
+        dns_ip: Some(address),
+        tcp_port: Some(port),
+        tcp_target: Some(target.to_owned()),
+        tls: false,
+        service: Some("db".to_owned()),
+        external_target: false,
+    }
+}
+
+#[test]
+fn a_new_checkout_takes_the_lowest_address_no_live_route_references() {
+    with_test_home("loopback-live-sibling", || {
+        let root = tempfile::tempdir().expect("fixture");
+        let sibling = checkout_dir(root.path(), "sibling");
+        let newcomer = checkout_dir(root.path(), "newcomer");
+        let table_path = gateway_route_table_path().expect("route path");
+
+        // A live checkout's routes already answer for 127.1.0.1 and
+        // 127.1.0.2, exactly as a parallel environment leaves the table.
+        EndpointStore::for_routes(&table_path)
+            .routes::<_, effigy_gateway::GatewayError>(|table| {
+                for (domain, ip, port, target) in [
+                    ("postgres.sibling.test", 1, 5432, "127.0.0.1:5432"),
+                    ("mysql.sibling.test", 2, 3306, "127.0.0.1:3306"),
+                ] {
+                    table.upsert(Route {
+                        domain: domain.to_owned(),
+                        target: None,
+                        dns_ip: Some(std::net::Ipv4Addr::new(127, 1, 0, ip)),
+                        tcp_port: Some(port),
+                        tcp_target: Some(target.to_owned()),
+                        source: RouteSource::Container,
+                        project: sibling.display().to_string(),
+                        scope: None,
+                        managed_listener: None,
+                        tls: false,
+                        registered: chrono::Utc::now(),
+                    });
+                }
+                Ok(())
+            })
+            .expect("the sibling's routes are on record");
+
+        let address = checkout_loopback_ip(&newcomer, true)
+            .expect("resolve")
+            .expect("an address");
+        assert_ne!(address, std::net::Ipv4Addr::new(127, 1, 0, 2));
+        assert_eq!(address, std::net::Ipv4Addr::new(127, 1, 0, 3));
+
+        // The newcomer's `up` succeeds: no conflicting endpoint owners, and the
+        // address it took is the one recorded on its own routes.
+        reconcile_gateway_routes(
+            &table_path,
+            &newcomer,
+            &[alias_route(
+                "postgres.newcomer.test",
+                address,
+                5432,
+                "127.0.0.1:5432",
+            )],
+        )
+        .expect("the newcomer registers its alias route");
+        let table = RouteTable::load(&table_path).expect("routes");
         assert_eq!(
-            load_or_allocate_loopback_ip(&identity, &scope, false)
+            table
+                .lookup("postgres.newcomer.test")
+                .and_then(|route| route.dns_ip),
+            Some(address)
+        );
+        assert_eq!(
+            table
+                .lookup("postgres.sibling.test")
+                .and_then(|route| route.dns_ip),
+            Some(std::net::Ipv4Addr::new(127, 1, 0, 1)),
+            "the live sibling keeps its address"
+        );
+        assert_eq!(
+            table
+                .lookup("mysql.sibling.test")
+                .and_then(|route| route.dns_ip),
+            Some(std::net::Ipv4Addr::new(127, 1, 0, 2)),
+            "the live sibling keeps its address"
+        );
+    });
+}
+
+#[test]
+fn a_registered_alias_route_is_where_the_next_up_reads_it() {
+    with_test_home("loopback-route-record", || {
+        let root = tempfile::tempdir().expect("fixture");
+        let checkout = checkout_dir(root.path(), "checkout");
+        let table_path = gateway_route_table_path().expect("route path");
+        let address = checkout_loopback_ip(&checkout, true)
+            .expect("resolve")
+            .expect("an address");
+        reconcile_gateway_routes(
+            &table_path,
+            &checkout,
+            &[alias_route(
+                "postgres.app.test",
+                address,
+                5432,
+                "127.0.0.1:5432",
+            )],
+        )
+        .expect("register the alias route");
+
+        assert_eq!(
+            checkout_loopback_ip(&checkout, false)
                 .expect("read")
-                .expect("the retained address"),
-            first
+                .expect("the recorded address"),
+            address
         );
-        let store = EndpointStore::for_routes(&gateway_route_table_path().expect("route path"));
-        assert!(store.release_loopback(&identity).expect("release at down"));
         assert_eq!(
-            load_or_allocate_loopback_ip(&identity, &scope, false).expect("read"),
-            None
+            checkout_loopback_ip(&checkout, true).expect("reallocate"),
+            Some(address)
         );
-        let _ = std::fs::remove_dir_all(&repo_root);
+
+        // Removing the routes frees the address for the next checkout, with no
+        // separate release step.
+        EndpointStore::for_routes(&table_path)
+            .routes::<_, effigy_gateway::GatewayError>(|table| {
+                table.deregister("postgres.app.test")?;
+                Ok(())
+            })
+            .expect("down removes the route");
+        assert_eq!(checkout_loopback_ip(&checkout, false).expect("read"), None);
+        assert_eq!(
+            checkout_loopback_ip(&checkout, true).expect("reclaim"),
+            Some(address)
+        );
     });
 }
 
@@ -937,7 +1068,7 @@ fn explicit_dns_routes_win_over_derived_shared_service_alias_domains() {
 }
 
 #[test]
-fn deregister_gateway_routes_removes_service_alias_domains_without_loopback_registry() {
+fn deregister_gateway_routes_removes_service_alias_domains_by_path() {
     with_test_home("deregister-service-alias-domains", || {
         let mut policy = test_policy();
         policy.shared_services = vec![shared_service(
@@ -948,8 +1079,9 @@ fn deregister_gateway_routes_removes_service_alias_domains_without_loopback_regi
             2525,
         )];
         let route_table_path = gateway_route_table_path().expect("route table path");
-        let project_path = "/tmp/repo";
-        policy.repo_root = PathBuf::from(project_path);
+        let checkout = tempfile::tempdir().expect("checkout");
+        let project_path = checkout.path().display().to_string();
+        policy.repo_root = PathBuf::from(&project_path);
         std::fs::create_dir_all(route_table_path.parent().expect("route table parent"))
             .expect("mkdir route table parent");
         register_route(
@@ -961,7 +1093,7 @@ fn deregister_gateway_routes_removes_service_alias_domains_without_loopback_regi
                 tcp_port: None,
                 tcp_target: None,
                 tls: true,
-                project_path: project_path.to_owned(),
+                project_path: project_path.clone(),
                 source: RouteSource::Container,
             },
         )
@@ -979,7 +1111,7 @@ fn deregister_gateway_routes_removes_service_alias_domains_without_loopback_regi
                     tcp_port: Some(tcp_port),
                     tcp_target: Some(target_port.to_owned()),
                     tls: false,
-                    project_path: project_path.to_owned(),
+                    project_path: project_path.clone(),
                     source: RouteSource::Container,
                 },
             )
@@ -1253,6 +1385,8 @@ fn rejects_tcp_alias_bind_tuple_collision_with_different_upstream() {
     let route_table_path = dir.path().join("routes.json");
     let repo_root = dir.path().join("repo");
     std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+    let other_checkout = dir.path().join("other");
+    std::fs::create_dir_all(&other_checkout).expect("mkdir other checkout");
 
     register_route(
         &route_table_path,
@@ -1263,7 +1397,7 @@ fn rejects_tcp_alias_bind_tuple_collision_with_different_upstream() {
             tcp_port: Some(5432),
             tcp_target: Some("127.0.0.1:22132".to_owned()),
             tls: false,
-            project_path: dir.path().join("other").display().to_string(),
+            project_path: other_checkout.display().to_string(),
             source: RouteSource::Container,
         },
     )
@@ -1296,6 +1430,8 @@ fn allows_tcp_alias_bind_tuple_reuse_when_upstream_matches() {
     let route_table_path = dir.path().join("routes.json");
     let repo_root = dir.path().join("repo");
     std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+    let other_checkout = dir.path().join("other");
+    std::fs::create_dir_all(&other_checkout).expect("mkdir other checkout");
 
     register_route(
         &route_table_path,
@@ -1306,7 +1442,7 @@ fn allows_tcp_alias_bind_tuple_reuse_when_upstream_matches() {
             tcp_port: Some(5432),
             tcp_target: Some("127.0.0.1:22132".to_owned()),
             tls: false,
-            project_path: dir.path().join("other").display().to_string(),
+            project_path: other_checkout.display().to_string(),
             source: RouteSource::Container,
         },
     )
@@ -1327,46 +1463,6 @@ fn allows_tcp_alias_bind_tuple_reuse_when_upstream_matches() {
         }],
     )
     .expect("matching upstream should be reusable");
-}
-
-#[test]
-fn generated_registration_and_regeneration_reuse_one_loopback_assignment() {
-    with_test_home("loopback-reuse", || {
-        let repo_root = PathBuf::from("/tmp/loopback-reuse");
-        std::fs::create_dir_all(&repo_root).expect("checkout");
-        let policy = test_policy();
-        let first = load_or_allocate_project_loopback_ip(&repo_root, &policy, true)
-            .expect("allocate")
-            .expect("an address");
-        let again = load_or_allocate_project_loopback_ip(&repo_root, &policy, true)
-            .expect("reallocate")
-            .expect("the same address");
-
-        assert_eq!(first, again);
-        let _ = std::fs::remove_dir_all(&repo_root);
-    });
-}
-
-#[test]
-fn shared_and_project_aliases_get_distinct_addresses() {
-    with_test_home("loopback-shared", || {
-        let repo_root = PathBuf::from("/tmp/loopback-shared");
-        std::fs::create_dir_all(&repo_root).expect("checkout");
-        let policy = test_policy();
-        let project = load_or_allocate_project_loopback_ip(&repo_root, &policy, true)
-            .expect("project alias")
-            .expect("an address");
-        let shared = load_or_allocate_shared_loopback_ip(
-            &repo_root,
-            &shared_service("db", "mariadb", "effigy-shared-mariadb", 3306, 3306),
-            true,
-        )
-        .expect("shared alias")
-        .expect("an address");
-
-        assert_ne!(project, shared);
-        let _ = std::fs::remove_dir_all(&repo_root);
-    });
 }
 
 #[test]
@@ -1391,25 +1487,35 @@ fn runtime_not_running_errors_degrade_gateway_probe_to_not_ready() {
 }
 
 #[test]
-fn the_same_project_name_in_two_checkouts_gets_two_aliases() {
+fn two_checkouts_with_one_project_name_get_two_addresses() {
     with_test_home("loopback-distinct-repos-same-project-name", || {
-        let policy = test_policy();
         let fixture = tempfile::tempdir().expect("fixture");
-        let first_repo = fixture.path().join("acowtancy-new");
-        let second_repo = fixture.path().join("acowtancy-legacy");
-        std::fs::create_dir_all(&first_repo).expect("first checkout");
-        std::fs::create_dir_all(&second_repo).expect("second checkout");
+        let first_repo = checkout_dir(fixture.path(), "acowtancy-new");
+        let second_repo = checkout_dir(fixture.path(), "acowtancy-legacy");
+        let table_path = gateway_route_table_path().expect("route path");
 
-        let first = load_or_allocate_project_loopback_ip(&first_repo, &policy, true)
+        let first = checkout_loopback_ip(&first_repo, true)
             .expect("allocate first")
             .expect("first alias");
-        let second = load_or_allocate_project_loopback_ip(&second_repo, &policy, true)
+        reconcile_gateway_routes(
+            &table_path,
+            &first_repo,
+            &[alias_route(
+                "postgres.new.test",
+                first,
+                5432,
+                "127.0.0.1:5432",
+            )],
+        )
+        .expect("first checkout registers");
+        let second = checkout_loopback_ip(&second_repo, true)
             .expect("allocate second")
             .expect("second alias");
 
         assert_ne!(first, second, "one address per checkout path");
     });
 }
+
 #[test]
 fn service_alias_claims_use_the_inferred_apex_not_the_front_route() {
     let mut policy = test_policy();

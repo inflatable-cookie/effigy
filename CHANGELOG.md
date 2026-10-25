@@ -46,15 +46,23 @@ During v0.x, MINOR bumps may include breaking changes.
   stable, probed port per published container port from the checkout path
   instead, and never records it. Shared backing services derive their port the
   same way.
-- **One endpoint table and one transaction.** The gateway keeps its routes and
-  loopback aliases in one committed snapshot written by one plain transaction.
+- **One endpoint table and one transaction.** The gateway keeps its route table
+  in one committed snapshot written by one plain transaction.
   The second commit path, the endpoint quarantine, the v0.14.1 handback and the
   legacy `routes.json`/`loopback-ips.json`/`ports.json` import are gone; the
   Store is the only source and the route file is no longer a privilege boundary
   the daemon re-verifies.
-- **A loopback alias lives from `up` to `down`.** `down` releases it, and the
-  next allocation reclaims one whose checkout path is gone, so a deleted
-  worktree's address is reused without a repair command.
+- **The route table is the only record of loopback ownership.** An address is
+  in use exactly when some route references it, as its `dns_ip` or as its
+  target, and a checkout's aliased routes share one address in the
+  `127.1.0.1`-`127.1.0.50` pool. `up` takes the address the checkout's routes
+  already answer with, or the lowest address no route references; `down` and
+  retirement free it by removing the routes. The separate loopback assignment
+  record, its `loopback-ips.json` file and the Prepare step that allocated one
+  are gone, so a new checkout's `up` never collides with another checkout's
+  address. Any route write also drops routes whose recorded checkout path is
+  gone, for every domain, so a deleted worktree keeps neither a domain nor an
+  address.
 - **`container up` starts the gateway** when it is not running, and `up`
   reconciles a gateway whose cleanup an interruption left incomplete. One line
   names it.
@@ -351,6 +359,29 @@ During v0.x, MINOR bumps may include breaking changes.
   nerdctl `health-check-*.pid` files stays, on `container up` (silent, warns
   only when it cannot run) and on the explicit command, which now reports the
   before/after pid-file counts and no longer reports inode use.
+- Effigy's own control markers in a workload's environment (effigy#341). One
+  spawn helper now starts every task child, host process, managed workload and
+  supervisor from the user's environment minus every `EFFIGY_INTERNAL_*`
+  marker, `EFFIGY_MANAGED_RUN_TOKEN` and `EFFIGY_SECRETS_REQUIRED`, so a
+  workload sees the user's own variables plus the documented Effigy ones
+  (`HOST`/`PORT`, the `EFFIGY_HOST_PROCESS_*` facts, `TMPDIR`).
+  Three markers stay, each because a child depends on it: the container
+  handoff, which a consumer's Rhai task reads to detect the workspace
+  container; the vault generate guard, which stops a
+  `[secrets.vault].generate` hook's own child Effigy from running the hook
+  again; and the external task source boundary, which makes a nested Effigy
+  resolve no consumer secrets. `EFFIGY_ADMITTED` and `EFFIGY_DEFER_DEPTH` stay
+  because they are the designed nesting markers a nested Effigy step reads.
+- The v0.14.1 PID-file host-process supervisor path (effigy#341): the
+  `__host-process-supervise` and `__host-process-stop` internal entries, the
+  recorded-identity stop of `<name>.pid` records with its listener-route
+  reconciliation, and the `legacy` stop and status states. A leftover
+  `<name>.pid` or `<name>.spec.json` is deleted with one line when the
+  environment next starts or stops, so a record from a supervisor that died
+  with a reboot never blocks `up`.
+- `EFFIGY_INTERNAL_ENVIRONMENT_EXEMPT` (effigy#341). Nothing set it, so it was
+  a forgeable dead input; a run settling in this process exempts its own hold
+  by id.
 - The runtime scope journal, its `effigy.runtime-scope.v1` records, the
   `com.effigy.checkout-generation` and `com.effigy.checkout-fence` labels, and
   the dead-retire inode-generation comparison. `container retire` keeps no
@@ -1318,6 +1349,20 @@ During v0.x, MINOR bumps may include breaking changes.
   instead of calling it a live foreign owner.
 
 ### Changed
+- A host process is replaced with a growing wait instead of a fixed one: the
+  first replacement waits `restart_delay_ms`, each further one doubles it, and
+  the wait is capped at 30 s. A generation that ran for 30 s or longer resets
+  the wait, and there is still no restart limit. `restart` and `shutdown_signal`
+  reach the supervisor as the values the manifest validated, so an unknown
+  value now fails at load naming the key instead of becoming `on-failure` or
+  SIGTERM (effigy#341).
+- A run cancelled before it starts reports its cancellation. When `run stop` or
+  Ctrl-C stops the parent's admission hook before a nested child reads its
+  parent capability, the child reports `the run was cancelled before it
+  started (…)` with nothing started, instead of `the parent run capability
+  refused this child (cancelled by SIGTERM)`. A capability that really refuses
+  a child still names its reason and the top-level command that grants one
+  (effigy#341).
 - Container ownership is the runtime's own labels. A checkout owns a
   container, volume or network exactly when it carries the Compose project
   plus Effigy's checkout and scope labels, so `container retire` asks the
@@ -1668,6 +1713,11 @@ During v0.x, MINOR bumps may include breaking changes.
   diagnostics and rewritten when they no longer describe the checkout.
 
 ### Fixed
+- A gateway started before any route store existed now serves the first route
+  published after it, which is the normal case now that `up` and `dev` start the
+  gateway themselves. Startup creates the store's own private directory before
+  installing its watcher, so a fresh machine no longer answers `503 No route
+  registered` until the gateway restarts (effigy#351).
 - A host process whose child leader exits now applies its declared `restart`
   policy instead of failing supervision. After a leader exit, Effigy reaps the
   leader and observes the process group as the kernel does: the exited leader is

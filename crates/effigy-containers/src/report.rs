@@ -1555,7 +1555,6 @@ pub fn retire_report(
             .collect::<Vec<_>>(),
         "gateway": {
             "routes": outcome.gateway.routes,
-            "loopbacks": outcome.gateway.loopbacks,
         },
     });
     let mut lines = Vec::new();
@@ -1586,12 +1585,6 @@ pub fn retire_report(
             "released {} route(s): {}",
             outcome.gateway.routes.len(),
             outcome.gateway.routes.join(", ")
-        ));
-    }
-    if outcome.gateway.loopbacks > 0 {
-        lines.push(format!(
-            "released {} loopback address(es)",
-            outcome.gateway.loopbacks
         ));
     }
     for failed in outcome.remaining() {
@@ -1734,15 +1727,10 @@ mod retire_tests {
     fn gateway_release_is_reported() {
         let mut outcome = RetireOutcome::default();
         outcome.gateway.routes = vec!["app.test".to_owned()];
-        outcome.gateway.loopbacks = 2;
         let report = retire_report(Some("/w/one"), &outcome);
         assert_eq!(report.json["ok"], true);
         assert_eq!(report.json["gateway"]["routes"][0], "app.test");
-        assert_eq!(report.json["gateway"]["loopbacks"], 2);
         assert!(report.success_text.contains("released 1 route(s)"));
-        assert!(report
-            .success_text
-            .contains("released 2 loopback address(es)"));
     }
 }
 

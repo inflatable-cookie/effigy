@@ -151,14 +151,14 @@ The run supervisor attaches through this surface.
   begun before the bring-up and settled when the command ends.
 - Release is the holder's own settle; it takes no environment gate, so a
   holder and a waiting transition never wait on each other.
-- A holder's own stop is exempt only once that run is settling:
-  `EFFIGY_INTERNAL_ENVIRONMENT_EXEMPT` names it, and the kernel checks that
-  the named run is `Stopping` or `Closed` (052 §5.9 `permit` exemption).
-  A managed run records its outcome before its cleanup `container down`.
+- A holder's own stop is exempt only once that run is settling: the settling
+  process passes its own task-run id, and the kernel checks that the named run
+  is `Stopping` or `Closed` (052 §5.9 `permit` exemption). A managed run
+  records its outcome before its cleanup `container down`.
 
-Neither variable confers authority: the holder variable only requests
-protection for a live, admitted run; the exemption only covers a run that is
-already ending.
+The holder variable confers no authority: it only requests protection for a
+live, admitted run. The exemption is this process's own id, so it covers only
+a run that is already ending.
 
 Remote workloads (052 §5.10, effigy#236) bind the environment's generation at
 intent and then check only its identity; every bring-up advances the
