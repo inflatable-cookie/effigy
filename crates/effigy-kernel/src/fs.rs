@@ -497,6 +497,27 @@ impl DirFd {
     ) -> Result<Self, FsError> {
         self.prepare_child_mode(cx, name, 0o755)
     }
+    /// Remove one prepared child tree below this verified directory. Prepare
+    /// and Mutate only; descriptor-relative, bounded, and never follows a link.
+    pub fn remove_prepared_tree(
+        &self,
+        cx: &crate::ctx::EffectContext,
+        name: &FileName,
+        depth: usize,
+    ) -> Result<(), FsError> {
+        cx.require(crate::ctx::Capability::SourceStore)
+            .map_err(|_| {
+                FsError::untrusted(&self.path, "source removal requires Prepare or Mutate")
+            })?;
+        cx.require(crate::ctx::Capability::HostAuthority)
+            .map_err(|_| FsError::HostAuthorityRequired)?;
+        cx.operation()
+            .check("source removal")
+            .map_err(|error| FsError::untrusted(&self.path, format!("{error}")))?;
+        self.require_local()?;
+        self.remove_tree(name, Trust::Operator, depth)?;
+        self.sync()
+    }
     fn prepare_child_mode(
         &self,
         cx: &crate::ctx::EffectContext,
@@ -655,7 +676,12 @@ impl DirFd {
     }
     /// Removes `name` and everything under it, descriptor-relative, without
     /// following links. Bounded in depth and entries.
-    pub(crate) fn remove_tree(&self, name: &FileName, depth: usize) -> Result<(), FsError> {
+    pub(crate) fn remove_tree(
+        &self,
+        name: &FileName,
+        trust: Trust,
+        depth: usize,
+    ) -> Result<(), FsError> {
         let Some(stat) = self.entry(name)? else {
             return Ok(());
         };
@@ -669,17 +695,19 @@ impl DirFd {
             ));
         }
         let child = self
-            .child(name.as_str(), Trust::Private, false)?
+            .child(name.as_str(), trust, false)?
             .ok_or_else(|| FsError::untrusted(&self.join(name.as_str()), "vanished"))?;
-        // A tree an older build sealed read-only is repaired here: removal
-        // needs write on the directory, never on the files in it.
-        child.chmod(DIR_MODE)?;
+        if trust == Trust::Private {
+            // A tree an older build sealed read-only is repaired here: removal
+            // needs write on the directory, never on the files in it.
+            child.chmod(DIR_MODE)?;
+        }
         for entry in child.list(1 << 16)? {
             let entry = entry
                 .to_str()
                 .and_then(|entry| FileName::new(entry).ok())
                 .ok_or_else(|| FsError::untrusted(child.path(), "unexpected entry name"))?;
-            child.remove_tree(&entry, depth - 1)?;
+            child.remove_tree(&entry, trust, depth - 1)?;
         }
         self.remove(name, true)
     }

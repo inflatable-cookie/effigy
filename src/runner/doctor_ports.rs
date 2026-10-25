@@ -423,7 +423,7 @@ fn append_legacy_task_state_diagnostics(
                 family.path.display()
             ),
             remediation: format!(
-                "{}. Effigy v0.15 never reads it for exclusion or status beyond the read-only view, and never deletes it",
+                "{}. Effigy v0.15 never reads it and never deletes it",
                 family.disposition
             ),
             fixable: false,

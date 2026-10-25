@@ -224,7 +224,7 @@ fn retired_task_cache_error(task_name: &str) -> RunnerError {
     RunnerError::task_invocation(format!(
         "task `{task_name}` declares `cache`, which was removed in v0.15: Effigy no longer skips \
          tasks from a fingerprint. Delete the `cache` table and let the tool's own cache \
-         (cargo, turbo, vite) decide; `.effigy/cache` can be deleted"
+         (cargo, turbo, vite) decide; the retired `.effigy/cache/task-cache-v1.json` can be deleted"
     ))
 }
 
