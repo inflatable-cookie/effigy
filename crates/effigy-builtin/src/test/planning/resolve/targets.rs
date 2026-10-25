@@ -33,8 +33,12 @@ fn resolve_prefixed_target(
             warnings: Vec::new(),
         });
     };
-    let (plans, suite_source, cargo_env, cargo_env_match) =
-        resolve_target_test_plans(catalogs, &catalog.catalog_root)?;
+    let runtime = resolve_target_runtime(&catalog.manifest, &catalog.catalog_root);
+    let (plans, suite_source, cargo_env, cargo_env_match) = resolve_target_test_plans(
+        catalogs,
+        &catalog.catalog_root,
+        matches!(runtime, BuiltinTargetRuntime::Host),
+    )?;
     if plans.is_empty() {
         return Ok(BuiltinTestTargetSet {
             targets: Vec::new(),
@@ -52,7 +56,7 @@ fn resolve_prefixed_target(
             suite_source,
             cargo_env,
             cargo_env_match,
-            runtime: resolve_target_runtime(&catalog.manifest, &catalog.catalog_root),
+            runtime,
         }],
         excluded_targets: Vec::new(),
         warnings: Vec::new(),
@@ -69,8 +73,16 @@ fn collect_workspace_targets(
         if excluded_targets.binary_search(&name).is_ok() {
             continue;
         }
-        let (plans, suite_source, cargo_env, cargo_env_match) =
-            resolve_target_test_plans(catalogs, &root)?;
+        let runtime = catalogs
+            .iter()
+            .find(|catalog| catalog.catalog_root == root)
+            .map(|catalog| resolve_target_runtime(&catalog.manifest, &root))
+            .unwrap_or(BuiltinTargetRuntime::Host);
+        let (plans, suite_source, cargo_env, cargo_env_match) = resolve_target_test_plans(
+            catalogs,
+            &root,
+            matches!(runtime, BuiltinTargetRuntime::Host),
+        )?;
         if plans.is_empty() {
             continue;
         }
@@ -82,11 +94,7 @@ fn collect_workspace_targets(
             suite_source,
             cargo_env,
             cargo_env_match,
-            runtime: catalogs
-                .iter()
-                .find(|catalog| catalog.catalog_root == root)
-                .map(|catalog| resolve_target_runtime(&catalog.manifest, &root))
-                .unwrap_or(BuiltinTargetRuntime::Host),
+            runtime,
         });
     }
     let warnings = overlapping_cargo_target_warnings(&targets);
@@ -148,10 +156,11 @@ fn overlapping_cargo_target_warnings(targets: &[BuiltinTestTarget]) -> Vec<Strin
 }
 
 fn target_uses_cargo(target: &BuiltinTestTarget) -> bool {
-    target
-        .plans
-        .iter()
-        .any(|plan| plan.command.contains("cargo ") || plan.command.contains("cargo-nextest"))
+    target.plans.iter().any(|plan| {
+        plan.command.contains("cargo ")
+            || plan.command.contains("cargo-nextest")
+            || plan.command.starts_with("oxide ")
+    })
 }
 
 /// Resolve the owning catalog's declared runtime target for its test suites.

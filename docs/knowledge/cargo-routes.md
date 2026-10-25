@@ -31,6 +31,14 @@ routes and never need a row.
   selector as plain Cargo, and `GITHUB_ACTIONS=true` does the same on hosted
   runners that have no Oxide. A local run without `oxide` fails loudly and
   names the escape; it never falls back silently.
+- The built-in test command routes a detected Rust suite the same way:
+  `effigy test` runs `oxide nextest run …` (or `oxide test …` for the
+  `cargo test` fallback) when `oxide pool describe --json` answers
+  `oxide.pool.describe/1`, and plain Cargo otherwise. `EFFIGY_OXIDE_ESCAPE=cargo`
+  and a host without `oxide` keep the plain-Cargo route; a present but unusable
+  `oxide` fails the run naming the escape. Container-runtime targets and
+  `[test.runners]` overrides keep their own command. See
+  [contract 038](../knowledge/contracts/038-unified-test-orchestration-contract.md#host-cargo-route).
 - The same script owns the private-HOME pool pass-through: when `OXIDE_POOL` is
   unset and `$HOME` is not the account's real home, it resolves the real pool
   from `oxide status` under that home and exports `OXIDE_POOL` before

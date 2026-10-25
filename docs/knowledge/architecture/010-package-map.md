@@ -86,7 +86,7 @@ these callers. `deny.toml` remains the dependency policy authority.
 | Crate | Responsibility |
 | --- | --- |
 | `effigy-context` | boot-time runtime context, cwd/repo target authority, optional external task-source identity, host facts, and container handoff capture |
-| `effigy-containers` | effective container policy, scoped host maps, durable runtime-scope records, labelled retirement planning, backend facade, typed container operation planning, compose assembly, typed system/workspace mount rendering, workspace mount rewrite, and lower-level container/runtime compatibility helpers |
+| `effigy-containers` | effective container policy, scoped host maps, runtime ownership labels, labelled retirement planning, backend facade, typed container operation planning, compose assembly, typed system/workspace mount rendering, workspace mount rewrite, and lower-level container/runtime compatibility helpers |
 | `effigy-catalog` | compiled baseline catalog, ordered catalog-source resolution, qualified names, fragment requirements, compose assembly inputs, and catalog schema |
 | `effigy-gateway` | local gateway loopback aliases and host-port derivation |
 | `effigy-runtime-plan` | typed runtime activation request, activation plan, readiness/alias/lease plan, and activation report substrate |
@@ -157,7 +157,7 @@ these callers. `deny.toml` remains the dependency policy authority.
 | --- | --- |
 | [`src/runner/container_command/*`](../../../src/runner/container_command/mod.rs) | container command-surface glue: parse resolved CLI model, call operation/runtime/data helpers, render operator output |
 | [`src/runner/container_command/hosts.rs`](../../../src/runner/container_command/hosts.rs) | effective host map for one checkout: declared and scoped HTTP/TCP names |
-| [`src/runner/container_command/retire.rs`](../../../src/runner/container_command/retire.rs) | labelled per-scope retirement over the durable runtime-scope record |
+| [`src/runner/container_command/retire.rs`](../../../src/runner/container_command/retire.rs) | retirement over the backend's own ownership labels: containers, volumes, networks, gateway state |
 | [`src/runner/container_command/data.rs`](../../../src/runner/container_command/data.rs) | container data command glue over `effigy-data`, `effigy-state::artifact`, container operation plans, and runtime IO adapters |
 | [`src/runner/db_seed.rs`](../../../src/runner/db_seed.rs) | bootstrap and task-facing DB seed glue over `effigy-data` source normalization, artifact staging, and task execution requests |
 | [`src/runner/state_command_artifact.rs`](../../../src/runner/state_command_artifact.rs) | `effigy state artifact` command glue over `effigy_state::artifact` refs, OCI transport, staging, and capture plans |

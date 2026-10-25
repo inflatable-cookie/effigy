@@ -34,6 +34,14 @@ slow-timeout = { period = "180s", terminate-after = 1, grace-period = "2s" }
 filter = "test(managed_host_adapterless_) | test(managed_host_listener_outside_generation_)"
 slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }
 
+# This clone/switch proof runs a listener up, a container handover and a switch
+# back through the public CLI in a scoped clone, so it needs the same budget as
+# the other clone and switch proofs rather than the 45s default (papercut
+# 630e6e98).
+[[profile.default.overrides]]
+filter = "test(container_scoped_clone_first_listener_up_and_switch_round_trip_hands_over)"
+slow-timeout = { period = "120s", terminate-after = 1, grace-period = "2s" }
+
 # The 108-cell managed matrix runs nine cases per test with an immediate
 # restart each; one takes about 300s on a quiet host. A sweep that selects
 # gateway_private under this profile must not terminate it at the 45s default.

@@ -278,8 +278,6 @@ fn activate_container_runtime_plan_for_task_using(
     ensure_gateway_ready: impl FnOnce(&Path, &EffectiveContainerPolicy) -> Result<(), RunnerError>,
 ) -> Result<ContainerTaskActivation, RunnerError> {
     let repo_root = plan.request.repo_root.as_path();
-    effigy_containers::register_container_runtime_scope(policy)
-        .map_err(|error| RunnerError::task_invocation(error.to_string()))?;
     // The command's session exists before any bring-up, so the bring-up's
     // activation attaches it and no idle stop can intervene (§5.9).
     let mut hold = Held::begin(repo_root, policy, activation_label(plan.route))?;

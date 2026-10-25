@@ -9,16 +9,12 @@ use effigy_manifest::{
 };
 
 use crate::mount_spec::resolve_host_mounts;
-use crate::policy::hosts::{
-    apply_scope_to_routes, build_host_map, host_key, rewrite_declared_host, scope_token,
-    uses_shared_runtime_identity,
-};
+use crate::policy::hosts::{apply_scope_to_routes, host_key, rewrite_declared_host, scope_token};
 use crate::policy::project::{
     default_project_name_base, resolve_project_name, validate_unique_project_names,
 };
 use crate::policy_support::resolve_compose_source;
 use crate::runtime::dns::{materialize_runtime_dns_override, runtime_route_domains};
-use crate::runtime::scope::{upsert as upsert_scope_record, ScopeRecord};
 use crate::workspace::{
     materialize_runtime_workspace_mount_rewrite, WorkspaceComposeRewrite,
     WorkspaceExtraMountDecision,
@@ -39,43 +35,6 @@ pub fn load_container_policy(
     requested_name: Option<&str>,
 ) -> Result<EffectiveContainerPolicy, ContainerPolicyError> {
     load_container_policy_with_workspace(repo_root, requested_name, None)
-}
-
-/// Record the runtime scope immediately before an activation can create owned
-/// runtime resources. Policy resolution itself deliberately leaves the
-/// durable ownership store untouched.
-pub fn register_container_runtime_scope(
-    policy: &EffectiveContainerPolicy,
-) -> Result<(), ContainerPolicyError> {
-    let token =
-        effigy_core::worktree_scope::load_or_create(&policy.repo_root).map_err(|error| {
-            ContainerPolicyError::TaskInvocation(format!(
-                "cannot establish checkout runtime scope for {}: {error}",
-                policy.repo_root.display()
-            ))
-        })?;
-    let Some(token) = token else {
-        return Ok(());
-    };
-    let Some(key) = host_key(&token) else {
-        return Ok(());
-    };
-
-    let shared_runtime_identity = uses_shared_runtime_identity(policy, Some(&token));
-    let host_map = build_host_map(
-        &policy.dns_routes,
-        &policy.service_aliases,
-        &policy.shared_services,
-        Some(&token),
-        shared_runtime_identity,
-        policy.dns_base_domain.as_deref(),
-    );
-    let record = ScopeRecord::from_policy(policy, &token, key, &host_map, shared_runtime_identity);
-    upsert_scope_record(&record).map_err(|error| ContainerPolicyError::Read {
-        path: policy.repo_root.join(".effigy/state/runtime-scopes"),
-        error,
-    })?;
-    Ok(())
 }
 
 /// Resolve user-global library mounts for the manifest's declared bundle.

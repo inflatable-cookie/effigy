@@ -164,6 +164,7 @@ effigy container migrate <NAME>
 effigy container hosts
 effigy container scope [--repo <PATH>] [--json]
 effigy container retire --yes
+effigy container retire --dead --yes
 effigy container cache list --global
 effigy container volume list --dormant
 ```
@@ -185,7 +186,7 @@ Useful flags:
 - `--keep-data` remains accepted as a compatibility alias for reset's default
 - `--json` returns machine-readable payloads for non-interactive paths
 - `hosts` prints the effective HTTP and TCP host map for this checkout
-- `retire --yes` removes only this runtime scope's owned resources; `--scope <TOKEN>` retries after the checkout directory is gone
+- `retire --yes` removes every container, volume and network the backend labels for this checkout; `--keep-data` keeps the volumes and lists them, and `--dead` retires a stack whose checkout path is gone
 
 ### Bounded finite command capture
 
@@ -494,10 +495,15 @@ Effigy sets `EFFIGY_MANAGED_HOST_LISTENER_BIND` to the exact loopback address
 (the reserved port for a `:0` declaration), `HOST` and `PORT` to that address
 and port, and `EFFIGY_HOST_PROCESS_PUBLIC_URL`
 and `EFFIGY_HOST_PROCESS_INTERNAL_URL` to its own route origin and reserved
-endpoint. Any ordinary server that listens on `$HOST`/`$PORT` is a managed
-listener, with no language-specific adapter and nothing to write: Effigy sends
-the readiness request to the address it reserved and publishes the route when
-that address answers. `run = 'exec effigy profile:api'` is enough, and a server
+endpoint. It supplies `EFFIGY_MANAGED_HOST_LISTENER_REPORT_FILE`, a private path
+in the process's runtime directory beside its log, and
+`EFFIGY_MANAGED_HOST_LISTENER_GENERATION`, the current child generation token,
+only for the adapter scripts shipped bundles already carry. Effigy never reads
+that report and removes the file when the generation stops, so a new host
+process needs no adapter. Any ordinary server that listens on `$HOST`/`$PORT`
+is a managed listener: Effigy sends the readiness request to the address it
+reserved and publishes the route when that address answers.
+`run = 'exec effigy profile:api'` is enough, and a server
 that compiles for a minute before it serves needs only a long enough declared
 timeout.
 
@@ -766,18 +772,19 @@ names. `effigy container hosts --json` is the machine-readable map for
 public URLs, origins, cookie scope, WebAuthn and test selectors, and
 reports scope kind `worktree` or `ephemeral-clone`. Listener-only routes
 appear there with their declared and effective names. Effigy does not
-rewrite application configuration. `effigy container retire --yes` removes
-that scope's owned containers (running, stopped, or Created), networks,
-disposable caches, mutable volumes, isolated routes and ports using
-`com.effigy.scope`, `com.effigy.project`, or the exact Compose project
-label, and only on the runtime profile that produced each observation.
-Shared services, persistent volumes, external volumes, and shared-identity
-routes stay. Repo-owned Compose volumes stay unless labelled
-`com.effigy.persist=false`. The checkout keeps its scope inventory under
-`.effigy/state/runtime-scopes/`, with journalled atomic edits and corrupt-input
-refusal. Deleting a checkout deletes that inventory; no machine index survives.
-A backend that cannot list resources, or that returns malformed inspect output, fails instead of
-reporting an empty stack. TLS certificates for isolated routes are removed
+rewrite application configuration. `effigy container retire --yes
+effigy container retire --dead --yes` removes
+that stack's containers (running, stopped, or Created), networks, mutable
+volumes, isolated routes and ports, by the backend's own
+`com.docker.compose.project` plus `com.effigy.checkout` and
+`com.effigy.scope` labels. Shared services, external volumes, shared-identity routes and every volume
+retained by `--keep-data` stay.
+Nothing is recorded beside those labels: there is no
+`.effigy/state/runtime-scopes/` journal, no checkout generation and no custody
+fence, so deleting a checkout deletes nothing else and a re-cloned checkout at
+the same path needs no reconciliation. A backend that cannot list resources, or
+that returns malformed inspect output, fails instead of reporting an empty
+stack. TLS certificates for isolated routes are removed
 under the route lock after an owner check; failure leaves the route and a
 pending-cert list on the record. A pending certificate whose domain now has
 a foreign owner stays.
@@ -797,18 +804,17 @@ Paseo worktree archive should call retire from `paseo.json`
 gone, run `effigy container retire --dead --yes` from a live checkout (or name
 one with `--repo`). Bootstrap has no teardown of its own: environments own reset and retirement, so worker
 scopes are retired exactly as above. A failed retire must stay non-zero so the
-durable record remains and archive does not swallow residue.
+leftovers stay visible and archive does not swallow residue.
 
 Worktrees removed without running their teardown (for example Queue task
-checkouts) leave their stacks behind. `effigy container retire --dead` retires
-scopes discovered on the selected backend whose native checkout generation is
-positively gone. Backend labels and surviving shared endpoint/port facts supply
-ownership; the exact recorded custody lease must be free. Missing/replaced
-lease state, unavailable volumes and ambiguous ownership stay protected. Retry
-progress is kept in the invoking live checkout. Without a terminal or `--yes` it refuses and prints the scopes it would retire. Each scope
-is retired independently: a scope that cannot be fully retired keeps its record
-for a retry and makes the command exit non-zero. `--json` reports every scope in
-one `effigy.container.retire-dead.v1` document. To prune on a host schedule, run
+checkouts) leave their stacks behind. `effigy container retire --dead` groups
+the backend's Effigy ownership labels by checkout path and retires the groups
+whose path is missing. A relative or unreadable path label is reported under
+`unknown` and never guessed about; a live path's stack is left alone. Without a
+terminal or `--yes` it refuses and prints the stacks it would retire. Each stack
+is retired independently: one that cannot be fully retired is named with the
+runtime's error and makes the command exit non-zero. `--json` reports every
+stack in one `effigy.container.retire-dead.v1` document. To prune on a host schedule, run
 it periodically, for example from cron:
 
 ```text
@@ -965,7 +971,8 @@ references, but has no immutable declaration-to-mount association, exclusive
 volume/data ownership proof, or supported backend preservation plan. Those
 references cannot establish that recreation will retain data, including
 anonymous, shared, unknown or changed mount associations. No container is
-recreated and no volume is removed. `effigy container retire --yes` removes
+recreated and no volume is removed. `effigy container retire --yes
+effigy container retire --dead --yes` removes
 owned mutable volumes; it is not restart recovery. The refusal is exercised
 through private fake command transports with file preservation markers; this
 does not qualify a real Linux/containerd health timer or a live exec session.

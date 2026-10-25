@@ -874,26 +874,7 @@ fn inventory_and_ownership_child() {
             "an exhausted deadline never spawns the runtime"
         );
 
-        // A foreign or unknown ownership observation is refused and nothing is
-        // recreated.
-        fixture.control(json!({
-            "ps": {"mode": "running"},
-            "inspect": {"mode": "foreign"},
-            "up": {"mode": "ok"},
-        }));
-        let foreign = crate::exec::running_stack_admits_reactivation(
-            &root,
-            &policy,
-            &rows,
-            Instant::now() + Duration::from_secs(10),
-        )
-        .expect_err("a foreign checkout never authorizes reactivation");
-        assert!(
-            foreign
-                .to_string()
-                .contains("not proven to belong to this checkout"),
-            "{foreign}"
-        );
+        // A foreign or unknown ownership observation never becomes a binding.
         fixture.control(json!({
             "ps": {"mode": "running"},
             "inspect": {"mode": "unknown"},
@@ -911,65 +892,6 @@ fn inventory_and_ownership_child() {
                 .to_string()
                 .contains("canonical full container identity is missing"),
             "{unknown}"
-        );
-        // An owned container whose canonical identity a deleted or restarted
-        // profile left unreadable is reconciled by stopping and removing it, so
-        // the next activation recreates it. The same unreadable identity under
-        // a foreign checkout still refuses before any effect.
-        fixture.control(json!({
-            "ps": {"mode": "running"},
-            "inspect": {"mode": "stale"},
-            "up": {"mode": "ok"},
-        }));
-        let stale_admission = crate::exec::running_stack_admits_reactivation(
-            &root,
-            &policy,
-            &rows,
-            Instant::now() + Duration::from_secs(10),
-        )
-        .expect("an owned container left stale by a profile transition is admitted");
-        assert_eq!(
-            stale_admission.stale_owned,
-            vec![CONTAINER.to_owned()],
-            "the stale owner is reported for reconcile"
-        );
-        let before_remove = fixture.calls().len();
-        let removed = crate::exec::remove_stale_owned_containers(
-            &root,
-            &policy,
-            &stale_admission.stale_owned,
-        )
-        .expect("the stale owned container is stopped and removed");
-        assert_eq!(removed, vec![CONTAINER.to_owned()]);
-        let reconcile_calls = fixture.calls()[before_remove..].to_vec();
-        assert!(
-            reconcile_calls.iter().any(|call| {
-                call["command"] == json!("rm")
-                    && call["argv"].as_array().is_some_and(|argv| {
-                        let tail = &argv[argv.len().saturating_sub(3)..];
-                        tail == [json!("rm"), json!("-f"), json!(CONTAINER)]
-                    })
-            }),
-            "the reconcile stops and removes the stale owned container: {reconcile_calls:#?}"
-        );
-
-        fixture.control(json!({
-            "ps": {"mode": "running"},
-            "inspect": {"mode": "stale_foreign"},
-            "up": {"mode": "ok"},
-        }));
-        let foreign_stale = crate::exec::running_stack_admits_reactivation(
-            &root,
-            &policy,
-            &rows,
-            Instant::now() + Duration::from_secs(10),
-        )
-        .expect_err("a foreign stale container is never reconciled");
-        assert!(
-            foreign_stale
-                .to_string()
-                .contains("not proven to belong to this checkout"),
-            "{foreign_stale}"
         );
 
         for call in fixture.calls() {

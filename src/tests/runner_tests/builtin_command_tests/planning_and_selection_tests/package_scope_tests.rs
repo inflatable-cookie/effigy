@@ -1,8 +1,8 @@
 use crate::runner::tests::prelude::harness::EnvGuard;
 use crate::runner::tests::prelude::{
     assert_builtin_test_non_zero, assert_invocation_error_contains, assert_output_contains_all, fs,
-    lock_test, parse_json_output_with_schema, run_builtin_err, run_builtin_ok, temp_workspace,
-    write_executable,
+    lock_test, parse_json_output_with_schema, plain_cargo_route, run_builtin_err, run_builtin_ok,
+    temp_workspace, write_executable,
 };
 use std::path::Path;
 use std::path::PathBuf;
@@ -80,6 +80,7 @@ fn assert_plan_arguments(command: &str, expected: &str) {
 #[test]
 fn run_manifest_task_builtin_test_plan_package_scope_narrows_cargo_command() {
     let _guard = lock_test();
+    let _route = plain_cargo_route();
     let root = temp_workspace("builtin-test-package-scope-plan-narrows");
     write_two_package_cargo_workspace(&root);
 
@@ -104,6 +105,7 @@ fn run_manifest_task_builtin_test_plan_package_scope_narrows_cargo_command() {
 #[test]
 fn run_manifest_task_builtin_test_plan_package_scope_covers_selection_forms() {
     let _guard = lock_test();
+    let _route = plain_cargo_route();
     let root = temp_workspace("builtin-test-package-scope-plan-forms");
     write_two_package_cargo_workspace(&root);
 
@@ -147,6 +149,7 @@ fn run_manifest_task_builtin_test_plan_package_scope_covers_selection_forms() {
 #[test]
 fn run_manifest_task_builtin_test_plan_package_scope_ignores_selectors_after_runner_separator() {
     let _guard = lock_test();
+    let _route = plain_cargo_route();
     let root = temp_workspace("builtin-test-package-scope-runner-separator");
     write_two_package_cargo_workspace(&root);
 
@@ -193,6 +196,7 @@ fn run_manifest_task_builtin_test_plan_package_scope_ignores_selectors_after_run
 #[test]
 fn run_manifest_task_builtin_test_plan_package_scope_rejects_workspace_plus_package() {
     let _guard = lock_test();
+    let _route = plain_cargo_route();
     let root = temp_workspace("builtin-test-package-scope-rejects-ambiguous");
     write_two_package_cargo_workspace(&root);
 
@@ -239,6 +243,7 @@ fn run_manifest_task_builtin_test_plan_package_scope_rejects_workspace_plus_pack
 #[test]
 fn run_manifest_task_builtin_test_package_scope_execution_omits_unrelated_failing_package() {
     let _guard = lock_test();
+    let _route = plain_cargo_route();
     let root = temp_workspace("builtin-test-package-scope-execution");
     write_two_package_cargo_workspace(&root);
 
@@ -279,6 +284,7 @@ fn run_manifest_task_builtin_test_package_scope_execution_omits_unrelated_failin
 #[test]
 fn run_manifest_task_builtin_test_package_scope_execution_cargo_test_fallback() {
     let _guard = lock_test();
+    let _route = plain_cargo_route();
     let root = temp_workspace("builtin-test-package-scope-cargo-fallback");
     write_two_package_cargo_workspace(&root);
 

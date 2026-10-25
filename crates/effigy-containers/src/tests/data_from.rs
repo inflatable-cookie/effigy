@@ -1,12 +1,8 @@
-//! `data_from` behavior: volume identity, compose output, retirement and
-//! reset safety for environments borrowing another environment's service
-//! data volumes.
+//! `data_from` behavior: volume identity, compose output and reset safety for
+//! environments borrowing another environment's service data volumes.
 
 use super::{load_container_policy, temp_repo, with_temp_effigy_home};
-use crate::runtime::retire::{plan_retirement, ObservedKind, ObservedResource};
-use crate::runtime::scope::ScopeRecord;
 use crate::EffectiveContainerPolicy;
-use crate::SCOPE_LABEL;
 use effigy_catalog::volumes::{classify_for_reset, ManagedVolume};
 use std::fs;
 
@@ -209,111 +205,6 @@ fn environment_without_data_from_keeps_fresh_own_volumes() {
             );
         }
     });
-}
-
-#[test]
-fn scope_record_lists_borrowed_volumes_as_retained_never_owned() {
-    let root = temp_repo("data-from-scope-record");
-    let mut hybrid = crate::policy::model::test_policy(&root);
-    hybrid.name = "hybrid".to_owned();
-    hybrid.project_name = "acowtancy-dev-hybrid-wt-abcdef012345".to_owned();
-    hybrid.borrowed_volumes = vec![
-        ManagedVolume {
-            name: "acowtancy-dev-wt-abcdef012345-db-data".to_owned(),
-            service: "db".to_owned(),
-            persist: true,
-            size_bytes: None,
-            mount_point: None,
-            mount_target: Some("/var/lib/postgresql/data".to_owned()),
-        },
-        ManagedVolume {
-            name: "acowtancy-dev-wt-abcdef012345-cache".to_owned(),
-            service: "db".to_owned(),
-            persist: false,
-            size_bytes: None,
-            mount_point: None,
-            mount_target: Some("/cache".to_owned()),
-        },
-    ];
-    hybrid.managed_volumes = vec![ManagedVolume {
-        name: "acowtancy-dev-hybrid-wt-abcdef012345-own-cache".to_owned(),
-        service: "app".to_owned(),
-        persist: false,
-        size_bytes: None,
-        mount_point: None,
-        mount_target: Some("/target".to_owned()),
-    }];
-    let token = "abcdef0123456789abcdef0123456789";
-    let host_map = crate::build_host_map(&[], &[], &[], None, false, None);
-    let record = ScopeRecord::from_policy(&hybrid, token, "abcdef01", &host_map, false);
-
-    assert!(
-        !record
-            .owned_volumes
-            .iter()
-            .any(|name| name.starts_with("acowtancy-dev-wt-")),
-        "borrowed volumes are never owned: {:?}",
-        record.owned_volumes
-    );
-    for borrowed in [
-        "acowtancy-dev-wt-abcdef012345-db-data",
-        "acowtancy-dev-wt-abcdef012345-cache",
-    ] {
-        assert!(
-            record.retain_volumes.iter().any(|name| name == borrowed),
-            "borrowed volume {borrowed} must be retained"
-        );
-        let labels = [(SCOPE_LABEL.to_owned(), token.to_owned())]
-            .into_iter()
-            .collect();
-        assert!(
-            record.volume_is_persistent(borrowed, &labels),
-            "retained borrowed volume {borrowed} reads as persistent"
-        );
-    }
-    assert!(
-        record
-            .owned_volumes
-            .iter()
-            .any(|name| name == "acowtancy-dev-hybrid-wt-abcdef012345-own-cache"),
-        "own volumes stay owned"
-    );
-
-    // Retirement planning retains every borrowed volume, mutable or
-    // persistent, while still deleting owned mutable volumes.
-    let observed = [
-        ("acowtancy-dev-wt-abcdef012345-db-data", true),
-        ("acowtancy-dev-wt-abcdef012345-cache", false),
-        ("acowtancy-dev-hybrid-wt-abcdef012345-own-cache", false),
-    ]
-    .into_iter()
-    .map(|(name, persist)| ObservedResource {
-        kind: ObservedKind::Volume,
-        name: name.to_owned(),
-        scope_label: Some(token.to_owned()),
-        project_label: Some("acowtancy-dev-wt-abcdef012345".to_owned()),
-        persist,
-        external: false,
-        profile: Some("effigy".to_owned()),
-    })
-    .collect::<Vec<_>>();
-    let plan = plan_retirement(&record, &observed);
-    assert_eq!(
-        plan.delete
-            .iter()
-            .map(|resource| resource.name.as_str())
-            .collect::<Vec<_>>(),
-        vec!["acowtancy-dev-hybrid-wt-abcdef012345-own-cache"],
-        "only owned mutable volumes delete: {:?}",
-        plan.delete
-    );
-    let retained = plan
-        .retain
-        .iter()
-        .map(|resource| resource.name.as_str())
-        .collect::<Vec<_>>();
-    assert!(retained.contains(&"acowtancy-dev-wt-abcdef012345-db-data"));
-    assert!(retained.contains(&"acowtancy-dev-wt-abcdef012345-cache"));
 }
 
 #[test]

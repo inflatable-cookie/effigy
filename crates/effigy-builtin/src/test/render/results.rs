@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use effigy_core::widgets::KeyValue;
+use effigy_core::widgets::{KeyValue, NoticeLevel};
 use effigy_ui::{render_utf8, text_renderer, Renderer};
 
 use super::super::super::response::render_text_or_json_lazy;
@@ -133,6 +133,15 @@ pub(crate) fn render_builtin_test_results(
         renderer.key_values(&[KeyValue::new(name, value)])?;
     }
     renderer.text("")?;
+    if results
+        .iter()
+        .any(|result| !result.success && result.command.starts_with("oxide "))
+    {
+        renderer.notice(
+            NoticeLevel::Warning,
+            "a suite ran through Oxide; if Oxide refused the build, set EFFIGY_OXIDE_ESCAPE=cargo to run plain Cargo",
+        )?;
+    }
     Ok(render_utf8(renderer.into_inner())?)
 }
 
