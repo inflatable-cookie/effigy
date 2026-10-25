@@ -455,37 +455,6 @@ fn stop_env(
     }
 }
 
-/// A restart of a service that stopped answering, as one transition: it
-/// refuses while any run holds the environment (R4, probes never repair
-/// a held environment).
-pub(in crate::runner) fn repair(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    effect: impl FnOnce() -> Result<(), RunnerError>,
-) -> Result<(), RunnerError> {
-    let env = env_ref(policy)?;
-    let ctx = context(&policy.repo_root)?;
-    let mut failure = None;
-    let result = engine::repair(
-        &ctx,
-        &env,
-        &backend(repo_root, policy),
-        &policy.project_name,
-        || {
-            effect().map_err(|error| {
-                let message = error.to_string();
-                failure = Some(error);
-                BackendError::Uncertain(message)
-            })
-        },
-    );
-    match (result, failure) {
-        (Ok(()), _) => Ok(()),
-        (Err(EnvError::Backend(_)), Some(failure)) => Err(failure),
-        (Err(error_value), _) => Err(error(error_value)),
-    }
-}
-
 /// One reset transition: the stop plus dropping this environment's render
 /// references.
 pub(in crate::runner) fn reset(

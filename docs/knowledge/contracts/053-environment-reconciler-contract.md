@@ -83,7 +83,7 @@ runtime's own: Running, Stopped or Absent.
 ## 3. Transitions
 
 Every transition is one `EnvRun`: a kernel run owned by the environment, so
-up, down, handover, reset, reap, repair and import serialise on `Gate(Env)`.
+up, down, handover, reset, reap and import serialise on `Gate(Env)`.
 A transition waits up to 10 minutes for the gate; idle stop and import do not wait.
 
 - **Permit.** A backend effect needs a `TransitionPermit`. It is refused
@@ -134,8 +134,6 @@ A transition waits up to 10 minutes for the gate; idle stop and import do not wa
   through its own stop, then runs a handover transition of that environment.
 - **Reset** stops and drops only this environment's render references;
   sibling environments keep theirs (D3-07).
-- **Repair** (the exec-readiness restart) is a transition: it refuses while
-  any run holds the environment.
 
 ## 4. Hold API
 

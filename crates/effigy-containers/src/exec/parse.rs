@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_json::Value as JsonValue;
@@ -53,34 +54,19 @@ pub(super) fn docker_failure_looks_like_colima_runtime_state_loss(
         || (combined.contains("current runtime") && combined.contains("empty value"))
 }
 
-pub(crate) fn looks_like_stale_healthcheck_timer(stdout: &str, stderr: &str) -> bool {
-    let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
-    let timer_or_systemd = combined.contains(".timer")
-        || combined.contains("systemd-run")
-        || combined.contains("healthcheck");
-    let stale = combined.contains("already loaded") || combined.contains("has a fragment file");
-    timer_or_systemd && stale
-}
-
 pub fn compose_status_is_running(status: &str) -> bool {
     let lowered = status.to_ascii_lowercase();
-    if compose_status_needs_start(status) || lowered.contains("paused") {
+    if compose_status_is_in_flight(status) || lowered.contains("paused") {
+        return false;
+    }
+    if lowered.contains("exited") || lowered.contains("created") || lowered.contains("dead") {
         return false;
     }
     lowered.contains("up") || lowered.contains("running")
 }
 
-pub(crate) fn compose_status_needs_start(status: &str) -> bool {
-    if compose_status_is_in_flight(status) {
-        return false;
-    }
-    let lowered = status.to_ascii_lowercase();
-    lowered.contains("exited") || lowered.contains("created") || lowered.contains("dead")
-}
-
-/// Statuses that say the backend is already acting on the container. A
-/// `restarting` or `starting` container is not a start target however the
-/// rest of its status reads, and a `removing` one has no stable task to start.
+/// Statuses that say the backend is already acting on the container, so the
+/// container is neither running nor a reliable start target.
 fn compose_status_is_in_flight(status: &str) -> bool {
     let lowered = status.to_ascii_lowercase();
     [
@@ -95,30 +81,146 @@ fn compose_status_is_in_flight(status: &str) -> bool {
     .any(|word| lowered.contains(word))
 }
 
-/// A single container's own `inspect` observation. `running` is the backend's
-/// authoritative task state; `status` is its `State.Status` word.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct InspectedContainerState {
-    pub status: String,
-    pub running: bool,
+/// A full 64-character container id, with any `sha256:` prefix removed.
+pub(crate) fn parse_full_container_id(raw: &str) -> Option<String> {
+    let id = raw.strip_prefix("sha256:").unwrap_or(raw).trim();
+    if id.len() != 64 {
+        return None;
+    }
+    if !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(id.to_ascii_lowercase())
 }
 
-/// Only a created, exited or dead container is a recovery start target. A
-/// running container needs nothing, and a container the backend is still
-/// acting on (restarting, starting, stopping, removing, paused) is never
-/// started again on the strength of one stale inventory row.
-pub(crate) fn inspected_container_needs_start(state: &InspectedContainerState) -> bool {
-    if state.running || compose_status_is_in_flight(&state.status) {
-        return false;
+const COMPOSE_PROJECT_LABEL: &str = "com.docker.compose.project";
+const COMPOSE_SERVICE_LABEL: &str = "com.docker.compose.service";
+const COMPOSE_ONEOFF_LABEL: &str = "com.docker.compose.oneoff";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct VolumeRef {
+    pub name: Option<String>,
+    pub source: Option<String>,
+    pub destination: Option<String>,
+    pub mount_type: Option<String>,
+}
+
+/// One container's identity as its own `inspect` reports it: the full id, its
+/// name, its state and the Compose labels that locate its owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InspectedContainerIdentity {
+    pub id: String,
+    pub name: String,
+    pub status: String,
+    pub running: bool,
+    pub project: Option<String>,
+    pub service: Option<String>,
+    pub oneoff: bool,
+    pub volume_refs: Vec<VolumeRef>,
+}
+
+/// Parse exactly one inspect record. An id that is not a full hexadecimal
+/// container id, a missing name or a missing `State.Status` is not proof of
+/// anything, so it is refused here.
+pub(crate) fn parse_inspected_container_identity(
+    stdout: &str,
+) -> Result<InspectedContainerIdentity, String> {
+    let records: Vec<InspectRecord> = serde_json::from_str(stdout)
+        .map_err(|error| format!("failed to parse inspect json: {error}"))?;
+    if records.len() != 1 {
+        return Err(format!(
+            "inspect returned {} records; exactly one container is required",
+            records.len()
+        ));
     }
-    let lowered = state.status.to_ascii_lowercase();
-    matches!(lowered.as_str(), "created" | "exited" | "dead")
+    let record = &records[0];
+    let id = parse_full_container_id(record.id.as_deref().unwrap_or("")).ok_or_else(|| {
+        format!(
+            "inspect Id is not a full 64-character hexadecimal container id (`{}`)",
+            record.id.as_deref().unwrap_or("")
+        )
+    })?;
+    let name = record
+        .name
+        .as_deref()
+        .map(|value| value.trim_start_matches('/').to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "inspect record missing container name".to_owned())?;
+    let status = record
+        .state
+        .as_ref()
+        .and_then(|state| state.status.as_deref())
+        .unwrap_or("")
+        .trim()
+        .to_owned();
+    if status.is_empty() {
+        return Err("inspect record missing State.Status".to_owned());
+    }
+    let running = record
+        .state
+        .as_ref()
+        .and_then(|state| state.running)
+        .unwrap_or(false);
+    let labels = record
+        .config
+        .as_ref()
+        .and_then(|config| config.labels.as_ref());
+    let project = labels.and_then(|labels| label_value(labels, COMPOSE_PROJECT_LABEL));
+    let service = labels.and_then(|labels| label_value(labels, COMPOSE_SERVICE_LABEL));
+    let oneoff = labels
+        .and_then(|labels| label_value(labels, COMPOSE_ONEOFF_LABEL))
+        .map(|value| {
+            let lowered = value.to_ascii_lowercase();
+            lowered == "true" || lowered == "1" || lowered == "yes"
+        })
+        .unwrap_or(false);
+    let volume_refs = record
+        .mounts
+        .iter()
+        .map(|mount| VolumeRef {
+            name: empty_to_none(mount.name.clone()),
+            source: empty_to_none(mount.source.clone()),
+            destination: empty_to_none(mount.destination.clone()),
+            mount_type: empty_to_none(mount.mount_type.clone()),
+        })
+        .collect();
+    Ok(InspectedContainerIdentity {
+        id,
+        name,
+        status,
+        running,
+        project,
+        service,
+        oneoff,
+        volume_refs,
+    })
+}
+
+fn label_value(labels: &BTreeMap<String, String>, key: &str) -> Option<String> {
+    labels
+        .get(key)
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn empty_to_none(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 #[derive(serde::Deserialize)]
-struct InspectStateRecord {
-    #[serde(rename = "State", default)]
+struct InspectRecord {
+    #[serde(rename = "Id", alias = "ID", alias = "id")]
+    id: Option<String>,
+    #[serde(rename = "Name", alias = "name")]
+    name: Option<String>,
+    #[serde(rename = "State")]
     state: Option<InspectStateWord>,
+    #[serde(rename = "Config")]
+    config: Option<InspectConfig>,
+    #[serde(rename = "Mounts", default)]
+    mounts: Vec<InspectMount>,
 }
 
 #[derive(serde::Deserialize)]
@@ -129,45 +231,10 @@ struct InspectStateWord {
     running: Option<bool>,
 }
 
-pub(crate) fn parse_inspect_container_state(
-    stdout: &str,
-) -> Result<InspectedContainerState, ContainerExecError> {
-    let records: Vec<InspectStateRecord> =
-        serde_json::from_str(stdout).map_err(|error| ContainerExecError::Failure {
-            command: "runtime inspect".to_owned(),
-            code: None,
-            stdout: stdout.to_owned(),
-            stderr: format!("failed to parse inspect json: {error}"),
-        })?;
-    let Some(record) = records.into_iter().next() else {
-        return Err(ContainerExecError::Failure {
-            command: "runtime inspect".to_owned(),
-            code: None,
-            stdout: stdout.to_owned(),
-            stderr: "inspect returned no container record".to_owned(),
-        });
-    };
-    let status = record
-        .state
-        .as_ref()
-        .and_then(|state| state.status.as_deref())
-        .unwrap_or("")
-        .trim()
-        .to_owned();
-    if status.is_empty() {
-        return Err(ContainerExecError::Failure {
-            command: "runtime inspect".to_owned(),
-            code: None,
-            stdout: stdout.to_owned(),
-            stderr: "inspect record missing State.Status".to_owned(),
-        });
-    }
-    let running = record
-        .state
-        .as_ref()
-        .and_then(|state| state.running)
-        .unwrap_or(false);
-    Ok(InspectedContainerState { status, running })
+#[derive(serde::Deserialize)]
+struct InspectConfig {
+    #[serde(rename = "Labels", default)]
+    labels: Option<BTreeMap<String, String>>,
 }
 
 pub fn parse_running_compose_containers(
@@ -327,11 +394,13 @@ struct InspectContainerConfig {
 
 #[derive(serde::Deserialize)]
 struct InspectMount {
-    #[serde(rename = "Type")]
+    #[serde(rename = "Type", alias = "type")]
     mount_type: Option<String>,
-    #[serde(rename = "Source")]
+    #[serde(rename = "Name", alias = "name", default)]
+    name: Option<String>,
+    #[serde(rename = "Source", alias = "source")]
     source: Option<String>,
-    #[serde(rename = "Destination")]
+    #[serde(rename = "Destination", alias = "destination")]
     destination: Option<String>,
 }
 
@@ -553,33 +622,13 @@ mod tests {
     }
 
     #[test]
-    fn stale_healthcheck_timer_matches_nerdctl_systemd_run_warning() {
-        assert!(looks_like_stale_healthcheck_timer(
-            "",
-            r#"systemd-run --unit=dd94022f7dd0.timer: Unit dd94022f7dd0.timer was already loaded or has a fragment file"#
-        ));
-        assert!(!looks_like_stale_healthcheck_timer(
-            "",
-            "service workspace depends on undefined service redis"
-        ));
-    }
-
-    #[test]
-    fn compose_status_classifies_running_versus_startable() {
+    fn compose_status_classifies_running_versus_stopped() {
         assert!(compose_status_is_running("Up 10 seconds"));
         assert!(compose_status_is_running("Up (healthy)"));
         assert!(compose_status_is_running("running"));
         assert!(!compose_status_is_running("Exited (255) 2 minutes ago"));
         assert!(!compose_status_is_running("Created"));
         assert!(!compose_status_is_running("Paused"));
-        assert!(compose_status_needs_start("Exited (0) 1 second ago"));
-        assert!(compose_status_needs_start("Created"));
-        assert!(compose_status_needs_start("Dead"));
-        assert!(!compose_status_needs_start("Up 2 minutes"));
-    }
-
-    #[test]
-    fn compose_status_never_targets_a_container_in_flight() {
         for status in [
             "Restarting (1) 2 seconds ago",
             "Starting",
@@ -588,54 +637,47 @@ mod tests {
             "Pausing",
         ] {
             assert!(
-                !compose_status_needs_start(status),
-                "`{status}` must never be a start target"
-            );
-            assert!(
                 !compose_status_is_running(status),
                 "`{status}` in-flight status must not read as running"
             );
         }
     }
 
+    const FULL_ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
     #[test]
-    fn inspected_state_starts_only_proven_stopped_containers() {
-        let state = |status: &str, running: bool| InspectedContainerState {
-            status: status.to_owned(),
-            running,
-        };
-        assert!(inspected_container_needs_start(&state("created", false)));
-        assert!(inspected_container_needs_start(&state("exited", false)));
-        assert!(inspected_container_needs_start(&state("dead", false)));
-        assert!(!inspected_container_needs_start(&state("running", true)));
-        assert!(!inspected_container_needs_start(&state("created", true)));
-        assert!(!inspected_container_needs_start(&state("restarting", true)));
-        assert!(!inspected_container_needs_start(&state(
-            "restarting",
-            false
-        )));
-        assert!(!inspected_container_needs_start(&state("paused", false)));
-        assert!(!inspected_container_needs_start(&state("removing", false)));
+    fn parse_full_id_rejects_short_and_non_hex() {
+        assert_eq!(parse_full_container_id(FULL_ID).as_deref(), Some(FULL_ID));
+        assert_eq!(
+            parse_full_container_id(&format!("sha256:{FULL_ID}")).as_deref(),
+            Some(FULL_ID)
+        );
+        assert!(parse_full_container_id("dd94022f7dd0").is_none());
+        assert!(parse_full_container_id("acowtancy-mysql-1").is_none());
+        assert!(parse_full_container_id(&"g".repeat(64)).is_none());
     }
 
     #[test]
-    fn inspect_state_parses_the_record_nerdctl_and_docker_report() {
-        let parsed = parse_inspect_container_state(
-            r#"[{"Id":"abc","State":{"Status":"exited","Running":false},"Config":{}}]"#,
-        )
-        .expect("inspect state");
+    fn inspect_identity_reads_full_id_labels_and_volumes() {
+        let identity = parse_inspected_container_identity(&format!(
+            r#"[{{"Id":"{FULL_ID}","Name":"/acowtancy-mysql-1","State":{{"Status":"exited","Running":false}},"Config":{{"Labels":{{"com.docker.compose.project":"acowtancy-shared-mysql","com.docker.compose.service":"mysql","com.docker.compose.oneoff":"False"}}}},"Mounts":[{{"Type":"volume","Name":"acowtancy_mysql_data","Destination":"/var/lib/mysql"}}]}}]"#
+        ))
+        .expect("identity");
+        assert_eq!(identity.id, FULL_ID);
+        assert_eq!(identity.name, "acowtancy-mysql-1");
+        assert_eq!(identity.status, "exited");
+        assert!(!identity.running);
+        assert_eq!(identity.project.as_deref(), Some("acowtancy-shared-mysql"));
+        assert_eq!(identity.service.as_deref(), Some("mysql"));
+        assert!(!identity.oneoff);
+        assert_eq!(identity.volume_refs.len(), 1);
         assert_eq!(
-            parsed,
-            InspectedContainerState {
-                status: "exited".to_owned(),
-                running: false,
-            }
+            identity.volume_refs[0].name.as_deref(),
+            Some("acowtancy_mysql_data")
         );
-        assert!(
-            parse_inspect_container_state(r#"[{"Id":"abc","Config":{}}]"#).is_err(),
-            "a record without State.Status is not proof of anything"
+        assert_eq!(
+            identity.volume_refs[0].destination.as_deref(),
+            Some("/var/lib/mysql")
         );
-        assert!(parse_inspect_container_state("[]").is_err());
-        assert!(parse_inspect_container_state("not json").is_err());
     }
 }

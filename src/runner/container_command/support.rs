@@ -8,9 +8,7 @@ use effigy_catalog::volumes::{
 use effigy_containers::backend::endpoint_backend;
 use effigy_containers::{
     exec::{
-        list_running_compose_containers_for_policy,
-        recover_exited_owned_compose_services_for_project, ContainerExecError,
-        RunningComposeContainer,
+        list_running_compose_containers_for_policy, ContainerExecError, RunningComposeContainer,
     },
     health::wait_for_ready,
     EffectiveContainerPolicy,
@@ -372,14 +370,6 @@ pub(super) fn ensure_shared_services_running(
             &shared_compose_args(service, ["up", "-d", "--remove-orphans"]),
             &format!("docker compose up (shared {})", service.service_name),
         )?;
-        let recovery = recover_exited_owned_compose_services_for_project(
-            &policy.repo_root,
-            policy,
-            &service.project_name,
-        )?;
-        for warning in recovery.warnings {
-            eprintln!("[warn] {warning}");
-        }
         notes.push(format!(
             "{} [{}] -> {}:{}",
             service.service_name, service.catalog, service.host, service.host_port

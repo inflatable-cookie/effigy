@@ -535,12 +535,8 @@ fn run_in_service(
     capture: bool,
     label: &str,
 ) -> Result<PlainExit, RunnerError> {
-    let binding = crate::runner::container_runtime_prep::verify_service_exec_ready(
-        repo_root,
-        policy,
-        service,
-        Path::new(&exec.workdir),
-        None,
+    let binding = crate::runner::container_runtime_prep::verify_service_binding(
+        repo_root, policy, service, None,
     )?;
     crate::runner::task_engine::run_remote(
         run,
@@ -661,11 +657,10 @@ pub(in crate::runner) fn render_container_suite_command(
         &target.service,
         &mapped_cwd,
     );
-    let binding = crate::runner::container_runtime_prep::verify_service_exec_ready(
+    let binding = crate::runner::container_runtime_prep::verify_service_binding(
         &target.root,
         &policy,
         &target.service,
-        &working_dir,
         None,
     )?;
     let plan = effigy_runtime::container_manager::compose_invocation_plan_from_tail_args(

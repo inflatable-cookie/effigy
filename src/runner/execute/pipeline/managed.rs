@@ -1038,10 +1038,6 @@ fn environment_plan(
                 ContainerExecutionBinding::None | ContainerExecutionBinding::Host
             )
     });
-    let working_dir = context
-        .binding_resolution
-        .exec_working_dir(&repo)?
-        .unwrap_or_else(|| repo.clone());
     let mut ready_lines = Vec::new();
     if let Some(message) = managed_ready_message(
         context.selection.task.ready_message.as_deref(),
@@ -1059,7 +1055,7 @@ fn environment_plan(
         up,
         up_env,
         borrowed: inline.is_none() && environment_borrowed(&repo, policy),
-        exec_probe: exec_workloads.then(|| (policy.primary_service.clone(), working_dir)),
+        exec_probe: exec_workloads.then(|| policy.primary_service.clone()),
         route_urls: if plan.readiness.health_wait {
             managed_readiness_probe_urls(Some(policy))
         } else {

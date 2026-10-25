@@ -361,10 +361,9 @@ The `rust-toolchain.toml` comment now records the current pin only and claims
 no wider MSRV, matching [guide 049](../../guides/049-ci-binary-distribution-and-release-protocol.md).
 Passing audit or CI does not assert that all Rust is safe or bug-free.
 Named containers test-lint sites that had been excluded from
-`effigy-containers --all-targets` (`healthcheck_timer` `cmp_owned`,
-`participation` `cmp_owned`, `generated_compose` redundant closure,
-`tests/compose.rs` needless borrow) keep their oracles and are linted
-all-target through `check:rust:postfork-safety`. Private errno, allocation,
+`effigy-containers --all-targets` (`participation` `cmp_owned`,
+`generated_compose` redundant closure, `tests/compose.rs` needless borrow) keep
+their oracles and are linted all-target through `check:rust:postfork-safety`. Private errno, allocation,
 negative-control, argv, group-ownership, and launch-error proofs live under
 `test:rust:postfork-safety`.
 

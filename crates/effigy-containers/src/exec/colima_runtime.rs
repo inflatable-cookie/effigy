@@ -5,13 +5,12 @@ use std::process::{Command, Output};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::healthcheck_pidfiles::{inspect_run_inode_pressure, prune_stale_health_check_pidfiles};
+use super::healthcheck_pidfiles::prune_stale_health_check_pidfiles;
 use super::implementation::ContainerExecError;
 use super::parse::docker_failure_looks_like_colima_runtime_state_loss;
 use super::process::{
     error_is_timeout, format_args, run_command_capture, run_command_capture_allow_failure,
-    run_command_capture_allow_failure_with_deadline,
-    run_command_capture_allow_failure_with_timeout, run_command_capture_os,
+    run_command_capture_allow_failure_with_deadline, run_command_capture_os,
     run_command_capture_with_absolute_deadline, run_command_capture_with_timeout,
 };
 use crate::{
@@ -65,34 +64,14 @@ struct ColimaProfileEntry {
 /// its files; a clean profile walks a handful.
 const HEALTHCHECK_PIDFILE_PRUNE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The one line a routine activation says about the `/run` pid-file leak, or
-/// nothing.
-///
-/// The prune itself is always silent: it is Effigy's own housekeeping inside a
-/// VM tmpfs, and its counts and the nerdctl upgrade note live in
-/// `effigy doctor` and the explicit prune command (effigy#313). A profile the
-/// doctor threshold calls pressured is different: the next `exec` may fail, so
-/// that one is said here, during the activation that just made room.
-fn health_check_pid_file_prune_notice(
-    profile: &str,
-    prune: &super::healthcheck_pidfiles::HealthCheckPidFilePrune,
-    pressure: &super::healthcheck_pidfiles::RunInodePressure,
-) -> Option<String> {
-    let warning = pressure.warning(profile)?;
-    Some(format!(
-        "{warning} This activation pruned {} stale file(s); `effigy doctor` reports the current counts and /run inode use.",
-        prune.deleted()
-    ))
-}
-
 /// What one managed-profile ensure did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ColimaEnsureReport {
     /// The profile was not running, so this call started it.
     pub started: bool,
-    /// The profile was created or restarted by this call. Every owned
-    /// container admitted against the previous profile is gone or stale, so a
-    /// retained container admission recorded earlier is void.
+    /// The profile was created by this call. Every owned container admitted
+    /// against the previous profile is gone or stale, so a retained container
+    /// admission recorded earlier is void.
     pub profile_created_or_restarted: bool,
 }
 
@@ -104,7 +83,8 @@ pub fn ensure_colima_running(
 }
 
 /// The one entry point for a managed Colima profile: create it when it does not
-/// exist, start it when stopped, restart it when its managed settings drifted.
+/// exist and start it when stopped. A running profile is never stopped or
+/// restarted here: other checkouts' stacks share it.
 pub fn ensure_colima_running_report(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
@@ -127,8 +107,6 @@ enum ColimaProfileAction {
     Created,
     /// The profile existed but its VM was stopped.
     Started,
-    /// The profile was running without a managed setting and was restarted.
-    Restarted,
 }
 
 impl ColimaProfileAction {
@@ -136,43 +114,21 @@ impl ColimaProfileAction {
     /// A created profile keeps nothing, so a retained container admission can
     /// no longer describe it.
     fn recreates_profile(self) -> bool {
-        matches!(self, Self::Created | Self::Restarted)
+        matches!(self, Self::Created)
     }
 }
 
 /// `container up`'s bounded prune of the pid files nerdctl 2.3.1 health checks
-/// leak into the VM's `/run` (effigy#291). It never fails the bring-up: a
-/// profile that cannot answer the probe keeps whatever state it had, and the
-/// doctor check still reports the pressure.
-///
-/// A routine `up` says nothing about it. The counts and the nerdctl upgrade
-/// note belong to `effigy doctor` and to the explicit
-/// `container profile prune-health-pid-files`, because the VM's nerdctl is
-/// whatever Colima ships and the reader can do nothing about it mid-activation
-/// (effigy#313). The one thing a routine run still says is that the VM is
-/// close to running out of `/run` inodes: that is actionable now.
+/// leak into the VM's `/run` (effigy#291). It never fails the bring-up and says
+/// nothing when it succeeds: a failed prune warns, and the explicit
+/// `container profile prune-health-pid-files` reports the counts.
 fn maintain_health_check_pid_files(policy: &EffectiveContainerPolicy, repo_root: &Path) {
     let deadline = Instant::now() + HEALTHCHECK_PIDFILE_PRUNE_TIMEOUT;
-    match prune_stale_health_check_pidfiles(&policy.profile, repo_root, deadline) {
-        Ok(prune) => {
-            if prune.deleted() == 0 {
-                return;
-            }
-            let pressure_deadline = Instant::now() + HEALTHCHECK_PIDFILE_PRUNE_TIMEOUT;
-            let Ok(pressure) =
-                inspect_run_inode_pressure(&policy.profile, repo_root, pressure_deadline)
-            else {
-                return;
-            };
-            if let Some(notice) = health_check_pid_file_prune_notice(&policy.profile, &prune, &pressure)
-            {
-                eprintln!("[warn] {notice}");
-            }
-        }
-        Err(error) => eprintln!(
-            "[warn] Colima profile `{}`: stale nerdctl health-check pid-file prune skipped: {error}. `effigy doctor` reports /run inode use and the pid-file counts",
-            policy.profile
-        ),
+    if let Err(error) = prune_stale_health_check_pidfiles(&policy.profile, repo_root, deadline) {
+        eprintln!(
+            "[warn] Colima profile `{}`: stale nerdctl health-check pid-file prune skipped: {error}. `effigy container profile prune-health-pid-files --profile {}` runs it on request",
+            policy.profile, policy.profile
+        );
     }
 }
 
@@ -209,16 +165,17 @@ fn colima_profile_exists(
 }
 
 /// A running profile is only reusable when it carries Effigy's managed
-/// settings. Observed drift restarts it with the managed arguments and says so
-/// in one line; the user's profile is never deleted.
+/// settings. Observed drift warns once and names the deliberate command: the
+/// profile is shared with every other checkout's stacks, so Effigy never stops
+/// or restarts it, and the user's profile is never deleted.
 fn ensure_running_managed_profile_ready(
     policy: &EffectiveContainerPolicy,
     repo_root: &Path,
 ) -> Result<ColimaProfileAction, ContainerExecError> {
     if let Some(drift) = managed_colima_profile_drift(&policy.profile) {
-        eprintln!("[info] {}", drift.restart_notice(&policy.profile));
-        stop_colima_profile_for_repair(policy, repo_root)?;
-        return start_managed_colima_profile(policy, repo_root, ColimaProfileAction::Restarted);
+        // Write the managed settings so the operator's own restart applies them.
+        let _ = prepare_managed_colima_profile(policy);
+        eprintln!("[warn] {}", drift.warning(&policy.profile));
     }
     ensure_running_profile_runtime_ready(
         policy.profile.as_str(),
@@ -246,7 +203,7 @@ fn start_managed_colima_profile(
             "[info] {}",
             crate::colima::colima_profile_start_notice(&policy.profile)
         ),
-        ColimaProfileAction::Reused | ColimaProfileAction::Restarted => {}
+        ColimaProfileAction::Reused => {}
     }
     prepare_managed_colima_profile(policy).map_err(|error| ContainerExecError::Failure {
         command: "colima profile config".to_owned(),
@@ -765,31 +722,6 @@ pub(super) fn run_runtime_command_capture_for_policy_allow_failure(
         })
 }
 
-pub(super) fn run_runtime_command_capture_for_policy_allow_failure_with_timeout(
-    repo_root: &Path,
-    policy: &EffectiveContainerPolicy,
-    docker_args: &[OsString],
-    label: &str,
-    timeout: Duration,
-) -> Result<Output, ContainerExecError> {
-    let detection = runtime_detection_for_policy(repo_root, policy);
-    let (program, args) = ContainerManager::defaults()
-        .runtime_process_invocation(&detection, policy.profile.as_str(), "docker", docker_args)
-        .map_err(container_manager_error)?;
-    let program = program.to_string_lossy().into_owned();
-    let rendered = args
-        .iter()
-        .map(|arg| arg.to_string_lossy().into_owned())
-        .collect::<Vec<_>>();
-    run_command_capture_allow_failure_with_timeout(
-        repo_root,
-        &program,
-        &rendered.iter().map(String::as_str).collect::<Vec<_>>(),
-        label,
-        timeout,
-    )
-}
-
 /// Start containerd and BuildKit inside a running Colima VM.
 fn start_colima_runtime_units(
     policy: &EffectiveContainerPolicy,
@@ -1220,57 +1152,6 @@ mod tests {
     };
     use std::path::PathBuf;
 
-    /// A routine activation says nothing about the pid-file prune: it is
-    /// Effigy's own housekeeping, and the counts and nerdctl note belong to
-    /// `effigy doctor` and the explicit prune (effigy#313). Only a profile the
-    /// doctor threshold calls pressured is reported during a run.
-    ///
-    /// Before, every `up` and `dev` printed:
-    ///
-    /// ```text
-    /// [info] Colima profile `effigy`: removed 540 stale nerdctl health-check
-    /// pid file(s); 404 remain (`effigy container profile
-    /// prune-health-pid-files --profile effigy` repeats this, and nerdctl
-    /// 2.4.1 or later stops the leak)
-    /// ```
-    ///
-    /// which reads as an instruction the operator cannot carry out: Colima
-    /// 0.10.3 ships nerdctl 2.3.1, so the upgrade note names a version no
-    /// current Colima provides.
-    #[test]
-    fn a_routine_prune_says_nothing_until_run_inodes_are_pressured() {
-        let prune = super::super::healthcheck_pidfiles::HealthCheckPidFilePrune {
-            before: 540,
-            after: 404,
-        };
-        let calm = super::super::healthcheck_pidfiles::RunInodePressure {
-            inode_total: 819_200,
-            inode_used: 1_912,
-            pid_files: 404,
-            stale_pid_files: 0,
-        };
-        assert_eq!(
-            health_check_pid_file_prune_notice("effigy", &prune, &calm),
-            None,
-            "a routine prune prints nothing"
-        );
-
-        let pressured = super::super::healthcheck_pidfiles::RunInodePressure {
-            inode_total: 819_200,
-            inode_used: 700_000,
-            pid_files: 404,
-            stale_pid_files: 0,
-        };
-        let notice = health_check_pid_file_prune_notice("effigy", &prune, &pressured)
-            .expect("a pressured profile is reported");
-        assert!(notice.contains("nerdctl 2.4.1"), "{notice}");
-        assert!(notice.contains("pruned 136 stale file(s)"), "{notice}");
-        assert!(
-            notice.contains("`effigy container profile prune-health-pid-files --profile effigy`"),
-            "{notice}"
-        );
-    }
-
     #[test]
     fn default_runtime_profile_honors_user_global_preference() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -1699,7 +1580,7 @@ esac
     }
 
     #[test]
-    fn running_managed_profile_with_drifted_config_is_restarted_with_managed_arguments() {
+    fn running_managed_profile_with_drifted_config_warns_without_touching_the_vm() {
         let _lock = crate::test_env_lock();
         let fixture = ManagedProfileFixture::new();
         fixture.state("listed");
@@ -1707,24 +1588,19 @@ esac
         fixture.write_colima_config("forwardAgent: false\n");
         let policy = fixture.policy();
 
-        let report = ensure_colima_running_report(&policy, &fixture.root).expect("restart profile");
+        let report = ensure_colima_running_report(&policy, &fixture.root).expect("reuse profile");
 
-        assert!(report.started);
-        assert!(report.profile_created_or_restarted);
+        assert!(!report.started);
+        assert!(!report.profile_created_or_restarted);
         let calls = fixture.calls();
-        let rendered = calls.join(" | ");
-        let stop = calls
-            .iter()
-            .position(|call| call.starts_with("stop --profile effigy"))
-            .unwrap_or_else(|| panic!("the drifted profile is stopped first: {rendered}"));
-        let start = calls
-            .iter()
-            .position(|call| call.starts_with("start --profile effigy"))
-            .unwrap_or_else(|| {
-                panic!("the drifted profile is started with managed args: {rendered}")
-            });
-        assert!(stop < start, "stop precedes start: {rendered}");
-        assert!(calls[start].contains("--ssh-agent"), "{rendered}");
+        assert!(
+            !calls
+                .iter()
+                .any(|call| call.starts_with("start ") || call.starts_with("stop ")),
+            "a running shared profile is never stopped or restarted: {calls:#?}"
+        );
+        // The managed settings are written so the operator's own
+        // `colima restart effigy` applies them.
         let config = std::fs::read_to_string(fixture.home.join(".colima/effigy/colima.yaml"))
             .expect("managed config");
         assert!(config.contains("forwardAgent: true"), "{config}");

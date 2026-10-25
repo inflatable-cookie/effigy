@@ -2,7 +2,6 @@ use std::path::Path;
 
 use super::RunnerError;
 use effigy_containers::exec::ContainerExecError;
-use effigy_containers::{EffectiveComposeSource, EffectiveContainerPolicy};
 use effigy_core::build_info::StaleLocalInstall;
 
 #[test]
@@ -207,86 +206,6 @@ fn gateway_route_variants_render_stably() {
             .to_string(),
         "gateway runtime target runtime rows failed: compose backend unavailable"
     );
-}
-
-#[test]
-fn container_runtime_exec_not_ready_constructor_preserves_runtime_shape() {
-    let policy = EffectiveContainerPolicy {
-        render: None,
-        repo_root: std::path::PathBuf::from("/tmp"),
-        name: "web".to_owned(),
-        driver: effigy_manifest::ManifestContainerDriver::Colima,
-        startup: effigy_manifest::ManifestContainerStartup::Detached,
-        profile: "effigy".to_owned(),
-        compose_source: EffectiveComposeSource::Direct,
-        compose_files: vec![std::path::PathBuf::from("docker-compose.yml")],
-        compose_file_display: "docker-compose.yml".to_owned(),
-        managed_volumes: vec![],
-        borrowed_volumes: Vec::new(),
-        data_peers: Vec::new(),
-        data_from: None,
-        shared_services: vec![],
-        project_name: "demo-web".to_owned(),
-        primary_service: "app".to_owned(),
-        dns_domain: None,
-        dns_base_domain: None,
-        dns_tls: false,
-        dns_port: None,
-        dns_routes: vec![],
-        service_aliases: vec![],
-        declared_ports: vec![],
-        ports_declared_explicitly: false,
-        declared_mounts: vec![],
-        declared_media_mounts: vec![],
-        pull_production_hook: None,
-        health_check: None,
-        health_timeout_secs: 60,
-        secret_delivery: effigy_manifest::ManifestContainerSecretDelivery::ComposeEnv,
-        secret_runtime_dir: None,
-        source_secret_runtime_for_deferrals: false,
-        workspace_user: None,
-        workspace_home: None,
-        on_task_exit: effigy_manifest::ManifestContainerOnTaskExit::Stop,
-        shutdown: effigy_manifest::ManifestContainerShutdownMode::Graceful,
-        detach_timeout_secs: 10,
-        host_processes: Vec::new(),
-    };
-
-    let err =
-        RunnerError::container_runtime_exec_not_ready(&policy, Path::new("/workspace-root/demo"));
-    match &err {
-        RunnerError::ContainerRuntimeExecNotReady {
-            container,
-            service,
-            profile,
-            working_dir,
-            host_load,
-        } => {
-            assert_eq!(container, "web");
-            assert_eq!(service, "app");
-            assert_eq!(profile, "effigy");
-            assert_eq!(working_dir, Path::new("/workspace-root/demo"));
-            assert!(host_load.is_none(), "an idle host is not reported");
-        }
-        other => panic!("unexpected error variant: {other}"),
-    }
-    let rendered = err.to_string();
-    assert!(rendered.contains("container `web` is not exec-ready"));
-    assert!(rendered.contains("-w /workspace-root/demo"));
-    assert!(rendered.contains("restarting service `app`"));
-    assert!(rendered.contains("--profile effigy"));
-    assert!(!rendered.contains("the host was overloaded"));
-
-    let saturated = RunnerError::container_runtime_exec_not_ready_with_load(
-        &policy,
-        Path::new("/workspace-root/demo"),
-        Some("the host was overloaded (load average 40.00 over 18 CPU(s))".into()),
-    )
-    .to_string();
-    assert!(saturated.contains("container `web` is not exec-ready"));
-    assert!(saturated.contains("the host was overloaded (load average 40.00 over 18 CPU(s))"));
-    assert!(saturated.contains("no bounded probe answered"));
-    assert!(saturated.contains("health is unproven"));
 }
 
 #[test]

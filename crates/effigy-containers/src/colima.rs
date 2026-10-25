@@ -374,8 +374,8 @@ fn colima_vm_type_override() -> Option<String> {
 ///
 /// A profile Effigy did not create (a plain `colima start`, or one recreated
 /// without Effigy's arguments) can be running and still miss Effigy's managed
-/// configuration. Deleting or recreating the profile is never the repair: the
-/// next run that needs it restarts it with the managed arguments.
+/// configuration. Deleting or recreating the profile is never the repair, and
+/// neither is restarting it: other checkouts' stacks share it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManagedColimaProfileDrift {
     /// SSH agent forwarding is disabled, so the workspace agent-socket bind
@@ -384,12 +384,13 @@ pub enum ManagedColimaProfileDrift {
 }
 
 impl ManagedColimaProfileDrift {
-    /// One line naming the profile, the setting it lacks and the restart
-    /// Effigy runs to put the managed arguments back.
-    pub fn restart_notice(self, profile: &str) -> String {
+    /// One line naming the profile, the setting it lacks and the command that
+    /// applies it. A running profile is shared with every other checkout's
+    /// stacks, so Effigy never stops or restarts it to repair one setting.
+    pub fn warning(self, profile: &str) -> String {
         match self {
             Self::SshAgentForwardingDisabled => format!(
-                "restarting Colima profile `{profile}` to enable SSH agent forwarding: it was started without Effigy's managed arguments, so workspace `git push` over SSH would fail"
+                "Colima profile `{profile}` is running without SSH agent forwarding, so workspace `git push` over SSH will fail. Effigy wrote its managed settings to the profile config and did not restart the VM: that stops every stack on the profile. Restart it deliberately with `colima restart {profile}`."
             ),
         }
     }
